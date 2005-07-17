@@ -1,6 +1,6 @@
 #include <config.h>
 #include <libgnomevfs/gnome-vfs.h>
-#include <gtk/gtkfilesystem.h>
+//#include <gtk/gtkfilesystem.h>
 #include <libart_lgpl/libart.h>
 #include <libgnomeui/gnome-icon-lookup.h>
 #include <pthread.h>
