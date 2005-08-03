@@ -10,10 +10,11 @@
 #include "Timer.h"
 #include "ImageCache.h"
 
+#include "QuiverFile.h"
 #include "PixbufLoaderObserver.h"
 
 
-class ImageLoader
+class ImageLoader : public PixbufLoaderObserver
 {
 	
 public:
@@ -28,15 +29,16 @@ public:
 	typedef struct _Command
 	{
 		State state;
-		std::string filename;
+		QuiverFile quiverFile;
 	} Command;
 
 	ImageLoader();
 	~ImageLoader();
 
 	void AddPixbufLoaderObserver(PixbufLoaderObserver * loader_observer);
-	void LoadImage(std::string image);	
-	void CacheImage(std::string image);	
+	void LoadImage(QuiverFile);	
+	void CacheImage(QuiverFile);
+	void ReloadImage(QuiverFile);
 	
 	// thread functions
 	static void* run(void *data);
@@ -45,6 +47,7 @@ public:
 	// starts the thread
 	void Start();
 	
+	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
 
 private:	
 	void Load();
@@ -53,8 +56,8 @@ private:
 
 	pthread_t m_pthread_id;
 
-	pthread_cond_t m_pthread_cond_id;
-	pthread_mutex_t m_pthread_mutex_id;
+	pthread_cond_t m_Condition;
+	pthread_mutex_t m_ConditionMutex;
 	
 	std::list<PixbufLoaderObserver*> m_observers;
 

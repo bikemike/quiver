@@ -8,8 +8,10 @@
 #include <iostream>
 #include <string>
 
+
 #include "PixbufLoaderObserver.h"
 #include "NavigationControl.h"
+#include "QuiverFile.h"
 
 class Viewer : public PixbufLoaderObserver
 
@@ -31,6 +33,7 @@ public:
 
 	//constructor
 	Viewer();
+	~Viewer();
 	
 	
 	//member functions
@@ -44,6 +47,8 @@ public:
 	
 	void ScrollbarShow(ScrollbarType t);
 	void ScrollbarHide(ScrollbarType t);
+	
+	static GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation);
 	
 	void UpdateSize();
 
@@ -69,11 +74,16 @@ public:
 	gboolean TimeoutEventConfigure(gpointer data);
 	
 	
-	virtual void SignalAreaPrepared(GdkPixbufLoader *loader);
-	virtual void SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height);
-	virtual void SignalClosed(GdkPixbufLoader *loader);
-	virtual void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
-	virtual void SetPixbuf(GdkPixbuf * pixbuf);
+	void SignalAreaPrepared(GdkPixbufLoader *loader);
+	void SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height);
+	void SignalClosed(GdkPixbufLoader *loader);
+	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
+	void SetPixbuf(GdkPixbuf * pixbuf);
+	void SetPixbufFromThread(GdkPixbuf * pixbuf);
+	void SetQuiverFile(QuiverFile quiverfile);
+	void Rotate(bool right);
+	void Flip(bool horizontal);
+	bool GetHasFullPixbuf();
 
 
 
@@ -130,6 +140,7 @@ private:
 	bool m_bConfigureTimeoutStarted;
 	bool m_bConfigureTimeoutEnded;
 	bool m_bConfigureTimeoutRestarted;
+	QuiverFile m_QuiverFile;
 	
 };
 

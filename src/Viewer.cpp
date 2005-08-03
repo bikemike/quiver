@@ -20,7 +20,10 @@ void Viewer::EventNavButtonClicked (GtkWidget *widget, GdkEventButton *event, vo
 }
 
 
-
+Viewer::~Viewer()
+{
+	delete m_pNavigationControl;
+}
 Viewer::Viewer()
 {
 	m_pNavigationControl = new NavigationControl();
@@ -514,6 +517,37 @@ void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 
 
 	GdkPixbuf * pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+  	int w = gdk_pixbuf_get_width(pixbuf);
+	int h = gdk_pixbuf_get_height(pixbuf);	
+	
+		
+	// lets try to set the background of the pixbuf to be the resized thumbnail:
+	GdkPixbuf *thumb = m_QuiverFile.GetThumbnail();
+	bool thumb_set = false;
+	if (NULL != thumb)
+	{
+	  	int thumb_w = gdk_pixbuf_get_width(thumb);
+		int thumb_h = gdk_pixbuf_get_height(thumb);	
+			
+		double sx,sy;
+		sx = (double)w  / thumb_w;
+		sy = (double)h / thumb_h;
+		gdk_pixbuf_composite(thumb,pixbuf,
+	                 0,
+	                 0,
+	                 w,
+	                 h,
+	                 0,
+	                 0,
+	                 sx,
+	                 sy,
+	                 GDK_INTERP_NEAREST,
+	                 255);
+	                 
+		g_object_unref(thumb);
+		thumb_set = true;
+	}
+	
 	g_object_ref(pixbuf);
 	//printf("0x%08x Viewer::SignalAreaPrepared 1 (after ref): %d\n",pixbuf,G_OBJECT(pixbuf)->ref_count);
 
@@ -528,9 +562,6 @@ void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 		w_old = 0;
 		h_old = 0;
 	}
-
-  	int w = gdk_pixbuf_get_width(pixbuf);
-	int h = gdk_pixbuf_get_height(pixbuf);	
 
 	GdkRectangle screen;		
 	screen.x = 0;
@@ -644,6 +675,11 @@ void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 			gdk_region_subtract(new_reg,old_reg);
 
 			gdk_window_invalidate_region(m_pDrawingArea->window,new_reg,false);
+			if (thumb_set)
+			{
+				gdk_window_invalidate_region(m_pDrawingArea->window,new_rect_reg,false);
+			}
+
 			
 			gdk_region_destroy(new_reg);
 			gdk_region_destroy(old_reg);
@@ -735,6 +771,7 @@ void Viewer::SignalClosed(GdkPixbufLoader *loader)
 void Viewer::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
 	gdk_threads_enter ();
+	
 	//cout << "got " << width << " " << height;
 
 	if (ZOOM_FIT == m_iZoomType)
@@ -758,6 +795,8 @@ void Viewer::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 		}
 
 	}
+
+
 	//gdk_flush();
 	//XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
 	
@@ -943,14 +982,33 @@ void Viewer::UpdateSize()
 
 }
 
+
+void Viewer::SetQuiverFile(QuiverFile f)
+{
+	//gdk_threads_enter ();
+
+	m_QuiverFile = f;
+
+	//gdk_threads_leave ();
+}
+
+void Viewer::SetPixbufFromThread(GdkPixbuf * pixbuf)
+{
+	gdk_threads_enter ();
+	
+	SetPixbuf(pixbuf);
+	
+	gdk_threads_leave ();
+}
+
 void Viewer::SetPixbuf(GdkPixbuf * pixbuf)
 {
 
-	gdk_threads_enter ();
-
-	GObject * obj = G_OBJECT(pixbuf);
+	//GObject * obj = G_OBJECT(pixbuf);
 	//printf("0x%08x Viewer::SetPixbuf 0: %d\n",pixbuf,G_OBJECT(pixbuf)->ref_count);
 	
+	printf("Load time: %f\n",m_QuiverFile.GetLoadTimeInSeconds());
+		
 	g_object_ref(pixbuf);
 	
 	if (m_pixbuf != m_pixbuf_real)
@@ -982,9 +1040,6 @@ void Viewer::SetPixbuf(GdkPixbuf * pixbuf)
 	r.width = m_pDrawingArea->allocation.width;
 	r.height = m_pDrawingArea->allocation.height;
 	gdk_window_invalidate_rect(m_pDrawingArea->window,&r,false);
-
-
-	gdk_threads_leave ();
 }
 
 
@@ -1053,5 +1108,127 @@ gboolean Viewer::timeout_event_configure (gpointer data)
 gboolean Viewer::idle_event_configure (gpointer data)
 {
 	return ((Viewer*)data)->IdleEventConfigure(data);
+}
+
+
+void Viewer::Rotate(bool right)
+{
+	GdkPixbuf * pixbuf_rotated = NULL;
+	if (right)
+	{
+		pixbuf_rotated = gdk_pixbuf_rotate_simple(m_pixbuf_real,GDK_PIXBUF_ROTATE_CLOCKWISE);
+	}
+	else
+	{
+		pixbuf_rotated = gdk_pixbuf_rotate_simple(m_pixbuf_real,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
+	}
+	if (NULL != pixbuf_rotated)
+	{
+		SetPixbuf(pixbuf_rotated);
+		g_object_unref(pixbuf_rotated);
+	}
+	
+}
+
+bool Viewer::GetHasFullPixbuf()
+{
+	// FIXME: need to create a "current rotation" state
+	// and adjust the comparision accordingly
+	if ( gdk_pixbuf_get_width(m_pixbuf_real) == m_QuiverFile.GetWidth()
+		&& gdk_pixbuf_get_height(m_pixbuf_real) == m_QuiverFile.GetHeight() )
+	{
+		return true;
+	}
+	return false;
+}
+void Viewer::Flip(bool horizontal)
+{
+	GdkPixbuf * pixbuf_flipped = NULL;
+	if (horizontal)
+	{
+		pixbuf_flipped = gdk_pixbuf_flip(m_pixbuf_real,TRUE);
+	}
+	else
+	{
+		pixbuf_flipped = gdk_pixbuf_flip(m_pixbuf_real,FALSE);
+	}
+	
+	if (NULL != pixbuf_flipped)
+	{
+		SetPixbuf(pixbuf_flipped);
+		g_object_unref(pixbuf_flipped);
+	}
+	
+}
+
+GdkPixbuf * Viewer::GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
+{
+	//printf("orientation is: %d\n",orientation);
+
+/*
+  1        2       3      4         5            6           7          8
+888888  888888      88  88      8888888888  88                  88  8888888888
+88          88      88  88      88  88      88  88          88  88      88  88
+8888      8888    8888  8888    88          8888888888  8888888888          88
+88          88      88  88
+88          88  888888  888888
+1 = no rotation
+2 = flip h
+3 = rotate 180
+4 = flip v
+5 = flip v, rotate 90
+6 = rotate 90
+7 = flip v, rotate 270
+8 = rotae 270 
+
+
+*/
+	//get rotaiton
+	
+	GdkPixbuf * modified = NULL;
+
+	switch (orientation)
+	{
+		case 1:
+			//1 = no rotation
+			break;
+		case 2:
+			//2 = flip h
+			modified = gdk_pixbuf_flip(pixbuf,TRUE);
+			break;
+		case 3:
+			//3 = rotate 180
+			modified = gdk_pixbuf_rotate_simple(pixbuf,(GdkPixbufRotation)180);
+			break;
+		case 4:
+			//4 = flip v
+			modified = gdk_pixbuf_flip(pixbuf,FALSE);
+			break;
+		case 5:
+			//5 = flip v, rotate 90
+			{
+				GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
+				modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_CLOCKWISE);
+				g_object_unref(tmp);
+			}
+			break;
+		case 6:
+			modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_CLOCKWISE);
+			break;
+		case 7:
+			//7 = flip v, rotate 270
+			{
+				GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
+				modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
+				g_object_unref(tmp);
+			}
+			break;
+		case 8:
+			//8 = rotae 270 
+			modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
+		default:
+			break;
+	}
+	return modified;
 }
 

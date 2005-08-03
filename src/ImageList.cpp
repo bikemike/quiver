@@ -72,11 +72,11 @@ void ImageList::RemoveCurrentImage()
 	string new_current;
 	if (HasNext())
 	{
-		new_current = PeekNext();
+		new_current = PeekNext()->GetURI();
 	}
 	else if (HasPrevious())
 	{
-		new_current = PeekPrevious();
+		new_current = PeekPrevious()->GetURI();
 	}
 	if ( 0 < GetSize() )
 	{
@@ -102,7 +102,7 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 	string current;
 	if (0 < GetSize())
 	{
-		current = GetCurrent();
+		current = GetCurrent()->GetURI();
 	}
 	
 	if (1 == file_list->size())
@@ -111,7 +111,7 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 
 		gchar* uri = gnome_vfs_make_uri_from_shell_arg (file_list->front().c_str());
 		
-		//cout << "is this valid: " << uri << endl;
+		cout << "is this valid: " << uri << endl;
 		
 		GnomeVFSURI * vfs_uri = gnome_vfs_uri_new (uri);
 		GnomeVFSFileInfo *info;
@@ -152,6 +152,7 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 							uri = gnome_vfs_make_uri_from_shell_arg(info->symlink_name);
 						}
 						// get parent directory, then set the current image to uri
+
 						vfs_uri = gnome_vfs_uri_new (uri);
 						if (NULL != vfs_uri)
 						{
@@ -261,6 +262,7 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 
 void ImageList::SetImageList(list<string> *file_list)
 {
+	printf("Setting the image list\n");
 	if (0 == file_list->size())
 	{
 		if (0 == GetSize())
@@ -270,6 +272,7 @@ void ImageList::SetImageList(list<string> *file_list)
 	
 	m_ImageList.clear();
 	AddImageList(file_list);
+	printf("done setting the image list\n");
 }
 
 
@@ -277,7 +280,7 @@ void ImageList::AddDirectory(const gchar* uri)
 {
 	GnomeVFSResult result;
 	GnomeVFSDirectoryHandle *dir_handle;
-	GnomeVFSFileInfo *info;
+
 
 	result = gnome_vfs_directory_open (&dir_handle,uri,(GnomeVFSFileInfoOptions)
 							  (GNOME_VFS_FILE_INFO_DEFAULT|
@@ -288,9 +291,10 @@ void ImageList::AddDirectory(const gchar* uri)
 	if ( GNOME_VFS_OK == result )
 	{
 		GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(uri);
-		info = gnome_vfs_file_info_new ();
+
 		while ( GNOME_VFS_OK == result )
 		{
+			GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();;
 			result = gnome_vfs_directory_read_next(dir_handle,info);
 			
 			if (GNOME_VFS_OK == result )
@@ -300,14 +304,17 @@ void ImageList::AddDirectory(const gchar* uri)
 				
 				//printf("uri: %s\n",str_uri_file);
 				gnome_vfs_uri_unref(vfs_uri_file);
+
+				// FIXME:  what should the info be?
+				// 
 				AddFile(str_uri_file,info);
 				//cout << "freeing uri file " << endl;
 				free (str_uri_file);
 				//cout << "freed uri file " << endl;
 			}
+			gnome_vfs_file_info_unref (info);
 		}
 		gnome_vfs_uri_unref(vfs_uri_dir);
-		gnome_vfs_file_info_unref (info);
 		gnome_vfs_directory_close (dir_handle);
 	}
 }
@@ -333,12 +340,11 @@ void ImageList::AddFile(const gchar* uri, GnomeVFSFileInfo *info)
 	if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find( info->mime_type ) )
 	{
 		QuiverFile f(uri,info);
-		printf("Adding %s to list: %s\n",uri,info->mime_type);
 		m_ImageList.push_back(f);
 	}
 	else
 	{
-		printf("Unsupported mime_type: %s\n",info->mime_type);
+		//printf("Unsupported mime_type: %s\n",info->mime_type);
 	}
 }
 
@@ -375,34 +381,37 @@ bool ImageList::HasPrevious()
 	return ( m_itrCurrent != m_ImageList.begin() );
 }
 
-string ImageList::GetNext()
+QuiverFile* ImageList::GetNext()
 {
 	if (HasNext())
 	{
 		//printf("index: %d\n",m_iIndex);
 		m_iIndex++;
-		return ((++m_itrCurrent)->GetURI());
+		++m_itrCurrent;
+		return &(*m_itrCurrent);
 	}
-	return string();
+	return NULL;
 }
 
-string ImageList::PeekNext()
+QuiverFile* ImageList::PeekNext()
 {
 	if (HasNext())
 	{
 		std::list<QuiverFile>::iterator itr = m_itrCurrent;
-		return ((++itr)->GetURI());
+		return &(*(++itr));
 	}
-	return string();
+	return NULL;
 }
 
 
-string ImageList::GetCurrent()
+QuiverFile* ImageList::GetCurrent()
 {
 	if (GetSize() && m_itrCurrent != m_ImageList.end())
-		return m_itrCurrent->GetURI();
-	else
-		return string();
+	{
+		return &(*m_itrCurrent);
+	}
+
+	return NULL;
 }
 
 int ImageList::GetCurrentIndex()
@@ -410,23 +419,23 @@ int ImageList::GetCurrentIndex()
 	return m_iIndex;
 }
 
-string ImageList::GetPrevious()
+QuiverFile* ImageList::GetPrevious()
 {
 	if (HasPrevious())
 	{
 		m_iIndex--;
-		return (--m_itrCurrent)->GetURI();
+		return &(*(--m_itrCurrent));
 	}
-	return string();
+	return NULL;
 }
-string ImageList::PeekPrevious()
+QuiverFile* ImageList::PeekPrevious()
 {
 	if (HasPrevious())
 	{
 		std::list<QuiverFile>::iterator itr = m_itrCurrent;
-		return (--itr)->GetURI();
+		return &(*(--itr));
 	}
-	return string();
+	return NULL;
 }
 
 int ImageList::GetSize()

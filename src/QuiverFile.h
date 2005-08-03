@@ -13,16 +13,10 @@
 
 #include "ImageCache.h"
 
-
-struct IptcData;
-//struct GnomeVFSFileInfo;
-struct DBData;
-
 class QuiverFile {
 	// Associations
 	// Attributes
 public:
-	boost::shared_ptr<int> intPtr;
 
 	typedef enum _QuiverDataFlags
 	{
@@ -35,42 +29,34 @@ public:
 
 	// Operations
 	
+	QuiverFile();
 	QuiverFile(const gchar*  uri);
 	QuiverFile(const gchar* , GnomeVFSFileInfo *info);
 	~QuiverFile();
 	
-	const gchar* GetURI(); // get the uri for this QuiverFile
-	//static QuiverFile GetInstance(std::string path);
+	const gchar* GetURI();
 
-	// copy constructor
-	QuiverFile(const QuiverFile& a);
-	// operator overloading
-	QuiverFile& QuiverFile::operator=(const QuiverFile &rhs);
 	GdkPixbuf * GetThumbnail();
 	GdkPixbuf * GetExifThumbnail();
 	void LoadExifData();
 	ExifData *GetExifData();
 	int GetExifOrientation();
 	GnomeVFSFileInfo * GetFileInfo();
-
+	
+	int GetWidth();
+	int GetHeight();
+	double GetLoadTimeInSeconds();
+	
+	void SetWidth(int );
+	void SetHeight(int);
+	void SetLoadTimeInSeconds(double);
+	
 	
 private:
-	//GnomeVFSFileInfo *info;
-	//gnome_vfs_make_uri_canonical
-	//gnome_vfs_get_local_path_from_uri
-	int * p_ref_count;
-	gchar* m_szURI;
 
-	GnomeVFSFileInfo *file_info;
- 	ExifData *exif_data;
-	IptcData *iptc_data;
-	DBData *db_data;
-	
-	// if load is successful, set the flags accordingly
-	QuiverDataFlags *data_loaded_flags;
-	// if the load of data is attempted, set flag accordingly
-	QuiverDataFlags *data_exist_flags;
-	static ImageCache c_ThumbnailCache;
+	class QuiverFileImpl;
+	boost::shared_ptr<QuiverFileImpl> QuiverFilePtr;
+
 };
 
 #endif

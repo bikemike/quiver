@@ -125,7 +125,7 @@ private:
 		
 		
 		GdkWindowState m_WindowState;
-		ImageLoader im;
+		ImageLoader m_ImageLoader;
 
 };
 

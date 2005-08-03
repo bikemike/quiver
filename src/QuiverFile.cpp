@@ -4,162 +4,189 @@
 #include "QuiverFile.h"
 #include "Timer.h"
 #include <exif-utils.h>
+#include "Viewer.h"
 
-ImageCache QuiverFile::c_ThumbnailCache(100); // thumbnail cache of size 100!
 
-QuiverFile::QuiverFile(const gchar * uri)
-{
-	//m_szURI = new gchar[strlen(uri)+1];
-	m_szURI = new gchar [ strlen(uri) + 1 ];
-	g_stpcpy(m_szURI,uri);
-	p_ref_count = new int;
+// =================================================================================================
+// Implementation
+// =================================================================================================
+
+struct IptcData;
+//struct GnomeVFSFileInfo;
+struct DBData;
+
+class QuiverFile::QuiverFileImpl {
+	// Associations
+	// Attributes
+public:
+
+	// Operations
 	
-	*p_ref_count = 1;
+	QuiverFileImpl(const gchar*  uri);
+	QuiverFileImpl(const gchar* , GnomeVFSFileInfo *info);
+	~QuiverFileImpl();
+	
+	
+	gchar* m_szURI;
+	GnomeVFSFileInfo *file_info;
+ 	ExifData *exif_data;
+	IptcData *iptc_data;
+	DBData *db_data;
+	
+	// if load is successful, set the flags accordingly
+	QuiverDataFlags data_loaded_flags;
+	
+	// if the load of data is attempted, set flag accordingly
+	QuiverDataFlags data_exists_flags;
+	
+	int width;
+	int height;
+	double loadTimeSeconds;
+	
+	static ImageCache c_ThumbnailCache;
+private:
+	void Init(const gchar *uri, GnomeVFSFileInfo *info);
+};
 
+
+ImageCache QuiverFile::QuiverFileImpl::c_ThumbnailCache(100); // thumbnail cache of size 100!
+
+QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar * uri)
+{
 	// get the file info
 	GnomeVFSFileInfo *info;
 	GnomeVFSResult result;
 	info = gnome_vfs_file_info_new ();
-	result = gnome_vfs_get_file_info (m_szURI,info,(GnomeVFSFileInfoOptions)
+	result = gnome_vfs_get_file_info (uri,info,(GnomeVFSFileInfoOptions)
 									  (GNOME_VFS_FILE_INFO_DEFAULT|
 									  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
 									  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
 									  GNOME_VFS_FILE_INFO_FOLLOW_LINKS)
 									  );
-	file_info = info;
-	gnome_vfs_file_info_ref(file_info);
-	data_loaded_flags = new QuiverDataFlags;
-	data_exist_flags = new QuiverDataFlags;
-	
-	*data_loaded_flags = QUIVER_FILE_DATA_NONE;
-	*data_exist_flags = QUIVER_FILE_DATA_NONE;
-	
-	*data_loaded_flags = (QuiverDataFlags)(*data_loaded_flags | QUIVER_FILE_DATA_INFO);
-	*data_exist_flags = (QuiverDataFlags)(*data_exist_flags | QUIVER_FILE_DATA_INFO);
-	
-	
-	exif_data = NULL;
-	iptc_data = NULL;
-	//printf("constructor: %s = %d\n",m_szURI, *p_ref_count);
+	Init(uri,info);
 }
 
-
-GnomeVFSFileInfo * QuiverFile::GetFileInfo()
+QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GnomeVFSFileInfo *info)
 {
-	gnome_vfs_file_info_ref(file_info);
-	return file_info;
+	Init(uri,info);
 }
-QuiverFile::QuiverFile(const gchar *uri, GnomeVFSFileInfo *info)
+
+void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GnomeVFSFileInfo *info)
 {
 	//m_szURI = (gchar*)malloc (sizeof(gchar) * strlen(uri) + 1 );
 	m_szURI = new gchar [ strlen(uri) + 1 ];
 	g_stpcpy(m_szURI,uri);
+
 	file_info = info;
 	gnome_vfs_file_info_ref(file_info);
-	p_ref_count = new int;
-	*p_ref_count = 1;
-	//printf("constructor: %s = %d\n",m_szURI, *p_ref_count);
-	data_loaded_flags = new QuiverDataFlags;
-	data_exist_flags = new QuiverDataFlags;
-	
-	*data_loaded_flags = QUIVER_FILE_DATA_NONE;
-	*data_exist_flags = QUIVER_FILE_DATA_NONE;
-	
-	*data_loaded_flags = QUIVER_FILE_DATA_NONE;
-	*data_exist_flags = QUIVER_FILE_DATA_NONE;
-	
-	*data_exist_flags = (QuiverDataFlags)(*data_exist_flags | QUIVER_FILE_DATA_INFO);
-	*data_loaded_flags = (QuiverDataFlags)(*data_loaded_flags | QUIVER_FILE_DATA_INFO);
-	exif_data = NULL;
-	iptc_data = NULL;	
-}
 
-QuiverFile::~QuiverFile()
-{
-	//free ( m_szURI );
-	if (NULL != file_info)
-		gnome_vfs_file_info_unref(file_info);
+	data_loaded_flags = QUIVER_FILE_DATA_NONE;
+	data_exists_flags = QUIVER_FILE_DATA_NONE;
 	
-	(*p_ref_count)--;
-	
-	
-	if (0 == *p_ref_count)
+	if (NULL != info)
 	{
-		delete [] m_szURI;
-
-		if (NULL != exif_data)
-		{
-			exif_data_unref(exif_data);
-		}
+		data_exists_flags = (QuiverDataFlags)(data_exists_flags | QUIVER_FILE_DATA_INFO);
+		data_loaded_flags = (QuiverDataFlags)(data_loaded_flags | QUIVER_FILE_DATA_INFO);
 	}
 	
+	exif_data = NULL;
+	iptc_data = NULL;	
+
+	width = -1;
+	height = -1;
+
 }
-/*
-QuiverFile *QuiverFile::GetInstance(string path)
+
+QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 {
-	// if able to make a valid uri,
-	// else return null;
-	string uri  = path;
-	return new QuiverFile(uri);
+	//free ( m_szURI );
+	gnome_vfs_file_info_unref(file_info);
+	
+	delete [] m_szURI;
+
+	if (NULL != exif_data)
+	{
+		exif_data_unref(exif_data);
+	}
 }
-*/
+
+
+
+
+// =================================================================================================
+// QuiverFile Wrapper Class
+// =================================================================================================
+
+QuiverFile::QuiverFile() : QuiverFilePtr( new QuiverFileImpl("") )
+{
+}
+QuiverFile::QuiverFile(const gchar*  uri)  : QuiverFilePtr( new QuiverFileImpl(uri) )
+{
+	
+}
+QuiverFile::QuiverFile(const gchar* uri, GnomeVFSFileInfo *info) : QuiverFilePtr( new QuiverFileImpl(uri,info) )
+{
+	
+}
+QuiverFile::~QuiverFile()
+{
+	
+}
+
+GnomeVFSFileInfo * QuiverFile::GetFileInfo()
+{
+	gnome_vfs_file_info_ref(QuiverFilePtr->file_info);
+	return QuiverFilePtr->file_info;
+}
+
+
 const gchar* QuiverFile::GetURI()
 {
-	return m_szURI;
+	return QuiverFilePtr->m_szURI;
 }
 
-// copy constructor
-QuiverFile::QuiverFile(const QuiverFile& a)
+
+void QuiverFile::SetLoadTimeInSeconds(double seconds)
 {
-	
-	// increase ref count
-	p_ref_count = a.p_ref_count;
-	(*p_ref_count)++;
-	
-	
-	exif_data = a.exif_data;
-	iptc_data = a.iptc_data;
-	// use the same file info because it has ref counting
-	file_info = a.file_info;
-	gnome_vfs_file_info_ref(file_info);
-	
-	data_exist_flags = a.data_exist_flags;
-	data_loaded_flags = a.data_loaded_flags;	
-	
-	// copy the string uri
-	m_szURI = a.m_szURI;
-	//m_szURI = new gchar [ strlen(a.m_szURI) + 1 ];
-	//g_stpcpy(m_szURI,a.m_szURI);
-	//printf("copied: %s = %d\n",m_szURI, *p_ref_count);
+	QuiverFilePtr->loadTimeSeconds = seconds;
 }
-// operator overloading
-QuiverFile& QuiverFile::QuiverFile::operator=(const QuiverFile &rhs)
+double QuiverFile::GetLoadTimeInSeconds()
 {
-	// increase ref count
-	p_ref_count = rhs.p_ref_count;
-	(*p_ref_count)++;
-	
-	exif_data = rhs.exif_data;
-	iptc_data = rhs.iptc_data;
-	
-	data_exist_flags = rhs.data_exist_flags;
-	data_loaded_flags = rhs.data_loaded_flags;
-	// TODO: FIXME
-	//printf("assignment op =========================\n");
-	file_info = rhs.file_info;
-	gnome_vfs_file_info_ref(file_info);
-	
-	// copy the string uri
-	//m_szURI = new gchar [ strlen(rhs.m_szURI) + 1 ];
-	//g_stpcpy(m_szURI,rhs.m_szURI);
-	m_szURI = rhs.m_szURI;
-	return *this;
+	return QuiverFilePtr->loadTimeSeconds;
 }
 
+void QuiverFile::SetWidth(int w)
+{
+	QuiverFilePtr->width = w;
+}
+void QuiverFile::SetHeight(int h)
+{
+	QuiverFilePtr->height = h;
+}
+int QuiverFile::GetWidth()
+{
+	/*
+	if (-1 == QuiverFilePtr->width)
+	{
+		
+	}
+	*/
+	return QuiverFilePtr->width;
+}
+int QuiverFile::GetHeight()
+{
+	/*
+	if (-1 == QuiverFilePtr->height)
+	{
+			
+	}
+	*/
+	return QuiverFilePtr->height;
+}
 void QuiverFile::LoadExifData()
 {
 	//Timer t("QuiverFile::LoadExifData()");
-	if (! ( *data_loaded_flags & QUIVER_FILE_DATA_EXIF ) )
+	if (! ( QuiverFilePtr->data_loaded_flags & QUIVER_FILE_DATA_EXIF ) )
 	{
 		ExifLoader *loader;
 		//	unsigned char data[1024];
@@ -172,7 +199,7 @@ void QuiverFile::LoadExifData()
 		GnomeVFSResult    result;
 		GnomeVFSFileSize  bytes_read;
 		
-		result = gnome_vfs_open (&handle, m_szURI, GNOME_VFS_OPEN_READ);
+		result = gnome_vfs_open (&handle, QuiverFilePtr->m_szURI, GNOME_VFS_OPEN_READ);
 		if (GNOME_VFS_OK == result)
 		{
 			while (GNOME_VFS_OK == result)
@@ -187,10 +214,10 @@ void QuiverFile::LoadExifData()
 			gnome_vfs_close(handle);
 		}
 		
-		exif_data = exif_loader_get_data (loader);
+		QuiverFilePtr->exif_data = exif_loader_get_data (loader);
 		exif_loader_unref (loader);
 		
-		if (NULL == exif_data)
+		if (NULL == QuiverFilePtr->exif_data)
 		{
 			//printf("exif data is null\n");
 		}
@@ -200,30 +227,30 @@ void QuiverFile::LoadExifData()
 			
 			// go through exif fields to see if any are set (if not, no exif)
 			for (int i = 0; i < EXIF_IFD_COUNT && no_exif; i++) {
-				if (exif_data->ifd[i] && exif_data->ifd[i]->count) {
+				if (QuiverFilePtr->exif_data->ifd[i] && QuiverFilePtr->exif_data->ifd[i]->count) {
 					no_exif = false;
 				}
 			}
-			if (exif_data->data)
+			if (QuiverFilePtr->exif_data->data)
 			{
 				no_exif = false;
 			}
 			
 			if (!no_exif)
 			{
-				*data_exist_flags = (QuiverDataFlags)(*data_exist_flags | QUIVER_FILE_DATA_EXIF);
+				QuiverFilePtr->data_exists_flags = (QuiverDataFlags)(QuiverFilePtr->data_exists_flags | QUIVER_FILE_DATA_EXIF);
 				//printf("there is exif!!\n");
 			}
 			else
 			{
 				//printf("no data in the exif!\n");
 				// dont keep structure around, it has nothing in it
-				exif_data_unref(exif_data);
-				exif_data = NULL;
+				exif_data_unref(QuiverFilePtr->exif_data);
+				QuiverFilePtr->exif_data = NULL;
 			}
 	
 		}
-		*data_loaded_flags = (QuiverDataFlags)(*data_loaded_flags | QUIVER_FILE_DATA_EXIF);
+		QuiverFilePtr->data_loaded_flags = (QuiverDataFlags)(QuiverFilePtr->data_loaded_flags | QUIVER_FILE_DATA_EXIF);
 	}
 }
 
@@ -234,7 +261,7 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 
 	LoadExifData();
 	//exif_data_dump(exif_data);
-	if (*data_exist_flags & QUIVER_FILE_DATA_EXIF && exif_data->data)
+	if (QuiverFilePtr->data_exists_flags & QUIVER_FILE_DATA_EXIF && QuiverFilePtr->exif_data->data)
 	{
 		GError *tmp_error;
 		tmp_error = NULL;
@@ -242,7 +269,7 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 		GdkPixbufLoader *pixbuf_loader;
 		
 		pixbuf_loader = gdk_pixbuf_loader_new();
-		gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)exif_data->data, exif_data->size, &tmp_error);
+		gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)QuiverFilePtr->exif_data->data, QuiverFilePtr->exif_data->size, &tmp_error);
 
 		gdk_pixbuf_loader_close(pixbuf_loader,&tmp_error);
 		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
@@ -260,6 +287,7 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 			// we must ref it
 		}				
 		g_object_unref(pixbuf_loader);
+		
 	}
 		//thumb data
 	return thumb_pixbuf;
@@ -267,18 +295,20 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 
 GdkPixbuf * QuiverFile::GetThumbnail()
 {
+
 	//Timer t("QuiverFile::GetThumbnail()");
 	GdkPixbuf * thumb_pixbuf = NULL;
 	//GnomeThumbnailFactory* thumb_factory;
 	//thumb_factory =	gnome_thumbnail_factory_new(GNOME_THUMBNAIL_SIZE_NORMAL);
 
-	char * thumb_path ;
-	thumb_path = gnome_thumbnail_path_for_uri(m_szURI,GNOME_THUMBNAIL_SIZE_NORMAL);
-	//printf("thumb path: %s\n",thumb_path);
+	gchar * thumb_path ;
+	thumb_path = gnome_thumbnail_path_for_uri(QuiverFilePtr->m_szURI,GNOME_THUMBNAIL_SIZE_NORMAL);
+	//printf("thumb path %s: %s\n",QuiverFilePtr->m_szURI,thumb_path);
 
 	//const gchar* gdk_pixbuf_get_option(GdkPixbuf *pixbuf,const gchar *key);
 	
 	// try to load the thumb from thumb_path
+	//gdk_threads_enter ();
 	GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
 
 	GError *tmp_error;
@@ -309,20 +339,19 @@ GdkPixbuf * QuiverFile::GetThumbnail()
 		time_t mtime;
 		mtime = atol (thumb_mtime_str);
 		
-		if (file_info->mtime == mtime)
+		if (QuiverFilePtr->file_info->mtime == mtime)
 		{
-			//printf("mtimes match: %s\n",thumb_mtime_str);	
 			//mtimes match, it's good!
 			g_object_ref(thumb_pixbuf);
 		}
 		else
 		{
-			//printf("mtimes do NOT match: %s\n",thumb_mtime_str);	
 			// they dont match.. we should load a new version
 			thumb_pixbuf = NULL;
 		}
 		g_object_unref(loader);
 	}
+	//gdk_threads_leave ();
 	
 	if (NULL == thumb_pixbuf) // no thumbnail in the ~/.thumbnails/normal/ cache
 	{ 
@@ -338,62 +367,44 @@ GdkPixbuf * QuiverFile::GetThumbnail()
 	}
 
 	g_free (thumb_path);
+
+	//FIXME: need to get an autorotate option
+	int orientation = GetExifOrientation();
+	if (NULL != thumb_pixbuf  && 1 < orientation) 
+	{
+		GdkPixbuf * new_pixbuf = Viewer::GdkPixbufExifReorientate(thumb_pixbuf, orientation);
+		if (NULL != new_pixbuf)
+		{
+			g_object_unref(thumb_pixbuf);
+			thumb_pixbuf = new_pixbuf;
+		}
+	}
+
 	return thumb_pixbuf;
 }
 
+ExifData* QuiverFile::GetExifData()
+{
+	exif_data_ref(QuiverFilePtr->exif_data);
+	return QuiverFilePtr->exif_data;
+}
 	
 int QuiverFile::GetExifOrientation()
 {
 	LoadExifData();
 	int orientation = 0;
 	
-	if (*data_exist_flags & QUIVER_FILE_DATA_EXIF)
+	if (QuiverFilePtr->data_exists_flags & QUIVER_FILE_DATA_EXIF)
 	{
-		ExifTag tag;
-	
 		ExifEntry *entry;
-		entry = exif_data_get_entry(exif_data,EXIF_TAG_ORIENTATION);
+		entry = exif_data_get_entry(QuiverFilePtr->exif_data,EXIF_TAG_ORIENTATION);
 		if (NULL != entry)
 		{
 			// the orientation field is set
 			//exif_entry_dump(entry,2);
-			char word[100];
 			ExifByteOrder o;
-			//ExifShort v_short;
 			o = exif_data_get_byte_order (entry->parent->parent);
 			orientation = exif_get_short (entry->data, o);
-
-			//exif_entry_get_value(entry,word,100);
-			/*
-			1 top - left 
-			2 top - right
-			3 bottom - right
-			4 bottom - left
-			5 left - top
-			6 right - top
-			7 right - bottom
-			8 left - bottom
-			*/
-			/*
-			printf ("word : \"%s\"\n",word);
-			if (0 == strcmp(word,"top - left") )
-				orientation = 1;
-			else if (0 == strcmp(word,"top - right") )
-				orientation = 2;	
-			else if (0 == strcmp(word,"bottom - right") )
-				orientation = 3;
-			else if (0 == strcmp(word,"bottom - left") )
-				orientation = 4;
-			else if (0 == strcmp(word,"left - top") )
-				orientation = 5;
-			else if (0 == strcmp(word,"right - top") )
-				orientation = 6;
-			else if (0 == strcmp(word,"right - bottom") )
-				orientation = 7;
-			else if (0 == strcmp(word,"left - bottom") )
-				orientation = 8;
-			printf ("orientation: \"%d\"\n",orientation);
-			*/
 		}
 	}
 	return orientation;
@@ -517,3 +528,56 @@ gnome_thumbnail_factory_save_thumbnail (GnomeThumbnailFactory *factory,
   g_free (tmp_path);
 }
 */
+
+/*
+
+const gchar* QuiverFile::GetURI()
+{
+	return QuiverFilePtr->GetURI();
+	
+}
+//static QuiverFile GetInstance(std::string path);
+
+GdkPixbuf * QuiverFile::GetThumbnail()
+{
+	return QuiverFilePtr->GetThumbnail();	
+}
+GdkPixbuf * QuiverFile::GetExifThumbnail()
+{
+	return QuiverFilePtr->GetExifThumbnail();	
+}
+void QuiverFile::LoadExifData()
+{
+	QuiverFilePtr->LoadExifData();
+}
+ExifData *QuiverFile::GetExifData()
+{
+	return QuiverFilePtr->GetExifData();
+}
+int QuiverFile::GetExifOrientation()
+{
+	return QuiverFilePtr->GetExifOrientation();
+}
+GnomeVFSFileInfo * QuiverFile::GetFileInfo()
+{
+	return QuiverFilePtr->GetFileInfo();
+}
+
+*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

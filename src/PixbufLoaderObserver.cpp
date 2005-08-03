@@ -1,11 +1,16 @@
 #include <config.h>
 #include "PixbufLoaderObserver.h"
 
-using namespace std;
+//using namespace std;
 
 PixbufLoaderObserver::PixbufLoaderObserver()
 {
 }
+
+PixbufLoaderObserver::~PixbufLoaderObserver()
+{
+}
+
 
 void PixbufLoaderObserver::ConnectSignalSizePrepared(GdkPixbufLoader * loader)
 {
@@ -24,25 +29,33 @@ void PixbufLoaderObserver::ConnectSignals(GdkPixbufLoader *loader)
 
 void PixbufLoaderObserver::SetPixbuf(GdkPixbuf * pixbuf)
 {
-	cout << "PixbufLoaderObserver::SetPixbuf" << endl;
+	//printf("PixbufLoaderObserver::SetPixbuf\n");
+}
+void PixbufLoaderObserver::SetPixbufFromThread(GdkPixbuf * pixbuf)
+{
+	//printf("PixbufLoaderObserver::SetPixbufFromThread\n");
 }
 
+void PixbufLoaderObserver::SetQuiverFile(QuiverFile quiverFile)
+{
+	//printf("PixbufLoaderObserver::SetQuiverFile\n");
+}
 
 void PixbufLoaderObserver::SignalAreaPrepared(GdkPixbufLoader *loader)
 {
-	cout << "PixbufLoaderObserver::SignalAreaPrepared" << endl;
+	//printf("PixbufLoaderObserver::SignalAreaPrepared\n");
 }
 void PixbufLoaderObserver::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height)
 {
-	cout << "PixbufLoaderObserver::SignalAreaUpdated: x=" << x << ", y=" << y << ", width=" << width << ", height=" << height << endl;	
+	//printf("PixbufLoaderObserver::SignalAreaUpdated x=%d, y=%d, width=%d, height=%d\n",x,y,width,height);
 }
 void PixbufLoaderObserver::SignalClosed(GdkPixbufLoader *loader)
 {
-	cout << "PixbufLoaderObserver::SignalClosed" << endl;
+	//printf("PixbufLoaderObserver::SignalClosed\n");
 }
 void PixbufLoaderObserver::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
-	cout << "PixbufLoaderObserver::SignalSizePrepared: width=" << width << ",height=" << height << endl;
+	//printf("PixbufLoaderObserver::SignalSizePrepared: width=%d, height=%d\n",width,height);
 }
 
 void PixbufLoaderObserver::signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data)

@@ -19,6 +19,21 @@ ImageCache::~ImageCache()
 	}
 }
 
+bool ImageCache::RemovePixbuf(std::string filename)
+{
+	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
+	bool rval = false;
+	if (m_mapImageCache.end() != itr)
+	{
+		// adding the same file again so unref the old pixbuf 
+		// before setting the new one
+		g_object_unref(itr->second.pPixbuf);
+		m_mapImageCache.erase(itr->first);
+		rval = true;
+	}
+	return rval;
+}
+
 void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb)
 {
 	AddPixbuf(filename,pb,CurrentTimeMillis());

@@ -1,6 +1,7 @@
 #include <config.h>
 #include "Quiver.h"
 #include <libgnomevfs/gnome-vfs.h>
+#include "icons/quiver_icon.xpm"
 
 
 using namespace std;
@@ -98,8 +99,16 @@ void  Quiver::SignalDragBegin (GtkWidget *widget,GdkDragContext *drag_context,gp
 	// disable drop 
 	gtk_drag_dest_unset(m_pQuiverWindow);
 	
-	// TO: DO
+	// TODO
 	// set icon
+	GdkPixbuf *thumb = m_pImageList->GetCurrent()->GetThumbnail();
+
+	if (NULL != thumb)
+	{
+		gtk_drag_set_icon_pixbuf(drag_context,thumb,-2,-2);
+		g_object_unref(thumb);
+	}
+
 }
 
 void Quiver::signal_drag_data_received(GtkWidget *widget,GdkDragContext *drag_context, gint x,gint y,
@@ -122,7 +131,7 @@ void Quiver::SignalDragDataGet (GtkWidget *widget, GdkDragContext *context,
 		{
     		gtk_selection_data_set (selection_data,
 			    selection_data->target,
-			    8, (const guchar*)m_pImageList->GetCurrent().c_str(),m_pImageList->GetCurrent().length());
+			    8, (const guchar*)m_pImageList->GetCurrent()->GetURI(),strlen(m_pImageList->GetCurrent()->GetURI()));
 		}
 	}
 	else if (info == QUIVER_TARGET_URI)
@@ -134,7 +143,7 @@ void Quiver::SignalDragDataGet (GtkWidget *widget, GdkDragContext *context,
 			//context->suggested_action = GDK_ACTION_LINK;
     		gtk_selection_data_set (selection_data,
 			    selection_data->target,
-			    8, (const guchar*)m_pImageList->GetCurrent().c_str(),m_pImageList->GetCurrent().length());
+			    8, (const guchar*)m_pImageList->GetCurrent()->GetURI(),strlen(m_pImageList->GetCurrent()->GetURI()));
 		}
 	}
   	else
@@ -171,20 +180,27 @@ void Quiver::CurrentImage()
 {
 	if (0 < m_pImageList->GetSize())
 	{
+		QuiverFile *f;
+		f = m_pImageList->GetCurrent();
 		
-		string file = m_pImageList->GetCurrent();
-		im.LoadImage(file);
+		stringstream ss;
+		ss << " (" << m_pImageList->GetCurrentIndex() << " of " << m_pImageList->GetSize() << ")";
+		SetWindowTitle(f->GetURI() + ss.str());
+		
+		if (NULL != f)
+		{
+			m_ImageLoader.LoadImage(*f);
+		}
 		
 		// cache the next image if there is one
 		if (m_pImageList->HasNext())
 		{
-			string cache_file = m_pImageList->PeekNext();
-			im.CacheImage(cache_file);
+			f = m_pImageList->PeekNext();
+			if (NULL != f)
+			{
+				m_ImageLoader.CacheImage(*f);
+			}
 		}		
-		
-		stringstream ss;
-		ss << " (" << m_pImageList->GetCurrentIndex() << " of " << m_pImageList->GetSize() << ")";
-		SetWindowTitle(file + ss.str());
 	}
 }
 
@@ -192,40 +208,43 @@ void Quiver::NextImage()
 {
 	if (m_pImageList->HasNext())
 	{
-		
-		string file = m_pImageList->GetNext();
-		im.LoadImage(file);
+		QuiverFile *f;
+		f = m_pImageList->GetNext();
+		m_ImageLoader.LoadImage(*f);
+
+		stringstream ss;
+		ss << " (" << m_pImageList->GetCurrentIndex() << " of " << m_pImageList->GetSize() << ")";
+		SetWindowTitle(f->GetURI() + ss.str());
+
 		
 		// cache the next image if there is one
 		if (m_pImageList->HasNext())
 		{
-			string cache_file = m_pImageList->PeekNext();
-			im.CacheImage(cache_file);
+			f = m_pImageList->PeekNext();
+			m_ImageLoader.CacheImage(*f);
 		}		
 		
-		stringstream ss;
-		ss << " (" << m_pImageList->GetCurrentIndex() << " of " << m_pImageList->GetSize() << ")";
-		SetWindowTitle(file + ss.str());
 	}
 }
 void Quiver::PreviousImage()
 {
 	if (m_pImageList->HasPrevious())
 	{
-		string file = m_pImageList->GetPrevious();
-		im.LoadImage(file);
-		
-		// cache the previous image if there is one
-		if (m_pImageList->HasPrevious())
-		{
-			string cache_file = m_pImageList->PeekPrevious();
-			im.CacheImage(cache_file);	
-		}		
-		
+		QuiverFile *f;
+		f = m_pImageList->GetPrevious();
+		m_ImageLoader.LoadImage(*f);
 		
 		stringstream ss;
 		ss << " (" << m_pImageList->GetCurrentIndex() << " of " << m_pImageList->GetSize() << ")";
-		SetWindowTitle(file + ss.str());
+		SetWindowTitle(f->GetURI() + ss.str());
+				
+		// cache the previous image if there is one
+		if (m_pImageList->HasPrevious())
+		{
+			f = m_pImageList->PeekPrevious();
+			m_ImageLoader.CacheImage(*f);	
+		}		
+		
 	}
 
 }
@@ -350,10 +369,14 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 	}
 	else if (GDK_d == event->keyval || GDK_D == event->keyval || GDK_Delete == event->keyval )
 	{
+		// FIXME: create a ShowCursor method
+		// and a HideCursor method
+		gdk_window_set_cursor (m_pQuiverWindow->window, NULL);
+		
 		//delete the current images
 		if (m_pImageList->GetSize())
 		{
-			char * for_display = gnome_vfs_format_uri_for_display(m_pImageList->GetCurrent().c_str());
+			char * for_display = gnome_vfs_format_uri_for_display(m_pImageList->GetCurrent()->GetURI());
 			GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(widget),GTK_DIALOG_MODAL,
 									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,"Are you sure you want to move the following image to the trash?");
 			gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
@@ -368,7 +391,9 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 					cout << "trashing file : " << m_pImageList->GetCurrent() << endl;
 					//locate trash folder
 					GnomeVFSURI * trash_vfs_uri = NULL;
-					GnomeVFSURI * near_vfs_uri = gnome_vfs_uri_new ( m_pImageList->GetCurrent().c_str() );
+
+					cout << "is this one val? "<< endl;
+					GnomeVFSURI * near_vfs_uri = gnome_vfs_uri_new ( m_pImageList->GetCurrent()->GetURI() );
 					gnome_vfs_find_directory (near_vfs_uri, GNOME_VFS_DIRECTORY_KIND_TRASH,&trash_vfs_uri, TRUE, TRUE, 0777);
 
 					if (trash_vfs_uri != NULL) 
@@ -431,8 +456,13 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 		{
 			// unset dnd source
 			gtk_drag_source_unset (m_Viewer.GetWidget());
-			cout << "zoom 1:1" << endl;	
+			cout << "zoom 1:1" << endl;
 			m_Viewer.SetZoomType(Viewer::ZOOM_NONE);
+			if (!m_Viewer.GetHasFullPixbuf())
+			{
+				printf("not the same size\n");
+				m_ImageLoader.ReloadImage(*m_pImageList->GetCurrent());
+			}
 		}
 	}
 	else if (GDK_Left == event->keyval || GDK_BackSpace == event->keyval)
@@ -442,6 +472,22 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 	else if (GDK_Right == event->keyval || GDK_space == event->keyval)
 	{
 		NextImage();
+	}
+	else if (GDK_r == event->keyval || GDK_L == event->keyval)
+	{
+		m_Viewer.Rotate(true);
+	}
+	else if (GDK_R == event->keyval || GDK_l == event->keyval)
+	{
+		m_Viewer.Rotate(false);
+	}
+	else if (GDK_v == event->keyval || GDK_H == event->keyval)
+	{
+		m_Viewer.Flip(false);
+	}
+	else if (GDK_h == event->keyval || GDK_V == event->keyval)
+	{
+		m_Viewer.Flip(true);
 	}
 	else 
 	{
@@ -457,6 +503,9 @@ void Quiver::FullScreen()
 		if (GDK_WINDOW_STATE_FULLSCREEN & m_WindowState)
 		{
 			gtk_window_unfullscreen(GTK_WINDOW(m_pQuiverWindow));
+			// FIXME: create a ShowCursor method
+			// and a HideCursor method
+			gdk_window_set_cursor (m_pQuiverWindow->window, NULL);
 		}
 		else
 		{
@@ -578,7 +627,7 @@ void Quiver::Init()
 	m_bTimeoutEventMotionNotifyMouseMoved = false;
 	
 
-	im.Start();
+	m_ImageLoader.Start();
 	//initialize
 			/* Create the main window */
 	m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
@@ -591,7 +640,11 @@ void Quiver::Init()
 		gtk_window_set_default_size (GTK_WINDOW(m_pQuiverWindow),m_iAppWidth,m_iAppHeight);
 
 	}
-	
+
+	GdkPixbuf *pixbuf_icon = gdk_pixbuf_new_from_xpm_data ((const char**) quiver_icon_xpm);
+	gtk_window_set_icon(GTK_WINDOW(m_pQuiverWindow),pixbuf_icon);
+	g_object_unref(pixbuf_icon);
+
 	
 	/* Set up our GUI elements */
 	GtkWidget *menubar;
@@ -738,7 +791,7 @@ void Quiver::Init()
 				G_CALLBACK (signal_drag_motion), this);
 */
 					
-	im.AddPixbufLoaderObserver(&m_Viewer);
+	m_ImageLoader.AddPixbufLoaderObserver(&m_Viewer);
 }
 
 /**
@@ -807,14 +860,7 @@ bool Quiver::LoadSettings()
 	{
 		cout << "not able to open : " << quiver_rc << endl;
 	}
-	
-	string icon = getenv("HOME") + string("/.quiver/quiver.png");
-	
-	if (g_file_test (icon.c_str(), G_FILE_TEST_EXISTS))
-	{
-		gtk_window_set_icon_from_file (GTK_WINDOW(m_pQuiverWindow),icon.c_str(),NULL);
-	}
-	
+
 	return (15 == loaded & 15);
 }
 
@@ -912,7 +958,7 @@ int main (int argc, char **argv)
 	list<string> files;
 	for (int i =1;i<argc;i++)
 	{	
-		printf ("command line %d : %s\n",i,argv[i]);
+		//printf ("command line %d : %s\n",i,argv[i]);
 		files.push_back(argv[i]);
 	}
 	if (argc == 1)

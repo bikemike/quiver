@@ -43,11 +43,11 @@ public:
 	
 	bool HasNext();
 	bool HasPrevious();
-	std::string GetNext();
-	std::string PeekNext();
-	std::string GetPrevious();
-	std::string PeekPrevious();
-	std::string GetCurrent();
+	QuiverFile* GetNext();
+	QuiverFile* PeekNext();
+	QuiverFile* GetPrevious();
+	QuiverFile* PeekPrevious();
+	QuiverFile* GetCurrent();
 	int GetCurrentIndex();
 
 	int GetSize();

@@ -27,6 +27,7 @@ public:
 	// returns null if not in cache
 	GdkPixbuf * ImageCache::GetPixbuf(std::string filename);
 	bool ImageCache::InCache(std::string filename);
+	bool ImageCache::RemovePixbuf(std::string filename);
 	
 	void ImageCache::AddPixbuf(std::string filename,GdkPixbuf * pb);
 	void ImageCache::AddPixbuf(std::string filename,GdkPixbuf * pb, unsigned long time);

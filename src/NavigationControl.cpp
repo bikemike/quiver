@@ -32,6 +32,7 @@ NavigationControl::NavigationControl()
 				G_CALLBACK (NavigationControl::event_button_release), this);
 
 	m_pLineGC = NULL;
+	m_pNavPixbuf = NULL;
 	m_LastRect.x = m_CurrRect.x = -1;
 
 }
@@ -40,7 +41,11 @@ NavigationControl::NavigationControl()
 NavigationControl::~NavigationControl()
 {
 	gtk_widget_destroy(m_pNavigationWindow);
-	g_object_unref(m_pLineGC);
+
+	if (NULL != m_pLineGC)
+	{
+		g_object_unref(m_pLineGC);
+	}
 
 	if (NULL != m_pNavPixbuf)
 	{

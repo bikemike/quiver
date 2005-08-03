@@ -22,12 +22,13 @@ GdkPixbuf* GetFancyIcon(QuiverFile f);
 //void Run(void);
 void* Run(void * data)
 {
+	
 
 	printf("sleeping for 2s\n");
 	gdk_threads_enter ();
 	pthread_yield();
 	gdk_threads_leave ();
-	usleep(500000);
+	usleep(1500000);
 	
 	printf("slept for 2s\n");
 	
@@ -38,11 +39,11 @@ void* Run(void * data)
 	
 	gint size = gtk_tree_model_iter_n_children (GTK_TREE_MODEL(store),NULL);
 
+	/*
 	rval = gtk_tree_model_get_iter_first   (GTK_TREE_MODEL(store),
                                              &iter);
+	*/
 	
-	
-	/*
 	GtkTreePath *start_path;
 	GtkTreePath *end_path;
 	rval = gtk_icon_view_get_visible_range (GTK_ICON_VIEW(icon_view),
@@ -52,10 +53,12 @@ void* Run(void * data)
   	gtk_tree_model_get_iter (GTK_TREE_MODEL(store), &iter, start_path);
   	gtk_tree_path_free (start_path);
 	gtk_tree_path_free (end_path);
-	*/
 	
 	gdk_threads_leave ();
 	ImageCache iconCache(size);
+	
+	
+
 	while ( rval )
 	{
 			
@@ -68,7 +71,7 @@ void* Run(void * data)
 		gtk_tree_model_get_value(GTK_TREE_MODEL(store),&iter,  0,  value);
 		*/
 		gdk_threads_enter ();
-		gtk_tree_model_get(GTK_TREE_MODEL(store),&iter, 0, &uri, -1);
+		gtk_tree_model_get(GTK_TREE_MODEL(store),&iter, 2, &uri, -1);
 		gdk_threads_leave ();
 		//printf("this is the uri? : %s\n",uri);
 				
@@ -82,10 +85,29 @@ void* Run(void * data)
 		g_free(uri);
 		pixbuf = GetFancyIcon(f);//GetFancyIcon(f);
 		//printf("adding pixbuf to cache: %s\n", f.GetURI());
-		iconCache.AddPixbuf(f.GetURI(),pixbuf);
-		g_object_unref(pixbuf);
+		if (NULL != pixbuf)
+		{
+			iconCache.AddPixbuf(f.GetURI(),pixbuf);
+			g_object_unref(pixbuf);
+		}
+
 		
+
 		gdk_threads_enter ();
+		
+		if (NULL != pixbuf)
+		{
+/*
+			g_signal_handler_block ()
+			g_signal_stop_emission_by_name  (store,"row_changed");
+			g_signal_stop_emission_by_name  (store,"row_inserted");
+			g_signal_stop_emission_by_name  (store,"row_deleted");
+			g_signal_stop_emission_by_name  (store,"rows_reordered");
+*/			
+			gtk_list_store_set (store, &iter,1, pixbuf,-1);
+		}
+		//gtk_list_store_set_value(store,&iter,1,&value);
+		
 		rval = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
 		gdk_threads_leave ();
 	}
@@ -93,7 +115,7 @@ void* Run(void * data)
 	rval = gtk_tree_model_get_iter_first   (GTK_TREE_MODEL(store),
                                              &iter);
 	//printf("this is the second while loop\n");
-	
+	/*
 	GtkListStore *	store2 = gtk_list_store_new (2, G_TYPE_STRING, GDK_TYPE_PIXBUF);
 	GtkTreeIter iter2;	
 	while (rval)
@@ -108,11 +130,6 @@ void* Run(void * data)
 		//printf("getting from cache\n");
 		pixbuf = iconCache.GetPixbuf(uri);
 
-		/*
-		GValue value={0};
-    	g_value_init(&value, GDK_TYPE_PIXBUF);
-		g_value_set_object(&value,pixbuf);
-		*/
 		if (NULL != pixbuf)
 		{
 			//printf("not null\n");
@@ -133,6 +150,7 @@ void* Run(void * data)
 	gtk_icon_view_set_model (GTK_ICON_VIEW(icon_view), (GTK_TREE_MODEL (store2)));
 	//gtk_icon_view_set_text_column   (GTK_ICON_VIEW(icon_view),0);
 	gtk_icon_view_set_pixbuf_column (GTK_ICON_VIEW(icon_view),1);
+	*/
 	
 	gdk_threads_leave ();
 	return NULL;
@@ -148,7 +166,7 @@ void Init()
 {
 	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtk_window_move(GTK_WINDOW(window),100,100);
-	gtk_window_set_default_size (GTK_WINDOW(window),400,300);
+	gtk_window_set_default_size (GTK_WINDOW(window),800,600);
 
 	
 	/* Set up our GUI elements */
@@ -297,6 +315,21 @@ GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
 
 GdkPixbuf* GetFancyIcon(QuiverFile f)
 {
+	
+	// bgcolor 
+	GtkStyle* style =   gtk_widget_get_style(icon_view);
+	GdkColor bgcolor = style->base[GTK_STATE_NORMAL];
+
+	/*
+	typedef struct {
+  guint32 pixel;
+  guint16 red;
+  guint16 green;
+  guint16 blue;
+} GdkColor;
+*/
+
+	//printf("colors: %d %d %d : %d \n",bgcolor.red/256,bgcolor.green/256,bgcolor.blue/256,bgcolor.pixel);
 	//printf("getting pixbuf\n");
 	GdkPixbuf *pixbuf = f.GetThumbnail();
 	//printf("got it\n");
@@ -375,7 +408,7 @@ GdkPixbuf* GetFancyIcon(QuiverFile f)
   
 	GdkPixbuf* draw_buf = gdk_pixbuf_new (
 								gdk_pixbuf_get_colorspace(pixbuf),
-											TRUE,//gdk_pixbuf_get_has_alpha(pixbuf),
+											FALSE,//gdk_pixbuf_get_has_alpha(pixbuf),
                                              gdk_pixbuf_get_bits_per_sample(pixbuf),
                                              icon_width,
                                              icon_height);
@@ -429,13 +462,15 @@ GdkPixbuf* GetFancyIcon(QuiverFile f)
 	
 	int dst_rowstride = gdk_pixbuf_get_rowstride(draw_buf);
 	
-  	art_rgba_fill_run_with_alpha (buffer, 0xFF, 0xFF, 0xFF, 0x00, icon_width*icon_height);
+  	//art_rgba_fill_run_with_alpha (buffer, 0xFF, 0xFF, 0xFF, 0x00, icon_width*icon_height);
+	art_rgb_fill_run (buffer, bgcolor.red/256,bgcolor.green/256,bgcolor.blue/256, icon_width*icon_height);
 	
 	for (int i = 8;i >= 1; i-=2)
 	{
 		ArtSVP * shadow = art_svp_vpath_stroke (vec,ART_PATH_STROKE_JOIN_ROUND,ART_PATH_STROKE_CAP_BUTT,i,0,1);
 		
-		gnome_print_art_rgba_svp_alpha (shadow, 0, 0, icon_width, icon_height, shadow_color, buffer, dst_rowstride, NULL);
+		//gnome_print_art_rgba_svp_alpha (shadow, 0, 0, icon_width, icon_height, shadow_color, buffer, dst_rowstride, NULL);
+		art_rgb_svp_alpha (shadow, 0, 0, icon_width, icon_height, shadow_color, buffer, dst_rowstride, NULL);
 
 		art_free(shadow);
 	}
@@ -454,7 +489,8 @@ GdkPixbuf* GetFancyIcon(QuiverFile f)
                                              255);
   //art_rgb_run_alpha (buffer, 0xFF, 0xFF, 0xFF, 0xFF, WIDTH*HEIGHT);
 	//gnome_print_art_rgba_svp_alpha (inner_path, 0, 0, icon_width, icon_height, white, buffer, dst_rowstride, NULL);
-	gnome_print_art_rgba_svp_alpha (outer_path, 0, 0, icon_width, icon_height, black, buffer, dst_rowstride, NULL);
+	//gnome_print_art_rgba_svp_alpha (outer_path, 0, 0, icon_width, icon_height, black, buffer, dst_rowstride, NULL);
+	art_rgb_svp_alpha (outer_path, 0, 0, icon_width, icon_height, black, buffer, dst_rowstride, NULL);
   //art_rgb_svp_alpha (circle, 0, 0, w, h, color, buffer, rowstride, NULL);
 
 	art_free (vec);
@@ -484,6 +520,10 @@ GdkPixbuf* GetFancyIcon(QuiverFile f)
 
 GdkPixbuf * GetStockIcon(QuiverFile f)
 {
+	
+	int icon_width = 136;
+	int icon_height = 136;
+
 	GError *error = NULL;
 
 /*
@@ -526,8 +566,41 @@ GdkPixbuf * GetStockIcon(QuiverFile f)
                                              GTK_ICON_LOOKUP_USE_BUILTIN,
                                              &error);
 	
+	GdkPixbuf* draw_buf = gdk_pixbuf_new (
+								gdk_pixbuf_get_colorspace(pixbuf),
+											FALSE,//gdk_pixbuf_get_has_alpha(pixbuf),
+                                             gdk_pixbuf_get_bits_per_sample(pixbuf),
+                                             icon_width,
+                                             icon_height);
+	int w = gdk_pixbuf_get_width(pixbuf);
+	int h = gdk_pixbuf_get_height(pixbuf);
+	
+	int top_x,top_y;
+	top_x = (int)(icon_width/2 - w/2);
+	top_y = (int)(icon_height/2 - h/2);
+	
+	GtkStyle* style =   gtk_widget_get_style(icon_view);
+	GdkColor bgcolor = style->base[GTK_STATE_NORMAL];
+	
+	gdk_pixbuf_fill (draw_buf,bgcolor.red<<24 | bgcolor.green<<16 | bgcolor.blue<<8);
+
+	
+	gdk_pixbuf_composite            (pixbuf,
+                                             draw_buf,
+                                             (int)top_x,
+                                             (int)top_y,
+                                             w,
+                                             h,
+                                             (int)top_x,
+                                             (int)top_y,
+                                             1,
+                                             1,
+                                             GDK_INTERP_NEAREST,
+                                             255);
+    g_object_unref(pixbuf);
+	
 	gnome_vfs_file_info_unref(file_info);
-	return pixbuf;
+	return draw_buf;
 }
 
 void PopulateIconView(list<string> &files)
@@ -535,14 +608,15 @@ void PopulateIconView(list<string> &files)
 	ImageList image_list;
 	image_list.SetImageList(&files);
 
-	store = gtk_list_store_new (2, G_TYPE_STRING, GDK_TYPE_PIXBUF);
+	store = gtk_list_store_new (3, G_TYPE_STRING, GDK_TYPE_PIXBUF,G_TYPE_STRING);
 	GtkTreeIter   iter;
 
 	if (image_list.GetSize())
 	{
-		string uri = image_list.GetCurrent();
+		
+		QuiverFile f = *image_list.GetCurrent();
 
-		QuiverFile f(uri.c_str());
+		
 
 		//GdkPixbuf * pixbuf = f.GetThumbnail();
 
@@ -550,28 +624,34 @@ void PopulateIconView(list<string> &files)
 		if (NULL != pixbuf)
 		{
 			gtk_list_store_append  (store,&iter);
-			gtk_list_store_set (store, &iter,0,uri.c_str(),1, pixbuf,-1);
+			
+			GnomeVFSFileInfo * info = f.GetFileInfo();
+			gtk_list_store_set (store, &iter,0,info->name,1, pixbuf,2,f.GetURI(),-1);
+			gnome_vfs_file_info_unref(info);
+			
 		}
 	}
 	while (image_list.HasNext() )
 	{
 		
-		string uri = image_list.GetNext();
 
-		QuiverFile f(uri.c_str());
+
+		QuiverFile f = *image_list.GetNext();
 
 		GdkPixbuf *pixbuf = GetStockIcon(f);//GetFancyIcon(f);
 		if (NULL != pixbuf)
 		{
 			
 			gtk_list_store_append  (store,&iter);
-			gtk_list_store_set (store, &iter,0,uri.c_str(),1, pixbuf,-1);
+			GnomeVFSFileInfo * info = f.GetFileInfo();
+			gtk_list_store_set (store, &iter,0,info->name,1, pixbuf,2,f.GetURI(),-1);
+			gnome_vfs_file_info_unref(info);
 			//printf("appended\n");
 		}
 	}
 	
 	gtk_icon_view_set_model (GTK_ICON_VIEW(icon_view), (GTK_TREE_MODEL (store)));
-	//gtk_icon_view_set_text_column   (GTK_ICON_VIEW(icon_view),0);
+	gtk_icon_view_set_text_column   (GTK_ICON_VIEW(icon_view),0);
 	gtk_icon_view_set_pixbuf_column (GTK_ICON_VIEW(icon_view),1);
 	gtk_icon_view_set_selection_mode (GTK_ICON_VIEW(icon_view),GTK_SELECTION_MULTIPLE);
 }
