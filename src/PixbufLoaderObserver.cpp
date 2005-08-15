@@ -36,6 +36,7 @@ void PixbufLoaderObserver::SetPixbufFromThread(GdkPixbuf * pixbuf)
 	//printf("PixbufLoaderObserver::SetPixbufFromThread\n");
 }
 
+void PixbufLoaderObserver::SetCacheQuiverFile(QuiverFile quiverFile){}
 void PixbufLoaderObserver::SetQuiverFile(QuiverFile quiverFile)
 {
 	//printf("PixbufLoaderObserver::SetQuiverFile\n");

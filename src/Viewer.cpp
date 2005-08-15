@@ -7,6 +7,25 @@
 
 using namespace std;
 
+//                     0 1 2 3 4 5 6 7 8
+/*
+static int rotate_cw[] = {0,8,7,6,5,2,1,4,3};
+static int rotate_ccw[] = {0,6,5,8,7,4,3,2,1};
+static int flip_h[] = {0,2,1,4,3,8,7,6,5};
+static int flip_v[] = {0,4,3,2,1,6,5,8,7};
+*/
+#define ORIENTATION_ROTATE_CW	0
+#define ORIENTATION_ROTATE_CCW 	1
+#define ORIENTATION_FLIP_H    	2
+#define ORIENTATION_FLIP_V    	3
+
+static int orientation_matrix[4][9] = 
+		{ 
+			{0,8,7,6,5,2,1,4,3}, //cw
+			{0,6,5,8,7,4,3,2,1}, //ccw
+			{0,2,1,4,3,8,7,6,5}, //flip h
+			{0,4,3,2,1,6,5,8,7}, //flip v
+		};
 
 
 void Viewer::event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data)
@@ -37,6 +56,7 @@ Viewer::Viewer()
 	m_bConfigureTimeoutEnded = false;
 	m_bConfigureTimeoutRestarted = false;
 
+	m_iCurrentOrientation = 1;
 	m_dAdjustmentValueLastH = 0;
 	m_dAdjustmentValueLastV = 0;
 	
@@ -177,7 +197,7 @@ gboolean Viewer::EventConfigure(GtkWidget * widget, GdkEventConfigure * event, g
 		{
 			m_bConfigureTimeoutStarted = true;
 			// run timeout func every 10ms
-			g_timeout_add(500,timeout_event_configure,this);
+			g_timeout_add(300,timeout_event_configure,this);
 		}
 		m_bConfigureTimeoutEnded = false;
 	}
@@ -201,20 +221,35 @@ gboolean Viewer::EventConfigure(GtkWidget * widget, GdkEventConfigure * event, g
 		if (NULL == m_pixbuf_real)
 			return TRUE;
 
+
+		// real image w/h (currently loaded)
 		int rw = gdk_pixbuf_get_width(m_pixbuf_real);
 		int rh = gdk_pixbuf_get_height(m_pixbuf_real);
 
 		if (NULL == m_pixbuf)
 			return TRUE;
+			
+		// current image w/h
 		int img_w = gdk_pixbuf_get_width(m_pixbuf);
 		int img_h = gdk_pixbuf_get_height(m_pixbuf);
-
-
+		
+		// actual image width/height
+		int aw = m_QuiverFile.GetWidth();
+		int ah = m_QuiverFile.GetHeight();
+		
+		// fix actual width if we've rotated via orientation
+		if (m_iCurrentOrientation >= 5)
+		{
+			aw = ah;
+			ah = m_QuiverFile.GetWidth();
+		}
+		
 		
 		bool bResizeNeeded = false;
 		//cout << "should we resize" << endl;
 		if (m_pixbuf == m_pixbuf_real)
 		{
+			// if the window width/height is less than the real width/height
 			if (wind_w < rw || wind_h < rh)
 			{
 				//needs resize on pixbuf_real
@@ -222,10 +257,22 @@ gboolean Viewer::EventConfigure(GtkWidget * widget, GdkEventConfigure * event, g
 				bResizeNeeded = true;
 				//printf("0x%08x Viewer::EventConfigure 0: %d\n",m_pixbuf,G_OBJECT(m_pixbuf)->ref_count);
 			}
+			else if (wind_w > rw && wind_h > rh)
+			{
+				// if actual width / height are bigger than the currently loaded rw/rh
+				// then resize bigger is needed
+				if (rw < aw || rh < ah)
+				{
+					printf("big resize needed 0: %d x %d , %d x %d\n",rw,rh,aw,ah);
+					bResizeNeeded = true;
+				}
+			}
+			
 
 		}
 		else
 		{
+			// if the window w / h is smaller than the real width/height
 			if (wind_w < rw || wind_h < rh)
 			{
 				//printf("0x%08x Viewer::EventConfigure 1: %d\n",m_pixbuf,G_OBJECT(m_pixbuf)->ref_count);
@@ -233,14 +280,25 @@ gboolean Viewer::EventConfigure(GtkWidget * widget, GdkEventConfigure * event, g
 				m_pixbuf = m_pixbuf_real;
 				bResizeNeeded = true;
 			}
-			else
+			else // if the window w/h is greater than the real width/height
 			{
+				// if the current w/h is less than the full size w/h
 				if (img_w <= rw && img_h <= rh)
 				{
 					//printf("0x%08x Viewer::EventConfigure 2: %d\n",m_pixbuf,G_OBJECT(m_pixbuf)->ref_count);
 					g_object_unref(m_pixbuf);
 					m_pixbuf = m_pixbuf_real;					
 				} 
+				else
+				{
+					if (rw < aw || rh < ah)
+					{
+						printf("big resize needed 1\n");
+						bResizeNeeded = true;
+						g_object_unref(m_pixbuf);
+						m_pixbuf = m_pixbuf_real;
+					}	
+				}
 /*				if (wind_w > img_w && wind_h > img_h)
 				{
 					// need resize on m_pixbuf_real
@@ -258,15 +316,41 @@ gboolean Viewer::EventConfigure(GtkWidget * widget, GdkEventConfigure * event, g
 		
 		if (bResizeNeeded)
 		{
+			double image_ratio = (double)rw/(double)rh;
+		
+			// set the max width of the resized image
+			int max_w=wind_w, max_h=wind_h;
+			if (wind_w > aw && wind_h > ah)
+			{
+				max_w = aw;
+				max_h = ah;
+			}
+			int new_width;
+			int new_height;
+		
+					
+			new_width = max_w;
+			new_height =(int) ( max_w / image_ratio);
+			if (new_width > max_w|| new_height > max_h)
+			{
+				new_width = (int) (max_h * image_ratio);
+				new_height = max_h;
+			}
+			/*
 			GdkGeometry geo;
+			geo.min_width = geo.min_height = -1;
 			geo.max_width = wind_w;
 			geo.max_height = wind_h;
+
 			geo.min_aspect = geo.max_aspect = rw/(double)rh;
+			
 			int new_width,new_height;
-		
-			int geoflags = GDK_HINT_MAX_SIZE|GDK_HINT_ASPECT;
+
+			int geoflags = GDK_HINT_MIN_SIZE|GDK_HINT_MAX_SIZE|GDK_HINT_ASPECT;
 			gdk_window_constrain_size(&geo,geoflags,rw,rh,&new_width,&new_height);
-	
+			printf("new w x h = %d x %d\n,new_width,new_height);
+
+			*/
 			GdkPixbuf * tmp = gdk_pixbuf_scale_simple (m_pixbuf, new_width, new_height, interptype);
 			//printf("0x%08x Viewer::EventConfigure 3: %d\n",m_pixbuf,G_OBJECT(m_pixbuf)->ref_count);
 			m_pixbuf = tmp;
@@ -529,23 +613,27 @@ void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 	  	int thumb_w = gdk_pixbuf_get_width(thumb);
 		int thumb_h = gdk_pixbuf_get_height(thumb);	
 			
-		double sx,sy;
-		sx = (double)w  / thumb_w;
-		sy = (double)h / thumb_h;
-		gdk_pixbuf_composite(thumb,pixbuf,
-	                 0,
-	                 0,
-	                 w,
-	                 h,
-	                 0,
-	                 0,
-	                 sx,
-	                 sy,
-	                 GDK_INTERP_NEAREST,
-	                 255);
-	                 
-		g_object_unref(thumb);
-		thumb_set = true;
+		if (w > h && thumb_w > thumb_h
+		 || w < h && thumb_w < thumb_h)
+		 {
+			double sx,sy;
+			sx = (double)w  / thumb_w;
+			sy = (double)h / thumb_h;
+			gdk_pixbuf_composite(thumb,pixbuf,
+		                 0,
+		                 0,
+		                 w,
+		                 h,
+		                 0,
+		                 0,
+		                 sx,
+		                 sy,
+		                 GDK_INTERP_NEAREST,
+		                 255);
+		                 
+			g_object_unref(thumb);
+			thumb_set = true;
+		 }
 	}
 	
 	g_object_ref(pixbuf);
@@ -693,7 +781,7 @@ void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 	//gdk_flush();
 	//#include <gdk/gdkx.h>
 	//GdkDisplay *display = ;
-	XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
+	//XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
 
 	gdk_threads_leave ();
 }
@@ -758,14 +846,18 @@ void Viewer::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint widt
 	gdk_window_invalidate_rect(m_pDrawingArea->window,&r,false);
 	
 	//gdk_flush();
-	XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
+	//XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
 	
 	gdk_threads_leave ();	
 }
 
 void Viewer::SignalClosed(GdkPixbufLoader *loader)
 {
-
+	m_iCurrentOrientation = m_QuiverFile.GetExifOrientation();
+	if (!m_iCurrentOrientation)
+	{
+		m_iCurrentOrientation = 1;
+	}
 }
 
 void Viewer::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
@@ -780,6 +872,17 @@ void Viewer::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 		geo.max_width = m_pDrawingArea->allocation.width;
 		geo.max_height = m_pDrawingArea->allocation.height;
 
+
+		// FIXME: This should only be done if the exif autorotate option is specified.
+		if (m_QuiverFileCached.GetExifOrientation() >= 5)
+		{
+			geo.max_width = m_pDrawingArea->allocation.height;
+			geo.max_height = m_pDrawingArea->allocation.width;
+		}
+
+		//FIXME: may be able to speed up jpeg load if we dont resize
+		// when loading at sizes greater than 1/2 width or height
+		//if (geo.max_width <= width/2 || geo.max_height <= height/2)
 		if (geo.max_width < width || geo.max_height < height)
 		{
 			geo.min_aspect = geo.max_aspect = width/(double)height;
@@ -982,19 +1085,30 @@ void Viewer::UpdateSize()
 
 }
 
+void Viewer::SetCacheQuiverFile(QuiverFile f)
+{
+	m_QuiverFileCached = f;
+}
 
 void Viewer::SetQuiverFile(QuiverFile f)
 {
 	//gdk_threads_enter ();
 
-	m_QuiverFile = f;
+	m_QuiverFile = m_QuiverFileCached = f;
 
 	//gdk_threads_leave ();
 }
 
 void Viewer::SetPixbufFromThread(GdkPixbuf * pixbuf)
 {
+
 	gdk_threads_enter ();
+
+	m_iCurrentOrientation = m_QuiverFile.GetExifOrientation();
+	if (!m_iCurrentOrientation)
+	{
+		m_iCurrentOrientation = 1;
+	}
 	
 	SetPixbuf(pixbuf);
 	
@@ -1113,17 +1227,23 @@ gboolean Viewer::idle_event_configure (gpointer data)
 
 void Viewer::Rotate(bool right)
 {
+	int new_orientation;
 	GdkPixbuf * pixbuf_rotated = NULL;
 	if (right)
 	{
+		new_orientation = orientation_matrix[ORIENTATION_ROTATE_CW][m_iCurrentOrientation];
 		pixbuf_rotated = gdk_pixbuf_rotate_simple(m_pixbuf_real,GDK_PIXBUF_ROTATE_CLOCKWISE);
 	}
 	else
 	{
+		new_orientation = orientation_matrix[ORIENTATION_ROTATE_CCW][m_iCurrentOrientation];
 		pixbuf_rotated = gdk_pixbuf_rotate_simple(m_pixbuf_real,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
 	}
 	if (NULL != pixbuf_rotated)
 	{
+		cout << "old: " << m_iCurrentOrientation << endl;
+		m_iCurrentOrientation = new_orientation;
+		cout << "new: " << m_iCurrentOrientation << endl;
 		SetPixbuf(pixbuf_rotated);
 		g_object_unref(pixbuf_rotated);
 	}
@@ -1134,33 +1254,50 @@ bool Viewer::GetHasFullPixbuf()
 {
 	// FIXME: need to create a "current rotation" state
 	// and adjust the comparision accordingly
-	if ( gdk_pixbuf_get_width(m_pixbuf_real) == m_QuiverFile.GetWidth()
-		&& gdk_pixbuf_get_height(m_pixbuf_real) == m_QuiverFile.GetHeight() )
+	int w,h;
+	w = m_QuiverFile.GetWidth();
+	h = m_QuiverFile.GetHeight();
+	if (m_iCurrentOrientation >= 5)
+	{
+		w = h;
+		h = m_QuiverFile.GetWidth();
+	}
+	
+	if ( gdk_pixbuf_get_width(m_pixbuf_real) == w
+		&& gdk_pixbuf_get_height(m_pixbuf_real) == h )
 	{
 		return true;
 	}
 	return false;
 }
+
 void Viewer::Flip(bool horizontal)
 {
 	GdkPixbuf * pixbuf_flipped = NULL;
+	int new_orientation;
+
 	if (horizontal)
 	{
+		new_orientation = orientation_matrix[ORIENTATION_FLIP_H][m_iCurrentOrientation];
 		pixbuf_flipped = gdk_pixbuf_flip(m_pixbuf_real,TRUE);
 	}
 	else
 	{
+		new_orientation = orientation_matrix[ORIENTATION_FLIP_V][m_iCurrentOrientation];
 		pixbuf_flipped = gdk_pixbuf_flip(m_pixbuf_real,FALSE);
 	}
 	
 	if (NULL != pixbuf_flipped)
 	{
+		m_iCurrentOrientation = new_orientation;
 		SetPixbuf(pixbuf_flipped);
 		g_object_unref(pixbuf_flipped);
 	}
 	
 }
 
+// FIXME: we shouldnt have GdkPixbufExifReorientate in the viewer
+// it should be in a utility class
 GdkPixbuf * Viewer::GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
 {
 	//printf("orientation is: %d\n",orientation);

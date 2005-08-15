@@ -35,7 +35,8 @@ ALL_LINGUAS=""
 AM_GLIB_GNU_GETTEXT
 
 
-PKG_CHECK_MODULES(PACKAGE, [gtk+-2.0 libglade-2.0 gnome-vfs-2.0 libgnomeui-2.0 libart-2.0 libexif])
+dnl libglade-2.0
+PKG_CHECK_MODULES(PACKAGE, [gtk+-2.0  gnome-vfs-2.0 libgnomeui-2.0 libart-2.0 libexif])
 AC_SUBST(PACKAGE_CFLAGS)
 AC_SUBST(PACKAGE_LIBS)
 

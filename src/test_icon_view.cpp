@@ -8,6 +8,7 @@
 #include "art_rgba_svp.h"
 #include "art_rgba_rgba_affine.h"
 
+#include "Viewer.h"
 #include "ImageList.h"
 #include "QuiverFile.h"
 

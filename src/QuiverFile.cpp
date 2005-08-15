@@ -369,9 +369,12 @@ GdkPixbuf * QuiverFile::GetThumbnail()
 	g_free (thumb_path);
 
 	//FIXME: need to get an autorotate option
+	
 	int orientation = GetExifOrientation();
 	if (NULL != thumb_pixbuf  && 1 < orientation) 
 	{
+		// FIXME: we shouldnt have GdkPixbufExifReorientate in the viewer
+		// it should be in a utility class
 		GdkPixbuf * new_pixbuf = Viewer::GdkPixbufExifReorientate(thumb_pixbuf, orientation);
 		if (NULL != new_pixbuf)
 		{
@@ -379,6 +382,7 @@ GdkPixbuf * QuiverFile::GetThumbnail()
 			thumb_pixbuf = new_pixbuf;
 		}
 	}
+	
 
 	return thumb_pixbuf;
 }

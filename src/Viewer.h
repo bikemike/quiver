@@ -78,13 +78,13 @@ public:
 	void SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height);
 	void SignalClosed(GdkPixbufLoader *loader);
 	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
-	void SetPixbuf(GdkPixbuf * pixbuf);
+
 	void SetPixbufFromThread(GdkPixbuf * pixbuf);
 	void SetQuiverFile(QuiverFile quiverfile);
+	void SetCacheQuiverFile(QuiverFile quiverfile);
 	void Rotate(bool right);
 	void Flip(bool horizontal);
 	bool GetHasFullPixbuf();
-
 
 
 private:
@@ -103,7 +103,7 @@ private:
 	static gboolean idle_event_configure (gpointer data);
 
 	static void event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data);
-
+	void SetPixbuf(GdkPixbuf * pixbuf);
 
 
 	//private member variables
@@ -141,6 +141,8 @@ private:
 	bool m_bConfigureTimeoutEnded;
 	bool m_bConfigureTimeoutRestarted;
 	QuiverFile m_QuiverFile;
+	QuiverFile m_QuiverFileCached;
+	int m_iCurrentOrientation;
 	
 };
 

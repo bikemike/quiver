@@ -189,6 +189,11 @@ void Quiver::CurrentImage()
 		
 		if (NULL != f)
 		{
+			if (QUIVER_APP_MODE_SCREENSAVER == m_QuiverAppMode)
+			{
+				m_ImageLoader.CacheImage(*f);
+			}
+			usleep(100000);
 			m_ImageLoader.LoadImage(*f);
 		}
 		
@@ -489,6 +494,20 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 	{
 		m_Viewer.Flip(true);
 	}
+	else if (GDK_s == event->keyval || GDK_S == event->keyval)
+	{
+		if (SlideshowRunning())
+		{
+			SlideshowStop();
+		}
+		else
+		{
+			SlideshowStart();
+		}
+			
+	}
+
+
 	else 
 	{
 		printf("key pressed: 0x%04x\n",event->keyval);
@@ -616,6 +635,7 @@ gboolean Quiver::quiver_event_callback( GtkWidget *widget, GdkEvent *event, gpoi
  */
 Quiver::Quiver(list<string> images)
 {
+
 	m_pImageList = new ImageList();
 	Init();
 	SetImageList(images);
@@ -626,6 +646,8 @@ void Quiver::Init()
 	m_bTimeoutEventMotionNotifyRunning = false;
 	m_bTimeoutEventMotionNotifyMouseMoved = false;
 	
+	m_bSlideshowRunning = false;
+	m_iTimeoutSlideshowID = 0;
 
 	m_ImageLoader.Start();
 	//initialize
@@ -692,10 +714,40 @@ void Quiver::Init()
  * */
 
 	GtkWidget* statusbar;
-	statusbar = gtk_statusbar_new ();
+	//statusbar = gtk_statusbar_new ();
 	
 	GtkWidget* vbox;
 	
+	
+	/* create a status bar
+	 * 
+	 * 
+	 */
+	/* 
+	statusbar = gtk_hbox_new(FALSE,0);
+	 
+	GtkWidget * statusbar_label = gtk_label_new ("img_2247.jpg | 1600x1200 | 723kb | 2004-02-16");
+	gtk_widget_show (statusbar_label);
+	gtk_box_pack_start (GTK_BOX (statusbar), statusbar_label, TRUE, TRUE, 0);
+	gtk_widget_set_size_request (statusbar_label, 1, -1);
+	gtk_misc_set_alignment (GTK_MISC (statusbar_label), 0, 0.5);
+	gtk_misc_set_padding (GTK_MISC (statusbar_label), 2, 0);
+	GtkWidget * statusbar_separator = gtk_vseparator_new ();
+	gtk_widget_show (statusbar_separator);
+	gtk_box_pack_start (GTK_BOX (statusbar), statusbar_separator, FALSE, FALSE, 0);
+	
+	GtkWidget* statusbar_progressbar = gtk_progress_bar_new ();
+	gtk_widget_show (statusbar_progressbar);
+	gtk_box_pack_start (GTK_BOX (statusbar), statusbar_progressbar, FALSE, FALSE, 2);
+	gtk_widget_set_size_request (statusbar_progressbar, 75, -1);
+	
+	*/
+	 
+	 
+	/*
+	 * end creating status bar
+	 */ 
+	 
 	vbox = gtk_vbox_new(FALSE,0);
 	
 	
@@ -725,8 +777,8 @@ void Quiver::Init()
 	g_signal_connect (G_OBJECT (m_pQuiverWindow), "button_release_event",
 				G_CALLBACK (Quiver::event_button_release), this);				
 
-	
 	/*
+	
 	gboolean expand,fill;
 	guint padding;
 	GtkPackType pack_type;
@@ -743,15 +795,20 @@ void Quiver::Init()
 	gtk_box_set_child_packing(GTK_BOX(vbox),statusbar,FALSE,fill,padding,pack_type);
 
 	gtk_container_add (GTK_CONTAINER (m_pQuiverWindow),vbox);
-*/
+
+	*/
 	gtk_container_add (GTK_CONTAINER (m_pQuiverWindow),m_Viewer.GetWidget());
+	
+	
 	
 	/* Show the application window */
 	
 	gtk_container_set_border_width (GTK_CONTAINER(m_pQuiverWindow),0);
+	
 	//gtk_window_fullscreen(GTK_WINDOW(m_pQuiverWindow));
 
-	gtk_widget_show_all (m_pQuiverWindow);
+	
+
 	/* Enter the main event loop, and wait for user interaction */
 
 	//{ "application/x-rootwin-drop", 0, TARGET_ROOTWIN }
@@ -792,13 +849,20 @@ void Quiver::Init()
 */
 					
 	m_ImageLoader.AddPixbufLoaderObserver(&m_Viewer);
+	m_ImageLoader.AddPixbufLoaderObserver(this);
 }
 
 /**
  * quiver main application loop
  */
-int Quiver::Show()
+int Quiver::Show(QuiverAppMode mode )
 {
+	m_QuiverAppMode = mode;
+	
+	if (QUIVER_APP_MODE_SCREENSAVER != m_QuiverAppMode)
+	{
+		gtk_widget_show_all (m_pQuiverWindow);
+	}
 	gtk_main ();
 	
 	/* The user lost interest */
@@ -945,6 +1009,7 @@ int main (int argc, char **argv)
 	/* Initialize i18n support */
 //	gtk_set_locale ();
 
+	Quiver::QuiverAppMode mode = Quiver::QUIVER_APP_MODE_NORMAL;
 
   /* init threads */
 	g_thread_init (NULL);
@@ -958,6 +1023,12 @@ int main (int argc, char **argv)
 	list<string> files;
 	for (int i =1;i<argc;i++)
 	{	
+		string s = argv[i];
+		if ("-root" == s)
+		{
+			mode = Quiver::QUIVER_APP_MODE_SCREENSAVER;
+			// no display
+		}
 		//printf ("command line %d : %s\n",i,argv[i]);
 		files.push_back(argv[i]);
 	}
@@ -975,7 +1046,7 @@ int main (int argc, char **argv)
 	
 	Quiver quiver(files);
 	//quiver.SetImageList(files);
-	int rval = quiver.Show();	
+	int rval = quiver.Show(mode);	
 	gdk_threads_leave();
 	
 	return rval;
@@ -1016,6 +1087,71 @@ gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
 	}
 
 	return retval;
+}
+
+
+gboolean Quiver::timeout_advance_slideshow (gpointer data)
+{
+	return ((Quiver*)data)->TimeoutAdvanceSlideshow(data);
+}
+
+gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data)
+{
+	printf("timeout reached\n");
+
+	// reset timout id
+	m_iTimeoutSlideshowID = 0;
+	// advance slideshow
+
+	SlideshowAddTimeout();
+	
+	NextImage();
+	if (!m_pImageList->HasNext())
+	{
+		SlideshowStop();
+	}
+
+	return FALSE;
+}
+
+void Quiver::SlideshowStart()
+{
+	printf("adding timeout\n");
+	m_bSlideshowRunning = true;
+	SlideshowAddTimeout();
+	
+}
+
+void Quiver::SlideshowAddTimeout()
+{
+	if (SlideshowRunning())
+	{
+		if (!m_iTimeoutSlideshowID)
+		{
+			m_iTimeoutSlideshowID = g_timeout_add(2000,timeout_advance_slideshow,this);
+		}
+	}
+}
+void Quiver::SlideshowStop()
+{
+	g_source_remove (m_iTimeoutSlideshowID);
+	// reset timout id
+	m_iTimeoutSlideshowID = 0;
+	m_bSlideshowRunning = false;
+}
+
+bool Quiver::SlideshowRunning()
+{
+	return m_bSlideshowRunning;
+}
+
+void Quiver::SignalClosed(GdkPixbufLoader *loader)
+{
+	SlideshowAddTimeout();
+}
+void Quiver::SetPixbufFromThread(GdkPixbuf*pixbuf)
+{
+	SlideshowAddTimeout();
 }
 
 gboolean Quiver::timeout_event_motion_notify (gpointer data)

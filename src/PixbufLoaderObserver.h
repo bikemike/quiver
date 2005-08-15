@@ -24,7 +24,12 @@ public:
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf);
 	virtual void SetPixbufFromThread(GdkPixbuf * pixbuf);
+	
+	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile);
+	
+	// the image that is being cached for future use
+	virtual void SetCacheQuiverFile(QuiverFile quiverFile);
 	
 private:
 	static void signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data);

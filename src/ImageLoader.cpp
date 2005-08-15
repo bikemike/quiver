@@ -36,6 +36,12 @@ void ImageLoader::ReloadImage(QuiverFile f)
 	// to reload, we must first remove the item from the cache
 	m_ImageCache.RemovePixbuf(f.GetURI());
 	
+	
+	if (f.GetExifOrientation() >= 5)
+	{
+		CacheImage(f);
+		usleep(10000);
+	}
 	// now we can load it
 	LoadImage(f);
 }
@@ -251,32 +257,7 @@ void ImageLoader::Load()
 	}	
 	else if (CACHE == m_Command.state)
 	{
-		/*
-		struct timespec   ts;
-		struct timeval    tp;
-		*/
-/*
-	    gettimeofday(&tp, NULL);
-	
-	    ts.tv_sec  = tp.tv_sec;
-	    ts.tv_nsec = tp.tv_usec * 1000;
-	    //ts.tv_sec += 1;
-		//    1,000,000,000 of a second
-	
-	
-	    //printf("%d ns\n",ts.tv_nsec);
-	    ts.tv_nsec += 250 * 1000000; // wait for 50 ms
-	    //printf("%d ns\n",ts.tv_nsec);
-		//pthread_cond_timedwait(&cond, &mutex, &ts);
-		//cout << "waiting " << endl;
-		int rc = pthread_cond_timedwait(&m_Condition,&m_ConditionMutex,&ts);
-		if (rc != ETIMEDOUT) {
-			m_interrupted = true;
-			//cout << "interrupted" << endl;
-		}
-		//cout << " done wait " << endl;
-		
-*/		
+
 		if (!m_ImageCache.InCache(m_Command.quiverFile.GetURI()))
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
@@ -287,6 +268,7 @@ void ImageLoader::Load()
 				list<PixbufLoaderObserver*>::iterator itr;
 				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 				{
+					(*itr)->SetCacheQuiverFile(m_Command.quiverFile);
 					(*itr)->ConnectSignalSizePrepared(ldr);
 				}
 				

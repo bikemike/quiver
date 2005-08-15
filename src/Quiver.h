@@ -14,9 +14,15 @@
 #include "ImageLoader.h"
 
 
-class Quiver
+class Quiver : PixbufLoaderObserver
 {
 public:
+
+  	enum QuiverAppMode{
+  		QUIVER_APP_MODE_NORMAL,
+  		QUIVER_APP_MODE_SCREENSAVER
+  	};
+
 	// constructors
 	Quiver(std::list<std::string> images);
 	~Quiver();
@@ -25,18 +31,24 @@ public:
 	
 	// run the application
 	void Init();
-	int Show(void);	
+	int Show(QuiverAppMode);	
 	
 	
 	//events
 	//	static gboolean quiver_event_callback( GtkWidget *widget, GdkEvent *event, gpointer data );
 	
 	gboolean Quiver::TimeoutEventMotionNotify(gpointer data);
+
 	gboolean Quiver::EventMotionNotify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
+
 	
-	static gboolean Quiver::event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 	static gboolean Quiver::timeout_event_motion_notify (gpointer data);
-	
+
+
+	static gboolean Quiver::event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
+
+	static gboolean Quiver::timeout_advance_slideshow (gpointer data);
+	gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data);
 	
 	static gboolean event_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data );
 	static gboolean event_key_release(GtkWidget *widget, GdkEventKey *event, gpointer data );
@@ -76,7 +88,7 @@ public:
     	QUIVER_TARGET_STRING,
 		QUIVER_TARGET_URI
   	};
-
+  	
 	static GtkTargetEntry quiver_drag_target_table[];
 		
 		
@@ -100,7 +112,17 @@ public:
 	void PreviousImage();
 	void Quiver::CurrentImage();
 	
+	void SlideshowStart();
+	void SlideshowStop();
+	bool SlideshowRunning();
+	void SlideshowAddTimeout();
+	
 	void SetImageList(std::list<std::string> &list);
+
+	// PixbufLoaderObserver  - override to set timeout for slideshow
+	void Quiver::SignalClosed(GdkPixbufLoader *loader); 
+	void Quiver::SetPixbufFromThread(GdkPixbuf*); 
+
 		
 private:
 		//Viewer
@@ -122,6 +144,11 @@ private:
 		
 		bool m_bTimeoutEventMotionNotifyRunning;
 		bool m_bTimeoutEventMotionNotifyMouseMoved;
+		
+		bool m_bSlideshowRunning;
+		guint m_iTimeoutSlideshowID;
+		
+		QuiverAppMode m_QuiverAppMode;
 		
 		
 		GdkWindowState m_WindowState;
