@@ -43,6 +43,7 @@ public:
 	int GetExifOrientation();
 	GnomeVFSFileInfo * GetFileInfo();
 	
+	std::string GetFilePath();
 	int GetWidth();
 	int GetHeight();
 	double GetLoadTimeInSeconds();

@@ -94,7 +94,7 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GnomeVFSFileInfo *info)
 
 	width = -1;
 	height = -1;
-
+	loadTimeSeconds = 0;
 }
 
 QuiverFile::QuiverFileImpl::~QuiverFileImpl()
@@ -139,6 +139,21 @@ GnomeVFSFileInfo * QuiverFile::GetFileInfo()
 	return QuiverFilePtr->file_info;
 }
 
+std::string QuiverFile::GetFilePath()
+{
+	std::string s;
+	if (GNOME_VFS_FILE_INFO_LOCAL (QuiverFilePtr->file_info) )
+	{
+		char * uri = gnome_vfs_get_local_path_from_uri (QuiverFilePtr->m_szURI);
+		s = uri;
+		g_free(uri);
+	}
+	else
+	{
+		s = QuiverFilePtr->m_szURI;
+	}
+	return s;
+}
 
 const gchar* QuiverFile::GetURI()
 {

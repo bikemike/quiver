@@ -31,12 +31,14 @@ void PixbufLoaderObserver::SetPixbuf(GdkPixbuf * pixbuf)
 {
 	//printf("PixbufLoaderObserver::SetPixbuf\n");
 }
-void PixbufLoaderObserver::SetPixbufFromThread(GdkPixbuf * pixbuf)
+
+void PixbufLoaderObserver::SignalBytesRead(long bytes_read,long total)
 {
-	//printf("PixbufLoaderObserver::SetPixbufFromThread\n");
 }
 
-void PixbufLoaderObserver::SetCacheQuiverFile(QuiverFile quiverFile){}
+void PixbufLoaderObserver::SetCacheQuiverFile(QuiverFile quiverFile)
+{
+}
 void PixbufLoaderObserver::SetQuiverFile(QuiverFile quiverFile)
 {
 	//printf("PixbufLoaderObserver::SetQuiverFile\n");

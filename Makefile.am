@@ -12,7 +12,10 @@ quiverdoc_DATA = \
 	INSTALL\
 	NEWS
 
-EXTRA_DIST = $(quiverdoc_DATA)
+EXTRA_DIST = $(quiverdoc_DATA) \
+     intltool-extract.in \
+	 intltool-merge.in \
+	 intltool-update.in
 
 # Copy all the spec files. Of cource, only one is actually used.
 dist-hook:

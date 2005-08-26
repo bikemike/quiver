@@ -194,20 +194,31 @@ void ImageLoader::Load()
 			{
 				//cout << "load from file: " << m_Command.quiverFile.GetURI() << endl;
 				//cout << "not in cache" << endl;
+				// TODO: update all of these calls to call gdk_flush();
+				gdk_threads_enter();
 				GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
+				gdk_threads_leave();
 				
 				list<PixbufLoaderObserver*>::iterator itr;
 				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 				{
+					gdk_threads_enter();
 					(*itr)->SetQuiverFile(m_Command.quiverFile);
+					gdk_flush();
+					gdk_threads_leave();
+					
 					(*itr)->ConnectSignals(loader);
+					
 				}
 
 				bool rval = LoadPixbuf(loader);
 				
 				if (rval)
 				{
+					gdk_threads_enter();
 					GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+					gdk_threads_leave();
+					
 					if (NULL == pixbuf  )
 					{
 						cout << "pixbuf is null! : " << m_Command.quiverFile.GetURI() << endl;
@@ -217,7 +228,10 @@ void ImageLoader::Load()
 						g_object_ref(pixbuf);
 						if (1 < m_Command.quiverFile.GetExifOrientation()) // TODO: change to get rotate option
 						{
+							gdk_threads_enter();
 							GdkPixbuf* pixbuf_rotated = Viewer::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
+							gdk_threads_leave();
+							
 							if (NULL != pixbuf_rotated)
 							{
 								g_object_unref(pixbuf);
@@ -225,8 +239,15 @@ void ImageLoader::Load()
 								list<PixbufLoaderObserver*>::iterator itr;
 								for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 								{
+									gdk_threads_enter();
 									(*itr)->SetQuiverFile(m_Command.quiverFile);
-									(*itr)->SetPixbufFromThread(pixbuf);
+									gdk_threads_leave();
+									
+									gdk_threads_enter();
+									(*itr)->SetPixbuf(pixbuf);
+									gdk_flush();
+									gdk_threads_leave();
+
 								}
 							}
 						}
@@ -250,8 +271,13 @@ void ImageLoader::Load()
 			list<PixbufLoaderObserver*>::iterator itr;
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
+				gdk_threads_enter();
 				(*itr)->SetQuiverFile(m_Command.quiverFile);
-				(*itr)->SetPixbufFromThread(pixbuf);
+				gdk_threads_leave();
+				
+				gdk_threads_enter();
+				(*itr)->SetPixbuf(pixbuf);
+				gdk_threads_leave();
 			}
 		}
 	}	
@@ -263,26 +289,36 @@ void ImageLoader::Load()
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
 				//cout << "cache : " << m_Command.filename << endl;
+				gdk_threads_enter();
 				GdkPixbufLoader* ldr = gdk_pixbuf_loader_new ();	
+				gdk_threads_leave();
 			
 				list<PixbufLoaderObserver*>::iterator itr;
 				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 				{
+					gdk_threads_enter();
 					(*itr)->SetCacheQuiverFile(m_Command.quiverFile);
 					(*itr)->ConnectSignalSizePrepared(ldr);
+					gdk_flush();
+					gdk_threads_leave();
 				}
 				
 				bool rval = LoadPixbuf(ldr);
 
 				if (rval)
 				{
+					gdk_threads_enter();
 					GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(ldr);
+					gdk_threads_leave();
 					if (NULL != pixbuf)
 					{
 						g_object_ref(pixbuf);
 						if (1 < m_Command.quiverFile.GetExifOrientation()) // TODO: change to get rotate option
 						{
+							gdk_threads_enter();
 							GdkPixbuf* pixbuf_rotated = Viewer::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
+							gdk_threads_leave();
+							
 							if (NULL != pixbuf_rotated)
 							{
 								g_object_unref(pixbuf);
@@ -294,8 +330,11 @@ void ImageLoader::Load()
 							list<PixbufLoaderObserver*>::iterator itr;
 							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 							{
+								gdk_threads_enter();
 								(*itr)->SetQuiverFile(m_Command.quiverFile);
-								(*itr)->SetPixbufFromThread(pixbuf);
+								(*itr)->SetPixbuf(pixbuf);
+								gdk_flush();
+								gdk_threads_leave();
 							}
 							m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
 							//cout << "cache loaded image" << endl;
@@ -304,12 +343,17 @@ void ImageLoader::Load()
 						{
 							m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf,0);
 						}
+						gdk_threads_enter();
 						g_object_unref(pixbuf);
+						gdk_threads_leave();
 					}
 				}
 				
 				//gdk_pixbuf_loader_close(ldr,&tmp_error);
+				gdk_threads_enter();
 				g_object_unref(ldr);
+				gdk_flush();
+				gdk_threads_leave();
 			}
 
 		}
@@ -333,41 +377,68 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	
 	if (CommandsPending())
 	{	
+		gdk_threads_enter();
 		gdk_pixbuf_loader_close(loader,&tmp_error);	
+		gdk_threads_leave();
 		return retval;
 	}
 	Timer loadTimer(true); // true for quite mode
 	
-	int size = 8192;
-	
+	//int size = 8192;
+	//int size = 16384;
+	int size = 32768;
+	long bytes_read_inc=0, bytes_total=0;
 
 	gchar buffer[size];
 	GnomeVFSHandle   *handle;
 	GnomeVFSResult    result;
 	GnomeVFSFileSize  bytes_read;
+	bytes_total = m_Command.quiverFile.GetFileInfo()->size;
 	
 
 	result = gnome_vfs_open (&handle, m_Command.quiverFile.GetURI(), GNOME_VFS_OPEN_READ);
-	
+	list<PixbufLoaderObserver*>::iterator itr;
 	while (GNOME_VFS_OK == result) {
 		if (CommandsPending())
 		{
-			gdk_pixbuf_loader_close(loader,&tmp_error);		
+			gdk_threads_enter();
+			gdk_pixbuf_loader_close(loader,&tmp_error);
+			gdk_threads_leave();
+			
 			gnome_vfs_close(handle);
 			return retval;
 		}
 		result = gnome_vfs_read (handle, buffer, 
 								 size, &bytes_read);
+		
+		bytes_read_inc += bytes_read;
+		// notify others of bytes read
+		
+		for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+		{
+			gdk_threads_enter();
+			(*itr)->SignalBytesRead(bytes_read_inc,bytes_total);
+			gdk_threads_leave();
+		}
+		
+		gdk_threads_enter();
 		gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+		gdk_flush();
+		gdk_threads_leave();
 	}
+
+	m_Command.quiverFile.SetLoadTimeInSeconds( loadTimer.GetRunningTimeInSeconds() );
 	
+
+	gdk_threads_enter();
 	gdk_pixbuf_loader_close(loader,&tmp_error);
+	gdk_flush();
+	gdk_threads_leave();
 	
 	if (GNOME_VFS_ERROR_EOF == result)
 		retval = true;
 	gnome_vfs_close(handle);
 
-	m_Command.quiverFile.SetLoadTimeInSeconds( loadTimer.GetRunningTimeInSeconds() );
 	
 	
 	return retval;

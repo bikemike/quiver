@@ -47,6 +47,10 @@ public:
 	QuiverFile* PeekNext();
 	QuiverFile* GetPrevious();
 	QuiverFile* PeekPrevious();
+	
+	QuiverFile* GetLast();
+	QuiverFile* GetFirst();
+	
 	QuiverFile* GetCurrent();
 	int GetCurrentIndex();
 

@@ -83,8 +83,6 @@ Viewer::Viewer()
 
 	
 	//cout <<	"st: " << gtk_viewport_get_shadow_type (GTK_VIEWPORT(m_pViewport)) << endl;
-	// the following removes the silly line border from the viewport
-	gtk_viewport_set_shadow_type(GTK_VIEWPORT(m_pViewport),GTK_SHADOW_NONE);
 	
 	
 	gtk_widget_set_size_request(m_pViewport,20,20);
@@ -138,7 +136,7 @@ Viewer::Viewer()
 	gtk_table_attach (GTK_TABLE (m_pTable), m_pNavigationBox, 1, 2, 1, 2,
 			  (GtkAttachOptions) (0),
 			  (GtkAttachOptions) (0), 0, 0);
-
+	
 
 	g_signal_connect (G_OBJECT (m_pDrawingArea), "expose_event",  
 				G_CALLBACK (Viewer::event_expose), this);
@@ -162,8 +160,33 @@ Viewer::Viewer()
 	
 	//GTK_WIDGET_UNSET_FLAGS (m_pDrawingArea, GTK_DOUBLE_BUFFERED);
 	
-}
+	// hide the border of the viewport
+	gtk_viewport_set_shadow_type(GTK_VIEWPORT(m_pViewport),GTK_SHADOW_NONE);
+	
+	GTK_WIDGET_SET_FLAGS(m_pTable,GTK_CAN_FOCUS);
 
+}
+/*
+void Viewer::HideBorder()
+{
+	// the following removes the silly line border from the viewport
+	m_GtkShadowType = gtk_viewport_get_shadow_type(GTK_VIEWPORT(m_pViewport));
+	gtk_viewport_set_shadow_type(GTK_VIEWPORT(m_pViewport),GTK_SHADOW_NONE);
+}
+void Viewer::ShowBorder()
+{
+	GtkShadowType type = gtk_viewport_get_shadow_type(GTK_VIEWPORT(m_pViewport));
+	if (GTK_SHADOW_NONE == type)
+	{
+		gtk_viewport_set_shadow_type(GTK_VIEWPORT(m_pViewport),m_GtkShadowType);	
+	}
+	else
+	{
+		m_GtkShadowType = type;
+	}
+	
+}
+*/
 gboolean Viewer::EventDelete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
 {
 	    /* If you return FALSE in the "delete_event" signal handler,
@@ -523,6 +546,8 @@ gboolean Viewer::EventEvent( GtkWidget *widget,GdkEvent  *event,gpointer data )
 
 gboolean Viewer::EventButtonPress( GtkWidget *widget,GdkEventButton  *event,gpointer data )
 {
+	gtk_widget_grab_focus (GetWidget());
+	
 	if (1 == event->button)
 	{
 		int x = (int)event->x;
@@ -589,7 +614,6 @@ gboolean  Viewer::event_button_release ( GtkWidget *widget, GdkEventButton *even
 
 void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 {
-	gdk_threads_enter ();
 
 	//Timer t("Viewer::SignalAreaPrepared()");
 /*
@@ -783,7 +807,6 @@ void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 	//GdkDisplay *display = ;
 	//XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
 
-	gdk_threads_leave ();
 }
 
 /**
@@ -814,7 +837,6 @@ void Viewer::SignalAreaPrepared(GdkPixbufLoader *loader)
 void Viewer::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height)
 {
 
-	gdk_threads_enter ();
 	//cout << x << "," << y << "," << width << "," << height << endl;
 	//Timer t("Viewer::SignalAreaUpdated()");
 		
@@ -848,7 +870,6 @@ void Viewer::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint widt
 	//gdk_flush();
 	//XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
 	
-	gdk_threads_leave ();	
 }
 
 void Viewer::SignalClosed(GdkPixbufLoader *loader)
@@ -862,7 +883,6 @@ void Viewer::SignalClosed(GdkPixbufLoader *loader)
 
 void Viewer::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
-	gdk_threads_enter ();
 	
 	//cout << "got " << width << " " << height;
 
@@ -903,7 +923,6 @@ void Viewer::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 	//gdk_flush();
 	//XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
 	
-	gdk_threads_leave ();
 }
 
 Viewer::ZoomType Viewer::GetZoomType()
@@ -931,6 +950,29 @@ void Viewer::SetZoomType(ZoomType type)
 			UpdateSize();
 			break;
 	}
+}
+
+double Viewer::GetZoomLevel()
+{
+	int aw = m_QuiverFile.GetWidth();
+	int ah = m_QuiverFile.GetHeight();
+	
+	int w = gdk_pixbuf_get_width(m_pixbuf);
+	//int h = gdk_pixbuf_get_height(m_pixbuf);
+	
+	if (m_iCurrentOrientation >= 5)
+	{
+		aw = ah;
+		ah = m_QuiverFile.GetWidth();
+	}
+	
+	m_dZoomLevel = w*100 / aw;
+	return m_dZoomLevel;
+}
+void Viewer::SetZoomLevel(double level)
+{
+	// FIXME: must implement custom zooming
+	m_dZoomLevel = level;
 }
 
 GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get);
@@ -1092,17 +1134,14 @@ void Viewer::SetCacheQuiverFile(QuiverFile f)
 
 void Viewer::SetQuiverFile(QuiverFile f)
 {
-	//gdk_threads_enter ();
 
 	m_QuiverFile = m_QuiverFileCached = f;
 
-	//gdk_threads_leave ();
 }
 
-void Viewer::SetPixbufFromThread(GdkPixbuf * pixbuf)
+void Viewer::SetPixbuf(GdkPixbuf * pixbuf)
 {
 
-	gdk_threads_enter ();
 
 	m_iCurrentOrientation = m_QuiverFile.GetExifOrientation();
 	if (!m_iCurrentOrientation)
@@ -1110,18 +1149,17 @@ void Viewer::SetPixbufFromThread(GdkPixbuf * pixbuf)
 		m_iCurrentOrientation = 1;
 	}
 	
-	SetPixbuf(pixbuf);
+	UpdatePixbuf(pixbuf);
 	
-	gdk_threads_leave ();
 }
 
-void Viewer::SetPixbuf(GdkPixbuf * pixbuf)
+void Viewer::UpdatePixbuf(GdkPixbuf * pixbuf)
 {
 
 	//GObject * obj = G_OBJECT(pixbuf);
 	//printf("0x%08x Viewer::SetPixbuf 0: %d\n",pixbuf,G_OBJECT(pixbuf)->ref_count);
 	
-	printf("Load time: %f\n",m_QuiverFile.GetLoadTimeInSeconds());
+	//printf("Load time: %f\n",m_QuiverFile.GetLoadTimeInSeconds());
 		
 	g_object_ref(pixbuf);
 	
@@ -1177,11 +1215,14 @@ gboolean Viewer::IdleEventConfigure(gpointer data)
 
 gboolean Viewer::TimeoutEventConfigure(gpointer data)
 {
+	
+	
 	GdkModifierType mask;
 	int x,y;
 	
 	gboolean retval = FALSE;
 	
+	gdk_threads_enter();
 	
 	gdk_window_get_pointer(m_pDrawingArea->window,&x,&y,&mask);
 	
@@ -1210,7 +1251,7 @@ gboolean Viewer::TimeoutEventConfigure(gpointer data)
 
 		gdk_event_free(e);
 	}
-	
+	gdk_threads_leave();
 	return retval;
 }
 
@@ -1244,7 +1285,7 @@ void Viewer::Rotate(bool right)
 		cout << "old: " << m_iCurrentOrientation << endl;
 		m_iCurrentOrientation = new_orientation;
 		cout << "new: " << m_iCurrentOrientation << endl;
-		SetPixbuf(pixbuf_rotated);
+		UpdatePixbuf(pixbuf_rotated);
 		g_object_unref(pixbuf_rotated);
 	}
 	
@@ -1290,7 +1331,7 @@ void Viewer::Flip(bool horizontal)
 	if (NULL != pixbuf_flipped)
 	{
 		m_iCurrentOrientation = new_orientation;
-		SetPixbuf(pixbuf_flipped);
+		UpdatePixbuf(pixbuf_flipped);
 		g_object_unref(pixbuf_flipped);
 	}
 	

@@ -45,6 +45,10 @@ public:
 	void SetZoomType(ZoomType type);
 	ZoomType GetZoomType();
 	
+	double GetZoomLevel();
+	void SetZoomLevel(double level);
+	
+	
 	void ScrollbarShow(ScrollbarType t);
 	void ScrollbarHide(ScrollbarType t);
 	
@@ -79,12 +83,16 @@ public:
 	void SignalClosed(GdkPixbufLoader *loader);
 	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
 
-	void SetPixbufFromThread(GdkPixbuf * pixbuf);
 	void SetQuiverFile(QuiverFile quiverfile);
 	void SetCacheQuiverFile(QuiverFile quiverfile);
 	void Rotate(bool right);
 	void Flip(bool horizontal);
 	bool GetHasFullPixbuf();
+	/*
+	void HideBorder();
+	void ShowBorder();
+	*/
+	void SetPixbuf(GdkPixbuf * pixbuf);
 
 
 private:
@@ -103,13 +111,13 @@ private:
 	static gboolean idle_event_configure (gpointer data);
 
 	static void event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data);
-	void SetPixbuf(GdkPixbuf * pixbuf);
+	void UpdatePixbuf(GdkPixbuf * pixbuf);
 
 
 	//private member variables
 
 	GtkWidget * m_pDrawingArea;
-
+	
 	GdkPixbuf * m_pixbuf;
 	GdkPixbuf * m_pixbuf_real;
 	GtkWidget * m_pTable;
@@ -143,6 +151,8 @@ private:
 	QuiverFile m_QuiverFile;
 	QuiverFile m_QuiverFileCached;
 	int m_iCurrentOrientation;
+	
+	GtkShadowType m_GtkShadowType;
 	
 };
 

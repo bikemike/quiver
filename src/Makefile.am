@@ -1,6 +1,5 @@
-## Process this file with automake to produce Makefile.in
-
-## Created by Anjuta
+##test
+SUBDIRS = icons
 
 AM_CPPFLAGS = \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
@@ -12,14 +11,29 @@ AM_CPPFLAGS = \
 bin_PROGRAMS = quiver
 
 quiver_SOURCES = \
+	quiver-i18n.h \
+	QuiverUI.h \
+	ImageCache.h \
 	ImageCache.cpp \
+	ImageList.h \
 	ImageList.cpp \
+	ImageLoader.h \
 	ImageLoader.cpp \
+	QuiverFile.h \
 	QuiverFile.cpp \
+	NavigationControl.h \
 	NavigationControl.cpp \
+	PixbufLoaderObserver.h \
 	PixbufLoaderObserver.cpp \
+	Timer.h \
 	Timer.cpp \
+	Viewer.h \
 	Viewer.cpp \
+	Statusbar.h \
+	Statusbar.cpp \
+	QuiverStockIcons.h \
+	QuiverStockIcons.cpp \
+	Quiver.h \
 	Quiver.cpp
 
 quiver_LDFLAGS = 

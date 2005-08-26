@@ -418,7 +418,6 @@ int ImageList::GetCurrentIndex()
 {
 	return m_iIndex;
 }
-
 QuiverFile* ImageList::GetPrevious()
 {
 	if (HasPrevious())
@@ -436,6 +435,29 @@ QuiverFile* ImageList::PeekPrevious()
 		return &(*(--itr));
 	}
 	return NULL;
+}
+
+QuiverFile* ImageList::GetLast()
+{
+	if (m_iIndex < GetSize())
+	{
+		m_itrCurrent = m_ImageList.end();
+		--m_itrCurrent;
+		m_iIndex = GetSize();
+		return &*m_itrCurrent;
+	}
+	return NULL;
+}
+QuiverFile* ImageList::GetFirst()
+{
+	if (m_iIndex != 1 && 1 < GetSize())
+	{
+		m_itrCurrent = m_ImageList.begin();
+		m_iIndex = 1;
+		return &*m_itrCurrent;
+	}
+	return NULL;
+	
 }
 
 int ImageList::GetSize()

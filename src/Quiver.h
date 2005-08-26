@@ -12,6 +12,7 @@
 #include "Viewer.h"
 #include "ImageList.h"
 #include "ImageLoader.h"
+#include "Statusbar.h"
 
 
 class Quiver : PixbufLoaderObserver
@@ -74,14 +75,26 @@ public:
 	static void signal_drag_begin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
 	static void  signal_drag_end(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
 	
+	// gtk_ui_manager signals
+	static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
+	static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
+	static void signal_item_select (GtkItem *proxy,gpointer data);
+	static void signal_item_deselect (GtkItem *proxy,gpointer data);
 	
+	void SignalConnectProxy(GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
+	void SignalDisconnectProxy(GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);	
+	void SignalItemSelect (GtkItem *proxy,gpointer data);
+	void SignalItemDeselect (GtkItem *proxy,gpointer data);
+	
+	
+	
+	// drag signals
 	void  SignalDragEnd(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
 	
 	void  SignalDragBegin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
 	
 	void  SignalDragDataDelete  (GtkWidget *widget,GdkDragContext *context,gpointer data);
-	void SignalDragDataGet  (GtkWidget *widget, GdkDragContext *context, 
-		GtkSelectionData *selection_data, guint info, guint time,gpointer data);
+	void SignalDragDataGet  (GtkWidget *widget, GdkDragContext *context,GtkSelectionData *selection_data, guint info, guint time,gpointer data);
 		
 	// drag/drop targets
 	enum {
@@ -106,11 +119,11 @@ public:
 	
 	bool LoadSettings();
 	void SaveSettings();
-	void FullScreen();
+
 	void SetWindowTitle(std::string s);
-	void NextImage();
-	void PreviousImage();
+
 	void Quiver::CurrentImage();
+	void ImageChanged();
 	
 	void SlideshowStart();
 	void SlideshowStop();
@@ -121,8 +134,33 @@ public:
 
 	// PixbufLoaderObserver  - override to set timeout for slideshow
 	void Quiver::SignalClosed(GdkPixbufLoader *loader); 
-	void Quiver::SetPixbufFromThread(GdkPixbuf*); 
+	void Quiver::SetPixbuf(GdkPixbuf*); 
 
+
+	// action c callbacks
+	static void action_image_next(GtkAction *action,gpointer data);
+	static void action_image_last(GtkAction *action,gpointer data);
+	static void action_image_first(GtkAction *action,gpointer data);
+	static void action_image_previous(GtkAction *action,gpointer data);
+	static void action_quit(GtkAction *action,gpointer data);
+	static void action_full_screen(GtkAction *action,gpointer data);
+	static void action_slide_show(GtkAction *action,gpointer data);
+	static void action_image_trash(GtkAction *action,gpointer data);
+	static void action_about(GtkAction *action,gpointer data);
+
+	
+	// action c++ callbacks
+	void ActionImageNext(GtkAction *action,gpointer data);
+	void ActionImagePrevious(GtkAction *action,gpointer data);
+	void ActionImageFirst(GtkAction *action,gpointer data);
+	void ActionImageLast(GtkAction *action,gpointer data);
+	void ActionQuit(GtkAction *action,gpointer data);
+	void ActionFullScreen(GtkAction *action,gpointer data);
+	void ActionSlideShow(GtkAction *action,gpointer data);
+	void ActionImageTrash(GtkAction *action,gpointer data);
+	void ActionAbout(GtkAction *action,gpointer data);
+	
+	
 		
 private:
 		//Viewer
@@ -133,7 +171,12 @@ private:
 		//Menu
 
 		Viewer m_Viewer;
+		Statusbar m_Statusbar;
 		GtkWidget *m_pQuiverWindow;
+		GtkWidget *m_pMenubar;
+		GtkWidget *m_pToolbar;
+		
+				
 		ImageList * m_pImageList;
 		
 		int m_iAppX;
@@ -153,6 +196,12 @@ private:
 		
 		GdkWindowState m_WindowState;
 		ImageLoader m_ImageLoader;
+
+		//gui actions
+		static GtkActionEntry Quiver::action_entries[];
+		static GtkToggleActionEntry Quiver::action_entries_toggle[];
+		static GtkRadioActionEntry Quiver::action_entries_radio[];
+
 
 };
 
