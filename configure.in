@@ -1,0 +1,55 @@
+dnl Process this file with autoconf to produce a configure script.
+dnl Created by Anjuta application wizard.
+
+AC_INIT(quiver, 0.1, http://mike.dyndns.org/quiver)
+AC_CONFIG_SRCDIR(src/Quiver.cpp)
+
+AM_INIT_AUTOMAKE(AC_PACKAGE_NAME, AC_PACKAGE_VERSION)
+
+
+AM_CONFIG_HEADER(config.h)
+dnl AM_MAINTAINER_MODE
+
+AC_ISC_POSIX
+AC_PROG_CC
+AM_PROG_CC_STDC
+AC_HEADER_STDC
+
+
+AC_CHECK_FUNCS([gettimeofday])
+AC_CHECK_HEADERS([sys/time.h])
+AC_C_CONST
+AC_HEADER_STDBOOL
+AC_HEADER_TIME
+
+
+
+AC_PROG_CPP
+AC_PROG_CXX
+
+
+
+dnl Set gettext package name
+GETTEXT_PACKAGE=quiver
+AC_SUBST(GETTEXT_PACKAGE)
+AC_DEFINE_UNQUOTED(GETTEXT_PACKAGE,"$GETTEXT_PACKAGE", [GETTEXT package name])
+
+dnl Add the languages which your application supports here.
+ALL_LINGUAS="fr"
+AM_GLIB_GNU_GETTEXT
+
+AC_PROG_INTLTOOL([0.21])
+
+
+dnl libglade-2.0
+PKG_CHECK_MODULES(PACKAGE, [gtk+-2.0  gnome-vfs-2.0 libgnomeui-2.0 libexif])
+AC_SUBST(PACKAGE_CFLAGS)
+AC_SUBST(PACKAGE_LIBS)
+
+
+AC_OUTPUT([
+Makefile
+src/Makefile
+src/icons/Makefile
+po/Makefile.in
+])
