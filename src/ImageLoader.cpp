@@ -1,7 +1,7 @@
 #include <config.h>
 
 #include "ImageLoader.h"
-#include "Viewer.h"
+#include "QuiverUtils.h"
 #include <libgnomevfs/gnome-vfs.h>
 
 using namespace std;
@@ -229,7 +229,7 @@ void ImageLoader::Load()
 						if (1 < m_Command.quiverFile.GetExifOrientation()) // TODO: change to get rotate option
 						{
 							gdk_threads_enter();
-							GdkPixbuf* pixbuf_rotated = Viewer::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
+							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
 							gdk_threads_leave();
 							
 							if (NULL != pixbuf_rotated)
@@ -316,7 +316,7 @@ void ImageLoader::Load()
 						if (1 < m_Command.quiverFile.GetExifOrientation()) // TODO: change to get rotate option
 						{
 							gdk_threads_enter();
-							GdkPixbuf* pixbuf_rotated = Viewer::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
+							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
 							gdk_threads_leave();
 							
 							if (NULL != pixbuf_rotated)

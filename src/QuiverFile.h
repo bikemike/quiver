@@ -24,7 +24,7 @@ public:
 		QUIVER_FILE_DATA_INFO = 1 << 0,
 		QUIVER_FILE_DATA_EXIF = 1 << 1,
 		QUIVER_FILE_DATA_IPTC = 1 << 2,
-		QUIVER_FILE_DATA_DB = 1 << 3,
+		QUIVER_FILE_DATA_DB   = 1 << 3,
 	} QuiverDataFlags;
 
 	// Operations
@@ -38,7 +38,7 @@ public:
 
 	GdkPixbuf * GetThumbnail();
 	GdkPixbuf * GetExifThumbnail();
-	void LoadExifData();
+
 	ExifData *GetExifData();
 	int GetExifOrientation();
 	GnomeVFSFileInfo * GetFileInfo();
@@ -51,10 +51,11 @@ public:
 	void SetWidth(int );
 	void SetHeight(int);
 	void SetLoadTimeInSeconds(double);
+	bool IsWriteable();
 	
 	
 private:
-
+	void LoadExifData();
 	class QuiverFileImpl;
 	boost::shared_ptr<QuiverFileImpl> QuiverFilePtr;
 

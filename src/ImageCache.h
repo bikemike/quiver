@@ -20,7 +20,7 @@ class ImageCache
 
 public:
 	//constructor
-	ImageCache(int size);
+	ImageCache(unsigned int size);
 	~ImageCache();
 
 	// request a pixbuf 
@@ -31,6 +31,9 @@ public:
 	
 	void ImageCache::AddPixbuf(std::string filename,GdkPixbuf * pb);
 	void ImageCache::AddPixbuf(std::string filename,GdkPixbuf * pb, unsigned long time);
+	unsigned int ImageCache::GetSize();
+	void ImageCache::SetSize(unsigned int size);
+
 
 	
 private:

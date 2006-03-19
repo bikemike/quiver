@@ -52,8 +52,6 @@ public:
 	void ScrollbarShow(ScrollbarType t);
 	void ScrollbarHide(ScrollbarType t);
 	
-	static GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation);
-	
 	void UpdateSize();
 
 //	GdkPixbuf* GetNextPixbuf();
@@ -93,6 +91,7 @@ public:
 	void ShowBorder();
 	*/
 	void SetPixbuf(GdkPixbuf * pixbuf);
+	int GetCurrentOrientation();
 
 
 private:

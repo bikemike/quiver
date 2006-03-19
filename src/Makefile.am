@@ -31,6 +31,8 @@ quiver_SOURCES = \
 	Viewer.cpp \
 	Statusbar.h \
 	Statusbar.cpp \
+	QuiverUtils.h \
+	QuiverUtils.cpp \
 	QuiverStockIcons.h \
 	QuiverStockIcons.cpp \
 	Quiver.h \
@@ -38,7 +40,7 @@ quiver_SOURCES = \
 
 quiver_LDFLAGS = 
 
-quiver_LDADD = $(PACKAGE_LIBS)
+quiver_LDADD = $(PACKAGE_LIBS) -ljpeg
 
 
 TESTS = test_image_list test_quiver_file test_icon_view
@@ -50,5 +52,5 @@ test_image_list_LDADD = $(PACKAGE_LIBS)
 test_quiver_file_SOURCES= test_quiver_file.cpp ImageCache.cpp QuiverFile.cpp Timer.cpp
 test_quiver_file_LDADD = $(PACKAGE_LIBS)
 
-test_icon_view_SOURCES= test_icon_view.cpp ImageCache.cpp QuiverFile.cpp Timer.cpp ImageList.cpp art_rgba_rgba_affine.c art_rgba_svp.c
+test_icon_view_SOURCES= test_icon_view.cpp ImageCache.cpp QuiverFile.cpp Timer.cpp ImageList.cpp QuiverUtils.cpp
 test_icon_view_LDADD = $(PACKAGE_LIBS)

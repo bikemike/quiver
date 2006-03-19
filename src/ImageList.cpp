@@ -128,7 +128,8 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 											  (GNOME_VFS_FILE_INFO_DEFAULT|
 											  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
 											  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-											  GNOME_VFS_FILE_INFO_FOLLOW_LINKS)
+											  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+											  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
 											  );
 			if ( GNOME_VFS_OK == result )
 			{
@@ -231,7 +232,8 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 											  (GNOME_VFS_FILE_INFO_DEFAULT|
 											  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
 											  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-											  GNOME_VFS_FILE_INFO_FOLLOW_LINKS)
+											  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+											  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
 											  );
 			if ( GNOME_VFS_OK == result )
 			{
@@ -286,7 +288,9 @@ void ImageList::AddDirectory(const gchar* uri)
 							  (GNOME_VFS_FILE_INFO_DEFAULT|
 							  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
 							  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-							  GNOME_VFS_FILE_INFO_FOLLOW_LINKS));
+							  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+							  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS
+							  ));
 	//printf("opened dir: %d: %s\n",result,gnome_vfs_result_to_string (result));
 	if ( GNOME_VFS_OK == result )
 	{
@@ -327,7 +331,8 @@ void ImageList::AddFile(const gchar*  uri)
 									  (GNOME_VFS_FILE_INFO_DEFAULT|
 									  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
 									  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-									  GNOME_VFS_FILE_INFO_FOLLOW_LINKS)
+									  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+									  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
 									 );
 	if ( GNOME_VFS_OK == result )
 	{

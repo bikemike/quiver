@@ -4,7 +4,8 @@
 #include "QuiverFile.h"
 #include "Timer.h"
 #include <exif-utils.h>
-#include "Viewer.h"
+#include "QuiverUtils.h"
+#include <glib/gstdio.h>
 
 
 // =================================================================================================
@@ -61,7 +62,9 @@ QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar * uri)
 									  (GNOME_VFS_FILE_INFO_DEFAULT|
 									  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
 									  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-									  GNOME_VFS_FILE_INFO_FOLLOW_LINKS)
+									  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+									  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
+ 
 									  );
 	Init(uri,info);
 }
@@ -198,6 +201,21 @@ int QuiverFile::GetHeight()
 	*/
 	return QuiverFilePtr->height;
 }
+
+bool QuiverFile::IsWriteable()
+{
+	bool rval = false;
+	if (GNOME_VFS_FILE_INFO_FIELDS_ACCESS & QuiverFilePtr->file_info->valid_fields)
+	{
+		if (GNOME_VFS_PERM_ACCESS_WRITABLE & QuiverFilePtr->file_info->permissions)
+		{
+			rval = true;
+		}
+	}
+
+	return rval;
+}
+
 void QuiverFile::LoadExifData()
 {
 	//Timer t("QuiverFile::LoadExifData()");
@@ -274,9 +292,9 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 	//Timer t("QuiverFile::GetExifThumbnail()");
 	GdkPixbuf *thumb_pixbuf = NULL;
 
-	LoadExifData();
+	ExifData *exif_data = GetExifData();
 	//exif_data_dump(exif_data);
-	if (QuiverFilePtr->data_exists_flags & QUIVER_FILE_DATA_EXIF && QuiverFilePtr->exif_data->data)
+	if (QuiverFilePtr->data_exists_flags & QUIVER_FILE_DATA_EXIF && exif_data->data)
 	{
 		GError *tmp_error;
 		tmp_error = NULL;
@@ -284,7 +302,7 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 		GdkPixbufLoader *pixbuf_loader;
 		
 		pixbuf_loader = gdk_pixbuf_loader_new();
-		gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)QuiverFilePtr->exif_data->data, QuiverFilePtr->exif_data->size, &tmp_error);
+		gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)exif_data->data, exif_data->size, &tmp_error);
 
 		gdk_pixbuf_loader_close(pixbuf_loader,&tmp_error);
 		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
@@ -293,10 +311,8 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 		{
 			
 			g_object_ref(thumb_pixbuf);
-			/*
-			int w = gdk_pixbuf_get_width(thumb_pixbuf);
-			int h = gdk_pixbuf_get_height(thumb_pixbuf);
-			*/
+			//int w = gdk_pixbuf_get_width(thumb_pixbuf);
+			//int h = gdk_pixbuf_get_height(thumb_pixbuf);
 			//printf ("thumbnail size: %d x %d\n",w,h);
 			// to keep using this thumbnail
 			// we must ref it
@@ -308,9 +324,45 @@ GdkPixbuf * QuiverFile::GetExifThumbnail()
 	return thumb_pixbuf;
 }
 
+static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
+                                            gint             height,
+                                            gpointer         user_data)
+{
+	int size = *(int*)user_data;
+
+	if (size < width || size < height)
+	{
+		//printf("resize thumbnail to size: %d from %dx%d\n",size,width,height);
+		gint new_width,new_height;
+		if (size < width && height < width)
+		{
+			new_width = size;
+			new_height = (gint)(size*(double)height/(double)width);
+		}
+		else
+		{
+			new_height = size;
+			new_width = (gint)(size* (double)width/(double)height);
+		}
+		//printf("resize thumbnail to size: %dx%d\n",new_width,new_height);
+		gdk_pixbuf_loader_set_size(loader,new_width,new_height);
+	}
+	else
+	{
+		// we set the size to -1 to inform the 
+		// loader that the original size was smaller than
+		// the size requested
+		//printf("we are not resizing: %dx%d\n",width,height);
+		size = -1;
+	}
+	
+}
+
 GdkPixbuf * QuiverFile::GetThumbnail()
 {
 
+	gboolean save_thumbnail_to_cache = TRUE;
+	
 	//Timer t("QuiverFile::GetThumbnail()");
 	GdkPixbuf * thumb_pixbuf = NULL;
 	//GnomeThumbnailFactory* thumb_factory;
@@ -324,7 +376,7 @@ GdkPixbuf * QuiverFile::GetThumbnail()
 	
 	// try to load the thumb from thumb_path
 	//gdk_threads_enter ();
-	GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
+	int orientation = 0;
 
 	GError *tmp_error;
 	gchar buffer[8192];
@@ -336,34 +388,51 @@ GdkPixbuf * QuiverFile::GetThumbnail()
 	result = gnome_vfs_open (&handle, thumb_path, GNOME_VFS_OPEN_READ);
 	if (GNOME_VFS_OK == result)
 	{
+		GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
+
 		while (GNOME_VFS_OK == result) {
 			result = gnome_vfs_read (handle, buffer, 
 									 sizeof(buffer), &bytes_read);
 			gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
 		}
-		gdk_pixbuf_loader_close(loader,&tmp_error);
 		gnome_vfs_close(handle);
 		
 		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
-	
-		// check mtime (if they do not match, we dont want to use this thumbnail)
-		const char *thumb_uri, *thumb_mtime_str;
-		thumb_uri = gdk_pixbuf_get_option (thumb_pixbuf,"tEXt::Thumb::URI");
-  		thumb_mtime_str = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::MTime");
-		
-		time_t mtime;
-		mtime = atol (thumb_mtime_str);
-		
-		if (QuiverFilePtr->file_info->mtime == mtime)
+
+		if (NULL != thumb_pixbuf)
 		{
-			//mtimes match, it's good!
 			g_object_ref(thumb_pixbuf);
+			//printf("got thumb from cache\n");
+	
+			// check mtime (if they do not match, we dont want to use this thumbnail)
+			const char *thumb_uri, *thumb_mtime_str, *str_orientation;
+			thumb_uri = gdk_pixbuf_get_option (thumb_pixbuf,"tEXt::Thumb::URI");
+			thumb_mtime_str = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::MTime");
+			str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
+			if (NULL != str_orientation)
+			{
+				//printf("we got orientation: %s\n",str_orientation);
+				orientation = atoi(str_orientation);
+			}
+			
+			time_t mtime;
+			mtime = atol (thumb_mtime_str);
+			
+			if (QuiverFilePtr->file_info->mtime != mtime)
+			{
+				// they dont match.. we should load a new version
+				//printf("m-times do not match! %lu  != %lu\n",QuiverFilePtr->file_info->mtime ,mtime);
+				g_object_unref(thumb_pixbuf);
+				thumb_pixbuf = NULL;
+			}
+			else
+			{
+				//printf("m-times do match! %lu  != %lu\n",QuiverFilePtr->file_info->mtime ,mtime);
+				save_thumbnail_to_cache = FALSE;
+			}
+
 		}
-		else
-		{
-			// they dont match.. we should load a new version
-			thumb_pixbuf = NULL;
-		}
+		gdk_pixbuf_loader_close(loader,&tmp_error);
 		g_object_unref(loader);
 	}
 	//gdk_threads_leave ();
@@ -373,50 +442,158 @@ GdkPixbuf * QuiverFile::GetThumbnail()
 		// unable to load from file, next try exif
 		thumb_pixbuf = GetExifThumbnail();
 		if (NULL != thumb_pixbuf)
-		{	
-			// FIXME:
-			// we should store this into .thumbnails (see commented out code at bottom of
-			// file
-			// we should also  return a thumbnail that is 128x128 pixels
+		{
+			int size = 128;
+			gint pixbuf_width = gdk_pixbuf_get_width(thumb_pixbuf);
+			gint pixbuf_height = gdk_pixbuf_get_height(thumb_pixbuf);
+			// resize it to the proper size
+			if (pixbuf_width > size || pixbuf_height > size)
+			{
+				int nw,nh;
+				if (size < pixbuf_width && pixbuf_width > pixbuf_height)
+				{
+					nw = size;
+					nh = (int) (size * (double)pixbuf_height/(double)pixbuf_width);
+				}
+				else
+				{
+					nh = size;
+					nw = (int)(size * (double)pixbuf_width / (double)pixbuf_height);
+				}
+				pixbuf_width = nw;
+				pixbuf_height = nh;
+				//printf("new size %d %d\n",nw,nh);
+				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
+									thumb_pixbuf,
+									nw,
+									nh,
+									GDK_INTERP_BILINEAR);
+									//GDK_INTERP_NEAREST);
+				g_object_unref(thumb_pixbuf);
+				thumb_pixbuf = newpixbuf;
+			}
+			//printf("got thumb from exif\n");
 		}
 	}
 
+	// we couldnt get it from the cache, or the exif, so we'll have to load it straight from the file
+	if (NULL == thumb_pixbuf)
+	{
+		int size = 128;
+
+		result = gnome_vfs_open (&handle, QuiverFilePtr->m_szURI, GNOME_VFS_OPEN_READ);
+		if (GNOME_VFS_OK == result)
+		{
+			GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
+			g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size);	
+
+			while (GNOME_VFS_OK == result) {
+				result = gnome_vfs_read (handle, buffer, 
+										 sizeof(buffer), &bytes_read);
+				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+			}
+			gnome_vfs_close(handle);
+
+			gdk_pixbuf_loader_close(loader,&tmp_error);
+			
+			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+		
+			if (NULL != thumb_pixbuf)
+			{
+				g_object_ref(thumb_pixbuf);
+				//printf("got thumb from file\n");
+			}
+			g_object_unref(loader);
+		}
+		if (-1 == size)
+		{
+			// size of image is smaller than 128x128 so
+			// we do not need to cache it
+			save_thumbnail_to_cache = FALSE;
+		}
+	}
+	
+	// FIXME: maybe this should be in a low priority thread?
+	// save the thumbnail to the cache directory (~/.thumbnails)
+
+	if (NULL != thumb_pixbuf && save_thumbnail_to_cache)
+	{
+
+		// FIXME: should make sure the directory exists first!
+		gchar *temp_file_name = g_strconcat (thumb_path, ".XXXXXX", NULL);
+		gint fhandle = g_mkstemp (temp_file_name);
+		
+		if (-1 != fhandle )
+		{
+			close (fhandle);
+			gchar str_mtime[30];
+			gchar str_orientation[2];
+			//printf("temp_file_name = %s -> %s\n",temp_file_name,QuiverFilePtr->m_szURI);
+			g_snprintf (str_mtime, 30, "%lu",  QuiverFilePtr->file_info->mtime);
+
+			orientation = GetExifOrientation();
+			g_snprintf (str_orientation, 2, "%d",  orientation);
+			//printf("orientation to save: %s\n",str_orientation);
+			
+			gboolean saved = gdk_pixbuf_save (thumb_pixbuf,
+					   temp_file_name,
+					   "png", NULL, 
+					   "tEXt::Thumb::URI", QuiverFilePtr->m_szURI,
+					   "tEXt::Thumb::MTime", str_mtime,
+					   "tEXt::Thumb::Image::Orientation", str_orientation,
+					   "tEXt::Software", PACKAGE_STRING,
+					   NULL);
+			if (saved)
+			{
+				//printf("move: %s => %s \n",temp_file_name,thumb_path);
+				g_chmod (temp_file_name, 0600);
+				g_rename(temp_file_name, thumb_path);
+			}
+			else
+			{
+				g_remove(temp_file_name);
+			}
+		}
+		g_free(temp_file_name);
+	}
+	
 	g_free (thumb_path);
 
 	//FIXME: need to get an autorotate option
 	
-	int orientation = GetExifOrientation();
+	if (0 == orientation)
+	{
+		orientation = GetExifOrientation();
+	}
 	if (NULL != thumb_pixbuf  && 1 < orientation) 
 	{
-		// FIXME: we shouldnt have GdkPixbufExifReorientate in the viewer
-		// it should be in a utility class
-		GdkPixbuf * new_pixbuf = Viewer::GdkPixbufExifReorientate(thumb_pixbuf, orientation);
+		GdkPixbuf * new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(thumb_pixbuf, orientation);
 		if (NULL != new_pixbuf)
 		{
 			g_object_unref(thumb_pixbuf);
 			thumb_pixbuf = new_pixbuf;
 		}
 	}
-	
 
 	return thumb_pixbuf;
 }
 
 ExifData* QuiverFile::GetExifData()
 {
+	LoadExifData();
 	exif_data_ref(QuiverFilePtr->exif_data);
 	return QuiverFilePtr->exif_data;
 }
 	
 int QuiverFile::GetExifOrientation()
 {
-	LoadExifData();
+	ExifData *exif_data = GetExifData();
 	int orientation = 0;
 	
 	if (QuiverFilePtr->data_exists_flags & QUIVER_FILE_DATA_EXIF)
 	{
 		ExifEntry *entry;
-		entry = exif_data_get_entry(QuiverFilePtr->exif_data,EXIF_TAG_ORIENTATION);
+		entry = exif_data_get_entry(exif_data,EXIF_TAG_ORIENTATION);
 		if (NULL != entry)
 		{
 			// the orientation field is set

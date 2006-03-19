@@ -25,7 +25,7 @@ public:
   	};
 
 	// constructors
-	Quiver(std::list<std::string> images);
+	Quiver(std::list<std::string> &images);
 	~Quiver();
 
 	// member functions
@@ -44,13 +44,14 @@ public:
 
 	
 	static gboolean Quiver::timeout_event_motion_notify (gpointer data);
-
-
 	static gboolean Quiver::event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 
 	static gboolean Quiver::timeout_advance_slideshow (gpointer data);
 	gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data);
 	
+	static gboolean Quiver::idle_quiver_init (gpointer data);
+	gboolean Quiver::IdleQuiverInit(gpointer data);
+
 	static gboolean event_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data );
 	static gboolean event_key_release(GtkWidget *widget, GdkEventKey *event, gpointer data );
 	static gboolean event_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data );
@@ -90,9 +91,7 @@ public:
 	
 	// drag signals
 	void  SignalDragEnd(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
-	
 	void  SignalDragBegin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
-	
 	void  SignalDragDataDelete  (GtkWidget *widget,GdkDragContext *context,gpointer data);
 	void SignalDragDataGet  (GtkWidget *widget, GdkDragContext *context,GtkSelectionData *selection_data, guint info, guint time,gpointer data);
 		
@@ -138,6 +137,7 @@ public:
 
 
 	// action c callbacks
+	static void action_file_save(GtkAction *action,gpointer data);
 	static void action_image_next(GtkAction *action,gpointer data);
 	static void action_image_last(GtkAction *action,gpointer data);
 	static void action_image_first(GtkAction *action,gpointer data);
@@ -148,8 +148,12 @@ public:
 	static void action_image_trash(GtkAction *action,gpointer data);
 	static void action_about(GtkAction *action,gpointer data);
 
+	static void action_ui_mode_change(GtkAction *action,gpointer data);
+
 	
 	// action c++ callbacks
+	void ActionFileSave(GtkAction *action,gpointer data);
+
 	void ActionImageNext(GtkAction *action,gpointer data);
 	void ActionImagePrevious(GtkAction *action,gpointer data);
 	void ActionImageFirst(GtkAction *action,gpointer data);
@@ -159,7 +163,7 @@ public:
 	void ActionSlideShow(GtkAction *action,gpointer data);
 	void ActionImageTrash(GtkAction *action,gpointer data);
 	void ActionAbout(GtkAction *action,gpointer data);
-	
+	void ActionUIModeChange(GtkAction *action,gpointer data);
 	
 		
 private:
@@ -201,9 +205,16 @@ private:
 		static GtkActionEntry Quiver::action_entries[];
 		static GtkToggleActionEntry Quiver::action_entries_toggle[];
 		static GtkRadioActionEntry Quiver::action_entries_radio[];
+		
+		GtkUIManager* m_pUIManager;
+		
+		std::list<std::string> m_listImages;
 
 
 };
+
+// helper functions
+
 
 #endif
 

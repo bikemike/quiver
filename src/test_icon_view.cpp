@@ -1,16 +1,15 @@
 #include <config.h>
 #include <libgnomevfs/gnome-vfs.h>
 //#include <gtk/gtkfilesystem.h>
-#include <libart_lgpl/libart.h>
+
 #include <libgnomeui/gnome-icon-lookup.h>
 #include <pthread.h>
 
-#include "art_rgba_svp.h"
-#include "art_rgba_rgba_affine.h"
 
-#include "Viewer.h"
 #include "ImageList.h"
 #include "QuiverFile.h"
+#include "QuiverUtils.h"
+#include "Timer.h"
 
 using namespace std;
 
@@ -18,20 +17,121 @@ GtkWidget * window;
 GtkWidget * icon_view;
 GtkListStore *store;
 
+int icon_width = 140;
+int icon_height = 140;
+int thumb_size = 128;
+
 GdkPixbuf* GetFancyIcon(QuiverFile f);
 
-//void Run(void);
+// signal functions
+gboolean signal_iconview_activate_cursor_item(GtkIconView *iconview,gpointer user_data)
+{
+	printf("signal_iconview_activate_cursor_item\n");
+	return TRUE;
+}
+
+gboolean signal_iconview_item_activated(GtkIconView *iconview,GtkTreePath *arg1,gpointer user_data)
+{
+	printf("signal_iconview_item_activated\n");
+	return TRUE;
+}
+gboolean signal_iconview_move_cursor(GtkIconView *iconview,GtkMovementStep arg1,gint arg2,gpointer user_data)
+{
+	printf("signal_iconview_move_cursor\n");
+	return TRUE;
+}
+gboolean signal_iconview_select_all(GtkIconView *iconview,gpointer user_data)
+{
+	printf("signal_iconview_select_all\n");
+	return TRUE;
+}
+gboolean signal_iconview_select_cursor_item(GtkIconView *iconview,gpointer user_data)
+{
+	printf("signal_iconview_select_cursor_item\n");
+	return TRUE;
+}
+gboolean signal_iconview_selection_changed(GtkIconView *iconview,gpointer user_data)
+{
+	printf("signal_iconview_selection_changed\n");
+	return TRUE;
+}
+gboolean signal_iconview_set_scroll_adjustments(GtkIconView *iconview,GtkAdjustment arg1,GtkAdjustment arg2,gpointer user_data)
+{
+	printf("signal_iconview_set_scroll_adjustments\n");
+	return TRUE;
+}
+gboolean signal_iconview_toggle_cursor_item(GtkIconView *iconview,gpointer user_data)
+{
+	printf("signal_iconview_toggle_cursor_item\n");
+	return TRUE;
+}
+gboolean signal_iconview_unselect_all(GtkIconView *iconview,gpointer user_data)
+{
+	printf("signal_iconview_unselect_all\n");
+	return TRUE;
+}
+
+gboolean event_iconview_motion_notify (GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+{
+	printf("widget allocation.height: %d\n",widget->allocation.height);
+	int x=0, y=0;
+	
+	GdkModifierType state;
+	
+	if (event->is_hint)
+	{
+		//printf("hint\n");
+		gdk_window_get_pointer (event->window, &x, &y, &state);
+	}		
+	else
+	{
+		//printf("event\n");
+		x = (int)event->x;
+		y = (int)event->y;
+		state = (GdkModifierType)event->state;
+		
+	}
+	
+	GtkTreePath *tree_path;
+	GtkCellRenderer * cell;
+	GtkIconView *icon_view = GTK_ICON_VIEW(widget);
+	
+	tree_path = gtk_icon_view_get_path_at_pos(icon_view,x,y);
+/*
+	gboolean rval = gtk_icon_view_get_item_at_pos   (icon_view,
+                                             x,
+                                             y,
+                                             tree_path,
+                                             cell);
+*/
+	if (NULL != tree_path)
+	{
+		gchar *uri = NULL;
+		GtkTreeModel* model = gtk_icon_view_get_model(icon_view);
+		GtkTreeIter iter;
+		gtk_tree_model_get_iter (model, &iter, tree_path);
+		gtk_tree_model_get(model,&iter, 2, &uri, -1);
+
+		printf("tree path %s: %s\n",gtk_tree_path_to_string(tree_path),uri);
+	}
+	printf("%dx%d\n",x,y);
+	
+	gtk_tree_path_free(tree_path);
+	
+	return FALSE;
+}
+
+
 void* Run(void * data)
 {
-	
-
-	printf("sleeping for 2s\n");
+	Timer t(false);
+	printf("sleeping for .1s\n");
 	gdk_threads_enter ();
 	pthread_yield();
 	gdk_threads_leave ();
-	usleep(1500000);
+	usleep(100000);
 	
-	printf("slept for 2s\n");
+	printf("slept for .1s\n");
 	
 	GtkTreeIter   iter;
 	gdk_threads_enter ();
@@ -58,43 +158,33 @@ void* Run(void * data)
 	gdk_threads_leave ();
 	ImageCache iconCache(size);
 	
-	
-
+	int i = 1;
+	int n = 10;
+	//gdk_threads_enter ();
 	while ( rval )
 	{
-			
-		
-		//printf("hello why sleep no work?\n");
-		//store
+		gdk_threads_enter ();
 		GdkPixbuf * pixbuf = NULL;
 		gchar *uri = NULL;
-		/*
-		gtk_tree_model_get_value(GTK_TREE_MODEL(store),&iter,  0,  value);
-		*/
-		gdk_threads_enter ();
+		
 		gtk_tree_model_get(GTK_TREE_MODEL(store),&iter, 2, &uri, -1);
-		gdk_threads_leave ();
-		//printf("this is the uri? : %s\n",uri);
+
 				
 		// hmm
 		if (NULL == uri)
 		{
-			
 			continue;
 		}
 		QuiverFile f(uri);
 		g_free(uri);
 		pixbuf = GetFancyIcon(f);//GetFancyIcon(f);
+		
 		//printf("adding pixbuf to cache: %s\n", f.GetURI());
 		if (NULL != pixbuf)
 		{
 			iconCache.AddPixbuf(f.GetURI(),pixbuf);
 			g_object_unref(pixbuf);
 		}
-
-		
-
-		gdk_threads_enter ();
 		
 		if (NULL != pixbuf)
 		{
@@ -104,56 +194,28 @@ void* Run(void * data)
 			g_signal_stop_emission_by_name  (store,"row_inserted");
 			g_signal_stop_emission_by_name  (store,"row_deleted");
 			g_signal_stop_emission_by_name  (store,"rows_reordered");
+*/
+/*			GdkPixbuf * store_buff = NULL;
+			gtk_tree_model_get (GTK_TREE_MODEL(store_, &iter,1, &store_buff,-1);
+			store_buff = pixbuf;
 */			
 			gtk_list_store_set (store, &iter,1, pixbuf,-1);
 		}
-		//gtk_list_store_set_value(store,&iter,1,&value);
 		
 		rval = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
+		
 		gdk_threads_leave ();
+		if (0 == i%n)
+		{
+			//pthread_yield();
+			usleep(10);
+		}
+		i++;
 	}
+	//gdk_threads_leave ();
 	
 	rval = gtk_tree_model_get_iter_first   (GTK_TREE_MODEL(store),
                                              &iter);
-	//printf("this is the second while loop\n");
-	/*
-	GtkListStore *	store2 = gtk_list_store_new (2, G_TYPE_STRING, GDK_TYPE_PIXBUF);
-	GtkTreeIter iter2;	
-	while (rval)
-	{
-		//usleep(100000);
-		gdk_threads_enter ();
-		
-		GdkPixbuf * pixbuf = NULL;
-		gchar *uri = NULL;
-		
-		gtk_tree_model_get(GTK_TREE_MODEL(store),&iter, 0, &uri, -1);
-		//printf("getting from cache\n");
-		pixbuf = iconCache.GetPixbuf(uri);
-
-		if (NULL != pixbuf)
-		{
-			//printf("not null\n");
-			
-			gtk_list_store_append  (store2,&iter2);
-			gtk_list_store_set (store2, &iter2,0,"",1, pixbuf,-1);
-			
-			//gtk_list_store_set (store2, &iter,1, pixbuf,-1);
-			//gtk_list_store_set_value(store,&iter,1,&value);
-		}
-		//g_object_unref(pixbuf);
-		rval = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
-		gdk_threads_leave ();
-	}
-	
-	gdk_threads_enter ();
-	
-	gtk_icon_view_set_model (GTK_ICON_VIEW(icon_view), (GTK_TREE_MODEL (store2)));
-	//gtk_icon_view_set_text_column   (GTK_ICON_VIEW(icon_view),0);
-	gtk_icon_view_set_pixbuf_column (GTK_ICON_VIEW(icon_view),1);
-	*/
-	
-	gdk_threads_leave ();
 	return NULL;
 }
 
@@ -168,6 +230,7 @@ void Init()
 	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtk_window_move(GTK_WINDOW(window),100,100);
 	gtk_window_set_default_size (GTK_WINDOW(window),800,600);
+
 
 	
 	/* Set up our GUI elements */
@@ -212,7 +275,44 @@ void Init()
 	vbox = gtk_vbox_new(FALSE,0);
 	
 	icon_view =   gtk_icon_view_new ();
-	gtk_container_add (GTK_CONTAINER (window),icon_view);
+	
+	g_signal_connect (G_OBJECT (icon_view), "activate_cursor_item",
+	   			G_CALLBACK (signal_iconview_activate_cursor_item), NULL);
+	   			
+	g_signal_connect (G_OBJECT (icon_view), "item_activated",
+	   			G_CALLBACK (signal_iconview_item_activated), NULL);
+	   			
+	g_signal_connect (G_OBJECT (icon_view), "move_cursor",
+	   			G_CALLBACK (signal_iconview_move_cursor), NULL);
+	   			
+	g_signal_connect (G_OBJECT (icon_view), "select_all",
+	   			G_CALLBACK (signal_iconview_select_all), NULL);
+
+	g_signal_connect (G_OBJECT (icon_view), "select_cursor_item",
+	   			G_CALLBACK (signal_iconview_select_cursor_item), NULL);
+	   				   			
+	g_signal_connect (G_OBJECT (icon_view), "selection_changed",
+	   			G_CALLBACK (signal_iconview_selection_changed), NULL);
+	   			
+	g_signal_connect (G_OBJECT (icon_view), "set_scroll_adjustments",
+   			G_CALLBACK (signal_iconview_set_scroll_adjustments), NULL);
+	g_signal_connect (G_OBJECT (icon_view), "toggle_cursor_item)",
+   			G_CALLBACK (signal_iconview_toggle_cursor_item), NULL);
+   			
+	g_signal_connect (G_OBJECT (icon_view), "unselect_all",
+   			G_CALLBACK (signal_iconview_unselect_all), NULL);
+   			
+ 	gtk_widget_add_events (icon_view, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);   			
+ 	
+	g_signal_connect (G_OBJECT (icon_view), "motion_notify_event",
+				G_CALLBACK (event_iconview_motion_notify), NULL);   			
+
+	GtkWidget * scrolled_window = gtk_scrolled_window_new(NULL,NULL);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
+	//gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(scrolled_window),icon_view);
+	gtk_container_add(GTK_CONTAINER(scrolled_window),icon_view);
+	
+	gtk_container_add (GTK_CONTAINER (window),scrolled_window);
 	
 	/* Show the application window */
 	
@@ -242,121 +342,18 @@ int Show()
 	
 }
 
-GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
-{
-	//printf("orientation is: %d\n",orientation);
-
-/*
-  1        2       3      4         5            6           7          8
-888888  888888      88  88      8888888888  88                  88  8888888888
-88          88      88  88      88  88      88  88          88  88      88  88
-8888      8888    8888  8888    88          8888888888  8888888888          88
-88          88      88  88
-88          88  888888  888888
-1 = no rotation
-2 = flip h
-3 = rotate 180
-4 = flip v
-5 = flip v, rotate 90
-6 = rotate 90
-7 = flip v, rotate 270
-8 = rotae 270 
-
-
-*/
-	//get rotaiton
-	
-	GdkPixbuf * modified = NULL;
-
-	switch (orientation)
-	{
-		case 1:
-			//1 = no rotation
-			break;
-		case 2:
-			//2 = flip h
-			modified = gdk_pixbuf_flip(pixbuf,TRUE);
-			break;
-		case 3:
-			//3 = rotate 180
-			modified = gdk_pixbuf_rotate_simple(pixbuf,(GdkPixbufRotation)180);
-			break;
-		case 4:
-			//4 = flip v
-			modified = gdk_pixbuf_flip(pixbuf,FALSE);
-			break;
-		case 5:
-			//5 = flip v, rotate 90
-			{
-				GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
-				modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_CLOCKWISE);
-				g_object_unref(tmp);
-			}
-			break;
-		case 6:
-			modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_CLOCKWISE);
-			break;
-		case 7:
-			//7 = flip v, rotate 270
-			{
-				GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
-				modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
-				g_object_unref(tmp);
-			}
-			break;
-		case 8:
-			//8 = rotae 270 
-			modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
-		default:
-			break;
-	}
-
-	return modified;
-}
-
 GdkPixbuf* GetFancyIcon(QuiverFile f)
 {
-	
+	//Timer t(false);
 	// bgcolor 
 	GtkStyle* style =   gtk_widget_get_style(icon_view);
 	GdkColor bgcolor = style->base[GTK_STATE_NORMAL];
 
-	/*
-	typedef struct {
-  guint32 pixel;
-  guint16 red;
-  guint16 green;
-  guint16 blue;
-} GdkColor;
-*/
-
-	//printf("colors: %d %d %d : %d \n",bgcolor.red/256,bgcolor.green/256,bgcolor.blue/256,bgcolor.pixel);
-	//printf("getting pixbuf\n");
 	GdkPixbuf *pixbuf = f.GetThumbnail();
-	//printf("got it\n");
 	if (NULL == pixbuf)
 		return NULL;
-	
-	//printf("not null\n");
-	GdkPixbuf *newpixbuf = GdkPixbufExifReorientate(pixbuf,f.GetExifOrientation());
-	if (NULL != newpixbuf)
-	{
-		//printf("reorientated\n");
-		g_object_unref(pixbuf);
-		pixbuf = newpixbuf;
-	}
-	
-	//printf("normal stuff\n");
-
-	int icon_width = 136;
-	int icon_height = 136;
-
-	int thumb_size = 128;
 
 	guchar *buffer;
-	
-	
-	ArtVpath *vec = NULL;
 	
 	int w,h,src_rowstride;
 	w = gdk_pixbuf_get_width(pixbuf);
@@ -375,14 +372,14 @@ GdkPixbuf* GetFancyIcon(QuiverFile f)
 		{
 			nh = thumb_size;
 			nw = (int)(thumb_size * (double)w / (double)h);
-
 		}
 		//printf("new size %d %d\n",nw,nh);
-		GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (pixbuf,
-                                             nw,
-                                             nh,
-                                             GDK_INTERP_BILINEAR);
-											 //GDK_INTERP_NEAREST);
+		GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
+							pixbuf,
+							nw,
+							nh,
+							GDK_INTERP_BILINEAR);
+							//GDK_INTERP_NEAREST);
 		g_object_unref(pixbuf);
 		//printf("resized\n");
 		pixbuf = newpixbuf;
@@ -391,158 +388,81 @@ GdkPixbuf* GetFancyIcon(QuiverFile f)
 	w = gdk_pixbuf_get_width(pixbuf);
 	h = gdk_pixbuf_get_height(pixbuf);
 	
-
-	
-	vec = art_new (ArtVpath, 10);
-	
-	art_u32 black = (0x00 << 24) | (0x00 <<16) | (0x00<<8) | (0xFF) ; /* RRGGBBAA */
-	//art_u32 white = (0xFF << 24) | (0xFF <<16) | (0xFF<<8) | (0xFF) ; /* RRGGBBAA */
-	
-	art_u32 shadow_color = (0x00 << 24) | (0x00 <<16) | (0x00<<8) | (0x15) ; /* RRGGBBAA */
-	
-	
-	
-	ArtVpath* circle_vec = art_vpath_new_circle(w/2, h/2, h/2 );
-	//ArtSVP *circle = art_svp_from_vpath(circle_vec);
-	ArtSVP *circle = art_svp_vpath_stroke (circle_vec,ART_PATH_STROKE_JOIN_MITER,ART_PATH_STROKE_CAP_BUTT,1,0,0);
-
-  
 	GdkPixbuf* draw_buf = gdk_pixbuf_new (
-								gdk_pixbuf_get_colorspace(pixbuf),
-											FALSE,//gdk_pixbuf_get_has_alpha(pixbuf),
-                                             gdk_pixbuf_get_bits_per_sample(pixbuf),
-                                             icon_width,
-                                             icon_height);
-
-	
-	buffer = gdk_pixbuf_get_pixels(draw_buf);
+							gdk_pixbuf_get_colorspace(pixbuf),
+							TRUE,//gdk_pixbuf_get_has_alpha(pixbuf),
+							gdk_pixbuf_get_bits_per_sample(pixbuf),
+							icon_width,
+							icon_height);
+                                             
+	gdk_pixbuf_fill (draw_buf,bgcolor.red<<24 | bgcolor.green<<16 | bgcolor.blue<<8 | 0xff);
 	
 	//calculate center
 	double top_x,top_y;
-	top_x = (int)(icon_width/2 - w/2) + .5;
-	top_y = (int)(icon_height/2 - h/2) + .5;
+	top_x = (int)(icon_width/2 - w/2) - .5;
+	top_y = (int)(icon_height/2 - h/2) - .5;
 
-	// must offset by .5 because libart tries to draw bits on either side of the point
-	vec[0].code = ART_MOVETO;
-	vec[0].x = top_x -1;
-	vec[0].y = top_y -1;
-	vec[1].code = ART_LINETO;
-	vec[1].x = top_x -1;
-	vec[1].y = top_y + h -1;
-	vec[2].code = ART_LINETO;
-	vec[2].x = top_x + w -1;
-	vec[2].y = top_y + h -1;
-	vec[3].code = ART_LINETO;
-	vec[3].x = top_x +w -1;
-	vec[3].y = top_y -1;
-	vec[4].code = ART_LINETO;
-	vec[4].x = top_x -1;
-	vec[4].y = top_y -1;
-	vec[5].code = ART_END;
-
-	ArtSVP *inner_path = art_svp_vpath_stroke (vec,ART_PATH_STROKE_JOIN_BEVEL,ART_PATH_STROKE_CAP_BUTT,3,0,1);
-	ArtSVP * outer_path = art_svp_vpath_stroke (vec,ART_PATH_STROKE_JOIN_BEVEL,ART_PATH_STROKE_CAP_BUTT,1,0,1);
-
-
-	vec[0].code = ART_MOVETO;
-	vec[0].x = top_x;
-	vec[0].y = top_y;
-	vec[1].code = ART_LINETO;
-	vec[1].x = top_x;
-	vec[1].y = top_y + h;
-	vec[2].code = ART_LINETO;
-	vec[2].x = top_x + w;
-	vec[2].y = top_y + h;
-	vec[3].code = ART_LINETO;
-	vec[3].x = top_x +w;
-	vec[3].y = top_y;
-	vec[4].code = ART_LINETO;
-	vec[4].x = top_x;
-	vec[4].y = top_y;
-	vec[5].code = ART_END;
+	buffer = gdk_pixbuf_get_pixels(draw_buf);
+	int rowstride = gdk_pixbuf_get_rowstride(draw_buf);
 	
-	int dst_rowstride = gdk_pixbuf_get_rowstride(draw_buf);
+	cairo_surface_t *surface = cairo_image_surface_create_for_data (
+							buffer,
+							CAIRO_FORMAT_ARGB32,
+							icon_width,icon_height,
+							rowstride);
 	
-  	//art_rgba_fill_run_with_alpha (buffer, 0xFF, 0xFF, 0xFF, 0x00, icon_width*icon_height);
-	art_rgb_fill_run (buffer, bgcolor.red/256,bgcolor.green/256,bgcolor.blue/256, icon_width*icon_height);
-	
-	for (int i = 8;i >= 1; i-=2)
+	cairo_t * cr = cairo_create(surface);
+
+	// set the color for the drop shadow
+	// for gdkpixbuf rgba data this is going to be bgra
+	cairo_set_source_rgba (cr, 0, 0, 0, .1);
+	cairo_set_line_join(cr,CAIRO_LINE_JOIN_ROUND);
+	for (int i = 8;i >=1; i-=2)
 	{
-		ArtSVP * shadow = art_svp_vpath_stroke (vec,ART_PATH_STROKE_JOIN_ROUND,ART_PATH_STROKE_CAP_BUTT,i,0,1);
-		
-		//gnome_print_art_rgba_svp_alpha (shadow, 0, 0, icon_width, icon_height, shadow_color, buffer, dst_rowstride, NULL);
-		art_rgb_svp_alpha (shadow, 0, 0, icon_width, icon_height, shadow_color, buffer, dst_rowstride, NULL);
-
-		art_free(shadow);
+		cairo_set_line_width(cr,i);
+		cairo_rectangle (cr, top_x+1, top_y+1, w, h);
+		cairo_stroke(cr);
 	}
-	
-	gdk_pixbuf_composite            (pixbuf,
-                                             draw_buf,
-                                             (int)top_x-1,
-                                             (int)top_y-1,
-                                             w,
-                                             h,
-                                             (int)top_x-1,
-                                             (int)top_y-1,
-                                             1,
-                                             1,
-                                             GDK_INTERP_NEAREST,
-                                             255);
-  //art_rgb_run_alpha (buffer, 0xFF, 0xFF, 0xFF, 0xFF, WIDTH*HEIGHT);
-	//gnome_print_art_rgba_svp_alpha (inner_path, 0, 0, icon_width, icon_height, white, buffer, dst_rowstride, NULL);
-	//gnome_print_art_rgba_svp_alpha (outer_path, 0, 0, icon_width, icon_height, black, buffer, dst_rowstride, NULL);
-	art_rgb_svp_alpha (outer_path, 0, 0, icon_width, icon_height, black, buffer, dst_rowstride, NULL);
-  //art_rgb_svp_alpha (circle, 0, 0, w, h, color, buffer, rowstride, NULL);
 
-	art_free (vec);
-	art_free (circle_vec);
-	art_free(inner_path);
-	art_free(outer_path);
-	art_free(circle);
+	cairo_rectangle (cr, top_x, top_y, w, h);
+
+	gdk_pixbuf_composite(pixbuf,
+							draw_buf,
+							(int)top_x,
+							(int)top_y,
+							w,
+							h,
+							(int)top_x,
+							(int)top_y,
+							1,
+							1,
+							GDK_INTERP_NEAREST,
+							255);
+
+	cairo_set_line_width(cr,1);
+	cairo_set_source_rgba (cr, 0, 0, 0, 1);
+
+	cairo_stroke(cr);	
+	
+	cairo_set_source_rgba (cr, 0, 0, 0, .15);
+	double dashes[] = {2.0,2.0};
+	
+	// set the offset to .5 so 1 pixel dashes don't look like a solid line
+	cairo_set_dash(cr,dashes,2,.5);
+	cairo_rectangle (cr, .5, .5, icon_width-1, icon_height -1);
+	cairo_stroke(cr);
+	
+	cairo_destroy(cr);
+	cairo_surface_destroy(surface);
 	
 	g_object_unref(pixbuf);
 	return draw_buf;
-
-/*
-  GdkPixbuf *pixbuf;
-
-  pixbuf = gdk_pixbuf_new_from_data (buffer,
-				     GDK_COLORSPACE_RGB, 
-				     FALSE, 8,
-				     WIDTH, HEIGHT,
-				     ROWSTRIDE,
-				     NULL, NULL);
-
-  pixbuf_save_to_file (pixbuf, filename);
- 
-  gdk_pixbuf_unref (pixbuf);
-  */
 }
 
 GdkPixbuf * GetStockIcon(QuiverFile f)
 {
 	
-	int icon_width = 136;
-	int icon_height = 136;
-
 	GError *error = NULL;
-
-/*
-	GError *error;
-	error = NULL;
-	
-	GtkSettings *settings = gtk_settings_get_default ();
-	gchar *default_backend = NULL;
-	g_object_get (settings, "gtk-file-chooser-backend", &default_backend, NULL);
-	GtkFileSystem *file_system = _gtk_file_system_create (default_backend);
-	GtkFilePath *path = gtk_file_system_uri_to_path (file_system,f.GetURI());
-
-	return gtk_file_system_render_icon   (	file_system,
-					    					path,
-					    					NULL, // widget?
-					    					140, // pixel size
-					    					&error);
-*/
 
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 	GnomeIconLookupResultFlags result;
@@ -569,7 +489,7 @@ GdkPixbuf * GetStockIcon(QuiverFile f)
 	
 	GdkPixbuf* draw_buf = gdk_pixbuf_new (
 								gdk_pixbuf_get_colorspace(pixbuf),
-											FALSE,//gdk_pixbuf_get_has_alpha(pixbuf),
+											TRUE,//gdk_pixbuf_get_has_alpha(pixbuf),
                                              gdk_pixbuf_get_bits_per_sample(pixbuf),
                                              icon_width,
                                              icon_height);
@@ -583,7 +503,7 @@ GdkPixbuf * GetStockIcon(QuiverFile f)
 	GtkStyle* style =   gtk_widget_get_style(icon_view);
 	GdkColor bgcolor = style->base[GTK_STATE_NORMAL];
 	
-	gdk_pixbuf_fill (draw_buf,bgcolor.red<<24 | bgcolor.green<<16 | bgcolor.blue<<8);
+	gdk_pixbuf_fill (draw_buf,bgcolor.red<<24 | bgcolor.green<<16 | bgcolor.blue<<8 | 0xff);
 
 	
 	gdk_pixbuf_composite            (pixbuf,
@@ -599,6 +519,27 @@ GdkPixbuf * GetStockIcon(QuiverFile f)
                                              GDK_INTERP_NEAREST,
                                              255);
     g_object_unref(pixbuf);
+
+	int rowstride = gdk_pixbuf_get_rowstride(draw_buf);
+	
+	cairo_surface_t *surface = cairo_image_surface_create_for_data (
+							gdk_pixbuf_get_pixels(draw_buf),
+							CAIRO_FORMAT_ARGB32,
+							icon_width,icon_height,
+							rowstride);
+	
+	cairo_t * cr = cairo_create(surface);
+
+	cairo_set_line_width(cr,1);
+	cairo_set_source_rgba (cr, 0, 0, 0, .15);
+	double dashes[] = {2.0,2.0};
+	
+	// set the offset to .5 so 1 pixel dashes don't look like a solid line
+	cairo_set_dash(cr,dashes,2,.5);
+	cairo_rectangle (cr, .5, .5, icon_width-1, icon_height -1);
+	cairo_stroke(cr);
+	cairo_destroy(cr);
+	cairo_surface_destroy(surface);
 	
 	gnome_vfs_file_info_unref(file_info);
 	return draw_buf;
@@ -652,9 +593,10 @@ void PopulateIconView(list<string> &files)
 	}
 	
 	gtk_icon_view_set_model (GTK_ICON_VIEW(icon_view), (GTK_TREE_MODEL (store)));
-	gtk_icon_view_set_text_column   (GTK_ICON_VIEW(icon_view),0);
+	//gtk_icon_view_set_text_column   (GTK_ICON_VIEW(icon_view),0);
 	gtk_icon_view_set_pixbuf_column (GTK_ICON_VIEW(icon_view),1);
 	gtk_icon_view_set_selection_mode (GTK_ICON_VIEW(icon_view),GTK_SELECTION_MULTIPLE);
+	//gtk_icon_view_set_item_width(GTK_ICON_VIEW(icon_view),50);
 }
 
 int main (int argc, char **argv)

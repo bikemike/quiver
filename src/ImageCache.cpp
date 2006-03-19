@@ -5,7 +5,7 @@
 using namespace std;
 
 
-ImageCache::ImageCache(int size)
+ImageCache::ImageCache(unsigned int size)
 {
 	m_iCacheSize = size;
 }
@@ -37,6 +37,40 @@ bool ImageCache::RemovePixbuf(std::string filename)
 void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb)
 {
 	AddPixbuf(filename,pb,CurrentTimeMillis());
+}
+
+unsigned int ImageCache::GetSize()
+{
+	return m_iCacheSize;
+}
+
+void ImageCache::SetSize(unsigned int size)
+{
+	// remove the oldest elements from the cache
+	map<string,CacheItem>::iterator oldest,itr;
+	while (size < m_mapImageCache.size())
+	{
+		for (itr = oldest = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
+		{
+			if (itr->second.time < oldest->second.time)
+			{
+				oldest = itr;
+			}
+		}
+		if (oldest != m_mapImageCache.end())
+		{
+			if  (1 < G_OBJECT(oldest->second.pPixbuf)->ref_count)
+			{
+				cout << "ERROR: MEMORY LEAK ON (" << G_OBJECT(oldest->second.pPixbuf)->ref_count << "): " << oldest->first << endl;
+			}
+			g_object_unref(oldest->second.pPixbuf);
+			m_mapImageCache.erase(oldest->first);
+		}
+	}
+	
+	m_iCacheSize = size;
+	//printf("cache size: %d\n",size);
+
 }
 
 void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
@@ -115,10 +149,10 @@ bool ImageCache::InCache(std::string filename)
 	return (m_mapImageCache.end() != itr);
 }
 
-GdkPixbuf * ImageCache::GetPixbuf(string filename)
+GdkPixbuf* ImageCache::GetPixbuf(string filename)
 {
 	//get an item from the cache and update the time on it
-	GdkPixbuf * pixbuf = NULL;
+	GdkPixbuf *pixbuf = NULL;
 	
 	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
 	if (m_mapImageCache.end() != itr)

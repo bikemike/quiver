@@ -5,13 +5,54 @@
 #include <libgnomevfs/gnome-vfs.h>
 #include "QuiverStockIcons.h"
 
-
+extern "C" {
+#define JPEG_INTERNALS
+#include <jpeglib.h>
+}
 using namespace std;
 
+// helper functions
 
+GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
+{
+	GList * action_groups = gtk_ui_manager_get_action_groups(ui);
+	GtkAction * action = NULL;
+	while (NULL != action_groups)
+	{
+		action = gtk_action_group_get_action (GTK_ACTION_GROUP(action_groups->data),action_name);
+		if (NULL != action)
+		{
+			break;
+		}                      
+		action_groups = g_list_next(action_groups);
+	}
+
+	return action;
+}
+
+
+/*
+typedef struct {
+  const gchar *name;
+  const gchar *stock_id;
+  const gchar *label;
+  const gchar *accelerator;
+  const gchar *tooltip;
+  gint   value; 
+} GtkRadioActionEntry;
+*/
+/*
+GtkRadioActionEntry Quiver::action_entries_radio[] = {
+
+};
+*/
 GtkToggleActionEntry Quiver::action_entries_toggle[] = {
-	{ "FullScreen", GTK_STOCK_FULLSCREEN, N_("_Full Screen"), "f", N_("Full Screen Mode"), G_CALLBACK(action_full_screen),FALSE},
-	{ "SlideShow",QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Slide Show"), G_CALLBACK(action_slide_show),FALSE},	
+	{ QUIVER_ACTION_FULLSCREEN, GTK_STOCK_FULLSCREEN, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(action_full_screen),FALSE},
+	{ QUIVER_ACTION_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(action_slide_show),FALSE},	
+	{ "ViewMenubar", GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(NULL),TRUE},
+	{ "ViewToolbarMain", GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(NULL),TRUE},
+	{ "ViewStatusbar", GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(NULL),TRUE},
+	
 };
 
 GtkActionEntry Quiver::action_entries[] = {
@@ -27,10 +68,13 @@ GtkActionEntry Quiver::action_entries[] = {
 	{ "MenuWindow", NULL, N_("_Window") },
 	{ "MenuHelp", NULL, N_("_Help") },
 
+	{ "UIModeBrowser", GTK_STOCK_DIRECTORY, "_Browser", "", "Browse Images", G_CALLBACK(action_ui_mode_change)},
+	{ "UIModeViewer", QUIVER_STOCK_ICON, "_Viewer", "", "View Image", G_CALLBACK(action_ui_mode_change)},
 
-	{ "OpenFile", GTK_STOCK_OPEN, "_Open", "<Control>O", "Open an image", G_CALLBACK(NULL)},
-	{ "OpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>O", "Open a folder", G_CALLBACK( NULL )},
-	{ "OpenLocation", GTK_STOCK_OPEN, "Open _Location", "<Control>L", "Open a location", G_CALLBACK( NULL )},
+	{ "FileOpen", GTK_STOCK_OPEN, "_Open", "<Control>O", "Open an image", G_CALLBACK(NULL)},
+	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>O", "Open a folder", G_CALLBACK( NULL )},
+	{ "FileOpenLocation", GTK_STOCK_OPEN, "Open _Location", "<Control>L", "Open a location", G_CALLBACK( NULL )},
+	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>S", "Save the Image", G_CALLBACK(action_file_save)},
 	{ "Quit", GTK_STOCK_QUIT, "_Quit", "q", "Quit quiver", G_CALLBACK( action_quit )},
 
 	{ "Cut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(NULL)},
@@ -60,7 +104,7 @@ GtkActionEntry Quiver::action_entries[] = {
 	{ "BookmarksAdd", GTK_STOCK_ADD, "_Add Bookmark", "", "Add a bookmark", G_CALLBACK(NULL)},
 	{ "BookmarksEdit", GTK_STOCK_EDIT, "_Edit Bookmarks", "", "Edit the bookmarks", G_CALLBACK(NULL)},
 
-	{ "About", GTK_STOCK_ABOUT, "_About", "<Control>A", "About quiver", G_CALLBACK( action_about )}
+	{ "About", GTK_STOCK_ABOUT, "_About", "<Control>A", "About quiver", G_CALLBACK( action_about )},
 
 };
 
@@ -295,6 +339,7 @@ gboolean Quiver::EventScroll( GtkWidget *widget, GdkEventScroll *event, gpointer
 
 gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
 {
+	gboolean bFullscreen = FALSE;
 	//cout << "window state event" << endl;
 	m_WindowState = event->new_window_state;
 	//cout << event->new_window_state << " FS: " << GDK_WINDOW_STATE_FULLSCREEN <<endl;
@@ -307,6 +352,7 @@ gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event
 		//m_Viewer.HideBorder();
 		m_bTimeoutEventMotionNotifyRunning = true;
 		g_timeout_add(1500,timeout_event_motion_notify,this);
+		
 		
 		//cout << "window fullscreen state event" << endl;
 //		gtk_window_set_decorated(GTK_WINDOW (m_pQuiverWindow),FALSE);
@@ -325,6 +371,7 @@ gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event
 		//gtk_window_set_screen (GTK_WINDOW (m_pQuiverWindow), gtk_widget_get_screen (m_pQuiverWindow));
 		//gtk_window_present (GTK_WINDOW (m_pQuiverWindow));		
 		 */
+		 bFullscreen = TRUE;
 	}
 	else
 	{
@@ -335,6 +382,14 @@ gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event
 		
 		gdk_window_set_cursor (m_pQuiverWindow->window, NULL);
 		//m_Viewer.ShowBorder();
+	}
+	
+	GtkAction * action = GetAction(m_pUIManager,QUIVER_ACTION_FULLSCREEN);
+	if (NULL != action)
+	{
+		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bFullscreen);
+		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
 	}
 /*
 	typedef struct {
@@ -579,16 +634,17 @@ gboolean Quiver::quiver_event_callback( GtkWidget *widget, GdkEvent *event, gpoi
  * constructor
  * 
  */
-Quiver::Quiver(list<string> images)
+Quiver::Quiver(list<string> &images)
 {
-
-	m_pImageList = new ImageList();
+	m_listImages = images;
 	Init();
-	SetImageList(images);
 }
 
 void Quiver::Init()
 {
+	m_pUIManager = NULL;
+	m_pImageList = NULL;
+	
 	QuiverStockIcons::Load();
 	
 	m_bTimeoutEventMotionNotifyRunning = false;
@@ -624,15 +680,16 @@ void Quiver::Init()
 	GError *tmp_error;
 	tmp_error = NULL;
 	
-	GtkUIManager* ui = gtk_ui_manager_new();
-	gtk_ui_manager_set_add_tearoffs (ui,TRUE);
+	m_pUIManager = gtk_ui_manager_new();
+	gtk_ui_manager_set_add_tearoffs (m_pUIManager,TRUE);
 	/*
-	gtk_ui_manager_add_ui_from_file (ui,
+	gtk_ui_manager_add_ui_from_file (m_pUIManager,
                                              "/home/mike/.quiver/ui.xml",
                                               &tmp_error);
 	*/
-	gtk_ui_manager_add_ui_from_string(ui,quiver_menubar,strlen(quiver_menubar),&tmp_error);
-	gtk_ui_manager_add_ui_from_string(ui,quiver_toolbar,strlen(quiver_toolbar),&tmp_error);
+	gtk_ui_manager_add_ui_from_string(m_pUIManager,quiver_menubar,strlen(quiver_menubar),&tmp_error);
+	gtk_ui_manager_add_ui_from_string(m_pUIManager,quiver_toolbar_main,strlen(quiver_toolbar_main),&tmp_error);
+	gtk_ui_manager_add_ui_from_string(m_pUIManager,quiver_toolbar_browser,strlen(quiver_toolbar_browser),&tmp_error);	
 /*                                             
 typedef struct {
   const gchar     *name;
@@ -684,24 +741,32 @@ typedef struct {
 										action_entries_toggle, 
 										G_N_ELEMENTS (action_entries_toggle),
 										this);
-	
-	gtk_ui_manager_insert_action_group (ui,actions,0);
+	/* FIXME: i think there's a bug with the data when passed in using
+	 * g_signal_connect_data in the following function.
+	gtk_action_group_add_radio_actions(actions,
+										action_entries_radio, 
+										G_N_ELEMENTS (action_entries_radio),
+										1,
+										NULL,
+										NULL);										
+	*/
+	gtk_ui_manager_insert_action_group (m_pUIManager,actions,0);
                                              
                                              
-	g_signal_connect (ui, "connect_proxy",
+	g_signal_connect (m_pUIManager, "connect_proxy",
 		G_CALLBACK (signal_connect_proxy), this);
-	g_signal_connect (ui, "disconnect_proxy",
+	g_signal_connect (m_pUIManager, "disconnect_proxy",
 		G_CALLBACK (signal_disconnect_proxy), this);
                                              
                                              
                                              
 	gtk_window_add_accel_group (GTK_WINDOW(m_pQuiverWindow),
-								gtk_ui_manager_get_accel_group(ui));
+								gtk_ui_manager_get_accel_group(m_pUIManager));
 	
 	
 	
-	m_pMenubar = gtk_ui_manager_get_widget (ui,"/ui/MenubarMain");
-	m_pToolbar = gtk_ui_manager_get_widget (ui,"/ui/ToolbarViewer");
+	m_pMenubar = gtk_ui_manager_get_widget (m_pUIManager,"/ui/MenubarMain");
+	m_pToolbar = gtk_ui_manager_get_widget (m_pUIManager,"/ui/ToolbarMain");
 
 	//GTK_WIDGET_UNSET_FLAGS(toolbar,GTK_CAN_FOCUS);
 
@@ -804,6 +869,8 @@ typedef struct {
 	m_ImageLoader.AddPixbufLoaderObserver(&m_Viewer);
 	m_ImageLoader.AddPixbufLoaderObserver(this);
 	
+	g_idle_add(idle_quiver_init,this);
+	
 }
 
 /**
@@ -825,7 +892,10 @@ int Quiver::Show(QuiverAppMode mode )
 }
 Quiver::~Quiver()
 {
-	delete m_pImageList;
+	if (NULL != m_pImageList)
+	{
+		delete m_pImageList;
+	}
 	//destructor
 }
 
@@ -1048,6 +1118,22 @@ gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
 	return retval;
 }
 
+gboolean Quiver::idle_quiver_init (gpointer data)
+{
+	return ((Quiver*)data)->IdleQuiverInit(data);
+}
+gboolean Quiver::IdleQuiverInit(gpointer data)
+{
+	// put process intenstive startup code in here 
+	// (loading image list, setting first image)
+
+	printf("initialized\n");
+	m_pImageList = new ImageList();
+	SetImageList(m_listImages);
+
+	return FALSE; // return false so it is never called again
+}
+
 
 gboolean Quiver::timeout_advance_slideshow (gpointer data)
 {
@@ -1062,11 +1148,12 @@ gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data)
 	m_iTimeoutSlideshowID = 0;
 	// advance slideshow
 
-	SlideshowAddTimeout();
+	//SlideshowAddTimeout();
 	
 	gdk_threads_enter();
 	ActionImageNext(NULL,NULL);
 	gdk_threads_leave();
+
 	if (!m_pImageList->HasNext())
 	{
 		gdk_threads_enter();
@@ -1079,10 +1166,8 @@ gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data)
 
 void Quiver::SlideshowStart()
 {
-	printf("adding timeout\n");
 	m_bSlideshowRunning = true;
 	SlideshowAddTimeout();
-	
 }
 
 void Quiver::SlideshowAddTimeout()
@@ -1097,10 +1182,22 @@ void Quiver::SlideshowAddTimeout()
 }
 void Quiver::SlideshowStop()
 {
-	g_source_remove (m_iTimeoutSlideshowID);
+	if (0 != m_iTimeoutSlideshowID)
+	{
+		g_source_remove (m_iTimeoutSlideshowID);
+	}
 	// reset timout id
 	m_iTimeoutSlideshowID = 0;
 	m_bSlideshowRunning = false;
+	// re-enable the slideshow button if it was disabled
+
+	GtkAction * action = GetAction(m_pUIManager,QUIVER_ACTION_SLIDESHOW);
+	if (NULL != action)
+	{
+		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),FALSE);
+		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+	}
 }
 
 bool Quiver::SlideshowRunning()
@@ -1216,11 +1313,14 @@ void Quiver::SignalItemDeselect (GtkItem *proxy,gpointer data)
 	}
 }
 
-
 //==============================================================================
 //== action c callbacks ========================================================
 //==============================================================================
 
+void Quiver::action_file_save(GtkAction *action,gpointer data)
+{
+	return ((Quiver*)data)->ActionFileSave(action,data);
+}
 
 void Quiver::action_image_next(GtkAction *action,gpointer data)
 {
@@ -1265,10 +1365,294 @@ void Quiver::action_about(GtkAction *action,gpointer data)
 	return ((Quiver*)data)->ActionAbout(action,data);
 }
 
+void Quiver::action_ui_mode_change(GtkAction *action,gpointer data)
+{
+	return ((Quiver*)data)->ActionUIModeChange(action,data);
+}
+
+
+
 //==============================================================================
 //== action c++ callbacks ======================================================
 //==============================================================================
+typedef enum {
+	JCOPYOPT_NONE,		/* copy no optional markers */
+	JCOPYOPT_COMMENTS,	/* copy only comment (COM) markers */
+	JCOPYOPT_ALL		/* copy all optional markers */
+} JCOPY_OPTION;
 
+/* Copy markers saved in the given source object to the destination object.
+ * This should be called just after jpeg_start_compress() or
+ * jpeg_write_coefficients().
+ * Note that those routines will have written the SOI, and also the
+ * JFIF APP0 or Adobe APP14 markers if selected.
+ */
+
+GLOBAL(void)
+jcopy_markers_execute (j_decompress_ptr srcinfo, j_compress_ptr dstinfo,
+		       JCOPY_OPTION option)
+{
+  jpeg_saved_marker_ptr marker;
+
+  /* In the current implementation, we don't actually need to examine the
+   * option flag here; we just copy everything that got saved.
+   * But to avoid confusion, we do not output JFIF and Adobe APP14 markers
+   * if the encoder library already wrote one.
+   */
+  for (marker = srcinfo->marker_list; marker != NULL; marker = marker->next) {
+    if (dstinfo->write_JFIF_header &&
+	marker->marker == JPEG_APP0 &&
+	marker->data_length >= 5 &&
+	GETJOCTET(marker->data[0]) == 0x4A &&
+	GETJOCTET(marker->data[1]) == 0x46 &&
+	GETJOCTET(marker->data[2]) == 0x49 &&
+	GETJOCTET(marker->data[3]) == 0x46 &&
+	GETJOCTET(marker->data[4]) == 0)
+      continue;			/* reject duplicate JFIF */
+    if (dstinfo->write_Adobe_marker &&
+	marker->marker == JPEG_APP0+14 &&
+	marker->data_length >= 5 &&
+	GETJOCTET(marker->data[0]) == 0x41 &&
+	GETJOCTET(marker->data[1]) == 0x64 &&
+	GETJOCTET(marker->data[2]) == 0x6F &&
+	GETJOCTET(marker->data[3]) == 0x62 &&
+	GETJOCTET(marker->data[4]) == 0x65)
+      continue;			/* reject duplicate Adobe */
+#ifdef NEED_FAR_POINTERS
+    /* We could use jpeg_write_marker if the data weren't FAR... */
+    {
+      unsigned int i;
+      jpeg_write_m_header(dstinfo, marker->marker, marker->data_length);
+      for (i = 0; i < marker->data_length; i++)
+	jpeg_write_m_byte(dstinfo, marker->data[i]);
+    }
+#else
+    jpeg_write_marker(dstinfo, marker->marker,
+		      marker->data, marker->data_length);
+#endif
+  }
+}
+
+#ifndef SAVE_MARKERS_SUPPORTED
+#error please add a #define JPEG_INTERNALS above jpeglib.h include
+#endif
+GLOBAL(void)
+jcopy_markers_setup (j_decompress_ptr srcinfo, JCOPY_OPTION option)
+{
+#ifdef SAVE_MARKERS_SUPPORTED
+  int m;
+
+  /* Save comments except under NONE option */
+  if (option != JCOPYOPT_NONE) {
+    jpeg_save_markers(srcinfo, JPEG_COM, 0xFFFF);
+  }
+  /* Save all types of APPn markers iff ALL option */
+  if (option == JCOPYOPT_ALL) {
+    for (m = 0; m < 16; m++)
+      jpeg_save_markers(srcinfo, JPEG_APP0 + m, 0xFFFF);
+  }
+#endif /* SAVE_MARKERS_SUPPORTED */
+}
+
+
+static int save_jpeg_file(string filename,ExifData *exifData)
+{
+/*
+int jpeg_transform_files(char *infile, char *outfile,
+			 JXFORM_CODE transform,
+			 unsigned char *comment,
+			 char *thumbnail, int tsize,
+			 unsigned int flags)
+{
+*/
+	int rc;
+	FILE *in;
+	FILE *out;
+
+	string strOriginalFile = filename + "_original.jpg";
+	const char *infile  = strOriginalFile.c_str();
+	const char *outfile = filename.c_str();
+	rename(filename.c_str(),strOriginalFile.c_str());
+
+	/* open infile */
+	in = fopen(infile,"r");
+	if (NULL == in) {
+	//fprintf(stderr,"open %s: %s\n",infile,strerror(errno));
+	return -1;
+	}
+
+	/* open outfile */
+	out = fopen(outfile,"w");
+	if (NULL == out) {
+	//fprintf(stderr,"open %s: %s\n",outfile,strerror(errno));
+	fclose(in);
+	return -1;
+	}
+
+	/* go! */
+
+	//rc = jpeg_transform_fp(in,out,transform,comment,thumbnail,tsize,flags);
+	//
+
+	struct jpeg_decompress_struct src;
+	struct jpeg_compress_struct   dst;
+
+	struct jpeg_error_mgr jdsterr;
+	//struct longjmp_error_mgr jsrcerr;
+
+	src.err = jpeg_std_error(&jdsterr);
+	/* setup src */
+	/*
+	jsrcerr.jpeg.error_exit = longjmp_error_exit;
+	if (setjmp(jsrcerr.setjmp_buffer))
+		printf("ouch\n");
+	*/
+
+
+	jpeg_create_decompress(&src);
+	jpeg_stdio_src(&src, in);
+
+
+
+	/* setup dst */
+	dst.err = jpeg_std_error(&jdsterr);
+	jpeg_create_compress(&dst);
+	jpeg_stdio_dest(&dst, out);
+
+	/* transform image */
+
+	jvirt_barray_ptr * src_coef_arrays;
+	jvirt_barray_ptr * dst_coef_arrays;
+	//jpeg_transform_info transformoption;
+
+
+	jcopy_markers_setup(&src, JCOPYOPT_ALL);
+	if (JPEG_HEADER_OK != jpeg_read_header(&src, TRUE))
+	return -1;
+
+	/* do exif updating */
+	jpeg_saved_marker_ptr mark;
+	//ExifData *ed = NULL;
+	unsigned char *data;
+	unsigned int  size;
+
+	for (mark = src.marker_list; NULL != mark; mark = mark->next) {
+		printf("searching...\n");
+		if (mark->marker == JPEG_APP0 +1)
+		{
+			printf("found exif marker!\n");
+			break;
+		}
+		continue;
+	}
+
+
+	if (NULL == mark) {
+		mark = (jpeg_marker_struct*)src.mem->alloc_large((j_common_ptr)&src,JPOOL_IMAGE,sizeof(*mark));
+		memset(mark,0,sizeof(*mark));
+		mark->marker = JPEG_APP0 +1;
+		mark->next   = src.marker_list->next;
+		src.marker_list->next = mark;
+	}
+
+	/* build new exif data block */
+	exif_data_save_data(exifData,&data,&size);
+	//exif_data_unref(ed);
+
+	/* update jpeg APP1 (EXIF) marker */
+	mark->data = (JOCTET*)src.mem->alloc_large((j_common_ptr)&src,JPOOL_IMAGE,size);
+	mark->original_length = size;
+	mark->data_length = size;
+	memcpy(mark->data,data,size);
+	free(data);
+
+	/* Any space needed by a transform option must be requested before
+	 * jpeg_read_coefficients so that memory allocation will be done right.
+	 */
+	//jtransform_request_workspace(&src, &transformoption);
+	src_coef_arrays = jpeg_read_coefficients(&src);
+	jpeg_copy_critical_parameters(&src, &dst);
+
+	/*dst_coef_arrays = jtransform_adjust_parameters
+	(&src, &dst, src_coef_arrays, &transformoption);
+	*/
+	/* Start compressor (note no image data is actually written here) */
+	jpeg_write_coefficients(&dst, src_coef_arrays);
+
+	/* Copy to the output file any extra markers that we want to preserve */
+	jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL);
+
+	/* Execute image transformation, if any */
+	/*
+	jtransform_execute_transformation(src, dst,
+					  src_coef_arrays,
+					  &transformoption);
+
+	/* Finish compression and release memory */
+	jpeg_finish_compress(&dst);
+	jpeg_finish_decompress(&src);
+
+
+	/* cleanup */
+	jpeg_destroy_decompress(&src);
+	jpeg_destroy_compress(&dst);
+
+	fclose(in);
+	fclose(out);
+
+	return rc;
+
+
+}
+
+static void update_exif_orientation(ExifData *exifData,int value)
+{
+	ExifEntry *e;
+
+	/* If the entry doesn't exist, create it. */
+	e = exif_content_get_entry (exifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
+	if (!e) 
+	{
+		e = exif_entry_new ();
+		exif_content_add_entry (exifData->ifd[EXIF_IFD_0], e);
+		exif_entry_initialize (e, EXIF_TAG_ORIENTATION);
+	}
+
+	/* Now set the value and save the data. */
+	exif_set_short (e->data , exif_data_get_byte_order (exifData), value);
+}
+
+
+void Quiver::ActionFileSave(GtkAction *action,gpointer data)
+{
+	printf("save the file! aww yeah baby\n");
+	QuiverFile *quiverFile;
+	quiverFile = m_pImageList->GetCurrent();
+	int old_orientation, new_orientation;
+
+	old_orientation = quiverFile->GetExifOrientation();
+	new_orientation = m_Viewer.GetCurrentOrientation();
+	
+	ExifData *exif_data = quiverFile->GetExifData();
+	if (exif_data && old_orientation != new_orientation)
+	{
+		// hmm...must have a suitable file
+		printf("we certainly should save the file\n");
+		update_exif_orientation(exif_data,new_orientation);
+		save_jpeg_file(quiverFile->GetFilePath(),exif_data);
+	}
+}
+
+void Quiver::ActionUIModeChange(GtkAction *action,gpointer data)
+{
+	printf("%s\n",gtk_action_get_name(action));
+	GError *tmp_error;
+	tmp_error = NULL;
+	gtk_ui_manager_add_ui_from_string(m_pUIManager,
+						quiver_toolbar_viewer,
+						strlen(quiver_toolbar_viewer),
+						&tmp_error);
+}
 
 void Quiver::ActionAbout(GtkAction *action,gpointer data)
 {
@@ -1380,7 +1764,6 @@ void Quiver::ActionFullScreen(GtkAction *action,gpointer data)
 		gtk_window_unfullscreen(GTK_WINDOW(m_pQuiverWindow));
 		// FIXME: create a ShowCursor method
 		// and a HideCursor method
-
 	}
 	else
 	{

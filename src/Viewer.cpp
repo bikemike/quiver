@@ -4,6 +4,8 @@
 //#include "ath.h"
 #include "icons/nav_button.xpm"
 
+#include "QuiverUtils.h"
+
 
 using namespace std;
 
@@ -21,10 +23,10 @@ static int flip_v[] = {0,4,3,2,1,6,5,8,7};
 
 static int orientation_matrix[4][9] = 
 		{ 
-			{0,8,7,6,5,2,1,4,3}, //cw
-			{0,6,5,8,7,4,3,2,1}, //ccw
-			{0,2,1,4,3,8,7,6,5}, //flip h
-			{0,4,3,2,1,6,5,8,7}, //flip v
+			{0,6,7,8,5,2,3,4,1}, //cw rotation
+			{0,8,5,6,7,4,1,2,3}, //ccw rotation
+			{0,2,1,4,3,6,5,8,7}, //flip h
+			{0,4,3,2,1,8,7,6,5}, //flip v
 		};
 
 
@@ -1153,6 +1155,11 @@ void Viewer::SetPixbuf(GdkPixbuf * pixbuf)
 	
 }
 
+int Viewer::GetCurrentOrientation()
+{
+	return m_iCurrentOrientation;	
+}
+
 void Viewer::UpdatePixbuf(GdkPixbuf * pixbuf)
 {
 
@@ -1282,9 +1289,8 @@ void Viewer::Rotate(bool right)
 	}
 	if (NULL != pixbuf_rotated)
 	{
-		cout << "old: " << m_iCurrentOrientation << endl;
+		cout << m_iCurrentOrientation << "->" << new_orientation << endl;
 		m_iCurrentOrientation = new_orientation;
-		cout << "new: " << m_iCurrentOrientation << endl;
 		UpdatePixbuf(pixbuf_rotated);
 		g_object_unref(pixbuf_rotated);
 	}
@@ -1330,83 +1336,11 @@ void Viewer::Flip(bool horizontal)
 	
 	if (NULL != pixbuf_flipped)
 	{
+		cout << m_iCurrentOrientation << "->" << new_orientation << endl;
 		m_iCurrentOrientation = new_orientation;
 		UpdatePixbuf(pixbuf_flipped);
 		g_object_unref(pixbuf_flipped);
 	}
 	
-}
-
-// FIXME: we shouldnt have GdkPixbufExifReorientate in the viewer
-// it should be in a utility class
-GdkPixbuf * Viewer::GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
-{
-	//printf("orientation is: %d\n",orientation);
-
-/*
-  1        2       3      4         5            6           7          8
-888888  888888      88  88      8888888888  88                  88  8888888888
-88          88      88  88      88  88      88  88          88  88      88  88
-8888      8888    8888  8888    88          8888888888  8888888888          88
-88          88      88  88
-88          88  888888  888888
-1 = no rotation
-2 = flip h
-3 = rotate 180
-4 = flip v
-5 = flip v, rotate 90
-6 = rotate 90
-7 = flip v, rotate 270
-8 = rotae 270 
-
-
-*/
-	//get rotaiton
-	
-	GdkPixbuf * modified = NULL;
-
-	switch (orientation)
-	{
-		case 1:
-			//1 = no rotation
-			break;
-		case 2:
-			//2 = flip h
-			modified = gdk_pixbuf_flip(pixbuf,TRUE);
-			break;
-		case 3:
-			//3 = rotate 180
-			modified = gdk_pixbuf_rotate_simple(pixbuf,(GdkPixbufRotation)180);
-			break;
-		case 4:
-			//4 = flip v
-			modified = gdk_pixbuf_flip(pixbuf,FALSE);
-			break;
-		case 5:
-			//5 = flip v, rotate 90
-			{
-				GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
-				modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_CLOCKWISE);
-				g_object_unref(tmp);
-			}
-			break;
-		case 6:
-			modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_CLOCKWISE);
-			break;
-		case 7:
-			//7 = flip v, rotate 270
-			{
-				GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
-				modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
-				g_object_unref(tmp);
-			}
-			break;
-		case 8:
-			//8 = rotae 270 
-			modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
-		default:
-			break;
-	}
-	return modified;
 }
 
