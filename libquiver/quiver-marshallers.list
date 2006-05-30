@@ -1,0 +1,2 @@
+# these marshallers will be gejerated with glib-genmarshal (see makefile)
+VOID:OBJECT,OBJECT
