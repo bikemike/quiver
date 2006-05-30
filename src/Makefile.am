@@ -7,26 +7,35 @@ AM_CPPFLAGS = \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
 	$(PACKAGE_CFLAGS)\
 	-Wall 
+##-I$(top_srcdir)/libquiver \
 
 bin_PROGRAMS = quiver
 
 quiver_SOURCES = \
 	quiver-i18n.h \
 	QuiverUI.h \
+	ExifView.h \
+	ExifView.cpp \
 	ImageCache.h \
 	ImageCache.cpp \
 	ImageList.h \
 	ImageList.cpp \
+	ImageListEventSource.h \
+	ImageListEventSource.cpp \
+	IImageListEventHandler.h \
 	ImageLoader.h \
 	ImageLoader.cpp \
 	QuiverFile.h \
 	QuiverFile.cpp \
 	NavigationControl.h \
 	NavigationControl.cpp \
+	IPixbufLoaderObserver.h \
 	PixbufLoaderObserver.h \
 	PixbufLoaderObserver.cpp \
 	Timer.h \
 	Timer.cpp \
+	Browser.h \
+	Browser.cpp \
 	Viewer.h \
 	Viewer.cpp \
 	Statusbar.h \
@@ -36,11 +45,22 @@ quiver_SOURCES = \
 	QuiverStockIcons.h \
 	QuiverStockIcons.cpp \
 	Quiver.h \
-	Quiver.cpp
+	Quiver.cpp \
+	IEvent.h \
+	EventBase.h \
+	BrowserEvent.h \
+	IEventSource.h \
+	IEventHandler.h \
+	IBrowserEventHandler.h \
+	AbstractEventSource.h \
+	AbstractEventSource.cpp \
+	BrowserEventSource.h \
+	BrowserEventSource.cpp 
+
 
 quiver_LDFLAGS = 
 
-quiver_LDADD = $(PACKAGE_LIBS) -ljpeg
+quiver_LDADD = $(PACKAGE_LIBS) -ljpeg $(top_srcdir)/libquiver/libquiver.la /usr/lib/libboost_signals.a 
 
 
 TESTS = test_image_list test_quiver_file test_icon_view

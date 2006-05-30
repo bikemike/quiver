@@ -5,6 +5,8 @@
 #include <libgnomevfs/gnome-vfs.h>
 #include "QuiverStockIcons.h"
 
+
+
 extern "C" {
 #define JPEG_INTERNALS
 #include <jpeglib.h>
@@ -46,13 +48,30 @@ GtkRadioActionEntry Quiver::action_entries_radio[] = {
 
 };
 */
+static void action_view_properties(GtkAction *action,gpointer data)
+{
+	((Quiver*)data)->ActionViewProperties(action,data);
+}
+
+void Quiver::ActionViewProperties(GtkAction *action,gpointer data)
+{
+	if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
+	{
+		gtk_widget_show(m_pNBProperties);
+	}
+	else
+	{
+		gtk_widget_hide(m_pNBProperties);
+	}
+	printf("hi!\n");
+}
 GtkToggleActionEntry Quiver::action_entries_toggle[] = {
 	{ QUIVER_ACTION_FULLSCREEN, GTK_STOCK_FULLSCREEN, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(action_full_screen),FALSE},
 	{ QUIVER_ACTION_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(action_slide_show),FALSE},	
 	{ "ViewMenubar", GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(NULL),TRUE},
 	{ "ViewToolbarMain", GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(NULL),TRUE},
 	{ "ViewStatusbar", GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(NULL),TRUE},
-	
+	{ "ViewProperties", GTK_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(action_view_properties),TRUE},
 };
 
 GtkActionEntry Quiver::action_entries[] = {
@@ -84,8 +103,8 @@ GtkActionEntry Quiver::action_entries[] = {
 	{ "Preferences", GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(NULL)},
 	
 
-	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "Z", "Fit to Screen", G_CALLBACK(NULL)},
-	{ "Zoom100", GTK_STOCK_ZOOM_100, "Zoom _100%", "Z", "Full Size", G_CALLBACK(NULL)},
+	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "", "Fit to Screen", G_CALLBACK(NULL)},
+	{ "Zoom100", GTK_STOCK_ZOOM_100, "Zoom _100%", "", "Full Size", G_CALLBACK(NULL)},
 	{ "ZoomIn", GTK_STOCK_ZOOM_IN,"Zoom _In", "", "Zoom In", G_CALLBACK(NULL)},
 	{ "ZoomOut", GTK_STOCK_ZOOM_OUT,"Zoom _Out", "", "Zoom Out", G_CALLBACK(NULL)},
 
@@ -104,7 +123,7 @@ GtkActionEntry Quiver::action_entries[] = {
 	{ "BookmarksAdd", GTK_STOCK_ADD, "_Add Bookmark", "", "Add a bookmark", G_CALLBACK(NULL)},
 	{ "BookmarksEdit", GTK_STOCK_EDIT, "_Edit Bookmarks", "", "Edit the bookmarks", G_CALLBACK(NULL)},
 
-	{ "About", GTK_STOCK_ABOUT, "_About", "<Control>A", "About quiver", G_CALLBACK( action_about )},
+	{ "About", GTK_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( action_about )},
 
 };
 
@@ -163,14 +182,14 @@ void Quiver::SignalDragDataReceived (GtkWidget *widget,GdkDragContext *drag_cont
 			if (GDK_ACTION_MOVE & drag_context->suggested_action)
 			{
 				// if move, we will add to the list
-				m_pImageList->AddImageList(&file_list);
+				m_ImageList.Add(&file_list);
 				CurrentImage();			
 			}
 			else
 			{
 				//create a new list
 				//cout << "suggested action : GDK_ACTION_COPY! " << endl;
-				m_pImageList->SetImageList(&file_list);
+				m_ImageList.SetImageList(&file_list);
 				CurrentImage();
 			}
 		}
@@ -205,7 +224,7 @@ void  Quiver::SignalDragBegin (GtkWidget *widget,GdkDragContext *drag_context,gp
 	
 	// TODO
 	// set icon
-	GdkPixbuf *thumb = m_pImageList->GetCurrent()->GetThumbnail();
+	GdkPixbuf *thumb = m_ImageList.GetCurrent().GetThumbnail();
 
 	if (NULL != thumb)
 	{
@@ -231,23 +250,23 @@ void Quiver::SignalDragDataGet (GtkWidget *widget, GdkDragContext *context,
 	if (info == QUIVER_TARGET_STRING)
     {
 		g_print ("drop the image uri as text/plain\n");
-		if (m_pImageList->GetSize())
+		if (m_ImageList.GetSize())
 		{
     		gtk_selection_data_set (selection_data,
 			    selection_data->target,
-			    8, (const guchar*)m_pImageList->GetCurrent()->GetURI(),strlen(m_pImageList->GetCurrent()->GetURI()));
+			    8, (const guchar*)m_ImageList.GetCurrent().GetURI(),strlen(m_ImageList.GetCurrent().GetURI()));
 		}
 	}
 	else if (info == QUIVER_TARGET_URI)
 	{
 		g_print ("drop the image uri as text/uri\n");
-		if (m_pImageList->GetSize())
+		if (m_ImageList.GetSize())
 		{
 			//selection data set
 			//context->suggested_action = GDK_ACTION_LINK;
     		gtk_selection_data_set (selection_data,
 			    selection_data->target,
-			    8, (const guchar*)m_pImageList->GetCurrent()->GetURI(),strlen(m_pImageList->GetCurrent()->GetURI()));
+			    8, (const guchar*)m_ImageList.GetCurrent().GetURI(),strlen(m_ImageList.GetCurrent().GetURI()));
 		}
 	}
   	else
@@ -282,42 +301,30 @@ void Quiver::SetWindowTitle(string s)
 void Quiver::ImageChanged()
 {
 	stringstream ss;
-	QuiverFile *f = m_pImageList->GetCurrent();
-	ss << " (" << m_pImageList->GetCurrentIndex() << " of " << m_pImageList->GetSize() << ")";
-	string s = f->GetFileInfo()->name;
-	SetWindowTitle( f->GetFilePath() );
-	m_Statusbar.SetPosition(m_pImageList->GetCurrentIndex(),m_pImageList->GetSize());
+	QuiverFile f = m_ImageList.GetCurrent();
+	ss << " (" << m_ImageList.GetCurrentIndex()+1 << " of " << m_ImageList.GetSize() << ")";
+	string s = f.GetFileInfo()->name;
+	SetWindowTitle( f.GetFilePath() );
+	m_Statusbar.SetPosition(m_ImageList.GetCurrentIndex()+1,m_ImageList.GetSize());
+	m_ExifView.SetQuiverFile(f);
 }
 
 void Quiver::CurrentImage()
 {
-	if (0 < m_pImageList->GetSize())
+	if (0 < m_ImageList.GetSize())
 	{
-		QuiverFile *f;
-		f = m_pImageList->GetCurrent();
+		QuiverFile f;
+		f = m_ImageList.GetCurrent();
 
-		
-		if (NULL != f)
-		{
-			/*
-			if (QUIVER_APP_MODE_SCREENSAVER == m_QuiverAppMode)
-			{
-				m_ImageLoader.CacheImage(*f);
-			}
-			*/
-			m_ImageLoader.LoadImage(*f);
-			ImageChanged();
-		}
-		
+		m_ImageLoader.LoadImage(f);
+		ImageChanged();
+	
 		
 		// cache the next image if there is one
-		if (m_pImageList->HasNext())
+		if (m_ImageList.HasNext())
 		{
-			f = m_pImageList->PeekNext();
-			if (NULL != f)
-			{
-				m_ImageLoader.CacheImage(*f);
-			}
+			f = m_ImageList.GetNext();
+			m_ImageLoader.CacheImage(f);
 		}		
 	}
 }
@@ -387,9 +394,11 @@ gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event
 	GtkAction * action = GetAction(m_pUIManager,QUIVER_ACTION_FULLSCREEN);
 	if (NULL != action)
 	{
+
 		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bFullscreen);
 		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+
 	}
 /*
 	typedef struct {
@@ -492,7 +501,7 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 			if (!m_Viewer.GetHasFullPixbuf())
 			{
 				printf("not the same size\n");
-				m_ImageLoader.ReloadImage(*m_pImageList->GetCurrent());
+				m_ImageLoader.ReloadImage(m_ImageList.GetCurrent());
 			}
 		}
 	}
@@ -634,7 +643,7 @@ gboolean Quiver::quiver_event_callback( GtkWidget *widget, GdkEvent *event, gpoi
  * constructor
  * 
  */
-Quiver::Quiver(list<string> &images)
+Quiver::Quiver(list<string> &images) : m_BrowserEventHandler(new BrowserEventHandler(this))
 {
 	m_listImages = images;
 	Init();
@@ -643,8 +652,10 @@ Quiver::Quiver(list<string> &images)
 void Quiver::Init()
 {
 	m_pUIManager = NULL;
-	m_pImageList = NULL;
-	
+
+	m_iMergedViewerUI = 0;
+	m_iMergedBrowserUI = 0;	
+
 	QuiverStockIcons::Load();
 	
 	m_bTimeoutEventMotionNotifyRunning = false;
@@ -655,7 +666,10 @@ void Quiver::Init()
 
 	m_ImageLoader.Start();
 	//initialize
-			/* Create the main window */
+
+	m_Browser.AddEventHandler(m_BrowserEventHandler);
+
+	/* Create the main window */
 	m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 
 	if (LoadSettings())
@@ -667,81 +681,40 @@ void Quiver::Init()
 
 	}
 
-	GdkPixbuf *pixbuf_icon = gdk_pixbuf_new_from_xpm_data ((const char**) quiver_icon_xpm);
-	//gtk_window_set_icon(GTK_WINDOW(m_pQuiverWindow),pixbuf_icon);
+	GError *tmp_error;
+	tmp_error = NULL;
+	
+
+	GdkPixdata pixdata;
+	gdk_pixdata_deserialize (&pixdata,sizeof(quiver_icon),quiver_icon,&tmp_error);
+	GdkPixbuf *pixbuf_icon = gdk_pixbuf_from_pixdata(&pixdata,FALSE,&tmp_error);
 	
 	gtk_window_set_default_icon     (pixbuf_icon);
 	
 	g_object_unref(pixbuf_icon);
 
-	
-	/* Set up our GUI elements */
+	/* Set up GUI elements */
 
-	GError *tmp_error;
-	tmp_error = NULL;
-	
 	m_pUIManager = gtk_ui_manager_new();
 	gtk_ui_manager_set_add_tearoffs (m_pUIManager,TRUE);
-	/*
-	gtk_ui_manager_add_ui_from_file (m_pUIManager,
-                                             "/home/mike/.quiver/ui.xml",
-                                              &tmp_error);
-	*/
-	gtk_ui_manager_add_ui_from_string(m_pUIManager,quiver_menubar,strlen(quiver_menubar),&tmp_error);
-	gtk_ui_manager_add_ui_from_string(m_pUIManager,quiver_toolbar_main,strlen(quiver_toolbar_main),&tmp_error);
-	gtk_ui_manager_add_ui_from_string(m_pUIManager,quiver_toolbar_browser,strlen(quiver_toolbar_browser),&tmp_error);	
-/*                                             
-typedef struct {
-  const gchar     *name;
-  const gchar     *stock_id;
-  const gchar     *label;
-  const gchar     *accelerator;
-  const gchar     *tooltip;
-  GCallback  callback;
-} GtkActionEntry;
 
-typedef struct {
-  const gchar *name;
-  const gchar *stock_id;
-  const gchar *label;
-  const gchar *accelerator;
-  const gchar *tooltip;
-  gint   value; 
-} GtkRadioActionEntry;
+	gtk_ui_manager_add_ui_from_string(m_pUIManager,
+			quiver_ui_main,
+			strlen(quiver_ui_main),
+			&tmp_error);
 
-typedef struct {
-  const gchar *name;
-  const gchar *stock_id;
-  const gchar *label;
-  const gchar *accelerator;
-  const gchar *tooltip;
-  gint   value; 
-} GtkRadioActionEntry;
-
-
-*/                                             
 	guint n_entries = G_N_ELEMENTS (action_entries);
 
 	
 	GtkActionGroup* actions = gtk_action_group_new ("Actions");
 	
-	
-	/*
-	void        gtk_action_group_add_actions    (GtkActionGroup *action_group,
-                                             const GtkActionEntry *entries,
-                                             guint n_entries,
-                                             gpointer user_data);
-	*/
-	gtk_action_group_add_actions(actions,
-                                 action_entries,
-                                 n_entries,
-                                 this);
+	gtk_action_group_add_actions(actions, action_entries, n_entries, this);
                                  
 	gtk_action_group_add_toggle_actions(actions,
 										action_entries_toggle, 
 										G_N_ELEMENTS (action_entries_toggle),
 										this);
-	/* FIXME: i think there's a bug with the data when passed in using
+	/* FIXME: i think there's a bug with the user_data when passed in using
 	 * g_signal_connect_data in the following function.
 	gtk_action_group_add_radio_actions(actions,
 										action_entries_radio, 
@@ -752,32 +725,20 @@ typedef struct {
 	*/
 	gtk_ui_manager_insert_action_group (m_pUIManager,actions,0);
                                              
-                                             
 	g_signal_connect (m_pUIManager, "connect_proxy",
 		G_CALLBACK (signal_connect_proxy), this);
 	g_signal_connect (m_pUIManager, "disconnect_proxy",
 		G_CALLBACK (signal_disconnect_proxy), this);
                                              
-                                             
-                                             
 	gtk_window_add_accel_group (GTK_WINDOW(m_pQuiverWindow),
 								gtk_ui_manager_get_accel_group(m_pUIManager));
 	
-	
-	
-	m_pMenubar = gtk_ui_manager_get_widget (m_pUIManager,"/ui/MenubarMain");
-	m_pToolbar = gtk_ui_manager_get_widget (m_pUIManager,"/ui/ToolbarMain");
 
+	m_Browser.SetUIManager(m_pUIManager);
+	m_Viewer.SetUIManager(m_pUIManager);
 	//GTK_WIDGET_UNSET_FLAGS(toolbar,GTK_CAN_FOCUS);
 
-
-	
-	GtkWidget* vbox;
-	vbox = gtk_vbox_new(FALSE,0);
-	
-	
  	//gtk_widget_add_events (m_pQuiverWindow, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);
-	
 	
     g_signal_connect (G_OBJECT (m_pQuiverWindow), "window_state_event",
     			G_CALLBACK (Quiver::event_window_state), this);
@@ -802,29 +763,93 @@ typedef struct {
 	g_signal_connect (G_OBJECT (m_pQuiverWindow), "button_release_event",
 				G_CALLBACK (Quiver::event_button_release), this);				
 
-	/*
-	
-	gboolean expand,fill;
-	guint padding;
-	GtkPackType pack_type;
 
-	*/
+	/* the layout for the gui is as follows:
+	 * 
+	 * gtkwinodw
+	 * -> vbox
+	 *   -> menubar
+	 *   -> toolbar
+	 *   -> hpaned (main gui area)
+	 *     -> hbox
+	 *       -> browser  ( browser xor viewer visible at any given time)
+	 *       -> viewer 
+	 *     -> notebook  for image properties (file,exif,db)
+	 *   -> status bar
+	 */
+	GtkWidget* statusbar;
+	GtkWidget* vbox;
+	GtkWidget* hpaned_main_area;
+	GtkWidget* hbox_browser_viewer_container;
+	
+	vbox = gtk_vbox_new(FALSE,0);
+	hpaned_main_area = gtk_hpaned_new();
+	
+	hbox_browser_viewer_container = gtk_hbox_new(FALSE,0);
+	m_pNBProperties = gtk_notebook_new();
+	
+	//FIXME: temp notebook stuff
+	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("File"));
+	//gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Exif"));
+	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),m_ExifView.GetWidget(),gtk_label_new("Exif"));
+	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("IPTC"));
+	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Database"));
+	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_pNBProperties));
+	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_pNBProperties),TRUE);
+	
+	statusbar =  m_Statusbar.GetWidget();
+	m_pMenubar = gtk_ui_manager_get_widget (m_pUIManager,"/ui/MenubarMain");
+	m_pToolbar = gtk_ui_manager_get_widget (m_pUIManager,"/ui/ToolbarMain");
+
+	// pack the browser and viewer area
+	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_Browser.GetWidget(), TRUE, TRUE, 0);
+	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_Viewer.GetWidget(), TRUE, TRUE, 0);
+
+	if (1 < m_listImages.size())
+	{
+		// must do the following to hide the widget on initial
+		// display of app
+		gtk_widget_show_all(m_Viewer.GetWidget());
+		gtk_widget_hide(m_Viewer.GetWidget());
+		gtk_widget_set_no_show_all(m_Viewer.GetWidget(),TRUE);
+
+		m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
+			quiver_ui_browser,
+			strlen(quiver_ui_browser),
+			&tmp_error);	
+	}
+	else
+	{
+		gtk_widget_show_all(m_Browser.GetWidget());
+		gtk_widget_hide(m_Browser.GetWidget());
+		gtk_widget_set_no_show_all(m_Browser.GetWidget(),TRUE);
+
+		m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
+			quiver_ui_viewer,
+			strlen(quiver_ui_viewer),
+			&tmp_error);
+	}
+
+	// pack the hpaned (main gui area)
+	gtk_paned_pack1(GTK_PANED(hpaned_main_area),hbox_browser_viewer_container,TRUE,TRUE);
+	gtk_paned_pack2(GTK_PANED(hpaned_main_area),m_pNBProperties,FALSE,FALSE);
+
+	// pack the main gui ara with the rest of the gui compoents
 	//gtk_container_add (GTK_CONTAINER (vbox),menubar);
 	gtk_box_pack_start (GTK_BOX (vbox), m_pMenubar, FALSE, FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), m_pToolbar, FALSE, FALSE, 0);
-
-	//gtk_box_query_child_packing(GTK_BOX(vbox),menubar,&expand,&fill,&padding,&pack_type);
-	//gtk_box_set_child_packing(GTK_BOX(vbox),menubar,FALSE,fill,padding,pack_type);
-
-	gtk_box_pack_start (GTK_BOX (vbox), m_Viewer.GetWidget(), TRUE, TRUE, 0);
-	gtk_widget_grab_focus (m_Viewer.GetWidget());
-
-
-	GtkWidget* statusbar =  m_Statusbar.GetWidget();
-	
+	gtk_box_pack_start (GTK_BOX (vbox), hpaned_main_area, TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox),statusbar , FALSE, FALSE, 0);
 
+	// add the gui elements to the main window
 	gtk_container_add (GTK_CONTAINER (m_pQuiverWindow),vbox);
+
+
+	// FIXME: viewer should focus when it is displayed
+	//	gtk_widget_grab_focus (m_Viewer.GetWidget());
+
+
+
 
 	/* Show the application window */
 	
@@ -892,24 +917,25 @@ int Quiver::Show(QuiverAppMode mode )
 }
 Quiver::~Quiver()
 {
-	if (NULL != m_pImageList)
-	{
-		delete m_pImageList;
-	}
 	//destructor
 }
 
 bool Quiver::LoadSettings()
 {
+	
+	string gtk_rc = getenv("HOME") + string("/.quiver/gtkrc");
+	gtk_rc_parse (gtk_rc.c_str());
+	
+		
 	string quiver_rc = getenv("HOME") + string("/.quiver/quiver.rc");
-
+	
 	ifstream ifile;
 	streamsize size = 1024;
 	char line[1024];
 	ifile.open(quiver_rc.c_str(),ifstream::in);
 	
 	int loaded = 0;
-
+	
 	if (ifile.is_open())
 	{
 		string x,y,width,height;
@@ -1024,8 +1050,9 @@ void Quiver::SaveSettings()
 
 void Quiver::SetImageList(list<string> &files)
 {
-	m_pImageList->SetImageList(&files);
-	CurrentImage();
+	m_ImageList.SetImageList(&files);
+	if (GTK_WIDGET_VISIBLE(m_Viewer.GetWidget()))
+		CurrentImage();
 }
 
 int main (int argc, char **argv)
@@ -1128,8 +1155,9 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	// (loading image list, setting first image)
 
 	printf("initialized\n");
-	m_pImageList = new ImageList();
+
 	SetImageList(m_listImages);
+	m_Browser.SetImageList(m_ImageList);
 
 	return FALSE; // return false so it is never called again
 }
@@ -1154,7 +1182,7 @@ gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data)
 	ActionImageNext(NULL,NULL);
 	gdk_threads_leave();
 
-	if (!m_pImageList->HasNext())
+	if (!m_ImageList.HasNext())
 	{
 		gdk_threads_enter();
 		SlideshowStop();
@@ -1587,7 +1615,7 @@ int jpeg_transform_files(char *infile, char *outfile,
 	jtransform_execute_transformation(src, dst,
 					  src_coef_arrays,
 					  &transformoption);
-
+   */
 	/* Finish compression and release memory */
 	jpeg_finish_compress(&dst);
 	jpeg_finish_decompress(&src);
@@ -1626,32 +1654,68 @@ static void update_exif_orientation(ExifData *exifData,int value)
 void Quiver::ActionFileSave(GtkAction *action,gpointer data)
 {
 	printf("save the file! aww yeah baby\n");
-	QuiverFile *quiverFile;
-	quiverFile = m_pImageList->GetCurrent();
+	QuiverFile quiverFile;
+	quiverFile = m_ImageList.GetCurrent();
 	int old_orientation, new_orientation;
 
-	old_orientation = quiverFile->GetExifOrientation();
+	old_orientation = quiverFile.GetExifOrientation();
 	new_orientation = m_Viewer.GetCurrentOrientation();
 	
-	ExifData *exif_data = quiverFile->GetExifData();
+	ExifData *exif_data = quiverFile.GetExifData();
 	if (exif_data && old_orientation != new_orientation)
 	{
 		// hmm...must have a suitable file
 		printf("we certainly should save the file\n");
 		update_exif_orientation(exif_data,new_orientation);
-		save_jpeg_file(quiverFile->GetFilePath(),exif_data);
+		save_jpeg_file(quiverFile.GetFilePath(),exif_data);
 	}
 }
+void Quiver::ShowViewer()
+{
+	GError *tmp_error;
+	tmp_error = NULL;
+	gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedBrowserUI);
+	m_iMergedBrowserUI = 0;
+	if (0 == m_iMergedViewerUI)
+		m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
+			quiver_ui_viewer,
+			strlen(quiver_ui_viewer),
+			&tmp_error);
+	m_Browser.Hide();
+	m_Viewer.Show();
+	// clear the screen of any old image
+	m_Viewer.SetPixbuf(NULL);
+	CurrentImage();
+	printf("%d is the merge id\n",m_iMergedViewerUI);
+}
+void Quiver::ShowBrowser()
+{
+	GError *tmp_error;
+	tmp_error = NULL;
 
+	gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedViewerUI);
+	m_iMergedViewerUI = 0;
+	if (0 == m_iMergedBrowserUI)
+		m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
+			quiver_ui_browser,
+			strlen(quiver_ui_browser),
+			&tmp_error);
+	printf("%d is the merge id\n",m_iMergedBrowserUI);
+	m_Viewer.Hide();
+	m_Browser.Show();
+}
 void Quiver::ActionUIModeChange(GtkAction *action,gpointer data)
 {
 	printf("%s\n",gtk_action_get_name(action));
-	GError *tmp_error;
-	tmp_error = NULL;
-	gtk_ui_manager_add_ui_from_string(m_pUIManager,
-						quiver_toolbar_viewer,
-						strlen(quiver_toolbar_viewer),
-						&tmp_error);
+
+	if (0 == strcmp( gtk_action_get_name(action),QUIVER_ACTION_UI_MODE_BROWSER) )
+	{
+		ShowBrowser();
+	}
+	else
+	{
+		ShowViewer();
+	}						
 }
 
 void Quiver::ActionAbout(GtkAction *action,gpointer data)
@@ -1676,68 +1740,70 @@ void Quiver::ActionAbout(GtkAction *action,gpointer data)
 
 void Quiver::ActionImageNext(GtkAction *action,gpointer data)
 {
-	if (m_pImageList->HasNext())
+	if (m_ImageList.Next())
 	{
-		QuiverFile *f;
-		f = m_pImageList->GetNext();
-		m_ImageLoader.LoadImage(*f);
+		QuiverFile f;
+
+		f = m_ImageList.GetCurrent();
+		m_ImageLoader.LoadImage(f);
 
 		// cache the next image if there is one
-		if (m_pImageList->HasNext())
+		if (m_ImageList.HasNext())
 		{
-			f = m_pImageList->PeekNext();
-			m_ImageLoader.CacheImage(*f);
+			f = m_ImageList.GetNext();
+			m_ImageLoader.CacheImage(f);
 		}		
 		ImageChanged();
 	}
 }
 void Quiver::ActionImagePrevious(GtkAction *action,gpointer data)
 {
-	if (m_pImageList->HasPrevious())
+	if (m_ImageList.Previous())
 	{
-		QuiverFile *f;
-		f = m_pImageList->GetPrevious();
-		m_ImageLoader.LoadImage(*f);
+		QuiverFile f;
+		f = m_ImageList.GetCurrent();
+		m_ImageLoader.LoadImage(f);
 		
 		// cache the previous image if there is one
-		if (m_pImageList->HasPrevious())
+		if (m_ImageList.HasPrevious())
 		{
-			f = m_pImageList->PeekPrevious();
-			m_ImageLoader.CacheImage(*f);	
+			f = m_ImageList.GetPrevious();
+			m_ImageLoader.CacheImage(f);	
 		}		
 		ImageChanged();
 	}
 }
 void Quiver::ActionImageFirst(GtkAction *action,gpointer data)
 {
-	QuiverFile *f;
-	f = m_pImageList->GetFirst();
-	if (NULL != f)
+	QuiverFile f;
+	if (m_ImageList.First())
 	{
-		m_ImageLoader.LoadImage(*f);
+		f = m_ImageList.GetCurrent();
+	
+		m_ImageLoader.LoadImage(f);
 	
 		// cache the next image if there is one
-		if (m_pImageList->HasNext())
+		if (m_ImageList.HasNext())
 		{
-			f = m_pImageList->PeekNext();
-			m_ImageLoader.CacheImage(*f);
+			f = m_ImageList.GetNext();
+			m_ImageLoader.CacheImage(f);
 		}		
 		ImageChanged();
 	}
 }
 void Quiver::ActionImageLast(GtkAction *action,gpointer data)
 {
-	QuiverFile *f;
-	f = m_pImageList->GetLast();
-	if (NULL != f)
+	if (m_ImageList.Last())
 	{
-		m_ImageLoader.LoadImage(*f);
+		QuiverFile f;
+		f = m_ImageList.GetLast();
+		m_ImageLoader.LoadImage(f);
 	
 		// cache the previous image if there is one
-		if (m_pImageList->HasPrevious())
+		if (m_ImageList.HasPrevious())
 		{
-			f = m_pImageList->PeekPrevious();
-			m_ImageLoader.CacheImage(*f);	
+			f = m_ImageList.GetPrevious();
+			m_ImageLoader.CacheImage(f);	
 		}		
 		ImageChanged();
 	}
@@ -1759,6 +1825,7 @@ void Quiver::ActionQuit(GtkAction *action,gpointer data)
 
 void Quiver::ActionFullScreen(GtkAction *action,gpointer data)
 {
+	printf("action fullscreen!\n");
 	if (GDK_WINDOW_STATE_FULLSCREEN & m_WindowState)
 	{
 		gtk_window_unfullscreen(GTK_WINDOW(m_pQuiverWindow));
@@ -1791,9 +1858,9 @@ void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
 	gdk_window_set_cursor (m_pQuiverWindow->window, NULL);
 	
 	//delete the current images
-	if (m_pImageList->GetSize())
+	if (m_ImageList.GetSize())
 	{
-		char * for_display = gnome_vfs_format_uri_for_display(m_pImageList->GetCurrent()->GetURI());
+		char * for_display = gnome_vfs_format_uri_for_display(m_ImageList.GetCurrent().GetURI());
 		GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_pQuiverWindow),GTK_DIALOG_MODAL,
 								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,_("Are you sure you want to move the following image to the trash?"));
 		gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
@@ -1805,12 +1872,12 @@ void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
 			case GTK_RESPONSE_YES:
 			{
 				//trash the file
-				cout << "trashing file : " << m_pImageList->GetCurrent() << endl;
+				cout << "trashing file : " << m_ImageList.GetCurrent().GetURI() << endl;
 				//locate trash folder
 				GnomeVFSURI * trash_vfs_uri = NULL;
 
 				cout << "is this one val? "<< endl;
-				GnomeVFSURI * near_vfs_uri = gnome_vfs_uri_new ( m_pImageList->GetCurrent()->GetURI() );
+				GnomeVFSURI * near_vfs_uri = gnome_vfs_uri_new ( m_ImageList.GetCurrent().GetURI() );
 				gnome_vfs_find_directory (near_vfs_uri, GNOME_VFS_DIRECTORY_KIND_TRASH,&trash_vfs_uri, TRUE, TRUE, 0777);
 
 				if (trash_vfs_uri != NULL) 
@@ -1831,7 +1898,7 @@ void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
 					if (GNOME_VFS_OK == result)
 					{
 						cout << "trashed the file " << endl;
-						m_pImageList->RemoveCurrentImage();
+						m_ImageList.Remove(m_ImageList.GetCurrentIndex());
 						CurrentImage();
 					}
 					else
@@ -1850,7 +1917,7 @@ void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
 				//fall through
 			default:
 				// do not delete
-				cout << "not trashing file : " << m_pImageList->GetCurrent() << endl;
+				cout << "not trashing file : " << m_ImageList.GetCurrent().GetURI() << endl;
 				break;
 		}
 	
@@ -1858,8 +1925,41 @@ void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
 	}
 }
 
+void Quiver::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr event_ptr)
+{
+	list<int> selection = parent->m_Browser.GetSelection();
+	list<int>::iterator itr;
+	
+	unsigned long long total_size = 0;
+	
+	// n items selected (xx kb)
+	for (itr = selection.begin(); selection.end() != itr; ++itr)
+	{
+		if (*itr < parent->m_ImageList.GetSize())
+		{
+			QuiverFile f = parent->m_ImageList[*itr];
+			total_size += f.GetFileSize();
+		}
+	}
+	
+	parent->m_Statusbar.SetZoomPercent(-1);
+	parent->m_Statusbar.SetLoadTime(-1);
+	
+	char status_text[256];
+	sprintf(status_text,"%d items selected (%d bytes)",selection.size(),total_size);
 
+	parent->m_Statusbar.SetText(status_text);
+}
 
+void Quiver::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_ptr)
+{
+	parent->ShowViewer();
+}
+
+void Quiver::BrowserEventHandler::HandleCursorChanged(BrowserEventPtr event_ptr)
+{
+	parent->ImageChanged();
+}
 
 
 

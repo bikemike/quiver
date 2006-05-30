@@ -93,6 +93,10 @@ public:
 	void SetPixbuf(GdkPixbuf * pixbuf);
 	int GetCurrentOrientation();
 
+	void Show();
+	void Hide();
+	void SetUIManager(GtkUIManager *ui_manager);
+
 
 private:
 
@@ -152,6 +156,9 @@ private:
 	int m_iCurrentOrientation;
 	
 	GtkShadowType m_GtkShadowType;
+	
+	GtkUIManager *m_pUIManager;
+	guint m_iMergedViewerUI;
 	
 };
 

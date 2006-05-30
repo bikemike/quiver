@@ -1,13 +1,18 @@
 #ifndef FILE_IMAGELIST_H
 #define FILE_IMAGELIST_H
 
-#include "QuiverFile.h"
 #include <string>
 #include <list>
 #include <set>
 
+
+#include "QuiverFile.h"
+#include "ImageListEventSource.h"
+
+class ImageListImpl;
+typedef boost::shared_ptr<ImageListImpl> ImageListImplPtr;
 	
-class ImageList
+class ImageList : public virtual ImageListEventSource
 {
 public:
 
@@ -21,59 +26,44 @@ public:
 
 
 	ImageList();
-	ImageList(std::string filepath);
-	
-	//void LoadImageList(std::string path, std::string filename);
-	
-	void SetImageList(std::list<std::string> file_list);
+	//~ImageList();	
+
 	void SetImageList(std::list<std::string> *file_list);
-	void AddImageList(std::list<std::string> *file_list);
-
-	//void ImageList::AddDirectory(GnomeVFSFileInfo *info);
-	
-	void ImageList::AddDirectory(const gchar* uri);
-
-	void ImageList::AddFile(const gchar*  uri);
-	void ImageList::AddFile(const gchar* uri,GnomeVFSFileInfo *info);
-	//void ImageList::AddFile(std::string uri);
-	void ImageList::SetCurrentImage(std::string uri);
-	void ImageList::RemoveCurrentImage();
-	
-	
-	
-	bool HasNext();
-	bool HasPrevious();
-	QuiverFile* GetNext();
-	QuiverFile* PeekNext();
-	QuiverFile* GetPrevious();
-	QuiverFile* PeekPrevious();
-	
-	QuiverFile* GetLast();
-	QuiverFile* GetFirst();
-	
-	QuiverFile* GetCurrent();
-	int GetCurrentIndex();
-
-	int GetSize();
+	void Add(std::list<std::string> *file_list);
 
 
+	void Remove(unsigned int iIndex);
+	void RemoveRange(unsigned int iStart, unsigned int iEnd);
 
+	void Clear();
 	
-	static void LoadMimeTypes();
+	bool HasNext() const ;
+	bool HasPrevious() const;
+	
+	bool Next();
+	bool Previous();
+	bool First();
+	bool Last();
 
-	static bool QuiverFileCompare(const QuiverFile & left , const QuiverFile & right);
-	void Sort(SortOrder o,bool reverse);
+	unsigned int GetSize() const;
+	unsigned int GetCurrentIndex() const;
+	
+	bool SetCurrentIndex(unsigned int new_index );
+
+	QuiverFile GetNext() const;
+	QuiverFile GetPrevious() const;
+	QuiverFile GetCurrent() const;
+	QuiverFile GetFirst() const;
+	QuiverFile GetLast() const;
+
+	QuiverFile Get(unsigned int n) const;
+	QuiverFile operator[](unsigned int n);
+	QuiverFile const operator[](unsigned int n) const;
+
+	void Sort(SortOrder o,bool descending);
+
 private:
-
-	static SortOrder c_SortOrder;
-	static std::set<std::string> c_setSupportedMimeTypes;
-	
-	std::list<QuiverFile> m_ImageList;
-	std::list<QuiverFile>::iterator m_itrCurrent;
-
-	int m_iIndex;
+	ImageListImplPtr m_ImageListImplPtr;
 	
 };
-
-
 #endif

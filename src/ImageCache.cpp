@@ -5,22 +5,36 @@
 using namespace std;
 
 
+static unsigned long CurrentTimeInMilliseconds();
+
 ImageCache::ImageCache(unsigned int size)
 {
 	m_iCacheSize = size;
+	
+	pthread_mutex_init(&m_MutexImageCache, NULL);
+
 }
 
 ImageCache::~ImageCache()
 {
+	pthread_mutex_lock (&m_MutexImageCache);
+	
 	map<string,CacheItem>::iterator itr;
 	for (itr = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
 	{
 		g_object_unref(itr->second.pPixbuf);
 	}
+	
+	pthread_mutex_unlock (&m_MutexImageCache);
+
+	pthread_mutex_destroy(&m_MutexImageCache);
+
 }
 
 bool ImageCache::RemovePixbuf(std::string filename)
 {
+	pthread_mutex_lock (&m_MutexImageCache);
+	
 	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
 	bool rval = false;
 	if (m_mapImageCache.end() != itr)
@@ -31,23 +45,36 @@ bool ImageCache::RemovePixbuf(std::string filename)
 		m_mapImageCache.erase(itr->first);
 		rval = true;
 	}
+	pthread_mutex_unlock (&m_MutexImageCache);
 	return rval;
 }
 
 void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb)
 {
-	AddPixbuf(filename,pb,CurrentTimeMillis());
+	AddPixbuf(filename,pb,CurrentTimeInMilliseconds());
 }
 
 unsigned int ImageCache::GetSize()
 {
-	return m_iCacheSize;
+	unsigned int size;
+	
+	pthread_mutex_lock (&m_MutexImageCache);
+	
+	size = m_iCacheSize;
+	
+	pthread_mutex_unlock (&m_MutexImageCache);
+	
+	return size;
 }
 
 void ImageCache::SetSize(unsigned int size)
 {
 	// remove the oldest elements from the cache
+
 	map<string,CacheItem>::iterator oldest,itr;
+	
+	pthread_mutex_lock (&m_MutexImageCache);
+	
 	while (size < m_mapImageCache.size())
 	{
 		for (itr = oldest = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
@@ -59,23 +86,28 @@ void ImageCache::SetSize(unsigned int size)
 		}
 		if (oldest != m_mapImageCache.end())
 		{
+			/*
 			if  (1 < G_OBJECT(oldest->second.pPixbuf)->ref_count)
 			{
 				cout << "ERROR: MEMORY LEAK ON (" << G_OBJECT(oldest->second.pPixbuf)->ref_count << "): " << oldest->first << endl;
 			}
+			*/
 			g_object_unref(oldest->second.pPixbuf);
 			m_mapImageCache.erase(oldest->first);
 		}
 	}
 	
 	m_iCacheSize = size;
-	//printf("cache size: %d\n",size);
+
+	pthread_mutex_unlock (&m_MutexImageCache);
 
 }
 
 void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 {
 	// if item is already here, just update the time of it
+	pthread_mutex_lock (&m_MutexImageCache);
+
 	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
 
 	if (m_mapImageCache.end() != itr)
@@ -86,6 +118,9 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 		itr->second.pPixbuf = pb;
 		g_object_ref( itr->second.pPixbuf );
 		itr->second.time = time;
+
+		pthread_mutex_unlock (&m_MutexImageCache);
+
 		return;
 	}
 
@@ -119,15 +154,17 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 		//printf("cached pixbuf: 0x%08x\n",oldest->second.pPixbuf);
 		if  (1 < G_OBJECT(oldest->second.pPixbuf)->ref_count)
 		{
-			cout << "ERROR: MEMORY LEAK ON (" << G_OBJECT(oldest->second.pPixbuf)->ref_count << "): " << oldest->first << endl;
 
-			// FIXME! THIS IS A HACK
+			/*
+			 *  FIXME! THIS IS A HACK
 			// we should really find the real location where it is not releasing the reference
+			cout << "ERROR: MEMORY LEAK ON (" << G_OBJECT(oldest->second.pPixbuf)->ref_count << "): " << oldest->first << endl;
 
 			while (1 < G_OBJECT(oldest->second.pPixbuf)->ref_count)
 			{
 				g_object_unref(oldest->second.pPixbuf);
 			}
+			*/
 				
 		}
 		
@@ -140,19 +177,29 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 	}
 	//add the new item
 	m_mapImageCache.insert(pair<string,CacheItem>(filename,c));
+
+	pthread_mutex_unlock (&m_MutexImageCache);
 }
 
 
 bool ImageCache::InCache(std::string filename)
 {
+	bool rval;
+	pthread_mutex_lock (&m_MutexImageCache);
+	
 	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
-	return (m_mapImageCache.end() != itr);
+	rval = (m_mapImageCache.end() != itr);
+	pthread_mutex_unlock (&m_MutexImageCache);
+	
+	return rval;
 }
 
 GdkPixbuf* ImageCache::GetPixbuf(string filename)
 {
 	//get an item from the cache and update the time on it
 	GdkPixbuf *pixbuf = NULL;
+
+	pthread_mutex_lock (&m_MutexImageCache);
 	
 	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
 	if (m_mapImageCache.end() != itr)
@@ -160,17 +207,19 @@ GdkPixbuf* ImageCache::GetPixbuf(string filename)
 		// FIXME:
 		// we shouldnt set the time unless we're getting the image for
 		// display in the viewer
-		itr->second.time = CurrentTimeMillis();
+		itr->second.time = CurrentTimeInMilliseconds();
 		pixbuf = itr->second.pPixbuf;
 		
 		// FIXME: - WE SHOULD ADD A REF
+		g_object_ref(pixbuf);
 	}
+	pthread_mutex_unlock (&m_MutexImageCache);
 
 	return pixbuf;
 }
 
 
-unsigned long ImageCache::CurrentTimeMillis()
+static unsigned long CurrentTimeInMilliseconds()
 {
 	timeval tv_time;
 

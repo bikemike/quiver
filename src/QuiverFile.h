@@ -36,12 +36,18 @@ public:
 	
 	const gchar* GetURI();
 
-	GdkPixbuf * GetThumbnail();
-	GdkPixbuf * GetExifThumbnail();
+	GdkPixbuf *GetThumbnail();
+	GdkPixbuf *GetExifThumbnail();
+	GdkPixbuf *GetThumbnail(bool large);
+
 
 	ExifData *GetExifData();
 	int GetExifOrientation();
 	GnomeVFSFileInfo * GetFileInfo();
+
+	unsigned long long GetFileSize();
+	
+	GdkPixbuf *GetIcon(int width_desired,int height_desired);
 	
 	std::string GetFilePath();
 	int GetWidth();
@@ -57,7 +63,7 @@ public:
 private:
 	void LoadExifData();
 	class QuiverFileImpl;
-	boost::shared_ptr<QuiverFileImpl> QuiverFilePtr;
+	boost::shared_ptr<QuiverFileImpl> m_QuiverFilePtr;
 
 };
 

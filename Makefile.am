@@ -1,7 +1,9 @@
 ## Process this file with automake to produce Makefile.in
-## Created by Anjuta
 
-SUBDIRS = src po
+SUBDIRS =      \
+	po         \
+	libquiver  \
+	src        
 
 ##quiverdocdir = ${prefix}/doc/quiver
 ##quiverdoc_DATA = \

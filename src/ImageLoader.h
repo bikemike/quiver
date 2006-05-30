@@ -35,7 +35,7 @@ public:
 	ImageLoader();
 	~ImageLoader();
 
-	void AddPixbufLoaderObserver(PixbufLoaderObserver * loader_observer);
+	void AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 	void LoadImage(QuiverFile);	
 	void CacheImage(QuiverFile);
 	void ReloadImage(QuiverFile);
@@ -58,12 +58,13 @@ private:
 
 	pthread_cond_t m_Condition;
 	pthread_mutex_t m_ConditionMutex;
-	
-	std::list<PixbufLoaderObserver*> m_observers;
+	pthread_mutex_t m_CommandMutex;
+		
+	std::list<IPixbufLoaderObserver*> m_observers;
 
 	ImageCache m_ImageCache;
 	
-	pthread_mutex_t m_CommandMutex;
+
 	std::list<Command> m_Commands;
 	Command m_Command;
 	

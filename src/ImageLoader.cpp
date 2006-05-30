@@ -50,7 +50,6 @@ int ImageLoader::Run()
 {
 	while (true)
 	{
-
 		
 		pthread_mutex_lock (&m_CommandMutex);
 
@@ -174,7 +173,7 @@ void ImageLoader::CacheImage(QuiverFile f)
 	pthread_mutex_unlock (&m_CommandMutex);
 }
 
-void ImageLoader::AddPixbufLoaderObserver(PixbufLoaderObserver * loader_observer)
+void ImageLoader::AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer)
 {
 	m_observers.push_back(loader_observer);	
 }
@@ -195,19 +194,27 @@ void ImageLoader::Load()
 				//cout << "load from file: " << m_Command.quiverFile.GetURI() << endl;
 				//cout << "not in cache" << endl;
 				// TODO: update all of these calls to call gdk_flush();
+				// - what does that mean? i should have commented why 
+				//   there is a need to have gdk_flush
 				gdk_threads_enter();
 				GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
 				gdk_threads_leave();
 				
-				list<PixbufLoaderObserver*>::iterator itr;
+				list<IPixbufLoaderObserver*>::iterator itr;
 				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 				{
 					gdk_threads_enter();
 					(*itr)->SetQuiverFile(m_Command.quiverFile);
 					gdk_flush();
 					gdk_threads_leave();
-					
-					(*itr)->ConnectSignals(loader);
+					if (1 < m_Command.quiverFile.GetExifOrientation())
+					{
+						(*itr)->ConnectSignalSizePrepared(loader);
+					}
+					else
+					{
+						(*itr)->ConnectSignals(loader);
+					}
 					
 				}
 
@@ -236,7 +243,7 @@ void ImageLoader::Load()
 							{
 								g_object_unref(pixbuf);
 								pixbuf = pixbuf_rotated;
-								list<PixbufLoaderObserver*>::iterator itr;
+								list<IPixbufLoaderObserver*>::iterator itr;
 								for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 								{
 									gdk_threads_enter();
@@ -268,7 +275,7 @@ void ImageLoader::Load()
 			// we'll need to set up the signals ourselves
 			//cout << "load from cache: "  << m_Command.filename << endl;
 	
-			list<PixbufLoaderObserver*>::iterator itr;
+			list<IPixbufLoaderObserver*>::iterator itr;
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
 				gdk_threads_enter();
@@ -279,6 +286,7 @@ void ImageLoader::Load()
 				(*itr)->SetPixbuf(pixbuf);
 				gdk_threads_leave();
 			}
+			g_object_unref(pixbuf);
 		}
 	}	
 	else if (CACHE == m_Command.state)
@@ -293,7 +301,7 @@ void ImageLoader::Load()
 				GdkPixbufLoader* ldr = gdk_pixbuf_loader_new ();	
 				gdk_threads_leave();
 			
-				list<PixbufLoaderObserver*>::iterator itr;
+				list<IPixbufLoaderObserver*>::iterator itr;
 				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 				{
 					gdk_threads_enter();
@@ -327,7 +335,7 @@ void ImageLoader::Load()
 						}
 						if (CACHE_LOAD == m_Command.state)
 						{
-							list<PixbufLoaderObserver*>::iterator itr;
+							list<IPixbufLoaderObserver*>::iterator itr;
 							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 							{
 								gdk_threads_enter();
@@ -397,7 +405,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	
 
 	result = gnome_vfs_open (&handle, m_Command.quiverFile.GetURI(), GNOME_VFS_OPEN_READ);
-	list<PixbufLoaderObserver*>::iterator itr;
+	list<IPixbufLoaderObserver*>::iterator itr;
 	while (GNOME_VFS_OK == result) {
 		if (CommandsPending())
 		{
@@ -416,13 +424,18 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		
 		for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 		{
-			gdk_threads_enter();
-			(*itr)->SignalBytesRead(bytes_read_inc,bytes_total);
-			gdk_threads_leave();
+			if (0 < bytes_read_inc && bytes_read_inc <= bytes_total)
+			{
+				gdk_threads_enter();
+				
+				(*itr)->SignalBytesRead(bytes_read_inc,bytes_total);
+				gdk_threads_leave();
+			}
 		}
 		
 		gdk_threads_enter();
 		gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+
 		gdk_flush();
 		gdk_threads_leave();
 	}
@@ -434,7 +447,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	gdk_pixbuf_loader_close(loader,&tmp_error);
 	gdk_flush();
 	gdk_threads_leave();
-	
+
 	if (GNOME_VFS_ERROR_EOF == result)
 		retval = true;
 	gnome_vfs_close(handle);

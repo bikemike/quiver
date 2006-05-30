@@ -75,10 +75,17 @@ void Statusbar::SetPosition(int pos, int n)
 
 void Statusbar::SetZoomPercent(int percent)
 {
-	char list_pos[50];
-	sprintf(list_pos,"%d%%",percent);
-	gtk_label_set_text(GTK_LABEL(m_pLabelZoom),list_pos);
-}
+	if (0 <= percent)
+	{
+		char list_pos[50];
+		sprintf(list_pos,"%d%%",percent);
+		gtk_label_set_text(GTK_LABEL(m_pLabelZoom),list_pos);
+	}
+	else
+	{
+		gtk_label_set_text(GTK_LABEL(m_pLabelZoom),"");
+	}
+}	
 
 void Statusbar::SetLoadTime()
 {
@@ -87,10 +94,16 @@ void Statusbar::SetLoadTime()
 
 void Statusbar::SetLoadTime(double seconds)
 {
-	char loadtime[20];
-	sprintf(loadtime,"%0.3fs",seconds);
-	gtk_label_set_text(GTK_LABEL(m_pLabelLoadTime),loadtime);
-	
+	if (0 <= seconds)
+	{
+		char loadtime[20];
+		sprintf(loadtime,"%0.3fs",seconds);
+		gtk_label_set_text(GTK_LABEL(m_pLabelLoadTime),loadtime);
+	}
+	else
+	{
+		gtk_label_set_text(GTK_LABEL(m_pLabelLoadTime),"");
+	}
 }
 void Statusbar::SetText(std::string s)
 {
@@ -114,6 +127,8 @@ void Statusbar::SetText()
 	
 	
 	double bytes = (double)info->size;
+	gnome_vfs_file_info_unref(info);
+	
 	double abytes;
 	char unit = 'B';
 	
@@ -156,6 +171,7 @@ void Statusbar::SetText()
 	
 	gtk_statusbar_pop(GTK_STATUSBAR(m_pStatusbar),m_iDefaultContext);
 	gtk_statusbar_push(GTK_STATUSBAR(m_pStatusbar),m_iDefaultContext,status_text);
+	
 
 }
 

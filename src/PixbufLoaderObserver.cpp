@@ -3,6 +3,24 @@
 
 //using namespace std;
 
+static void signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data);
+
+static void signal_area_updated(GdkPixbufLoader *loader,
+                                        gint x,
+                                        gint y,
+                                        gint width,
+                                        gint height,
+                                        gpointer user_data);
+                                        
+static void signal_closed(GdkPixbufLoader *loader,
+                                        gpointer user_data);
+                                        
+static void signal_size_prepared(GdkPixbufLoader *loader,
+                                        gint width,
+                                        gint height,
+                                        gpointer user_data);
+
+
 PixbufLoaderObserver::PixbufLoaderObserver()
 {
 }
@@ -14,16 +32,16 @@ PixbufLoaderObserver::~PixbufLoaderObserver()
 
 void PixbufLoaderObserver::ConnectSignalSizePrepared(GdkPixbufLoader * loader)
 {
-	g_signal_connect (loader,"size-prepared",G_CALLBACK (PixbufLoaderObserver::signal_size_prepared), this);	
+	g_signal_connect (loader,"size-prepared",G_CALLBACK (signal_size_prepared), this);	
 }
 
 void PixbufLoaderObserver::ConnectSignals(GdkPixbufLoader *loader)
 {
 
-	g_signal_connect (loader,"area-prepared",G_CALLBACK (PixbufLoaderObserver::signal_area_prepared), this);
-	g_signal_connect (loader,"area-updated",G_CALLBACK (PixbufLoaderObserver::signal_area_updated), this);
-	g_signal_connect (loader,"closed",G_CALLBACK (PixbufLoaderObserver::signal_closed), this);
-	g_signal_connect (loader,"size-prepared",G_CALLBACK (PixbufLoaderObserver::signal_size_prepared), this);	
+	g_signal_connect (loader,"area-prepared",G_CALLBACK (signal_area_prepared), this);
+	g_signal_connect (loader,"area-updated",G_CALLBACK (signal_area_updated), this);
+	g_signal_connect (loader,"closed",G_CALLBACK (signal_closed), this);
+	g_signal_connect (loader,"size-prepared",G_CALLBACK (signal_size_prepared), this);	
 
 }
 
@@ -61,12 +79,12 @@ void PixbufLoaderObserver::SignalSizePrepared(GdkPixbufLoader *loader,gint width
 	//printf("PixbufLoaderObserver::SignalSizePrepared: width=%d, height=%d\n",width,height);
 }
 
-void PixbufLoaderObserver::signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data)
+static void signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data)
 {
 	((PixbufLoaderObserver*)user_data)->SignalAreaPrepared(loader);
 }
 
-void PixbufLoaderObserver::signal_area_updated(GdkPixbufLoader *loader,
+static void signal_area_updated(GdkPixbufLoader *loader,
                                         gint x,
                                         gint y,
                                         gint width,
@@ -76,13 +94,13 @@ void PixbufLoaderObserver::signal_area_updated(GdkPixbufLoader *loader,
 	((PixbufLoaderObserver*)user_data)->SignalAreaUpdated(loader,x,y,width,height);
 }
                                         
-void PixbufLoaderObserver::signal_closed(GdkPixbufLoader *loader,
+static void signal_closed(GdkPixbufLoader *loader,
                                         gpointer user_data)
 
 {
 	((PixbufLoaderObserver*)user_data)->SignalClosed(loader);
 }                                       
-void PixbufLoaderObserver::signal_size_prepared(GdkPixbufLoader *loader,
+static void signal_size_prepared(GdkPixbufLoader *loader,
                                         gint width,
                                         gint height,
                                         gpointer user_data)

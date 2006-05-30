@@ -2,9 +2,10 @@
 #define FILE_IMAGECACHE_H
 
 #include <gtk/gtk.h>
-#include "sys/time.h"
+#include <sys/time.h>
 #include <map>
 #include <string>
+#include <pthread.h>
 
 
 typedef struct _CacheItem
@@ -40,7 +41,8 @@ private:
 	std::map<std::string,CacheItem> m_mapImageCache;
 	unsigned int m_iCacheSize;
 	
-	unsigned long CurrentTimeMillis();
+	pthread_mutex_t m_MutexImageCache;
+	
 };
 
 #endif

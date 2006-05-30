@@ -13,6 +13,9 @@
 #include "ImageList.h"
 #include "ImageLoader.h"
 #include "Statusbar.h"
+#include "Browser.h"
+#include "ExifView.h"
+#include "IBrowserEventHandler.h"
 
 
 class Quiver : PixbufLoaderObserver
@@ -118,6 +121,9 @@ public:
 	
 	bool LoadSettings();
 	void SaveSettings();
+	
+	void ShowBrowser();
+	void ShowViewer();
 
 	void SetWindowTitle(std::string s);
 
@@ -164,52 +170,74 @@ public:
 	void ActionImageTrash(GtkAction *action,gpointer data);
 	void ActionAbout(GtkAction *action,gpointer data);
 	void ActionUIModeChange(GtkAction *action,gpointer data);
+	void ActionViewProperties(GtkAction *action,gpointer data);
 	
 		
 private:
-		//Viewer
-		//Browser
-		
-		//StatusBar
-		//Toolbar
-		//Menu
+	//Viewer
+	//Browser
+	
+	//StatusBar
+	//Toolbar
+	//Menu
 
-		Viewer m_Viewer;
-		Statusbar m_Statusbar;
-		GtkWidget *m_pQuiverWindow;
-		GtkWidget *m_pMenubar;
-		GtkWidget *m_pToolbar;
-		
-				
-		ImageList * m_pImageList;
-		
-		int m_iAppX;
-		int m_iAppY;
-		int m_iAppWidth;
-		int m_iAppHeight;
-		
-		
-		bool m_bTimeoutEventMotionNotifyRunning;
-		bool m_bTimeoutEventMotionNotifyMouseMoved;
-		
-		bool m_bSlideshowRunning;
-		guint m_iTimeoutSlideshowID;
-		
-		QuiverAppMode m_QuiverAppMode;
-		
-		
-		GdkWindowState m_WindowState;
-		ImageLoader m_ImageLoader;
+	Browser m_Browser;
+	Viewer m_Viewer;
+	ExifView m_ExifView;
 
-		//gui actions
-		static GtkActionEntry Quiver::action_entries[];
-		static GtkToggleActionEntry Quiver::action_entries_toggle[];
-		static GtkRadioActionEntry Quiver::action_entries_radio[];
-		
-		GtkUIManager* m_pUIManager;
-		
-		std::list<std::string> m_listImages;
+	Statusbar m_Statusbar;
+	GtkWidget *m_pQuiverWindow;
+	GtkWidget *m_pMenubar;
+	GtkWidget *m_pToolbar;
+	GtkWidget *m_pNBProperties;
+	
+	guint m_iMergedViewerUI;
+	guint m_iMergedBrowserUI;
+	
+			
+	ImageList m_ImageList;
+	
+	int m_iAppX;
+	int m_iAppY;
+	int m_iAppWidth;
+	int m_iAppHeight;
+	
+	
+	bool m_bTimeoutEventMotionNotifyRunning;
+	bool m_bTimeoutEventMotionNotifyMouseMoved;
+	
+	bool m_bSlideshowRunning;
+	guint m_iTimeoutSlideshowID;
+	
+	QuiverAppMode m_QuiverAppMode;
+	
+	
+	GdkWindowState m_WindowState;
+	ImageLoader m_ImageLoader;
 
+	//gui actions
+	static GtkActionEntry Quiver::action_entries[];
+	static GtkToggleActionEntry Quiver::action_entries_toggle[];
+	static GtkRadioActionEntry Quiver::action_entries_radio[];
+	
+	GtkUIManager* m_pUIManager;
+	
+	std::list<std::string> m_listImages;
+
+	//class BrowserEventHandler;
+	class BrowserEventHandler : public IBrowserEventHandler
+	{
+	public:
+		BrowserEventHandler(Quiver *parent){this->parent = parent;};
+		virtual void HandleSelectionChanged(BrowserEventPtr event_ptr);
+		virtual void HandleItemActivated(BrowserEventPtr event_ptr);
+		virtual void HandleCursorChanged(BrowserEventPtr event_ptr);
+	private:
+		Quiver *parent;
+	};
+	
+	IBrowserEventHandlerPtr m_BrowserEventHandler;
+	
 
 };
 

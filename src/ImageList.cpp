@@ -7,19 +7,67 @@
 #include <libgnomevfs/gnome-vfs.h>
 #include <stdlib.h>
 
+
+#include <vector>
+
 #include "ImageList.h"
 
 using namespace std;
 
-ImageList::SortOrder ImageList::c_SortOrder;
-set<string> ImageList::c_setSupportedMimeTypes;
+// ============================================================================
+// ImageListImpl: private implementation (hidden from header file)
+// ============================================================================
 
-ImageList::ImageList()
+typedef std::vector<QuiverFile> QuiverFileList;
+typedef std::vector<QuiverFile>::iterator QuiverFileListIter;
+
+class ImageListImpl
 {
-	LoadMimeTypes();
-	c_SortOrder = SORT_FILENAME;
+public:
+	/* constructor*/
+	ImageListImpl();
+	
+	/* destructor */
+	//~ImageListImpl();
+	
+	/* member functions */
+	
+	static void LoadMimeTypes();
+	
+	void Add(std::list<std::string> *file_list);
+	void SetImageList(std::list<std::string> *file_list);
+	
+	void AddDirectory(const gchar* uri);
+	void AddFile(const gchar*  uri);
+	void AddFile(const gchar* uri,GnomeVFSFileInfo *info);
+
+	void SetCurrentImage(std::string uri);
+	void Sort(ImageList::SortOrder o,bool descending);
+
+	/* member variables */
+	static ImageList::SortOrder c_SortOrder;
+	static std::set<std::string> c_setSupportedMimeTypes;
+	
+	QuiverFileList m_QuivFileList;
+
+	unsigned int m_iCurrentIndex;
+
+	static bool QuiverFileCompare(const QuiverFile & left , const QuiverFile & right);
+};
+
+
+ImageList::SortOrder ImageListImpl::c_SortOrder;
+set<string> ImageListImpl::c_setSupportedMimeTypes;
+
+// ============================================================================
+
+
+ImageList::ImageList() : m_ImageListImplPtr( new ImageListImpl() )
+{
 }
 
+
+/*
 
 ImageList::ImageList(std::string filepath)
 {
@@ -29,8 +77,200 @@ ImageList::ImageList(std::string filepath)
 	file_list.push_back(filepath);
 	SetImageList(&file_list);
 }
+*/
 
-void ImageList::LoadMimeTypes()
+unsigned int
+ImageList::GetSize()  const
+{
+	return m_ImageListImplPtr->m_QuivFileList.size();
+}
+
+unsigned int
+ImageList::GetCurrentIndex() const
+{
+	return m_ImageListImplPtr->m_iCurrentIndex;
+}
+
+bool
+ImageList::SetCurrentIndex(unsigned int new_index)
+{
+	bool rval = false;
+	if ( new_index  < GetSize() )
+	{
+		m_ImageListImplPtr->m_iCurrentIndex = new_index;
+		rval = true;
+	}
+	return rval;
+}
+
+
+void 
+ImageList::Remove(unsigned int iIndex)
+{
+	QuiverFileList *list = &m_ImageListImplPtr->m_QuivFileList;
+	QuiverFileListIter itr = list->begin();
+	
+	if (iIndex < GetSize())
+	{
+		itr += iIndex;
+		
+		if (list->end() != itr)
+		{
+			list->erase(itr);
+		}
+
+		if (m_ImageListImplPtr->m_iCurrentIndex > iIndex)
+		{
+			m_ImageListImplPtr->m_iCurrentIndex--;
+		}
+		else if (m_ImageListImplPtr->m_iCurrentIndex == iIndex)
+		{
+			m_ImageListImplPtr->m_iCurrentIndex =
+				MIN(GetCurrentIndex(),GetSize()-1);
+		}
+		
+	}
+}
+
+
+
+bool 
+ImageList::HasNext()  const
+{
+	return GetCurrentIndex() < GetSize()-1;
+}
+
+bool
+ImageList::HasPrevious()  const
+{
+	return 0 < GetCurrentIndex() ;
+}
+
+QuiverFile
+ImageList::GetNext() const
+{
+	assert( HasNext() );
+	return m_ImageListImplPtr->m_QuivFileList[GetCurrentIndex()+1];
+}
+
+QuiverFile
+ImageList::GetCurrent() const
+{
+	assert ( GetSize() );
+	return m_ImageListImplPtr->m_QuivFileList[GetCurrentIndex()];
+}
+
+QuiverFile
+ImageList::GetPrevious() const
+{
+	assert( HasPrevious() );
+	return m_ImageListImplPtr->m_QuivFileList[GetCurrentIndex()-1];
+}
+
+QuiverFile
+ImageList::GetFirst() const
+{
+	assert (0 <GetSize() );
+	return m_ImageListImplPtr->m_QuivFileList[0];	
+}
+
+QuiverFile
+ImageList::GetLast() const
+{
+	assert (0 <GetSize() );
+	return m_ImageListImplPtr->m_QuivFileList[GetSize()-1];	
+}
+
+bool
+ImageList::Next() 
+{
+	bool rval = HasNext();
+	if (rval)
+		m_ImageListImplPtr->m_iCurrentIndex++;
+	return rval;
+}
+
+bool
+ImageList::Previous() 
+{
+	bool rval = HasPrevious();
+	if (rval)
+		m_ImageListImplPtr->m_iCurrentIndex--;
+	return rval;
+}
+
+bool
+ImageList::First() 
+{
+	m_ImageListImplPtr->m_iCurrentIndex = 0;
+
+	return (0 < GetSize());
+}
+
+bool
+ImageList::Last() 
+{
+	if (0 < GetSize())
+		m_ImageListImplPtr->m_iCurrentIndex = GetSize()-1;
+	else
+		m_ImageListImplPtr->m_iCurrentIndex = 0;
+	
+	return (0 < GetSize());
+}
+
+QuiverFile 
+ImageList::Get(unsigned int n) const
+{
+	assert ( n < GetSize() );
+	return m_ImageListImplPtr->m_QuivFileList[n];
+}
+
+QuiverFile 
+ImageList::operator[](unsigned int n)
+{
+	assert ( n < GetSize() );
+	return m_ImageListImplPtr->m_QuivFileList[n];
+}
+
+QuiverFile const 
+ImageList::operator[](unsigned int n) const
+{
+	assert ( n < GetSize() );
+	return m_ImageListImplPtr->m_QuivFileList[n];
+}
+
+void ImageList::Add(std::list<std::string> *file_list)
+{
+	m_ImageListImplPtr->Add(file_list);
+}
+
+
+void ImageList::SetImageList(list<string> *file_list)
+{
+	m_ImageListImplPtr->SetImageList(file_list);
+}
+
+
+void ImageList::Sort(SortOrder o,bool descending)
+{
+	m_ImageListImplPtr->Sort(o,descending);
+}
+
+
+
+//=============================================================================
+// ImageListImpl: private implementation 
+//=============================================================================
+
+ImageListImpl::ImageListImpl()
+{
+	LoadMimeTypes();
+	c_SortOrder = ImageList::SORT_FILENAME;
+	m_iCurrentIndex = 0;
+}
+
+
+void ImageListImpl::LoadMimeTypes()
 {
 	if ( c_setSupportedMimeTypes.empty())
 	{
@@ -65,49 +305,42 @@ void ImageList::LoadMimeTypes()
 	}
 }
 
-
-void ImageList::RemoveCurrentImage()
+void ImageListImpl::SetCurrentImage(string uri)
 {
-	// lets remove the current image;
-	string new_current;
-	if (HasNext())
+	if (!uri.empty())
 	{
-		new_current = PeekNext()->GetURI();
+		QuiverFileListIter itr;
+		int i = 0;
+		for (itr = m_QuivFileList.begin();itr != m_QuivFileList.end(); ++itr,i++)
+		{
+			if (itr->GetURI() == uri)
+			{
+				m_iCurrentIndex = i;
+
+				break;
+			}
+		}
 	}
-	else if (HasPrevious())
-	{
-		new_current = PeekPrevious()->GetURI();
-	}
-	if ( 0 < GetSize() )
-	{
-		m_ImageList.erase(m_itrCurrent);
-	}
-	SetCurrentImage(new_current);
 }
 
-void ImageList::SetImageList(list<string> file_list)
-{
-	SetImageList(&file_list);
-}
-
-void ImageList::AddImageList(std::list<std::string> *file_list)
+void ImageListImpl::Add(std::list<std::string> *file_list)
 {
 	if (0 == file_list->size())
 	{
-		if (0 == GetSize())
+		if (0 == m_QuivFileList.size())
 			SetCurrentImage("");
 		return;
 	}
 	
 	string current;
-	if (0 < GetSize())
+	if (0 < m_QuivFileList.size())
 	{
-		current = GetCurrent()->GetURI();
+		current = m_QuivFileList[m_iCurrentIndex].GetURI();
 	}
 	
 	if (1 == file_list->size())
 	{
-		m_iIndex = 1;
+		m_iCurrentIndex = 0;
 
 		gchar* uri = gnome_vfs_make_uri_from_shell_arg (file_list->front().c_str());
 		
@@ -139,7 +372,8 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 					{
 						cout << "adding dir" << endl;
 						AddDirectory(uri);
-						m_ImageList.sort(QuiverFileCompare);
+						std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
+						//m_QuivFileList.sort(QuiverFileCompare);
 						SetCurrentImage("");
 						//directory
 					}
@@ -170,7 +404,8 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 									cout << "adding parent dir" << endl;
 									// we can open the dir
 									AddDirectory(parent_str);
-									m_ImageList.sort(QuiverFileCompare);
+									std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
+									//m_QuivFileList.sort(QuiverFileCompare);
 									SetCurrentImage(uri);
 									//gnome_vfs_directory_close (dir_handle);
 								}
@@ -253,7 +488,8 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 			gnome_vfs_file_info_unref(info);
 			g_free(uri);
 		}
-		m_ImageList.sort(QuiverFileCompare);
+		//m_QuivFileList.sort(QuiverFileCompare);
+		std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
 		SetCurrentImage("");
 	}
 	if (!current.empty())
@@ -262,23 +498,23 @@ void ImageList::AddImageList(std::list<std::string> *file_list)
 	}
 }
 
-void ImageList::SetImageList(list<string> *file_list)
+void ImageListImpl::SetImageList(list<string> *file_list)
 {
-	printf("Setting the image list\n");
+	//printf("Setting the image list\n");
 	if (0 == file_list->size())
 	{
-		if (0 == GetSize())
+		if (0 == m_QuivFileList.size())
 			SetCurrentImage("");
 		return;
 	}
 	
-	m_ImageList.clear();
-	AddImageList(file_list);
-	printf("done setting the image list\n");
+	m_QuivFileList.clear();
+	Add(file_list);
+	//printf("done setting the image list\n");
 }
 
 
-void ImageList::AddDirectory(const gchar* uri)
+void ImageListImpl::AddDirectory(const gchar* uri)
 {
 	GnomeVFSResult result;
 	GnomeVFSDirectoryHandle *dir_handle;
@@ -323,7 +559,9 @@ void ImageList::AddDirectory(const gchar* uri)
 	}
 }
 
-void ImageList::AddFile(const gchar*  uri)
+
+
+void ImageListImpl::AddFile(const gchar*  uri)
 {
 	GnomeVFSResult result;
 	GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();
@@ -340,12 +578,13 @@ void ImageList::AddFile(const gchar*  uri)
 	}
 	gnome_vfs_file_info_unref(info);
 }
-void ImageList::AddFile(const gchar* uri, GnomeVFSFileInfo *info)
+
+void ImageListImpl::AddFile(const gchar* uri, GnomeVFSFileInfo *info)
 {
 	if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find( info->mime_type ) )
 	{
 		QuiverFile f(uri,info);
-		m_ImageList.push_back(f);
+		m_QuivFileList.push_back(f);
 	}
 	else
 	{
@@ -353,150 +592,35 @@ void ImageList::AddFile(const gchar* uri, GnomeVFSFileInfo *info)
 	}
 }
 
-void ImageList::SetCurrentImage(string uri)
+void ImageListImpl::Sort(ImageList::SortOrder o,bool descending)
 {
-	m_itrCurrent = m_ImageList.begin();
-	m_iIndex = 1;
-	
-	if (!uri.empty())
-	{
-		list<QuiverFile>::iterator itr;
-		int i;
-		for (i = 1,itr = m_ImageList.begin();itr != m_ImageList.end(); ++itr,i++)
-		{
-			if (itr->GetURI() == uri)
-			{
-				m_iIndex = i;
-				m_itrCurrent = itr;
-				break;
-			}
-		}
-	}
-}
-
-bool ImageList::HasNext()
-{
-	list<QuiverFile>::iterator itr;
-	itr = m_itrCurrent;
-	return ( ++itr != m_ImageList.end() );
-}
-
-bool ImageList::HasPrevious()
-{
-	return ( m_itrCurrent != m_ImageList.begin() );
-}
-
-QuiverFile* ImageList::GetNext()
-{
-	if (HasNext())
-	{
-		//printf("index: %d\n",m_iIndex);
-		m_iIndex++;
-		++m_itrCurrent;
-		return &(*m_itrCurrent);
-	}
-	return NULL;
-}
-
-QuiverFile* ImageList::PeekNext()
-{
-	if (HasNext())
-	{
-		std::list<QuiverFile>::iterator itr = m_itrCurrent;
-		return &(*(++itr));
-	}
-	return NULL;
+	//if (descending)
+		//m_QuivFileList.reverse();
 }
 
 
-QuiverFile* ImageList::GetCurrent()
-{
-	if (GetSize() && m_itrCurrent != m_ImageList.end())
-	{
-		return &(*m_itrCurrent);
-	}
 
-	return NULL;
-}
-
-int ImageList::GetCurrentIndex()
-{
-	return m_iIndex;
-}
-QuiverFile* ImageList::GetPrevious()
-{
-	if (HasPrevious())
-	{
-		m_iIndex--;
-		return &(*(--m_itrCurrent));
-	}
-	return NULL;
-}
-QuiverFile* ImageList::PeekPrevious()
-{
-	if (HasPrevious())
-	{
-		std::list<QuiverFile>::iterator itr = m_itrCurrent;
-		return &(*(--itr));
-	}
-	return NULL;
-}
-
-QuiverFile* ImageList::GetLast()
-{
-	if (m_iIndex < GetSize())
-	{
-		m_itrCurrent = m_ImageList.end();
-		--m_itrCurrent;
-		m_iIndex = GetSize();
-		return &*m_itrCurrent;
-	}
-	return NULL;
-}
-QuiverFile* ImageList::GetFirst()
-{
-	if (m_iIndex != 1 && 1 < GetSize())
-	{
-		m_itrCurrent = m_ImageList.begin();
-		m_iIndex = 1;
-		return &*m_itrCurrent;
-	}
-	return NULL;
-	
-}
-
-int ImageList::GetSize()
-{
-	return m_ImageList.size();
-}
-
-void ImageList::Sort(SortOrder o,bool reverse)
-{
-	if (reverse)
-		m_ImageList.reverse();
-}
-
-
-bool ImageList::QuiverFileCompare(const QuiverFile & l , const QuiverFile & r)
+bool ImageListImpl::QuiverFileCompare(const QuiverFile & l , const QuiverFile & r)
 {
 	QuiverFile left = l,right = r;
 	int retval = false;
 
 	switch (c_SortOrder)
 	{
-		case SORT_FILENAME:
+		case ImageList::SORT_FILENAME:
 			retval = (0 > strcmp(left.GetURI(),right.GetURI()) );
 			
 		break;
 
-		case SORT_FILE_EXTENSION:
+		case ImageList::SORT_FILE_EXTENSION:
 		break;
 
-		case SORT_FILE_DATE:
+		case ImageList::SORT_FILE_DATE:
 		break;
 		
-		case SORT_EXIF_DATE:
+		case ImageList::SORT_EXIF_DATE:
 		break;
 	}
 	return retval;
 }
+

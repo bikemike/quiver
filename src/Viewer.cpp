@@ -9,26 +9,41 @@
 
 using namespace std;
 
-//                     0 1 2 3 4 5 6 7 8
-/*
-static int rotate_cw[] = {0,8,7,6,5,2,1,4,3};
-static int rotate_ccw[] = {0,6,5,8,7,4,3,2,1};
-static int flip_h[] = {0,2,1,4,3,8,7,6,5};
-static int flip_v[] = {0,4,3,2,1,6,5,8,7};
-*/
 #define ORIENTATION_ROTATE_CW	0
 #define ORIENTATION_ROTATE_CCW 	1
 #define ORIENTATION_FLIP_H    	2
 #define ORIENTATION_FLIP_V    	3
 
 static int orientation_matrix[4][9] = 
-		{ 
-			{0,6,7,8,5,2,3,4,1}, //cw rotation
-			{0,8,5,6,7,4,1,2,3}, //ccw rotation
-			{0,2,1,4,3,6,5,8,7}, //flip h
-			{0,4,3,2,1,8,7,6,5}, //flip v
-		};
+{ 
+	{0,6,7,8,5,2,3,4,1}, //cw rotation
+	{0,8,5,6,7,4,1,2,3}, //ccw rotation
+	{0,2,1,4,3,6,5,8,7}, //flip h
+	{0,4,3,2,1,8,7,6,5}, //flip v
+};
 
+static char *ui_viewer =
+"<ui>"
+"	<menubar name='MenubarMain'>"
+"		<menu action='MenuView'>"
+"			<placeholder name='ViewItems'>"
+"				<menuitem action='ViewFilmStrip'/>"
+"			</placeholder>"
+"		</menu>"
+"	</menubar>"
+"	<toolbar name='ToolbarMain'>"
+"	</toolbar>"
+"</ui>";
+
+static  GtkToggleActionEntry action_entries_toggle[] = {
+	{ "ViewFilmStrip", GTK_STOCK_PROPERTIES,"Film Strip", "<Control><Shift>s", "Show/Hide Film Strip", G_CALLBACK(NULL),TRUE},
+};
+
+static GtkActionEntry action_entries[] = {
+	
+/*	{ "MenuFile", NULL, N_("_File") }, */
+	{ "ViewerStuff", GTK_STOCK_DIRECTORY, "viewer stuff", "", "view images", G_CALLBACK(NULL)},
+};
 
 void Viewer::event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data)
 {
@@ -45,6 +60,7 @@ Viewer::~Viewer()
 {
 	delete m_pNavigationControl;
 }
+
 Viewer::Viewer()
 {
 	m_pNavigationControl = new NavigationControl();
@@ -63,6 +79,9 @@ Viewer::Viewer()
 	m_dAdjustmentValueLastV = 0;
 	
 	m_iZoomType = ZOOM_FIT;
+	
+	m_pUIManager = NULL;
+	m_iMergedViewerUI = 0;
 	
 	//initialize the widget
 	//m_pScrolledWindow = gtk_scrolled_window_new (NULL,NULL);
@@ -167,6 +186,70 @@ Viewer::Viewer()
 	
 	GTK_WIDGET_SET_FLAGS(m_pTable,GTK_CAN_FOCUS);
 
+}
+
+void Viewer::Show()
+{
+	GError *tmp_error;
+	tmp_error = NULL;
+
+	gtk_widget_show(m_pTable);
+	if (m_pUIManager && 0 == m_iMergedViewerUI)
+	{
+		m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
+				ui_viewer,
+				strlen(ui_viewer),
+				&tmp_error);
+		if (NULL != tmp_error)
+		{
+			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
+		}
+	}
+}
+void Viewer::Hide()
+{
+	gtk_widget_hide(m_pTable);
+	if (m_pUIManager)
+	{	
+		gtk_ui_manager_remove_ui(m_pUIManager,
+			m_iMergedViewerUI);
+		m_iMergedViewerUI = 0;
+	}
+}
+void Viewer::SetUIManager(GtkUIManager *ui_manager)
+{
+	GError *tmp_error;
+	tmp_error = NULL;
+	
+	if (m_pUIManager)
+	{
+		g_object_unref(m_pUIManager);
+	}
+
+	m_pUIManager = ui_manager;
+	
+	g_object_ref(m_pUIManager);
+	
+	m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
+			ui_viewer,
+			strlen(ui_viewer),
+			&tmp_error);	
+	if (NULL != tmp_error)
+	{
+		g_warning("Browser::Show() Error: %s\n",tmp_error->message);
+	}
+	guint n_entries = G_N_ELEMENTS (action_entries);
+
+	
+	GtkActionGroup* actions = gtk_action_group_new ("BrowserActions");
+	
+	gtk_action_group_add_actions(actions, action_entries, n_entries, this);
+                                 
+	gtk_action_group_add_toggle_actions(actions,
+										action_entries_toggle, 
+										G_N_ELEMENTS (action_entries_toggle),
+										this);
+	gtk_ui_manager_insert_action_group (m_pUIManager,actions,0);	
 }
 /*
 void Viewer::HideBorder()
@@ -866,9 +949,9 @@ void Viewer::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint widt
 	r.y= y_off + y;
 	r.width = width;
 	r.height = height;
-
+//	printf("invalidate 1\n");
 	gdk_window_invalidate_rect(m_pDrawingArea->window,&r,false);
-	
+//	printf("invalidate 1\n");	
 	//gdk_flush();
 	//XFlush ( GDK_DISPLAY_XDISPLAY (gdk_display_get_default ()) );
 	
@@ -1167,8 +1250,9 @@ void Viewer::UpdatePixbuf(GdkPixbuf * pixbuf)
 	//printf("0x%08x Viewer::SetPixbuf 0: %d\n",pixbuf,G_OBJECT(pixbuf)->ref_count);
 	
 	//printf("Load time: %f\n",m_QuiverFile.GetLoadTimeInSeconds());
-		
-	g_object_ref(pixbuf);
+
+	if (NULL != pixbuf)		
+		g_object_ref(pixbuf);
 	
 	if (m_pixbuf != m_pixbuf_real)
 	{
@@ -1198,7 +1282,9 @@ void Viewer::UpdatePixbuf(GdkPixbuf * pixbuf)
 	r.x = r.y = 0;
 	r.width = m_pDrawingArea->allocation.width;
 	r.height = m_pDrawingArea->allocation.height;
+//	printf("invalidate 2\n");
 	gdk_window_invalidate_rect(m_pDrawingArea->window,&r,false);
+//	printf("invalidate 2\n");	
 }
 
 
@@ -1254,8 +1340,9 @@ gboolean Viewer::TimeoutEventConfigure(gpointer data)
 		r.x = r.y = 0;
 		r.width = m_pDrawingArea->allocation.width;
 		r.height = m_pDrawingArea->allocation.height;
+//		printf("invalidate 3\n");
 		gdk_window_invalidate_rect(m_pDrawingArea->window,&r,false);
-
+//		printf("invalidate 3\n");
 		gdk_event_free(e);
 	}
 	gdk_threads_leave();

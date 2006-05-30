@@ -4,17 +4,18 @@
 #include <gtk/gtk.h>
 //#include <iostream>
 #include "QuiverFile.h"
+#include "IPixbufLoaderObserver.h"
 
 
-class PixbufLoaderObserver
+class PixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
 
 	PixbufLoaderObserver();
 	virtual ~PixbufLoaderObserver();
-	
-	void ConnectSignals(GdkPixbufLoader *loader);
-	void ConnectSignalSizePrepared(GdkPixbufLoader * loader);
+
+	virtual void ConnectSignals(GdkPixbufLoader *loader);
+	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader);
 
 	virtual void SignalAreaPrepared(GdkPixbufLoader *loader);
 	virtual void SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height);
@@ -29,24 +30,8 @@ public:
 	// the image that is being cached for future use
 	virtual void SetCacheQuiverFile(QuiverFile quiverFile);
 	virtual void SignalBytesRead(long bytes_read,long total);
-	
 private:
-	static void signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data);
-	
-	static void signal_area_updated(GdkPixbufLoader *loader,
-                                            gint x,
-                                            gint y,
-                                            gint width,
-                                            gint height,
-                                            gpointer user_data);
-                                            
-	static void signal_closed(GdkPixbufLoader *loader,
-                                            gpointer user_data);
-                                            
-	static void signal_size_prepared(GdkPixbufLoader *loader,
-                                            gint width,
-                                            gint height,
-                                            gpointer user_data);
+
                                             
 };
 

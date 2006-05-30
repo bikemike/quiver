@@ -1,1 +1,9 @@
-Quiver!
+quiver!
+
+to build from svn:
+
+autoreconf -vifs
+./configure
+make
+
+
