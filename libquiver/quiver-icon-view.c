@@ -271,6 +271,26 @@ quiver_icon_view_class_init (QuiverIconViewClass *klass)
 		NULL, NULL,
 		g_cclosure_marshal_VOID__VOID,
 		G_TYPE_NONE,0);
+
+#define GTK_PARAM_READABLE G_PARAM_READABLE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
+
+	/* Style properties */
+	// FIXME -  P_ for last two strings
+	gtk_widget_class_install_style_property (widget_class,
+		g_param_spec_boxed ("selection-box-color",
+		("Selection Box Color"),
+		("Color of the selection box"),
+		GDK_TYPE_COLOR,
+		GTK_PARAM_READABLE));
+
+	gtk_widget_class_install_style_property (widget_class,
+		g_param_spec_uchar ("selection-box-alpha",
+		("Selection Box Alpha"),
+		("Opacity of the selection box"),
+		0, 0xff,
+		0x40,
+		GTK_PARAM_READABLE));
+		
 	/*
 
 	g_object_class_install_property (obj_class,
@@ -937,14 +957,70 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 	
 	if (iconview->priv->rubberband_mode)
 	{
+		cairo_t *cr = gdk_cairo_create(widget->window);
+
+		GdkColor *fill_color_gdk;
+		guchar fill_color_alpha;
+
+		gtk_widget_style_get (widget,
+			"selection-box-color", &fill_color_gdk,
+			"selection-box-alpha", &fill_color_alpha,
+			 NULL);
+		
+		if (!fill_color_gdk)
+		fill_color_gdk = gdk_color_copy (&widget->style->base[GTK_STATE_SELECTED]);
+
+		cairo_set_source_rgba (cr,
+			fill_color_gdk->red / 65535.,
+			fill_color_gdk->green / 65535.,
+			fill_color_gdk->blue / 65535.,
+			fill_color_alpha / 255.);
+
+		GdkRegion *rubber_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
+
+		gdk_region_intersect(rubber_region,in_region);
+		
+		int i;
+		int n_rectangles =0;
+		GdkRectangle *rects = NULL;
+
+		gdk_region_get_rectangles(rubber_region,&rects,&n_rectangles);
+		for (i = 0; i < n_rectangles; i++)
+		{
+			printf("rect %d: %d %d %d %d \n",i,rects[i].x, rects[i].y, rects[i].width, rects[i].height);
+			gdk_cairo_rectangle (cr,
+				&rects[i]);	
+		}
+		g_free(rects);
+
+	
+		cairo_clip(cr);
+		cairo_paint(cr);
+		
+		
+		cairo_set_source_rgb (cr,
+			fill_color_gdk->red / 65535.,
+			fill_color_gdk->green / 65535.,
+			fill_color_gdk->blue / 65535.);
+
+
+
+		cairo_destroy(cr);
+		
+		GdkGC *color_gc = gdk_gc_new(widget->window);
+		gdk_gc_set_rgb_fg_color(color_gc,fill_color_gdk);
+
 		gdk_draw_rectangle (widget->window,
-				widget->style->black_gc,
+				color_gc,
 				FALSE,
 				iconview->priv->rubberband_rect.x,
 				iconview->priv->rubberband_rect.y,
 				iconview->priv->rubberband_rect.width,
 				iconview->priv->rubberband_rect.height
 				);
+		g_object_unref(color_gc);
+		
+		gdk_color_free (fill_color_gdk);
 	}
 
 
@@ -1029,7 +1105,7 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 
 	if (iconview->priv->rubberband_mode)
 	{
-
+		/* this commented out code is for non-solid rect only
 		GdkRegion *invalid_region;
 		GdkRegion *tmp_region;
 
@@ -1042,9 +1118,16 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 		gdk_region_shrink(invalid_region,-1,-1);
 
 		gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
-
 		gdk_region_destroy(invalid_region);
 		gdk_region_destroy(tmp_region);
+		*/		
+		GdkRegion *invalid_region;
+		invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
+		gdk_region_shrink(invalid_region,-1,-1);
+		
+		gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
+
+		
 	}
 	else if (-1 != cell)
 	{
@@ -1491,10 +1574,16 @@ quiver_icon_view_timeout_smooth_scroll(gpointer data)
 	gboolean vdone = FALSE; 
 
 	QuiverIconView *iconview = (QuiverIconView*)data;
+
+	gdk_threads_enter();
+	
 	gint cell = iconview->priv->smooth_scroll_cell;
 
 	if (-1 == cell)
+	{
+		gdk_threads_leave();
 		return FALSE;
+	}
 
 	guint cols,rows;
 	quiver_icon_view_get_col_row_count(iconview,&cols,&rows);
@@ -1552,9 +1641,12 @@ quiver_icon_view_timeout_smooth_scroll(gpointer data)
 	if (hdone && vdone)
 	{
 		iconview->priv->smooth_scroll_cell = -1;
+		gdk_threads_leave();
 		return FALSE;
 	}
-
+	
+	gdk_threads_leave();
+	
 	return TRUE;
 }
 
