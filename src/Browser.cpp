@@ -45,7 +45,9 @@ public:
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
 			quiver_image_view_set_pixbuf(m_ImageView,pixbuf);
 		};
-	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height){quiver_image_view_set_pixbuf_at_size(m_ImageView,pixbuf,width,height);};
+	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height){
+		quiver_image_view_set_pixbuf_at_size(m_ImageView,pixbuf,width,height);
+		};
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile){};
 	
@@ -382,7 +384,7 @@ void ThumbnailLoader::Run(int id)
 					gdk_threads_leave();
 					//if (n % 15 == 0)
 					{
-						sched_yield();
+						pthread_yield();
 					}
 				}
 				//usleep(1000);
@@ -410,8 +412,21 @@ void* ThumbnailLoader::run(void * data)
 static char *ui_browser =
 "<ui>"
 "	<menubar name='MenubarMain'>"
+"		<menu action='MenuEdit'>"
+"			<placeholder name='CopyPaste'>"
+"				<menuitem action='Cut'/>"
+"				<menuitem action='Copy'/>"
+"				<menuitem action='Paste'/>"
+"			</placeholder>"
+"			<placeholder name='Selection'>"
+"				<menuitem action='SelectAll'/>"
+"			</placeholder>"
+"			<placeholder name='Trash'>"
+"				<menuitem action='ImageTrash'/>"
+"			</placeholder>"
+"		</menu>"
 "		<menu action='MenuView'>"
-"			<placeholder name='ViewItems'>"
+"			<placeholder name='UIItems'>"
 "				<menuitem action='ViewPreview'/>"
 "			</placeholder>"
 "		</menu>"
@@ -429,6 +444,13 @@ static GtkActionEntry action_entries[] = {
 	
 //	{ "MenuFile2", NULL, "_File" }, 
 	{ "BrowserStuff", GTK_STOCK_PROPERTIES, "what is this?", "", "Menu Tool Item Test", G_CALLBACK(NULL)},
+	
+	{ "Cut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(NULL)},
+	{ "Copy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(NULL)},
+	{ "Paste", GTK_STOCK_PASTE, "Paste", "<Control>V", "Paste image", G_CALLBACK(NULL)},
+	{ "SelectAll", NULL, "_Select All", "<Control>A", "Select all", G_CALLBACK(NULL)},
+	{ "ImageTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(NULL)},
+	
 };
 
 
@@ -506,13 +528,16 @@ Browser::GetWidget()
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
-
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
 
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
+
+static void entry_activate(GtkEntry *entry, gpointer user_data);
+
+
 //=============================================================================
 // BrowswerImpl Callback Prototypes
 //=============================================================================
@@ -592,6 +617,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	//quiver_image_view_set_transition_type(QUIVER_IMAGE_VIEW(imageview),QUIVER_IMAGE_VIEW_TRANSITION_TYPE_CROSSFADE);
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(imageview),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 	
+	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(iconview), TRUE);
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
@@ -602,6 +628,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	g_signal_connect(G_OBJECT(iconview),"cell_activated",G_CALLBACK(iconview_cell_activated_cb),this);
 	g_signal_connect(G_OBJECT(iconview),"cursor_changed",G_CALLBACK(iconview_cursor_changed_cb),this);
 	g_signal_connect(G_OBJECT(iconview),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);	
+	
+	g_signal_connect(G_OBJECT(entry),"activate",G_CALLBACK(entry_activate),this);
 
 	GdkColor dark_grey;
 	gdk_color_parse("#444",&dark_grey);
@@ -815,5 +843,14 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 
 
 
-
+static void entry_activate(GtkEntry *entry, gpointer user_data)
+{
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	string entry_text = gtk_entry_get_text(entry);
+	list<string> file_list;
+	file_list.push_back(entry_text);
+	b->m_QuiverFiles.SetImageList(&file_list);
+	printf("activated the entry box!\n");
+	
+}
 

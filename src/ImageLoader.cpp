@@ -14,6 +14,10 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	pthread_mutex_init(&m_CommandMutex, NULL);
 	
 	AddPixbufLoaderObserver(this);
+
+	//Timer t("ImageLoader::Start()");
+	pthread_create(&m_pthread_id, NULL, run, this);
+	pthread_detach(m_pthread_id);
 }
 
 ImageLoader::~ImageLoader()
@@ -26,9 +30,7 @@ ImageLoader::~ImageLoader()
 
 void ImageLoader::Start()
 {
-	//Timer t("ImageLoader::Start()");
-	pthread_create(&m_pthread_id, NULL, run, this);
-	pthread_detach(m_pthread_id);
+
 }
 
 void ImageLoader::ReloadImage(QuiverFile f)
@@ -84,7 +86,10 @@ int ImageLoader::Run()
 		m_Commands.pop_front();
 		
 		pthread_mutex_unlock (&m_CommandMutex);
+		
 		Load();
+		
+		pthread_yield();
 	}
 	
 	return 0;
@@ -191,38 +196,38 @@ void ImageLoader::Load()
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
-				GdkPixbuf *thumb_pixbuf;
+				GdkPixbuf *thumb_pixbuf = NULL;
+				
 				if (m_Command.quiverFile.HasThumbnail(true))
 				{
 					thumb_pixbuf = m_Command.quiverFile.GetThumbnail(true);
-					if (NULL != thumb_pixbuf)
-					{
-						list<IPixbufLoaderObserver*>::iterator itr;
-						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-						{
-							gdk_threads_enter();
-							(*itr)->SetPixbufAtSize(thumb_pixbuf,m_Command.quiverFile.GetWidth(),m_Command.quiverFile.GetHeight());
-							gdk_threads_leave();
-						}
-						g_object_unref(thumb_pixbuf);
-					}
-					
-					
 				}
 				else if (m_Command.quiverFile.HasThumbnail(false))
 				{
 					thumb_pixbuf = m_Command.quiverFile.GetThumbnail(false);
-					if (NULL != thumb_pixbuf)
+				}
+
+			
+				if (NULL != thumb_pixbuf)
+				{
+					
+					int width = m_Command.quiverFile.GetWidth();
+					int height = m_Command.quiverFile.GetHeight();
+					
+					if (4 < m_Command.quiverFile.GetOrientation())
 					{
-						list<IPixbufLoaderObserver*>::iterator itr;
-						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-						{
-							gdk_threads_enter();
-							(*itr)->SetPixbufAtSize(thumb_pixbuf,m_Command.quiverFile.GetWidth(),m_Command.quiverFile.GetHeight());
-							gdk_threads_leave();
-						}
-						g_object_unref(thumb_pixbuf);
+						swap(width,height);
+						printf("swapped size: %d %d\n",width,height);
 					}
+					
+					list<IPixbufLoaderObserver*>::iterator itr;
+					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+					{
+						gdk_threads_enter();
+						(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
+						gdk_threads_leave();
+					}
+					g_object_unref(thumb_pixbuf);
 				}
 				
 				//cout << "load from file: " << m_Command.quiverFile.GetURI() << endl;
@@ -285,7 +290,14 @@ void ImageLoader::Load()
 									gdk_threads_leave();
 									
 									gdk_threads_enter();
-									(*itr)->SetPixbuf(pixbuf);
+									gint width,height;
+									width = m_Command.quiverFile.GetWidth();
+									height = m_Command.quiverFile.GetHeight();
+									if (4 < m_Command.quiverFile.GetOrientation())
+									{
+										swap(width,height);
+									}
+									(*itr)->SetPixbufAtSize(pixbuf,width,height);
 									gdk_flush();
 									gdk_threads_leave();
 
@@ -317,7 +329,14 @@ void ImageLoader::Load()
 				gdk_threads_leave();
 				
 				gdk_threads_enter();
-				(*itr)->SetPixbuf(pixbuf);
+				gint width,height;
+				width = m_Command.quiverFile.GetWidth();
+				height = m_Command.quiverFile.GetHeight();
+				if (4 < m_Command.quiverFile.GetOrientation())
+				{
+					swap(width,height);
+				}
+				(*itr)->SetPixbufAtSize(pixbuf,width,height);
 				gdk_threads_leave();
 			}
 			g_object_unref(pixbuf);

@@ -137,7 +137,7 @@ ImageList::Remove(unsigned int iIndex)
 bool 
 ImageList::HasNext()  const
 {
-	return GetCurrentIndex() < GetSize()-1;
+	return (0 < GetSize() && GetCurrentIndex() < GetSize()-1);
 }
 
 bool

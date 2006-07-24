@@ -110,6 +110,8 @@ void quiver_image_view_flip(QuiverImageView *imageview, gboolean horizontal);
 void quiver_image_view_connect_pixbuf_loader_signals(QuiverImageView *imageview,GdkPixbufLoader *loader);
 void quiver_image_view_connect_pixbuf_size_prepared_signal(QuiverImageView *imageview,GdkPixbufLoader *loader);
 
+GtkAdjustment * quiver_image_view_get_hadjustment(QuiverImageView *imageview);
+GtkAdjustment * quiver_image_view_get_vadjustment(QuiverImageView *imageview);
 
 
 /*
