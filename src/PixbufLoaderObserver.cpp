@@ -50,6 +50,11 @@ void PixbufLoaderObserver::SetPixbuf(GdkPixbuf * pixbuf)
 	//printf("PixbufLoaderObserver::SetPixbuf\n");
 }
 
+void PixbufLoaderObserver::SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height)
+{
+	//printf("PixbufLoaderObserver::SetPixbuf\n");
+}
+
 void PixbufLoaderObserver::SignalBytesRead(long bytes_read,long total)
 {
 }

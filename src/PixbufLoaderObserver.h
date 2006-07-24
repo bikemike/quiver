@@ -24,9 +24,11 @@ public:
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf);
+	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height);
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile);
-	
+
+		
 	// the image that is being cached for future use
 	virtual void SetCacheQuiverFile(QuiverFile quiverFile);
 	virtual void SignalBytesRead(long bytes_read,long total);

@@ -959,7 +959,7 @@ void Viewer::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint widt
 
 void Viewer::SignalClosed(GdkPixbufLoader *loader)
 {
-	m_iCurrentOrientation = m_QuiverFile.GetExifOrientation();
+	m_iCurrentOrientation = m_QuiverFile.GetOrientation();
 	if (!m_iCurrentOrientation)
 	{
 		m_iCurrentOrientation = 1;
@@ -979,7 +979,7 @@ void Viewer::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 
 
 		// FIXME: This should only be done if the exif autorotate option is specified.
-		if (m_QuiverFileCached.GetExifOrientation() >= 5)
+		if (m_QuiverFileCached.GetOrientation() >= 5)
 		{
 			geo.max_width = m_pDrawingArea->allocation.height;
 			geo.max_height = m_pDrawingArea->allocation.width;
@@ -1228,7 +1228,7 @@ void Viewer::SetPixbuf(GdkPixbuf * pixbuf)
 {
 
 
-	m_iCurrentOrientation = m_QuiverFile.GetExifOrientation();
+	m_iCurrentOrientation = m_QuiverFile.GetOrientation();
 	if (!m_iCurrentOrientation)
 	{
 		m_iCurrentOrientation = 1;

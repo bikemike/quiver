@@ -1658,7 +1658,7 @@ void Quiver::ActionFileSave(GtkAction *action,gpointer data)
 	quiverFile = m_ImageList.GetCurrent();
 	int old_orientation, new_orientation;
 
-	old_orientation = quiverFile.GetExifOrientation();
+	old_orientation = quiverFile.GetOrientation();
 	new_orientation = m_Viewer.GetCurrentOrientation();
 	
 	ExifData *exif_data = quiverFile.GetExifData();

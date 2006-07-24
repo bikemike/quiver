@@ -37,7 +37,7 @@ void ImageLoader::ReloadImage(QuiverFile f)
 	m_ImageCache.RemovePixbuf(f.GetURI());
 	
 	
-	if (f.GetExifOrientation() >= 5)
+	if (f.GetOrientation() >= 5)
 	{
 		CacheImage(f);
 		usleep(10000);
@@ -191,6 +191,40 @@ void ImageLoader::Load()
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
+				GdkPixbuf *thumb_pixbuf;
+				if (m_Command.quiverFile.HasThumbnail(true))
+				{
+					thumb_pixbuf = m_Command.quiverFile.GetThumbnail(true);
+					if (NULL != thumb_pixbuf)
+					{
+						list<IPixbufLoaderObserver*>::iterator itr;
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							gdk_threads_enter();
+							(*itr)->SetPixbufAtSize(thumb_pixbuf,m_Command.quiverFile.GetWidth(),m_Command.quiverFile.GetHeight());
+							gdk_threads_leave();
+						}
+						g_object_unref(thumb_pixbuf);
+					}
+					
+					
+				}
+				else if (m_Command.quiverFile.HasThumbnail(false))
+				{
+					thumb_pixbuf = m_Command.quiverFile.GetThumbnail(false);
+					if (NULL != thumb_pixbuf)
+					{
+						list<IPixbufLoaderObserver*>::iterator itr;
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							gdk_threads_enter();
+							(*itr)->SetPixbufAtSize(thumb_pixbuf,m_Command.quiverFile.GetWidth(),m_Command.quiverFile.GetHeight());
+							gdk_threads_leave();
+						}
+						g_object_unref(thumb_pixbuf);
+					}
+				}
+				
 				//cout << "load from file: " << m_Command.quiverFile.GetURI() << endl;
 				//cout << "not in cache" << endl;
 				// TODO: update all of these calls to call gdk_flush();
@@ -207,7 +241,7 @@ void ImageLoader::Load()
 					(*itr)->SetQuiverFile(m_Command.quiverFile);
 					gdk_flush();
 					gdk_threads_leave();
-					if (1 < m_Command.quiverFile.GetExifOrientation())
+					if (1 < m_Command.quiverFile.GetOrientation())
 					{
 						(*itr)->ConnectSignalSizePrepared(loader);
 					}
@@ -233,10 +267,10 @@ void ImageLoader::Load()
 					else
 					{
 						g_object_ref(pixbuf);
-						if (1 < m_Command.quiverFile.GetExifOrientation()) // TODO: change to get rotate option
+						if (1 < m_Command.quiverFile.GetOrientation()) // TODO: change to get rotate option
 						{
 							gdk_threads_enter();
-							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
+							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetOrientation());
 							gdk_threads_leave();
 							
 							if (NULL != pixbuf_rotated)
@@ -321,10 +355,10 @@ void ImageLoader::Load()
 					if (NULL != pixbuf)
 					{
 						g_object_ref(pixbuf);
-						if (1 < m_Command.quiverFile.GetExifOrientation()) // TODO: change to get rotate option
+						if (1 < m_Command.quiverFile.GetOrientation()) // TODO: change to get rotate option
 						{
 							gdk_threads_enter();
-							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetExifOrientation());
+							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.quiverFile.GetOrientation());
 							gdk_threads_leave();
 							
 							if (NULL != pixbuf_rotated)

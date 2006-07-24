@@ -94,7 +94,10 @@ void quiver_image_view_set_n_rows(QuiverImageView *imageview,guint n_rows);
 void quiver_image_view_set_smooth_scroll(QuiverImageView *imageview,gboolean smooth_scroll);
 
 void quiver_image_view_set_size(QuiverImageView *imageview, guint width,guint height);
+
 void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf);
+void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width, int height);
+
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode);
 void quiver_image_view_set_transition_type(QuiverImageView *imageview,QuiverImageViewTransitionType type);
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble amount);

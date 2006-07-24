@@ -35,11 +35,17 @@ public:
 	virtual ~ImageViewPixbufLoaderObserver(){};
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
-		quiver_image_view_connect_pixbuf_loader_signals(m_ImageView,loader);};
-	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){quiver_image_view_connect_pixbuf_size_prepared_signal(m_ImageView,loader);};
+			quiver_image_view_connect_pixbuf_loader_signals(m_ImageView,loader);
+		};
+	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){
+			quiver_image_view_connect_pixbuf_size_prepared_signal(m_ImageView,loader);
+		};
 
 	// custom calls
-	virtual void SetPixbuf(GdkPixbuf * pixbuf){quiver_image_view_set_pixbuf(m_ImageView,pixbuf);};
+	virtual void SetPixbuf(GdkPixbuf * pixbuf){
+			quiver_image_view_set_pixbuf(m_ImageView,pixbuf);
+		};
+	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height){quiver_image_view_set_pixbuf_at_size(m_ImageView,pixbuf,width,height);};
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile){};
 	

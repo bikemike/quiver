@@ -36,13 +36,12 @@ public:
 	
 	const gchar* GetURI();
 
-	GdkPixbuf *GetThumbnail();
-	GdkPixbuf *GetExifThumbnail();
-	GdkPixbuf *GetThumbnail(bool large);
+	bool HasThumbnail(bool large = false);
 
+	GdkPixbuf *GetExifThumbnail();
+	GdkPixbuf *GetThumbnail(bool large = false);
 
 	ExifData *GetExifData();
-	int GetExifOrientation();
 	GnomeVFSFileInfo * GetFileInfo();
 
 	unsigned long long GetFileSize();
@@ -52,12 +51,17 @@ public:
 	std::string GetFilePath();
 	int GetWidth();
 	int GetHeight();
+	
+	int GetOrientation();
+	
 	double GetLoadTimeInSeconds();
 	
 	void SetWidth(int );
 	void SetHeight(int);
 	void SetLoadTimeInSeconds(double);
 	bool IsWriteable();
+	
+
 	
 	
 private:
