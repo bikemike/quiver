@@ -197,7 +197,7 @@ public:
 
 static void callback(gpointer data)
 {
-	printf("callback!\n");
+	//printf("callback!\n");
 }
 
 static gboolean viewer_scroll_event(GtkWidget *widget, GdkEventScroll *event, gpointer data )

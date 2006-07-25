@@ -302,7 +302,6 @@ int QuiverFile::GetWidth()
 	{
 		GetImageDimensions(m_QuiverFilePtr->m_szURI, &m_QuiverFilePtr->m_iWidth, &m_QuiverFilePtr->m_iHeight);
 	}
-
 	return m_QuiverFilePtr->m_iWidth;
 }
 int QuiverFile::GetHeight()
@@ -312,7 +311,6 @@ int QuiverFile::GetHeight()
 	{
 		GetImageDimensions(m_QuiverFilePtr->m_szURI, &m_QuiverFilePtr->m_iWidth, &m_QuiverFilePtr->m_iHeight);
 	}
-
 	return m_QuiverFilePtr->m_iHeight;
 }
 
@@ -537,22 +535,13 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb)
 		if (NULL != thumb_pixbuf)
 		{
 			g_object_ref(thumb_pixbuf);
-			//printf("got thumb from cache\n");
-	
-			// check mtime (if they do not match, we dont want to use this thumbnail)
-			
-			//const gchar* thumb_uri = gdk_pixbuf_get_option (thumb_pixbuf,"tEXt::Thumb::URI");
-			
-			//gchar copy[256];
-			
-	
-			//strcpy(copy,thumb_width);
 
 			const gchar* thumb_mtime_str = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::MTime");
 			const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
 
 			const gchar* str_thumb_width = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Width");
 			const gchar* str_thumb_height = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Height");
+			const gchar *str_thumb_software = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Software");
 			
 			if (NULL != str_orientation)
 			{
@@ -593,12 +582,29 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb)
 			{
 				save_thumbnail_to_cache = TRUE;
 			}
-			else if (-1 == m_QuiverFilePtr->m_iWidth || -1 == m_QuiverFilePtr->m_iHeight)
+			else 
 			{
-				m_QuiverFilePtr->m_iWidth = atol(str_thumb_width);
-				m_QuiverFilePtr->m_iHeight = atol(str_thumb_height);
-			}
+				int new_width  = atol(str_thumb_width);
+				int new_height = atol(str_thumb_height);
+				
+				if (NULL != str_thumb_software && 0 == strcmp("GNOME::ThumbnailFactory",str_thumb_software))
+				{
+					// this is to work around a bug with the gnome thumbnail factory
+					save_thumbnail_to_cache = TRUE;		
+				}
+				else if (-1 == m_QuiverFilePtr->m_iWidth || -1 == m_QuiverFilePtr->m_iHeight)
+				{
+					m_QuiverFilePtr->m_iWidth =  new_width;
+					m_QuiverFilePtr->m_iHeight = new_height;
+				}
+				/*
+				else if (new_width != m_QuiverFilePtr->m_iWidth || new_height != m_QuiverFilePtr->m_iHeight)
+				{
+					save_thumbnail_to_cache = TRUE;					
+				}
+				*/
 
+			}
 		}
 		gdk_pixbuf_loader_close(loader,&tmp_error);
 		g_object_unref(loader);

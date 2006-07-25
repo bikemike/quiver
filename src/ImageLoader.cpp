@@ -217,7 +217,6 @@ void ImageLoader::Load()
 					if (4 < m_Command.quiverFile.GetOrientation())
 					{
 						swap(width,height);
-						printf("swapped size: %d %d\n",width,height);
 					}
 					
 					list<IPixbufLoaderObserver*>::iterator itr;

@@ -176,6 +176,7 @@ static void quiver_image_view_magnification_start(QuiverImageView *imageview);
 
 static void quiver_image_view_get_pixbuf_display_size(QuiverImageView *imageview,GdkPixbuf *pixbuf, gint *width, gint *height);
 static void quiver_image_view_get_pixbuf_display_size_alt(QuiverImageView *imageview,gint in_width, gint in_height, gint *out_width, gint *out_height);
+static void quiver_image_view_get_pixbuf_display_size_for_mode(QuiverImageView *imageview, QuiverImageViewMode mode, gint in_width, gint in_height, gint *out_width, gint *out_height);
 
 static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imageview,gint new_width, gint new_height);
 static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,GdkRectangle *rect);
@@ -717,7 +718,6 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 				// tmp_mag - in case the actual size of the pixbuf is 
 				// not the same as the set size
 				gdouble tmp_mag = magnification * width / actual_width;
-				printf("tmp mag: %f\n",tmp_mag);
 
 				src_clip_x     = (gint)(hadjust / tmp_mag);
 				src_clip_x = MAX(0,src_clip_x-2); // make the src area a tad bigger
@@ -754,16 +754,16 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 				new_y     =  (gint)(vadjust - src_clip_y*tmp_mag);
 				new_y = MAX(0,MIN(new_y, tmp_h - new_height));
 			}
-			printf("original image size: %d %d\n",actual_width,actual_height);
+			//printf("original image size: %d %d\n",actual_width,actual_height);
 
-			printf("sx,sy,sw,sh %d %d  - %d %d\n",src_clip_x,src_clip_y,src_clip_width,src_clip_height);
+			//printf("sx,sy,sw,sh %d %d  - %d %d\n",src_clip_x,src_clip_y,src_clip_width,src_clip_height);
 			GdkPixbuf *sub_pixbuf = gdk_pixbuf_new_subpixbuf(imageview->priv->pixbuf,src_clip_x,src_clip_y,src_clip_width,src_clip_height);
-			printf("new img size %d %d \n",tmp_w,tmp_h);
+			//printf("new img size %d %d \n",tmp_w,tmp_h);
 			GdkPixbuf *new_pixbuf = gdk_pixbuf_scale_simple(sub_pixbuf,tmp_w, tmp_h,interptype);
 
 			g_object_unref(sub_pixbuf);
 
-			printf("nx,ny,nw,nh %d %d - %d %d\n",new_x,new_y,new_width,new_height);
+			//printf("nx,ny,nw,nh %d %d - %d %d\n",new_x,new_y,new_width,new_height);
 			sub_pixbuf = gdk_pixbuf_new_subpixbuf(new_pixbuf,new_x,new_y,new_width,new_height);
 			//printf("done\n");
 
@@ -1694,7 +1694,7 @@ static gboolean quiver_image_view_timeout_magnification(gpointer data)
 	
 	gdouble mag_diff = imageview->priv->magnification_final - imageview->priv->magnification;
 	gdouble percent_diff = imageview->priv->magnification_final / imageview->priv->magnification;
-	printf("percent diff orig %f\n",percent_diff);
+
 	if (1 < percent_diff || -1 > percent_diff)
 	{
 		percent_diff = 1/percent_diff;
@@ -1708,14 +1708,12 @@ static gboolean quiver_image_view_timeout_magnification(gpointer data)
 	
 	if (percent_diff < 5.)
 	{
-		printf("percent diff last %f\n",percent_diff);
 		quiver_image_view_set_magnification_full(imageview,imageview->priv->magnification_final);
 		imageview->priv->magnification_timeout_id = 0;
 		rval = FALSE;
 	}
 	else
 	{
-		printf("percent diff %f\n",percent_diff);
 		quiver_image_view_set_magnification_full(imageview,imageview->priv->magnification + mag_diff/2);
 		imageview->priv->magnification_timeout_id = 0;
 		quiver_image_view_add_magnification_timeout(imageview);
@@ -1749,13 +1747,18 @@ static void quiver_image_view_get_pixbuf_display_size(QuiverImageView *imageview
 }
 static void quiver_image_view_get_pixbuf_display_size_alt(QuiverImageView *imageview,gint in_width, gint in_height, gint *out_width, gint *out_height)
 {
+	quiver_image_view_get_pixbuf_display_size_for_mode(imageview,imageview->priv->view_mode,in_width,in_height,out_width,out_height);
+}
+
+static void quiver_image_view_get_pixbuf_display_size_for_mode(QuiverImageView *imageview, QuiverImageViewMode mode, gint in_width, gint in_height, gint *out_width, gint *out_height)
+{
 	GtkWidget *widget;
 	widget = GTK_WIDGET(imageview);
 	
 	*out_width = in_width;
 	*out_height = in_height;
 
-	switch (imageview->priv->view_mode)
+	switch (mode)
 	{
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
 			{
@@ -1778,7 +1781,6 @@ static void quiver_image_view_get_pixbuf_display_size_alt(QuiverImageView *image
 	}
 }
 
-
 /*
  * this function will invalidate the area of the current pixbuf but not the area 
  * that the new_pixbuf is in
@@ -1800,7 +1802,14 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 	old_pixbuf = imageview->priv->pixbuf;
 
 	quiver_image_view_get_pixbuf_display_size_alt(imageview,imageview->priv->pixbuf_width, imageview->priv->pixbuf_height,&old_width,&old_height);
-	quiver_image_view_get_pixbuf_display_size_alt(imageview,new_width,new_height,&new_width,&new_height);
+	
+	QuiverImageViewMode mode = imageview->priv->view_mode;
+	
+	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
+	{
+		mode = imageview->priv->view_mode_last;
+	}
+	quiver_image_view_get_pixbuf_display_size_for_mode(imageview, mode, new_width, new_height, &new_width, &new_height);
 
 	old_rect.x = MAX(0,(widget->allocation.width - old_width)/2.);
 	old_rect.y = MAX(0,(widget->allocation.height - old_height)/2.);
@@ -1884,12 +1893,17 @@ void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf)
 {
 	gint width , height;
 	
-	width = 0;
+	width  = 0;
 	height = 0;
 	if (NULL != pixbuf)
 	{
-		width = gdk_pixbuf_get_width(pixbuf);
+		width  = gdk_pixbuf_get_width(pixbuf);
 		height = gdk_pixbuf_get_height(pixbuf);
+	}
+	else
+	{
+		width  = 0;
+		height = 0;
 	}
 
 	quiver_image_view_set_pixbuf_at_size(imageview, pixbuf,width,height);
@@ -1908,15 +1922,9 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 		g_object_ref(pixbuf);
 
 		imageview->priv->pixbuf = pixbuf;
-		imageview->priv->pixbuf_width = width;
-		imageview->priv->pixbuf_height = height;
 	}
-	else
-	{
-		imageview->priv->pixbuf_width = width;
-		imageview->priv->pixbuf_height = height;
-	}
-
+	imageview->priv->pixbuf_width = width;
+	imageview->priv->pixbuf_height = height;
 	
 	quiver_image_view_reset_view_mode(imageview,FALSE);
 	
@@ -1935,10 +1943,10 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 
 static void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
 {
-	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
-	{
-		quiver_image_view_set_view_mode_full(imageview,imageview->priv->view_mode_last,invalidate);
-	}
+		if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
+		{
+			quiver_image_view_set_view_mode_full(imageview,imageview->priv->view_mode_last,invalidate);
+		}
 }
 
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode)
@@ -2017,7 +2025,6 @@ gdouble quiver_image_view_get_magnification(QuiverImageView *imageview)
 			{
 				quiver_image_view_get_pixbuf_display_size_alt(imageview,imageview->priv->pixbuf_width,imageview->priv->pixbuf_height,&display_width,&display_height);
 				magnification = display_width/(gdouble)imageview->priv->pixbuf_width;
-				printf("magnification = %f\n",magnification);
 			}
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
@@ -2122,7 +2129,7 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 		if (0 > new_hadjust)
 			new_hadjust = 0;
 
-		printf("old new h: %d %d\n",(gint)old_hadjust,(gint)new_hadjust);
+		//printf("old new h: %d %d\n",(gint)old_hadjust,(gint)new_hadjust);
 		gtk_adjustment_set_value(imageview->priv->hadjustment,new_hadjust);
 	}
 	else
@@ -2143,17 +2150,17 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 		else
 		{
 			// set the center as the next centerpoint
-			printf("old new v: %d %d\n",(gint)old_vadjust,(gint)new_vadjust);
-			printf("old page: %d\n",(gint)old_vpage_size);
+			//printf("old new v: %d %d\n",(gint)old_vadjust,(gint)new_vadjust);
+			//printf("old page: %d\n",(gint)old_vpage_size);
 			new_vadjust = (old_vadjust + old_vpage_size/2.) * (new_mag/old_mag) - imageview->priv->vadjustment->page_size/2.;
-			printf("old new v: %d %d\n",(gint)old_vadjust,(gint)new_vadjust);
+			//printf("old new v: %d %d\n",(gint)old_vadjust,(gint)new_vadjust);
 		}
 		if (new_vadjust > imageview->priv->vadjustment->upper - imageview->priv->vadjustment->page_size)
 			new_vadjust = MAX (0, imageview->priv->vadjustment->upper - imageview->priv->vadjustment->page_size);
 		if (0 > new_vadjust)
 			new_vadjust = 0;
 
-		printf("old new v: %d %d\n",(gint)old_vadjust,(gint)new_vadjust);
+		//printf("old new v: %d %d\n",(gint)old_vadjust,(gint)new_vadjust);
 		gtk_adjustment_set_value(imageview->priv->vadjustment,new_vadjust);
 	}
 	else
@@ -2360,7 +2367,6 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 			new_width = width;
 			new_height = height;
 			quiver_image_view_get_bound_size(widget->allocation.width,widget->allocation.height,&new_width,&new_height,FALSE);
-			printf("trying to set size to : %d %d\n",new_width,new_height);
 			gdk_pixbuf_loader_set_size(loader,new_width,new_height);
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
@@ -2395,12 +2401,13 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	imageview->priv->pixbuf_animation = pixbuf_animation;
 	
 	imageview->priv->pixbuf = pixbuf;
+	
+	imageview->priv->pixbuf_width = w;
+	imageview->priv->pixbuf_height = h;
+	
 	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
 
 	imageview->priv->scroll_draw = FALSE;
-
-	imageview->priv->pixbuf_width = w;
-	imageview->priv->pixbuf_height = h;
 
 	quiver_image_view_update_size(imageview);
 	
@@ -2409,7 +2416,8 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	
 	imageview->priv->scroll_draw = TRUE;
 	
-	printf("area prepared\n");
+	imageview->priv->area_updated = TRUE;
+
 }
 static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, gint width,gint height,gpointer userdata)
 {
@@ -2430,8 +2438,6 @@ static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, 
 
 	if (dw == aw && dh == ah)
 	{
-		printf(" we seem to be in the place where we are?\n");
-
 		rect.x = x;
 		rect.y = y;
 		rect.width = width;
@@ -2511,7 +2517,6 @@ static void pixbuf_loader_closed(GdkPixbufLoader *loader,gpointer userdata)
 		}
 		else
 		{
-			printf("hmm. area was updated?\n");
 			imageview->priv->area_updated = FALSE;
 		}
 	
