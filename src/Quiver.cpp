@@ -213,7 +213,7 @@ GtkToggleActionEntry Quiver::action_entries_toggle[] = {
 	{ "ViewMenubar", GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(NULL),TRUE},
 	{ "ViewToolbarMain", GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(NULL),TRUE},
 	{ "ViewStatusbar", GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(NULL),TRUE},
-	{ "ViewProperties", GTK_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(action_view_properties),TRUE},
+	{ "ViewProperties", GTK_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(action_view_properties),FALSE},
 };
 
 GtkActionEntry Quiver::action_entries[] = {
@@ -926,6 +926,8 @@ void Quiver::Init()
 	
 	hbox_browser_viewer_container = gtk_hbox_new(FALSE,0);
 	m_pNBProperties = gtk_notebook_new();
+	
+	gtk_widget_set_no_show_all(m_pNBProperties,TRUE);
 	
 	//FIXME: temp notebook stuff
 	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("File"));

@@ -113,6 +113,7 @@ void quiver_image_view_connect_pixbuf_size_prepared_signal(QuiverImageView *imag
 GtkAdjustment * quiver_image_view_get_hadjustment(QuiverImageView *imageview);
 GtkAdjustment * quiver_image_view_get_vadjustment(QuiverImageView *imageview);
 
+void quiver_image_view_activate(QuiverImageView *iconview);
 
 /*
 void quiver_image_view_set_n_items_func (QuiverImageView *imageview, 

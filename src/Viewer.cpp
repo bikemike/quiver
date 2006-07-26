@@ -20,12 +20,17 @@ using namespace std;
 #define ORIENTATION_FLIP_V    	3
 
 
-
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
 
+static void viewer_action_handler_cb(GtkAction *action, gpointer data);
+
+static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data );
+static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data);
+static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
+static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
 
 
 static int orientation_matrix[4][9] = 
@@ -79,27 +84,27 @@ static char *ui_viewer =
 "</ui>";
 
 static  GtkToggleActionEntry action_entries_toggle[] = {
-	{ "ViewFilmStrip", GTK_STOCK_PROPERTIES,"Film Strip", "<Control><Shift>s", "Show/Hide Film Strip", G_CALLBACK(NULL),TRUE},
+	{ "ViewFilmStrip", GTK_STOCK_PROPERTIES,"Film Strip", "<Control><Shift>s", "Show/Hide Film Strip", G_CALLBACK(viewer_action_handler_cb),TRUE},
 };
 
 static GtkActionEntry action_entries[] = {
 	
 /*	{ "MenuFile", NULL, N_("_File") }, */
-	{ "ViewerStuff", GTK_STOCK_DIRECTORY, "viewer stuff", "", "view images", G_CALLBACK(NULL)},
-	{ "Cut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(NULL)},
-	{ "Copy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(NULL)},
-	{ "ImageTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(NULL)},
+	{ "ViewerStuff", GTK_STOCK_DIRECTORY, "viewer stuff", "", "view images", G_CALLBACK(viewer_action_handler_cb)},
+	{ "Cut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "Copy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImageTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
 	
-	{ "ImagePrevious", GTK_STOCK_GO_BACK, "_Previous Image", NULL, "Go to previous image", G_CALLBACK(NULL)},
-	{ "ImageNext", GTK_STOCK_GO_FORWARD, "_Next Image", NULL, "Go to next image", G_CALLBACK(NULL)},
-	{ "ImageFirst", GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(NULL)},
-	{ "ImageLast", GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(NULL)},
+	{ "ImagePrevious", GTK_STOCK_GO_BACK, "_Previous Image", NULL, "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImageNext", GTK_STOCK_GO_FORWARD, "_Next Image", NULL, "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImageFirst", GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImageLast", GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
 
-	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "", "Fit to Screen", G_CALLBACK(NULL)},
-	{ "ZoomFitStretch", GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Screen", G_CALLBACK(NULL)},
-	{ "Zoom100", GTK_STOCK_ZOOM_100, "Zoom _100%", "", "Full Size", G_CALLBACK(NULL)},
-	{ "ZoomIn", GTK_STOCK_ZOOM_IN,"Zoom _In", "", "Zoom In", G_CALLBACK(NULL)},
-	{ "ZoomOut", GTK_STOCK_ZOOM_OUT,"Zoom _Out", "", "Zoom Out", G_CALLBACK(NULL)},
+	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "", "Fit to Screen", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomFitStretch", GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Screen", G_CALLBACK(viewer_action_handler_cb)},
+	{ "Zoom100", GTK_STOCK_ZOOM_100, "Zoom _100%", "", "Full Size", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomIn", GTK_STOCK_ZOOM_IN,"Zoom _In", "", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomOut", GTK_STOCK_ZOOM_OUT,"Zoom _Out", "", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
 
 };
 
@@ -195,12 +200,15 @@ public:
 };
 
 
-static void callback(gpointer data)
+static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 {
-	//printf("callback!\n");
+	ViewerImpl *pViewerImpl;
+	pViewerImpl = (ViewerImpl*)data;
+	
+	printf("Action: %s\n",gtk_action_get_name(action));
 }
 
-static gboolean viewer_scroll_event(GtkWidget *widget, GdkEventScroll *event, gpointer data )
+static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data )
 {
 
 	ViewerImpl *pViewerImpl;
@@ -208,7 +216,8 @@ static gboolean viewer_scroll_event(GtkWidget *widget, GdkEventScroll *event, gp
 
 	if (event->state & GDK_CONTROL_MASK || event->state & GDK_SHIFT_MASK)
 		return FALSE;
-	
+
+	g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
 	
 	if (GDK_SCROLL_UP == event->direction)
 	{
@@ -218,10 +227,11 @@ static gboolean viewer_scroll_event(GtkWidget *widget, GdkEventScroll *event, gp
 			f = pViewerImpl->m_ImageList.GetCurrent();
 			pViewerImpl->m_ImageLoader.LoadImage(f);
 			
+
 			quiver_icon_view_set_cursor_cell(
 				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
 				,pViewerImpl->m_ImageList.GetCurrentIndex());
-			
+
 			// cache the previous image if there is one
 			if (pViewerImpl->m_ImageList.HasPrevious())
 			{
@@ -251,6 +261,48 @@ static gboolean viewer_scroll_event(GtkWidget *widget, GdkEventScroll *event, gp
 			}		
 			//ImageChanged();
 		}
+	}
+
+	g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+
+	return TRUE;
+}
+
+
+static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
+{
+	printf("imageview: activated\n");
+	return TRUE;
+}
+
+static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
+{
+	printf("iconview: cell activated\n");	
+	return TRUE;
+}
+
+static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data)
+{
+	ViewerImpl *pViewerImpl;
+	pViewerImpl = (ViewerImpl*)data;
+	
+	pViewerImpl->m_ImageList.SetCurrentIndex(cell);
+
+	if (0 < pViewerImpl->m_ImageList.GetSize())
+	{
+		QuiverFile f;
+		f = pViewerImpl->m_ImageList.GetCurrent();
+
+		pViewerImpl->m_ImageLoader.LoadImage(f);
+		//ImageChanged();
+	
+		
+		// cache the next image if there is one
+		if (pViewerImpl->m_ImageList.HasNext())
+		{
+			f = pViewerImpl->m_ImageList.GetNext();
+			pViewerImpl->m_ImageLoader.CacheImage(f);
+		}		
 	}
 	return TRUE;
 }
@@ -345,12 +397,15 @@ ViewerImpl::ViewerImpl()
 	quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
 	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(m_pIconView),TRUE);
 
-	
-	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(callback),this);
-	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(callback),this);
+	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(viewer_iconview_cell_activated),this);
+	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(viewer_iconview_cursor_changed),this);
 	
     g_signal_connect (G_OBJECT (m_pImageView), "scroll_event",
-    			G_CALLBACK (viewer_scroll_event), this);
+    			G_CALLBACK (viewer_scrollwheel_event), this);
+
+    g_signal_connect (G_OBJECT (m_pImageView), "activated",
+    			G_CALLBACK (viewer_imageview_activated), this);
+
 
     g_signal_connect (G_OBJECT (m_pAdjustmentH), "changed",
     			G_CALLBACK (image_view_adjustment_changed), this);
@@ -581,6 +636,7 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 	{
 		// hide h show v
 		child->bottom_attach = 2;
+		child->right_attach = 1;
 		gtk_widget_show (pNavigationBox);	
 		gtk_widget_show (pScrollbarV);
 		gtk_widget_hide (pScrollbarH);
@@ -590,6 +646,7 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 	{
 		// show h hide v
 		child->right_attach = 2;
+		child->bottom_attach = 1;
 		gtk_widget_show (pNavigationBox);	
 		gtk_widget_show (pScrollbarH);
 		gtk_widget_hide (pScrollbarV);

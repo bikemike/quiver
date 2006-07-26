@@ -14,11 +14,9 @@
 #define QUIVER_IMAGE_VIEW_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewPrivate))
 
 /* set up some defaults */
-#define QUIVER_IMAGE_VIEW_ICON_WIDTH              128
-#define QUIVER_IMAGE_VIEW_ICON_HEIGHT             128
-#define QUIVER_IMAGE_VIEW_CELL_PADDING            8 
-#define QUIVER_IMAGE_VIEW_ICON_SHADOW_SIZE        5
-#define QUIVER_IMAGE_VIEW_ICON_BORDER_SIZE        1
+#define QUIVER_IMAGE_VIEW_MAG_MAX              50.
+#define QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE       32
+
 
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
@@ -29,9 +27,11 @@ G_DEFINE_TYPE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET);
 
 /* signals */
 enum {
+	SIGNAL_ACTIVATED,
 	SIGNAL_COUNT
 };
 
+static guint imageview_signals[SIGNAL_COUNT] = {0};
 
 /* properties */
 /* properties */
@@ -85,7 +85,6 @@ struct _QuiverImageViewPrivate
 	gboolean area_updated;
 	guint animation_timeout_id;
 
-	GdkPixmap *drop_shadow[5][8];
 
 	QuiverImageViewMouseMode mouse_move_mode;
 	gint mouse_x1, mouse_y1;
@@ -148,9 +147,7 @@ quiver_image_view_set_adjustment_upper (GtkAdjustment *adj,
 				 gboolean       always_emit_changed);
 
 
-/*
-static void quiver_image_view_draw_drop_shadow(QuiverImageView *imageview,GdkDrawable *drawable,GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h);
-*/
+
 static void quiver_image_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller);
 static void quiver_image_view_add_scale_hq_timeout(QuiverImageView *imageview);
 static gboolean quiver_image_view_timeout_scale_hq(gpointer data);
@@ -246,16 +243,14 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 
 	g_type_class_add_private (obj_class, sizeof (QuiverImageViewPrivate));
 
-/*
-	imageview_signals[SIGNAL_CELL_ACTIVATED] = g_signal_new (I_("cell_activated"),
+	imageview_signals[SIGNAL_ACTIVATED] = g_signal_new (/*FIXME: I_*/("activated"),
 		G_TYPE_FROM_CLASS (obj_class),
 		G_SIGNAL_RUN_LAST,
-		G_STRUCT_OFFSET (QuiverImageViewClass, cell_activated),
+		G_STRUCT_OFFSET (QuiverImageViewClass, activated),
 		NULL, NULL,
-		g_cclosure_marshal_VOID__UINT,
-		G_TYPE_NONE, 1,
-		G_TYPE_UINT);
-*/
+		g_cclosure_marshal_VOID__VOID,
+		G_TYPE_NONE, 0);
+
 	/*
 
 	g_object_class_install_property (obj_class,
@@ -352,11 +347,8 @@ quiver_image_view_init(QuiverImageView *imageview)
 
 	GTK_WIDGET_SET_FLAGS(imageview,GTK_CAN_FOCUS);
 	//GTK_WIDGET_UNSET_FLAGS(imageview,GTK_DOUBLE_BUFFERED);
-	
-	gint i,j;
-	for (i = 0;i<5;i++)
-		for (j = 0;j<8;j++)
-			imageview->priv->drop_shadow[i][j] = NULL;
+
+	gtk_widget_set_size_request(GTK_WIDGET(imageview),QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE,QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE);
 
 	
 }
@@ -367,19 +359,6 @@ quiver_image_view_destroy(GtkObject *object)
 {
 	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(object);
 
-		
-	gint i,j;
-	for (i = 0;i<5;i++)
-	{
-		for (j = 0;j<8;j++)
-		{
-			if (NULL != imageview->priv->drop_shadow[i][j])
-			{
-				g_object_unref(imageview->priv->drop_shadow[i][j]);
-				imageview->priv->drop_shadow[i][j] = NULL;
-			}
-		}
-	}
 }
 */
 
@@ -907,8 +886,19 @@ quiver_image_view_button_press_event (GtkWidget *widget,
 
 	if (1 == event->button)
 	{
-		imageview->priv->mouse_move_capture = TRUE;
-		return TRUE;
+		if (GDK_BUTTON_PRESS == event->type)
+		{
+			imageview->priv->mouse_move_capture = TRUE;
+			return TRUE;
+		}
+		else if (GDK_2BUTTON_PRESS == event->type)
+		{
+			//activate
+			quiver_image_view_activate(imageview);
+		}
+		else if (GDK_3BUTTON_PRESS == event->type)
+		{
+		}
 	}
 
 
@@ -1956,6 +1946,7 @@ void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewM
 
 static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,QuiverImageViewMode mode,gboolean invalidate)
 {
+	
 	GtkWidget *widget;
 	GdkRectangle rect;
 	
@@ -2046,6 +2037,35 @@ gdouble quiver_image_view_get_magnification(QuiverImageView *imageview)
 
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_mag)
 {
+	// restrict the zoom amount
+	if (QUIVER_IMAGE_VIEW_MAG_MAX < new_mag)
+	{
+		new_mag = QUIVER_IMAGE_VIEW_MAG_MAX;
+	}
+	
+	if (1 > new_mag)
+	{
+		gdouble new_w = imageview->priv->pixbuf_width * new_mag;
+		gdouble new_h = imageview->priv->pixbuf_height * new_mag;
+		if (QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE > imageview->priv->pixbuf_width &&
+			QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE > imageview->priv->pixbuf_height)
+		{
+			new_mag = 1.;
+		}
+		else if (QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE > new_w &&
+			QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE > new_h)
+		{
+			gdouble mag_w = (gdouble)QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE / imageview->priv->pixbuf_width;
+			gdouble mag_h = (gdouble)QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE / imageview->priv->pixbuf_height;
+			new_mag = mag_w;
+			if (mag_h< mag_w)
+			{
+				new_mag = mag_h;
+			} 
+		}
+		
+	}
+	
 	if (QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH == imageview->priv->magnification_mode)
 	{
 		imageview->priv->magnification_final = new_mag;
@@ -2242,6 +2262,11 @@ GtkAdjustment * quiver_image_view_get_hadjustment(QuiverImageView *imageview)
 GtkAdjustment * quiver_image_view_get_vadjustment(QuiverImageView *imageview)
 {
 	return imageview->priv->vadjustment;	
+}
+
+void quiver_image_view_activate(QuiverImageView *imageview)
+{
+	g_signal_emit(imageview,imageview_signals[SIGNAL_ACTIVATED],0);
 }
 
 /* end public functions */
