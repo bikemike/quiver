@@ -59,7 +59,7 @@ public:
 	static gboolean event_key_release(GtkWidget *widget, GdkEventKey *event, gpointer data );
 	static gboolean event_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data );
 	static gboolean event_button_release ( GtkWidget *widget, GdkEventButton *event, gpointer data );
-	static gboolean event_scroll( GtkWidget *widget, GdkEventScroll *event, gpointer data );
+//	static gboolean event_scroll( GtkWidget *widget, GdkEventScroll *event, gpointer data );
 	static gboolean event_delete( GtkWidget *widget, GdkEvent  *event, gpointer   data );
 	static void event_destroy( GtkWidget *widget,gpointer   data );
 
@@ -111,7 +111,7 @@ public:
 	gboolean EventButtonPress ( GtkWidget *widget, GdkEventButton *event, gpointer data );
 	gboolean EventButtonRelease ( GtkWidget *widget, GdkEventButton *event, gpointer data );
 	gboolean EventWindowState( GtkWidget *widget, GdkEventWindowState *event, gpointer data );
-	gboolean EventScroll( GtkWidget *widget, GdkEventScroll *event, gpointer data );
+//	gboolean EventScroll( GtkWidget *widget, GdkEventScroll *event, gpointer data );
 	gboolean EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer data );
 	gboolean EventKeyRelease( GtkWidget *widget, GdkEventKey *event, gpointer data );
 	gboolean EventDelete( GtkWidget *widget,GdkEvent  *event,gpointer data );
@@ -127,7 +127,7 @@ public:
 
 	void SetWindowTitle(std::string s);
 
-	void Quiver::CurrentImage();
+//	void Quiver::CurrentImage();
 	void ImageChanged();
 	
 	void SlideshowStart();
@@ -144,10 +144,12 @@ public:
 
 	// action c callbacks
 	static void action_file_save(GtkAction *action,gpointer data);
+/*
 	static void action_image_next(GtkAction *action,gpointer data);
 	static void action_image_last(GtkAction *action,gpointer data);
 	static void action_image_first(GtkAction *action,gpointer data);
 	static void action_image_previous(GtkAction *action,gpointer data);
+*/
 	static void action_quit(GtkAction *action,gpointer data);
 	static void action_full_screen(GtkAction *action,gpointer data);
 	static void action_slide_show(GtkAction *action,gpointer data);
@@ -159,11 +161,12 @@ public:
 	
 	// action c++ callbacks
 	void ActionFileSave(GtkAction *action,gpointer data);
-
+/*
 	void ActionImageNext(GtkAction *action,gpointer data);
 	void ActionImagePrevious(GtkAction *action,gpointer data);
 	void ActionImageFirst(GtkAction *action,gpointer data);
 	void ActionImageLast(GtkAction *action,gpointer data);
+*/
 	void ActionQuit(GtkAction *action,gpointer data);
 	void ActionFullScreen(GtkAction *action,gpointer data);
 	void ActionSlideShow(GtkAction *action,gpointer data);
@@ -213,7 +216,7 @@ private:
 	
 	
 	GdkWindowState m_WindowState;
-	ImageLoader m_ImageLoader;
+	//ImageLoader m_ImageLoader;
 
 	//gui actions
 	static GtkActionEntry Quiver::action_entries[];

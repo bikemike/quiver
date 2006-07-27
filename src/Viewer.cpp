@@ -418,6 +418,10 @@ ViewerImpl::ViewerImpl()
 	m_ImageViewPixbufLoaderObserverPtr = tmp;
 	m_ImageLoader.AddPixbufLoaderObserver(m_ImageViewPixbufLoaderObserverPtr.get());
 	
+	gtk_widget_show_all(m_pHBox);
+	gtk_widget_hide(m_pHBox);
+	gtk_widget_set_no_show_all(m_pHBox,TRUE);
+	
 }
 
 
@@ -472,6 +476,12 @@ void Viewer::Show()
 		}
 	}
 
+	if ( (gint)m_ViewerImplPtr->m_ImageList.GetCurrentIndex()
+		!= quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView)) )
+	{
+		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),NULL);
+	}
+
 	quiver_icon_view_set_cursor_cell(
 		QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView),
 		m_ViewerImplPtr->m_ImageList.GetCurrentIndex() );
@@ -499,15 +509,7 @@ void Viewer::SetUIManager(GtkUIManager *ui_manager)
 	m_ViewerImplPtr->m_pUIManager = ui_manager;
 	
 	g_object_ref(m_ViewerImplPtr->m_pUIManager);
-	
-	m_ViewerImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_ViewerImplPtr->m_pUIManager,
-			ui_viewer,
-			strlen(ui_viewer),
-			&tmp_error);	
-	if (NULL != tmp_error)
-	{
-		g_warning("Browser::Show() Error: %s\n",tmp_error->message);
-	}
+
 	guint n_entries = G_N_ELEMENTS (action_entries);
 
 	

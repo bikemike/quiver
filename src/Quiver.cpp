@@ -316,14 +316,12 @@ void Quiver::SignalDragDataReceived (GtkWidget *widget,GdkDragContext *drag_cont
 			{
 				// if move, we will add to the list
 				m_ImageList.Add(&file_list);
-				CurrentImage();			
 			}
 			else
 			{
 				//create a new list
 				//cout << "suggested action : GDK_ACTION_COPY! " << endl;
 				m_ImageList.SetImageList(&file_list);
-				CurrentImage();
 			}
 		}
 	}
@@ -442,40 +440,6 @@ void Quiver::ImageChanged()
 	m_ExifView.SetQuiverFile(f);
 }
 
-void Quiver::CurrentImage()
-{
-	if (0 < m_ImageList.GetSize())
-	{
-		QuiverFile f;
-		f = m_ImageList.GetCurrent();
-
-		m_ImageLoader.LoadImage(f);
-		ImageChanged();
-	
-		
-		// cache the next image if there is one
-		if (m_ImageList.HasNext())
-		{
-			f = m_ImageList.GetNext();
-			m_ImageLoader.CacheImage(f);
-		}		
-	}
-}
-
-
-gboolean Quiver::EventScroll( GtkWidget *widget, GdkEventScroll *event, gpointer data )
-{
-	if (GDK_SCROLL_UP == event->direction)
-	{
-		ActionImagePrevious(NULL,NULL);
-	}
-	else if (GDK_SCROLL_DOWN == event->direction)
-	{
-		ActionImageNext(NULL,NULL);
-	}
-	return TRUE;
-}
-
 
 gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
 {
@@ -560,10 +524,6 @@ gboolean Quiver::event_window_state( GtkWidget *widget, GdkEventWindowState *eve
 	return ((Quiver*)data)->EventWindowState(widget,event,data);
 }
 
-gboolean Quiver::event_scroll( GtkWidget *widget, GdkEventScroll *event, gpointer data )
-{
-	return ((Quiver*)data)->EventScroll(widget,event,data);
-}
 gboolean Quiver::EventButtonPress( GtkWidget *widget,GdkEventButton  *event,gpointer data )
 {
 	if (1 == event->button)
@@ -639,7 +599,7 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 			}
 		}
 	}
-	*/
+
 	else if (GDK_Left == event->keyval)
 	{
 		ActionImagePrevious(NULL,NULL);
@@ -648,7 +608,6 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 	{
 		ActionImageNext(NULL,NULL);
 	}
-	/*
 	else if (GDK_r == event->keyval || GDK_L == event->keyval)
 	{
 		m_Viewer.Rotate(true);
@@ -801,7 +760,6 @@ void Quiver::Init()
 	m_bSlideshowRunning = false;
 	m_iTimeoutSlideshowID = 0;
 
-	m_ImageLoader.Start();
 	//initialize
 
 	m_Browser.AddEventHandler(m_BrowserEventHandler);
@@ -950,25 +908,12 @@ void Quiver::Init()
 	{
 		// must do the following to hide the widget on initial
 		// display of app
-		gtk_widget_show_all(m_Viewer.GetWidget());
-		gtk_widget_hide(m_Viewer.GetWidget());
-		gtk_widget_set_no_show_all(m_Viewer.GetWidget(),TRUE);
-
-		m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
-			quiver_ui_browser,
-			strlen(quiver_ui_browser),
-			&tmp_error);	
+		ShowBrowser();
 	}
 	else
 	{
-		gtk_widget_show_all(m_Browser.GetWidget());
-		gtk_widget_hide(m_Browser.GetWidget());
-		gtk_widget_set_no_show_all(m_Browser.GetWidget(),TRUE);
 
-		m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
-			quiver_ui_viewer,
-			strlen(quiver_ui_viewer),
-			&tmp_error);
+		ShowViewer();
 	}
 
 	// pack the hpaned (main gui area)
@@ -1037,10 +982,6 @@ void Quiver::Init()
 				G_CALLBACK (signal_drag_motion), this);
 */
 					
-	m_ImageLoader.AddPixbufLoaderObserver(&m_Statusbar);
-//	m_ImageLoader.AddPixbufLoaderObserver(&m_Viewer);
-	m_ImageLoader.AddPixbufLoaderObserver(this);
-	
 	g_idle_add(idle_quiver_init,this);
 	
 }
@@ -1198,8 +1139,6 @@ void Quiver::SaveSettings()
 void Quiver::SetImageList(list<string> &files)
 {
 	m_ImageList.SetImageList(&files);
-	if (GTK_WIDGET_VISIBLE(m_Viewer.GetWidget()))
-		CurrentImage();
 }
 
 int main (int argc, char **argv)
@@ -1307,6 +1246,15 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	m_Browser.SetImageList(m_ImageList);
 	m_Viewer.SetImageList(m_ImageList);
 
+	if (0 == m_iMergedBrowserUI)
+	{
+		ShowViewer();
+	}
+	else
+	{
+		ShowBrowser();
+	}
+
 	return FALSE; // return false so it is never called again
 }
 
@@ -1327,7 +1275,7 @@ gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data)
 	//SlideshowAddTimeout();
 	
 	gdk_threads_enter();
-	ActionImageNext(NULL,NULL);
+//	ActionImageNext(NULL,NULL);
 	gdk_threads_leave();
 
 	if (!m_ImageList.HasNext())
@@ -1500,14 +1448,6 @@ void Quiver::action_file_save(GtkAction *action,gpointer data)
 	return ((Quiver*)data)->ActionFileSave(action,data);
 }
 
-void Quiver::action_image_next(GtkAction *action,gpointer data)
-{
-	return ((Quiver*)data)->ActionImageNext(action,data);
-}
-void Quiver::action_image_previous(GtkAction *action,gpointer data)
-{
-	return ((Quiver*)data)->ActionImagePrevious(action,data);
-}
 
 void Quiver::action_quit(GtkAction *action,gpointer data)
 {
@@ -1527,15 +1467,6 @@ void Quiver::action_slide_show(GtkAction *action,gpointer data)
 void Quiver::action_image_trash(GtkAction *action,gpointer data)
 {
 	return ((Quiver*)data)->ActionImageTrash(action,data);
-}
-
-void Quiver::action_image_last(GtkAction *action,gpointer data)
-{
-	return ((Quiver*)data)->ActionImageLast(action,data);
-}
-void Quiver::action_image_first(GtkAction *action,gpointer data)
-{
-	return ((Quiver*)data)->ActionImageFirst(action,data);
 }
 
 void Quiver::action_about(GtkAction *action,gpointer data)
@@ -1839,7 +1770,7 @@ void Quiver::ShowViewer()
 	// clear the screen of any old image
 	//FIXME 
 	//m_Viewer.SetPixbuf(NULL);
-	CurrentImage();
+
 	printf("%d is the merge id\n",m_iMergedViewerUI);
 }
 void Quiver::ShowBrowser()
@@ -1874,94 +1805,23 @@ void Quiver::ActionUIModeChange(GtkAction *action,gpointer data)
 
 void Quiver::ActionAbout(GtkAction *action,gpointer data)
 {
-	char * authors[] = {"http://mike.dyndns.org mike morrison <mike_morrison@alumni.uvic.ca>",NULL};
-	char * artists[] = {"mike morrison <mike_morrison@alumni.uvic.ca> http://mike.dyndns.org",NULL};
-	char * documenters[] = {"mike morrison <mike_morrison@alumni.uvic.ca> http://mike.dyndns.org",NULL};
+	char * authors[] = {"mike morrison <mike_morrison@alumni.uvic.ca>",NULL};
+	char * artists[] = {"mike morrison <mike_morrison@alumni.uvic.ca>",NULL};
+	char * documenters[] = {"mike morrison <mike_morrison@alumni.uvic.ca>",NULL};
 	gtk_show_about_dialog(GTK_WINDOW(m_pQuiverWindow),
-		"name","quiver",
-		"version","0.1",
+		"name",GETTEXT_PACKAGE,
+		"version",PACKAGE_VERSION,
 		"copyright","copyright (c) 2005\nmike morrison",
 		"comments","a gtk image viewer",
 		"authors",authors,
 		"artists",artists,
 		"documenters",documenters,
-		"website","http://mike.dyndns.org/quiver",
+		"website",PACKAGE_BUGREPORT,
 		"website-label","quiver website",
 		NULL);
 }
 
 
-
-void Quiver::ActionImageNext(GtkAction *action,gpointer data)
-{
-	if (m_ImageList.Next())
-	{
-		QuiverFile f;
-
-		f = m_ImageList.GetCurrent();
-		m_ImageLoader.LoadImage(f);
-
-		// cache the next image if there is one
-		if (m_ImageList.HasNext())
-		{
-			f = m_ImageList.GetNext();
-			m_ImageLoader.CacheImage(f);
-		}		
-		ImageChanged();
-	}
-}
-void Quiver::ActionImagePrevious(GtkAction *action,gpointer data)
-{
-	if (m_ImageList.Previous())
-	{
-		QuiverFile f;
-		f = m_ImageList.GetCurrent();
-		m_ImageLoader.LoadImage(f);
-		
-		// cache the previous image if there is one
-		if (m_ImageList.HasPrevious())
-		{
-			f = m_ImageList.GetPrevious();
-			m_ImageLoader.CacheImage(f);	
-		}		
-		ImageChanged();
-	}
-}
-void Quiver::ActionImageFirst(GtkAction *action,gpointer data)
-{
-	QuiverFile f;
-	if (m_ImageList.First())
-	{
-		f = m_ImageList.GetCurrent();
-	
-		m_ImageLoader.LoadImage(f);
-	
-		// cache the next image if there is one
-		if (m_ImageList.HasNext())
-		{
-			f = m_ImageList.GetNext();
-			m_ImageLoader.CacheImage(f);
-		}		
-		ImageChanged();
-	}
-}
-void Quiver::ActionImageLast(GtkAction *action,gpointer data)
-{
-	if (m_ImageList.Last())
-	{
-		QuiverFile f;
-		f = m_ImageList.GetLast();
-		m_ImageLoader.LoadImage(f);
-	
-		// cache the previous image if there is one
-		if (m_ImageList.HasPrevious())
-		{
-			f = m_ImageList.GetPrevious();
-			m_ImageLoader.CacheImage(f);	
-		}		
-		ImageChanged();
-	}
-}
 
 void Quiver::ActionQuit(GtkAction *action,gpointer data)
 {
@@ -2053,7 +1913,7 @@ void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
 					{
 						cout << "trashed the file " << endl;
 						m_ImageList.Remove(m_ImageList.GetCurrentIndex());
-						CurrentImage();
+
 					}
 					else
 					{

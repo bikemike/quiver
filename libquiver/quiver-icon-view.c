@@ -987,7 +987,7 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 		gdk_region_get_rectangles(rubber_region,&rects,&n_rectangles);
 		for (i = 0; i < n_rectangles; i++)
 		{
-			printf("rect %d: %d %d %d %d \n",i,rects[i].x, rects[i].y, rects[i].width, rects[i].height);
+			//printf("rect %d: %d %d %d %d \n",i,rects[i].x, rects[i].y, rects[i].width, rects[i].height);
 			gdk_cairo_rectangle (cr,
 				&rects[i]);	
 		}
@@ -2261,8 +2261,11 @@ quiver_icon_view_update_icon_size(QuiverIconView *iconview)
 	rect.y = 0;
 	rect.width = widget->allocation.width;
 	rect.height = widget->allocation.height;
-	gdk_window_invalidate_rect(widget->window,&rect,FALSE);
-	gdk_window_process_updates(widget->window,FALSE);
+	if (GTK_WIDGET_REALIZED(widget))
+	{
+		gdk_window_invalidate_rect(widget->window,&rect,FALSE);
+		gdk_window_process_updates(widget->window,FALSE);
+	}
 
 	iconview->priv->scroll_draw = TRUE;
 
@@ -2512,6 +2515,11 @@ void quiver_icon_view_activate_cell(QuiverIconView *iconview,guint cell)
 	g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_ACTIVATED],0,cell);
 }
 
+gint quiver_icon_view_get_cursor_cell(QuiverIconView *iconview)
+{
+	return iconview->priv->cursor_cell;
+}
+
 void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gint new_cursor_cell)
 {
 	quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)0,FALSE);
@@ -2600,7 +2608,14 @@ void
 quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
 		guint cell)
 {
+
 	GtkWidget *widget = GTK_WIDGET (iconview);
+	
+	if (!GTK_WIDGET_REALIZED(widget))
+	{
+		return;
+	}
+	
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
 

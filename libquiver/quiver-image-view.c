@@ -609,6 +609,11 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 
 	pixbuf = imageview->priv->pixbuf;
 
+	if ( !GTK_WIDGET_REALIZED (widget) )
+	{
+		return;
+	}
+
 	if (NULL == pixbuf)
 		return;
 
@@ -1292,6 +1297,7 @@ quiver_image_view_timeout_scale_hq(gpointer data)
 		quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
 		if (GTK_WIDGET_REALIZED (widget))
 		{
+			// FIXME: probalby dont need to invalidate whole image area
 			gdk_window_invalidate_rect(widget->window,&rect,FALSE);
 		}		
 			
@@ -1562,6 +1568,7 @@ static void quiver_image_view_start_animation(QuiverImageView *imageview)
 	imageview->priv->pixbuf = gdk_pixbuf_copy(pixbuf);
 
 	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
+	
 	quiver_image_view_invalidate_image_area(imageview,NULL);
 	
 	quiver_image_view_add_animation_timeout(imageview);
@@ -1791,6 +1798,11 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 	widget = GTK_WIDGET(imageview);
 	old_pixbuf = imageview->priv->pixbuf;
 
+	if ( !GTK_WIDGET_REALIZED (widget) )
+	{
+		return;
+	}
+
 	quiver_image_view_get_pixbuf_display_size_alt(imageview,imageview->priv->pixbuf_width, imageview->priv->pixbuf_height,&old_width,&old_height);
 	
 	QuiverImageViewMode mode = imageview->priv->view_mode;
@@ -1837,10 +1849,15 @@ static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,G
 	gint width,height;
 
 	GdkPixbuf *pixbuf;
-	
+
 	widget = GTK_WIDGET(imageview);
 	pixbuf = imageview->priv->pixbuf;
 
+	if ( !GTK_WIDGET_REALIZED (widget) )
+	{
+		return;
+	}
+	
 	//quiver_image_view_get_pixbuf_display_size(imageview,pixbuf,&width,&height);
 	quiver_image_view_get_pixbuf_display_size_alt(imageview,imageview->priv->pixbuf_width, imageview->priv->pixbuf_height,&width,&height);
 
@@ -1933,10 +1950,10 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 
 static void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
 {
-		if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
-		{
-			quiver_image_view_set_view_mode_full(imageview,imageview->priv->view_mode_last,invalidate);
-		}
+	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
+	{
+		quiver_image_view_set_view_mode_full(imageview,imageview->priv->view_mode_last,invalidate);
+	}
 }
 
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode)
@@ -1984,7 +2001,12 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 		rect.height = widget->allocation.height;
 
 		quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
-		gdk_window_invalidate_rect(widget->window,&rect,FALSE);
+		if ( GTK_WIDGET_REALIZED (widget) )
+		{
+			//FIXME: probably dont need to invalidate whole image area
+			gdk_window_invalidate_rect(widget->window,&rect,FALSE);
+		}
+
 
 		quiver_image_view_update_size(imageview);
 
@@ -2195,7 +2217,12 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 	rect.y = 0;
 	rect.width = widget->allocation.width;
 	rect.height = widget->allocation.height;
-	gdk_window_invalidate_rect(widget->window,&rect,FALSE);
+	
+	if (GTK_WIDGET_REALIZED(widget))
+	{
+		// FIXME: probably dont need to invalidate whole window
+		gdk_window_invalidate_rect(widget->window,&rect,FALSE);
+	}
 }
 
 void quiver_image_view_set_magnification_mode(QuiverImageView *imageview,QuiverImageViewMagnificationMode mode)
@@ -2363,6 +2390,11 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 	quiver_image_view_reset_view_mode(imageview,FALSE);
 
 	widget = GTK_WIDGET(imageview);
+
+	if (!GTK_WIDGET_REALIZED(widget))
+	{
+		return;
+	}
 
 	format = gdk_pixbuf_loader_get_format(loader);
 	

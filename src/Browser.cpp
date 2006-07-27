@@ -646,6 +646,15 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	m_pImageViewPixbufLoaderObserver = new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(imageview));
 	m_ImageLoader.AddPixbufLoaderObserver(m_pImageViewPixbufLoaderObserver);
 	m_ImageLoader.Start();
+
+	gtk_widget_show_all(m_pBrowserWidget);
+	gtk_widget_hide(m_pBrowserWidget);
+	gtk_widget_set_no_show_all(m_pBrowserWidget,TRUE);
+
+
+	// temporarily hide the folder tree until we
+	// get the code written	
+	gtk_widget_hide(vpaned);
 }
 
 Browser::BrowserImpl::~BrowserImpl()
@@ -680,15 +689,6 @@ void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 										G_N_ELEMENTS (action_entries_toggle),
 										this);
 	gtk_ui_manager_insert_action_group (m_pUIManager,actions,0);	
-
-	m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
-			ui_browser,
-			strlen(ui_browser),
-			&tmp_error);
-	if (NULL != tmp_error)
-	{
-		g_warning("Browser::SetUIManager() Error: %s\n",tmp_error->message);
-	}
 
 	/*
 	GtkWidget *menuitem = gtk_ui_manager_get_widget(ui_manager,"/ui/MenubarMain/thefilemenu");
@@ -813,12 +813,14 @@ static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpo
 {
 	
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	if (GTK_WIDGET_VISIBLE(b->iconview))
+	{
+		b->m_ImageLoader.LoadImage(b->m_QuiverFiles[cell]);
+	
+		b->m_QuiverFiles.SetCurrentIndex(cell);
+	}
 
-	b->m_ImageLoader.LoadImage(b->m_QuiverFiles[cell]);
-
-	b->m_QuiverFiles.SetCurrentIndex(cell);
 	b->m_BrowserParent->EmitCursorChangedEvent();
-
 }
 
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data)

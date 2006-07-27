@@ -84,6 +84,8 @@ guint quiver_icon_view_get_cell_padding(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_width(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_height(QuiverIconView *iconview);
 void quiver_icon_view_activate_cell(QuiverIconView *iconview,guint cell);
+
+gint quiver_icon_view_get_cursor_cell(QuiverIconView *iconview);
 void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gint new_cursor_cell);
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection);
