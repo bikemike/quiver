@@ -115,13 +115,6 @@ char * quiver_ui_main =
 "			<placeholder name='Zoom'/>"
 "			<separator/>"
 "		</menu>"
-"		<menu action='MenuImage'>"
-"			<menuitem action='RotateCW'/>"
-"			<menuitem action='RotateCCW'/>"
-"			<separator/>"
-"			<menuitem action='FlipH'/>"
-"			<menuitem action='FlipV'/>"
-"		</menu>"
 "		<menu action='MenuGo'>"
 "			<placeholder name='ImageNavigation'/>"
 "			<separator/>"
@@ -151,6 +144,9 @@ char * quiver_ui_main =
 "		<toolitem action='ImageTrash'/>"
 "		<separator/>"
 "	</toolbar>"
+"	<accelerator action='QuitQ'/>"
+"	<accelerator action='QuitEsc'/>"
+"	<accelerator action='QuitCtrlW'/>"
 "</ui>";
 
 
@@ -208,8 +204,8 @@ char *quiver_ui_viewer =
 "</ui>";
 
 GtkToggleActionEntry Quiver::action_entries_toggle[] = {
-	{ QUIVER_ACTION_FULLSCREEN, GTK_STOCK_FULLSCREEN, N_("_Full Screen"), NULL, N_("Toggle Full Screen Mode"), G_CALLBACK(action_full_screen),FALSE},
-	{ QUIVER_ACTION_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), NULL, N_("Toggle Slide Show"), G_CALLBACK(action_slide_show),FALSE},	
+	{ QUIVER_ACTION_FULLSCREEN, GTK_STOCK_FULLSCREEN, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(action_full_screen),FALSE},
+	{ QUIVER_ACTION_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(action_slide_show),FALSE},	
 	{ "ViewMenubar", GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(NULL),TRUE},
 	{ "ViewToolbarMain", GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(NULL),TRUE},
 	{ "ViewStatusbar", GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(NULL),TRUE},
@@ -233,25 +229,18 @@ GtkActionEntry Quiver::action_entries[] = {
 	{ "UIModeViewer", QUIVER_STOCK_ICON, "_Viewer", "<Control>B", "View Image", G_CALLBACK(action_ui_mode_change)},
 
 	{ "FileOpen", GTK_STOCK_OPEN, "_Open", "<Control>O", "Open an image", G_CALLBACK(NULL)},
-	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>O", "Open a folder", G_CALLBACK( NULL )},
+	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>F", "Open a folder", G_CALLBACK( NULL )},
 	{ "FileOpenLocation", GTK_STOCK_OPEN, "Open _Location", "<Control>L", "Open a location", G_CALLBACK( NULL )},
 	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>S", "Save the Image", G_CALLBACK(action_file_save)},
 	{ "Quit", GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( action_quit )},
+	{ "QuitQ", GTK_STOCK_QUIT, "_Quit", "Q", "Quit quiver", G_CALLBACK( action_quit )},
+	{ "QuitEsc", GTK_STOCK_QUIT, "_Quit", "Escape", "Quit quiver", G_CALLBACK( action_quit )},	
+	{ "QuitCtrlW", GTK_STOCK_QUIT, "_Quit", "<Control>W", "Quit quiver", G_CALLBACK( action_quit )},	
 
 	{ "Preferences", GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(NULL)},
 
 
-	{ "RotateCW", GTK_STOCK_GO_BACK, "_Rotate Clockwise", "", "Rotate Clockwise", G_CALLBACK(NULL)},
-	{ "RotateCCW", GTK_STOCK_GO_BACK, "Rotate _Counterclockwise", "", "Rotate Counterclockwise", G_CALLBACK(NULL)},
-	{ "FlipH", GTK_STOCK_GO_BACK, "Flip _Horizontally", "", "Flip Horizontally", G_CALLBACK(NULL)},
-	{ "FlipV", GTK_STOCK_GO_BACK, "Flip _Vertically", "", "Flip Vertically", G_CALLBACK(NULL)},
 
-/*
-	{ "ImagePrevious", GTK_STOCK_GO_BACK, "_Previous Image", "BackSpace", "Go to previous image", G_CALLBACK(action_image_previous)},
-	{ "ImageNext", GTK_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(action_image_next)},
-	{ "ImageFirst", GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(action_image_first)},
-	{ "ImageLast", GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(action_image_last)},
-*/
 	{ "MenuBookmarks", NULL, "_Bookmarks" },
 	{ "BookmarksAdd", GTK_STOCK_ADD, "_Add Bookmark", "", "Add a bookmark", G_CALLBACK(NULL)},
 	{ "BookmarksEdit", GTK_STOCK_EDIT, "_Edit Bookmarks", "", "Edit the bookmarks", G_CALLBACK(NULL)},
@@ -554,20 +543,7 @@ gboolean Quiver::EventButtonRelease ( GtkWidget *widget,GdkEventButton  *event,g
 
 gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer data )
 {
-	if ( !GTK_WIDGET_HAS_FOCUS(m_Viewer.GetWidget()) )
-	{
-		return FALSE;
-	}
-	/*
-	if (GDK_q == event->keyval || GDK_Q == event->keyval)
-	{
-		ActionQuit(NULL,NULL);
-	}*/
-	/*
-	else if (GDK_f == event->keyval || GDK_F == event->keyval)
-	{
-		ActionFullScreen(NULL,NULL);
-	}*/
+
 	/*
 	else if (GDK_d == event->keyval || GDK_D == event->keyval || GDK_Delete == event->keyval )
 	{
@@ -633,10 +609,6 @@ gboolean Quiver::EventKeyPress( GtkWidget *widget, GdkEventKey *event, gpointer 
 	}
 	*/
 
-	else 
-	{
-		printf("key pressed: 0x%04x\n",event->keyval);
-	}
 	
 	return FALSE;
 }
@@ -904,7 +876,7 @@ void Quiver::Init()
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_Browser.GetWidget(), TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_Viewer.GetWidget(), TRUE, TRUE, 0);
 
-	if (1 < m_listImages.size())
+	if (1 != m_listImages.size())
 	{
 		// must do the following to hide the widget on initial
 		// display of app
@@ -1010,12 +982,14 @@ Quiver::~Quiver()
 
 bool Quiver::LoadSettings()
 {
-	
 	string gtk_rc = getenv("HOME") + string("/.quiver/gtkrc");
 	gtk_rc_parse (gtk_rc.c_str());
 	
 		
 	string quiver_rc = getenv("HOME") + string("/.quiver/quiver.rc");
+
+	string strAccelMap = getenv("HOME") + string("/.quiver/quiver_keys.map");	
+	gtk_accel_map_load(strAccelMap.c_str());
 	
 	ifstream ifile;
 	streamsize size = 1024;
@@ -1079,6 +1053,9 @@ void Quiver::SaveSettings()
 	string directory = getenv("HOME") + string("/.quiver/");
 	string quiver_rc = directory + string("quiver.rc");
 	
+	string strAccelMap = directory + string("quiver_keys.map");	
+	gtk_accel_map_save(strAccelMap.c_str());
+
 	GError *tmp_error;
 	GnomeVFSHandle   *handle;
 	GnomeVFSResult    result;
@@ -1771,7 +1748,7 @@ void Quiver::ShowViewer()
 	//FIXME 
 	//m_Viewer.SetPixbuf(NULL);
 
-	printf("%d is the merge id\n",m_iMergedViewerUI);
+	//printf("%d is the merge id\n",m_iMergedViewerUI);
 }
 void Quiver::ShowBrowser()
 {
@@ -1785,7 +1762,7 @@ void Quiver::ShowBrowser()
 			quiver_ui_browser,
 			strlen(quiver_ui_browser),
 			&tmp_error);
-	printf("%d is the merge id\n",m_iMergedBrowserUI);
+	//printf("%d is the merge id\n",m_iMergedBrowserUI);
 	m_Viewer.Hide();
 	m_Browser.Show();
 }

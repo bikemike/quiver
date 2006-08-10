@@ -6,6 +6,9 @@
 namespace QuiverUtils
 {
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation);
+	
+	void DisconnectUnmodifiedAccelerators(GtkUIManager *pUIManager);
+	void ConnectUnmodifiedAccelerators(GtkUIManager *pUIManager);
 }
 
 #endif

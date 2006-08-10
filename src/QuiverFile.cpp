@@ -523,7 +523,8 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb)
 	{
 		GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
 
-		while (GNOME_VFS_OK == result) {
+		while (GNOME_VFS_OK == result)
+		{
 			result = gnome_vfs_read (handle, buffer, 
 									 sizeof(buffer), &bytes_read);
 			gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
@@ -590,6 +591,7 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb)
 				if (NULL != str_thumb_software && 0 == strcmp("GNOME::ThumbnailFactory",str_thumb_software))
 				{
 					// this is to work around a bug with the gnome thumbnail factory
+					// not saving the correct width/height to the thumbnails
 					save_thumbnail_to_cache = TRUE;		
 				}
 				else if (-1 == m_QuiverFilePtr->m_iWidth || -1 == m_QuiverFilePtr->m_iHeight)

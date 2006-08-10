@@ -16,6 +16,7 @@ using namespace std;
 #include "ImageCache.h"
 #include "ImageLoader.h"
 #include "IPixbufLoaderObserver.h"
+#include "QuiverUtils.h"
 
 // ============================================================================
 // Browser::BrowserImpl: private implementation (hidden from header file)
@@ -538,6 +539,44 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 static void entry_activate(GtkEntry *entry, gpointer user_data);
 
 
+static GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
+{
+	GList * action_groups = gtk_ui_manager_get_action_groups(ui);
+	GtkAction * action = NULL;
+	while (NULL != action_groups)
+	{
+		action = gtk_action_group_get_action (GTK_ACTION_GROUP(action_groups->data),action_name);
+		if (NULL != action)
+		{
+			break;
+		}                      
+		action_groups = g_list_next(action_groups);
+	}
+
+	return action;
+}
+
+gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
+{
+	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
+
+	QuiverUtils::DisconnectUnmodifiedAccelerators(pBrowserImpl->m_pUIManager);
+		
+	//printf("focus in! %s\n", );
+
+	return FALSE;
+}
+
+gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
+{
+	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
+
+	QuiverUtils::ConnectUnmodifiedAccelerators(pBrowserImpl->m_pUIManager);
+	
+	return FALSE;
+}
+
+
 //=============================================================================
 // BrowswerImpl Callback Prototypes
 //=============================================================================
@@ -617,7 +656,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	//quiver_image_view_set_transition_type(QUIVER_IMAGE_VIEW(imageview),QUIVER_IMAGE_VIEW_TRANSITION_TYPE_CROSSFADE);
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(imageview),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 	
-	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(iconview), TRUE);
+//	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(iconview), TRUE);
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
@@ -630,6 +669,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	g_signal_connect(G_OBJECT(iconview),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);	
 	
 	g_signal_connect(G_OBJECT(entry),"activate",G_CALLBACK(entry_activate),this);
+
+
+    g_signal_connect (G_OBJECT (entry), "focus-in-event",
+    			G_CALLBACK (entry_focus_in), this);
+    g_signal_connect (G_OBJECT (entry), "focus-out-event",
+    			G_CALLBACK (entry_focus_out), this);
 
 	GdkColor dark_grey;
 	gdk_color_parse("#444",&dark_grey);
@@ -813,13 +858,13 @@ static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpo
 {
 	
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
-	if (GTK_WIDGET_VISIBLE(b->iconview))
+	if (GTK_WIDGET_MAPPED(b->imageview))
 	{
+		printf("visible!\n");
 		b->m_ImageLoader.LoadImage(b->m_QuiverFiles[cell]);
-	
-		b->m_QuiverFiles.SetCurrentIndex(cell);
 	}
-
+	b->m_QuiverFiles.SetCurrentIndex(cell);
+		
 	b->m_BrowserParent->EmitCursorChangedEvent();
 }
 

@@ -53,6 +53,8 @@ private:
 	void Load();
 	bool LoadPixbuf(GdkPixbufLoader *loader);
 	bool CommandsPending();
+	
+	void LoadQuickPreview();
 
 	pthread_t m_pthread_id;
 

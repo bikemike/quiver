@@ -11,7 +11,7 @@
 #include "QuiverUtils.h"
 #include "ImageLoader.h"
 
-
+#include <gdk/gdkkeysyms.h>
 using namespace std;
 
 #define ORIENTATION_ROTATE_CW	0
@@ -32,6 +32,7 @@ static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer d
 static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
 static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
 
+static gboolean image_view_key_press_event  (GtkWidget *widget, GdkEventKey *event, gpointer userdata);
 
 static int orientation_matrix[4][9] = 
 { 
@@ -67,6 +68,13 @@ static char *ui_viewer =
 "				</menu>"
 "			</placeholder>"
 "		</menu>"
+"		<menu action='MenuImage'>"
+"			<menuitem action='RotateCW'/>"
+"			<menuitem action='RotateCCW'/>"
+"			<separator/>"
+"			<menuitem action='FlipH'/>"
+"			<menuitem action='FlipV'/>"
+"		</menu>"
 "		<menu action='MenuGo'>"
 "			<placeholder name='ImageNavigation'>"
 "				<menuitem action='ImagePrevious'/>"
@@ -95,16 +103,22 @@ static GtkActionEntry action_entries[] = {
 	{ "Copy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ImageTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
 	
-	{ "ImagePrevious", GTK_STOCK_GO_BACK, "_Previous Image", NULL, "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
-	{ "ImageNext", GTK_STOCK_GO_FORWARD, "_Next Image", NULL, "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImagePrevious", GTK_STOCK_GO_BACK, "_Previous Image", "BackSpace", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImageNext", GTK_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ImageFirst", GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ImageLast", GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
 
-	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "", "Fit to Screen", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>0", "Fit to Screen", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ZoomFitStretch", GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Screen", G_CALLBACK(viewer_action_handler_cb)},
-	{ "Zoom100", GTK_STOCK_ZOOM_100, "Zoom _100%", "", "Full Size", G_CALLBACK(viewer_action_handler_cb)},
-	{ "ZoomIn", GTK_STOCK_ZOOM_IN,"Zoom _In", "", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
-	{ "ZoomOut", GTK_STOCK_ZOOM_OUT,"Zoom _Out", "", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
+	{ "Zoom100", GTK_STOCK_ZOOM_100, "_Actual Size", "", "Full Size", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomIn", GTK_STOCK_ZOOM_IN,"Zoom _In", "equal", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomOut", GTK_STOCK_ZOOM_OUT,"Zoom _Out", "minus", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
+	
+	{ "RotateCW", NULL, "_Rotate Clockwise", "r", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
+	{ "RotateCCW", NULL, "Rotate _Counterclockwise", "l", "Rotate Counterclockwise", G_CALLBACK(viewer_action_handler_cb)},
+	{ "FlipH", NULL, "Flip _Horizontally", "h", "Flip Horizontally", G_CALLBACK(viewer_action_handler_cb)},
+	{ "FlipV", NULL, "Flip _Vertically", "v", "Flip Vertically", G_CALLBACK(viewer_action_handler_cb)},
+	
 
 };
 
@@ -205,7 +219,146 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	ViewerImpl *pViewerImpl;
 	pViewerImpl = (ViewerImpl*)data;
 	
-	printf("Action: %s\n",gtk_action_get_name(action));
+	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView);
+	
+	//printf("Action: %s\n",gtk_action_get_name(action));
+	
+	const gchar * szAction = gtk_action_get_name(action);
+	
+	if (0 == strcmp(szAction,"ZoomFit"))
+	{
+		quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+	}
+	else if (0 == strcmp(szAction,"ZoomFitStretch"))
+	{
+		quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+	}
+	else if (0 == strcmp(szAction, "Zoom100"))
+	{
+		quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE);
+	}
+	else if (0 == strcmp(szAction, "ZoomIn"))
+	{		
+		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
+			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
+				
+		quiver_image_view_set_magnification(imageview,
+						quiver_image_view_get_magnification(imageview)*2);
+	}
+	else if (0 == strcmp(szAction, "ZoomOut"))
+	{
+		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
+			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
+				
+		quiver_image_view_set_magnification(imageview,
+			quiver_image_view_get_magnification(imageview)/2);
+	}
+	else if (0 == strcmp(szAction,"RotateCW"))
+	{
+		quiver_image_view_rotate(imageview,TRUE);
+	}
+	else if (0 == strcmp(szAction,"RotateCCW"))
+	{
+		quiver_image_view_rotate(imageview,FALSE);
+	}
+	else if (0 == strcmp(szAction,"FlipH"))
+	{
+		quiver_image_view_flip(imageview,TRUE);
+	}
+	else if (0 == strcmp(szAction,"FlipV"))
+	{
+		quiver_image_view_flip(imageview,FALSE);
+	}
+	else if (0 == strcmp(szAction, "ImageFirst"))
+	{
+		if (pViewerImpl->m_ImageList.First())
+		{
+			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+			QuiverFile f;
+	
+			f = pViewerImpl->m_ImageList.GetCurrent();
+			pViewerImpl->m_ImageLoader.LoadImage(f);
+
+			quiver_icon_view_set_cursor_cell(
+				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
+				,pViewerImpl->m_ImageList.GetCurrentIndex());	
+			// cache the next image if there is one
+			if (pViewerImpl->m_ImageList.HasNext())
+			{
+				f = pViewerImpl->m_ImageList.GetNext();
+				pViewerImpl->m_ImageLoader.CacheImage(f);
+			}		
+			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+		}
+	}
+	else if (0 == strcmp(szAction, "ImagePrevious"))
+	{
+		if (pViewerImpl->m_ImageList.Previous())
+		{
+			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+			QuiverFile f;
+			f = pViewerImpl->m_ImageList.GetCurrent();
+			pViewerImpl->m_ImageLoader.LoadImage(f);
+			
+
+			quiver_icon_view_set_cursor_cell(
+				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
+				,pViewerImpl->m_ImageList.GetCurrentIndex());
+
+			// cache the previous image if there is one
+			if (pViewerImpl->m_ImageList.HasPrevious())
+			{
+				f = pViewerImpl->m_ImageList.GetPrevious();
+				pViewerImpl->m_ImageLoader.CacheImage(f);	
+			}		
+			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+		}
+	}
+	else if (0 == strcmp(szAction, "ImageNext"))
+	{
+		if (pViewerImpl->m_ImageList.Next())
+		{
+			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+			QuiverFile f;
+	
+			f = pViewerImpl->m_ImageList.GetCurrent();
+			pViewerImpl->m_ImageLoader.LoadImage(f);
+
+			quiver_icon_view_set_cursor_cell(
+				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
+				,pViewerImpl->m_ImageList.GetCurrentIndex());	
+			// cache the next image if there is one
+			if (pViewerImpl->m_ImageList.HasNext())
+			{
+				f = pViewerImpl->m_ImageList.GetNext();
+				pViewerImpl->m_ImageLoader.CacheImage(f);
+			}		
+			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+		}
+	}
+	else if (0 == strcmp(szAction, "ImageLast"))
+	{
+		if (pViewerImpl->m_ImageList.Last())
+		{
+			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+			QuiverFile f;
+			f = pViewerImpl->m_ImageList.GetCurrent();
+			pViewerImpl->m_ImageLoader.LoadImage(f);
+			
+
+			quiver_icon_view_set_cursor_cell(
+				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
+				,pViewerImpl->m_ImageList.GetCurrentIndex());
+
+			// cache the previous image if there is one
+			if (pViewerImpl->m_ImageList.HasPrevious())
+			{
+				f = pViewerImpl->m_ImageList.GetPrevious();
+				pViewerImpl->m_ImageLoader.CacheImage(f);	
+			}		
+			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
+		}
+	}
 }
 
 static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data )
@@ -472,19 +625,24 @@ void Viewer::Show()
 				&tmp_error);
 		if (NULL != tmp_error)
 		{
-			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
+			g_warning("Viewer::Show() Error: %s\n",tmp_error->message);
 		}
 	}
 
+	gint cursor_cell = quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView));
+ 
 	if ( (gint)m_ViewerImplPtr->m_ImageList.GetCurrentIndex()
-		!= quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView)) )
+		!= cursor_cell  )
 	{
 		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),NULL);
 	}
 
-	quiver_icon_view_set_cursor_cell(
-		QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView),
-		m_ViewerImplPtr->m_ImageList.GetCurrentIndex() );
+	if (0 != m_ViewerImplPtr->m_ImageList.GetSize())
+	{
+		quiver_icon_view_set_cursor_cell(
+			QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView),
+			m_ViewerImplPtr->m_ImageList.GetCurrentIndex() );
+	}
 }
 void Viewer::Hide()
 {
@@ -515,7 +673,7 @@ void Viewer::SetUIManager(GtkUIManager *ui_manager)
 	
 	GtkActionGroup* actions = gtk_action_group_new ("BrowserActions");
 	
-	gtk_action_group_add_actions(actions, action_entries, n_entries, this);
+	gtk_action_group_add_actions(actions, action_entries, n_entries, m_ViewerImplPtr.get());
                                  
 	gtk_action_group_add_toggle_actions(actions,
 										action_entries_toggle, 

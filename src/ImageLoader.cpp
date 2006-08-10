@@ -103,6 +103,7 @@ bool ImageLoader::CommandsPending()
 	// and start a new one
 	
 	bool rval = false;
+	bool bLoadPreview = false;
 	
 	pthread_mutex_lock (&m_CommandMutex);
 	
@@ -125,7 +126,8 @@ bool ImageLoader::CommandsPending()
 				if (0 == strcmp(m_Command.quiverFile.GetURI(), m_Commands.front().quiverFile.GetURI()))
 				{
 					m_Command.state = CACHE_LOAD;
-					m_Commands.pop_front();		
+					m_Commands.pop_front();
+					bLoadPreview = true;
 				}
 				else
 				{
@@ -141,6 +143,10 @@ bool ImageLoader::CommandsPending()
 
 	
 	pthread_mutex_unlock (&m_CommandMutex);
+
+	// must do this outside of the mutext lock because it locks the gui thread
+	if (bLoadPreview)
+		LoadQuickPreview();
 	
 	return rval;
 }
@@ -183,6 +189,43 @@ void ImageLoader::AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observe
 	m_observers.push_back(loader_observer);	
 }
 
+
+void ImageLoader::LoadQuickPreview()
+{
+	GdkPixbuf *thumb_pixbuf = NULL;
+	
+	if (m_Command.quiverFile.HasThumbnail(true))
+	{
+		thumb_pixbuf = m_Command.quiverFile.GetThumbnail(true);
+	}
+	else if (m_Command.quiverFile.HasThumbnail(false))
+	{
+		thumb_pixbuf = m_Command.quiverFile.GetThumbnail(false);
+	}
+
+
+	if (NULL != thumb_pixbuf)
+	{
+		
+		int width = m_Command.quiverFile.GetWidth();
+		int height = m_Command.quiverFile.GetHeight();
+		
+		if (4 < m_Command.quiverFile.GetOrientation())
+		{
+			swap(width,height);
+		}
+		
+		list<IPixbufLoaderObserver*>::iterator itr;
+		for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+		{
+			gdk_threads_enter();
+			(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
+			gdk_threads_leave();
+		}
+		g_object_unref(thumb_pixbuf);
+	}
+}
+
 void ImageLoader::Load()
 {
 	//GError *tmp_error;
@@ -196,39 +239,7 @@ void ImageLoader::Load()
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
-				GdkPixbuf *thumb_pixbuf = NULL;
-				
-				if (m_Command.quiverFile.HasThumbnail(true))
-				{
-					thumb_pixbuf = m_Command.quiverFile.GetThumbnail(true);
-				}
-				else if (m_Command.quiverFile.HasThumbnail(false))
-				{
-					thumb_pixbuf = m_Command.quiverFile.GetThumbnail(false);
-				}
-
-			
-				if (NULL != thumb_pixbuf)
-				{
-					
-					int width = m_Command.quiverFile.GetWidth();
-					int height = m_Command.quiverFile.GetHeight();
-					
-					if (4 < m_Command.quiverFile.GetOrientation())
-					{
-						swap(width,height);
-					}
-					
-					list<IPixbufLoaderObserver*>::iterator itr;
-					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-					{
-						gdk_threads_enter();
-						(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
-						gdk_threads_leave();
-					}
-					g_object_unref(thumb_pixbuf);
-				}
-				
+				LoadQuickPreview();
 				//cout << "load from file: " << m_Command.quiverFile.GetURI() << endl;
 				//cout << "not in cache" << endl;
 				// TODO: update all of these calls to call gdk_flush();
@@ -458,7 +469,8 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 
 	result = gnome_vfs_open (&handle, m_Command.quiverFile.GetURI(), GNOME_VFS_OPEN_READ);
 	list<IPixbufLoaderObserver*>::iterator itr;
-	while (GNOME_VFS_OK == result) {
+	while (GNOME_VFS_OK == result) 
+	{
 		if (CommandsPending())
 		{
 			gdk_threads_enter();
