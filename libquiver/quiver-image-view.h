@@ -95,14 +95,19 @@ void quiver_image_view_set_smooth_scroll(QuiverImageView *imageview,gboolean smo
 
 void quiver_image_view_set_size(QuiverImageView *imageview, guint width,guint height);
 
+GdkPixbuf* quiver_image_view_get_pixbuf(QuiverImageView *imageview);
 void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf);
 void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width, int height);
 
+QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview);
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode);
 void quiver_image_view_set_transition_type(QuiverImageView *imageview,QuiverImageViewTransitionType type);
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble amount);
 void quiver_image_view_set_magnification_mode(QuiverImageView *imageview,QuiverImageViewMagnificationMode mode);
 gdouble quiver_image_view_get_magnification(QuiverImageView *imageview);
+
+void quiver_image_view_get_pixbuf_display_size_for_mode(QuiverImageView *imageview, QuiverImageViewMode mode, gint *width, gint *height);
+void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *imageview, QuiverImageViewMode mode, gint in_width, gint in_height, gint *out_width, gint *out_height);
 
 void quiver_image_view_rotate(QuiverImageView *imageview, gboolean clockwise);
 void quiver_image_view_flip(QuiverImageView *imageview, gboolean horizontal);

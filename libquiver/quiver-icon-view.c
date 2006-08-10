@@ -75,7 +75,7 @@ struct _QuiverIconViewPrivate
 	GdkRectangle rubberband_rect_old;
 
 
-	guint cursor_cell;
+	gint cursor_cell;
 	gint prelight_cell;
 	gint cursor_cell_first;
 
@@ -140,8 +140,7 @@ static gboolean  quiver_icon_view_scroll_event ( GtkWidget *widget,
 static gboolean  quiver_icon_view_key_press_event  (GtkWidget *widget,
                     GdkEventKey *event);
 static gboolean  quiver_icon_view_leave_notify_event (GtkWidget *widget,
-                    GdkEventCrossing *event,
-                    gpointer user_data);
+                    GdkEventCrossing *event);
 
 static void      quiver_icon_view_set_scroll_adjustments (QuiverIconView *iconview,
                     GtkAdjustment *hadjustment,
@@ -324,6 +323,12 @@ quiver_icon_view_class_init (QuiverIconViewClass *klass)
 		*/
 }
 
+static GtkAdjustment *
+new_default_adjustment (void)
+{
+  return GTK_ADJUSTMENT (gtk_adjustment_new (0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
+}
+
 static void 
 quiver_icon_view_init(QuiverIconView *iconview)
 {
@@ -357,7 +362,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->callback_get_overlay_pixbuf_data_destroy = NULL;
 
 	
-	quiver_icon_view_set_scroll_adjustments(iconview,NULL,NULL);
+	quiver_icon_view_set_scroll_adjustments(iconview,new_default_adjustment(),new_default_adjustment());
 	//iconview->priv->hadjustment  = NULL;
 	//iconview->priv->vadjustment  = NULL;
 
@@ -381,7 +386,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->rubberband_mode = FALSE;
 
 
-	iconview->priv->cursor_cell = 0;
+	iconview->priv->cursor_cell = -1;
 	iconview->priv->prelight_cell = -1;
 
 	/* setting these to 0 lets the widget decide how many
@@ -405,7 +410,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->cell_items = g_malloc0( (sizeof *iconview->priv->cell_items));
 	iconview->priv->n_cell_items = 0;
 
-	iconview->priv->cell_items[0].selected = TRUE;
+	//iconview->priv->cell_items[0].selected = TRUE;
 	
 }
 
@@ -714,7 +719,7 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 	{
 		for (i = col_start;i<= col_end; i ++)
 		{
-			guint current_cell = j * num_cols + i + num_adj_cells_y + num_adj_cols;
+			gint current_cell = j * num_cols + i + num_adj_cells_y + num_adj_cols;
 
 
 			guint x_cell_offset = i * cell_width;
@@ -1468,8 +1473,7 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 
 static gboolean
 quiver_icon_view_leave_notify_event (GtkWidget *widget,
-       GdkEventCrossing *event,
-       gpointer user_data)
+       GdkEventCrossing *event)
 {
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
@@ -1478,13 +1482,7 @@ quiver_icon_view_leave_notify_event (GtkWidget *widget,
 		quiver_icon_view_invalidate_cell(iconview,iconview->priv->prelight_cell);
 		iconview->priv->prelight_cell = -1;
 	}
-}
-
-
-static GtkAdjustment *
-new_default_adjustment (void)
-{
-  return GTK_ADJUSTMENT (gtk_adjustment_new (0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
+	return FALSE;
 }
 
 
@@ -1499,12 +1497,8 @@ quiver_icon_view_set_scroll_adjustments (QuiverIconView     *iconview,
 
 	if (hadj)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (hadj));
-	else
-		hadj = new_default_adjustment ();
 	if (vadj)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (vadj));
-	else
-		vadj = new_default_adjustment ();
 
 	if (iconview->priv->hadjustment && (iconview->priv->hadjustment != hadj))
 	{
@@ -1512,6 +1506,7 @@ quiver_icon_view_set_scroll_adjustments (QuiverIconView     *iconview,
 			quiver_icon_view_adjustment_value_changed,
 			iconview);
 		g_object_unref (iconview->priv->hadjustment);
+		iconview->priv->hadjustment = NULL;
 	}
 
 	if (iconview->priv->vadjustment && (iconview->priv->vadjustment != vadj))
@@ -1520,6 +1515,7 @@ quiver_icon_view_set_scroll_adjustments (QuiverIconView     *iconview,
 			quiver_icon_view_adjustment_value_changed,
 			iconview);
 		g_object_unref (iconview->priv->vadjustment);
+		iconview->priv->vadjustment = NULL;
 	}
 
 	if (iconview->priv->hadjustment != hadj)

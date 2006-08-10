@@ -4,7 +4,8 @@ DIST_SUBDIRS =
 ##icons cursors
 
 AM_CPPFLAGS =		\
-	$(PACKAGE_CFLAGS)
+	$(PACKAGE_CFLAGS) \
+	-Wall
 
 libquiverdir = $(libdir)/quiver
 noinst_LTLIBRARIES = libquiver.la
