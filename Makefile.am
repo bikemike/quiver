@@ -5,14 +5,15 @@ SUBDIRS =      \
 	libquiver  \
 	src        
 
-##quiverdocdir = ${prefix}/doc/quiver
-##quiverdoc_DATA = \
-##	README\
-##	COPYING\
-##	AUTHORS\
-##	ChangeLog\
-##	INSTALL\
-##	NEWS
+quiverdocdir = ${prefix}/doc/quiver
+
+quiverdoc_DATA = \
+	README\
+	COPYING\
+	AUTHORS\
+	ChangeLog\
+	INSTALL\
+	NEWS
 
 EXTRA_DIST = $(quiverdoc_DATA) \
      intltool-extract.in \

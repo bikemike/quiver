@@ -55,7 +55,11 @@ quiver_SOURCES = \
 	AbstractEventSource.h \
 	AbstractEventSource.cpp \
 	BrowserEventSource.h \
-	BrowserEventSource.cpp 
+	BrowserEventSource.cpp \
+	ViewerEvent.h \
+	ViewerEventSource.h \
+	ViewerEventSource.cpp \
+	IViewerEventHandler.h 
 
 
 quiver_LDFLAGS = 

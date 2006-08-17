@@ -1,8 +1,6 @@
 #ifndef FILE_BROWSER_H
 #define FILE_BROWSER_H
 
-#include <vector>
-#include <list>
 #include <boost/shared_ptr.hpp>
 
 #include "QuiverFile.h"

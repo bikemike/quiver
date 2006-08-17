@@ -2,23 +2,18 @@
 #define FILE_VIEWER_H
 
 #include <gtk/gtk.h>
-//#include <gdk/gdkx.h>
-
-#include <fstream>
-#include <iostream>
-#include <string>
 
 #include <boost/shared_ptr.hpp>
 
-#include "PixbufLoaderObserver.h"
-#include "NavigationControl.h"
-#include "QuiverFile.h"
-#include "ImageList.h"
+#include "ViewerEventSource.h"
+
+class ImageList;
+
 
 class ViewerImpl;
 typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;
 
-class Viewer
+class Viewer : public virtual ViewerEventSource
 {
 public:
 	//constructor

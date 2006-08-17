@@ -5,11 +5,14 @@
 
 #include "Viewer.h"
 #include "Timer.h"
-//#include "ath.h"
 #include "icons/nav_button.xpm"
 
 #include "QuiverUtils.h"
 #include "ImageLoader.h"
+#include "ImageList.h"
+
+#include "NavigationControl.h"
+#include "QuiverFile.h"
 
 #include <gdk/gdkkeysyms.h>
 using namespace std;
@@ -67,13 +70,15 @@ static char *ui_viewer =
 "				</menu>"
 "			</placeholder>"
 "		</menu>"
-"		<menu action='MenuImage'>"
-"			<menuitem action='RotateCW'/>"
-"			<menuitem action='RotateCCW'/>"
-"			<separator/>"
-"			<menuitem action='FlipH'/>"
-"			<menuitem action='FlipV'/>"
-"		</menu>"
+"		<placeholder name='MenuImage'>"
+"			<menu action='MenuImage'>"
+"				<menuitem action='RotateCW'/>"
+"				<menuitem action='RotateCCW'/>"
+"				<separator/>"
+"				<menuitem action='FlipH'/>"
+"				<menuitem action='FlipV'/>"
+"			</menu>"
+"		</placeholder>"
 "		<menu action='MenuGo'>"
 "			<placeholder name='ImageNavigation'>"
 "				<menuitem action='ImagePrevious'/>"
@@ -162,7 +167,7 @@ public:
 	}ScrollbarType;
 		
 
-	ViewerImpl();
+	ViewerImpl(Viewer *pViewer);
 
 	void SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal = true );
 
@@ -213,12 +218,16 @@ public:
 	ImageLoader m_ImageLoader;
 	ImageList m_ImageList;
 	
+	Viewer *m_pViewer;
+	
 };
 
 void ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal /* = true */)
 {
 	if (m_ImageList.SetCurrentIndex(index))
 	{
+		m_pViewer->EmitCursorChangedEvent();
+
 		if (bBlockCursorChangeSignal)
 		{
 			g_signal_handlers_block_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
@@ -367,6 +376,10 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 
 static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
 {
+	ViewerImpl *pViewerImpl;
+	pViewerImpl = (ViewerImpl*)data;
+	
+	pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 	return TRUE;
 }
 
@@ -390,6 +403,10 @@ static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data
 
 static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
 {
+	ViewerImpl *pViewerImpl;
+	pViewerImpl = (ViewerImpl*)data;
+
+	pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 	return TRUE;
 }
 
@@ -403,8 +420,9 @@ static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cel
 	return TRUE;
 }
 
-ViewerImpl::ViewerImpl()
+ViewerImpl::ViewerImpl(Viewer *pViewer)
 {
+	m_pViewer = pViewer;
 	m_pNavigationControl = new NavigationControl();
 	
 
@@ -530,7 +548,7 @@ void Viewer::event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event,
 }
 
 
-Viewer::Viewer() : m_ViewerImplPtr(new ViewerImpl())
+Viewer::Viewer() : m_ViewerImplPtr(new ViewerImpl(this))
 {
 	
 
