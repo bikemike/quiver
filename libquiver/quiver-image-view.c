@@ -2244,7 +2244,7 @@ void quiver_image_view_flip(QuiverImageView *imageview, gboolean horizontal)
 	
 	if (NULL != pixbuf_flipped)
 	{
-		quiver_image_view_set_pixbuf(imageview,pixbuf_flipped);
+		quiver_image_view_set_pixbuf_at_size(imageview,pixbuf_flipped,imageview->priv->pixbuf_width,imageview->priv->pixbuf_height);
 		g_object_unref(pixbuf_flipped);
 	}
 }
