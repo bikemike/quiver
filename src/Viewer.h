@@ -30,8 +30,6 @@ public:
 
 	void SetImageList(ImageList imgList);
 
-	void EventNavButtonClicked (GtkWidget *widget, GdkEventButton *event, void *data);
-	
 	int GetCurrentOrientation();
 
 	void Show();

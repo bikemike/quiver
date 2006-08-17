@@ -124,7 +124,7 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 	m_ExifViewImplPtr->m_TreeView = NULL;
 
 	GtkWidget *treeview;
-	printf("quiver_exif_tree_new start\n");
+
 	GtkTreeViewColumn *column;
 	GtkCellRenderer *renderer;
 	//GtkTreeSelection *selection;

@@ -18,17 +18,6 @@ typedef struct _QuiverImageView        QuiverImageView;
 typedef struct _QuiverImageViewClass   QuiverImageViewClass;
 typedef struct _QuiverImageViewPrivate QuiverImageViewPrivate;
 
-/*
-typedef enum _QuiverIconOverlayType QuiverIconOverlayType;
-
-typedef guint (*QuiverImageViewGetNItemsFunc) (QuiverImageView *imageview,gpointer user_data);
-typedef gchar* (*QuiverImageViewGetTextFunc) (QuiverImageView *imageview,guint cell,gpointer user_data);
-typedef GdkPixbuf* (*QuiverImageViewGetIconPixbufFunc) (QuiverImageView *imageview,guint cell,gpointer user_data);
-typedef GdkPixbuf* (*QuiverImageViewGetThumbnailPixbufFunc) (QuiverImageView *imageview,guint cell,gpointer user_data);
-typedef GdkPixbuf* (*QuiverImageViewGetOverlayPixbufFunc) (QuiverImageView *imageview,guint cell, QuiverIconOverlayType type,gpointer user_data);
-//typedef GdkPixbuf* (*QuiverImageViewGetOverlayPixbufFunc) (QuiverImageView *imageview, guint cell, QuiverIconOverlayType type, gpointer user_data);
-
-*/
 
 typedef enum _QuiverImageViewMouseMode {
 	QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG,
@@ -74,6 +63,7 @@ struct _QuiverImageViewClass
 					 GtkAdjustment  *vadjustment);
 
 	void (*activated) (QuiverImageView *imageview);
+	void (*reload) (QuiverImageView *imageview);
 
 	/* Padding for future expansion */
 	

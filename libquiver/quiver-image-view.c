@@ -28,6 +28,7 @@ G_DEFINE_TYPE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET);
 /* signals */
 enum {
 	SIGNAL_ACTIVATED,
+	SIGNAL_RELOAD,
 	SIGNAL_COUNT
 };
 
@@ -105,6 +106,8 @@ struct _QuiverImageViewPrivate
 
 	gboolean smooth_scroll;
 	gint smooth_scroll_cell;
+	
+	gboolean reload_event_sent;
 
 };
 /* end private data structures */
@@ -142,6 +145,7 @@ static void      quiver_image_view_adjustment_value_changed (GtkAdjustment *adju
                     QuiverImageView *imageview);
 
 /* start utility function prototypes*/
+static void quiver_image_view_send_reload_event(QuiverImageView *imageview);
 static guint quiver_image_view_get_width(QuiverImageView *imageview);
 static guint quiver_image_view_get_height(QuiverImageView *imageview);
 static void
@@ -253,6 +257,13 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 		g_cclosure_marshal_VOID__VOID,
 		G_TYPE_NONE, 0);
 
+	imageview_signals[SIGNAL_RELOAD] = g_signal_new (/*FIXME: I_*/("reload"),
+		G_TYPE_FROM_CLASS (obj_class),
+		G_SIGNAL_RUN_LAST,
+		G_STRUCT_OFFSET (QuiverImageViewClass, activated),
+		NULL, NULL,
+		g_cclosure_marshal_VOID__VOID,
+		G_TYPE_NONE, 0);
 	/*
 
 	g_object_class_install_property (obj_class,
@@ -338,6 +349,8 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->scroll_draw   = TRUE;
 	imageview->priv->smooth_scroll = FALSE;
 	imageview->priv->smooth_scroll_cell = -1;
+	
+	imageview->priv->reload_event_sent = FALSE;
 	
 	imageview->priv->mouse_x1 = 0;
 	imageview->priv->mouse_y1 = 0;
@@ -484,7 +497,10 @@ quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 	GdkInterpType interptype = GDK_INTERP_NEAREST;
 	
 	//printf("########### configure scale hq\n");
+	
 	quiver_image_view_create_scaled_pixbuf(imageview,interptype);
+
+	quiver_image_view_send_reload_event(imageview);
 	
 	if (imageview->priv->scroll_draw)
 	{
@@ -494,6 +510,32 @@ quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 	}
 
 	return TRUE;
+}
+
+static void quiver_image_view_send_reload_event(QuiverImageView *imageview)
+{
+	// send reload signal if current display size is 
+	// greater than the actual pixbuf size and the actual
+	// pixbuf size is less than the "set_pixbuf_at_size" size
+	if (NULL != imageview->priv->pixbuf && !imageview->priv->reload_event_sent)
+	{
+		gint aw, ah;
+		gint width,height;
+	
+		quiver_image_view_get_pixbuf_display_size(imageview,&width,&height);
+
+		aw = gdk_pixbuf_get_width(imageview->priv->pixbuf);
+		ah = gdk_pixbuf_get_height(imageview->priv->pixbuf);
+
+		if (imageview->priv->pixbuf_width > aw || imageview->priv->pixbuf_height > ah)
+		{
+			if (width > aw || height > ah)
+			{
+				g_signal_emit(imageview,imageview_signals[SIGNAL_RELOAD],0);
+				imageview->priv->reload_event_sent = TRUE;
+			}
+		}
+	}
 }
 /*
 static void quiver_image_view_create_transition_pixbuf(QuiverImageView *imageview)
@@ -1438,7 +1480,7 @@ quiver_image_view_update_size(QuiverImageView *imageview)
 
 	gtk_adjustment_changed (hadjustment);
 	gtk_adjustment_changed (vadjustment);
-
+	
 }
 
 static void quiver_image_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
@@ -1901,8 +1943,6 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 
 	gint ow,oh,nw,nh;
 	
-	printf("view mode: %d\n",mode);
-
 	quiver_image_view_get_pixbuf_display_size(imageview,&ow, &oh);
 
 	// when switching to zoom view mode, we need to set 
@@ -2016,7 +2056,6 @@ void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_
 				new_mag = mag_h;
 			} 
 		}
-		
 	}
 	
 	if (QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH == imageview->priv->magnification_mode)
@@ -2044,6 +2083,11 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 
 	old_mag = imageview->priv->magnification;
 
+	if (old_mag < new_mag)
+	{
+		quiver_image_view_send_reload_event(imageview);
+	}
+	
 	imageview->priv->magnification = new_mag;
 	widget = GTK_WIDGET(imageview);
 
@@ -2288,6 +2332,8 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 		g_object_unref(imageview->priv->pixbuf);
 		imageview->priv->pixbuf = NULL;
 	}
+	
+	imageview->priv->reload_event_sent = FALSE;
 
 
 	

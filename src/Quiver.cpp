@@ -1816,7 +1816,6 @@ void Quiver::ActionQuit(GtkAction *action,gpointer data)
 
 void Quiver::ActionFullScreen(GtkAction *action,gpointer data)
 {
-	printf("action fullscreen!\n");
 	if (GDK_WINDOW_STATE_FULLSCREEN & m_WindowState)
 	{
 		gtk_window_unfullscreen(GTK_WINDOW(m_pQuiverWindow));

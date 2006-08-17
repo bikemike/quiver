@@ -690,7 +690,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 
 	m_pImageViewPixbufLoaderObserver = new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(imageview));
 	m_ImageLoader.AddPixbufLoaderObserver(m_pImageViewPixbufLoaderObserver);
-	m_ImageLoader.Start();
 
 	gtk_widget_show_all(m_pBrowserWidget);
 	gtk_widget_hide(m_pBrowserWidget);
@@ -860,7 +859,6 @@ static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpo
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	if (GTK_WIDGET_MAPPED(b->imageview))
 	{
-		printf("visible!\n");
 		b->m_ImageLoader.LoadImage(b->m_QuiverFiles[cell]);
 	}
 	b->m_QuiverFiles.SetCurrentIndex(cell);
@@ -897,7 +895,6 @@ static void entry_activate(GtkEntry *entry, gpointer user_data)
 	list<string> file_list;
 	file_list.push_back(entry_text);
 	b->m_QuiverFiles.SetImageList(&file_list);
-	printf("activated the entry box!\n");
 	
 }
 

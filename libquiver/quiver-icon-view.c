@@ -424,8 +424,6 @@ quiver_icon_view_finalize(GObject *object)
 	iconview = QUIVER_ICON_VIEW(object);
 	klass = QUIVER_ICON_VIEW_GET_CLASS(iconview);
 	obj_class = G_OBJECT_CLASS (klass);
-
-	printf("finalize the iconview!\n");
 		
 	gint i,j;
 	for (i = 0;i<5;i++)
@@ -1375,6 +1373,10 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 	
 	switch(event->keyval)
 	{
+		case GDK_Return:
+		case GDK_KP_Enter:
+			quiver_icon_view_activate_cell(iconview,iconview->priv->cursor_cell);
+			break;
 		case GDK_a:
 		case GDK_A:
 			if (event->state & GDK_CONTROL_MASK)

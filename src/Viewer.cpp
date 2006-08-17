@@ -29,10 +29,9 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data);
 
 static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data );
 static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data);
+static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data);
 static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
 static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
-
-static gboolean image_view_key_press_event  (GtkWidget *widget, GdkEventKey *event, gpointer userdata);
 
 static int orientation_matrix[4][9] = 
 { 
@@ -164,7 +163,10 @@ public:
 		
 
 	ViewerImpl();
-	//private member variables
+
+	void SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal = true );
+
+	// member variables
 
 	GtkWidget *m_pIconView;
 	GtkWidget *m_pImageView;
@@ -199,7 +201,7 @@ public:
 	bool m_bConfigureTimeoutEnded;
 	bool m_bConfigureTimeoutRestarted;
 	QuiverFile m_QuiverFile;
-	QuiverFile m_QuiverFileCached;
+
 	int m_iCurrentOrientation;
 	
 	GtkShadowType m_GtkShadowType;
@@ -212,6 +214,52 @@ public:
 	ImageList m_ImageList;
 	
 };
+
+void ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal /* = true */)
+{
+	if (m_ImageList.SetCurrentIndex(index))
+	{
+		if (bBlockCursorChangeSignal)
+		{
+			g_signal_handlers_block_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
+		}
+		
+		QuiverFile f;
+
+		f = m_ImageList.GetCurrent();
+		m_ImageLoader.LoadImage(f);
+		
+		m_iCurrentOrientation = f.GetOrientation();
+
+		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
+		      m_ImageList.GetCurrentIndex() );	
+
+		if (bDirectionForward)
+		{
+			// cache the next image if there is one
+			if (m_ImageList.HasNext())
+			{
+				f = m_ImageList.GetNext();
+				m_ImageLoader.CacheImage(f);
+			}
+		}
+		else
+		{
+			// cache the next image if there is one
+			if (m_ImageList.HasPrevious())
+			{
+				f = m_ImageList.GetPrevious();
+				m_ImageLoader.CacheImage(f);
+			}
+			
+		}
+		
+		if (bBlockCursorChangeSignal)
+		{
+			g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
+		}
+	}
+}
 
 
 static void viewer_action_handler_cb(GtkAction *action, gpointer data)
@@ -256,108 +304,38 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	else if (0 == strcmp(szAction,"RotateCW"))
 	{
 		quiver_image_view_rotate(imageview,TRUE);
+		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->m_iCurrentOrientation];
 	}
 	else if (0 == strcmp(szAction,"RotateCCW"))
 	{
 		quiver_image_view_rotate(imageview,FALSE);
+		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->m_iCurrentOrientation];
 	}
 	else if (0 == strcmp(szAction,"FlipH"))
 	{
 		quiver_image_view_flip(imageview,TRUE);
+		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_FLIP_H][pViewerImpl->m_iCurrentOrientation];
 	}
 	else if (0 == strcmp(szAction,"FlipV"))
 	{
 		quiver_image_view_flip(imageview,FALSE);
+		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_FLIP_V][pViewerImpl->m_iCurrentOrientation];
 	}
 	else if (0 == strcmp(szAction, "ImageFirst"))
 	{
-		if (pViewerImpl->m_ImageList.First())
-		{
-			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-			QuiverFile f;
-	
-			f = pViewerImpl->m_ImageList.GetCurrent();
-			pViewerImpl->m_ImageLoader.LoadImage(f);
-
-			quiver_icon_view_set_cursor_cell(
-				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
-				,pViewerImpl->m_ImageList.GetCurrentIndex());	
-			// cache the next image if there is one
-			if (pViewerImpl->m_ImageList.HasNext())
-			{
-				f = pViewerImpl->m_ImageList.GetNext();
-				pViewerImpl->m_ImageLoader.CacheImage(f);
-			}		
-			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-		}
+		pViewerImpl->SetImageIndex(0,true,true);
 	}
 	else if (0 == strcmp(szAction, "ImagePrevious"))
 	{
-		if (pViewerImpl->m_ImageList.Previous())
-		{
-			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-			QuiverFile f;
-			f = pViewerImpl->m_ImageList.GetCurrent();
-			pViewerImpl->m_ImageLoader.LoadImage(f);
-			
-
-			quiver_icon_view_set_cursor_cell(
-				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
-				,pViewerImpl->m_ImageList.GetCurrentIndex());
-
-			// cache the previous image if there is one
-			if (pViewerImpl->m_ImageList.HasPrevious())
-			{
-				f = pViewerImpl->m_ImageList.GetPrevious();
-				pViewerImpl->m_ImageLoader.CacheImage(f);	
-			}		
-			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-		}
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,true,true);
 	}
 	else if (0 == strcmp(szAction, "ImageNext"))
 	{
-		if (pViewerImpl->m_ImageList.Next())
-		{
-			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-			QuiverFile f;
-	
-			f = pViewerImpl->m_ImageList.GetCurrent();
-			pViewerImpl->m_ImageLoader.LoadImage(f);
-
-			quiver_icon_view_set_cursor_cell(
-				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
-				,pViewerImpl->m_ImageList.GetCurrentIndex());	
-			// cache the next image if there is one
-			if (pViewerImpl->m_ImageList.HasNext())
-			{
-				f = pViewerImpl->m_ImageList.GetNext();
-				pViewerImpl->m_ImageLoader.CacheImage(f);
-			}		
-			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-		}
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true,true);
 	}
 	else if (0 == strcmp(szAction, "ImageLast"))
 	{
-		if (pViewerImpl->m_ImageList.Last())
-		{
-			g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-			QuiverFile f;
-			f = pViewerImpl->m_ImageList.GetCurrent();
-			pViewerImpl->m_ImageLoader.LoadImage(f);
-			
-
-			quiver_icon_view_set_cursor_cell(
-				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
-				,pViewerImpl->m_ImageList.GetCurrentIndex());
-
-			// cache the previous image if there is one
-			if (pViewerImpl->m_ImageList.HasPrevious())
-			{
-				f = pViewerImpl->m_ImageList.GetPrevious();
-				pViewerImpl->m_ImageLoader.CacheImage(f);	
-			}		
-			g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
-		}
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetSize()-1,true,true);
 	}
 }
 
@@ -374,46 +352,11 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 	
 	if (GDK_SCROLL_UP == event->direction)
 	{
-		if (pViewerImpl->m_ImageList.Previous())
-		{
-			QuiverFile f;
-			f = pViewerImpl->m_ImageList.GetCurrent();
-			pViewerImpl->m_ImageLoader.LoadImage(f);
-			
-
-			quiver_icon_view_set_cursor_cell(
-				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
-				,pViewerImpl->m_ImageList.GetCurrentIndex());
-
-			// cache the previous image if there is one
-			if (pViewerImpl->m_ImageList.HasPrevious())
-			{
-				f = pViewerImpl->m_ImageList.GetPrevious();
-				pViewerImpl->m_ImageLoader.CacheImage(f);	
-			}		
-			//ImageChanged();
-		}
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,true,true);
 	}
 	else if (GDK_SCROLL_DOWN == event->direction)
 	{
-		if (pViewerImpl->m_ImageList.Next())
-		{
-			QuiverFile f;
-	
-			f = pViewerImpl->m_ImageList.GetCurrent();
-			pViewerImpl->m_ImageLoader.LoadImage(f);
-
-			quiver_icon_view_set_cursor_cell(
-				QUIVER_ICON_VIEW(pViewerImpl->m_pIconView)
-				,pViewerImpl->m_ImageList.GetCurrentIndex());	
-			// cache the next image if there is one
-			if (pViewerImpl->m_ImageList.HasNext())
-			{
-				f = pViewerImpl->m_ImageList.GetNext();
-				pViewerImpl->m_ImageLoader.CacheImage(f);
-			}		
-			//ImageChanged();
-		}
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true,true);
 	}
 
 	g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
@@ -424,13 +367,29 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 
 static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
 {
-	printf("imageview: activated\n");
 	return TRUE;
 }
 
+static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
+{
+	ViewerImpl *pViewerImpl;
+	pViewerImpl = (ViewerImpl*)data;
+	ImageLoader::LoadParams params = {0};
+
+	params.orientation = pViewerImpl->m_iCurrentOrientation;
+	params.reload = true;
+	params.fullsize = true;
+	params.no_thumb_preview = true;
+	params.state = ImageLoader::LOAD;
+
+	pViewerImpl->m_ImageLoader.LoadImage(pViewerImpl->m_ImageList.GetCurrent(),params);
+
+	return TRUE;
+}
+
+
 static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
 {
-	printf("iconview: cell activated\n");	
 	return TRUE;
 }
 
@@ -439,24 +398,8 @@ static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cel
 	ViewerImpl *pViewerImpl;
 	pViewerImpl = (ViewerImpl*)data;
 	
-	pViewerImpl->m_ImageList.SetCurrentIndex(cell);
+	pViewerImpl->SetImageIndex(cell,true,false);
 
-	if (0 < pViewerImpl->m_ImageList.GetSize())
-	{
-		QuiverFile f;
-		f = pViewerImpl->m_ImageList.GetCurrent();
-
-		pViewerImpl->m_ImageLoader.LoadImage(f);
-		//ImageChanged();
-	
-		
-		// cache the next image if there is one
-		if (pViewerImpl->m_ImageList.HasNext())
-		{
-			f = pViewerImpl->m_ImageList.GetNext();
-			pViewerImpl->m_ImageLoader.CacheImage(f);
-		}		
-	}
 	return TRUE;
 }
 
@@ -559,6 +502,9 @@ ViewerImpl::ViewerImpl()
     g_signal_connect (G_OBJECT (m_pImageView), "activated",
     			G_CALLBACK (viewer_imageview_activated), this);
 
+    g_signal_connect (G_OBJECT (m_pImageView), "reload",
+    			G_CALLBACK (viewer_imageview_reload), this);
+
 
     g_signal_connect (G_OBJECT (m_pAdjustmentH), "changed",
     			G_CALLBACK (image_view_adjustment_changed), this);
@@ -580,14 +526,8 @@ ViewerImpl::ViewerImpl()
 
 void Viewer::event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data)
 {
-	((Viewer*)data)->EventNavButtonClicked(widget,event,NULL);
+//	((Viewer*)data)->EventNavButtonClicked(widget,event,NULL);
 }
-
-void Viewer::EventNavButtonClicked (GtkWidget *widget, GdkEventButton *event, void *data)
-{
-//	m_ViewerImplPtr->m_pNavigationControl->Show(GTK_VIEWPORT(m_pViewport),m_pixbuf,event->x_root,event->y_root);
-}
-
 
 
 Viewer::Viewer() : m_ViewerImplPtr(new ViewerImpl())
@@ -701,32 +641,6 @@ GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get)
 	}
 	return table_child;
 }
-/*
- * FIXME
-bool Viewer::GetHasFullPixbuf()
-{
-	// FIXME: need to create a "current rotation" state
-	// and adjust the comparision accordingly
-	int w,h;
-	w = m_QuiverFile.GetWidth();
-	h = m_QuiverFile.GetHeight();
-	if (m_iCurrentOrientation >= 5)
-	{
-		w = h;
-		h = m_QuiverFile.GetWidth();
-	}
-	
-	if ( gdk_pixbuf_get_width(m_pixbuf_real) == w
-		&& gdk_pixbuf_get_height(m_pixbuf_real) == h )
-	{
-		return true;
-	}
-	return false;
-}
-*/
-
-
-
 
 
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data)

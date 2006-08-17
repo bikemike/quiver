@@ -26,29 +26,33 @@ public:
 		CACHE_LOAD,
 	} State;
 
-	typedef struct _Command
+	typedef struct _LoadParams
 	{
+		int orientation;
+		bool reload;
+		bool fullsize;
+		bool no_thumb_preview;
 		State state;
-		QuiverFile quiverFile;
-	} Command;
+	} LoadParams;
+
+
 
 	ImageLoader();
 	~ImageLoader();
 
-	void AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 	void LoadImage(QuiverFile);	
+	void LoadImage(QuiverFile,LoadParams load_params);	
+
 	void CacheImage(QuiverFile);
 	void ReloadImage(QuiverFile);
 	
 	// thread functions
 	static void* run(void *data);
 	int Run();
-
-	// starts the thread
-	void Start();
 	
 	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
-
+	void AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
+	
 private:	
 	void Load();
 	bool LoadPixbuf(GdkPixbufLoader *loader);
@@ -66,6 +70,12 @@ private:
 
 	ImageCache m_ImageCache;
 	
+	typedef struct _Command
+	{
+		QuiverFile quiverFile;
+		LoadParams params;
+	} Command;
+
 
 	std::list<Command> m_Commands;
 	Command m_Command;
