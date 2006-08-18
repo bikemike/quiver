@@ -50,7 +50,7 @@ void PixbufLoaderObserver::SetPixbuf(GdkPixbuf * pixbuf)
 	//printf("PixbufLoaderObserver::SetPixbuf\n");
 }
 
-void PixbufLoaderObserver::SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height)
+void PixbufLoaderObserver::SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height, bool bResetViewMode /* = false */)
 {
 	//printf("PixbufLoaderObserver::SetPixbuf\n");
 }

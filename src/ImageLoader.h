@@ -52,6 +52,7 @@ public:
 	
 	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
 	void AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
+	void RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 	
 private:	
 	void Load();
@@ -79,6 +80,8 @@ private:
 
 	std::list<Command> m_Commands;
 	Command m_Command;
+	
+	bool m_bStopThread;
 	
 };
 

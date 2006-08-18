@@ -139,8 +139,10 @@ public:
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){quiver_image_view_set_pixbuf(m_ImageView,pixbuf);};
-	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height){
-		quiver_image_view_set_pixbuf_at_size(m_ImageView,pixbuf,width,height);
+	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
+		gboolean bReset = FALSE;
+		if (bResetViewMode) bReset = TRUE;
+		quiver_image_view_set_pixbuf_at_size_ex(m_ImageView,pixbuf,width,height,bReset);
 	};
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile){};

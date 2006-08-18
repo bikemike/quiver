@@ -46,9 +46,11 @@ public:
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
 			quiver_image_view_set_pixbuf(m_ImageView,pixbuf);
 		};
-	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height){
-		quiver_image_view_set_pixbuf_at_size(m_ImageView,pixbuf,width,height);
-		};
+	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
+		gboolean bReset = FALSE;
+		if (bResetViewMode) bReset = TRUE;
+		quiver_image_view_set_pixbuf_at_size_ex(m_ImageView,pixbuf,width,height,bReset);
+	};
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile){};
 	
@@ -587,6 +589,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	m_BrowserParent = parent;
 	m_pUIManager = NULL;
 	timeout_thumbnail_current = -1;
+	m_iMergedBrowserUI = 0;
 	/*
 	 * layout for the browser gui:
 	 * hpaned
@@ -703,6 +706,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 
 Browser::BrowserImpl::~BrowserImpl()
 {
+	m_ImageLoader.RemovePixbufLoaderObserver(m_pImageViewPixbufLoaderObserver);
+	
+	delete m_pImageViewPixbufLoaderObserver;
+	
 	if (m_pUIManager)
 	{
 		g_object_unref(m_pUIManager);

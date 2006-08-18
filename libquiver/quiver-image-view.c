@@ -1882,6 +1882,11 @@ void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf)
 
 void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height)
 {
+	quiver_image_view_set_pixbuf_at_size_ex(imageview, pixbuf, width , height, TRUE);
+}
+
+void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode)
+{
 	quiver_image_view_prepare_for_new_pixbuf(imageview,width,height);
 	
 	if (NULL != pixbuf)
@@ -1893,15 +1898,18 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 	imageview->priv->pixbuf_width = width;
 	imageview->priv->pixbuf_height = height;
 	
-	quiver_image_view_reset_view_mode(imageview,FALSE);
-	
-	imageview->priv->scroll_draw = FALSE;
-	quiver_image_view_update_size(imageview);
-	
-	gtk_adjustment_set_value(imageview->priv->hadjustment,0);
-	gtk_adjustment_set_value(imageview->priv->vadjustment,0);
-	
-	imageview->priv->scroll_draw = TRUE;
+	if (reset_view_mode)
+	{
+		quiver_image_view_reset_view_mode(imageview,FALSE);
+		
+		imageview->priv->scroll_draw = FALSE;
+		quiver_image_view_update_size(imageview);
+		
+		gtk_adjustment_set_value(imageview->priv->hadjustment,0);
+		gtk_adjustment_set_value(imageview->priv->vadjustment,0);
+		
+		imageview->priv->scroll_draw = TRUE;
+	}
 	
 	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
 	quiver_image_view_invalidate_image_area(imageview,NULL);

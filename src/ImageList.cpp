@@ -283,20 +283,24 @@ void ImageListImpl::LoadMimeTypes()
 			fmt = (GdkPixbufFormat*)formats->data;
 			//cout << gdk_pixbuf_format_get_name(fmt) <<": " << endl;
 			//cout << gdk_pixbuf_format_get_description(fmt) << endl;
-			gchar ** ext_ptr = gdk_pixbuf_format_get_extensions(fmt);
+			gchar ** ext_ptr_head = gdk_pixbuf_format_get_extensions(fmt);
+			gchar ** ext_ptr = ext_ptr_head;
 			while (NULL != *ext_ptr)
 			{
 				//cout << *ext_ptr << "," ;
 				ext_ptr++;
 			}
+			g_strfreev(ext_ptr_head);
 			//cout << endl;
-			ext_ptr = gdk_pixbuf_format_get_mime_types(fmt);
+			ext_ptr_head = gdk_pixbuf_format_get_mime_types(fmt);
+			ext_ptr = ext_ptr_head;
 			while (NULL != *ext_ptr)
 			{
 				c_setSupportedMimeTypes.insert(*ext_ptr);
 				cout << *ext_ptr << "," ;
 				ext_ptr++;
 			}
+			g_strfreev(ext_ptr_head);
 			formats = g_slist_next(formats);
 		}
 		cout << endl;

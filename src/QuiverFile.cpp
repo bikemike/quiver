@@ -77,6 +77,7 @@ QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar * uri)
  
 									  );
 	Init(uri,info);
+	gnome_vfs_file_info_unref(info);
 }
 
 QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GnomeVFSFileInfo *info)
@@ -460,6 +461,7 @@ bool QuiverFile::HasThumbnail(bool bLargeThumb)
 		{
 			bHasThumb = true;
 		}
+		g_free(thumb_path);
 	}
 	
 	return bHasThumb;
@@ -869,7 +871,6 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 ExifData* QuiverFile::GetExifData()
 {
 	LoadExifData();
-	exif_data_ref(m_QuiverFilePtr->exif_data);
 	return m_QuiverFilePtr->exif_data;
 }
 

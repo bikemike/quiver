@@ -347,9 +347,13 @@ gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 	//exif_loader_write_file(loader,"ginger.jpg");
 	//exifData = exif_data_new_from_file("IMGP0217_modified.JPG"); //exif_loader_get_data(loader);
 	ExifData *exifData = NULL;
+	
 	exifData = pExifViewImpl->m_QuiverFile.GetExifData();
+	
 	if (NULL != exifData)
 	{
+		exif_data_ref(exifData);
+	
 		GdkPixbuf *pixbuf = pExifViewImpl->m_QuiverFile.GetExifThumbnail();
 		if (NULL != pixbuf)
 		{
@@ -441,6 +445,7 @@ gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 
 			}
 		}
+		exif_data_unref(exifData);
 	}
 
 	gdk_threads_enter();
@@ -451,9 +456,6 @@ gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 
 	pExifViewImpl->m_iIdleLoadID = 0;
 	gdk_threads_leave();
-
-	//exif_mnote_data_unref (mnote_data);
-	exif_data_unref(exifData);
 
 	g_object_unref (G_OBJECT (store));
 

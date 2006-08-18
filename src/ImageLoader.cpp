@@ -15,6 +15,7 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	
 	AddPixbufLoaderObserver(this);
 
+	m_bStopThread = false;
 	//Timer t("ImageLoader::Start()");
 	pthread_create(&m_pthread_id, NULL, run, this);
 	pthread_detach(m_pthread_id);
@@ -22,6 +23,14 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 
 ImageLoader::~ImageLoader()
 {
+	m_bStopThread = true;
+	
+	pthread_mutex_lock (&m_ConditionMutex);
+	pthread_cond_signal(&m_Condition);
+	pthread_mutex_unlock (&m_ConditionMutex);
+	
+	pthread_join(m_pthread_id,NULL);
+	
 	pthread_cond_destroy(&m_Condition);
 	pthread_mutex_destroy(&m_ConditionMutex);
 	pthread_mutex_destroy(&m_CommandMutex);
@@ -48,6 +57,11 @@ int ImageLoader::Run()
 		else
 		{
 			pthread_mutex_unlock (&m_CommandMutex);
+		}
+		
+		if (m_bStopThread)
+		{
+			break;
 		}
 
 		pthread_mutex_lock (&m_CommandMutex);
@@ -182,6 +196,12 @@ void ImageLoader::AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observe
 	m_observers.push_back(loader_observer);	
 }
 
+void ImageLoader::RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer)
+{
+	m_observers.remove(loader_observer);	
+}
+
+
 
 void ImageLoader::LoadQuickPreview()
 {
@@ -315,7 +335,10 @@ void ImageLoader::Load()
 									{
 										swap(width,height);
 									}
-									(*itr)->SetPixbufAtSize(pixbuf,width,height);
+									if (m_Command.params.reload)
+										(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
+									else
+										(*itr)->SetPixbufAtSize(pixbuf,width,height);
 									gdk_flush();
 									gdk_threads_leave();
 

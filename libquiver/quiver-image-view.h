@@ -88,6 +88,7 @@ void quiver_image_view_set_size(QuiverImageView *imageview, guint width,guint he
 GdkPixbuf* quiver_image_view_get_pixbuf(QuiverImageView *imageview);
 void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf);
 void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width, int height);
+void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode);
 
 QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview);
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode);

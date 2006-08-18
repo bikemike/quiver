@@ -24,7 +24,7 @@ public:
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf);
-	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height);
+	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height, bool bResetViewMode = true );
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile);
 
