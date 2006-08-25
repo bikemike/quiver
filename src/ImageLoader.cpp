@@ -6,6 +6,20 @@
 
 using namespace std;
 
+static int reorientation_matrix[9][9] =
+{
+	{1,1,2,3,4,5,6,7,8},
+	{1,1,2,3,4,5,6,7,8},
+	{2,2,1,4,3,8,7,6,5},
+	{3,3,4,1,2,7,8,5,6},
+	{4,4,3,2,1,6,5,8,7},
+	{5,5,6,7,8,1,2,3,4},
+	{8,8,7,6,5,2,1,4,3},
+	{7,7,8,5,6,3,4,1,2},
+	{6,6,5,8,7,4,3,2,1},
+	
+};
+
 ImageLoader::ImageLoader() : m_ImageCache(4)
 {
 	//Timer t("ImageLoader::ImageLoader()");
@@ -305,46 +319,44 @@ void ImageLoader::Load()
 						if (1 < m_Command.params.orientation || // TODO: change to get rotate option
 						    m_Command.params.fullsize ) 
 						{
-							GdkPixbuf* pixbuf2;
 							if (1 < m_Command.params.orientation)
 							{
-								pixbuf2 = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
-							}
-							else
-							{
-								pixbuf2 = pixbuf;
-								g_object_ref(pixbuf2);
-							}
-							
-							if (NULL != pixbuf2)
-							{
-								g_object_unref(pixbuf);
-								pixbuf = pixbuf2;
-								list<IPixbufLoaderObserver*>::iterator itr;
-								for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+								GdkPixbuf* pixbuf_rotated;
+								pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
+								if (NULL != pixbuf_rotated)
 								{
-									gdk_threads_enter();
-									(*itr)->SetQuiverFile(m_Command.quiverFile);
-									gdk_threads_leave();
-									
-									gdk_threads_enter();
-									gint width,height;
-									width = m_Command.quiverFile.GetWidth();
-									height = m_Command.quiverFile.GetHeight();
-									if (4 < m_Command.params.orientation)
-									{
-										swap(width,height);
-									}
-									if (m_Command.params.reload)
-										(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
-									else
-										(*itr)->SetPixbufAtSize(pixbuf,width,height);
-									gdk_flush();
-									gdk_threads_leave();
-
+									g_object_unref(pixbuf);
+									pixbuf = pixbuf_rotated;
 								}
 							}
+							
+							list<IPixbufLoaderObserver*>::iterator itr;
+							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+							{
+								gdk_threads_enter();
+								(*itr)->SetQuiverFile(m_Command.quiverFile);
+								gdk_threads_leave();
+								
+								gdk_threads_enter();
+								gint width,height;
+								width = m_Command.quiverFile.GetWidth();
+								height = m_Command.quiverFile.GetHeight();
+								if (4 < m_Command.params.orientation)
+								{
+									swap(width,height);
+								}
+								if (m_Command.params.reload)
+									(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
+								else
+									(*itr)->SetPixbufAtSize(pixbuf,width,height);
+								gdk_flush();
+								gdk_threads_leave();
+							}
 						}
+
+						gint *pOrientation = g_new(int,1);
+						*pOrientation = m_Command.params.orientation;
+						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
 
 						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
 						g_object_unref(pixbuf);
@@ -361,7 +373,21 @@ void ImageLoader::Load()
 		{
 			// we'll need to set up the signals ourselves
 			//cout << "load from cache: "  << m_Command.filename << endl;
-	
+
+			gint *pOrientation = (gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
+			if (NULL != pOrientation && m_Command.params.orientation != *pOrientation)
+			{
+				int new_orientation = reorientation_matrix[*pOrientation][m_Command.params.orientation];
+				
+				GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,new_orientation);
+				if (NULL != pixbuf_rotated)
+				{
+					g_object_unref(pixbuf);
+					pixbuf = pixbuf_rotated;
+					m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
+				}
+			}
+
 			list<IPixbufLoaderObserver*>::iterator itr;
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
@@ -420,9 +446,7 @@ void ImageLoader::Load()
 						g_object_ref(pixbuf);
 						if (1 < m_Command.params.orientation) // TODO: change to get rotate option
 						{
-							gdk_threads_enter();
 							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
-							gdk_threads_leave();
 							
 							if (NULL != pixbuf_rotated)
 							{
@@ -430,6 +454,13 @@ void ImageLoader::Load()
 								pixbuf = pixbuf_rotated;
 							}
 						}
+						
+						// save the orientation so we can find out later
+						// what orientation was performed 
+						gint *pOrientation = g_new(int,1);
+						*pOrientation = m_Command.params.orientation;
+						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
+
 						if (CACHE_LOAD == m_Command.params.state)
 						{
 							list<IPixbufLoaderObserver*>::iterator itr;

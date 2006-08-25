@@ -86,6 +86,8 @@ private:
 	guint m_iRangeStart, m_iRangeEnd;
 	guint m_bLargeThumbs;
 	int m_nThreads;
+	
+	bool m_bStopThreads;
 
 };
 
@@ -143,6 +145,7 @@ public:
 
 ThumbnailLoader::ThumbnailLoader(Browser::BrowserImpl *b,int nThreads)
 {
+	m_bStopThreads = false;
 	m_iRangeStart = 0;
 	m_iRangeEnd   = 0;
 	this->b       = b;
@@ -170,7 +173,18 @@ ThumbnailLoader::ThumbnailLoader(Browser::BrowserImpl *b,int nThreads)
 }
 ThumbnailLoader::~ThumbnailLoader()
 {
+	m_bStopThreads = true;
+	
 	int i;
+	for (i = 0 ; i < m_nThreads; i++)
+	{
+		pthread_mutex_lock (&m_pConditionMutexes[i]);
+		pthread_cond_signal(&m_pConditions[i]);
+		pthread_mutex_unlock (&m_pConditionMutexes[i]);
+
+		pthread_join(m_pThreadIDs[i], NULL);
+	}
+	
 	for (i = 0 ; i < m_nThreads; i++)
 	{
 		pthread_cond_destroy(&m_pConditions[i]);
@@ -321,8 +335,17 @@ void ThumbnailLoader::Run(int id)
 			pthread_mutex_unlock (&m_ListMutex);
 		}
 		
+		if (m_bStopThreads)
+		{
+			break;
+		}
+		
 		while (true)
 		{
+			if (m_bStopThreads)
+			{
+				break;
+			}
 			//printf("thread %d\n",id); 
 			pthread_mutex_lock (&m_ListMutex);
 			if (0 == m_Files.size())
@@ -338,6 +361,7 @@ void ThumbnailLoader::Run(int id)
 			
 			//printf("Loading : %s\n",f.GetFilePath().c_str());
 			guint width, height;
+
 			quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(b->iconview),&width,&height);
 
 			GdkPixbuf *pixbuf = NULL;
@@ -398,6 +422,11 @@ void ThumbnailLoader::Run(int id)
 			}
 
 			
+		}
+
+		if (m_bStopThreads)
+		{
+			break;
 		}
 		
 
@@ -761,6 +790,13 @@ void Browser::BrowserImpl::Show()
 	GError *tmp_error;
 	tmp_error = NULL;
 	
+
+ 	if (0 != m_QuiverFiles.GetSize())
+	{
+		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(iconview),
+			m_QuiverFiles.GetCurrentIndex() );
+	}
+
 	gtk_widget_show(m_pBrowserWidget);
 	if (m_pUIManager && 0 == m_iMergedBrowserUI)
 	{
@@ -773,6 +809,7 @@ void Browser::BrowserImpl::Show()
 			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
 		}
 	}
+
 }
 
 void Browser::BrowserImpl::Hide()

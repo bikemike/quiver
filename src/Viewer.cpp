@@ -338,7 +338,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction, "ImagePrevious"))
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,true,true);
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false,true);
 	}
 	else if (0 == strcmp(szAction, "ImageNext"))
 	{
@@ -346,7 +346,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction, "ImageLast"))
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetSize()-1,true,true);
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetSize()-1,false,true);
 	}
 }
 
@@ -408,7 +408,7 @@ static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cel
 	ViewerImpl *pViewerImpl;
 	pViewerImpl = (ViewerImpl*)data;
 
-	pViewerImpl->m_pViewer->EmitItemActivatedEvent();
+	//pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 	return TRUE;
 }
 
@@ -491,6 +491,7 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 	gtk_box_pack_start (GTK_BOX (m_pVBox), m_pTable, TRUE, TRUE, 0);
 
 	gtk_box_pack_start (GTK_BOX (m_pHBox), m_pIconView, FALSE, TRUE, 0);
+//	gtk_box_pack_start (GTK_BOX (m_pVBox), m_pIconView, FALSE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (m_pHBox), m_pVBox, TRUE, TRUE, 0);
 
 
@@ -511,6 +512,7 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
 
 	quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
+//	quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView),1);
 	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(m_pIconView),TRUE);
 
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(viewer_iconview_cell_activated),this);
@@ -576,18 +578,6 @@ void Viewer::Show()
 	GError *tmp_error;
 	tmp_error = NULL;
 
-	gtk_widget_show(m_ViewerImplPtr->m_pHBox);
-	if (m_ViewerImplPtr->m_pUIManager && 0 == m_ViewerImplPtr->m_iMergedViewerUI)
-	{
-		m_ViewerImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_ViewerImplPtr->m_pUIManager,
-				ui_viewer,
-				strlen(ui_viewer),
-				&tmp_error);
-		if (NULL != tmp_error)
-		{
-			g_warning("Viewer::Show() Error: %s\n",tmp_error->message);
-		}
-	}
 
 	gint cursor_cell = quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView));
  
@@ -603,6 +593,20 @@ void Viewer::Show()
 			QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView),
 			m_ViewerImplPtr->m_ImageList.GetCurrentIndex() );
 	}
+
+	gtk_widget_show(m_ViewerImplPtr->m_pHBox);
+	if (m_ViewerImplPtr->m_pUIManager && 0 == m_ViewerImplPtr->m_iMergedViewerUI)
+	{
+		m_ViewerImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_ViewerImplPtr->m_pUIManager,
+				ui_viewer,
+				strlen(ui_viewer),
+				&tmp_error);
+		if (NULL != tmp_error)
+		{
+			g_warning("Viewer::Show() Error: %s\n",tmp_error->message);
+		}
+	}
+
 }
 void Viewer::Hide()
 {

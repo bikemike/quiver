@@ -627,7 +627,7 @@ quiver_icon_view_get_col_row_count(QuiverIconView *iconview,guint *cols, guint *
 	
 	if (0 == c)
 		c = 1;
-	
+
 	if (n_cells)
 		r = (n_cells-1) / c + 1;
 
@@ -646,6 +646,7 @@ quiver_icon_view_get_col_row_count(QuiverIconView *iconview,guint *cols, guint *
 	{
 		*cols = c;
 	}
+
 	if (NULL != rows)
 	{
 		*rows = r;
@@ -696,9 +697,12 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 
 	if (col_end >= num_cols)
 	{
-		col_end = num_cols -1;
+		col_end = 0;
+		if (0 != num_cols)
+		{
+			col_end = num_cols - 1;
+		}
 	}
-	//printf("col end: %d\n",col_end);
 
 	GdkGC *dotted_line_gc = gdk_gc_new(widget->window);
 	GdkColor color;
@@ -725,7 +729,7 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 	guint n_cells  = quiver_icon_view_get_n_items(iconview);
 	for (j=row_start;j <= row_end; j++)
 	{
-		for (i = col_start;i<= col_end; i ++)
+		for (i = col_start;i<= col_end; i++)
 		{
 			gint current_cell = j * num_cols + i + num_adj_cells_y + num_adj_cols;
 
