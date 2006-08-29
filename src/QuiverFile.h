@@ -39,7 +39,7 @@ public:
 	bool HasThumbnail(bool large = false);
 
 	GdkPixbuf *GetExifThumbnail();
-	GdkPixbuf *GetThumbnail(bool large = false);
+	GdkPixbuf *GetThumbnail(bool bLargeThumb = false);
 
 	ExifData *GetExifData();
 	GnomeVFSFileInfo * GetFileInfo();

@@ -467,7 +467,7 @@ bool QuiverFile::HasThumbnail(bool bLargeThumb)
 	return bHasThumb;
 }
 
-GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb)
+GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 {
 	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
 	if (bLargeThumb)
@@ -686,6 +686,14 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb)
 			if (NULL != thumb_pixbuf)
 			{
 				g_object_ref(thumb_pixbuf);
+				printf("checking for orientation\n");
+				const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
+				if (NULL != str_orientation)
+				{
+					printf("we got orientation: %s\n",str_orientation);
+					m_QuiverFilePtr->m_iOrientation = atoi(str_orientation);
+					
+				}
 				//printf("got thumb from file\n");
 			}
 			
@@ -894,6 +902,22 @@ int QuiverFile::GetOrientation()
 				o = exif_data_get_byte_order (entry->parent->parent);
 				orientation = exif_get_short (entry->data, o);
 			}
+		}
+		else
+		{
+			/*
+			GdkPixbuf *pixbuf = GetThumbnail();
+			if (NULL != pixbuf)
+			{
+				const gchar* str_orientation = gdk_pixbuf_get_option (pixbuf, "tEXt::Thumb::Image::Orientation");
+				int new_orientation = atoi(str_orientation);
+				if (1 < new_orientation && new_orientation < 9)
+				{
+					orientation = new_orientation;
+				}
+				g_object_unref(pixbuf);
+			}
+			*/
 		}
 		m_QuiverFilePtr->m_iOrientation = orientation;
 		

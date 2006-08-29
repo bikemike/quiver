@@ -2442,13 +2442,13 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	pixbuf = gdk_pixbuf_animation_get_static_image (pixbuf_animation);
 	g_object_ref(pixbuf);
 
+	quiver_image_view_prepare_for_new_pixbuf(imageview,
+		imageview->priv->pixbuf_width_next,imageview->priv->pixbuf_height_next);
+
 	imageview->priv->pixbuf_width = 
 		imageview->priv->pixbuf_width_next;
 	imageview->priv->pixbuf_height = 
 		imageview->priv->pixbuf_height_next;
-				
-	quiver_image_view_prepare_for_new_pixbuf(imageview,
-		imageview->priv->pixbuf_width,imageview->priv->pixbuf_height);
 	
 	imageview->priv->pixbuf_animation = pixbuf_animation;
 	
