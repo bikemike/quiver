@@ -6,9 +6,11 @@
 
 #include "icons/quiver_icon.pixdata"
 #include "icons/quiver_slideshow.pixdata"
+#include "icons/quiver_browser_icon.pixdata"
 
-#define QUIVER_STOCK_ICON "quiver-icon"
+#define QUIVER_STOCK_ICON      "quiver-icon"
 #define QUIVER_STOCK_SLIDESHOW "quiver-slideshow"
+#define QUIVER_STOCK_BROWSER   "quiver-browser-icon"
 
 
 class QuiverStockIcons

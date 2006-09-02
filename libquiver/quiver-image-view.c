@@ -16,7 +16,7 @@
 /* set up some defaults */
 #define QUIVER_IMAGE_VIEW_MAG_MAX              50.
 #define QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE       32
-
+#define QUIVER_ICON_VIEW_SCALE_HQ_TIMEOUT      100
 
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
@@ -1215,7 +1215,7 @@ void quiver_image_view_add_scale_hq_timeout(QuiverImageView *imageview)
 	{
 		g_source_remove(imageview->priv->timeout_scale_hq_id);
 	}
-	imageview->priv->timeout_scale_hq_id = g_timeout_add(300,quiver_image_view_timeout_scale_hq,imageview);
+	imageview->priv->timeout_scale_hq_id = g_timeout_add(QUIVER_ICON_VIEW_SCALE_HQ_TIMEOUT,quiver_image_view_timeout_scale_hq,imageview);
 }
 
 static gboolean 

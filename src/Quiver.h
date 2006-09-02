@@ -29,7 +29,6 @@ public:
 
 	// member functions
 	void Init();
-	int Show();	
 	
 	gboolean Quiver::TimeoutEventMotionNotify(gpointer data);
 

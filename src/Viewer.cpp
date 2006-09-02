@@ -13,6 +13,11 @@
 
 #include "NavigationControl.h"
 #include "QuiverFile.h"
+#include "Preferences.h"
+
+#define QUIVER_PREFS_APP                       "application"
+#define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
+#define QUIVER_PREFS_APP_BG_ICONVIEW           "bgcolor_iconview"
 
 #include <gdk/gdkkeysyms.h>
 using namespace std;
@@ -424,6 +429,8 @@ static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cel
 
 ViewerImpl::ViewerImpl(Viewer *pViewer)
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	
 	m_pViewer = pViewer;
 	m_pNavigationControl = new NavigationControl();
 	
@@ -495,15 +502,23 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 	gtk_box_pack_start (GTK_BOX (m_pHBox), m_pVBox, TRUE, TRUE, 0);
 
 
+	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
 
-	GdkColor dark_grey;
-	gdk_color_parse("#444",&dark_grey);
-	gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &dark_grey );
-/*
-	GdkColor black;
-	gdk_color_parse("black",&black);
-*/
-	gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &dark_grey );
+	if (!strBGColorImg.empty())
+	{
+		GdkColor color;
+		gdk_color_parse(strBGColorImg.c_str(),&color);
+		gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
+	}
+	
+	if (!strBGColorThumb.empty())
+	{
+		GdkColor color;
+		gdk_color_parse(strBGColorThumb.c_str(),&color);
+		gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
+	}
+
 
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 

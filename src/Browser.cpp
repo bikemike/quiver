@@ -17,6 +17,15 @@ using namespace std;
 #include "ImageLoader.h"
 #include "IPixbufLoaderObserver.h"
 #include "QuiverUtils.h"
+#include "Preferences.h"
+
+#define QUIVER_PREFS_APP                       "application"
+#define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
+#define QUIVER_PREFS_APP_BG_ICONVIEW           "bgcolor_iconview"
+
+#define QUIVER_PREFS_BROWSER                   "browser"
+#define QUIVER_PREFS_BROWSER_THUMB_SIZE        "thumb_size"
+
 
 // ============================================================================
 // Browser::BrowserImpl: private implementation (hidden from header file)
@@ -178,6 +187,11 @@ ThumbnailLoader::~ThumbnailLoader()
 	int i;
 	for (i = 0 ; i < m_nThreads; i++)
 	{
+		// this call to gdk_threads_leave is made to make sure we dont get into
+		// a deadlock between this thread(gui) and the ThumbnailLoader thread which calls
+		// gdk_threads_enter 
+		gdk_threads_leave();
+
 		pthread_mutex_lock (&m_pConditionMutexes[i]);
 		pthread_cond_signal(&m_pConditions[i]);
 		pthread_mutex_unlock (&m_pConditionMutexes[i]);
@@ -204,7 +218,6 @@ void ThumbnailLoader::Start()
 	for (i = 0 ; i < m_nThreads; i++)
 	{
 		pthread_create(&m_pThreadIDs[i], NULL, run, &m_pThreadData[i]);
-		pthread_detach(m_pThreadIDs[i]);
 	}
 }
 void ThumbnailLoader::UpdateList()
@@ -320,7 +333,7 @@ void ThumbnailLoader::Run(int id)
 
 		pthread_mutex_lock (&m_ListMutex);
 
-		if (0 == m_Files.size())
+		if (0 == m_Files.size() && !m_bStopThreads)
 		{
 			// unlock mutex
 			pthread_mutex_unlock (&m_ListMutex);
@@ -404,17 +417,20 @@ void ThumbnailLoader::Run(int id)
 	
 					g_object_unref(pixbuf);
 					
+					if (m_bStopThreads)
+					{
+						break;
+					}
+
 					gdk_threads_enter();
 					
 					quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(b->iconview),n);
 					
 					gdk_threads_leave();
-					//if (n % 15 == 0)
-					{
-						pthread_yield();
-					}
+
+					pthread_yield();
 				}
-				//usleep(1000);
+
 			}
 			else
 			{
@@ -614,6 +630,8 @@ gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer use
 
 Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100),m_ThumbnailCacheLarge(50), m_ThumbnailLoader(this,4)
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+
 	m_ThumbnailLoader.Start();
 	m_BrowserParent = parent;
 	m_pUIManager = NULL;
@@ -638,7 +656,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	
 
 	hscale = gtk_hscale_new_with_range(20,256,1);
-	gtk_range_set_value(GTK_RANGE(hscale),128.);
+	gtk_range_set_value(GTK_RANGE(hscale),128);
 	gtk_scale_set_value_pos (GTK_SCALE(hscale),GTK_POS_LEFT);
 	gtk_scale_set_draw_value(GTK_SCALE(hscale),FALSE);
 
@@ -694,7 +712,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
 
 	gtk_signal_connect (GTK_OBJECT (hscale), "value_changed",
-	      GTK_SIGNAL_FUNC (icon_size_value_changed), this);	
+	      GTK_SIGNAL_FUNC (icon_size_value_changed), this);
 
 	g_signal_connect(G_OBJECT(iconview),"cell_activated",G_CALLBACK(iconview_cell_activated_cb),this);
 	g_signal_connect(G_OBJECT(iconview),"cursor_changed",G_CALLBACK(iconview_cursor_changed_cb),this);
@@ -708,14 +726,22 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
     g_signal_connect (G_OBJECT (entry), "focus-out-event",
     			G_CALLBACK (entry_focus_out), this);
 
-	GdkColor dark_grey;
-	gdk_color_parse("#444",&dark_grey);
-	gtk_widget_modify_bg (iconview, GTK_STATE_NORMAL, &dark_grey );
+	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
 
-	GdkColor black;
-	gdk_color_parse("black",&black);
-	gtk_widget_modify_bg (imageview, GTK_STATE_NORMAL, &black );
+	if (!strBGColorImg.empty())
+	{
+		GdkColor color;
+		gdk_color_parse(strBGColorImg.c_str(),&color);
+		gtk_widget_modify_bg (imageview, GTK_STATE_NORMAL, &color );
+	}
 	
+	if (!strBGColorThumb.empty())
+	{
+		GdkColor color;
+		gdk_color_parse(strBGColorThumb.c_str(),&color);
+		gtk_widget_modify_bg (iconview, GTK_STATE_NORMAL, &color );
+	}
 /*
 	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(real_iconview),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,user_data,NULL);
 */
@@ -728,6 +754,14 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	gtk_widget_set_no_show_all(m_pBrowserWidget,TRUE);
 
 
+	gdouble thumb_size = (gdouble)prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE);	
+
+	if (thumb_size < 20. || 256. < thumb_size)
+	{
+		thumb_size = 128.;
+	}
+	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
+
 	// temporarily hide the folder tree until we
 	// get the code written	
 	gtk_widget_hide(vpaned);
@@ -735,6 +769,11 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 
 Browser::BrowserImpl::~BrowserImpl()
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	gdouble value = gtk_range_get_value (GTK_RANGE(hscale));
+	
+	prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE,(int)value);
+
 	m_ImageLoader.RemovePixbufLoaderObserver(m_pImageViewPixbufLoaderObserver);
 	
 	delete m_pImageViewPixbufLoaderObserver;

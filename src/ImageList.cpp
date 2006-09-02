@@ -348,7 +348,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 
 		gchar* uri = gnome_vfs_make_uri_from_shell_arg (file_list->front().c_str());
 		
-		cout << "is this valid: " << uri << endl;
+		//cout << "is this valid: " << uri << endl;
 		
 		GnomeVFSURI * vfs_uri = gnome_vfs_uri_new (uri);
 		GnomeVFSFileInfo *info;
@@ -374,7 +374,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 				{
 					if (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
 					{
-						cout << "adding dir" << endl;
+						//cout << "adding dir" << endl;
 						AddDirectory(uri);
 						std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
 						//m_QuivFileList.sort(QuiverFileCompare);
@@ -383,7 +383,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 					}
 					else if (info->type == GNOME_VFS_FILE_TYPE_REGULAR)
 					{ // regular file
-						cout << "adding file" << endl;
+						//cout << "adding file" << endl;
 						if (GNOME_VFS_FILE_INFO_FIELDS_SYMLINK_NAME & info->valid_fields)
 						{
 							//print the symlink
@@ -405,7 +405,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 								result = gnome_vfs_get_file_info (parent_str,dir_info,(GnomeVFSFileInfoOptions)GNOME_VFS_FILE_INFO_DEFAULT);
 								if (GNOME_VFS_OK == result && dir_info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
 								{
-									cout << "adding parent dir" << endl;
+									//cout << "adding parent dir" << endl;
 									// we can open the dir
 									AddDirectory(parent_str);
 									std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
@@ -415,8 +415,8 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 								}
 								else
 								{
-									cout << "not adding parent dir" << endl;
-									printf("dir info type: %d, %s\n",info->type, parent_str);
+									//cout << "not adding parent dir" << endl;
+									//printf("dir info type: %d, %s\n",info->type, parent_str);
 
 									// if we can't open the dir, just add the file
 									// (ie, if it is http)

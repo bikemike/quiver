@@ -686,11 +686,11 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 			if (NULL != thumb_pixbuf)
 			{
 				g_object_ref(thumb_pixbuf);
-				printf("checking for orientation\n");
+				//printf("checking for orientation\n");
 				const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
 				if (NULL != str_orientation)
 				{
-					printf("we got orientation: %s\n",str_orientation);
+					//printf("we got orientation: %s\n",str_orientation);
 					m_QuiverFilePtr->m_iOrientation = atoi(str_orientation);
 					
 				}

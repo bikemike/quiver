@@ -22,6 +22,7 @@ icon icons[] =
 {
 	{QUIVER_STOCK_ICON,quiver_icon,sizeof(quiver_icon)},
 	{QUIVER_STOCK_SLIDESHOW, quiver_slideshow,sizeof(quiver_slideshow)},
+	{QUIVER_STOCK_BROWSER, quiver_browser_icon,sizeof(quiver_browser_icon)},
 };
 
 

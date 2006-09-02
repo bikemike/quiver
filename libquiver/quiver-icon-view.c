@@ -1525,9 +1525,12 @@ quiver_icon_view_set_scroll_adjustments (QuiverIconView     *iconview,
 			    GtkAdjustment *hadj,
 			    GtkAdjustment *vadj)
 {
+	GtkWidget *widget;
 	gboolean need_adjust = FALSE;
 
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	widget = GTK_WIDGET(iconview);
 
 	if (hadj)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (hadj));
@@ -1556,26 +1559,33 @@ quiver_icon_view_set_scroll_adjustments (QuiverIconView     *iconview,
 	{
 		iconview->priv->hadjustment = hadj;
 		g_object_ref_sink (iconview->priv->hadjustment);
-		guint width = quiver_icon_view_get_width(iconview);
-		quiver_icon_view_set_adjustment_upper (iconview->priv->hadjustment, width, FALSE);
-
+	
+		if (GTK_WIDGET_REALIZED (widget))
+		{
+			guint width = quiver_icon_view_get_width(iconview);
+			quiver_icon_view_set_adjustment_upper (iconview->priv->hadjustment, width, FALSE);
+			need_adjust = TRUE;
+		}
 		g_signal_connect (iconview->priv->hadjustment, "value_changed",
 		G_CALLBACK (quiver_icon_view_adjustment_value_changed),
 			iconview);
-		need_adjust = TRUE;
 	}
 
 	if (iconview->priv->vadjustment != vadj)
 	{
 		iconview->priv->vadjustment = vadj;
 		g_object_ref_sink (iconview->priv->vadjustment);
-		guint height = quiver_icon_view_get_height(iconview);
-		quiver_icon_view_set_adjustment_upper (iconview->priv->vadjustment, height, FALSE);
+		if (GTK_WIDGET_REALIZED (widget))
+		{
+	
+			guint height = quiver_icon_view_get_height(iconview);
+			quiver_icon_view_set_adjustment_upper (iconview->priv->vadjustment, height, FALSE);
+			need_adjust = TRUE;
+		}
 
 		g_signal_connect (iconview->priv->vadjustment, "value_changed",
-		G_CALLBACK (quiver_icon_view_adjustment_value_changed),
+			G_CALLBACK (quiver_icon_view_adjustment_value_changed),
 			iconview);
-		need_adjust = TRUE;
 	}
 
 
@@ -1691,10 +1701,6 @@ static void
 quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjustment,
            QuiverIconView *iconview)
 {
-	/*
-	if (iconview->freeze_count)
-		return;
-	*/
 	GtkWidget *widget = GTK_WIDGET(iconview);
 
 	gdouble hadj,vadj;
@@ -2282,6 +2288,11 @@ static void
 quiver_icon_view_update_icon_size(QuiverIconView *iconview)
 {
 	GtkWidget *widget = GTK_WIDGET(iconview);
+
+	if (!GTK_WIDGET_REALIZED (widget))
+	{
+		return;
+	}
 
 	guint width = quiver_icon_view_get_width(iconview);
 	guint height = quiver_icon_view_get_height(iconview);
