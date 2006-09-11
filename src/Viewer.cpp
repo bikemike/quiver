@@ -2,6 +2,7 @@
 
 #include <libquiver/quiver-icon-view.h>
 #include <libquiver/quiver-image-view.h>
+#include <libquiver/quiver-navigation-control.h>
 
 #include "Viewer.h"
 #include "Timer.h"
@@ -11,7 +12,6 @@
 #include "ImageLoader.h"
 #include "ImageList.h"
 
-#include "NavigationControl.h"
 #include "QuiverFile.h"
 #include "Preferences.h"
 
@@ -40,6 +40,12 @@ static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer d
 static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data);
 static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
 static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
+
+static gboolean viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata);
+gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data );
+
+
+
 
 static int orientation_matrix[4][9] = 
 { 
@@ -198,7 +204,8 @@ public:
 	gdouble m_dAdjustmentValueLastH;
 	gdouble m_dAdjustmentValueLastV;
 	
-	NavigationControl * m_pNavigationControl;
+	GtkWidget *m_pNavigationWindow;
+	GtkWidget *m_pNavigationControl;
 	
 	bool m_bPressed;
 
@@ -243,6 +250,10 @@ void ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCur
 		QuiverFile f;
 
 		f = m_ImageList.GetCurrent();
+
+		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
+		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),f.GetThumbnail());
+		
 		m_ImageLoader.LoadImage(f);
 		
 		m_iCurrentOrientation = f.GetOrientation();
@@ -427,13 +438,72 @@ static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cel
 	return TRUE;
 }
 
+static gboolean
+viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata)
+{
+	ViewerImpl *pViewerImpl;
+	pViewerImpl = (ViewerImpl*)userdata;
+	
+	GdkModifierType state;
+	gint x =0, y=0;
+
+	x = (gint)event->x_root;
+	y = (gint)event->y_root;
+	state = (GdkModifierType)event->state;
+	
+
+	gtk_widget_show_all (pViewerImpl->m_pNavigationWindow);
+
+	gint w,h;
+	gtk_window_get_size(GTK_WINDOW (pViewerImpl->m_pNavigationWindow),&w,&h);
+  	int ww, wh, pos_x,pos_y;
+  	ww = w+2;
+  	wh = h+2;
+  	
+  	pos_x = (int)x - ww/2;
+  	pos_y = (int)y - wh/2;
+  		
+	
+  	if (gdk_screen_width () < pos_x + ww)
+  		pos_x = gdk_screen_width() - ww;
+  	else if (0 > pos_x)
+  		pos_x = 0;
+	
+  	if (gdk_screen_height () < pos_y + wh)
+  		pos_y = gdk_screen_height() - wh;
+  	else if (0 > pos_y)
+  		pos_y = 0;
+	
+	gtk_window_move (GTK_WINDOW (pViewerImpl->m_pNavigationWindow), pos_x, pos_y);
+
+	GdkCursor *cursor;	
+	cursor = gdk_cursor_new (GDK_FLEUR); 
+		
+	gdk_pointer_grab (pViewerImpl->m_pNavigationWindow->window,  TRUE, (GdkEventMask)(GDK_BUTTON_RELEASE_MASK  | GDK_POINTER_MOTION_HINT_MASK    | GDK_BUTTON_MOTION_MASK   | GDK_EXTENSION_EVENTS_ALL),
+			  pViewerImpl->m_pNavigationControl->window, 
+			  cursor,
+			  GDK_CURRENT_TIME);
+
+	gdk_cursor_unref (cursor);
+	return TRUE;
+}
+
+gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data )
+{
+	ViewerImpl *pViewerImpl;
+	pViewerImpl = (ViewerImpl*)data;
+
+	gdk_pointer_ungrab (event->time);
+
+	gtk_widget_hide_all (pViewerImpl->m_pNavigationWindow);
+	return TRUE;	
+}
+
 ViewerImpl::ViewerImpl(Viewer *pViewer)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	
 	m_pViewer = pViewer;
-	m_pNavigationControl = new NavigationControl();
-	
 
 	m_pIconView = quiver_icon_view_new();
 	m_pImageView = quiver_image_view_new();
@@ -463,10 +533,10 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 	gtk_widget_set_no_show_all(m_pNavigationBox,TRUE);
 
 
-//	g_signal_connect (G_OBJECT (m_pNavigationBox), 
-//			  "button_press_event",
-//			  G_CALLBACK (/*FIXME*/NULL), 
-//			  this);
+	g_signal_connect (G_OBJECT (m_pNavigationBox), 
+			  "button_press_event",
+			  G_CALLBACK (viewer_navigation_button_press_event), 
+			  this);
 
 	
 
@@ -558,6 +628,24 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 	gtk_widget_hide(m_pHBox);
 	gtk_widget_set_no_show_all(m_pHBox,TRUE);
 	
+	
+	m_pNavigationWindow = gtk_window_new (GTK_WINDOW_POPUP);
+	m_pNavigationControl = quiver_navigation_control_new_with_adjustments (m_pAdjustmentH, m_pAdjustmentV);
+
+	g_signal_connect (G_OBJECT (m_pNavigationControl), "button_release_event",  
+				G_CALLBACK (navigation_control_button_release_event), this);
+
+ 	gtk_widget_add_events (m_pNavigationControl, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);
+	gtk_widget_add_events (m_pNavigationControl, GDK_BUTTON_PRESS_MASK|GDK_BUTTON_RELEASE_MASK);
+
+	GtkWidget * frame = gtk_frame_new(NULL);
+	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_ETCHED_IN);	
+
+	
+	gtk_container_add (GTK_CONTAINER (frame), m_pNavigationControl);
+	gtk_container_add (GTK_CONTAINER (m_pNavigationWindow), frame);
+	
+	
 }
 
 
@@ -575,7 +663,7 @@ Viewer::Viewer() : m_ViewerImplPtr(new ViewerImpl(this))
 
 Viewer::~Viewer()
 {
-	delete 	m_ViewerImplPtr->m_pNavigationControl;
+	gtk_widget_destroy(m_ViewerImplPtr->m_pNavigationWindow);
 }
 
 GtkWidget *Viewer::GetWidget()

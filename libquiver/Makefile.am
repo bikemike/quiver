@@ -19,12 +19,15 @@ MARSHALLERS =              \
 
 libquiver_la_SOURCES =     \
 	$(MARSHALLERS)         \
-	quiver-pixbuf-utils.c  \
-	quiver-image-view.c    \
-	quiver-icon-view.c      \
-	quiver-icon-view.h      \
 	quiver-pixbuf-utils.h  \
-	quiver-image-view.h    
+	quiver-pixbuf-utils.c  \
+	quiver-image-view.h    \
+	quiver-image-view.c    \
+	quiver-icon-view.h      \
+	quiver-icon-view.c      \
+	quiver-navigation-control.h      \
+	quiver-navigation-control.c
+
 
 
 quiver-marshallers.h: quiver-marshallers.list $(GLIB_GENMARSHAL)

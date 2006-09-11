@@ -29,8 +29,6 @@ quiver_SOURCES = \
 	ImageLoader.cpp \
 	QuiverFile.h \
 	QuiverFile.cpp \
-	NavigationControl.h \
-	NavigationControl.cpp \
 	IPixbufLoaderObserver.h \
 	PixbufLoaderObserver.h \
 	PixbufLoaderObserver.cpp \
