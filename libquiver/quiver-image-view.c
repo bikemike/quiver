@@ -495,19 +495,11 @@ quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 	gdk_window_get_pointer(widget->window,&x,&y,&mask);
 	
 	GdkInterpType interptype = GDK_INTERP_NEAREST;
-	
-	//printf("########### configure scale hq\n");
-	
-	quiver_image_view_create_scaled_pixbuf(imageview,interptype);
-
+	quiver_image_view_update_size(imageview);
 	quiver_image_view_send_reload_event(imageview);
-	
-	if (imageview->priv->scroll_draw)
-	{
-		quiver_image_view_add_scale_hq_timeout(imageview);
 
-		quiver_image_view_update_size(imageview);
-	}
+	quiver_image_view_create_scaled_pixbuf(imageview,interptype);
+	quiver_image_view_add_scale_hq_timeout(imageview);
 
 	return TRUE;
 }
@@ -1477,7 +1469,6 @@ quiver_image_view_update_size(QuiverImageView *imageview)
 	if (vadjustment->value > vadjustment->upper - vadjustment->page_size)
 		gtk_adjustment_set_value (vadjustment, MAX (0, vadjustment->upper - vadjustment->page_size));
 
-
 	gtk_adjustment_changed (hadjustment);
 	gtk_adjustment_changed (vadjustment);
 	
@@ -1499,7 +1490,7 @@ static void quiver_image_view_get_bound_size(guint bound_width,guint bound_heigh
 		gdouble ratio = (double)w/h;
 		guint new_height;
 
-		new_height = (guint)(.5 + (bound_width/ratio)); // round up
+		new_height = (guint)(bound_width/ratio);
 		if (new_height < bound_height)
 		{
 			*width = bound_width;
@@ -1507,7 +1498,7 @@ static void quiver_image_view_get_bound_size(guint bound_width,guint bound_heigh
 		}
 		else
 		{
-			*width = (guint)(bound_height *ratio + .5); // round up
+			*width = (guint)(bound_height *ratio);
 			*height = bound_height;
 		}
 	}

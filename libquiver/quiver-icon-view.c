@@ -1286,91 +1286,52 @@ gboolean quiver_icon_view_scroll_event ( GtkWidget *widget,
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
 
-
-	int adjustment = 5;
-	if (event->state & GDK_SHIFT_MASK)
+	gint adjust;
+		
+	remove_timeout_smooth_scroll(iconview);
+		
+	if (1 == iconview->priv->n_rows)
 	{
-		adjustment = 1;
-	}
-	//printf("scroll event\n");
+		adjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 
-	gboolean rvalue = FALSE;
-
-	if (event->state & GDK_CONTROL_MASK)
-	{
-		guint width,height;
-		quiver_icon_view_get_icon_size(iconview,&width,&height);
 		if (GDK_SCROLL_UP == event->direction)
 		{
-			if (20 <= width - adjustment)
-			{
-				width -= adjustment;
-				height -= adjustment;
-				quiver_icon_view_set_icon_size(iconview,width,height);
-			}
+			adjust -= iconview->priv->hadjustment->step_increment;
 		}
-
 		else if (GDK_SCROLL_DOWN == event->direction)
 		{
-			if (256 >= iconview->priv->icon_width + adjustment)
-			{
-				width += adjustment;
-				height += adjustment;
-				quiver_icon_view_set_icon_size(iconview,width,height);
-			}
+			adjust += iconview->priv->hadjustment->step_increment;
 		}
-		rvalue = TRUE;
+
+		if (adjust < iconview->priv->hadjustment->lower)
+			adjust = iconview->priv->hadjustment->lower;
+		else if (adjust > iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size)
+			adjust = iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size;
+
+		gtk_adjustment_set_value(iconview->priv->hadjustment,adjust);
 	}
 	else
 	{
-		gint adjust;
-		
-		remove_timeout_smooth_scroll(iconview);
-		
-		if (1 == iconview->priv->n_rows)
+		adjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
+
+		if (GDK_SCROLL_UP == event->direction)
 		{
-			adjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
-	
-			if (GDK_SCROLL_UP == event->direction)
-			{
-				adjust -= iconview->priv->hadjustment->step_increment;
-			}
-			else if (GDK_SCROLL_DOWN == event->direction)
-			{
-				adjust += iconview->priv->hadjustment->step_increment;
-			}
-	
-			if (adjust < iconview->priv->hadjustment->lower)
-				adjust = iconview->priv->hadjustment->lower;
-			else if (adjust > iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size)
-				adjust = iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size;
-	
-			gtk_adjustment_set_value(iconview->priv->hadjustment,adjust);
+			adjust -= iconview->priv->vadjustment->step_increment;
 		}
-		else
+		else if (GDK_SCROLL_DOWN == event->direction)
 		{
-			adjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
-	
-			if (GDK_SCROLL_UP == event->direction)
-			{
-				adjust -= iconview->priv->vadjustment->step_increment;
-			}
-			else if (GDK_SCROLL_DOWN == event->direction)
-			{
-				adjust += iconview->priv->vadjustment->step_increment;
-			}
-	
-			if (adjust < iconview->priv->vadjustment->lower)
-				adjust = iconview->priv->vadjustment->lower;
-			else if (adjust > iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size)
-				adjust = iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size;
-	
-			gtk_adjustment_set_value(iconview->priv->vadjustment,adjust);
+			adjust += iconview->priv->vadjustment->step_increment;
 		}
-		rvalue = TRUE;
+
+		if (adjust < iconview->priv->vadjustment->lower)
+			adjust = iconview->priv->vadjustment->lower;
+		else if (adjust > iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size)
+			adjust = iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size;
+
+		gtk_adjustment_set_value(iconview->priv->vadjustment,adjust);
 	}
 
-	return rvalue;
+	return TRUE;
 }
 
 static gboolean

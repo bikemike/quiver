@@ -442,16 +442,13 @@ quiver_navigation_control_motion_notify_event (GtkWidget *widget, GdkEventMotion
 	
 	if (event->is_hint)
 	{
-		//printf("hint\n");
 		gdk_window_get_pointer (event->window, &x, &y, &state);
 	}		
 	else
 	{
-		//printf("event\n");
 		x = (int)event->x;
 		y = (int)event->y;
 		state = (GdkModifierType)event->state;
-		
 	}
 	
 	quiver_navigation_control_update_adjustments(navcontrol, x, y);
