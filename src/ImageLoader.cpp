@@ -547,14 +547,24 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 			}
 		}
 		
+		tmp_error = NULL;
+		
 		gdk_threads_enter();
 		gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-
+		
 		gdk_flush();
 		gdk_threads_leave();
+
+		if (NULL != tmp_error)
+		{
+			//printf("Error loading image: %s\n",tmp_error->message);
+			break;
+		}
 	}
 
 	m_Command.quiverFile.SetLoadTimeInSeconds( loadTimer.GetRunningTimeInSeconds() );
+	
+	tmp_error = NULL;
 	
 	gdk_threads_enter();
 	gdk_pixbuf_loader_close(loader,&tmp_error);

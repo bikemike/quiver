@@ -57,11 +57,6 @@ struct _QuiverImageViewPrivate
 	gint pixbuf_width;
 	gint pixbuf_height;
 
-	// next width/height
-	// used in the area_updated pixbuf loader callback
-	gint pixbuf_width_next;
-	gint pixbuf_height_next;
-
 	QuiverImageViewMode view_mode;
 	QuiverImageViewMode view_mode_last;
 
@@ -311,9 +306,6 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->pixbuf_width  = 0;
 	imageview->priv->pixbuf_height = 0;
 	
-	imageview->priv->pixbuf_width_next  = 0;
-	imageview->priv->pixbuf_height_next = 0;
-
 	imageview->priv->view_mode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
 	imageview->priv->view_mode_last = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
 	
@@ -2397,9 +2389,6 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 
 	if (!resize)
 		return;
-
-	imageview->priv->pixbuf_width_next = width;
-	imageview->priv->pixbuf_height_next = height;
 	
 	switch (imageview->priv->view_mode)
 	{
@@ -2433,13 +2422,13 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	pixbuf = gdk_pixbuf_animation_get_static_image (pixbuf_animation);
 	g_object_ref(pixbuf);
 
-	quiver_image_view_prepare_for_new_pixbuf(imageview,
-		imageview->priv->pixbuf_width_next,imageview->priv->pixbuf_height_next);
+	gint width = gdk_pixbuf_get_width(pixbuf);
+	gint height = gdk_pixbuf_get_height(pixbuf);
+	
+	quiver_image_view_prepare_for_new_pixbuf(imageview,	width, height);
 
-	imageview->priv->pixbuf_width = 
-		imageview->priv->pixbuf_width_next;
-	imageview->priv->pixbuf_height = 
-		imageview->priv->pixbuf_height_next;
+	imageview->priv->pixbuf_width = width;
+	imageview->priv->pixbuf_height = height;
 	
 	imageview->priv->pixbuf_animation = pixbuf_animation;
 	

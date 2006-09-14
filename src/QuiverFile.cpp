@@ -671,14 +671,21 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 			size_info.size_request = size;
 			g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
 
-			while (GNOME_VFS_OK == result) {
-				result = gnome_vfs_read (handle, buffer, 
-										 sizeof(buffer), &bytes_read);
+			while (GNOME_VFS_OK == result) 
+			{
+				result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
+				tmp_error = NULL;
 				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+				if (NULL == tmp_error)
+				{
+					//printf("error: %s\n",tmp_error->message);
+					break;
+				}
 			}
 			size = size_info.size_request;
 			gnome_vfs_close(handle);
 
+			tmp_error = NULL;
 			gdk_pixbuf_loader_close(loader,&tmp_error);
 			
 			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);

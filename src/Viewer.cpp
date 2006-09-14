@@ -207,23 +207,9 @@ public:
 	GtkWidget *m_pNavigationWindow;
 	GtkWidget *m_pNavigationControl;
 	
-	bool m_bPressed;
-
-	GdkPoint m_pointLastPointer;
-
-
-	double m_dZoomLevel;
-	
-	int m_iLastLine;
-	
-	bool m_bConfigureTimeoutStarted;
-	bool m_bConfigureTimeoutEnded;
-	bool m_bConfigureTimeoutRestarted;
 	QuiverFile m_QuiverFile;
 
 	int m_iCurrentOrientation;
-	
-	GtkShadowType m_GtkShadowType;
 	
 	GtkUIManager *m_pUIManager;
 	guint m_iMergedViewerUI;
@@ -559,8 +545,6 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 			  (GtkAttachOptions) (0),
 			  (GtkAttachOptions) (0), 0, 0);
 
-	m_pointLastPointer.x = m_pointLastPointer.y=0;
-	
 //	GTK_WIDGET_SET_FLAGS(m_pTable,GTK_CAN_FOCUS);
 	m_pHBox = gtk_hbox_new(FALSE,0);
 	m_pVBox = gtk_vbox_new(FALSE,0);
