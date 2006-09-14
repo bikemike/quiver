@@ -240,14 +240,6 @@ static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
 			//printf("resize thumbnail to size: %dx%d\n",new_width,new_height);
 			gdk_pixbuf_loader_set_size(loader,new_width,new_height);
 		}
-		else
-		{
-			// we set the size to -1 to inform the 
-			// loader that the original size was smaller than
-			// the size requested
-			//printf("we are not resizing: %dx%d\n",width,height);
-			size = -1;
-		}
 	}
 	loader_size->width = width;
 	loader_size->height = height;
@@ -497,22 +489,11 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 			return thumb_pixbuf;
 		}
 	}
-	//GnomeThumbnailFactory* thumb_factory;
-	//thumb_factory =	gnome_thumbnail_factory_new(GNOME_THUMBNAIL_SIZE_NORMAL);
 
 	gchar * thumb_path ;
 	thumb_path = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,thumb_size);
-	gchar *large_thumb_file = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,GNOME_THUMBNAIL_SIZE_LARGE);
-	gchar *large_thumb_path = g_path_get_dirname(large_thumb_file);
 
-	g_free(large_thumb_file);
-	//printf("thumb path %s: %s\n",m_QuiverFilePtr->m_szURI,thumb_path);
-
-	//const gchar* gdk_pixbuf_get_option(GdkPixbuf *pixbuf,const gchar *key);
-	
 	// try to load the thumb from thumb_path
-	//gdk_threads_enter ();
-
 	GError *tmp_error;
 	gchar buffer[8192];
 	GnomeVFSHandle   *handle;
@@ -676,13 +657,13 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 				result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
 				tmp_error = NULL;
 				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-				if (NULL == tmp_error)
+				if (NULL != tmp_error)
 				{
 					//printf("error: %s\n",tmp_error->message);
 					break;
 				}
 			}
-			size = size_info.size_request;
+
 			gnome_vfs_close(handle);
 
 			tmp_error = NULL;
@@ -695,6 +676,7 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 				g_object_ref(thumb_pixbuf);
 				//printf("checking for orientation\n");
 				const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
+			
 				if (NULL != str_orientation)
 				{
 					//printf("we got orientation: %s\n",str_orientation);
@@ -712,40 +694,48 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 			
 			g_object_unref(loader);
 			
-			
+			if (size_info.width <= size_info.size_request && size_info.height <= size_info.size_request )
+			{
+				// size of image is smaller than size requested so
+				// we do not need to cache it
+				save_thumbnail_to_cache = FALSE;
+			}			
 		}
-		if (-1 == size)
-		{
-			// size of image is smaller than 128x128 so
-			// we do not need to cache it
-			save_thumbnail_to_cache = FALSE;
-		}
+
 	}
 	
+	gchar *large_thumb_file = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,GNOME_THUMBNAIL_SIZE_LARGE);
+	gchar *large_thumb_path = g_path_get_dirname(large_thumb_file);
+	g_free(large_thumb_file);
 	
+	// user may be browsing the thumbnail directory. 
+	// if so, we don't want "normal" thumbnails to be saved
+	// for images in the large directory
 	if (save_thumbnail_to_cache && !bLargeThumb)
 	{
 		std::string filepath = GetFilePath();
 		
 		if (NULL != strstr(filepath.c_str(),large_thumb_path) )
 		{
-			// if user is snooping in the .thumbnails/large
-			// directory, we dont want to generate thumbnails
-			// for these items
 			save_thumbnail_to_cache = FALSE; 
 		}
 	}
+
 	if (NULL != large_thumb_path)
 	{
 		g_free(large_thumb_path);
 	}
-	
+		
 	// FIXME: maybe this should be in a low priority thread?
 	// save the thumbnail to the cache directory (~/.thumbnails)
 
 	if (NULL != thumb_pixbuf && save_thumbnail_to_cache)
 	{
-
+		// make the directory if it does not already exist:
+		gchar *thumb_dir = g_path_get_dirname(thumb_path);
+		g_mkdir_with_parents(thumb_dir,S_IRUSR|S_IWUSR|S_IXUSR);
+		g_free(thumb_dir);
+		
 		// FIXME: should make sure the directory exists first!
 		gchar *temp_file_name = g_strconcat (thumb_path, ".XXXXXX", NULL);
 		gint fhandle = g_mkstemp (temp_file_name);
