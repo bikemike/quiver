@@ -432,7 +432,16 @@ quiver_icon_view_finalize(GObject *object)
 	iconview = QUIVER_ICON_VIEW(object);
 	klass = QUIVER_ICON_VIEW_GET_CLASS(iconview);
 	obj_class = G_OBJECT_CLASS (klass);
-		
+
+	// remove timeout callbacks
+	remove_timeout_smooth_scroll(iconview);
+
+	if (iconview->priv->timeout_id_rubberband_scroll != 0)
+	{
+		g_source_remove (iconview->priv->timeout_id_rubberband_scroll);
+		iconview->priv->timeout_id_rubberband_scroll = 0;
+	}
+
 	gint i,j;
 	for (i = 0;i<5;i++)
 	{

@@ -75,11 +75,6 @@ public:
 
 	void ImageChanged();
 	
-	void SlideshowStart();
-	void SlideshowStop();
-	bool SlideshowRunning();
-	void SlideshowAddTimeout();
-	
 	void SetImageList(std::list<std::string> &list);
 
 	// PixbufLoaderObserver  - override to set timeout for slideshow
@@ -101,6 +96,7 @@ public:
 	void OnOpenFolder();
 	void OnFullScreen();
 	void OnShowProperties(bool bShow = true);
+	void OnSlideShow(bool bStart);
 	void OnQuit();	
 		
 private:

@@ -882,7 +882,8 @@ ExifData* QuiverFile::GetExifData()
 
 int QuiverFile::GetOrientation()
 {
-	if (0 == m_QuiverFilePtr->m_iOrientation)
+	// temporarily comment out the cached orientation
+	//if (0 == m_QuiverFilePtr->m_iOrientation)
 	{
 		ExifData *exif_data = GetExifData();
 		int orientation = 1;

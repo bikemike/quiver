@@ -91,6 +91,8 @@ public:
 	
 	bool m_bSlideshowRunning;
 	guint m_iTimeoutSlideshowID;
+	
+	guint m_iTimeoutMouseMotionNotify;
 
 	GdkWindowState m_WindowState;
 
@@ -129,6 +131,8 @@ public:
 		ViewerEventHandler(QuiverImpl *parent){this->parent = parent;};
 		virtual void HandleItemActivated(ViewerEventPtr event_ptr);
 		virtual void HandleCursorChanged(ViewerEventPtr event_ptr);
+		virtual void HandleSlideShowStarted(ViewerEventPtr event_ptr);
+		virtual void HandleSlideShowStopped(ViewerEventPtr event_ptr);
 	private:
 		QuiverImpl *parent;
 	};
@@ -568,6 +572,9 @@ void Quiver::event_destroy( GtkWidget *widget, gpointer   data )
 void Quiver::EventDestroy( GtkWidget *widget, gpointer   data )
 {
 	// force reference count to 0 for the quiverimplptr
+	m_QuiverImplPtr->m_Browser.RemoveEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
+	m_QuiverImplPtr->m_Viewer.RemoveEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
+	
 	QuiverImplPtr quiverImplPtr;
 	m_QuiverImplPtr = quiverImplPtr;
 	
@@ -650,6 +657,8 @@ void Quiver::Init()
 	
 	m_QuiverImplPtr->m_bSlideshowRunning = false;
 	m_QuiverImplPtr->m_iTimeoutSlideshowID = 0;
+
+	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
 
 	//initialize
 
@@ -1030,46 +1039,6 @@ int main (int argc, char **argv)
 	return 0;
 }
 
-
-
-gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
-{
-	gboolean retval = TRUE;
-
-	if (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState)
-	{
-		if (m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved)
-		{
-			//do not remove the mouse cursor
-			m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = false;
-		}
-		else
-		{
-			gdk_threads_enter();
-			GdkCursor *empty_cursor;
-			GdkBitmap * empty_bitmap;
-			char zero[] = { 0x0 };	
-			GdkColor blank = { 0, 0, 0, 0 };	
-		
-			empty_bitmap = gdk_bitmap_create_from_data (NULL,zero,1,1);
-			empty_cursor = gdk_cursor_new_from_pixmap (empty_bitmap,empty_bitmap,&blank,&blank,0,0);
-
-			gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, empty_cursor);
-			
-			g_object_unref(empty_bitmap);
-			gdk_cursor_unref (empty_cursor);
-			
-			//remove the mouse cursor
-			retval = FALSE;
-			m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = false;
-			
-			gdk_threads_leave();
-		}
-	}
-
-	return retval;
-}
-
 gboolean Quiver::idle_quiver_init (gpointer data)
 {
 	return ((Quiver*)data)->IdleQuiverInit(data);
@@ -1096,87 +1065,39 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 }
 
 
-gboolean Quiver::timeout_advance_slideshow (gpointer data)
-{
-	return ((Quiver*)data)->TimeoutAdvanceSlideshow(data);
-}
-
-gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data)
-{
-	printf("timeout reached\n");
-
-	// reset timout id
-	m_QuiverImplPtr->m_iTimeoutSlideshowID = 0;
-	// advance slideshow
-
-	//SlideshowAddTimeout();
-	
-	gdk_threads_enter();
-//	ActionImageNext(NULL,NULL);
-	gdk_threads_leave();
-
-	if (!m_QuiverImplPtr->m_ImageList.HasNext())
-	{
-		gdk_threads_enter();
-		SlideshowStop();
-		gdk_threads_leave();
-	}
-
-	return FALSE;
-}
-
-void Quiver::SlideshowStart()
-{
-	m_QuiverImplPtr->m_bSlideshowRunning = true;
-	SlideshowAddTimeout();
-}
-
-void Quiver::SlideshowAddTimeout()
-{
-	if (SlideshowRunning())
-	{
-		if (!m_QuiverImplPtr->m_iTimeoutSlideshowID)
-		{
-			m_QuiverImplPtr->m_iTimeoutSlideshowID = g_timeout_add(2000,timeout_advance_slideshow,this);
-		}
-	}
-}
-void Quiver::SlideshowStop()
-{
-	if (0 != m_QuiverImplPtr->m_iTimeoutSlideshowID)
-	{
-		g_source_remove (m_QuiverImplPtr->m_iTimeoutSlideshowID);
-	}
-	// reset timout id
-	m_QuiverImplPtr->m_iTimeoutSlideshowID = 0;
-	m_QuiverImplPtr->m_bSlideshowRunning = false;
-	// re-enable the slideshow button if it was disabled
-
-	GtkAction * action = GetAction(m_QuiverImplPtr->m_pUIManager,QUIVER_ACTION_SLIDESHOW);
-	if (NULL != action)
-	{
-		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
-		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),FALSE);
-		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
-	}
-}
-
-bool Quiver::SlideshowRunning()
-{
-	return m_QuiverImplPtr->m_bSlideshowRunning;
-}
-
-void Quiver::SignalClosed(GdkPixbufLoader *loader)
-{
-	/*FIXME m_Statusbar.SetZoomPercent((int)m_Viewer.GetZoomLevel());*/
-	SlideshowAddTimeout();
-}
 void Quiver::SetPixbuf(GdkPixbuf*pixbuf)
 {
 	/*FIXME
 	m_Statusbar.SetZoomPercent((int)m_Viewer.GetZoomLevel());
 	*/
-	SlideshowAddTimeout();
+	//SlideshowAddTimeout();
+}
+
+
+gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
+{
+	if (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState)
+	{
+		gdk_threads_enter();
+		
+		GdkCursor *empty_cursor;
+		GdkBitmap * empty_bitmap;
+		char zero[] = { 0x0 };	
+		GdkColor blank = { 0, 0, 0, 0 };	
+	
+		empty_bitmap = gdk_bitmap_create_from_data (NULL,zero,1,1);
+		empty_cursor = gdk_cursor_new_from_pixmap (empty_bitmap,empty_bitmap,&blank,&blank,0,0);
+
+		gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, empty_cursor);
+		
+		g_object_unref(empty_bitmap);
+		gdk_cursor_unref (empty_cursor);
+		
+		//remove the mouse cursor		
+		gdk_threads_leave();
+	}
+	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
+	return FALSE;
 }
 
 gboolean Quiver::timeout_event_motion_notify (gpointer data)
@@ -1186,16 +1107,17 @@ gboolean Quiver::timeout_event_motion_notify (gpointer data)
 
 gboolean Quiver::EventMotionNotify( GtkWidget *widget, GdkEventMotion *event, gpointer data )
 {
-	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = true;
-	
-	if (!m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning)
+	if (0 != m_QuiverImplPtr->m_iTimeoutMouseMotionNotify)
 	{
-		gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, NULL);
-		m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = true;
-		g_timeout_add(1500,timeout_event_motion_notify,this);
+		g_source_remove(m_QuiverImplPtr->m_iTimeoutMouseMotionNotify);
+		m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
 	}
-	return FALSE;
 	
+	gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, NULL);
+
+	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
+
+	return FALSE;
 }
 gboolean Quiver::event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data )
 {
@@ -1285,11 +1207,11 @@ void Quiver::action_file_save(GtkAction *action,gpointer data)
 	return ((Quiver*)data)->ActionFileSave(action,data);
 }
 
-void Quiver::action_slide_show(GtkAction *action,gpointer data)
+void Quiver::SignalClosed(GdkPixbufLoader *loader)
 {
-	return ((Quiver*)data)->ActionSlideShow(action,data);
+	/*FIXME m_Statusbar.SetZoomPercent((int)m_Viewer.GetZoomLevel());*/
+	//SlideshowAddTimeout();
 }
-
 //==============================================================================
 //== action c++ callbacks ======================================================
 //==============================================================================
@@ -1632,18 +1554,6 @@ void Quiver::OnFullScreen()
 	}
 }
 
-void Quiver::ActionSlideShow(GtkAction *action,gpointer data)
-{
-	if (SlideshowRunning())
-	{
-		SlideshowStop();
-	}
-	else
-	{
-		SlideshowStart();
-	}
-}
-
 void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
 {
 	// FIXME: create a ShowCursor method
@@ -1764,6 +1674,20 @@ void QuiverImpl::ViewerEventHandler::HandleCursorChanged(ViewerEventPtr event_pt
 	parent->m_pQuiver->ImageChanged();
 }
 
+void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event_ptr)
+{
+}
+
+void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event_ptr)
+{
+	GtkAction * action = GetAction(parent->m_pUIManager,QUIVER_ACTION_SLIDESHOW);
+	if (NULL != action)
+	{
+		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),FALSE);
+		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+	}
+}
 
 void Quiver::OnShowProperties(bool bShow /* = true */)
 {
@@ -1842,6 +1766,18 @@ void Quiver::OnOpenFolder()
 	gtk_widget_destroy (dialog);
 }
 
+void Quiver::OnSlideShow(bool bStart)
+{
+		if( bStart )
+		{
+			m_QuiverImplPtr->m_Viewer.SlideShowStart();
+		}
+		else
+		{
+			m_QuiverImplPtr->m_Viewer.SlideShowStop();
+		}
+}
+
 static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 {
 	Quiver *pQuiver;
@@ -1902,8 +1838,9 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	{
 		pQuiver->OnAbout();
 	}
-	else if (0 == strcmp(szAction,"ZoomFit"))
+	else if (0 == strcmp(szAction,QUIVER_ACTION_SLIDESHOW))
 	{
+		pQuiver->OnSlideShow(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
 	}
 }
 

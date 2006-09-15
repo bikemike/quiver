@@ -15,9 +15,14 @@ public:
 
 	void EmitItemActivatedEvent();
 	void EmitCursorChangedEvent();
+	void EmitSlideShowStartedEvent();
+	void EmitSlideShowStoppedEvent();
+
 private:
 	ViewerSignal m_sigCursorChanged;
 	ViewerSignal m_sigItemActivated;
+	ViewerSignal m_sigSlideShowStarted;
+	ViewerSignal m_sigSlideShowStopped;
 	
 	
 };

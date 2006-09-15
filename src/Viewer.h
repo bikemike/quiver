@@ -9,10 +9,6 @@
 
 class ImageList;
 
-
-class ViewerImpl;
-typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;
-
 class Viewer : public virtual ViewerEventSource
 {
 public:
@@ -24,8 +20,10 @@ public:
 	GtkWidget *GetWidget();
 
 	void SetImageList(ImageList imgList);
-
 	int GetCurrentOrientation();
+
+	void SlideShowStart();
+	void SlideShowStop();
 
 	void Show();
 	void Hide();
@@ -33,10 +31,11 @@ public:
 	void SetUIManager(GtkUIManager *ui_manager);
 
 
+	class ViewerImpl;
+	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;
 
 private:
 	static void event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data);
-	
 	ViewerImplPtr m_ViewerImplPtr;
 	
 };

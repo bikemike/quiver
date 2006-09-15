@@ -19,6 +19,10 @@
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
 #define QUIVER_PREFS_APP_BG_ICONVIEW           "bgcolor_iconview"
 
+#define QUIVER_PREFS_SLIDESHOW                 "slideshow"
+#define QUIVER_PREFS_SLIDESHOW_DURATION        "duration"
+#define QUIVER_PREFS_SLIDESHOW_LOOP            "loop"
+
 #include <gdk/gdkkeysyms.h>
 using namespace std;
 
@@ -168,7 +172,7 @@ private:
 typedef boost::shared_ptr<ImageViewPixbufLoaderObserver> ImageViewPixbufLoaderObserverPtr;
 
 
-class ViewerImpl
+class Viewer::ViewerImpl
 {
 public:
 
@@ -217,12 +221,16 @@ public:
 	ImageViewPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
 	ImageLoader m_ImageLoader;
 	ImageList m_ImageList;
-	
+
 	Viewer *m_pViewer;
+	
+	guint m_iTimeoutSlideshowID;
+	int m_iSlideShowDuration;
+	bool m_bSlideShowLoop;
 	
 };
 
-void ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal /* = true */)
+void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal /* = true */)
 {
 	if (m_ImageList.SetCurrentIndex(index))
 	{
@@ -277,8 +285,8 @@ void ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCur
 
 static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 {
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView);
 	
@@ -355,8 +363,8 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data )
 {
 
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
 
 	if (event->state & GDK_CONTROL_MASK || event->state & GDK_SHIFT_MASK)
 		return FALSE;
@@ -380,8 +388,8 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 
 static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
 {
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 	return TRUE;
@@ -389,8 +397,8 @@ static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer d
 
 static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
 {
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
 	ImageLoader::LoadParams params = {0};
 
 	params.orientation = pViewerImpl->m_iCurrentOrientation;
@@ -407,8 +415,8 @@ static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data
 
 static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
 {
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
 
 	//pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 	return TRUE;
@@ -416,8 +424,8 @@ static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cel
 
 static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data)
 {
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	pViewerImpl->SetImageIndex(cell,true,false);
 
@@ -427,8 +435,8 @@ static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cel
 static gboolean
 viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata)
 {
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)userdata;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)userdata;
 	
 	GdkModifierType state;
 	gint x =0, y=0;
@@ -476,8 +484,8 @@ viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, g
 
 gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data )
 {
-	ViewerImpl *pViewerImpl;
-	pViewerImpl = (ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
 
 	gdk_pointer_ungrab (event->time);
 
@@ -485,7 +493,7 @@ gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventBut
 	return TRUE;	
 }
 
-ViewerImpl::ViewerImpl(Viewer *pViewer)
+Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	
@@ -499,6 +507,7 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 	m_pUIManager = NULL;
 	m_iMergedViewerUI = 0;
 	
+	m_iTimeoutSlideshowID = 0;
 
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
 	m_pAdjustmentV = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
@@ -573,6 +582,13 @@ ViewerImpl::ViewerImpl(Viewer *pViewer)
 		gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
 	}
 
+	m_iSlideShowDuration = prefsPtr->GetInteger(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_DURATION);
+	if (m_iSlideShowDuration < 500 || m_iSlideShowDuration > 60000)
+	{
+		//default to 2500 (2.5 seconds)
+		m_iSlideShowDuration = 2500;
+	}
+	m_bSlideShowLoop = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_LOOP);
 
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 
@@ -639,7 +655,7 @@ void Viewer::event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event,
 }
 
 
-Viewer::Viewer() : m_ViewerImplPtr(new ViewerImpl(this))
+Viewer::Viewer() : m_ViewerImplPtr(new Viewer::ViewerImpl(this))
 {
 	
 
@@ -647,6 +663,8 @@ Viewer::Viewer() : m_ViewerImplPtr(new ViewerImpl(this))
 
 Viewer::~Viewer()
 {
+	SlideShowStop();
+	
 	gtk_widget_destroy(m_ViewerImplPtr->m_pNavigationWindow);
 }
 
@@ -740,6 +758,59 @@ int Viewer::GetCurrentOrientation()
 	return m_ViewerImplPtr->m_iCurrentOrientation;	
 }
 
+
+static gboolean timeout_advance_slideshow (gpointer data)
+{
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)data;
+	
+	int iNextIndex = pViewerImpl->m_ImageList.GetCurrentIndex()+1;
+	
+	if (!pViewerImpl->m_ImageList.HasNext() && pViewerImpl->m_bSlideShowLoop)
+	{
+		iNextIndex = 0;
+	}
+	
+	gdk_threads_enter();
+	pViewerImpl->SetImageIndex(iNextIndex,true,true);
+	gdk_threads_leave();
+
+	if ( (!pViewerImpl->m_ImageList.HasNext() && !pViewerImpl->m_bSlideShowLoop)
+		|| pViewerImpl->m_ImageList.GetSize() < 2)
+	{
+		pViewerImpl->m_pViewer->SlideShowStop();
+		return FALSE;
+	}
+	
+	return TRUE;
+}
+
+
+void Viewer::SlideShowStart()
+{
+	if (!m_ViewerImplPtr->m_iTimeoutSlideshowID && m_ViewerImplPtr->m_ImageList.GetSize() > 2 )
+	{
+		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(m_ViewerImplPtr->m_iSlideShowDuration,timeout_advance_slideshow, m_ViewerImplPtr.get());
+		EmitSlideShowStartedEvent();
+	}
+	else
+	{
+		SlideShowStop();
+	}
+}
+
+
+void Viewer::SlideShowStop()
+{
+	if (0 != m_ViewerImplPtr->m_iTimeoutSlideshowID)
+	{
+		g_source_remove (m_ViewerImplPtr->m_iTimeoutSlideshowID);
+		EmitSlideShowStoppedEvent();
+	}
+	// reset timout id
+	m_ViewerImplPtr->m_iTimeoutSlideshowID = 0;
+}
+
+
 GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get)
 {
 	GtkTableChild *table_child = NULL;
@@ -756,13 +827,13 @@ GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get)
 
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data)
 {
-	ViewerImpl* pViewerImpl = (ViewerImpl*)user_data;
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	return pViewerImpl->m_ImageList.GetSize();
 }
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data)
 {
-	ViewerImpl* pViewerImpl = (ViewerImpl*)user_data;
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	QuiverFile f = pViewerImpl->m_ImageList[cell];
 
 	guint width, height;
@@ -772,7 +843,7 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data)
 {
-	ViewerImpl* pViewerImpl = (ViewerImpl*)user_data;
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	QuiverFile f = pViewerImpl->m_ImageList[cell];
 	
 	GdkPixbuf *pixbuf;
@@ -795,7 +866,7 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data)
 {
-	ViewerImpl* pViewerImpl = (ViewerImpl*)user_data;
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
 
 	GtkAdjustment *h = pViewerImpl->m_pAdjustmentH;
 	GtkAdjustment *v = pViewerImpl->m_pAdjustmentV;

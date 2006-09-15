@@ -139,6 +139,8 @@ static void      quiver_image_view_set_scroll_adjustments (QuiverImageView *imag
 static void      quiver_image_view_adjustment_value_changed (GtkAdjustment *adjustment,
                     QuiverImageView *imageview);
 
+static void     quiver_image_view_finalize(GObject *object);
+
 /* start utility function prototypes*/
 static void quiver_image_view_send_reload_event(QuiverImageView *imageview);
 static guint quiver_image_view_get_width(QuiverImageView *imageview);
@@ -226,6 +228,7 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 	//widget_class->key_press_event      = quiver_image_view_key_press_event;
 	klass->set_scroll_adjustments      = quiver_image_view_set_scroll_adjustments;
 
+	obj_class->finalize                = quiver_image_view_finalize;
 	/*
 	obj_class->set_property            = quiver_image_view_set_property;
 	obj_class->get_property            = quiver_image_view_get_property;
@@ -418,6 +421,29 @@ quiver_image_view_unrealize(GtkWidget *widget)
 
 }
 */
+
+
+static void
+quiver_image_view_finalize(GObject *object)
+{
+	GObjectClass *parent,*obj_class;
+	QuiverImageViewClass *klass; 
+	QuiverImageView *imageview;
+
+	imageview = QUIVER_IMAGE_VIEW(object);
+	klass = QUIVER_IMAGE_VIEW_GET_CLASS(imageview);
+	obj_class = G_OBJECT_CLASS (klass);
+
+	// remove timeout callbacks and unref data
+	quiver_image_view_prepare_for_new_pixbuf(imageview,0,0);
+
+	parent = g_type_class_peek_parent(klass);
+	if (parent)
+	{
+		parent->finalize(object);
+	}
+}
+
 
 static void
 quiver_image_view_size_allocate (GtkWidget     *widget,

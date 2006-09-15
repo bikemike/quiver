@@ -174,12 +174,20 @@ quiver_navigation_control_finalize(GObject *object)
 	
 	if (NULL != navcontrol->priv->hadjustment)
 	{
+		g_signal_handlers_disconnect_by_func (navcontrol->priv->hadjustment,
+			quiver_navigation_control_adjustment_changed,
+			navcontrol);
+			
 		g_object_unref(navcontrol->priv->hadjustment);
 		navcontrol->priv->hadjustment = NULL;
 	}
 
 	if (NULL != navcontrol->priv->vadjustment)
 	{
+		g_signal_handlers_disconnect_by_func (navcontrol->priv->vadjustment,
+			quiver_navigation_control_adjustment_changed,
+			navcontrol);
+			
 		g_object_unref(navcontrol->priv->vadjustment);
 		navcontrol->priv->vadjustment = NULL;
 	}

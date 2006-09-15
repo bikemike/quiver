@@ -9,6 +9,8 @@ class IViewerEventHandler : public IEventHandler
 public:
 	virtual void HandleItemActivated(ViewerEventPtr event) = 0;
 	virtual void HandleCursorChanged(ViewerEventPtr event) = 0;
+	virtual void HandleSlideShowStarted(ViewerEventPtr event) = 0;
+	virtual void HandleSlideShowStopped(ViewerEventPtr event) = 0;
 	virtual ~IViewerEventHandler(){};
 };
 

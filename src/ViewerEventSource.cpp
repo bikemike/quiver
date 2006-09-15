@@ -10,6 +10,12 @@ void ViewerEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 	c = m_sigItemActivated.connect( boost::bind(&IViewerEventHandler::HandleItemActivated,h,_1) );
 	MapConnection(handler,c);
+
+	c = m_sigSlideShowStarted.connect( boost::bind(&IViewerEventHandler::HandleSlideShowStarted,h,_1) );
+	MapConnection(handler,c);
+	
+	c = m_sigSlideShowStopped.connect( boost::bind(&IViewerEventHandler::HandleSlideShowStopped,h,_1) );
+	MapConnection(handler,c);
 }
 
 
@@ -26,4 +32,14 @@ void ViewerEventSource::EmitCursorChangedEvent()
 	m_sigCursorChanged(n);
 }
 
+void ViewerEventSource::EmitSlideShowStartedEvent()
+{
+	ViewerEventPtr n( new ViewerEvent(this) );
+	m_sigSlideShowStarted(n);
+}
 
+void ViewerEventSource::EmitSlideShowStoppedEvent()
+{
+	ViewerEventPtr n( new ViewerEvent(this) );
+	m_sigSlideShowStopped(n);
+}
