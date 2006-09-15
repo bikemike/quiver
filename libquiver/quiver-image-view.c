@@ -57,6 +57,11 @@ struct _QuiverImageViewPrivate
 	gint pixbuf_width;
 	gint pixbuf_height;
 
+	// used to keep track of the actual size
+	// of the image being loaded
+	gint pixbuf_width_next;
+	gint pixbuf_height_next;
+
 	QuiverImageViewMode view_mode;
 	QuiverImageViewMode view_mode_last;
 
@@ -308,6 +313,9 @@ quiver_image_view_init(QuiverImageView *imageview)
 	
 	imageview->priv->pixbuf_width  = 0;
 	imageview->priv->pixbuf_height = 0;
+
+	imageview->priv->pixbuf_width_next  = 0;
+	imageview->priv->pixbuf_height_next = 0;
 	
 	imageview->priv->view_mode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
 	imageview->priv->view_mode_last = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
@@ -2413,6 +2421,9 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 
 	g_strfreev(mime_types);
 
+	imageview->priv->pixbuf_width_next = width;
+	imageview->priv->pixbuf_height_next = height;
+
 	if (!resize)
 		return;
 	
@@ -2448,13 +2459,11 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	pixbuf = gdk_pixbuf_animation_get_static_image (pixbuf_animation);
 	g_object_ref(pixbuf);
 
-	gint width = gdk_pixbuf_get_width(pixbuf);
-	gint height = gdk_pixbuf_get_height(pixbuf);
-	
-	quiver_image_view_prepare_for_new_pixbuf(imageview,	width, height);
+	quiver_image_view_prepare_for_new_pixbuf(imageview,	
+		imageview->priv->pixbuf_width_next, imageview->priv->pixbuf_height_next);
 
-	imageview->priv->pixbuf_width = width;
-	imageview->priv->pixbuf_height = height;
+	imageview->priv->pixbuf_width = imageview->priv->pixbuf_width_next;
+	imageview->priv->pixbuf_height = imageview->priv->pixbuf_height_next;
 	
 	imageview->priv->pixbuf_animation = pixbuf_animation;
 	
@@ -2518,6 +2527,7 @@ static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, 
 		}
 
 		//printf("x,y,w,h: %d %d %d %d\n",x,y,width,height);
+		printf("%d=%d %d=%d\n",dw, width, dh,height);
 
 		quiver_image_view_invalidate_image_area(imageview,&rect);
 		imageview->priv->area_updated = TRUE;
@@ -2528,8 +2538,7 @@ static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, 
 		// we are displaying the image at a different size than the loader is returning
 		// printf("%d %d %d %d\n",aw, ah, dw,dh);
 	}
-	//gtk_main_iteration();
-	//usleep(2000);
+
 
 	//quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
 	//gdk_window_invalidate_rect(widget->window,&rect,FALSE);
@@ -2552,6 +2561,7 @@ static void pixbuf_loader_closed(GdkPixbufLoader *loader,gpointer userdata)
 		
 		if (!imageview->priv->area_updated)
 		{
+			printf("area not updated!\n");
 	
 			if (gdk_pixbuf_animation_is_static_image(pixbuf_animation))
 			{

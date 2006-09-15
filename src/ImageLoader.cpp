@@ -499,7 +499,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	if (CommandsPending())
 	{	
 		gdk_threads_enter();
-		gdk_pixbuf_loader_close(loader,&tmp_error);	
+		gdk_pixbuf_loader_close(loader,NULL);	
 		gdk_threads_leave();
 		return retval;
 	}
@@ -524,7 +524,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		if (CommandsPending())
 		{
 			gdk_threads_enter();
-			gdk_pixbuf_loader_close(loader,&tmp_error);
+			gdk_pixbuf_loader_close(loader,NULL);
 			gdk_threads_leave();
 			
 			gnome_vfs_close(handle);
