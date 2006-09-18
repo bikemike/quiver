@@ -32,6 +32,8 @@ public:
 		bool reload;
 		bool fullsize;
 		bool no_thumb_preview;
+		int max_width;
+		int max_height;
 		State state;
 	} LoadParams;
 
@@ -41,10 +43,14 @@ public:
 	~ImageLoader();
 
 	void LoadImage(QuiverFile);	
+	void LoadImageAtSize(QuiverFile, int width, int height);
 	void LoadImage(QuiverFile,LoadParams load_params);	
+	void ReloadImage(QuiverFile);
 
 	void CacheImage(QuiverFile);
-	void ReloadImage(QuiverFile);
+	void CacheImageAtSize(QuiverFile, int width, int height);
+	
+	void ReCacheImage(QuiverFile);
 	
 	// thread functions
 	static void* run(void *data);

@@ -6,6 +6,8 @@
 #include "Quiver.h"
 //#include "QuiverUI.h"
 #include <libgnomevfs/gnome-vfs.h>
+
+#include "icons/quiver_icon_app.pixdata"
 #include "QuiverStockIcons.h"
 
 #include "IBrowserEventHandler.h"
@@ -225,6 +227,10 @@ char * quiver_ui_main =
 "		<separator/>"
 "		<toolitem action='SlideShow'/>"
 "		<separator/>"
+"		<placeholder name='ZoomToolItems'/>"
+"		<separator/>"
+"		<placeholder name='TransformToolItems'/>"
+"		<separator/>"
 "		<toolitem action='ImageTrash'/>"
 "		<separator/>"
 "	</toolbar>"
@@ -276,14 +282,6 @@ char *quiver_ui_viewer =
 "			<toolitem action='UIModeBrowser'/>"
 "			<separator/>"
 "		</placeholder>"
-"		<placeholder name='NavToolItems'>"
-"			<separator/>"
-"			<toolitem action='ImageFirst'/>"
-"			<toolitem action='ImagePrevious'/>"
-"			<toolitem action='ImageNext'/>"
-"			<toolitem action='ImageLast'/>"
-"			<separator/>"
-"		</placeholder>"
 "	</toolbar>"
 "</ui>";
 
@@ -310,11 +308,11 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuHelp", NULL, N_("_Help") },
 
 	{ "UIModeBrowser",QUIVER_STOCK_BROWSER , "_Browser", "<Control>B", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
-	{ "UIModeViewer", QUIVER_STOCK_ICON, "_Viewer", "<Control>B", "View Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ "UIModeViewer", QUIVER_STOCK_APP, "_Viewer", "<Control>B", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 
 	{ "FileOpen", GTK_STOCK_OPEN, "_Open", "<Control>O", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
 	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>F", "Open a folder", G_CALLBACK( quiver_action_handler_cb )},
-	{ "FileOpenLocation", GTK_STOCK_OPEN, "Open _Location", "<Control>L", "Open a location", G_CALLBACK( quiver_action_handler_cb )},
+	{ "FileOpenLocation", NULL, "Open _Location", "<Control>L", "Open a location", G_CALLBACK( quiver_action_handler_cb )},
 	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>S", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
 	{ "Quit", GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
 	{ "QuitQ", GTK_STOCK_QUIT, "_Quit", "Q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
@@ -683,7 +681,7 @@ void Quiver::Init()
 	
 
 	GdkPixdata pixdata;
-	gdk_pixdata_deserialize (&pixdata,sizeof(quiver_icon),quiver_icon,&tmp_error);
+	gdk_pixdata_deserialize (&pixdata,sizeof(quiver_icon_app),quiver_icon_app,&tmp_error);
 	GdkPixbuf *pixbuf_icon = gdk_pixbuf_from_pixdata(&pixdata,FALSE,&tmp_error);
 	
 	gtk_window_set_default_icon     (pixbuf_icon);
@@ -1770,12 +1768,49 @@ void Quiver::OnSlideShow(bool bStart)
 {
 		if( bStart )
 		{
+			ShowViewer();
 			m_QuiverImplPtr->m_Viewer.SlideShowStart();
 		}
 		else
 		{
 			m_QuiverImplPtr->m_Viewer.SlideShowStop();
 		}
+}
+
+void Quiver::OnShowToolbar(bool bShow)
+{
+	if (bShow)
+	{
+		gtk_widget_show(m_QuiverImplPtr->m_pToolbar);
+	}
+	else
+	{
+		gtk_widget_hide(m_QuiverImplPtr->m_pToolbar);
+	}
+}
+
+void Quiver::OnShowStatusbar(bool bShow)
+{
+	if (bShow)
+	{
+		gtk_widget_show(m_QuiverImplPtr->m_Statusbar.GetWidget());
+	}
+	else
+	{
+		gtk_widget_hide(m_QuiverImplPtr->m_Statusbar.GetWidget());
+	}
+}
+
+void Quiver::OnShowMenubar(bool bShow)
+{
+	if (bShow)
+	{
+		gtk_widget_show(m_QuiverImplPtr->m_pMenubar);
+	}
+	else
+	{
+		gtk_widget_hide(m_QuiverImplPtr->m_pMenubar);
+	}
 }
 
 static void quiver_action_handler_cb(GtkAction *action, gpointer data)
@@ -1819,7 +1854,39 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		{
 			pQuiver->OnShowProperties(false);
 		}
-		
+	}
+	else if (0 == strcmp(szAction,"ViewToolbarMain"))
+	{
+		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
+		{
+			pQuiver->OnShowToolbar(true);	
+		}
+		else
+		{
+			pQuiver->OnShowToolbar(false);
+		}
+	}
+	else if (0 == strcmp(szAction,"ViewMenubar"))
+	{
+		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
+		{
+			pQuiver->OnShowMenubar(true);	
+		}
+		else
+		{
+			pQuiver->OnShowMenubar(false);
+		}
+	}
+	else if (0 == strcmp(szAction,"ViewStatusbar"))
+	{
+		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
+		{
+			pQuiver->OnShowStatusbar(true);	
+		}
+		else
+		{
+			pQuiver->OnShowStatusbar(false);
+		}
 	}
 	else if (0 == strcmp(szAction,"FullScreen"))
 	{

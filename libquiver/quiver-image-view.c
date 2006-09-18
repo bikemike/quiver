@@ -1905,7 +1905,7 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode)
 {
 	quiver_image_view_prepare_for_new_pixbuf(imageview,width,height);
-	
+
 	if (NULL != pixbuf)
 	{
 		g_object_ref(pixbuf);
@@ -1946,10 +1946,21 @@ QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview)
 	return imageview->priv->view_mode;
 }
 
+QuiverImageViewMode quiver_image_view_get_view_mode_unmagnified(QuiverImageView *imageview)
+{
+	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
+	{
+		return imageview->priv->view_mode_last;
+	}
+
+	return imageview->priv->view_mode;
+}
+
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode)
 {
 	quiver_image_view_set_view_mode_full(imageview,mode,TRUE);
 }
+
 
 static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,QuiverImageViewMode mode,gboolean invalidate)
 {
@@ -2384,6 +2395,7 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 {
 	GtkWidget *widget;
 	QuiverImageView *imageview;
+/*
 	GdkPixbufFormat *format;
 	gboolean resize;
 	gchar **mime_types;
@@ -2392,17 +2404,20 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 	guint new_width,new_height;
 
 	resize = TRUE;
+*/
 	imageview = (QuiverImageView*)userdata;
 	
 	quiver_image_view_reset_view_mode(imageview,FALSE);
 
 	widget = GTK_WIDGET(imageview);
 
+	imageview->priv->pixbuf_width_next = width;
+	imageview->priv->pixbuf_height_next = height;
 	if (!GTK_WIDGET_MAPPED(widget))
 	{
 		return;
 	}
-
+/*
 	format = gdk_pixbuf_loader_get_format(loader);
 	
 	mime_types = gdk_pixbuf_format_get_mime_types(format);
@@ -2420,10 +2435,9 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 	}
 
 	g_strfreev(mime_types);
+*/
 
-	imageview->priv->pixbuf_width_next = width;
-	imageview->priv->pixbuf_height_next = height;
-
+/*
 	if (!resize)
 		return;
 	
@@ -2441,7 +2455,7 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 		default:
 			break;
 	}
-
+*/
 	//printf("size prepared\n");
 }
 static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdata)
@@ -2527,7 +2541,7 @@ static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, 
 		}
 
 		//printf("x,y,w,h: %d %d %d %d\n",x,y,width,height);
-		printf("%d=%d %d=%d\n",dw, width, dh,height);
+		//printf("%d=%d %d=%d\n",dw, width, dh,height);
 
 		quiver_image_view_invalidate_image_area(imageview,&rect);
 		imageview->priv->area_updated = TRUE;

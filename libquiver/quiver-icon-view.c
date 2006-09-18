@@ -198,10 +198,8 @@ static void quiver_icon_view_update_icon_size(QuiverIconView *iconview);
 static guint quiver_icon_view_get_n_items(QuiverIconView* iconview);
 static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,guint cell);
 static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,guint cell);
-void quiver_icon_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller);
-void pixbuf_brighten(const GdkPixbuf *src, GdkPixbuf *dest, gint amount);
-void pixbuf_set_alpha(const GdkPixbuf *src, guchar alpha);
-void pixbuf_set_grayscale(const GdkPixbuf *src);
+static void quiver_icon_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller);
+
 static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawable *drawable,GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h);
 /* end utility function prototypes*/
 
@@ -2358,7 +2356,7 @@ static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,guin
 	return pixbuf;
 }
 
-void quiver_icon_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
+static void quiver_icon_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
 {
 	guint w = *width;
 	guint h = *height;

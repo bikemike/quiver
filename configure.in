@@ -30,6 +30,8 @@ AC_PROG_CXX
 
 AC_PATH_PROG(GLIB_GENMARSHAL, glib-genmarshal)
 
+AC_PATH_PROG(GDK_PIXBUF_CSOURCE, gdk-pixbuf-csource)
+
 dnl Set gettext package name
 GETTEXT_PACKAGE=quiver
 AC_SUBST(GETTEXT_PACKAGE)

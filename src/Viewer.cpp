@@ -15,6 +15,8 @@
 #include "QuiverFile.h"
 #include "Preferences.h"
 
+#include "QuiverStockIcons.h"
+
 #define QUIVER_PREFS_APP                       "application"
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
 #define QUIVER_PREFS_APP_BG_ICONVIEW           "bgcolor_iconview"
@@ -77,11 +79,11 @@ static char *ui_viewer =
 "			</placeholder>"
 "			<placeholder name='Zoom'>"
 "				<menu action='MenuZoom'>"
-"					<menuitem action='ZoomFit'/>"
-"					<menuitem action='ZoomFitStretch'/>"
-"					<menuitem action='Zoom100'/>"
 "					<menuitem action='ZoomIn'/>"
 "					<menuitem action='ZoomOut'/>"
+"					<menuitem action='Zoom100'/>"
+"					<menuitem action='ZoomFit'/>"
+"					<menuitem action='ZoomFitStretch'/>"
 "				</menu>"
 "			</placeholder>"
 "		</menu>"
@@ -96,9 +98,9 @@ static char *ui_viewer =
 "		</placeholder>"
 "		<menu action='MenuGo'>"
 "			<placeholder name='ImageNavigation'>"
+"				<menuitem action='ImageFirst'/>"
 "				<menuitem action='ImagePrevious'/>"
 "				<menuitem action='ImageNext'/>"
-"				<menuitem action='ImageFirst'/>"
 "				<menuitem action='ImageLast'/>"
 "			</placeholder>"
 "			<separator/>"
@@ -107,11 +109,28 @@ static char *ui_viewer =
 "		</menu>"
 "	</menubar>"
 "	<toolbar name='ToolbarMain'>"
+"		<placeholder name='NavToolItems'>"
+"			<separator/>"
+"			<toolitem action='ImagePrevious'/>"
+"			<toolitem action='ImageNext'/>"
+"			<separator/>"
+"		</placeholder>"
+"		<placeholder name='ZoomToolItems'>"
+"			<toolitem action='ZoomIn'/>"
+"			<toolitem action='ZoomOut'/>"
+"			<toolitem action='Zoom100'/>"
+"			<toolitem action='ZoomFit'/>"
+//"			<toolitem action='ZoomFitStretch'/>"
+"		</placeholder>"
+"		<placeholder name='TransformToolItems'>"
+"			<toolitem action='RotateCCW'/>"
+"			<toolitem action='RotateCW'/>"
+"		</placeholder>"
 "	</toolbar>"
 "</ui>";
 
 static  GtkToggleActionEntry action_entries_toggle[] = {
-	{ "ViewFilmStrip", GTK_STOCK_PROPERTIES,"Film Strip", "<Control><Shift>s", "Show/Hide Film Strip", G_CALLBACK(viewer_action_handler_cb),TRUE},
+	{ "ViewFilmStrip", GTK_STOCK_PROPERTIES,"Film Strip", "<Control><Shift>f", "Show/Hide Film Strip", G_CALLBACK(viewer_action_handler_cb),TRUE},
 };
 
 static GtkActionEntry action_entries[] = {
@@ -127,14 +146,14 @@ static GtkActionEntry action_entries[] = {
 	{ "ImageFirst", GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ImageLast", GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
 
-	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>0", "Fit to Screen", G_CALLBACK(viewer_action_handler_cb)},
-	{ "ZoomFitStretch", GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Screen", G_CALLBACK(viewer_action_handler_cb)},
-	{ "Zoom100", GTK_STOCK_ZOOM_100, "_Actual Size", "", "Full Size", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomFit", GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>1", "Fit to Window", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ZoomFitStretch", GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Window Stretch", G_CALLBACK(viewer_action_handler_cb)},
+	{ "Zoom100", GTK_STOCK_ZOOM_100, "_Actual Size", "<Control>0", "Actual Size", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ZoomIn", GTK_STOCK_ZOOM_IN,"Zoom _In", "equal", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ZoomOut", GTK_STOCK_ZOOM_OUT,"Zoom _Out", "minus", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
 	
-	{ "RotateCW", NULL, "_Rotate Clockwise", "r", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
-	{ "RotateCCW", NULL, "Rotate _Counterclockwise", "l", "Rotate Counterclockwise", G_CALLBACK(viewer_action_handler_cb)},
+	{ "RotateCW", QUIVER_STOCK_ROTATE_CW, "_Rotate Clockwise", "r", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
+	{ "RotateCCW", QUIVER_STOCK_ROTATE_CCW, "Rotate _Counterclockwise", "l", "Rotate Counterclockwise", G_CALLBACK(viewer_action_handler_cb)},
 	{ "FlipH", NULL, "Flip _Horizontally", "h", "Flip Horizontally", G_CALLBACK(viewer_action_handler_cb)},
 	{ "FlipV", NULL, "Flip _Vertically", "v", "Flip Vertically", G_CALLBACK(viewer_action_handler_cb)},
 	
@@ -145,19 +164,19 @@ static GtkActionEntry action_entries[] = {
 class ImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
-	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_ImageView = imageview;};
+	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pImageView = imageview;};
 	virtual ~ImageViewPixbufLoaderObserver(){};
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
-		quiver_image_view_connect_pixbuf_loader_signals(m_ImageView,loader);};
-	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){quiver_image_view_connect_pixbuf_size_prepared_signal(m_ImageView,loader);};
+		quiver_image_view_connect_pixbuf_loader_signals(m_pImageView,loader);};
+	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){quiver_image_view_connect_pixbuf_size_prepared_signal(m_pImageView,loader);};
 
 	// custom calls
-	virtual void SetPixbuf(GdkPixbuf * pixbuf){quiver_image_view_set_pixbuf(m_ImageView,pixbuf);};
+	virtual void SetPixbuf(GdkPixbuf * pixbuf){quiver_image_view_set_pixbuf(m_pImageView,pixbuf);};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
 		gboolean bReset = FALSE;
 		if (bResetViewMode) bReset = TRUE;
-		quiver_image_view_set_pixbuf_at_size_ex(m_ImageView,pixbuf,width,height,bReset);
+		quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
 	};
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile){};
@@ -166,7 +185,7 @@ public:
 	virtual void SetCacheQuiverFile(QuiverFile quiverFile){};
 	virtual void SignalBytesRead(long bytes_read,long total){};
 private:
-	QuiverImageView *m_ImageView;
+	QuiverImageView *m_pImageView;
 };
 
 typedef boost::shared_ptr<ImageViewPixbufLoaderObserver> ImageViewPixbufLoaderObserverPtr;
@@ -232,6 +251,16 @@ public:
 
 void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal /* = true */)
 {
+	gint width=0, height=0;
+
+	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
+	
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE)
+	{
+		width = m_pImageView->allocation.width;
+		height = m_pImageView->allocation.height;
+	}
+	
 	if (m_ImageList.SetCurrentIndex(index))
 	{
 		m_pViewer->EmitCursorChangedEvent();
@@ -248,7 +277,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
 		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),f.GetThumbnail());
 		
-		m_ImageLoader.LoadImage(f);
+		m_ImageLoader.LoadImageAtSize(f,width,height);
 		
 		m_iCurrentOrientation = f.GetOrientation();
 
@@ -261,7 +290,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			if (m_ImageList.HasNext())
 			{
 				f = m_ImageList.GetNext();
-				m_ImageLoader.CacheImage(f);
+				m_ImageLoader.CacheImageAtSize(f,width,height);
 			}
 		}
 		else
@@ -270,7 +299,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			if (m_ImageList.HasPrevious())
 			{
 				f = m_ImageList.GetPrevious();
-				m_ImageLoader.CacheImage(f);
+				m_ImageLoader.CacheImageAtSize(f, width, height);
 			}
 			
 		}
@@ -357,6 +386,17 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	else if (0 == strcmp(szAction, "ImageLast"))
 	{
 		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetSize()-1,false,true);
+	}
+	else if (0 == strcmp(szAction, "ViewFilmStrip"))
+	{
+		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
+		{
+			gtk_widget_show(pViewerImpl->m_pIconView);			
+		}
+		else
+		{
+			gtk_widget_hide(pViewerImpl->m_pIconView);
+		}
 	}
 }
 
@@ -715,6 +755,8 @@ void Viewer::Show()
 }
 void Viewer::Hide()
 {
+	SlideShowStop();
+	
 	gtk_widget_hide(m_ViewerImplPtr->m_pHBox);
 	if (m_ViewerImplPtr->m_pUIManager)
 	{	
@@ -747,7 +789,7 @@ void Viewer::SetUIManager(GtkUIManager *ui_manager)
 	gtk_action_group_add_toggle_actions(actions,
 										action_entries_toggle, 
 										G_N_ELEMENTS (action_entries_toggle),
-										this);
+										m_ViewerImplPtr.get());
 	gtk_ui_manager_insert_action_group (m_ViewerImplPtr->m_pUIManager,actions,0);	
 }
 

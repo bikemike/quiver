@@ -3,14 +3,11 @@
 
 #include <gdk-pixbuf/gdk-pixdata.h>
 
-
-#include "icons/quiver_icon.pixdata"
-#include "icons/quiver_slideshow.pixdata"
-#include "icons/quiver_browser_icon.pixdata"
-
-#define QUIVER_STOCK_ICON      "quiver-icon"
-#define QUIVER_STOCK_SLIDESHOW "quiver-slideshow"
-#define QUIVER_STOCK_BROWSER   "quiver-browser-icon"
+#define QUIVER_STOCK_APP        "quiver-icon_app"
+#define QUIVER_STOCK_SLIDESHOW  "quiver-icon-slideshow"
+#define QUIVER_STOCK_BROWSER    "quiver-icon-browser"
+#define QUIVER_STOCK_ROTATE_CW  "quiver-icon-rotate-cw"
+#define QUIVER_STOCK_ROTATE_CCW "quiver-icon-rotate-ccw"
 
 
 class QuiverStockIcons

@@ -11,6 +11,13 @@
   GTK_ICON_SIZE_DIALOG
 */
 
+
+#include "icons/quiver_icon_app.pixdata"
+#include "icons/quiver_icon_slideshow.pixdata"
+#include "icons/quiver_icon_browser.pixdata"
+#include "icons/quiver_icon_rotate_cw.pixdata"
+#include "icons/quiver_icon_rotate_ccw.pixdata"
+
 typedef struct
 {
 	const char * id;
@@ -20,9 +27,11 @@ typedef struct
 
 icon icons[] = 
 {
-	{QUIVER_STOCK_ICON,quiver_icon,sizeof(quiver_icon)},
-	{QUIVER_STOCK_SLIDESHOW, quiver_slideshow,sizeof(quiver_slideshow)},
-	{QUIVER_STOCK_BROWSER, quiver_browser_icon,sizeof(quiver_browser_icon)},
+	{QUIVER_STOCK_APP,quiver_icon_app,sizeof(quiver_icon_app)},
+	{QUIVER_STOCK_SLIDESHOW, quiver_icon_slideshow,sizeof(quiver_icon_slideshow)},
+	{QUIVER_STOCK_BROWSER, quiver_icon_browser,sizeof(quiver_icon_browser)},
+	{QUIVER_STOCK_ROTATE_CW, quiver_icon_rotate_cw,sizeof(quiver_icon_rotate_cw)},
+	{QUIVER_STOCK_ROTATE_CCW, quiver_icon_rotate_ccw,sizeof(quiver_icon_rotate_ccw)},
 };
 
 

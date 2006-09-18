@@ -95,8 +95,11 @@ public:
 	void OnOpenFile();
 	void OnOpenFolder();
 	void OnFullScreen();
-	void OnShowProperties(bool bShow = true);
+	void OnShowProperties(bool bShow);
 	void OnSlideShow(bool bStart);
+	void OnShowToolbar(bool bShow);
+	void OnShowStatusbar(bool bShow);
+	void OnShowMenubar(bool bShow);
 	void OnQuit();	
 		
 private:

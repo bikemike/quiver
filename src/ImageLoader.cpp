@@ -161,10 +161,27 @@ bool ImageLoader::CommandsPending()
 	return rval;
 }
 
+void ImageLoader::ReCacheImage(QuiverFile f)
+{
+	LoadParams p = {0};
+	p.state = CACHE;
+	p.reload = true;
+	LoadImage(f,p);
+}
+
 void ImageLoader::CacheImage(QuiverFile f)
 {
 	LoadParams p = {0};
 	p.state = CACHE;
+	LoadImage(f,p);
+}
+
+void ImageLoader::CacheImageAtSize(QuiverFile f, int width, int height)
+{
+	LoadParams p = {0};
+	p.state = CACHE;
+	p.max_width = width;
+	p.max_height = height;
 	LoadImage(f,p);
 }
 
@@ -183,6 +200,15 @@ void ImageLoader::LoadImage(QuiverFile f)
 	LoadParams p = {0};
 	p.state = LOAD;
 
+	LoadImage(f,p);
+}
+
+void ImageLoader::LoadImageAtSize(QuiverFile f, int width, int height)
+{
+	LoadParams p = {0};
+	p.state = LOAD;
+	p.max_width = width;
+	p.max_height = height;
 	LoadImage(f,p);
 }
 
@@ -265,6 +291,33 @@ void ImageLoader::Load()
 	if (m_Command.params.reload)
 	{
 		m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
+	}
+
+	if (0 < m_Command.params.max_width && 0 < m_Command.params.max_height)
+	{
+		GdkPixbuf * pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
+		if (NULL != pixbuf)
+		{
+			int real_width,real_height;
+			gint width,height;
+			width = gdk_pixbuf_get_width(pixbuf);
+			height = gdk_pixbuf_get_height(pixbuf);
+			
+			real_width = m_Command.quiverFile.GetWidth();
+			real_height = m_Command.quiverFile.GetWidth();
+			
+			if (4 < m_Command.params.orientation)
+			{
+				swap(real_width,real_height);
+			}
+			
+			if ( width < m_Command.params.max_width && height < m_Command.params.max_height && width < real_width && height < real_height)
+			{
+				m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
+			}
+					
+			g_object_unref(pixbuf);
+		}
 	}
 
 	if (LOAD == m_Command.params.state)
@@ -506,8 +559,8 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	Timer loadTimer(true); // true for quite mode
 	
 	//int size = 8192;
-	//int size = 16384;
-	int size = 32768;
+	int size = 16384;
+	//int size = 32768;
 	long bytes_read_inc=0, bytes_total=0;
 
 	gchar buffer[size];
@@ -584,6 +637,45 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 {
 	m_Command.quiverFile.SetWidth(width);
 	m_Command.quiverFile.SetHeight(height);
+	
+	int max_width, max_height;
+	
+	max_width = m_Command.params.max_width;
+	max_height = m_Command.params.max_height;
+	
+	if (4 < m_Command.params.orientation)
+	{
+		swap(max_width,max_height);
+		swap(width,height);
+	}
+	
+	if (0 < max_width && 0 < max_height)
+	{
+		if (max_width < width || max_height < height)
+		{
+			// adjust the image size
+			gdouble ratio = (double)width/height;
+			gint new_width;
+			gint new_height;
+	
+			new_height = (gint)(m_Command.params.max_width/ratio);
+			if (new_height < m_Command.params.max_height)
+			{
+				new_width = m_Command.params.max_width;
+			}
+			else
+			{
+				new_width = (gint)(m_Command.params.max_height *ratio);
+				new_height = m_Command.params.max_height;
+			}
+			
+			if (4 < m_Command.params.orientation)
+			{
+				swap(new_width,new_height);
+			}
+			gdk_pixbuf_loader_set_size(loader,new_width,new_height);
+		}
+	}
 }
 
 void* ImageLoader::run(void * data)

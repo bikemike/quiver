@@ -97,7 +97,6 @@ private:
 	int m_nThreads;
 	
 	bool m_bStopThreads;
-
 };
 
 
@@ -179,6 +178,11 @@ ThumbnailLoader::ThumbnailLoader(Browser::BrowserImpl *b,int nThreads)
 		
 	}
 	pthread_mutex_init(&m_ListMutex, NULL);
+	
+	for (i = 0 ; i < m_nThreads; i++)
+	{
+		pthread_create(&m_pThreadIDs[i], NULL, run, &m_pThreadData[i]);
+	}
 }
 ThumbnailLoader::~ThumbnailLoader()
 {
@@ -212,14 +216,7 @@ ThumbnailLoader::~ThumbnailLoader()
 	pthread_mutex_destroy(&m_ListMutex);
 }
 
-void ThumbnailLoader::Start()
-{
-	int i;
-	for (i = 0 ; i < m_nThreads; i++)
-	{
-		pthread_create(&m_pThreadIDs[i], NULL, run, &m_pThreadData[i]);
-	}
-}
+
 void ThumbnailLoader::UpdateList()
 {
 
@@ -632,7 +629,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
-	m_ThumbnailLoader.Start();
 	m_BrowserParent = parent;
 	m_pUIManager = NULL;
 	timeout_thumbnail_current = -1;
@@ -938,7 +934,6 @@ static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpo
 
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data)
 {
-	
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	if (GTK_WIDGET_MAPPED(b->imageview))
 	{
