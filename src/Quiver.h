@@ -30,19 +30,19 @@ public:
 	// member functions
 	void Init();
 	
-	gboolean Quiver::TimeoutEventMotionNotify(gpointer data);
+	gboolean TimeoutEventMotionNotify(gpointer data);
 
-	gboolean Quiver::EventMotionNotify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
+	gboolean EventMotionNotify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 
 	
-	static gboolean Quiver::timeout_event_motion_notify (gpointer data);
-	static gboolean Quiver::event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
+	static gboolean timeout_event_motion_notify (gpointer data);
+	static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 
-	static gboolean Quiver::timeout_advance_slideshow (gpointer data);
-	gboolean Quiver::TimeoutAdvanceSlideshow(gpointer data);
+	static gboolean timeout_advance_slideshow (gpointer data);
+	gboolean TimeoutAdvanceSlideshow(gpointer data);
 	
-	static gboolean Quiver::idle_quiver_init (gpointer data);
-	gboolean Quiver::IdleQuiverInit(gpointer data);
+	static gboolean idle_quiver_init (gpointer data);
+	gboolean IdleQuiverInit(gpointer data);
 
 	static gboolean event_delete( GtkWidget *widget, GdkEvent  *event, gpointer   data );
 	static void event_destroy( GtkWidget *widget,gpointer   data );
@@ -78,8 +78,8 @@ public:
 	void SetImageList(std::list<std::string> &list);
 
 	// PixbufLoaderObserver  - override to set timeout for slideshow
-	void Quiver::SignalClosed(GdkPixbufLoader *loader); 
-	void Quiver::SetPixbuf(GdkPixbuf*); 
+	void SignalClosed(GdkPixbufLoader *loader); 
+	void SetPixbuf(GdkPixbuf*); 
 
 	// action c callbacks
 	static void action_file_save(GtkAction *action,gpointer data);

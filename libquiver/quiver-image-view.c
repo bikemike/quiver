@@ -1687,8 +1687,11 @@ static gboolean quiver_image_view_timeout_magnification(gpointer data)
 	else
 	{
 		quiver_image_view_set_magnification_full(imageview,imageview->priv->magnification + mag_diff/2);
-		imageview->priv->magnification_timeout_id = 0;
-		quiver_image_view_add_magnification_timeout(imageview);
+		if (0 != imageview->priv->magnification_timeout_id)
+		{
+			imageview->priv->magnification_timeout_id = 0;
+			quiver_image_view_add_magnification_timeout(imageview);
+		}
 		rval = FALSE;
 	}
 	gdk_threads_leave();
@@ -1973,6 +1976,16 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 	{
 		imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
 		imageview->priv->view_mode_last = imageview->priv->view_mode;
+	}
+	
+	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode 
+		&& QUIVER_IMAGE_VIEW_MODE_ZOOM != mode)
+	{	
+		if (0 != imageview->priv->magnification_timeout_id)
+		{
+			g_source_remove(imageview->priv->magnification_timeout_id);
+			imageview->priv->magnification_timeout_id = 0;		
+		}
 	}
 
 	widget = GTK_WIDGET(imageview);
@@ -2315,6 +2328,12 @@ void quiver_image_view_activate(QuiverImageView *imageview)
 /* end public functions */
 static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview, gint new_width, gint new_height)
 {
+	if (0 != imageview->priv->magnification_timeout_id)
+	{
+		g_source_remove(imageview->priv->magnification_timeout_id);
+		imageview->priv->magnification_timeout_id = 0;		
+	}
+	
 	if (0 != imageview->priv->timeout_scale_hq_id)
 	{
 		g_source_remove(imageview->priv->timeout_scale_hq_id);

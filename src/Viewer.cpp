@@ -21,6 +21,10 @@
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
 #define QUIVER_PREFS_APP_BG_ICONVIEW           "bgcolor_iconview"
 
+
+#define QUIVER_PREFS_VIEWER                    "viewer"
+#define QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW     "filmstrip_show"
+
 #define QUIVER_PREFS_SLIDESHOW                 "slideshow"
 #define QUIVER_PREFS_SLIDESHOW_DURATION        "duration"
 #define QUIVER_PREFS_SLIDESHOW_LOOP            "loop"
@@ -275,7 +279,9 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		f = m_ImageList.GetCurrent();
 
 		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
-		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),f.GetThumbnail());
+		GdkPixbuf *pixbuf = f.GetThumbnail();
+		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),pixbuf);
+		g_object_unref(pixbuf);
 		
 		m_ImageLoader.LoadImageAtSize(f,width,height);
 		
@@ -389,6 +395,8 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction, "ViewFilmStrip"))
 	{
+		PreferencesPtr prefsPtr = Preferences::GetInstance();
+
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
 			gtk_widget_show(pViewerImpl->m_pIconView);			
@@ -397,6 +405,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 		{
 			gtk_widget_hide(pViewerImpl->m_pIconView);
 		}
+		prefsPtr->SetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW,gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
 	}
 }
 
@@ -685,13 +694,13 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer)
 	gtk_container_add (GTK_CONTAINER (frame), m_pNavigationControl);
 	gtk_container_add (GTK_CONTAINER (m_pNavigationWindow), frame);
 	
+	bool bShowFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW);
+	if (!bShowFilmstrip)
+	{
+		gtk_widget_hide(m_pIconView);
+	}
 	
-}
-
-
-void Viewer::event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data)
-{
-//	((Viewer*)data)->EventNavButtonClicked(widget,event,NULL);
+	
 }
 
 

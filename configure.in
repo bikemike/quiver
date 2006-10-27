@@ -45,7 +45,7 @@ AC_PROG_INTLTOOL([0.21])
 
 
 dnl libglade-2.0
-PKG_CHECK_MODULES(PACKAGE, [gtk+-2.0  gnome-vfs-2.0 libgnomeui-2.0 libexif])
+PKG_CHECK_MODULES(PACKAGE, [gtk+-2.0  gnome-vfs-2.0 libgnomeui-2.0 libexif libglade-2.0])
 AC_SUBST(PACKAGE_CFLAGS)
 AC_SUBST(PACKAGE_LIBS)
 

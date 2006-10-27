@@ -35,7 +35,7 @@ public:
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;
 
 private:
-	static void event_nav_button_clicked (GtkWidget *widget, GdkEventButton *event, void *data);
+
 	ViewerImplPtr m_ViewerImplPtr;
 	
 };

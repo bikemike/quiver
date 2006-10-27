@@ -47,6 +47,7 @@ private:
 	Preferences();
 
 	static PreferencesPtr c_pPreferencesPtr;
+	bool m_bModified;
 	GKeyFile *m_KeyFile;
 };
 

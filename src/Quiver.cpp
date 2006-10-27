@@ -1,4 +1,3 @@
-
 #include <config.h>
 
 #include "quiver-i18n.h"
@@ -6,6 +5,8 @@
 #include "Quiver.h"
 //#include "QuiverUI.h"
 #include <libgnomevfs/gnome-vfs.h>
+
+#include <boost/algorithm/string.hpp>
 
 #include "icons/quiver_icon_app.pixdata"
 #include "QuiverStockIcons.h"
@@ -16,6 +17,7 @@
 
 
 #include "Preferences.h"
+#include "PreferencesDlg.h"
 
 // globals needed for preferences
 
@@ -63,6 +65,10 @@ class QuiverImpl
 {
 public:
 	QuiverImpl(Quiver *parent);
+
+	void LoadExternalToolMenuItems();
+
+
 	Quiver *m_pQuiver;
 
 	Browser m_Browser;
@@ -151,6 +157,92 @@ QuiverImpl::QuiverImpl (Quiver *parent)
 	m_pQuiver = parent;	
 }
 
+void QuiverImpl::LoadExternalToolMenuItems()
+{
+	if (m_pUIManager)
+	{
+		PreferencesPtr prefs = Preferences::GetInstance();
+		list<string> keys = prefs->GetKeys("ExternalTools");
+		keys.sort();
+		
+		
+		if (0 < keys.size())
+		{
+			GtkActionGroup* actions2 = gtk_action_group_new ("ExternalToolActions");		
+
+			list<string>::iterator itr;
+			list<string> ui_commands;
+			
+			for (itr = keys.begin(); keys.end() != itr; ++itr)
+			{
+				string section = "ExternalTool_" + prefs->GetString("ExternalTools",*itr);
+				if (prefs->HasSection(section))
+				{
+					string name, tooltip, icon;
+					name = prefs->GetString(section,"name");
+					tooltip = prefs->GetString(section,"tooltip");
+					icon = prefs->GetString(section,"icon");
+					
+					if (icon.empty())
+					{
+						icon = GTK_STOCK_EXECUTE;
+					}
+					
+					
+					GtkActionEntry action_entry = {0};
+					action_entry.stock_id = icon.c_str();
+					action_entry.name = section.c_str();
+					action_entry.label = name.c_str();
+					action_entry.accelerator = "";
+					action_entry.tooltip = tooltip.c_str();
+					action_entry.callback = G_CALLBACK(quiver_action_handler_cb);
+								
+
+					gtk_action_group_add_actions    (actions2, &action_entry, 1, this);
+					ui_commands.push_back(section);
+				}
+				else
+				{
+					prefs->RemoveKey("ExternalTools",*itr);
+				}
+				
+			}
+	
+			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
+			
+			string str_ui =
+				"<ui>"
+				"	<menubar name='MenubarMain'>"
+				"		<menu action='MenuTools'>"
+				"			<placeholder name='ToolsExternal'>";
+			for (itr = ui_commands.begin(); ui_commands.end() != itr; ++itr)
+			{
+				str_ui += "<menuitem action='" + (*itr) + "'/>";
+
+			}
+			
+			str_ui +=
+				"			</placeholder>"
+				"		</menu>"
+				"	</menubar>"
+				"</ui>";
+
+			GError *error = NULL;
+			guint merge_id = gtk_ui_manager_add_ui_from_string
+                (m_pUIManager,
+                 str_ui.c_str(),
+                 str_ui.length(),
+                 &error);
+			if (NULL != error)
+			{
+				printf("error: %s\n",error->message);
+			}
+		}
+	}
+
+	
+}
+
 #define QUIVER_ACTION_SLIDESHOW  "SlideShow"
 #define QUIVER_ACTION_FULLSCREEN "FullScreen"
 
@@ -212,6 +304,9 @@ char * quiver_ui_main =
 "			<menuitem action='BookmarksEdit'/>"
 "		</menu>"
 "		<menu action='MenuTools'>"
+"			<menuitem action='ToolsExternalTools'/>"
+"			<separator/>"
+"			<placeholder name='ToolsExternal'/>"
 "		</menu>"
 "		<menu action='MenuWindow'>"
 "		</menu>"
@@ -325,7 +420,9 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 
 	{ "MenuBookmarks", NULL, "_Bookmarks" },
 	{ "BookmarksAdd", GTK_STOCK_ADD, "_Add Bookmark", "", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
-	{ "BookmarksEdit", GTK_STOCK_EDIT, "_Edit Bookmarks", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
+	{ "BookmarksEdit", GTK_STOCK_EDIT, "_Edit Bookmarks...", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
+
+	{ "ToolsExternalTools", GTK_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
 
 	{ "About", GTK_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( quiver_action_handler_cb )},
 
@@ -703,12 +800,12 @@ void Quiver::Init()
 	
 	GtkActionGroup* actions = gtk_action_group_new ("Actions");
 	
-	gtk_action_group_add_actions(actions, m_QuiverImplPtr->action_entries, n_entries, this);
+	gtk_action_group_add_actions(actions, m_QuiverImplPtr->action_entries, n_entries, m_QuiverImplPtr.get());
                                  
 	gtk_action_group_add_toggle_actions(actions,
 										m_QuiverImplPtr->action_entries_toggle, 
 										G_N_ELEMENTS (m_QuiverImplPtr->action_entries_toggle),
-										this);
+										m_QuiverImplPtr.get());
 	/* FIXME: i think there's a bug with the user_data when passed in using
 	 * g_signal_connect_data in the following function.
 	gtk_action_group_add_radio_actions(actions,
@@ -898,6 +995,11 @@ void Quiver::Init()
 	g_idle_add(idle_quiver_init,this);
 	
 	gtk_widget_show_all (m_QuiverImplPtr->m_pQuiverWindow);
+
+	
+	//test adding a custom item to the menu
+	m_QuiverImplPtr->LoadExternalToolMenuItems();
+
 }
 
 
@@ -1815,10 +1917,10 @@ void Quiver::OnShowMenubar(bool bShow)
 
 static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 {
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	Quiver *pQuiver;
-	pQuiver = (Quiver*)data;
+	pQuiver = pQuiverImpl->m_pQuiver;
 	
-	//printf("Action: %s\n",gtk_action_get_name(action));
 	const gchar * szAction = gtk_action_get_name(action);
 	if (0 == strcmp(szAction,"Quit"))
 	{
@@ -1908,6 +2010,100 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	else if (0 == strcmp(szAction,QUIVER_ACTION_SLIDESHOW))
 	{
 		pQuiver->OnSlideShow(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
+	}
+	else if (0 == strcmp(szAction,"Preferences"))
+	{
+		//
+		PreferencesDlg prefDlg;
+		prefDlg.Run();
+	}
+	else if (g_str_has_prefix(szAction,"ExternalTool_"))
+	{
+		// run external tool
+		PreferencesPtr prefs = Preferences::GetInstance();
+		
+		string command = prefs->GetString(szAction,"command");
+		
+		bool run_multiple_commands = prefs->GetBoolean(szAction,"run_multiple_commands");
+		bool supports_multiple_files = prefs->GetBoolean(szAction,"supports_multiple_files");
+		bool bInViewer = (0 != pQuiverImpl->m_iMergedViewerUI);
+				
+		list<int> selection = pQuiverImpl->m_Browser.GetSelection();
+		
+		list<string> files;
+		
+		if (bInViewer || 1 == selection.size())
+		{
+			QuiverFile f;
+			if (bInViewer)
+				f = pQuiverImpl->m_ImageList.GetCurrent();
+			else
+				f = pQuiverImpl->m_ImageList[selection.front()];
+			
+			string file, directory;
+
+			file = f.GetFilePath();
+			files.push_back(file);
+		}
+		else if (1 < selection.size())
+		{
+			list<int>::iterator itr;
+			for (itr = selection.begin(); selection.end() != itr; ++itr)
+			{
+				files.push_back(pQuiverImpl->m_ImageList[*itr].GetFilePath());
+			}
+			printf("run for many files\n");
+		}
+		
+		list<string> commands;
+
+		if ((supports_multiple_files && run_multiple_commands) || 1 == files.size())
+		{
+			list<string>::iterator itr;
+			for (itr = files.begin(); files.end() != itr; ++itr)
+			{
+				string file, directory, cmd;
+				file = *itr;
+				cmd = command;
+				
+				gchar *szDir = g_path_get_dirname (file.c_str());
+				directory = szDir;
+				g_free(szDir);
+				
+				boost::replace_all(cmd,"%f", "\"" + file + "\"");
+				boost::replace_all(cmd,"%d", "\"" + directory + "\"");
+				
+				commands.push_back(cmd);			
+			}
+			
+		}
+		else if (supports_multiple_files)
+		{
+			string str_files;
+			list<string>::iterator itr;
+			for (itr = files.begin(); files.end() != itr; ++itr)
+			{
+				str_files += "\"" + *itr + "\" "; 
+			}
+			string cmd = command;
+			boost::replace_all(cmd,"%f", str_files);
+
+			commands.push_back(cmd);
+		}
+		else
+		{
+			printf("command does not support %d files\n", files.size());
+		}
+
+		list<string>::iterator itr;
+		for (itr = commands.begin(); commands.end() != itr; ++itr)
+		{
+			string cmd = *itr; 
+			printf("Running external command: %s\n", cmd.c_str());
+			GError *error = NULL;
+			g_spawn_command_line_async (cmd.c_str(), &error);
+		}
+
 	}
 }
 

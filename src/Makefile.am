@@ -18,6 +18,8 @@ quiver_SOURCES = \
 	ExifView.cpp \
 	Preferences.h \
 	Preferences.cpp \
+	PreferencesDlg.h \
+	PreferencesDlg.cpp \
 	ImageCache.h \
 	ImageCache.cpp \
 	ImageList.h \

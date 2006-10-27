@@ -26,14 +26,14 @@ public:
 
 	// request a pixbuf 
 	// returns null if not in cache
-	GdkPixbuf * ImageCache::GetPixbuf(std::string filename);
-	bool ImageCache::InCache(std::string filename);
-	bool ImageCache::RemovePixbuf(std::string filename);
+	GdkPixbuf * GetPixbuf(std::string filename);
+	bool InCache(std::string filename);
+	bool RemovePixbuf(std::string filename);
 	
-	void ImageCache::AddPixbuf(std::string filename,GdkPixbuf * pb);
-	void ImageCache::AddPixbuf(std::string filename,GdkPixbuf * pb, unsigned long time);
-	unsigned int ImageCache::GetSize();
-	void ImageCache::SetSize(unsigned int size);
+	void AddPixbuf(std::string filename,GdkPixbuf * pb);
+	void AddPixbuf(std::string filename,GdkPixbuf * pb, unsigned long time);
+	unsigned int GetSize();
+	void SetSize(unsigned int size);
 
 
 	

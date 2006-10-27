@@ -13,23 +13,25 @@ PreferencesPtr Preferences::c_pPreferencesPtr;
 
 Preferences::Preferences()
 {
+	m_bModified = false;
 	GError *error = NULL;
 	m_KeyFile = g_key_file_new();
-	g_key_file_load_from_file(m_KeyFile,g_szConfigFilePath,G_KEY_FILE_KEEP_COMMENTS, &error);
+	g_key_file_load_from_file(m_KeyFile,g_szConfigFilePath,(GKeyFileFlags)0/*(G_KEY_FILE_KEEP_COMMENTS|G_KEY_FILE_KEEP_TRANSLATIONS)*/, &error);
 }
 
 Preferences::~Preferences()
 {
-
-	GError *error = NULL;
-	guint clength;
-	gchar *contents = g_key_file_to_data (m_KeyFile, &clength, &error);
-
-	error = NULL;
-	g_file_set_contents(g_szConfigFilePath,contents,clength,&error);
-
-	g_free(contents);
-
+	if (m_bModified)
+	{
+		GError *error = NULL;
+		guint clength;
+		gchar *contents = g_key_file_to_data (m_KeyFile, &clength, &error);
+	
+		error = NULL;
+		g_file_set_contents(g_szConfigFilePath,contents,clength,&error);
+	
+		g_free(contents);
+	}
 	g_key_file_free(m_KeyFile);
 
 
@@ -47,34 +49,39 @@ PreferencesPtr Preferences::GetInstance()
 
 std::list<std::string> Preferences::GetSections()
 {
-	gsize length;
+	gsize length = 0;
 	gchar** groups =  g_key_file_get_groups (m_KeyFile, &length);
 
 	list<string> sections;
-	gsize i = 0;
-	for (i = 0; i < length; i++)
+	
+	if (NULL != groups)
 	{
-		sections.push_back(groups[i]);
+		gsize i = 0;
+		for (i = 0; i < length; i++)
+		{
+			sections.push_back(groups[i]);
+		}
+		g_strfreev(groups);
 	}
-	g_strfreev(groups);
-
 	return sections;
 }
 
 std::list<std::string> Preferences::GetKeys(std::string section)
 {
 	GError *error = NULL;
-	gsize length;
+	gsize length = 0;
 	gchar** keys =  g_key_file_get_keys (m_KeyFile, section.c_str(),  &length, &error);
 
 	list<string> key_list;
-	gsize i = 0;
-	for (i = 0; i < length; i++)
+	if (NULL != keys)
 	{
-		key_list.push_back(keys[i]);
+		gsize i = 0;
+		for (i = 0; i < length; i++)
+		{
+			key_list.push_back(keys[i]);
+		}
+		g_strfreev(keys);
 	}
-	g_strfreev(keys);
-
 	return key_list;
 }
 
@@ -195,7 +202,11 @@ std::list<int> Preferences::GetIntegerList(std::string section, std::string key)
 
 void Preferences::SetValue(std::string section, std::string key, std::string value)
 {
-	g_key_file_set_value(m_KeyFile,section.c_str(),key.c_str(), value.c_str());
+	if (!HasKey(section,key) || GetValue(section,key) != value)
+	{
+		g_key_file_set_value(m_KeyFile,section.c_str(),key.c_str(), value.c_str());
+		m_bModified = true;
+	}
 }
 
 void Preferences::SetString(std::string section, std::string key, std::string value)
@@ -205,49 +216,73 @@ void Preferences::SetString(std::string section, std::string key, std::string va
 
 void Preferences::SetLocaleString(std::string section, std::string key, std::string locale, std::string value)
 {
-	g_key_file_set_locale_string(m_KeyFile,section.c_str(),key.c_str(), locale.c_str(), value.c_str());
+	if (GetLocaleString(section,key,locale) != value)
+	{
+		g_key_file_set_locale_string(m_KeyFile,section.c_str(),key.c_str(), locale.c_str(), value.c_str());
+		m_bModified = true;
+	}
 }
 
 void Preferences::SetBoolean(std::string section, std::string key, bool value)
 {
-	gboolean val = FALSE;
-	if (value)
+	if (!HasKey(section,key) || GetBoolean(section,key) != value)
 	{
-		val = TRUE;
+		gboolean val = FALSE;
+		if (value)
+		{
+			val = TRUE;
+		}
+		g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), val);
+		m_bModified = true;
 	}
-	g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), val);
 }
 
 void Preferences::SetInteger(std::string section, std::string key, int value)
 {
-	g_key_file_set_integer(m_KeyFile,section.c_str(),key.c_str(), value);
+	if (!HasKey(section,key) || GetInteger(section, key) != value)
+	{
+		g_key_file_set_integer(m_KeyFile,section.c_str(),key.c_str(), value);
+		m_bModified = true;
+	}
 }
 
 void Preferences::SetStringList(std::string section, std::string key, std::list<std::string> value_list)
 {
+	//m_bModified = true;
 }
 
 void Preferences::SetStringLocaleList(std::string section, std::string key, std::string locale, std::list<std::string> value_list)
 {
+	//m_bModified = true;
 }
 
 void Preferences::SetBooleanList(std::string section, std::string key, std::list<bool> value_list)
 {
+	//m_bModified = true;
 }
 
 void Preferences::SetIntegerList(std::string section, std::string key, std::list<int> value_list)
 {
+	//m_bModified = true;
 }
 
 void Preferences::RemoveSection(std::string section)
 {
-	GError *error = NULL;
-	g_key_file_remove_group(m_KeyFile,section.c_str(), &error);
+	if (HasSection(section))
+	{
+		GError *error = NULL;
+		g_key_file_remove_group(m_KeyFile,section.c_str(), &error);
+		m_bModified = true;
+	}
 }
 
 void Preferences::RemoveKey(std::string section,std::string key)
 {
-	GError *error = NULL;
-	g_key_file_remove_key(m_KeyFile,section.c_str(), key.c_str(), &error);
+	if (HasKey(section,key))
+	{
+		GError *error = NULL;
+		g_key_file_remove_key(m_KeyFile,section.c_str(), key.c_str(), &error);
+		m_bModified = true;
+	}
 }
 
