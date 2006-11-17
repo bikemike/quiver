@@ -6,6 +6,8 @@
 #include <string.h>
 #include <list>
 #include <map>
+#include <set>
+
 using namespace std;
 
 #include <libquiver/quiver-icon-view.h>
@@ -18,6 +20,8 @@ using namespace std;
 #include "IPixbufLoaderObserver.h"
 #include "QuiverUtils.h"
 #include "Preferences.h"
+#include "QuiverFileOps.h"
+#include "IImageListEventHandler.h"
 
 #define QUIVER_PREFS_APP                       "application"
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
@@ -76,12 +80,12 @@ public:
 	ThumbnailLoader(Browser::BrowserImpl *b,int nThreads);
 	~ThumbnailLoader();
 	void Start();
-	void UpdateList();
+	void UpdateList(bool bForce = false);
 	void Run(int id);
 	static void* run(void *data);
 	
 private:
-	list<int> m_Files;
+	list<unsigned int> m_Files;
 	Browser::BrowserImpl *b;
 	
 	pthread_t *m_pThreadIDs;
@@ -103,11 +107,11 @@ private:
 class Browser::BrowserImpl
 {
 public:
-	/* constructors and destructor */
+/* constructors and destructor */
 	BrowserImpl(Browser *parent);
 	~BrowserImpl();
 	
-	/* member functions */
+/* member functions */
 
 	void SetUIManager(GtkUIManager *ui_manager);
 	void Show();
@@ -119,7 +123,7 @@ public:
 	
 	void SetImageList(ImageList list);
 
-	/* member variables */	
+/* member variables */	
 	GtkWidget *iconview;
 	
 	GtkWidget *m_pBrowserWidget;
@@ -146,6 +150,23 @@ public:
 	ThumbnailLoader m_ThumbnailLoader;
 	ImageLoader m_ImageLoader;
 	ImageViewPixbufLoaderObserver *m_pImageViewPixbufLoaderObserver;
+	
+/* nested classes */
+	//class ViewerEventHandler;
+	class ImageListEventHandler : public IImageListEventHandler
+	{
+	public:
+		ImageListEventHandler(Browser::BrowserImpl *parent){this->parent = parent;};
+		virtual void HandleContentsChanged(ImageListEventPtr event);
+		virtual void HandleCurrentIndexChanged(ImageListEventPtr event) ;
+		virtual void HandleItemAdded(ImageListEventPtr event);
+		virtual void HandleItemRemoved(ImageListEventPtr event);
+		virtual void HandleItemChanged(ImageListEventPtr event);
+	private:
+		Browser::BrowserImpl *parent;
+	};
+	
+	IImageListEventHandlerPtr m_ImageListEventHandlerPtr;
 };
 // ============================================================================
 
@@ -217,9 +238,8 @@ ThumbnailLoader::~ThumbnailLoader()
 }
 
 
-void ThumbnailLoader::UpdateList()
+void ThumbnailLoader::UpdateList(bool bForce/* = false*/)
 {
-
 	bool bLargeThumbs = true;
 	guint start,end;
 	quiver_icon_view_get_visible_range(QUIVER_ICON_VIEW(b->iconview),&start,&end);
@@ -231,7 +251,8 @@ void ThumbnailLoader::UpdateList()
 	{
 		bLargeThumbs = false;
 	}
-	if (m_iRangeStart != start || m_iRangeEnd != end || bLargeThumbs != m_bLargeThumbs)
+	
+	if (bForce || m_iRangeStart != start || m_iRangeEnd != end || bLargeThumbs != m_bLargeThumbs)
 	{
 		pthread_mutex_lock (&m_ListMutex);
 		// view is different, we'll need to create a new list of items to cache
@@ -266,6 +287,8 @@ void ThumbnailLoader::UpdateList()
 
 		guint loop_size = (cache_size - n_visible*2 ) /2;
 	
+		// FIXME: This algorithm is quite
+		// horrible and needs to be rewritten
 		for (i = 0;i < loop_size; i++)
 		{
 			// now add cells not in view
@@ -358,13 +381,28 @@ void ThumbnailLoader::Run(int id)
 			}
 			//printf("thread %d\n",id); 
 			pthread_mutex_lock (&m_ListMutex);
+			/*
+			list<unsigned int>::iterator itr;
+			for (itr = m_Files.begin() ; m_Files.end() != itr; ++itr)
+			{
+				printf("%d ",*itr);
+			}
+			printf("\n");
+			*/
 			if (0 == m_Files.size())
 			{
 				pthread_mutex_unlock (&m_ListMutex);
 				break;
 			}
 			
-			int n = m_Files.front();
+			unsigned int n = m_Files.front();
+			
+			if (n >= b->m_QuiverFiles.GetSize())
+			{
+				m_Files.clear();
+				pthread_mutex_unlock (&m_ListMutex);
+				break;
+			}
 			QuiverFile f = b->m_QuiverFiles[n];
 			m_Files.pop_front();
 			pthread_mutex_unlock (&m_ListMutex);
@@ -378,17 +416,17 @@ void ThumbnailLoader::Run(int id)
 			
 			if (width <= 128 && height <= 128)
 			{
-				pixbuf = b->m_ThumbnailCacheNormal.GetPixbuf(f.GetFilePath());				
+				pixbuf = b->m_ThumbnailCacheNormal.GetPixbuf(f.GetURI());				
 			}
 			else
 			{
-				pixbuf = b->m_ThumbnailCacheLarge.GetPixbuf(f.GetFilePath());	
+				pixbuf = b->m_ThumbnailCacheLarge.GetPixbuf(f.GetURI());	
 			}
 
 
 			if (NULL == pixbuf)
 			{
-				//printf ("[%d] loading thumb : %s\n",id,f.GetFilePath().c_str());
+				//printf ("[%d] loading thumb : %s\n",id,f.GetURI());
 
 				if (width <= 128 && height <= 128)
 				{
@@ -404,11 +442,11 @@ void ThumbnailLoader::Run(int id)
 				{
 					if (width <= 128 && height <= 128)
 					{
-						b->m_ThumbnailCacheNormal.AddPixbuf(f.GetFilePath(),pixbuf);
+						b->m_ThumbnailCacheNormal.AddPixbuf(f.GetURI(),pixbuf);
 					}
 					else
 					{
-						b->m_ThumbnailCacheLarge.AddPixbuf(f.GetFilePath(),pixbuf);
+						b->m_ThumbnailCacheLarge.AddPixbuf(f.GetURI(),pixbuf);
 					}
 					
 	
@@ -454,48 +492,55 @@ void* ThumbnailLoader::run(void * data)
 }
 
 
+static void browser_action_handler_cb(GtkAction *action, gpointer data);
+
 static char *ui_browser =
 "<ui>"
 "	<menubar name='MenubarMain'>"
 "		<menu action='MenuEdit'>"
 "			<placeholder name='CopyPaste'>"
-"				<menuitem action='Cut'/>"
-"				<menuitem action='Copy'/>"
-"				<menuitem action='Paste'/>"
+"				<menuitem action='BrowserCut'/>"
+"				<menuitem action='BrowserCopy'/>"
+"				<menuitem action='BrowserPaste'/>"
 "			</placeholder>"
 "			<placeholder name='Selection'>"
-"				<menuitem action='SelectAll'/>"
+"				<menuitem action='BrowserSelectAll'/>"
 "			</placeholder>"
 "			<placeholder name='Trash'>"
-"				<menuitem action='ImageTrash'/>"
+"				<menuitem action='BrowserTrash'/>"
 "			</placeholder>"
 "		</menu>"
 "		<menu action='MenuView'>"
 "			<placeholder name='UIItems'>"
-"				<menuitem action='ViewPreview'/>"
+"				<menuitem action='BrowserViewPreview'/>"
 "			</placeholder>"
+"			<menuitem action='BrowserReload'/>"
 "		</menu>"
 "	</menubar>"
 "	<toolbar name='ToolbarMain'>"
-"		<separator/>"
+"		<placeholder name='NavToolItems'>"
+"			<separator/>"
+"			<toolitem action='BrowserReload'/>"
+"			<separator/>"
+"		</placeholder>"
+"		<placeholder name='Trash'>"
+"			<toolitem action='BrowserTrash'/>"
+"		</placeholder>"
 "	</toolbar>"
 "</ui>";
 
 static  GtkToggleActionEntry action_entries_toggle[] = {
-	{ "ViewPreview", GTK_STOCK_PROPERTIES,"Preview", "<Control><Shift>p", "Show/Hide Image Preview", G_CALLBACK(NULL),TRUE},
+	{ "BrowserViewPreview", GTK_STOCK_PROPERTIES,"Preview", "<Control><Shift>p", "Show/Hide Image Preview", G_CALLBACK(browser_action_handler_cb),TRUE},
 };
 
 static GtkActionEntry action_entries[] = {
-	
-//	{ "MenuFile2", NULL, "_File" }, 
-	{ "BrowserStuff", GTK_STOCK_PROPERTIES, "what is this?", "", "Menu Tool Item Test", G_CALLBACK(NULL)},
-	
-	{ "Cut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(NULL)},
-	{ "Copy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(NULL)},
-	{ "Paste", GTK_STOCK_PASTE, "Paste", "<Control>V", "Paste image", G_CALLBACK(NULL)},
-	{ "SelectAll", NULL, "_Select All", "<Control>A", "Select all", G_CALLBACK(NULL)},
-	{ "ImageTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(NULL)},
-	
+
+	{ "BrowserCut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(browser_action_handler_cb)},
+	{ "BrowserCopy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(browser_action_handler_cb)},
+	{ "BrowserPaste", GTK_STOCK_PASTE, "Paste", "<Control>V", "Paste image", G_CALLBACK(browser_action_handler_cb)},
+	{ "BrowserSelectAll", NULL, "_Select All", "<Control>A", "Select all", G_CALLBACK(browser_action_handler_cb)},
+	{ "BrowserTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(browser_action_handler_cb)},
+	{ "BrowserReload", GTK_STOCK_REFRESH, "_Reload", "<Control>R", "Refresh the Current View", G_CALLBACK(browser_action_handler_cb)},
 };
 
 
@@ -513,9 +558,9 @@ Browser::~Browser()
 
 }
 
-list<int> Browser::GetSelection()
+list<unsigned int> Browser::GetSelection()
 {
-	list<int> selection_list;
+	list<unsigned int> selection_list;
 	GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(m_BrowserImplPtr->iconview));
 	GList *item = selection;
 	while (NULL != item)
@@ -571,6 +616,11 @@ Browser::GetWidget()
 // private browser implementation:
 //=============================================================================
 
+
+//=============================================================================
+// BrowswerImpl Callback Prototypes
+//=============================================================================
+
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
@@ -600,7 +650,7 @@ static GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
 	return action;
 }
 
-gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
+static gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
@@ -611,7 +661,7 @@ gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user
 	return FALSE;
 }
 
-gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
+static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
@@ -621,11 +671,10 @@ gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer use
 }
 
 
-//=============================================================================
-// BrowswerImpl Callback Prototypes
-//=============================================================================
-
-Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100),m_ThumbnailCacheLarge(50), m_ThumbnailLoader(this,4)
+Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100),
+                                       m_ThumbnailCacheLarge(50),
+                                       m_ThumbnailLoader(this,4),
+                                       m_ImageListEventHandlerPtr( new ImageListEventHandler(this) )
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
@@ -825,14 +874,6 @@ void Browser::BrowserImpl::Show()
 	GError *tmp_error;
 	tmp_error = NULL;
 	
-
- 	if (0 != m_QuiverFiles.GetSize())
-	{
-		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(iconview),
-			m_QuiverFiles.GetCurrentIndex() );
-	}
-
-	gtk_widget_show(m_pBrowserWidget);
 	if (m_pUIManager && 0 == m_iMergedBrowserUI)
 	{
 		m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_pUIManager,
@@ -844,6 +885,14 @@ void Browser::BrowserImpl::Show()
 			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
 		}
 	}
+
+ 	if (0 != m_QuiverFiles.GetSize())
+	{
+		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(iconview),
+			m_QuiverFiles.GetCurrentIndex() );
+	}
+
+	gtk_widget_show(m_pBrowserWidget);
 
 }
 
@@ -860,7 +909,11 @@ void Browser::BrowserImpl::Hide()
 
 void Browser::BrowserImpl::SetImageList(ImageList list)
 {
+	m_QuiverFiles.RemoveEventHandler(m_ImageListEventHandlerPtr);
+	
 	m_QuiverFiles = list;
+	
+	m_QuiverFiles.AddEventHandler(m_ImageListEventHandlerPtr);
 }
 
 ImageList Browser::BrowserImpl::GetImageList()
@@ -907,14 +960,14 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	
 	if (width <= 128 && height <= 128)
 	{
-		pixbuf = b->m_ThumbnailCacheNormal.GetPixbuf(b->m_QuiverFiles[cell].GetFilePath());
+		pixbuf = b->m_ThumbnailCacheNormal.GetPixbuf(b->m_QuiverFiles[cell].GetURI());
 	}
 	else
 	{
-		pixbuf = b->m_ThumbnailCacheLarge.GetPixbuf(b->m_QuiverFiles[cell].GetFilePath());
+		pixbuf = b->m_ThumbnailCacheLarge.GetPixbuf(b->m_QuiverFiles[cell].GetURI());
 		if (NULL == pixbuf)
 		{
-			pixbuf = b->m_ThumbnailCacheNormal.GetPixbuf(b->m_QuiverFiles[cell].GetFilePath());
+			pixbuf = b->m_ThumbnailCacheNormal.GetPixbuf(b->m_QuiverFiles[cell].GetURI());
 		}
 			
 	}
@@ -939,7 +992,12 @@ static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpo
 	{
 		b->m_ImageLoader.LoadImage(b->m_QuiverFiles[cell]);
 	}
+	
+	b->m_QuiverFiles.BlockHandler(b->m_ImageListEventHandlerPtr);
+	
 	b->m_QuiverFiles.SetCurrentIndex(cell);
+	
+	b->m_QuiverFiles.UnblockHandler(b->m_ImageListEventHandlerPtr);
 		
 	b->m_BrowserParent->EmitCursorChangedEvent();
 }
@@ -949,17 +1007,20 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 //	printf("yes, the selection did change!\n");
 
-	GtkAction *action = gtk_ui_manager_get_action(b->m_pUIManager,"/ui/ToolbarMain/ImageTrash");
-	GList *selection;
-	selection = quiver_icon_view_get_selection(iconview);
-	if (NULL == selection)
+	GtkAction *action = gtk_ui_manager_get_action(b->m_pUIManager,"/ui/ToolbarMain/Trash/BrowserTrash");
+	if (NULL != action)
 	{
-		gtk_action_set_sensitive(action,FALSE);
-	}
-	else
-	{
-		gtk_action_set_sensitive(action,TRUE);
-		g_list_free(selection);
+		GList *selection;
+		selection = quiver_icon_view_get_selection(iconview);
+		if (NULL == selection)
+		{
+			gtk_action_set_sensitive(action,FALSE);
+		}
+		else
+		{
+			gtk_action_set_sensitive(action,TRUE);
+			g_list_free(selection);
+		}
 	}
 	b->m_BrowserParent->EmitSelectionChangedEvent();
 }
@@ -973,6 +1034,147 @@ static void entry_activate(GtkEntry *entry, gpointer user_data)
 	list<string> file_list;
 	file_list.push_back(entry_text);
 	b->m_QuiverFiles.SetImageList(&file_list);
+}
+
+
+
+static void browser_action_handler_cb(GtkAction *action, gpointer data)
+{
+	Browser::BrowserImpl* pBrowserImpl;
+	pBrowserImpl = (Browser::BrowserImpl*)data;
+	
+	printf("Browser Action: %s\n",gtk_action_get_name(action));
+	
+	const gchar * szAction = gtk_action_get_name(action);
+	
+	if (0 == strcmp(szAction,"BrowserReload"))
+	{
+		// clear the caches
+		pBrowserImpl->m_QuiverFiles.Reload();
+
+		pBrowserImpl->m_ThumbnailCacheLarge.Clear();
+		pBrowserImpl->m_ThumbnailCacheNormal.Clear();
+			
+		pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+		
+	}
+	else if (0 == strcmp(szAction,"BrowserTrash"))
+	{
+		gint rval = GTK_RESPONSE_YES;
+		if (0) // FIXME: add preference to display trash dialog
+		{
+		
+			GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
+									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected images to the trash?"));
+			rval = gtk_dialog_run(GTK_DIALOG(dialog));
+			gtk_widget_destroy(dialog);
+		}
+
+		switch (rval)
+		{
+			case GTK_RESPONSE_YES:
+			{
+				GList *selection;
+				selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->iconview));
+				if (NULL == selection)
+				{
+					// nothing to delete!
+				}
+				else
+				{
+					// delete the items!
+					GList *sel_itr = selection;
+					set<int> items;
+					
+					while (NULL != sel_itr)
+					{
+						items.insert((int)sel_itr->data);
+						sel_itr = g_list_next(sel_itr);
+					}
+					g_list_free(selection);
+
+					set<int>::reverse_iterator ritr;
+					
+					pBrowserImpl->m_QuiverFiles.BlockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
+					
+					for (ritr = items.rbegin() ; items.rend() != ritr ; ++ritr)
+					{
+						//printf("delete: %d\n",*ritr);
+						QuiverFile f = pBrowserImpl->m_QuiverFiles[*ritr];
+						
+						
+						
+						if (QuiverFileOps::MoveToTrash(f))
+						{
+							pBrowserImpl->m_QuiverFiles.Remove(*ritr);
+						}
+
+					}
+					
+					pBrowserImpl->m_QuiverFiles.UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);	
+					
+					quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->iconview),pBrowserImpl->m_QuiverFiles.GetCurrentIndex());					
+					
+					pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+				}
+				break;
+			}
+			case GTK_RESPONSE_NO:
+				//fall through
+			default:
+				// do not delete
+				cout << "not trashing file : " << endl;//m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI() << endl;
+				break;
+		}
+	
+
+	}
+}
+
+
+//=============================================================================
+// private browser implementation nested classes:
+//=============================================================================
+void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
+{
+	// refresh the list
+	//printf("HandleContentsChanged\n");
+	
+	if (parent->m_QuiverFiles.GetSize())
+	{
+		quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->iconview),parent->m_QuiverFiles.GetCurrentIndex());
+	}
+
+	parent->m_ThumbnailCacheLarge.Clear();
+	parent->m_ThumbnailCacheNormal.Clear();
+			
+	parent->m_ThumbnailLoader.UpdateList(true);	
+
+}
+void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
+{
+	//printf("Current item changed: %d\n",event->GetIndex());
+	quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->iconview),event->GetIndex());
+}
+void Browser::BrowserImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
+{
+	// refresh the list
+	parent->m_ThumbnailLoader.UpdateList(true);	
+}
+void Browser::BrowserImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
+{
+	parent->m_ThumbnailLoader.UpdateList(true);
+}
+void Browser::BrowserImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
+{
+	QuiverFile f = parent->m_QuiverFiles.Get(event->GetIndex());
+	//printf ("image list item changed %d: %s\n",event->GetIndex() , f.GetURI());
+
+	parent->m_ThumbnailCacheLarge.RemovePixbuf(f.GetURI());
+	parent->m_ThumbnailCacheNormal.RemovePixbuf(f.GetURI());
+		
+	// refresh the list
+	parent->m_ThumbnailLoader.UpdateList(true);	
 	
 }
 

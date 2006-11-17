@@ -92,7 +92,7 @@ void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *select
 GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
 
 void quiver_icon_view_get_visible_range(QuiverIconView *iconview,guint *first, guint *last);
-void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,guint cell);
+void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,gint cell);
 
 void quiver_icon_view_set_n_items_func (QuiverIconView *iconview, 
          QuiverIconViewGetNItemsFunc func,gpointer data,GtkDestroyNotify destroy);

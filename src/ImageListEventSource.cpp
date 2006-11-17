@@ -6,32 +6,51 @@ void ImageListEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 	IImageListEventHandlerPtr h = boost::static_pointer_cast<IImageListEventHandler>(handler);
 	
-	boost::signals::connection c = m_sigCurrentItemChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleCurrentItemChanged,h,_1) );
+	boost::signals::connection c = m_sigContentsChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleContentsChanged,h,_1) );
+	MapConnection(handler,c);
+	
+	c = m_sigCurrentIndexChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleCurrentIndexChanged,h,_1) );
 	MapConnection(handler,c);
 
-	c = m_sigItemsAddedPtr->connect( boost::bind(&IImageListEventHandler::HandleItemsAdded,h,_1) );
+	c = m_sigItemAddedPtr->connect( boost::bind(&IImageListEventHandler::HandleItemAdded,h,_1) );
 	MapConnection(handler,c);
 
-	c = m_sigItemsRemovedPtr->connect( boost::bind(&IImageListEventHandler::HandleItemsRemoved,h,_1) );
+	c = m_sigItemRemovedPtr->connect( boost::bind(&IImageListEventHandler::HandleItemRemoved,h,_1) );
+	MapConnection(handler,c);
+
+	c = m_sigItemChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleItemChanged,h,_1) );
 	MapConnection(handler,c);
 }
 
-void ImageListEventSource::EmitCurrentItemChangedEvent()
+void ImageListEventSource::EmitContentsChangedEvent()
 {
-	EventBasePtr n( new EventBase(this) );
-	(*m_sigCurrentItemChangedPtr)(n);
+	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::CONTENTS_CHANGED,0) );
+	(*m_sigContentsChangedPtr)(event);
 	
 }
 
-void ImageListEventSource::EmitItemsAddedEvent()
+void ImageListEventSource::EmitCurrentIndexChangedEvent(unsigned int iIndex)
 {
-	EventBasePtr n( new EventBase(this) );
-	(*m_sigItemsAddedPtr)(n);
+	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::CURRENT_INDEX_CHANGED,iIndex) );
+	(*m_sigCurrentIndexChangedPtr)(event);
+	
 }
 
-void ImageListEventSource::EmitItemsRemovedEvent()
+void ImageListEventSource::EmitItemAddedEvent(unsigned int iIndex)
 {
-	EventBasePtr n( new EventBase(this) );
-	(*m_sigItemsRemovedPtr)(n);
+	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::ITEM_ADDED,iIndex) );
+	(*m_sigItemAddedPtr)(event);
+}
+
+void ImageListEventSource::EmitItemRemovedEvent(unsigned int iIndex)
+{
+	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::ITEM_REMOVED,iIndex) );
+	(*m_sigItemRemovedPtr)(event);
+}
+
+void ImageListEventSource::EmitItemChangedEvent(unsigned int iIndex)
+{
+	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::ITEM_CHANGED,iIndex) );
+	(*m_sigItemChangedPtr)(event);
 }
 

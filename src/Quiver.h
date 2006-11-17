@@ -19,7 +19,7 @@
 class QuiverImpl;
 typedef boost::shared_ptr<QuiverImpl> QuiverImplPtr;
 
-class Quiver : PixbufLoaderObserver
+class Quiver
 {
 public:
 
@@ -38,9 +38,6 @@ public:
 	static gboolean timeout_event_motion_notify (gpointer data);
 	static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 
-	static gboolean timeout_advance_slideshow (gpointer data);
-	gboolean TimeoutAdvanceSlideshow(gpointer data);
-	
 	static gboolean idle_quiver_init (gpointer data);
 	gboolean IdleQuiverInit(gpointer data);
 
@@ -77,19 +74,6 @@ public:
 	
 	void SetImageList(std::list<std::string> &list);
 
-	// PixbufLoaderObserver  - override to set timeout for slideshow
-	void SignalClosed(GdkPixbufLoader *loader); 
-	void SetPixbuf(GdkPixbuf*); 
-
-	// action c callbacks
-	static void action_file_save(GtkAction *action,gpointer data);
-
-	static void action_slide_show(GtkAction *action,gpointer data);
-	
-	// action c++ callbacks
-	void ActionFileSave(GtkAction *action,gpointer data);
-	void ActionSlideShow(GtkAction *action,gpointer data);
-	void ActionImageTrash(GtkAction *action,gpointer data);
 
 	void OnAbout();
 	void OnOpenFile();
@@ -100,7 +84,9 @@ public:
 	void OnShowToolbar(bool bShow);
 	void OnShowStatusbar(bool bShow);
 	void OnShowMenubar(bool bShow);
-	void OnQuit();	
+	void OnQuit();
+	
+	void Close();
 		
 private:
 	QuiverImplPtr m_QuiverImplPtr;

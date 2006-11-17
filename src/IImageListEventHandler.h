@@ -3,14 +3,17 @@
 
 
 #include "IEventHandler.h"
-#include "EventBase.h"
+#include "ImageListEvent.h"
 
 class IImageListEventHandler : public IEventHandler
 {
 public:
-	virtual void HandleCurrentItemChanged(EventBasePtr event) = 0;
-	virtual void HandleItemsAdded(EventBasePtr event) = 0;
-	virtual void HandleItemsRemoved(EventBasePtr event) = 0;
+	
+	virtual void HandleContentsChanged(ImageListEventPtr event) = 0;
+	virtual void HandleCurrentIndexChanged(ImageListEventPtr event) = 0;
+	virtual void HandleItemAdded(ImageListEventPtr event) = 0;
+	virtual void HandleItemRemoved(ImageListEventPtr event) = 0;
+	virtual void HandleItemChanged(ImageListEventPtr event) = 0;
 
 	virtual ~IImageListEventHandler(){};
 };

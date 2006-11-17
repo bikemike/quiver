@@ -24,7 +24,8 @@ public:
 	
 	void Show();
 	void Hide();
-	std::list<int> GetSelection();
+
+	std::list<unsigned int> GetSelection();
 
 	class BrowserImpl;
 private:

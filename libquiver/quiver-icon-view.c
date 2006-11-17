@@ -413,7 +413,8 @@ quiver_icon_view_init(QuiverIconView *iconview)
 		for (j = 0;j<8;j++)
 			iconview->priv->drop_shadow[i][j] = NULL;
 
-	iconview->priv->cell_items = g_malloc0( (sizeof *iconview->priv->cell_items));
+	//iconview->priv->cell_items = g_malloc0( (sizeof *iconview->priv->cell_items));
+	iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(iconview->priv->n_cell_items+1) );
 	iconview->priv->n_cell_items = 0;
 
 	//iconview->priv->cell_items[0].selected = TRUE;
@@ -2329,12 +2330,11 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 	{
 		n_items = (*iconview->priv->callback_get_n_items)(iconview,iconview->priv->callback_get_n_items_data);
 	}
-	//printf("there are %d items\n",n_items);
 	if (iconview->priv->n_cell_items != n_items)
 	{
 		iconview->priv->n_cell_items = n_items;
 		g_free (iconview->priv->cell_items);
-		iconview->priv->cell_items = g_malloc0( (sizeof *iconview->priv->cell_items)*n_items);
+		iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(n_items+1) );
 		quiver_icon_view_update_icon_size(iconview);
 	}
 	return n_items;
@@ -2562,16 +2562,21 @@ quiver_icon_view_get_cell_padding(QuiverIconView *iconview)
 
 void quiver_icon_view_activate_cell(QuiverIconView *iconview,guint cell)
 {
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+	
 	g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_ACTIVATED],0,cell);
 }
 
 gint quiver_icon_view_get_cursor_cell(QuiverIconView *iconview)
 {
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), 0);
 	return iconview->priv->cursor_cell;
 }
 
 void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gint new_cursor_cell)
 {
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
 	quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)0,FALSE);
 }
 
@@ -2579,6 +2584,8 @@ void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *select
 {
 	gboolean selection_changed;
 	const GList *selection_iter;
+
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
 
 	selection_changed = FALSE;
 	selection_iter = selection;
@@ -2656,7 +2663,7 @@ void quiver_icon_view_get_visible_range(QuiverIconView *iconview,guint *first, g
 
 void 
 quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
-		guint cell)
+		gint cell)
 {
 
 	GtkWidget *widget = GTK_WIDGET (iconview);
@@ -2665,6 +2672,10 @@ quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
 	{
 		return;
 	}
+	
+	gint n_cells = quiver_icon_view_get_n_items(iconview);
+	if (0 > cell || cell >= n_cells)
+		return;
 	
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);

@@ -1,6 +1,7 @@
 #include <config.h>
 #include "QuiverUtils.h"
 
+static bool g_bAcceleratorsDisabled = false;
 
 namespace QuiverUtils
 {
@@ -80,88 +81,101 @@ namespace QuiverUtils
 	{
 		GList * action_groups = gtk_ui_manager_get_action_groups(pUIManager);
 		GtkAction * action = NULL;
-		while (NULL != action_groups)
-		{
-			GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
-			GList *actions = actions_list;
-			while (NULL != actions)
-			{
-				action = (GtkAction*)actions->data;
-				GtkAccelKey accel_key = {0};
-				
-				if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
-				{
-					// list of modifiers to check
-					guint mask = 0;
-					
-					mask |= GDK_CONTROL_MASK;
-					mask |= GDK_MOD1_MASK;    // normally alt
-					mask |= GDK_MOD2_MASK;
-					mask |= GDK_MOD3_MASK;
-					mask |= GDK_MOD4_MASK;
-					mask |= GDK_MOD5_MASK;
 
-					if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
+		if (!g_bAcceleratorsDisabled)
+		{		
+			while (NULL != action_groups)
+			{
+				GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
+				GList *actions = actions_list;
+				while (NULL != actions)
+				{
+					action = (GtkAction*)actions->data;
+					GtkAccelKey accel_key = {0};
+					
+					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
 					{
+						// list of modifiers to check
+						guint mask = 0;
+						
+						mask |= GDK_CONTROL_MASK;
+						mask |= GDK_MOD1_MASK;    // normally alt
+						mask |= GDK_MOD2_MASK;
+						mask |= GDK_MOD3_MASK;
+						mask |= GDK_MOD4_MASK;
+						mask |= GDK_MOD5_MASK;
+	
 						gchar *accel_label;
 						accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
-						printf("disable accel key: %s - %d\n",accel_label, accel_key.accel_key);
-						gtk_action_disconnect_accelerator(action);
+						//printf("disable  accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
+						//printf("disable accel key: %s - %d\n",accel_label, accel_key.accel_key);
+	
+						if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
+						{
+							gtk_action_disconnect_accelerator(action);
+							gtk_action_disconnect_accelerator(action);							
+						}
+						//printf("disabled accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
 						g_free(accel_label);
 					}
+					actions = g_list_next(actions);
 				}
-				actions = g_list_next(actions);
+				
+				g_list_free(actions_list);
+				
+				action_groups = g_list_next(action_groups);
 			}
-			
-			g_list_free(actions_list);
-			
-			action_groups = g_list_next(action_groups);
+			g_bAcceleratorsDisabled = true;
 		}
-		
 	}
 	
 	void ConnectUnmodifiedAccelerators(GtkUIManager *pUIManager)
 	{
 		GList * action_groups = gtk_ui_manager_get_action_groups(pUIManager);
 		GtkAction * action = NULL;
-		while (NULL != action_groups)
+		if (g_bAcceleratorsDisabled)
 		{
-			GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
-			GList *actions = actions_list;
-			while (NULL != actions)
+			while (NULL != action_groups)
 			{
-				action = (GtkAction*)actions->data;
-				GtkAccelKey accel_key = {0};
-				
-				if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
+				GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
+				GList *actions = actions_list;
+				while (NULL != actions)
 				{
-					// list of modifiers to check
-					guint mask = 0;
+					action = (GtkAction*)actions->data;
+					GtkAccelKey accel_key = {0};
 					
-					mask |= GDK_CONTROL_MASK;
-					mask |= GDK_MOD1_MASK;    // normally alt
-					mask |= GDK_MOD2_MASK;
-					mask |= GDK_MOD3_MASK;
-					mask |= GDK_MOD4_MASK;
-					mask |= GDK_MOD5_MASK;
-
-					if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
+					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
 					{
-						gchar *accel_label;
-						accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
-						printf("enable accel key: %s - %d\n",accel_label, accel_key.accel_key);
-						gtk_action_connect_accelerator(action);
-						g_free(accel_label);
+						// list of modifiers to check
+						guint mask = 0;
+						
+						mask |= GDK_CONTROL_MASK;
+						mask |= GDK_MOD1_MASK;    // normally alt
+						mask |= GDK_MOD2_MASK;
+						mask |= GDK_MOD3_MASK;
+						mask |= GDK_MOD4_MASK;
+						mask |= GDK_MOD5_MASK;
+	
+						if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
+						{
+							gchar *accel_label;
+							accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
+							//printf("enable accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
+							//printf("enable accel key: %s - %d\n",accel_label, accel_key.accel_key);
+							gtk_action_connect_accelerator(action);
+							gtk_action_connect_accelerator(action);
+							g_free(accel_label);
+						}
 					}
+					actions = g_list_next(actions);
 				}
-				actions = g_list_next(actions);
+				
+				g_list_free(actions_list);
+				
+				action_groups = g_list_next(action_groups);
 			}
-			
-			g_list_free(actions_list);
-			
-			action_groups = g_list_next(action_groups);
+			g_bAcceleratorsDisabled = false;
 		}
-		
 	}
 }
 

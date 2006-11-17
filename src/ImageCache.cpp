@@ -1,6 +1,9 @@
 #include <config.h>
 #include "ImageCache.h"
 
+#include <gtk/gtk.h>
+#include <sys/time.h>
+
 #include <iostream>
 using namespace std;
 
@@ -19,11 +22,12 @@ ImageCache::~ImageCache()
 {
 	pthread_mutex_lock (&m_MutexImageCache);
 	
-	map<string,CacheItem>::iterator itr;
+	ImageCacheMap::iterator itr;
 	for (itr = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
 	{
 		g_object_unref(itr->second.pPixbuf);
 	}
+	m_mapImageCache.clear();
 	
 	pthread_mutex_unlock (&m_MutexImageCache);
 
@@ -35,7 +39,7 @@ bool ImageCache::RemovePixbuf(std::string filename)
 {
 	pthread_mutex_lock (&m_MutexImageCache);
 	
-	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
 	bool rval = false;
 	if (m_mapImageCache.end() != itr)
 	{
@@ -71,7 +75,7 @@ void ImageCache::SetSize(unsigned int size)
 {
 	// remove the oldest elements from the cache
 
-	map<string,CacheItem>::iterator oldest,itr;
+	ImageCacheMap::iterator oldest,itr;
 	
 	pthread_mutex_lock (&m_MutexImageCache);
 	
@@ -108,7 +112,7 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 	// if item is already here, just update the time of it
 	pthread_mutex_lock (&m_MutexImageCache);
 
-	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
 
 	if (m_mapImageCache.end() != itr)
 	{
@@ -138,7 +142,7 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 	if (m_mapImageCache.size() >= m_iCacheSize)
 	{
 		//remove the oldest item
-		map<string,CacheItem>::iterator oldest;
+		ImageCacheMap::iterator oldest;
 		
 		for (itr = oldest = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
 		{
@@ -148,28 +152,6 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 			}
 		}
 		
-		// remove oldest (making sure to free the reference from the pixbuf)
-		//cout << "unreffing " << oldest->first << endl;
-
-		//printf("cached pixbuf: 0x%08x\n",oldest->second.pPixbuf);
-		if  (1 < G_OBJECT(oldest->second.pPixbuf)->ref_count)
-		{
-
-			/*
-			 *  FIXME! THIS IS A HACK
-			// we should really find the real location where it is not releasing the reference
-			cout << "ERROR: MEMORY LEAK ON (" << G_OBJECT(oldest->second.pPixbuf)->ref_count << "): " << oldest->first << endl;
-
-			while (1 < G_OBJECT(oldest->second.pPixbuf)->ref_count)
-			{
-				g_object_unref(oldest->second.pPixbuf);
-			}
-			*/
-				
-		}
-		
-		//printf("0x%08x ImageCache::AddPixbuf oldest %d\n",oldest->second.pPixbuf,G_OBJECT(oldest->second.pPixbuf)->ref_count);
-		//cout << "trying to unref oldest: " << oldest->first << endl;
 		g_object_unref(oldest->second.pPixbuf);
 		//cout << "unreffed " << oldest->first << endl;
 		
@@ -187,7 +169,7 @@ bool ImageCache::InCache(std::string filename)
 	bool rval;
 	pthread_mutex_lock (&m_MutexImageCache);
 	
-	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
 	rval = (m_mapImageCache.end() != itr);
 	pthread_mutex_unlock (&m_MutexImageCache);
 	
@@ -201,21 +183,32 @@ GdkPixbuf* ImageCache::GetPixbuf(string filename)
 
 	pthread_mutex_lock (&m_MutexImageCache);
 	
-	map<string,CacheItem>::iterator itr = m_mapImageCache.find(filename);
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
 	if (m_mapImageCache.end() != itr)
 	{
-		// FIXME:
-		// we shouldnt set the time unless we're getting the image for
-		// display in the viewer
 		itr->second.time = CurrentTimeInMilliseconds();
 		pixbuf = itr->second.pPixbuf;
 		
-		// FIXME: - WE SHOULD ADD A REF
 		g_object_ref(pixbuf);
 	}
 	pthread_mutex_unlock (&m_MutexImageCache);
 
 	return pixbuf;
+}
+
+void ImageCache::Clear()
+{
+	pthread_mutex_lock (&m_MutexImageCache);
+
+	ImageCacheMap::iterator itr;
+	for (itr = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
+	{
+		g_object_unref(itr->second.pPixbuf);
+	}
+	
+	m_mapImageCache.clear();
+	
+	pthread_mutex_unlock (&m_MutexImageCache);
 }
 
 

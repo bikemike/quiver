@@ -16,6 +16,9 @@
 #include "Preferences.h"
 
 #include "QuiverStockIcons.h"
+#include "QuiverFileOps.h"
+
+#include "IImageListEventHandler.h"
 
 #define QUIVER_PREFS_APP                       "application"
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
@@ -70,11 +73,11 @@ static char *ui_viewer =
 "	<menubar name='MenubarMain'>"
 "		<menu action='MenuEdit'>"
 "			<placeholder name='CopyPaste'>"
-"				<menuitem action='Cut'/>"
-"				<menuitem action='Copy'/>"
+"				<menuitem action='ViewerCut'/>"
+"				<menuitem action='ViewerCopy'/>"
 "			</placeholder>"
-"			<placeholder name='CopyPaste'>"
-"				<menuitem action='ImageTrash'/>"
+"			<placeholder name='Trash'>"
+"				<menuitem action='ViewerTrash'/>"
 "			</placeholder>"
 "		</menu>"
 "		<menu action='MenuView'>"
@@ -130,7 +133,16 @@ static char *ui_viewer =
 "			<toolitem action='RotateCCW'/>"
 "			<toolitem action='RotateCW'/>"
 "		</placeholder>"
+"		<placeholder name='Trash'>"
+"			<toolitem action='ViewerTrash'/>"
+"		</placeholder>"
 "	</toolbar>"
+"	<accelerator action='RotateCW_2'/>"
+"	<accelerator action='RotateCCW_2'/>"
+"	<accelerator action='FlipH_2'/>"
+"	<accelerator action='FlipV_2'/>"
+"	<accelerator action='ImagePrevious_2'/>"
+"	<accelerator action='ImageNext_2'/>"
 "</ui>";
 
 static  GtkToggleActionEntry action_entries_toggle[] = {
@@ -140,13 +152,14 @@ static  GtkToggleActionEntry action_entries_toggle[] = {
 static GtkActionEntry action_entries[] = {
 	
 /*	{ "MenuFile", NULL, N_("_File") }, */
-	{ "ViewerStuff", GTK_STOCK_DIRECTORY, "viewer stuff", "", "view images", G_CALLBACK(viewer_action_handler_cb)},
-	{ "Cut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(viewer_action_handler_cb)},
-	{ "Copy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
-	{ "ImageTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ViewerCut", GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ViewerCopy", GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ViewerTrash", GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
 	
 	{ "ImagePrevious", GTK_STOCK_GO_BACK, "_Previous Image", "BackSpace", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImagePrevious_2", GTK_STOCK_GO_BACK, "_Previous Image", "<Shift>space", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ImageNext", GTK_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
+	{ "ImageNext_2", GTK_STOCK_GO_FORWARD, "_Next Image", "<Shift>BackSpace", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ImageFirst", GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
 	{ "ImageLast", GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
 
@@ -157,11 +170,13 @@ static GtkActionEntry action_entries[] = {
 	{ "ZoomOut", GTK_STOCK_ZOOM_OUT,"Zoom _Out", "minus", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
 	
 	{ "RotateCW", QUIVER_STOCK_ROTATE_CW, "_Rotate Clockwise", "r", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
+	{ "RotateCW_2", QUIVER_STOCK_ROTATE_CW, "_Rotate Clockwise", "<Shift>l", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
 	{ "RotateCCW", QUIVER_STOCK_ROTATE_CCW, "Rotate _Counterclockwise", "l", "Rotate Counterclockwise", G_CALLBACK(viewer_action_handler_cb)},
+	{ "RotateCCW_2", QUIVER_STOCK_ROTATE_CCW, "Rotate _Counterclockwise", "<Shift>r", "Rotate Counterclockwise", G_CALLBACK(viewer_action_handler_cb)},
 	{ "FlipH", NULL, "Flip _Horizontally", "h", "Flip Horizontally", G_CALLBACK(viewer_action_handler_cb)},
+	{ "FlipH_2", NULL, "Flip _Horizontally", "<Shift>v", "Flip Horizontally", G_CALLBACK(viewer_action_handler_cb)},
 	{ "FlipV", NULL, "Flip _Vertically", "v", "Flip Vertically", G_CALLBACK(viewer_action_handler_cb)},
-	
-
+	{ "FlipV_2", NULL, "Flip _Vertically", "<Shift>h", "Flip Vertically", G_CALLBACK(viewer_action_handler_cb)},
 };
 
 
@@ -206,12 +221,16 @@ public:
 		BOTH,
 	}ScrollbarType;
 		
-
+// constructor 
 	ViewerImpl(Viewer *pViewer);
 
+// methods
+	void SetImageList(ImageList imgList);
 	void SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal = true );
+	int  GetCurrentOrientation();
+	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
 
-	// member variables
+// member variables
 
 	GtkWidget *m_pIconView;
 	GtkWidget *m_pImageView;
@@ -250,8 +269,34 @@ public:
 	guint m_iTimeoutSlideshowID;
 	int m_iSlideShowDuration;
 	bool m_bSlideShowLoop;
+
+/* nested classes */
+	//class ViewerEventHandler;
+	class ImageListEventHandler : public IImageListEventHandler
+	{
+	public:
+		ImageListEventHandler(Viewer::ViewerImpl *parent){this->parent = parent;};
+		virtual void HandleContentsChanged(ImageListEventPtr event);
+		virtual void HandleCurrentIndexChanged(ImageListEventPtr event) ;
+		virtual void HandleItemAdded(ImageListEventPtr event);
+		virtual void HandleItemRemoved(ImageListEventPtr event);
+		virtual void HandleItemChanged(ImageListEventPtr event);
+	private:
+		Viewer::ViewerImpl *parent;
+	};
 	
+	IImageListEventHandlerPtr m_ImageListEventHandlerPtr;
 };
+
+void Viewer::ViewerImpl::SetImageList(ImageList imgList)
+{
+	m_ImageList.RemoveEventHandler(m_ImageListEventHandlerPtr);
+	
+	m_ImageList = imgList;
+	
+	m_ImageList.AddEventHandler(m_ImageListEventHandlerPtr);
+	
+}
 
 void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal /* = true */)
 {
@@ -259,8 +304,9 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 
 	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
 	
-	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE)
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(m_pImageView))
 	{
+
 		width = m_pImageView->allocation.width;
 		height = m_pImageView->allocation.height;
 	}
@@ -285,7 +331,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		
 		m_ImageLoader.LoadImageAtSize(f,width,height);
 		
-		m_iCurrentOrientation = f.GetOrientation();
+		SetCurrentOrientation(f.GetOrientation(), false);
 
 		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
 		      m_ImageList.GetCurrentIndex() );	
@@ -317,6 +363,43 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 	}
 }
 
+int  Viewer::ViewerImpl::GetCurrentOrientation()
+{
+	QuiverFile f = m_ImageList.GetCurrent();
+	return m_iCurrentOrientation;
+}
+
+void Viewer::ViewerImpl::SetCurrentOrientation(int iOrientation, bool bUpdateExif /*= true*/)
+{
+	m_iCurrentOrientation = iOrientation;
+	
+	if (bUpdateExif)
+	{
+		QuiverFile f = m_ImageList.GetCurrent();
+		ExifData* pExifData = f.GetExifData();
+		
+		if (NULL != pExifData)
+		{
+			ExifEntry *pExifEntry;
+		
+			// If the entry doesn't exist, create it. /
+			pExifEntry = exif_content_get_entry (pExifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
+			if (!pExifEntry) 
+			{
+				pExifEntry = exif_entry_new ();
+				exif_content_add_entry (pExifData->ifd[EXIF_IFD_0], pExifEntry);
+				exif_entry_initialize (pExifEntry, EXIF_TAG_ORIENTATION);
+			}
+		
+			// Now set the value and save the data. /
+			exif_set_short (pExifEntry->data , exif_data_get_byte_order (pExifData), m_iCurrentOrientation);
+			
+			f.SetExifData(pExifData);
+			
+			exif_data_unref(pExifData);
+		}
+	}
+}
 
 static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 {
@@ -325,7 +408,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	
 	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView);
 	
-	//printf("Action: %s\n",gtk_action_get_name(action));
+	//printf("Viewer Action: %s\n",gtk_action_get_name(action));
 	
 	const gchar * szAction = gtk_action_get_name(action);
 	
@@ -357,35 +440,35 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 		quiver_image_view_set_magnification(imageview,
 			quiver_image_view_get_magnification(imageview)/2);
 	}
-	else if (0 == strcmp(szAction,"RotateCW"))
+	else if (0 == strcmp(szAction,"RotateCW") || 0 == strcmp(szAction,"RotateCW_2"))
 	{
 		quiver_image_view_rotate(imageview,TRUE);
-		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->m_iCurrentOrientation];
+		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->GetCurrentOrientation()] );
 	}
-	else if (0 == strcmp(szAction,"RotateCCW"))
+	else if (0 == strcmp(szAction,"RotateCCW") || 0 == strcmp(szAction,"RotateCCW_2"))
 	{
 		quiver_image_view_rotate(imageview,FALSE);
-		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->m_iCurrentOrientation];
+		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->GetCurrentOrientation()] );
 	}
-	else if (0 == strcmp(szAction,"FlipH"))
+	else if (0 == strcmp(szAction,"FlipH") || 0 == strcmp(szAction,"FlipH_2"))
 	{
 		quiver_image_view_flip(imageview,TRUE);
-		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_FLIP_H][pViewerImpl->m_iCurrentOrientation];
+		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_FLIP_H][pViewerImpl->GetCurrentOrientation()] );
 	}
-	else if (0 == strcmp(szAction,"FlipV"))
+	else if (0 == strcmp(szAction,"FlipV") || 0 == strcmp(szAction,"FlipV_2"))
 	{
 		quiver_image_view_flip(imageview,FALSE);
-		pViewerImpl->m_iCurrentOrientation = orientation_matrix[ORIENTATION_FLIP_V][pViewerImpl->m_iCurrentOrientation];
+		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_FLIP_V][pViewerImpl->GetCurrentOrientation()] );
 	}
 	else if (0 == strcmp(szAction, "ImageFirst"))
 	{
 		pViewerImpl->SetImageIndex(0,true,true);
 	}
-	else if (0 == strcmp(szAction, "ImagePrevious"))
+	else if (0 == strcmp(szAction, "ImagePrevious") || 0 == strcmp(szAction, "ImagePrevious_2"))
 	{
 		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false,true);
 	}
-	else if (0 == strcmp(szAction, "ImageNext"))
+	else if (0 == strcmp(szAction, "ImageNext") || 0 == strcmp(szAction, "ImageNext_2") )
 	{
 		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true,true);
 	}
@@ -406,6 +489,48 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 			gtk_widget_hide(pViewerImpl->m_pIconView);
 		}
 		prefsPtr->SetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW,gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
+	}
+	else if (0 == strcmp(szAction, "ViewerTrash"))
+	{
+		gint rval = GTK_RESPONSE_YES;
+
+		QuiverFile f = pViewerImpl->m_ImageList.GetCurrent();
+
+		if (0) // FIXME: add preference to display trash dialog
+		{
+	
+			GtkWidget* dialog = gtk_message_dialog_new (NULL,GTK_DIALOG_MODAL,
+									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected image to the trash?"));
+	
+			char *for_display = gnome_vfs_format_uri_for_display(f.GetURI());
+			gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
+			g_free(for_display);
+			
+			rval = gtk_dialog_run(GTK_DIALOG(dialog));
+	
+			gtk_widget_destroy(dialog);
+		}
+
+	
+		switch (rval)
+		{
+			case GTK_RESPONSE_YES:
+			{
+				// delete the items!
+				if (QuiverFileOps::MoveToTrash(f))
+				{
+					pViewerImpl->m_ImageList.Remove(pViewerImpl->m_ImageList.GetCurrentIndex());
+					pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex(),true,true);
+				}
+				break;
+			}
+			case GTK_RESPONSE_NO:
+				//fall through
+			default:
+				// do not delete
+				cout << "not trashing file : " << endl;//m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI() << endl;
+				break;
+		}
 	}
 }
 
@@ -446,11 +571,12 @@ static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer d
 
 static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
 {
+	//printf("#### got a reload message from the imageview\n");
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 	ImageLoader::LoadParams params = {0};
 
-	params.orientation = pViewerImpl->m_iCurrentOrientation;
+	params.orientation = pViewerImpl->GetCurrentOrientation();
 	params.reload = true;
 	params.fullsize = true;
 	params.no_thumb_preview = true;
@@ -542,7 +668,7 @@ gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventBut
 	return TRUE;	
 }
 
-Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer)
+Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : m_ImageListEventHandlerPtr( new ImageListEventHandler(this) )
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	
@@ -724,7 +850,7 @@ GtkWidget *Viewer::GetWidget()
 
 void Viewer::SetImageList(ImageList imgList)
 {
-	m_ViewerImplPtr->m_ImageList = imgList;
+	m_ViewerImplPtr->SetImageList(imgList);
 }
 
 void Viewer::Show()
@@ -749,6 +875,7 @@ void Viewer::Show()
 	}
 
 	gtk_widget_show(m_ViewerImplPtr->m_pHBox);
+
 	if (m_ViewerImplPtr->m_pUIManager && 0 == m_ViewerImplPtr->m_iMergedViewerUI)
 	{
 		m_ViewerImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_ViewerImplPtr->m_pUIManager,
@@ -806,7 +933,7 @@ GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get);
 
 int Viewer::GetCurrentOrientation()
 {
-	return m_ViewerImplPtr->m_iCurrentOrientation;	
+	return m_ViewerImplPtr->GetCurrentOrientation();	
 }
 
 
@@ -973,3 +1100,38 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 
 	
 }
+
+
+//=============================================================================
+// private viewer implementation nested classes:
+//=============================================================================
+void Viewer::ViewerImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
+{
+	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true,true);
+}
+void Viewer::ViewerImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
+{
+	parent->SetImageIndex(event->GetIndex(),true,true);
+}
+void Viewer::ViewerImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
+{
+	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true,true);
+}
+void Viewer::ViewerImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
+{
+	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true,true);
+}
+void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
+{
+	ImageLoader::LoadParams params = {0};
+
+	params.orientation = parent->GetCurrentOrientation();
+	params.reload = true;
+	params.fullsize = true;
+	params.no_thumb_preview = true;
+	params.state = ImageLoader::LOAD;
+
+	parent->m_ImageLoader.LoadImage(parent->m_ImageList.GetCurrent(),params);
+}
+
+

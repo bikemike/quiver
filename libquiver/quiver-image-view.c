@@ -1933,6 +1933,13 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 	
 	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
 	quiver_image_view_invalidate_image_area(imageview,NULL);
+
+	if (GTK_WIDGET_MAPPED (imageview))
+	{
+		// FIXME: should this really be here?
+		gdk_window_process_updates (GTK_WIDGET(imageview)->window, FALSE);
+	}
+
 	quiver_image_view_add_scale_hq_timeout(imageview);
 }
 
@@ -2414,16 +2421,7 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 {
 	GtkWidget *widget;
 	QuiverImageView *imageview;
-/*
-	GdkPixbufFormat *format;
-	gboolean resize;
-	gchar **mime_types;
-	gchar **mime_type;
-	
-	guint new_width,new_height;
 
-	resize = TRUE;
-*/
 	imageview = (QuiverImageView*)userdata;
 	
 	quiver_image_view_reset_view_mode(imageview,FALSE);
@@ -2436,46 +2434,6 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 	{
 		return;
 	}
-/*
-	format = gdk_pixbuf_loader_get_format(loader);
-	
-	mime_types = gdk_pixbuf_format_get_mime_types(format);
-	mime_type = mime_types;
-
-	while (NULL != *mime_type)
-	{
-		//printf("mime type: %s\n",*mime_type);
-		if (0 == strcmp(*mime_type,"image/gif"))
-		{
-			resize = FALSE;
-			break;
-		}
-		mime_type++;
-	}
-
-	g_strfreev(mime_types);
-*/
-
-/*
-	if (!resize)
-		return;
-	
-	switch (imageview->priv->view_mode)
-	{
-		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
-		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
-			new_width = width;
-			new_height = height;
-			quiver_image_view_get_bound_size(widget->allocation.width,widget->allocation.height,&new_width,&new_height,FALSE);
-			gdk_pixbuf_loader_set_size(loader,new_width,new_height);
-			break;
-		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
-		case QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE:
-		default:
-			break;
-	}
-*/
-	//printf("size prepared\n");
 }
 static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdata)
 {

@@ -7,6 +7,44 @@
 #include <libgnomevfs/gnome-vfs.h>
 #include <stdlib.h>
 
+// comment this define out if __gnu_cxx is not available
+#define USE_EXT
+
+#ifdef USE_EXT
+
+#include <ext/hash_map>
+#include <ext/hash_set>
+
+#ifndef QUIVER_STRING_HASH
+#define QUIVER_STRING_HASH
+
+namespace __gnu_cxx {
+	template<> struct hash<std::string>
+	{
+		size_t operator()(const std::string &s) const
+		{ return __stl_hash_string(s.c_str()); }
+	};
+}
+#endif
+
+typedef __gnu_cxx::hash_map<std::string,GnomeVFSMonitorHandle*> PathMonitorMap;
+typedef __gnu_cxx::hash_set<std::string> StringSet;
+typedef __gnu_cxx::hash_map<std::string,GnomeVFSMonitorEventType> PathChangedMap; 
+
+#else
+
+#include <map>
+#include <set>
+
+typedef std::map<std::string,GnomeVFSMonitorHandle*> PathMonitorMap;
+typedef std::set<std::string> StringSet;
+
+#endif
+
+typedef std::pair<std::string,GnomeVFSMonitorHandle*> PathMonitorPair;
+typedef std::pair<std::string,GnomeVFSMonitorEventType> PathChangedPair;
+
+
 
 #include <vector>
 
@@ -19,70 +57,89 @@ using namespace std;
 // ============================================================================
 
 typedef std::vector<QuiverFile> QuiverFileList;
-typedef std::vector<QuiverFile>::iterator QuiverFileListIter;
 
 class ImageListImpl
 {
 public:
-	/* constructor*/
-	ImageListImpl();
+/* constructor*/
+	ImageListImpl(ImageList *pImageList);
 	
-	/* destructor */
-	//~ImageListImpl();
+/* destructor */
+	~ImageListImpl();
 	
-	/* member functions */
+/* member functions */
 	
 	static void LoadMimeTypes();
 	
 	void Add(std::list<std::string> *file_list);
 	void SetImageList(std::list<std::string> *file_list);
 	
-	void AddDirectory(const gchar* uri);
-	void AddFile(const gchar*  uri);
-	void AddFile(const gchar* uri,GnomeVFSFileInfo *info);
+	bool AddDirectory(const gchar* uri);
+	bool AddFile(const gchar*  uri);
+	bool AddFile(const gchar* uri,GnomeVFSFileInfo *info);
+	
+	bool RemoveMonitor(string path);
+	void Reload();
+	void Clear();
+
+	bool RemoveFile(unsigned int iIndex);
 
 	void SetCurrentImage(std::string uri);
-	void Sort(ImageList::SortOrder o,bool descending);
-
-	/* member variables */
-	static ImageList::SortOrder c_SortOrder;
-	static std::set<std::string> c_setSupportedMimeTypes;
 	
-	QuiverFileList m_QuivFileList;
+	void Sort();
+	void Sort(bool bUpdateCurrentIndex);
+	void Sort(ImageList::SortBy o,bool descending, bool bUpdateCurrentIndex);
 
+	
+/* member variables */
+	
+	// pointer to the parent structure
+	ImageList *m_pImageList; 
+	
+	// mime types supported by the imagelist
+	static StringSet c_setSupportedMimeTypes;
+	
+	// the actual image list (but really a QuiverFile list)
+	QuiverFileList m_QuiverFileList;
+
+	// file monitors
+	PathMonitorMap m_mapDirs;
+	PathMonitorMap m_mapFiles;
+	
+	PathChangedMap m_mapPathChanged;
+	
+	guint m_iTimeoutPathChanged;
+	
+	
+	
+	
+	
 	unsigned int m_iCurrentIndex;
 
-	static bool QuiverFileCompare(const QuiverFile & left , const QuiverFile & right);
+	ImageList::SortBy m_SortBy;
+	bool m_bSortAscend;
+
 };
 
+// sort functions
+class SortByFilename;
+class SortByFileExtension;
+class SortByDate;
 
-ImageList::SortOrder ImageListImpl::c_SortOrder;
-set<string> ImageListImpl::c_setSupportedMimeTypes;
+
+StringSet ImageListImpl::c_setSupportedMimeTypes;
 
 // ============================================================================
 
 
-ImageList::ImageList() : m_ImageListImplPtr( new ImageListImpl() )
+ImageList::ImageList() : m_ImageListImplPtr( new ImageListImpl(this) )
 {
 }
-
-
-/*
-
-ImageList::ImageList(std::string filepath)
-{
-	LoadMimeTypes();
-	c_SortOrder = SORT_FILENAME;
-	list<string> file_list;
-	file_list.push_back(filepath);
-	SetImageList(&file_list);
-}
-*/
 
 unsigned int
 ImageList::GetSize()  const
 {
-	return m_ImageListImplPtr->m_QuivFileList.size();
+	return m_ImageListImplPtr->m_QuiverFileList.size();
 }
 
 unsigned int
@@ -95,9 +152,13 @@ bool
 ImageList::SetCurrentIndex(unsigned int new_index)
 {
 	bool rval = false;
-	if ( new_index  < GetSize() )
+	if ( new_index  < GetSize())
 	{
-		m_ImageListImplPtr->m_iCurrentIndex = new_index;
+		if ( new_index != m_ImageListImplPtr->m_iCurrentIndex)
+		{
+			m_ImageListImplPtr->m_iCurrentIndex = new_index;
+			EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex);
+		}
 		rval = true;
 	}
 	return rval;
@@ -107,28 +168,13 @@ ImageList::SetCurrentIndex(unsigned int new_index)
 void 
 ImageList::Remove(unsigned int iIndex)
 {
-	QuiverFileList *list = &m_ImageListImplPtr->m_QuivFileList;
-	QuiverFileListIter itr = list->begin();
-	
-	if (iIndex < GetSize())
-	{
-		itr += iIndex;
-		
-		if (list->end() != itr)
-		{
-			list->erase(itr);
-		}
+	unsigned int iOldIndex = GetCurrentIndex();	
 
-		if (m_ImageListImplPtr->m_iCurrentIndex > iIndex)
-		{
-			m_ImageListImplPtr->m_iCurrentIndex--;
-		}
-		else if (m_ImageListImplPtr->m_iCurrentIndex == iIndex)
-		{
-			m_ImageListImplPtr->m_iCurrentIndex =
-				MIN(GetCurrentIndex(),GetSize()-1);
-		}
-		
+	m_ImageListImplPtr->RemoveFile(iIndex);
+
+	if (iOldIndex != GetCurrentIndex())
+	{
+		EmitCurrentIndexChangedEvent(GetCurrentIndex());
 	}
 }
 
@@ -150,35 +196,35 @@ QuiverFile
 ImageList::GetNext() const
 {
 	assert( HasNext() );
-	return m_ImageListImplPtr->m_QuivFileList[GetCurrentIndex()+1];
+	return m_ImageListImplPtr->m_QuiverFileList[GetCurrentIndex()+1];
 }
 
 QuiverFile
 ImageList::GetCurrent() const
 {
 	assert ( GetSize() );
-	return m_ImageListImplPtr->m_QuivFileList[GetCurrentIndex()];
+	return m_ImageListImplPtr->m_QuiverFileList[GetCurrentIndex()];
 }
 
 QuiverFile
 ImageList::GetPrevious() const
 {
 	assert( HasPrevious() );
-	return m_ImageListImplPtr->m_QuivFileList[GetCurrentIndex()-1];
+	return m_ImageListImplPtr->m_QuiverFileList[GetCurrentIndex()-1];
 }
 
 QuiverFile
 ImageList::GetFirst() const
 {
 	assert (0 <GetSize() );
-	return m_ImageListImplPtr->m_QuivFileList[0];	
+	return m_ImageListImplPtr->m_QuiverFileList[0];	
 }
 
 QuiverFile
 ImageList::GetLast() const
 {
 	assert (0 <GetSize() );
-	return m_ImageListImplPtr->m_QuivFileList[GetSize()-1];	
+	return m_ImageListImplPtr->m_QuiverFileList[GetSize()-1];	
 }
 
 bool
@@ -186,7 +232,9 @@ ImageList::Next()
 {
 	bool rval = HasNext();
 	if (rval)
-		m_ImageListImplPtr->m_iCurrentIndex++;
+	{
+		rval = SetCurrentIndex(GetCurrentIndex()+1);
+	}
 	return rval;
 }
 
@@ -195,14 +243,16 @@ ImageList::Previous()
 {
 	bool rval = HasPrevious();
 	if (rval)
-		m_ImageListImplPtr->m_iCurrentIndex--;
+	{
+		rval = SetCurrentIndex(GetCurrentIndex()-1);
+	}
 	return rval;
 }
 
 bool
 ImageList::First() 
 {
-	m_ImageListImplPtr->m_iCurrentIndex = 0;
+	SetCurrentIndex(0);
 
 	return (0 < GetSize());
 }
@@ -211,9 +261,9 @@ bool
 ImageList::Last() 
 {
 	if (0 < GetSize())
-		m_ImageListImplPtr->m_iCurrentIndex = GetSize()-1;
-	else
-		m_ImageListImplPtr->m_iCurrentIndex = 0;
+	{
+		SetCurrentIndex(GetSize()-1);
+	}
 	
 	return (0 < GetSize());
 }
@@ -222,51 +272,295 @@ QuiverFile
 ImageList::Get(unsigned int n) const
 {
 	assert ( n < GetSize() );
-	return m_ImageListImplPtr->m_QuivFileList[n];
+	return m_ImageListImplPtr->m_QuiverFileList[n];
 }
 
 QuiverFile 
 ImageList::operator[](unsigned int n)
 {
 	assert ( n < GetSize() );
-	return m_ImageListImplPtr->m_QuivFileList[n];
+	return m_ImageListImplPtr->m_QuiverFileList[n];
 }
 
 QuiverFile const 
 ImageList::operator[](unsigned int n) const
 {
 	assert ( n < GetSize() );
-	return m_ImageListImplPtr->m_QuivFileList[n];
+	return m_ImageListImplPtr->m_QuiverFileList[n];
 }
 
 void ImageList::Add(std::list<std::string> *file_list)
 {
+	int iOldSize, iNewSize;
+	
+	iOldSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
+	
 	m_ImageListImplPtr->Add(file_list);
+	
+	iNewSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
+	
+	if (iOldSize != iNewSize)
+	{ 
+		EmitContentsChangedEvent();
+	}
 }
 
 
 void ImageList::SetImageList(list<string> *file_list)
 {
+	int iOldSize, iNewSize;
+	
+	iOldSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
+	
 	m_ImageListImplPtr->SetImageList(file_list);
+	
+	iNewSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
+	
+	if (!(0 == iOldSize && 0 == iNewSize))
+	{ 
+		EmitContentsChangedEvent();
+	}	
 }
 
 
-void ImageList::Sort(SortOrder o,bool descending)
+void ImageList::Sort(SortBy o, bool descending)
 {
-	m_ImageListImplPtr->Sort(o,descending);
+	unsigned int iOldIndex = GetCurrentIndex();	
+
+	m_ImageListImplPtr->Sort(o,descending, true);
+
+	if (iOldIndex != GetCurrentIndex())
+	{
+		EmitCurrentIndexChangedEvent(GetCurrentIndex());
+	}
+
 }
 
+void ImageList::Reload()
+{
+	unsigned int iOldIndex = GetCurrentIndex();
 
+	m_ImageListImplPtr->Reload();	
+
+	if (iOldIndex != GetCurrentIndex())
+	{
+		EmitCurrentIndexChangedEvent(GetCurrentIndex());
+		//printf("%d: %s\n",GetCurrentIndex(),strURI.c_str());
+	}
+
+}
+
+void ImageList::Clear()
+{
+	bool bWasEmpty, bIsEmpty;
+	bWasEmpty = (0 == m_ImageListImplPtr->m_mapDirs.size() && 0 == m_ImageListImplPtr->m_mapFiles.size());
+	
+	m_ImageListImplPtr->Clear();
+	
+	bIsEmpty = (0 == m_ImageListImplPtr->m_mapDirs.size() && 0 == m_ImageListImplPtr->m_mapFiles.size());
+	
+	if (bWasEmpty && !bIsEmpty || !bWasEmpty && bIsEmpty)
+	{ 
+		EmitContentsChangedEvent();
+	}
+}
 
 //=============================================================================
 // ImageListImpl: private implementation 
 //=============================================================================
 
-ImageListImpl::ImageListImpl()
+static gboolean timeout_path_changed(gpointer user_data)
 {
+	// FIXME: go through this list of 
+	// changes and sort them out.
+	
+	ImageListImpl *impl = (ImageListImpl*)user_data;
+	gdk_threads_enter();
+	
+	PathChangedMap::iterator itr;
+	
+	printf("==================\n");
+	for (itr = impl->m_mapPathChanged.begin(); impl->m_mapPathChanged.end() != itr; ++itr)
+	{
+		printf("TIMEOUT: [%d] %s\n",itr->second, itr->first.c_str());
+	}
+	printf("==================\n\n");
+	
+	
+	bool bFewItems = (impl->m_mapPathChanged.size() <= 2);
+	
+	for (itr = impl->m_mapPathChanged.begin(); impl->m_mapPathChanged.end() != itr; ++itr)
+	{
+		GnomeVFSMonitorEventType event_type = itr->second;
+		
+		switch (event_type)
+		{
+			case GNOME_VFS_MONITOR_EVENT_DELETED:
+				if (impl->RemoveMonitor(itr->first))
+				{
+					unsigned int iOldSize = impl->m_QuiverFileList.size();
+
+					if (iOldSize != impl->m_QuiverFileList.size())
+					{
+						// FIXME: if this is just a file, we should 
+						// emit an item removed event rather than
+						// a contents changed event
+						if (bFewItems)
+						{
+							impl->m_pImageList->EmitContentsChangedEvent();
+						}
+					}
+				}
+				else
+				{
+					QuiverFileList::iterator qitr;
+					QuiverFile f(itr->first.c_str());
+					qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
+					int iIndex = qitr - impl->m_QuiverFileList.begin();
+					if (impl->RemoveFile(iIndex))
+					{
+						if (bFewItems)
+						{
+							impl->m_pImageList->EmitItemRemovedEvent(iIndex);
+						}
+					}
+				}
+				break;
+			case GNOME_VFS_MONITOR_EVENT_STARTEXECUTING:
+				break;
+			case GNOME_VFS_MONITOR_EVENT_STOPEXECUTING:
+				break;
+			case GNOME_VFS_MONITOR_EVENT_CREATED:
+			case GNOME_VFS_MONITOR_EVENT_CHANGED:
+			case GNOME_VFS_MONITOR_EVENT_METADATA_CHANGED:
+				/*
+				// FIXME: this if should never happen, but should test just in case
+				// for now, it is commented out until it has been tested
+				if (gnome_vfs_uris_match (monitor_uri,info_uri))
+				{
+					list<string> l;
+					l.push_back(monitor_uri);
+					impl->Add(&l);
+				}
+				else
+				*/
+				
+				// basically we have to deal with all these events in the same way,
+				// if the item is not in the list, add it, and reload it.
+				
+				
+				{
+					QuiverFileList::iterator qitr;
+					QuiverFile f(itr->first.c_str());
+					qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
+					if (impl->m_QuiverFileList.end() == qitr)
+					{
+						//printf("adding file %s\n",itr->first.c_str());
+						// file did not exist in list so emit an add event
+						if (impl->AddFile(itr->first.c_str()))
+						{
+							impl->Sort(true);
+							 
+							QuiverFile f(itr->first.c_str());
+		 			
+							QuiverFileList::iterator qitr;
+							qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
+							if (impl->m_QuiverFileList.end() != qitr)
+							{
+								if (bFewItems)
+								{
+									impl->m_pImageList->EmitItemAddedEvent(qitr - impl->m_QuiverFileList.begin());
+								}
+							}
+						}
+					}
+					else
+					{
+						// file was already in the list, so emit a changed event
+						//printf("change file %s\n",itr->first.c_str());
+						qitr->Reload();
+						if (bFewItems)
+						{
+							impl->m_pImageList->EmitItemChangedEvent(qitr - impl->m_QuiverFileList.begin());
+						}
+					}
+					
+				}
+				break;
+			default:
+				break;
+		}
+	}
+	
+	if (!bFewItems)
+	{
+		impl->m_pImageList->EmitContentsChangedEvent();
+	}
+	
+	impl->m_mapPathChanged.clear();
+	
+	gdk_threads_leave();
+	return FALSE;
+}
+
+static
+void vfs_monitor_callback (GnomeVFSMonitorHandle *handle,
+				const gchar *monitor_uri,
+				const gchar *info_uri,
+				GnomeVFSMonitorEventType event_type,
+				gpointer user_data);
+
+static
+void        vfs_monitor_callback      (GnomeVFSMonitorHandle *handle,
+                                             const gchar *monitor_uri,
+                                             const gchar *info_uri,
+                                             GnomeVFSMonitorEventType event_type,
+                                             gpointer user_data)
+{
+	ImageListImpl *impl = (ImageListImpl*)user_data;
+
+	gdk_threads_enter();
+	
+	//printf("%s monitor: %s - ",monitor_uri,info_uri);
+	switch (event_type)
+	{
+		case GNOME_VFS_MONITOR_EVENT_DELETED:
+		case GNOME_VFS_MONITOR_EVENT_CREATED:
+		case GNOME_VFS_MONITOR_EVENT_CHANGED:
+		case GNOME_VFS_MONITOR_EVENT_METADATA_CHANGED:
+			if (0 != impl->m_iTimeoutPathChanged)
+			{
+				g_source_remove(impl->m_iTimeoutPathChanged);
+			}
+
+			impl->m_mapPathChanged[info_uri] = event_type;
+
+			impl->m_iTimeoutPathChanged = g_timeout_add(50, timeout_path_changed,impl);
+
+			break;
+		default:
+			break;
+	}
+
+	gdk_threads_leave();
+	printf("\n");
+}
+											 
+
+
+ImageListImpl::ImageListImpl(ImageList *pImageList)
+{
+	m_pImageList = pImageList;
+	
 	LoadMimeTypes();
-	c_SortOrder = ImageList::SORT_FILENAME;
+	m_SortBy = ImageList::SORT_BY_FILENAME;
+	m_bSortAscend = true;
 	m_iCurrentIndex = 0;
+}
+
+ImageListImpl::~ImageListImpl()
+{
+	Clear();
 }
 
 
@@ -278,7 +572,7 @@ void ImageListImpl::LoadMimeTypes()
 		GSList *formats = gdk_pixbuf_get_formats ();
 		//GSList *writable_formats = NULL;
 		GdkPixbufFormat * fmt;
-		while (NULL != (formats ) )
+		while ( NULL != formats )
 		{
 			fmt = (GdkPixbufFormat*)formats->data;
 			//cout << gdk_pixbuf_format_get_name(fmt) <<": " << endl;
@@ -313,161 +607,77 @@ void ImageListImpl::SetCurrentImage(string uri)
 {
 	if (!uri.empty())
 	{
-		QuiverFileListIter itr;
-		int i = 0;
-		for (itr = m_QuivFileList.begin();itr != m_QuivFileList.end(); ++itr,i++)
+		QuiverFileList::iterator itr;
+		
+		QuiverFile f(uri.c_str());
+		
+		itr = std::find(m_QuiverFileList.begin(),m_QuiverFileList.end(),f);
+		if (m_QuiverFileList.end() != itr)
 		{
-			if (itr->GetURI() == uri)
-			{
-				m_iCurrentIndex = i;
-
-				break;
-			}
+			m_iCurrentIndex = itr -m_QuiverFileList.begin() ;			
 		}
 	}
 }
+
+static 
+string PathToURI(const string &path)
+{
+	string strURI = path;
+	if ('~' == path[0])
+	{
+		char *expanded = gnome_vfs_expand_initial_tilde(strURI.c_str());
+		strURI = expanded;
+		g_free(expanded);
+	}
+	gchar* uri_tmp = gnome_vfs_make_uri_from_shell_arg (strURI.c_str());
+	gchar *uri = gnome_vfs_make_uri_canonical(uri_tmp);
+	
+	strURI = uri;
+	g_free(uri);
+	g_free(uri_tmp);
+
+	return strURI;
+}
+
 
 void ImageListImpl::Add(std::list<std::string> *file_list)
 {
 	if (0 == file_list->size())
 	{
-		if (0 == m_QuivFileList.size())
-			SetCurrentImage("");
 		return;
 	}
 	
-	string current;
-	if (0 < m_QuivFileList.size())
-	{
-		current = m_QuivFileList[m_iCurrentIndex].GetURI();
-	}
+	bool bNewList = true;
 	
-	if (1 == file_list->size())
+	string strCurrentURI;
+	if (0 < m_QuiverFileList.size())
 	{
-		m_iCurrentIndex = 0;
-
-		gchar* uri = gnome_vfs_make_uri_from_shell_arg (file_list->front().c_str());
-		
-		//cout << "is this valid: " << uri << endl;
-		
-		GnomeVFSURI * vfs_uri = gnome_vfs_uri_new (uri);
-		GnomeVFSFileInfo *info;
-		GnomeVFSResult result;
-		if (vfs_uri == NULL) 
-		{
-			printf ("%s is not a valid URI.\n", uri);
-		}
-		else
-		{
-			gnome_vfs_uri_unref(vfs_uri);
-			info = gnome_vfs_file_info_new ();
-			result = gnome_vfs_get_file_info (uri,info,(GnomeVFSFileInfoOptions)
-											  (GNOME_VFS_FILE_INFO_DEFAULT|
-											  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
-											  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-											  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
-											  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
-											  );
-			if ( GNOME_VFS_OK == result )
-			{
-				if (GNOME_VFS_FILE_INFO_FIELDS_TYPE  & info->valid_fields)
-				{
-					if (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
-					{
-						//cout << "adding dir" << endl;
-						AddDirectory(uri);
-						std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
-						//m_QuivFileList.sort(QuiverFileCompare);
-						SetCurrentImage("");
-						//directory
-					}
-					else if (info->type == GNOME_VFS_FILE_TYPE_REGULAR)
-					{ // regular file
-						//cout << "adding file" << endl;
-						if (GNOME_VFS_FILE_INFO_FIELDS_SYMLINK_NAME & info->valid_fields)
-						{
-							//print the symlink
-							g_free(uri);
-							uri = gnome_vfs_make_uri_from_shell_arg(info->symlink_name);
-						}
-						// get parent directory, then set the current image to uri
-
-						vfs_uri = gnome_vfs_uri_new (uri);
-						if (NULL != vfs_uri)
-						{
-							if ( gnome_vfs_uri_has_parent(vfs_uri) )
-							{
-								GnomeVFSURI *parent = gnome_vfs_uri_get_parent(vfs_uri);
-								gchar *parent_str = gnome_vfs_uri_to_string (parent,GNOME_VFS_URI_HIDE_NONE);
-								gnome_vfs_uri_unref(parent);
-
-								GnomeVFSFileInfo *dir_info = gnome_vfs_file_info_new ();
-								result = gnome_vfs_get_file_info (parent_str,dir_info,(GnomeVFSFileInfoOptions)GNOME_VFS_FILE_INFO_DEFAULT);
-								if (GNOME_VFS_OK == result && dir_info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
-								{
-									//cout << "adding parent dir" << endl;
-									// we can open the dir
-									AddDirectory(parent_str);
-									std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
-									//m_QuivFileList.sort(QuiverFileCompare);
-									SetCurrentImage(uri);
-									//gnome_vfs_directory_close (dir_handle);
-								}
-								else
-								{
-									//cout << "not adding parent dir" << endl;
-									//printf("dir info type: %d, %s\n",info->type, parent_str);
-
-									// if we can't open the dir, just add the file
-									// (ie, if it is http)
-									AddFile(uri);
-									SetCurrentImage("");
-								}
-								
-								//cout << "freeing parent" << endl;
-								g_free (parent_str);
-								gnome_vfs_file_info_unref (dir_info);
-								//cout << "freed parent" << endl;
-							}
-							else
-							{
-								// just add the file
-								AddFile(uri);
-								SetCurrentImage("");
-							}
-							
-							gnome_vfs_uri_unref(vfs_uri);
-						}
-							
-					} // end not a directory
-					else
-					{
-						//cout <<" who knows!" << endl;
-					}
-					
-				}
-				gnome_vfs_file_info_unref (info);
-			}
-			else
-			{
-				cout << "ERROR: could not get file info for " << uri << endl;
-			}
-			/*
-			AddFile(uri);
-			*/
-			//cout << " adding " << uri << endl;
-		}
-		g_free(uri);
+		strCurrentURI = m_QuiverFileList[m_iCurrentIndex].GetURI();
+		bNewList = false;
 	}
 	else
 	{
-		list<string>::iterator itr;
-		for (itr = file_list->begin(); file_list->end() != itr ; ++itr)
+		m_iCurrentIndex = 0;
+	}
+	
+	list<string>::iterator list_itr;
+	for (list_itr = file_list->begin(); file_list->end() != list_itr ; ++list_itr)
+	{
+		bool bAdded = false;
+		string strURI = PathToURI(*list_itr);
+		
+		GnomeVFSURI * vfs_uri = gnome_vfs_uri_new (strURI.c_str());
+		GnomeVFSFileInfo *info;
+		GnomeVFSResult result;
+		
+		if (vfs_uri == NULL) 
 		{
-			GnomeVFSResult result;
-			gchar* uri = gnome_vfs_make_uri_from_shell_arg (itr->c_str());
-			GnomeVFSFileInfo * info = gnome_vfs_file_info_new ();
-			result = gnome_vfs_get_file_info (uri,info,(GnomeVFSFileInfoOptions)
+			printf ("%s is not a valid URI.\n", strURI.c_str());
+		}
+		else
+		{
+			info = gnome_vfs_file_info_new ();
+			result = gnome_vfs_get_file_info (strURI.c_str(),info,(GnomeVFSFileInfoOptions)
 											  (GNOME_VFS_FILE_INFO_DEFAULT|
 											  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
 											  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
@@ -480,93 +690,207 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 				{
 					if (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
 					{
-						AddDirectory(uri);
-						//directory
+						AddDirectory(strURI.c_str());
 					}
 					else if (info->type == GNOME_VFS_FILE_TYPE_REGULAR)
 					{
-						AddFile(uri,info);
+						if (bNewList && 1 == file_list->size())
+						{
+							// special case to load the whole directory if only
+							// one file is specified
+							if (GNOME_VFS_FILE_INFO_FIELDS_SYMLINK_NAME & info->valid_fields)
+							{
+								//print the symlink
+								strURI = PathToURI(info->symlink_name);
+							}
+	
+							// get parent directory, then set the current image to uri
+							vfs_uri = gnome_vfs_uri_new (strURI.c_str());
+							if (NULL != vfs_uri)
+							{
+								if ( gnome_vfs_uri_has_parent(vfs_uri) )
+								{
+									GnomeVFSURI *parent = gnome_vfs_uri_get_parent(vfs_uri);
+									gchar *parent_str = gnome_vfs_uri_to_string (parent,GNOME_VFS_URI_HIDE_NONE);
+									gnome_vfs_uri_unref(parent);
+	
+									GnomeVFSFileInfo *dir_info = gnome_vfs_file_info_new ();
+									result = gnome_vfs_get_file_info (parent_str,dir_info,(GnomeVFSFileInfoOptions)GNOME_VFS_FILE_INFO_DEFAULT);
+									if (GNOME_VFS_OK == result && dir_info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
+									{
+										AddDirectory(parent_str);
+										strCurrentURI = strURI;
+										bAdded = true;
+									}
+									g_free (parent_str);
+									gnome_vfs_file_info_unref (dir_info);
+									//cout << "freed parent" << endl;
+								}
+
+							}
+								
+						}
+						
+						if (!bAdded)
+						{
+							// regular file
+							// check if directory is already in the list,
+							// if so, don't add the file
+							gchar *dir_uri = gnome_vfs_uri_extract_dirname(vfs_uri);
+							gchar *dir = gnome_vfs_make_uri_canonical(dir_uri);
+							
+							PathMonitorMap::iterator itr;
+							itr = m_mapDirs.find(dir);
+							if (m_mapDirs.end() != itr)
+							{
+								//printf("dir already exists: %s\n",dir);
+							}
+							else
+							{
+								pair<PathMonitorMap::iterator,bool> p;
+								p.second = false;
+								p = m_mapFiles.insert(PathMonitorPair(strURI.c_str(),NULL)); 
+								bAdded = p.second;
+								if (bAdded)
+								{
+									gnome_vfs_monitor_add(&p.first->second,strURI.c_str(),GNOME_VFS_MONITOR_FILE,vfs_monitor_callback,this);
+									// add a monitor
+								}
+								AddFile(strURI.c_str(),info);
+							}
+							
+							g_free(dir_uri);
+							g_free(dir);
+						}
 					}
 				}
+				gnome_vfs_uri_unref(vfs_uri);
+			}
+			else
+			{
+				printf ("%s is not a valid URI.\n", strURI.c_str());
 			}
 			gnome_vfs_file_info_unref(info);
-			g_free(uri);
 		}
-		//m_QuivFileList.sort(QuiverFileCompare);
-		std::sort(m_QuivFileList.begin(), m_QuivFileList.end(), QuiverFileCompare);
-		SetCurrentImage("");
 	}
-	if (!current.empty())
+
+	if (!strCurrentURI.empty())
 	{
-		SetCurrentImage(current);
+		printf("setting current image: %s\n",strCurrentURI.c_str());
+		SetCurrentImage(strCurrentURI);
 	}
+	
+	// sort - update the current index if the 
+	// string is not empty
+	Sort(!strCurrentURI.empty());
+
 }
 
 void ImageListImpl::SetImageList(list<string> *file_list)
 {
+
+	
 	//printf("Setting the image list\n");
 	if (0 == file_list->size())
 	{
-		if (0 == m_QuivFileList.size())
-			SetCurrentImage("");
 		return;
 	}
 	
-	m_QuivFileList.clear();
+	Clear();
+	
 	Add(file_list);
+
 	//printf("done setting the image list\n");
 }
 
 
-void ImageListImpl::AddDirectory(const gchar* uri)
+bool ImageListImpl::AddDirectory(const gchar* uri)
 {
-	GnomeVFSResult result;
-	GnomeVFSDirectoryHandle *dir_handle;
+	bool bAdded = false;
+	pair<PathMonitorMap::iterator,bool> p;
+	p.second = false;
+	p = m_mapDirs.insert(PathMonitorPair(uri,NULL));
+	bAdded = p.second;
 
-
-	result = gnome_vfs_directory_open (&dir_handle,uri,(GnomeVFSFileInfoOptions)
-							  (GNOME_VFS_FILE_INFO_DEFAULT|
-							  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
-							  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-							  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
-							  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS
-							  ));
-	//printf("opened dir: %d: %s\n",result,gnome_vfs_result_to_string (result));
-	if ( GNOME_VFS_OK == result )
+	if (bAdded)
 	{
-		GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(uri);
-
-		while ( GNOME_VFS_OK == result )
+		// add directory monitor
+		gnome_vfs_monitor_add(&p.first->second,uri,GNOME_VFS_MONITOR_DIRECTORY,vfs_monitor_callback,this);
+		
+		// remove any file monitor entries that are in this directory
+		PathMonitorMap::iterator itr;
+		itr = m_mapFiles.begin();
+		while (m_mapFiles.end() != itr)
 		{
-			GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();;
-			result = gnome_vfs_directory_read_next(dir_handle,info);
-			
-			if (GNOME_VFS_OK == result )
+			gchar * dirname = g_path_get_dirname(itr->first.c_str());
+			if (gnome_vfs_uris_match (uri,dirname))
 			{
-				GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,info->name);
-				gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
-				
-				//printf("uri: %s\n",str_uri_file);
-				gnome_vfs_uri_unref(vfs_uri_file);
-
-				// FIXME:  what should the info be?
-				// 
-				AddFile(str_uri_file,info);
-				//cout << "freeing uri file " << endl;
-				free (str_uri_file);
-				//cout << "freed uri file " << endl;
+				//printf("removing path: %s\n",itr->first.c_str());
+				QuiverFile qfile(itr->first.c_str());
+				QuiverFileList::iterator qitr = m_QuiverFileList.end();
+				qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
+				m_QuiverFileList.erase(qitr);
+				gnome_vfs_monitor_cancel(itr->second);
+				m_mapFiles.erase(itr++);
 			}
-			gnome_vfs_file_info_unref (info);
+			else
+			{
+				++itr;
+			}
+			g_free(dirname);
 		}
-		gnome_vfs_uri_unref(vfs_uri_dir);
-		gnome_vfs_directory_close (dir_handle);
+
+		// 
+		// now add the directory items to the file list
+		//
+		GnomeVFSResult result;
+		GnomeVFSDirectoryHandle *dir_handle;
+	
+		result = gnome_vfs_directory_open (&dir_handle,uri,(GnomeVFSFileInfoOptions)
+								  (GNOME_VFS_FILE_INFO_DEFAULT|
+								  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
+								  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
+								  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+								  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS
+								  ));
+		//printf("opened dir: %d: %s\n",result,gnome_vfs_result_to_string (result));
+		if ( GNOME_VFS_OK == result )
+		{
+			GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(uri);
+	
+			while ( GNOME_VFS_OK == result )
+			{
+				GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();;
+				result = gnome_vfs_directory_read_next(dir_handle,info);
+				
+				if (GNOME_VFS_OK == result )
+				{
+					if (info->type == GNOME_VFS_FILE_TYPE_REGULAR)
+					{
+						GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,info->name);
+						gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
+						
+						gnome_vfs_uri_unref(vfs_uri_file);
+	
+						AddFile(str_uri_file,info);
+	
+						free (str_uri_file);
+					}
+				}
+				gnome_vfs_file_info_unref (info);
+			}
+			gnome_vfs_uri_unref(vfs_uri_dir);
+			gnome_vfs_directory_close (dir_handle);
+		}
 	}
+	return bAdded;
 }
 
 
 
-void ImageListImpl::AddFile(const gchar*  uri)
+bool ImageListImpl::AddFile(const gchar*  uri)
 {
+	bool bAdded = false;
 	GnomeVFSResult result;
 	GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();
 	result = gnome_vfs_get_file_info (uri,info,(GnomeVFSFileInfoOptions)
@@ -578,53 +902,239 @@ void ImageListImpl::AddFile(const gchar*  uri)
 									 );
 	if ( GNOME_VFS_OK == result )
 	{
-		AddFile(uri,info);
+		bAdded = AddFile(uri,info);
 	}
 	gnome_vfs_file_info_unref(info);
+	
+	return bAdded;
 }
 
-void ImageListImpl::AddFile(const gchar* uri, GnomeVFSFileInfo *info)
+bool ImageListImpl::AddFile(const gchar* uri, GnomeVFSFileInfo *info)
 {
-	if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find( info->mime_type ) )
+	bool bAdded = false;
+	if (GNOME_VFS_FILE_INFO_FIELDS_MIME_TYPE & info->valid_fields)
 	{
-		QuiverFile f(uri,info);
-		m_QuivFileList.push_back(f);
+		if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find( info->mime_type ) )
+		{
+			QuiverFile f(uri,info);
+			m_QuiverFileList.push_back(f);
+			bAdded = true;
+		}
+		else
+		{
+			//printf("Unsupported mime_type: %s\n",info->mime_type);
+		}
 	}
-	else
-	{
-		//printf("Unsupported mime_type: %s\n",info->mime_type);
-	}
-}
-
-void ImageListImpl::Sort(ImageList::SortOrder o,bool descending)
-{
-	//if (descending)
-		//m_QuivFileList.reverse();
+	return bAdded;
 }
 
 
-
-bool ImageListImpl::QuiverFileCompare(const QuiverFile & l , const QuiverFile & r)
+bool ImageListImpl::RemoveMonitor(string path)
 {
-	QuiverFile left = l,right = r;
-	int retval = false;
+	bool bErased = false;
+	PathMonitorMap::iterator itr;
 
-	switch (c_SortOrder)
+	string strURI = PathToURI(path);
+	
+	itr = m_mapDirs.find(strURI);
+	if (m_mapDirs.end() != itr)
 	{
-		case ImageList::SORT_FILENAME:
-			retval = (0 > strcmp(left.GetURI(),right.GetURI()) );
-			
-		break;
+		QuiverFileList::iterator qitr;
+		qitr = m_QuiverFileList.begin();
 
-		case ImageList::SORT_FILE_EXTENSION:
-		break;
-
-		case ImageList::SORT_FILE_DATE:
-		break;
+		while (m_QuiverFileList.end() != qitr)
+		{
+			gchar * dirname = g_path_get_dirname(qitr->GetURI());
+			if (gnome_vfs_uris_match (strURI.c_str(),dirname))
+			{
+				int iIndex = qitr - m_QuiverFileList.begin();
+				RemoveFile(iIndex);
+			}
+			else
+			{
+				++qitr;
+			}
+			g_free(dirname);
+		}
 		
-		case ImageList::SORT_EXIF_DATE:
-		break;
+		gnome_vfs_monitor_cancel(itr->second);
+		m_mapDirs.erase(itr);
+		bErased = true;
 	}
-	return retval;
+
+	itr = m_mapFiles.find(strURI);
+	if (m_mapFiles.end() != itr)
+	{
+		QuiverFile qfile(itr->first.c_str());
+		
+		QuiverFileList::iterator qitr = m_QuiverFileList.end();
+		qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
+		if ( m_QuiverFileList.end() != qitr )
+		{
+			int iIndex = qitr - m_QuiverFileList.begin();
+			RemoveFile(iIndex);
+		}
+
+		gnome_vfs_monitor_cancel(itr->second);
+		m_mapFiles.erase(itr);
+		bErased = true;
+	}
+	
+	return bErased;
 }
+
+void ImageListImpl::Reload()
+{
+	string strURI;
+	
+	if (m_QuiverFileList.size())
+	{
+		strURI = m_QuiverFileList[m_iCurrentIndex].GetURI();
+		//printf("%d: %s\n",iOldIndex,strURI.c_str());
+	}
+	
+	list<string> files;
+	PathMonitorMap::iterator itr;
+	for (itr = m_mapDirs.begin(); m_mapDirs.end() != itr; ++itr)
+	{
+		files.push_back(itr->first);
+		gnome_vfs_monitor_cancel(itr->second);
+	}
+	for (itr = m_mapFiles.begin(); m_mapFiles.end() != itr; ++itr)
+	{
+		files.push_back(itr->first);
+		gnome_vfs_monitor_cancel(itr->second);
+	}
+	m_mapDirs.clear();
+	m_mapFiles.clear();
+	
+	Clear();
+	
+	Add(&files);
+	
+	if (!strURI.empty())
+	{
+		SetCurrentImage(strURI);
+	}
+}
+
+void ImageListImpl::Clear()
+{
+	PathMonitorMap::iterator itr;
+	for (itr = m_mapDirs.begin(); m_mapDirs.end() != itr; ++itr)
+	{
+		gnome_vfs_monitor_cancel(itr->second);
+	}
+	for (itr = m_mapFiles.begin(); m_mapFiles.end() != itr; ++itr)
+	{
+		gnome_vfs_monitor_cancel(itr->second);
+	}
+	
+	m_mapDirs.clear();
+	m_mapFiles.clear();
+	m_QuiverFileList.clear();
+}
+
+bool ImageListImpl::RemoveFile(unsigned int iIndex)
+{
+	bool bErased = false;
+
+	QuiverFileList::iterator itr = m_QuiverFileList.begin();
+	
+	if (iIndex < m_QuiverFileList.size())
+	{
+		itr += iIndex;
+		
+		if (m_QuiverFileList.end() != itr)
+		{
+			PathMonitorMap::iterator path_itr;
+			path_itr = m_mapFiles.find(itr->GetURI());
+			if (m_mapFiles.end() != path_itr)
+			{
+				gnome_vfs_monitor_cancel(path_itr->second);
+				m_mapFiles.erase(path_itr);
+			}
+			
+			m_QuiverFileList.erase(itr);
+			bErased = true;
+	
+			if (m_iCurrentIndex > iIndex)
+			{
+				m_iCurrentIndex--;
+			}
+			else if (m_iCurrentIndex == iIndex)
+			{
+				m_iCurrentIndex =
+					MIN(m_iCurrentIndex,m_QuiverFileList.size()-1);
+			}
+		}
+	}
+	return bErased;
+}
+
+
+void ImageListImpl::Sort()
+{
+	Sort(m_SortBy,m_bSortAscend, true);
+}
+
+void ImageListImpl::Sort(bool bUpdateCurrentIndex)
+{
+	Sort(m_SortBy, m_bSortAscend, bUpdateCurrentIndex);
+}
+
+
+class SortByFilename : public std::binary_function<QuiverFile,QuiverFile,bool>
+{
+public:
+	bool operator()(const QuiverFile &a, const QuiverFile &b) const
+	{
+		return (0 > strcmp(a.GetURI(),b.GetURI()) );
+	}
+};
+
+void ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurrentIndex)
+{
+	m_SortBy = o;
+	m_bSortAscend = bSortAscend;
+	
+	string strURI;
+	if (m_QuiverFileList.size())
+	{
+		strURI = m_QuiverFileList[m_iCurrentIndex].GetURI();
+	}
+	
+	switch (m_SortBy)
+	{
+		case ImageList::SORT_BY_FILENAME:
+		{
+			SortByFilename sortby;
+			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
+			break;
+		}
+		case ImageList::SORT_BY_FILE_TYPE:
+			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
+			break;
+		case ImageList::SORT_BY_DATE:
+			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
+			break;
+		default:
+			break;
+	}
+	
+	if (!m_bSortAscend)
+	{
+		std::reverse(m_QuiverFileList.begin(),m_QuiverFileList.end());
+	}
+	
+	if (bUpdateCurrentIndex)
+	{
+		if (!strURI.empty())
+		{
+			SetCurrentImage(strURI);
+		}
+	}
+}
+
+
 

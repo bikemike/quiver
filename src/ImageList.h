@@ -3,8 +3,6 @@
 
 #include <string>
 #include <list>
-#include <set>
-
 
 #include "QuiverFile.h"
 #include "ImageListEventSource.h"
@@ -18,15 +16,13 @@ public:
 
 	typedef enum 
 	{
-		SORT_FILENAME,
-		SORT_FILE_EXTENSION,
-		SORT_FILE_DATE,
-		SORT_EXIF_DATE
-	} SortOrder;
+		SORT_BY_FILENAME,
+		SORT_BY_FILE_TYPE,
+		SORT_BY_DATE,
+	} SortBy;
 
 
 	ImageList();
-	//~ImageList();	
 
 	void SetImageList(std::list<std::string> *file_list);
 	void Add(std::list<std::string> *file_list);
@@ -34,6 +30,9 @@ public:
 
 	void Remove(unsigned int iIndex);
 	void RemoveRange(unsigned int iStart, unsigned int iEnd);
+
+	// reload the list from the items in the maps (F5)
+	void Reload();
 
 	void Clear();
 	
@@ -60,7 +59,7 @@ public:
 	QuiverFile operator[](unsigned int n);
 	QuiverFile const operator[](unsigned int n) const;
 
-	void Sort(SortOrder o,bool descending);
+	void Sort(SortBy o, bool descending);
 
 private:
 	ImageListImplPtr m_ImageListImplPtr;

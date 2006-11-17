@@ -33,39 +33,46 @@ public:
 	QuiverFile(const gchar*  uri);
 	QuiverFile(const gchar* , GnomeVFSFileInfo *info);
 	~QuiverFile();
-	
-	const gchar* GetURI();
 
-	bool HasThumbnail(bool large = false);
+	const gchar* GetURI() const;
+
+	bool HasThumbnail(bool large = false) const;
+
+	bool Modified() const;
 
 	GdkPixbuf *GetExifThumbnail();
 	GdkPixbuf *GetThumbnail(bool bLargeThumb = false);
+	
+	void RemoveCachedThumbnail(bool bLargeThumb);
 
 	ExifData *GetExifData();
+	bool SetExifData(ExifData* pExifData);
+	
+	const char* GetMimeType();
 	GnomeVFSFileInfo * GetFileInfo();
 
 	unsigned long long GetFileSize();
 	
 	GdkPixbuf *GetIcon(int width_desired,int height_desired);
 	
-	std::string GetFilePath();
+	void Reload();
+	
+	std::string GetFilePath() const;
 	int GetWidth();
 	int GetHeight();
 	
-	int GetOrientation();
+	int GetOrientation() ;
 	
-	double GetLoadTimeInSeconds();
+	double GetLoadTimeInSeconds() const;
 	
 	void SetWidth(int );
 	void SetHeight(int);
 	void SetLoadTimeInSeconds(double);
 	bool IsWriteable();
 	
+	bool operator== (const QuiverFile &other) const;
 
-	
-	
 private:
-	void LoadExifData();
 	class QuiverFileImpl;
 	boost::shared_ptr<QuiverFileImpl> m_QuiverFilePtr;
 

@@ -29,8 +29,12 @@ quiver_SOURCES = \
 	IImageListEventHandler.h \
 	ImageLoader.h \
 	ImageLoader.cpp \
+	ImageSaveManager.h \
+	ImageSaveManager.cpp \
 	QuiverFile.h \
 	QuiverFile.cpp \
+	QuiverFileOps.h \
+	QuiverFileOps.cpp \
 	IPixbufLoaderObserver.h \
 	PixbufLoaderObserver.h \
 	PixbufLoaderObserver.cpp \

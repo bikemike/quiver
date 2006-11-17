@@ -5,12 +5,11 @@
 #include <exif-utils.h>
 #include <glib/gstdio.h>
 
+#include <string>
+
 #include "QuiverFile.h"
 #include "Timer.h"
 #include "QuiverUtils.h"
-
-
-
 
 // =================================================================================================
 // Implementation
@@ -21,28 +20,56 @@ struct IptcData;
 struct DBData;
 
 class QuiverFile::QuiverFileImpl {
-	// Associations
-	// Attributes
-public:
 
-	// Operations
+public:
+// Methods
 	
 	QuiverFileImpl(const gchar*  uri);
 	QuiverFileImpl(const gchar* , GnomeVFSFileInfo *info);
 	~QuiverFileImpl();
+
+	void Init(const gchar *uri, GnomeVFSFileInfo *info);
+	void Reload();
 	
+	const char* GetMimeType();
+	GnomeVFSFileInfo* GetFileInfo();
 	
+	int GetWidth();
+	int GetHeight();
+	
+	std::string GetFilePath() const;
+
+	void LoadExifData();
+	int GetOrientation();
+	
+	ExifData* GetExifData();
+	bool SetExifData(ExifData* pExifData);	
+	GdkPixbuf* GetExifThumbnail();
+	
+	bool HasThumbnail(bool bLargeThumb) const;
+	GdkPixbuf* GetThumbnail(bool bLargeThumb = false);
+	
+	bool Modified() const;
+	
+// variables	
 	gchar* m_szURI;
-	GnomeVFSFileInfo *file_info;
- 	ExifData *exif_data;
-	IptcData *iptc_data;
-	DBData *db_data;
+	GnomeVFSFileInfo* m_vfsFileInfo;
+ 	
+ 	ExifData* m_pExifData;
+ 	ExifData* m_pExifDataOriginal;
+ 	
+	IptcData* m_pIPTCData;
+	DBData* m_pDBData;
 	
-	// if load is successful, set the flags accordingly
-	QuiverDataFlags data_loaded_flags;
+	// if load has been tried, set the flags accordingly
+	QuiverDataFlags m_fDataLoaded;
 	
-	// if the load of data is attempted, set flag accordingly
-	QuiverDataFlags data_exists_flags;
+	// if the load of data is attempted, and the
+	// data actually exists set this flag accordingly
+	QuiverDataFlags m_fDataExists;
+
+	// indicates if the data has been modified or not
+	QuiverDataFlags m_fDataModified;
 	
 	int m_iWidth;
 	int m_iHeight;
@@ -51,33 +78,34 @@ public:
 	bool m_bHasNormalThumbnail;
 	bool m_bHasLargeThumbnail;
 	
-	double loadTimeSeconds;
+	double m_dLoadTimeSeconds;
 	
 	static ImageCache c_ThumbnailCacheNormal;
 	static ImageCache c_ThumbnailCacheLarge;
-private:
-	void Init(const gchar *uri, GnomeVFSFileInfo *info);
 };
 
+static void GetImageDimensions(const gchar *uri, gint *width, gint *height);
+static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
+                                            gint             height,
+                                            gpointer         user_data);
+typedef struct _PixbufLoaderSizeInfoStruct
+{
+	gint width;
+	gint height;
+	
+	gint size_request;
+	
+} PixbufLoaderSizeInfo;
 
-ImageCache QuiverFile::QuiverFileImpl::c_ThumbnailCacheNormal(100),QuiverFile::QuiverFileImpl::c_ThumbnailCacheLarge(50); // thumbnail cache of size 1000!
+
+
+ImageCache QuiverFile::QuiverFileImpl::c_ThumbnailCacheNormal(100);
+ImageCache QuiverFile::QuiverFileImpl::c_ThumbnailCacheLarge (50);
 
 QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar * uri)
 {
 	// get the file info
-	GnomeVFSFileInfo *info;
-	GnomeVFSResult result;
-	info = gnome_vfs_file_info_new ();
-	result = gnome_vfs_get_file_info (uri,info,(GnomeVFSFileInfoOptions)
-									  (GNOME_VFS_FILE_INFO_DEFAULT|
-									  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
-									  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-									  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
-									  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
- 
-									  );
-	Init(uri,info);
-	gnome_vfs_file_info_unref(info);
+	Init(uri,NULL);
 }
 
 QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GnomeVFSFileInfo *info)
@@ -91,20 +119,23 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GnomeVFSFileInfo *info)
 	m_szURI = new gchar [ strlen(uri) + 1 ];
 	g_stpcpy(m_szURI,uri);
 
-	file_info = info;
-	gnome_vfs_file_info_ref(file_info);
 
-	data_loaded_flags = QUIVER_FILE_DATA_NONE;
-	data_exists_flags = QUIVER_FILE_DATA_NONE;
+	m_vfsFileInfo = info;
+
+	m_fDataLoaded = QUIVER_FILE_DATA_NONE;
+	m_fDataExists = QUIVER_FILE_DATA_NONE;
 	
 	if (NULL != info)
 	{
-		data_exists_flags = (QuiverDataFlags)(data_exists_flags | QUIVER_FILE_DATA_INFO);
-		data_loaded_flags = (QuiverDataFlags)(data_loaded_flags | QUIVER_FILE_DATA_INFO);
+		gnome_vfs_file_info_ref(m_vfsFileInfo);
+		m_fDataExists = (QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_INFO);
+		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_INFO);
 	}
 	
-	exif_data = NULL;
-	iptc_data = NULL;	
+	m_pExifData = NULL;
+	m_pExifDataOriginal = NULL;
+	
+	m_pIPTCData = NULL;	
 
 	m_iWidth = -1;
 	m_iHeight = -1;
@@ -114,25 +145,755 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GnomeVFSFileInfo *info)
 	m_bHasNormalThumbnail = false;
 	m_bHasLargeThumbnail = false;
 	
+	m_fDataModified = QUIVER_FILE_DATA_NONE;
+	
+	m_dLoadTimeSeconds = 0;
 
-	loadTimeSeconds = 0;
+}
+
+const char* QuiverFile::QuiverFileImpl::GetMimeType()
+{
+	char *pMimeType = NULL;
+	GnomeVFSFileInfo *pInfo = GetFileInfo();
+	
+	if (NULL != pInfo && GNOME_VFS_FILE_INFO_FIELDS_MIME_TYPE & pInfo->valid_fields)
+	{
+		pMimeType = pInfo->mime_type;
+	}
+	return pMimeType;
+}
+
+GnomeVFSFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
+{
+	GnomeVFSFileInfo* vfsFileInfo = NULL;
+
+	if (m_fDataExists & QUIVER_FILE_DATA_INFO && m_vfsFileInfo)
+	{
+		vfsFileInfo = m_vfsFileInfo;
+	}
+	
+	if (!(m_fDataLoaded & QUIVER_FILE_DATA_INFO) && NULL == m_vfsFileInfo)
+	{
+		GnomeVFSResult result;
+		vfsFileInfo = gnome_vfs_file_info_new ();
+		result = gnome_vfs_get_file_info (m_szURI,vfsFileInfo,(GnomeVFSFileInfoOptions)
+										  (GNOME_VFS_FILE_INFO_DEFAULT|
+										  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
+										  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
+										  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+										  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
+	 
+										  );
+		m_vfsFileInfo = vfsFileInfo;
+		
+		m_fDataExists = (QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_INFO);
+		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_INFO);
+	}
+	
+	return vfsFileInfo;
 }
 
 QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 {
-	//free ( m_szURI );
-	gnome_vfs_file_info_unref(file_info);
+	if (m_vfsFileInfo != NULL)
+	{
+		gnome_vfs_file_info_unref(m_vfsFileInfo);
+	}
 	
 	delete [] m_szURI;
 
-	if (NULL != exif_data)
+	if (NULL != m_pExifData)
 	{
-		exif_data_unref(exif_data);
+		exif_data_unref(m_pExifData);
+	}
+	
+	if (NULL != m_pExifDataOriginal)
+	{
+		//exif_data_unref(m_pExifDataOriginal);
 	}
 }
 
+GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
+{
+	//Timer t("QuiverFile::GetExifThumbnail()");
+	GdkPixbuf *thumb_pixbuf = NULL;
+
+	ExifData *pExifData = GetExifData();
+	
+	if (m_fDataExists & QUIVER_FILE_DATA_EXIF && pExifData->data)
+	{
+		GError *tmp_error;
+		tmp_error = NULL;
+		
+		GdkPixbufLoader *pixbuf_loader;
+		
+		pixbuf_loader = gdk_pixbuf_loader_new();
+		gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)pExifData->data, pExifData->size, &tmp_error);
+
+		gdk_pixbuf_loader_close(pixbuf_loader,&tmp_error);
+		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
+		
+		if (NULL != thumb_pixbuf)
+		{
+			
+			g_object_ref(thumb_pixbuf);
+		}				
+		g_object_unref(pixbuf_loader);
+		
+	}
+	
+	return thumb_pixbuf;
+}
+
+bool QuiverFile::QuiverFileImpl::HasThumbnail(bool bLargeThumb) const
+{
+	bool bHasThumb = m_bHasNormalThumbnail;
+	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
+		
+	if (bLargeThumb)
+	{
+		bHasThumb = m_bHasLargeThumbnail;
+		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
+	}
+
+	if (!bHasThumb)
+	{
+	
+		gchar * thumb_path ;
+		thumb_path = gnome_thumbnail_path_for_uri(m_szURI,thumb_size);
+		
+		struct stat s;
+		if (0 == g_stat(thumb_path,&s))
+		{
+			bHasThumb = true;
+		}
+		g_free(thumb_path);
+	}
+	
+	return bHasThumb;
+}
+
+GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false */)
+{
+	GnomeVFSFileInfo* vfsFileInfo = GetFileInfo();
+	
+	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
+	if (bLargeThumb)
+	{
+		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
+	}
+	
+	gboolean save_thumbnail_to_cache = TRUE;
+	
+	//Timer t("QuiverFile::GetThumbnail()");
+	GdkPixbuf * thumb_pixbuf = NULL;
+
+	if (bLargeThumb)
+	{
+		thumb_pixbuf = c_ThumbnailCacheLarge.GetPixbuf(m_szURI);
+		if (NULL != thumb_pixbuf)
+		{
+			return thumb_pixbuf;
+		}
+	}
+	else
+	{
+		thumb_pixbuf = c_ThumbnailCacheNormal.GetPixbuf(m_szURI);
+		if (NULL != thumb_pixbuf)
+		{
+			return thumb_pixbuf;
+		}
+	}
+	
+	gchar * thumb_path ;
+	thumb_path = gnome_thumbnail_path_for_uri(m_szURI,thumb_size);
+
+	// try to load the thumb from thumb_path
+	GError *tmp_error;
+	gchar buffer[8192];
+	GnomeVFSHandle   *handle;
+	GnomeVFSResult    result;
+	GnomeVFSFileSize  bytes_read;
+	
+	tmp_error = NULL;
+	result = gnome_vfs_open (&handle, thumb_path, GNOME_VFS_OPEN_READ);
+	if (GNOME_VFS_OK == result)
+	{
+		GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
+
+		while (GNOME_VFS_OK == result)
+		{
+			result = gnome_vfs_read (handle, buffer, 
+									 sizeof(buffer), &bytes_read);
+			gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+		}
+		gnome_vfs_close(handle);
+		
+		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+
+		if (NULL != thumb_pixbuf)
+		{
+			g_object_ref(thumb_pixbuf);
+
+			const gchar* thumb_mtime_str = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::MTime");
+			const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
+
+			const gchar* str_thumb_width = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Width");
+			const gchar* str_thumb_height = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Height");
+			const gchar *str_thumb_software = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Software");
+			
+			if (NULL != str_orientation)
+			{
+				//printf("we got orientation: %s\n",str_orientation);
+				m_iOrientation = atoi(str_orientation);
+			}
+			
+			if (NULL != thumb_mtime_str)
+			{
+				time_t mtime;
+				mtime = atol (thumb_mtime_str);
+				
+				if (vfsFileInfo && vfsFileInfo->mtime != mtime)
+				{
+					// they dont match.. we should load a new version
+					//printf("m-times do not match! %lu  != %lu\n",vfsFileInfo->mtime ,mtime);
+					g_object_unref(thumb_pixbuf);
+					thumb_pixbuf = NULL;
+				}
+				else
+				{
+					//printf("m-times do match! %lu  != %lu\n",vfsFileInfo->mtime ,mtime);
+					save_thumbnail_to_cache = FALSE;
+				}
+			}
+			
+			// if we didn't get the width and height we should resave thumbnail
+			// with this information 
+			if (NULL == str_thumb_width || NULL == str_thumb_height)
+			{
+				save_thumbnail_to_cache = TRUE;
+			}
+			else 
+			{
+				int new_width  = atol(str_thumb_width);
+				int new_height = atol(str_thumb_height);
+				
+				if (NULL != str_thumb_software && 0 == strcmp("GNOME::ThumbnailFactory",str_thumb_software))
+				{
+					// this is to work around a bug with the gnome thumbnail factory
+					// not saving the correct width/height to the thumbnails
+					save_thumbnail_to_cache = TRUE;		
+				}
+				else if (-1 == m_iWidth || -1 == m_iHeight)
+				{
+					m_iWidth =  new_width;
+					m_iHeight = new_height;
+				}
+				/*
+				else if (new_width != m_iWidth || new_height != m_iHeight)
+				{
+					save_thumbnail_to_cache = TRUE;					
+				}
+				*/
+
+			}
+		}
+		gdk_pixbuf_loader_close(loader,&tmp_error);
+		g_object_unref(loader);
+	}
+	//gdk_threads_leave ();
+	
+	if (NULL == thumb_pixbuf && !bLargeThumb) // no thumbnail in the ~/.thumbnails/ cache
+	{ 
+		// unable to load from file, next try exif
+		thumb_pixbuf = GetExifThumbnail();
+		if (NULL != thumb_pixbuf)
+		{
+			int size = 128;
+			gint pixbuf_width = gdk_pixbuf_get_width(thumb_pixbuf);
+			gint pixbuf_height = gdk_pixbuf_get_height(thumb_pixbuf);
+			// resize it to the proper size
+			if (pixbuf_width > size || pixbuf_height > size)
+			{
+				int nw,nh;
+				if (size < pixbuf_width && pixbuf_width > pixbuf_height)
+				{
+					nw = size;
+					nh = (int) (size * (double)pixbuf_height/(double)pixbuf_width);
+				}
+				else
+				{
+					nh = size;
+					nw = (int)(size * (double)pixbuf_width / (double)pixbuf_height);
+				}
+				pixbuf_width = nw;
+				pixbuf_height = nh;
+				//printf("new size %d %d\n",nw,nh);
+				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
+									thumb_pixbuf,
+									nw,
+									nh,
+									GDK_INTERP_BILINEAR);
+									//GDK_INTERP_NEAREST);
+				g_object_unref(thumb_pixbuf);
+				thumb_pixbuf = newpixbuf;
+			}
+			//printf("got thumb from exif\n");
+		}
+	}
+
+	// we couldnt get it from the cache, or the exif, so we'll have to load it straight from the file
+	if (NULL == thumb_pixbuf)
+	{
+		int size = 128;
+		if (bLargeThumb)
+		{
+			size = 256;
+		}
+
+		result = gnome_vfs_open (&handle, m_szURI, GNOME_VFS_OPEN_READ);
+		if (GNOME_VFS_OK == result)
+		{
+			GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
+			PixbufLoaderSizeInfo size_info = {0};
+			size_info.size_request = size;
+			g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
+
+			while (GNOME_VFS_OK == result) 
+			{
+				result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
+				tmp_error = NULL;
+				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+				if (NULL != tmp_error)
+				{
+					//printf("error: %s\n",tmp_error->message);
+					break;
+				}
+			}
+
+			gnome_vfs_close(handle);
+
+			tmp_error = NULL;
+			gdk_pixbuf_loader_close(loader,&tmp_error);
+			
+			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+		
+			if (NULL != thumb_pixbuf)
+			{
+				// this is just in case we are browsing through the .thumbnail folders
+				// this way it will show the thumbnail at the correct orientation
+				g_object_ref(thumb_pixbuf);
+				//printf("checking for orientation\n");
+				const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
+			
+				if (NULL != str_orientation)
+				{
+					//printf("we got orientation: %s\n",str_orientation);
+					m_iOrientation = atoi(str_orientation);
+					
+				}
+				//printf("got thumb from file\n");
+			}
+			
+			if (-1 == m_iWidth || -1 == m_iHeight)
+			{
+				m_iWidth = size_info.width;
+				m_iHeight = size_info.height;
+			}
+			
+			g_object_unref(loader);
+			
+			if (size_info.width <= size_info.size_request && size_info.height <= size_info.size_request )
+			{
+				// size of image is smaller than size requested so
+				// we do not need to cache it
+				save_thumbnail_to_cache = FALSE;
+			}			
+		}
+
+	}
+	
+	gchar *large_thumb_file = gnome_thumbnail_path_for_uri(m_szURI,GNOME_THUMBNAIL_SIZE_LARGE);
+	gchar *large_thumb_path = g_path_get_dirname(large_thumb_file);
+	g_free(large_thumb_file);
+	
+	// user may be browsing the thumbnail directory. 
+	// if so, we don't want "normal" thumbnails to be saved
+	// for images in the large directory
+	if (save_thumbnail_to_cache && !bLargeThumb)
+	{
+		std::string filepath = GetFilePath();
+		
+		if (NULL != strstr(filepath.c_str(),large_thumb_path) )
+		{
+			save_thumbnail_to_cache = FALSE; 
+		}
+	}
+
+	if (NULL != large_thumb_path)
+	{
+		g_free(large_thumb_path);
+	}
+		
+	// FIXME: maybe this should be in a low priority thread?
+	// save the thumbnail to the cache directory (~/.thumbnails)
+
+	if (NULL != thumb_pixbuf && save_thumbnail_to_cache && vfsFileInfo)
+	{
+		// make the directory if it does not already exist:
+		gchar *thumb_dir = g_path_get_dirname(thumb_path);
+		g_mkdir_with_parents(thumb_dir,S_IRUSR|S_IWUSR|S_IXUSR);
+		g_free(thumb_dir);
+		
+		gchar *temp_file_name = g_strconcat (thumb_path, ".XXXXXX", NULL);
+		gint fhandle = g_mkstemp (temp_file_name);
+		
+		if (-1 != fhandle )
+		{
+			close (fhandle);
+			gchar str_mtime[32];
+			gchar str_width[32];
+			gchar str_height[32];
+			gchar str_orientation[2];
+			//printf("temp_file_name = %s -> %s\n",temp_file_name,m_szURI);
+			g_snprintf (str_mtime, 30, "%lu",  vfsFileInfo->mtime);
+
+			g_snprintf (str_width, 32, "%d",  GetWidth());
+			g_snprintf (str_height, 32, "%d",  GetHeight());
+			
+			g_snprintf (str_orientation, 2, "%d",  GetOrientation());
 
 
+			//printf("orientation to save: %s\n",str_orientation);
+			
+			gboolean saved = gdk_pixbuf_save (thumb_pixbuf,
+					   temp_file_name,
+					   "png", NULL, 
+					   "tEXt::Thumb::URI", m_szURI,
+					   "tEXt::Thumb::MTime", str_mtime,
+					   "tEXt::Thumb::Image::Orientation", str_orientation,
+					   "tEXt::Thumb::Image::Width", str_width,
+					   "tEXt::Thumb::Image::Height", str_height,
+					   "tEXt::Software", PACKAGE_STRING,
+					   NULL);
+			if (saved)
+			{
+				//printf("move: %s => %s \n",temp_file_name,thumb_path);
+				g_chmod (temp_file_name, 0600);
+				g_rename(temp_file_name, thumb_path);
+			}
+			else
+			{
+				g_remove(temp_file_name);
+			}
+		}
+		g_free(temp_file_name);
+	}
+	
+	g_free (thumb_path);
+
+	//FIXME: need to get an autorotate option
+	
+	if (NULL != thumb_pixbuf  && 1 < GetOrientation()) 
+	{
+		GdkPixbuf * new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(thumb_pixbuf, GetOrientation());
+		if (NULL != new_pixbuf)
+		{
+			g_object_unref(thumb_pixbuf);
+			thumb_pixbuf = new_pixbuf;
+		}
+	}
+
+
+	if (NULL != thumb_pixbuf)
+	{
+		if (bLargeThumb)
+		{
+			c_ThumbnailCacheLarge.AddPixbuf(m_szURI,thumb_pixbuf);
+			m_bHasLargeThumbnail = true;
+		}
+		else
+		{
+			c_ThumbnailCacheNormal.AddPixbuf(m_szURI,thumb_pixbuf);
+			m_bHasNormalThumbnail = true;
+		}
+	}
+
+	return thumb_pixbuf;
+}
+
+
+void QuiverFile::QuiverFileImpl::Reload()
+{
+	std::string strURI = m_szURI;
+	
+	gnome_vfs_file_info_unref(m_vfsFileInfo);
+	
+	delete [] m_szURI;
+	m_szURI = NULL;
+
+	if (NULL != m_pExifData)
+	{
+		exif_data_unref(m_pExifData);
+		m_pExifData = NULL;
+	}
+	
+	c_ThumbnailCacheLarge.RemovePixbuf(strURI);
+	c_ThumbnailCacheNormal.RemovePixbuf(strURI);
+	
+		// get the file info
+	GnomeVFSFileInfo *info;
+	GnomeVFSResult result;
+	info = gnome_vfs_file_info_new ();
+	result = gnome_vfs_get_file_info (strURI.c_str(),info,(GnomeVFSFileInfoOptions)
+									  (GNOME_VFS_FILE_INFO_DEFAULT|
+									  GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
+									  GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
+									  GNOME_VFS_FILE_INFO_FOLLOW_LINKS|
+									  GNOME_VFS_FILE_INFO_GET_ACCESS_RIGHTS)
+ 
+									  );
+	Init(strURI.c_str(),info);
+	gnome_vfs_file_info_unref(info);
+	
+}
+
+
+void QuiverFile::QuiverFileImpl::LoadExifData()
+{
+	//Timer t("QuiverFile::LoadExifData()");
+	if (! ( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
+	{
+		ExifLoader *loader;
+		//	unsigned char data[1024];
+	
+		loader = exif_loader_new ();
+	
+		unsigned char buffer[2048];
+		
+		GnomeVFSHandle   *handle;
+		GnomeVFSResult    result;
+		GnomeVFSFileSize  bytes_read;
+		
+		result = gnome_vfs_open (&handle, m_szURI, GNOME_VFS_OPEN_READ);
+		if (GNOME_VFS_OK == result)
+		{
+			while (GNOME_VFS_OK == result)
+			{
+				result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
+				
+				if (!exif_loader_write (loader, buffer, bytes_read))
+				{
+					break;
+				}
+			}
+			gnome_vfs_close(handle);
+		}
+		
+		m_pExifData = exif_loader_get_data (loader);
+		exif_loader_unref (loader);
+		
+		if (NULL == m_pExifData)
+		{
+			//printf("exif data is null\n");
+		}
+		else
+		{
+			bool no_exif = true;
+			
+			// go through exif fields to see if any are set (if not, no exif)
+			for (int i = 0; i < EXIF_IFD_COUNT && no_exif; i++)
+			{
+				if (m_pExifData->ifd[i] && m_pExifData->ifd[i]->count)
+				{
+					no_exif = false;
+				}
+			}
+			
+			if (m_pExifData->data)
+			{
+				no_exif = false;
+			}
+			
+			if (!no_exif)
+			{
+				m_fDataExists = (QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_EXIF);
+				//printf("there is exif!!\n");
+			}
+			else
+			{
+				//printf("no data in the exif!\n");
+				// dont keep structure around, it has nothing in it
+				exif_data_unref(m_pExifData);
+				m_pExifData = NULL;
+			}
+	
+		}
+		
+		if ( NULL != m_pExifData)
+		{
+			m_pExifDataOriginal = m_pExifData;
+			exif_data_ref(m_pExifDataOriginal);
+		}
+		
+		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_EXIF);
+	}
+}
+
+ExifData* QuiverFile::QuiverFileImpl::GetExifData()
+{
+	LoadExifData();
+	return m_pExifData;
+}
+
+bool QuiverFile::QuiverFileImpl::SetExifData(ExifData* pExifData)
+{
+	bool bSet = false;
+	bool bModified = false;
+	
+	LoadExifData();
+	
+	if (NULL != pExifData && NULL != m_pExifDataOriginal)
+	{
+		unsigned char *data1 = NULL;
+		unsigned char *data2 = NULL;
+		unsigned int  size1, size2;
+
+		exif_data_save_data(pExifData,&data1,&size1);
+		exif_data_save_data(m_pExifDataOriginal,&data2,&size2);
+
+		if (size1 != size2)
+		{
+			bModified = true;
+		}
+		else if (0 != memcmp(data1,data2, size1))
+		{
+			bModified = true;
+		}
+		
+		int iOldOrientation = GetOrientation();
+		
+		if (bModified)
+		{
+			ExifData *pExifDataCopy = exif_data_new_from_data(data1,size1);
+			
+			exif_data_unref(m_pExifData);
+			
+			m_pExifData = pExifDataCopy;
+			
+			// set the modified flag
+			m_fDataModified = (QuiverDataFlags)(m_fDataModified|QUIVER_FILE_DATA_EXIF);
+		}
+		else
+		{
+			exif_data_unref(m_pExifData);
+			
+			m_pExifData = m_pExifDataOriginal;
+			
+			exif_data_ref(m_pExifData);
+			
+			// unset the modified flag
+			if (QUIVER_FILE_DATA_EXIF & m_fDataModified)
+			{
+				m_fDataModified = (QuiverDataFlags)(m_fDataModified ^ QUIVER_FILE_DATA_EXIF );
+			}
+		}
+		
+		if (GetOrientation() != iOldOrientation)
+		{
+			// remove cached thumbnails because they are cached
+			// at a certain orientation and that has now changed
+			c_ThumbnailCacheNormal.RemovePixbuf(m_szURI);
+			c_ThumbnailCacheLarge.RemovePixbuf(m_szURI);
+		}
+		
+		
+		free(data1);
+		free(data2);
+		
+		
+		bSet = true;
+	}
+	return bSet;
+}
+
+bool QuiverFile::QuiverFileImpl::Modified() const
+{
+	return (0 != m_fDataModified);
+}
+
+std::string QuiverFile::QuiverFileImpl::GetFilePath() const
+{
+	std::string s;
+	if (GNOME_VFS_FILE_INFO_LOCAL (m_vfsFileInfo) )
+	{
+		char * uri = gnome_vfs_get_local_path_from_uri (m_szURI);
+		s = uri;
+		g_free(uri);
+	}
+	else
+	{
+		s = m_szURI;
+	}
+	return s;
+}
+
+
+int QuiverFile::QuiverFileImpl::GetWidth()
+{
+	if (-1 == m_iWidth)
+	{
+		GetImageDimensions(m_szURI, &m_iWidth, &m_iHeight);
+	}
+	return m_iWidth;
+}
+
+int QuiverFile::QuiverFileImpl::GetHeight()
+{
+	if (-1 == m_iHeight)
+	{
+		GetImageDimensions(m_szURI, &m_iWidth, &m_iHeight);
+	}
+	return m_iHeight;
+}
+
+
+int QuiverFile::QuiverFileImpl::GetOrientation()
+{
+	LoadExifData();
+
+	// if we have loaded the exif data or the orientation flag is set,
+	// check the exif data for the orientation value.
+	// otherwise just return the cached value
+	if (0 == m_iOrientation || (m_fDataLoaded & QUIVER_FILE_DATA_EXIF))
+	{
+		if (m_fDataExists & QUIVER_FILE_DATA_EXIF)
+		{
+			ExifData *pExifData = GetExifData();
+			int orientation = 1;
+			
+			ExifEntry *entry;
+			entry = exif_data_get_entry(pExifData,EXIF_TAG_ORIENTATION);
+			if (NULL != entry)
+			{
+				// the orientation field is set
+				//exif_entry_dump(entry,2);
+				ExifByteOrder o;
+				o = exif_data_get_byte_order (entry->parent->parent);
+				orientation = exif_get_short (entry->data, o);
+			}
+
+			m_iOrientation = orientation;
+		}
+	}
+	
+	if (0 == m_iOrientation)
+	{
+		m_iOrientation = 1;
+	}
+	
+	return m_iOrientation;
+}
 
 // =================================================================================================
 // QuiverFile Wrapper Class
@@ -154,34 +915,50 @@ QuiverFile::~QuiverFile()
 	
 }
 
-GnomeVFSFileInfo * QuiverFile::GetFileInfo()
+bool QuiverFile::Modified() const
 {
-	gnome_vfs_file_info_ref(m_QuiverFilePtr->file_info);
-	return m_QuiverFilePtr->file_info;
+	return m_QuiverFilePtr->Modified();
+}
+
+bool QuiverFile::operator== (const QuiverFile &other) const
+{
+	return gnome_vfs_uris_match(GetURI(),other.GetURI());
+}
+
+const char* QuiverFile::GetMimeType()
+{
+	return m_QuiverFilePtr->GetMimeType();
+}
+
+GnomeVFSFileInfo *QuiverFile::GetFileInfo()
+{
+	GnomeVFSFileInfo* vfsFileInfo = NULL;
+	vfsFileInfo = m_QuiverFilePtr->GetFileInfo();
+	if (NULL != vfsFileInfo)
+	{
+		gnome_vfs_file_info_ref(vfsFileInfo);
+	}
+	return vfsFileInfo;
 }
 
 unsigned long long QuiverFile::GetFileSize()
 {
-	return m_QuiverFilePtr->file_info->size;
+	long long size = 0;
+	GnomeVFSFileInfo *info = GetFileInfo();
+	if (NULL != info)
+	{
+		size = info->size;
+		gnome_vfs_file_info_unref(info);
+	}
+	return size;
 }
 
-std::string QuiverFile::GetFilePath()
+std::string QuiverFile::GetFilePath() const
 {
-	std::string s;
-	if (GNOME_VFS_FILE_INFO_LOCAL (m_QuiverFilePtr->file_info) )
-	{
-		char * uri = gnome_vfs_get_local_path_from_uri (m_QuiverFilePtr->m_szURI);
-		s = uri;
-		g_free(uri);
-	}
-	else
-	{
-		s = m_QuiverFilePtr->m_szURI;
-	}
-	return s;
+	return m_QuiverFilePtr->GetFilePath();
 }
 
-const gchar* QuiverFile::GetURI()
+const gchar* QuiverFile::GetURI() const
 {
 	return m_QuiverFilePtr->m_szURI;
 }
@@ -189,11 +966,12 @@ const gchar* QuiverFile::GetURI()
 
 void QuiverFile::SetLoadTimeInSeconds(double seconds)
 {
-	m_QuiverFilePtr->loadTimeSeconds = seconds;
+	m_QuiverFilePtr->m_dLoadTimeSeconds = seconds;
 }
-double QuiverFile::GetLoadTimeInSeconds()
+
+double QuiverFile::GetLoadTimeInSeconds() const
 {
-	return m_QuiverFilePtr->loadTimeSeconds;
+	return m_QuiverFilePtr->m_dLoadTimeSeconds;
 }
 
 void QuiverFile::SetWidth(int w)
@@ -205,14 +983,10 @@ void QuiverFile::SetHeight(int h)
 	m_QuiverFilePtr->m_iHeight = h;
 }
 
-typedef struct _PixbufLoaderSizeInfoStruct
+void QuiverFile::Reload()
 {
-	gint width;
-	gint height;
-	
-	gint size_request;
-	
-} PixbufLoaderSizeInfo;
+	m_QuiverFilePtr->Reload();
+}
 
 static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
                                             gint             height,
@@ -290,535 +1064,47 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 }
 int QuiverFile::GetWidth()
 {
-
-	if (-1 == m_QuiverFilePtr->m_iWidth)
-	{
-		GetImageDimensions(m_QuiverFilePtr->m_szURI, &m_QuiverFilePtr->m_iWidth, &m_QuiverFilePtr->m_iHeight);
-	}
-	return m_QuiverFilePtr->m_iWidth;
+	return m_QuiverFilePtr->GetWidth();
 }
+
 int QuiverFile::GetHeight()
 {
-
-	if (-1 == m_QuiverFilePtr->m_iHeight)
-	{
-		GetImageDimensions(m_QuiverFilePtr->m_szURI, &m_QuiverFilePtr->m_iWidth, &m_QuiverFilePtr->m_iHeight);
-	}
-	return m_QuiverFilePtr->m_iHeight;
-}
+	return m_QuiverFilePtr->GetHeight();
+}	
 
 bool QuiverFile::IsWriteable()
 {
 	bool rval = false;
-	if (GNOME_VFS_FILE_INFO_FIELDS_ACCESS & m_QuiverFilePtr->file_info->valid_fields)
-	{
-		if (GNOME_VFS_PERM_ACCESS_WRITABLE & m_QuiverFilePtr->file_info->permissions)
-		{
-			rval = true;
-		}
-	}
 
+	GnomeVFSFileInfo* vfsFileInfo = GetFileInfo();
+	if (NULL != vfsFileInfo)
+	{
+		if (GNOME_VFS_FILE_INFO_FIELDS_ACCESS & vfsFileInfo->valid_fields)
+		{
+			if (GNOME_VFS_PERM_ACCESS_WRITABLE & vfsFileInfo->permissions)
+			{
+				rval = true;
+			}
+		}
+
+		gnome_vfs_file_info_unref(vfsFileInfo);
+	}
 	return rval;
-}
-
-void QuiverFile::LoadExifData()
-{
-	//Timer t("QuiverFile::LoadExifData()");
-	if (! ( m_QuiverFilePtr->data_loaded_flags & QUIVER_FILE_DATA_EXIF ) )
-	{
-		ExifLoader *loader;
-		//	unsigned char data[1024];
-	
-		loader = exif_loader_new ();
-	
-		unsigned char buffer[2048];
-		
-		GnomeVFSHandle   *handle;
-		GnomeVFSResult    result;
-		GnomeVFSFileSize  bytes_read;
-		
-		result = gnome_vfs_open (&handle, m_QuiverFilePtr->m_szURI, GNOME_VFS_OPEN_READ);
-		if (GNOME_VFS_OK == result)
-		{
-			while (GNOME_VFS_OK == result)
-			{
-				result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
-				
-				if (!exif_loader_write (loader, buffer, bytes_read))
-				{
-					break;
-				}
-			}
-			gnome_vfs_close(handle);
-		}
-		
-		m_QuiverFilePtr->exif_data = exif_loader_get_data (loader);
-		exif_loader_unref (loader);
-		
-		if (NULL == m_QuiverFilePtr->exif_data)
-		{
-			//printf("exif data is null\n");
-		}
-		else
-		{
-			bool no_exif = true;
-			
-			// go through exif fields to see if any are set (if not, no exif)
-			for (int i = 0; i < EXIF_IFD_COUNT && no_exif; i++) {
-				if (m_QuiverFilePtr->exif_data->ifd[i] && m_QuiverFilePtr->exif_data->ifd[i]->count) {
-					no_exif = false;
-				}
-			}
-			if (m_QuiverFilePtr->exif_data->data)
-			{
-				no_exif = false;
-			}
-			
-			if (!no_exif)
-			{
-				m_QuiverFilePtr->data_exists_flags = (QuiverDataFlags)(m_QuiverFilePtr->data_exists_flags | QUIVER_FILE_DATA_EXIF);
-				//printf("there is exif!!\n");
-			}
-			else
-			{
-				//printf("no data in the exif!\n");
-				// dont keep structure around, it has nothing in it
-				exif_data_unref(m_QuiverFilePtr->exif_data);
-				m_QuiverFilePtr->exif_data = NULL;
-			}
-	
-		}
-		m_QuiverFilePtr->data_loaded_flags = (QuiverDataFlags)(m_QuiverFilePtr->data_loaded_flags | QUIVER_FILE_DATA_EXIF);
-	}
 }
 
 GdkPixbuf * QuiverFile::GetExifThumbnail()
 {
-	//Timer t("QuiverFile::GetExifThumbnail()");
-	GdkPixbuf *thumb_pixbuf = NULL;
-
-	ExifData *exif_data = GetExifData();
-	//exif_data_dump(exif_data);
-	if (m_QuiverFilePtr->data_exists_flags & QUIVER_FILE_DATA_EXIF && exif_data->data)
-	{
-		GError *tmp_error;
-		tmp_error = NULL;
-		
-		GdkPixbufLoader *pixbuf_loader;
-		
-		pixbuf_loader = gdk_pixbuf_loader_new();
-		gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)exif_data->data, exif_data->size, &tmp_error);
-
-		gdk_pixbuf_loader_close(pixbuf_loader,&tmp_error);
-		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
-		
-		if (NULL != thumb_pixbuf)
-		{
-			
-			g_object_ref(thumb_pixbuf);
-			//int w = gdk_pixbuf_get_width(thumb_pixbuf);
-			//int h = gdk_pixbuf_get_height(thumb_pixbuf);
-			//printf ("thumbnail size: %d x %d\n",w,h);
-			// to keep using this thumbnail
-			// we must ref it
-		}				
-		g_object_unref(pixbuf_loader);
-		
-	}
-		//thumb data
-	return thumb_pixbuf;
+	return m_QuiverFilePtr->GetExifThumbnail();
 }
 
-bool QuiverFile::HasThumbnail(bool bLargeThumb)
+bool QuiverFile::HasThumbnail(bool bLargeThumb) const
 {
-	bool bHasThumb = false;
-	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
-	bHasThumb = m_QuiverFilePtr->m_bHasNormalThumbnail;
-		
-	if (bLargeThumb)
-	{
-		bHasThumb = m_QuiverFilePtr->m_bHasLargeThumbnail;
-		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
-	}
-		
-
-	if (!bHasThumb)
-	{
-	
-		gchar * thumb_path ;
-		thumb_path = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,thumb_size);
-		
-		struct stat s;
-		if (0 == g_stat(thumb_path,&s))
-		{
-			bHasThumb = true;
-		}
-		g_free(thumb_path);
-	}
-	
-	return bHasThumb;
+	return m_QuiverFilePtr->HasThumbnail(bLargeThumb);
 }
 
 GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 {
-	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
-	if (bLargeThumb)
-	{
-		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
-	}
-	
-	gboolean save_thumbnail_to_cache = TRUE;
-	
-	//Timer t("QuiverFile::GetThumbnail()");
-	GdkPixbuf * thumb_pixbuf = NULL;
-
-
-	if (bLargeThumb)
-	{
-		thumb_pixbuf = m_QuiverFilePtr->c_ThumbnailCacheLarge.GetPixbuf(m_QuiverFilePtr->m_szURI);
-		if (NULL != thumb_pixbuf)
-		{
-			return thumb_pixbuf;
-		}
-	}
-	else
-	{
-		thumb_pixbuf = m_QuiverFilePtr->c_ThumbnailCacheNormal.GetPixbuf(m_QuiverFilePtr->m_szURI);
-		if (NULL != thumb_pixbuf)
-		{
-			return thumb_pixbuf;
-		}
-	}
-
-	gchar * thumb_path ;
-	thumb_path = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,thumb_size);
-
-	// try to load the thumb from thumb_path
-	GError *tmp_error;
-	gchar buffer[8192];
-	GnomeVFSHandle   *handle;
-	GnomeVFSResult    result;
-	GnomeVFSFileSize  bytes_read;
-	
-	tmp_error = NULL;
-	result = gnome_vfs_open (&handle, thumb_path, GNOME_VFS_OPEN_READ);
-	if (GNOME_VFS_OK == result)
-	{
-		GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
-
-		while (GNOME_VFS_OK == result)
-		{
-			result = gnome_vfs_read (handle, buffer, 
-									 sizeof(buffer), &bytes_read);
-			gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-		}
-		gnome_vfs_close(handle);
-		
-		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
-
-		if (NULL != thumb_pixbuf)
-		{
-			g_object_ref(thumb_pixbuf);
-
-			const gchar* thumb_mtime_str = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::MTime");
-			const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
-
-			const gchar* str_thumb_width = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Width");
-			const gchar* str_thumb_height = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Height");
-			const gchar *str_thumb_software = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Software");
-			
-			if (NULL != str_orientation)
-			{
-				//printf("we got orientation: %s\n",str_orientation);
-				m_QuiverFilePtr->m_iOrientation = atoi(str_orientation);
-			}
-			
-			if (NULL != thumb_mtime_str)
-			{
-				time_t mtime;
-				mtime = atol (thumb_mtime_str);
-				
-				if (m_QuiverFilePtr->file_info->mtime != mtime)
-				{
-					// they dont match.. we should load a new version
-					//printf("m-times do not match! %lu  != %lu\n",m_QuiverFilePtr->file_info->mtime ,mtime);
-					g_object_unref(thumb_pixbuf);
-					thumb_pixbuf = NULL;
-				}
-				else
-				{
-					//printf("m-times do match! %lu  != %lu\n",m_QuiverFilePtr->file_info->mtime ,mtime);
-					save_thumbnail_to_cache = FALSE;
-					if (bLargeThumb)
-					{
-						m_QuiverFilePtr->m_bHasLargeThumbnail = true;
-					}
-					else
-					{
-						m_QuiverFilePtr->m_bHasNormalThumbnail = true;
-					}
-				}
-			}
-			
-			// if we didn't get the width and height we should resave thumbnail
-			// with this information 
-			if (NULL == str_thumb_width || NULL == str_thumb_height)
-			{
-				save_thumbnail_to_cache = TRUE;
-			}
-			else 
-			{
-				int new_width  = atol(str_thumb_width);
-				int new_height = atol(str_thumb_height);
-				
-				if (NULL != str_thumb_software && 0 == strcmp("GNOME::ThumbnailFactory",str_thumb_software))
-				{
-					// this is to work around a bug with the gnome thumbnail factory
-					// not saving the correct width/height to the thumbnails
-					save_thumbnail_to_cache = TRUE;		
-				}
-				else if (-1 == m_QuiverFilePtr->m_iWidth || -1 == m_QuiverFilePtr->m_iHeight)
-				{
-					m_QuiverFilePtr->m_iWidth =  new_width;
-					m_QuiverFilePtr->m_iHeight = new_height;
-				}
-				/*
-				else if (new_width != m_QuiverFilePtr->m_iWidth || new_height != m_QuiverFilePtr->m_iHeight)
-				{
-					save_thumbnail_to_cache = TRUE;					
-				}
-				*/
-
-			}
-		}
-		gdk_pixbuf_loader_close(loader,&tmp_error);
-		g_object_unref(loader);
-	}
-	//gdk_threads_leave ();
-	
-	if (NULL == thumb_pixbuf && !bLargeThumb) // no thumbnail in the ~/.thumbnails/ cache
-	{ 
-		// unable to load from file, next try exif
-		thumb_pixbuf = GetExifThumbnail();
-		if (NULL != thumb_pixbuf)
-		{
-			int size = 128;
-			gint pixbuf_width = gdk_pixbuf_get_width(thumb_pixbuf);
-			gint pixbuf_height = gdk_pixbuf_get_height(thumb_pixbuf);
-			// resize it to the proper size
-			if (pixbuf_width > size || pixbuf_height > size)
-			{
-				int nw,nh;
-				if (size < pixbuf_width && pixbuf_width > pixbuf_height)
-				{
-					nw = size;
-					nh = (int) (size * (double)pixbuf_height/(double)pixbuf_width);
-				}
-				else
-				{
-					nh = size;
-					nw = (int)(size * (double)pixbuf_width / (double)pixbuf_height);
-				}
-				pixbuf_width = nw;
-				pixbuf_height = nh;
-				//printf("new size %d %d\n",nw,nh);
-				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
-									thumb_pixbuf,
-									nw,
-									nh,
-									GDK_INTERP_BILINEAR);
-									//GDK_INTERP_NEAREST);
-				g_object_unref(thumb_pixbuf);
-				thumb_pixbuf = newpixbuf;
-			}
-			//printf("got thumb from exif\n");
-		}
-	}
-
-	// we couldnt get it from the cache, or the exif, so we'll have to load it straight from the file
-	if (NULL == thumb_pixbuf)
-	{
-		int size = 128;
-		if (bLargeThumb)
-		{
-			size = 256;
-		}
-
-		result = gnome_vfs_open (&handle, m_QuiverFilePtr->m_szURI, GNOME_VFS_OPEN_READ);
-		if (GNOME_VFS_OK == result)
-		{
-			GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
-			PixbufLoaderSizeInfo size_info = {0};
-			size_info.size_request = size;
-			g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
-
-			while (GNOME_VFS_OK == result) 
-			{
-				result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
-				tmp_error = NULL;
-				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-				if (NULL != tmp_error)
-				{
-					//printf("error: %s\n",tmp_error->message);
-					break;
-				}
-			}
-
-			gnome_vfs_close(handle);
-
-			tmp_error = NULL;
-			gdk_pixbuf_loader_close(loader,&tmp_error);
-			
-			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
-		
-			if (NULL != thumb_pixbuf)
-			{
-				g_object_ref(thumb_pixbuf);
-				//printf("checking for orientation\n");
-				const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
-			
-				if (NULL != str_orientation)
-				{
-					//printf("we got orientation: %s\n",str_orientation);
-					m_QuiverFilePtr->m_iOrientation = atoi(str_orientation);
-					
-				}
-				//printf("got thumb from file\n");
-			}
-			
-			if (-1 == m_QuiverFilePtr->m_iWidth || -1 == m_QuiverFilePtr->m_iHeight)
-			{
-				m_QuiverFilePtr->m_iWidth = size_info.width;
-				m_QuiverFilePtr->m_iHeight = size_info.height;
-			}
-			
-			g_object_unref(loader);
-			
-			if (size_info.width <= size_info.size_request && size_info.height <= size_info.size_request )
-			{
-				// size of image is smaller than size requested so
-				// we do not need to cache it
-				save_thumbnail_to_cache = FALSE;
-			}			
-		}
-
-	}
-	
-	gchar *large_thumb_file = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,GNOME_THUMBNAIL_SIZE_LARGE);
-	gchar *large_thumb_path = g_path_get_dirname(large_thumb_file);
-	g_free(large_thumb_file);
-	
-	// user may be browsing the thumbnail directory. 
-	// if so, we don't want "normal" thumbnails to be saved
-	// for images in the large directory
-	if (save_thumbnail_to_cache && !bLargeThumb)
-	{
-		std::string filepath = GetFilePath();
-		
-		if (NULL != strstr(filepath.c_str(),large_thumb_path) )
-		{
-			save_thumbnail_to_cache = FALSE; 
-		}
-	}
-
-	if (NULL != large_thumb_path)
-	{
-		g_free(large_thumb_path);
-	}
-		
-	// FIXME: maybe this should be in a low priority thread?
-	// save the thumbnail to the cache directory (~/.thumbnails)
-
-	if (NULL != thumb_pixbuf && save_thumbnail_to_cache)
-	{
-		// make the directory if it does not already exist:
-		gchar *thumb_dir = g_path_get_dirname(thumb_path);
-		g_mkdir_with_parents(thumb_dir,S_IRUSR|S_IWUSR|S_IXUSR);
-		g_free(thumb_dir);
-		
-		// FIXME: should make sure the directory exists first!
-		gchar *temp_file_name = g_strconcat (thumb_path, ".XXXXXX", NULL);
-		gint fhandle = g_mkstemp (temp_file_name);
-		
-		if (-1 != fhandle )
-		{
-			close (fhandle);
-			gchar str_mtime[32];
-			gchar str_width[32];
-			gchar str_height[32];
-			gchar str_orientation[2];
-			//printf("temp_file_name = %s -> %s\n",temp_file_name,m_QuiverFilePtr->m_szURI);
-			g_snprintf (str_mtime, 30, "%lu",  m_QuiverFilePtr->file_info->mtime);
-
-			g_snprintf (str_width, 32, "%d",  GetWidth());
-			g_snprintf (str_height, 32, "%d",  GetHeight());
-			
-			g_snprintf (str_orientation, 2, "%d",  GetOrientation());
-
-
-			//printf("orientation to save: %s\n",str_orientation);
-			
-			gboolean saved = gdk_pixbuf_save (thumb_pixbuf,
-					   temp_file_name,
-					   "png", NULL, 
-					   "tEXt::Thumb::URI", m_QuiverFilePtr->m_szURI,
-					   "tEXt::Thumb::MTime", str_mtime,
-					   "tEXt::Thumb::Image::Orientation", str_orientation,
-					   "tEXt::Thumb::Image::Width", str_width,
-					   "tEXt::Thumb::Image::Height", str_height,
-					   "tEXt::Software", PACKAGE_STRING,
-					   NULL);
-			if (saved)
-			{
-				//printf("move: %s => %s \n",temp_file_name,thumb_path);
-				g_chmod (temp_file_name, 0600);
-				g_rename(temp_file_name, thumb_path);
-
-				if (bLargeThumb)
-				{
-					m_QuiverFilePtr->m_bHasLargeThumbnail = true;
-				}
-				else
-				{
-					m_QuiverFilePtr->m_bHasNormalThumbnail = true;
-				}
-			}
-			else
-			{
-				g_remove(temp_file_name);
-			}
-		}
-		g_free(temp_file_name);
-	}
-	
-	g_free (thumb_path);
-
-	//FIXME: need to get an autorotate option
-	
-	if (NULL != thumb_pixbuf  && 1 < GetOrientation()) 
-	{
-		GdkPixbuf * new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(thumb_pixbuf, GetOrientation());
-		if (NULL != new_pixbuf)
-		{
-			g_object_unref(thumb_pixbuf);
-			thumb_pixbuf = new_pixbuf;
-		}
-	}
-
-
-	if (NULL != thumb_pixbuf)
-	{
-		if (bLargeThumb)
-		{
-			m_QuiverFilePtr->c_ThumbnailCacheLarge.AddPixbuf(m_QuiverFilePtr->m_szURI,thumb_pixbuf);
-		}
-		else
-		{
-			m_QuiverFilePtr->c_ThumbnailCacheNormal.AddPixbuf(m_QuiverFilePtr->m_szURI,thumb_pixbuf);
-		}
-	}
-
-	return thumb_pixbuf;
+	return m_QuiverFilePtr->GetThumbnail(bLargeThumb);
 }
 
 GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
@@ -835,6 +1121,9 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 	GNOME_ICON_LOOKUP_FLAGS_NONE
 	*/
 	GnomeVFSFileInfo *file_info = GetFileInfo();
+	
+	if (NULL == file_info)
+		return NULL;
 	
 	char* icon_name = gnome_icon_lookup (icon_theme,
 										 NULL,
@@ -875,60 +1164,52 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 
 ExifData* QuiverFile::GetExifData()
 {
-	LoadExifData();
-	return m_QuiverFilePtr->exif_data;
+	// return a copy of the exif data
+	ExifData* pExifData = m_QuiverFilePtr->GetExifData();
+	ExifData* pExifDataCopy = NULL;
+	if (pExifData)
+	{
+		unsigned char *data = NULL;
+		unsigned int  size;
+
+		exif_data_save_data(pExifData,&data,&size);
+		pExifDataCopy = exif_data_new_from_data(data,size);
+		free(data);
+	}
+	return pExifDataCopy;
+}
+
+bool QuiverFile::SetExifData(ExifData* pExifData)
+{
+	return m_QuiverFilePtr->SetExifData(pExifData);
 }
 
 
 int QuiverFile::GetOrientation()
 {
-	// temporarily comment out the cached orientation
-	//if (0 == m_QuiverFilePtr->m_iOrientation)
-	{
-		ExifData *exif_data = GetExifData();
-		int orientation = 1;
-		
-		if (m_QuiverFilePtr->data_exists_flags & QUIVER_FILE_DATA_EXIF)
-		{
-			ExifEntry *entry;
-			entry = exif_data_get_entry(exif_data,EXIF_TAG_ORIENTATION);
-			if (NULL != entry)
-			{
-				// the orientation field is set
-				//exif_entry_dump(entry,2);
-				ExifByteOrder o;
-				o = exif_data_get_byte_order (entry->parent->parent);
-				orientation = exif_get_short (entry->data, o);
-			}
-		}
-		else
-		{
-			/*
-			GdkPixbuf *pixbuf = GetThumbnail();
-			if (NULL != pixbuf)
-			{
-				const gchar* str_orientation = gdk_pixbuf_get_option (pixbuf, "tEXt::Thumb::Image::Orientation");
-				int new_orientation = atoi(str_orientation);
-				if (1 < new_orientation && new_orientation < 9)
-				{
-					orientation = new_orientation;
-				}
-				g_object_unref(pixbuf);
-			}
-			*/
-		}
-		m_QuiverFilePtr->m_iOrientation = orientation;
-		
-	}
-	
-	return m_QuiverFilePtr->m_iOrientation;
+	return m_QuiverFilePtr->GetOrientation();
 }
 
 
-
-
-
-
-
-
+void QuiverFile::RemoveCachedThumbnail(bool bLargeThumb)
+{
+	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
+	if (bLargeThumb)
+	{
+		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
+	}
+	
+	if (bLargeThumb)
+	{
+		m_QuiverFilePtr->c_ThumbnailCacheLarge.RemovePixbuf(m_QuiverFilePtr->m_szURI);
+	}
+	else
+	{
+		m_QuiverFilePtr->c_ThumbnailCacheNormal.RemovePixbuf(m_QuiverFilePtr->m_szURI);
+	}
+	gchar * thumb_path ;
+	thumb_path = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,thumb_size);
+	g_remove(thumb_path);
+	g_free (thumb_path);
+}
 

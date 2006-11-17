@@ -32,6 +32,9 @@ static void exif_value_editing_started_callback (GtkCellRenderer *renderer,
                                             gchar *path,
                                             gpointer user_data);
 
+static void exif_value_editing_canceled_callback (GtkCellRenderer *renderer,
+                                            gpointer user_data);
+
 static gboolean exif_tree_event_popup_menu (GtkWidget *treeview, gpointer userdata);
 static gboolean exif_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpointer userdata);
 
@@ -42,7 +45,9 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
                                   gpointer             user_data);
 
 static void exif_convert_arg_to_entry (const char*set_value, ExifEntry *e, ExifByteOrder o);
-static void exif_update_orientation(ExifData *pExifData, int value);
+
+static int exif_data_get_orientation(ExifData *pExifData);
+static gboolean exif_update_orientation(ExifData *pExifData, int value);
 static void exif_update_entry(ExifData *pExifData, ExifIfd ifd,ExifTag tag,const char *value);
 static gboolean exif_date_format_is_valid(const char *date);
 
@@ -56,12 +61,18 @@ static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifI
 /* private implementation */
 class ExifView::ExifViewImpl
 {
-
 public:
-	QuiverFile m_QuiverFile;
-	GtkWidget *m_pTreeView;
-	GtkWidget *m_pScrolledWindow;
-	guint m_iIdleLoadID;
+//	methods
+	~ExifViewImpl();
+
+
+// variables
+	QuiverFile    m_QuiverFile;
+	ExifData*     m_pExifData;
+	GtkWidget*    m_pTreeView;
+	GtkWidget*    m_pScrolledWindow;
+	GtkUIManager* m_pUIManager;
+	guint         m_iIdleLoadID;
 };
 
 enum
@@ -110,7 +121,6 @@ typedef struct _ForEachEntryData
 typedef struct _ExifTagAddRemoveStruct
 {
 	ExifView::ExifViewImpl *pExifViewImpl;
-	GtkTreeView *tree_view;
 	ExifIfd ifd;
 	ExifTag tag;
 	
@@ -157,11 +167,26 @@ const int ifd_editable_tags[][10] = {
 	},
 };
 
+ExifView::ExifViewImpl::~ExifViewImpl()
+{
+	if (NULL != m_pExifData)
+	{
+		exif_data_unref(m_pExifData);
+	}
+	
+	if (NULL != m_pUIManager)
+	{
+		g_object_unref(m_pUIManager);
+		m_pUIManager =  NULL;
+	}
+}
 
 ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 {
 	m_ExifViewImplPtr->m_iIdleLoadID = 0;
-	m_ExifViewImplPtr->m_pTreeView = NULL;
+	m_ExifViewImplPtr->m_pTreeView   = NULL;
+	m_ExifViewImplPtr->m_pExifData   = NULL;
+	m_ExifViewImplPtr->m_pUIManager  = NULL;
 
 	GtkWidget *treeview;
 
@@ -255,7 +280,8 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 
 	renderer = gtk_cell_renderer_text_new ();
 	g_signal_connect(renderer, "edited", (GCallback) exif_value_cell_edited_callback, m_ExifViewImplPtr.get());
-
+	g_signal_connect(renderer, "editing-started", (GCallback) exif_value_editing_started_callback, m_ExifViewImplPtr.get());
+	g_signal_connect(renderer, "editing-canceled", (GCallback) exif_value_editing_canceled_callback, m_ExifViewImplPtr.get());
 
 	g_object_set (G_OBJECT (renderer),  "mode",GTK_CELL_RENDERER_MODE_EDITABLE,  NULL);
 	g_object_set (G_OBJECT (renderer),  "cell-background-gdk", &highlight_color2,  NULL);
@@ -293,7 +319,8 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 
 	g_signal_connect(renderer, "edited", (GCallback) exif_value_cell_edited_callback, m_ExifViewImplPtr.get());
 	//g_signal_connect(renderer, "edited", (GCallback) exif_value_cell_edited_callback, NULL);
-	g_signal_connect(renderer, "editing-started", (GCallback) exif_value_editing_started_callback, NULL);
+	g_signal_connect(renderer, "editing-started", (GCallback) exif_value_editing_started_callback, m_ExifViewImplPtr.get());
+	g_signal_connect(renderer, "editing-canceled", (GCallback) exif_value_editing_canceled_callback, m_ExifViewImplPtr.get());
 
 
 
@@ -370,20 +397,23 @@ gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 	//exifData = exif_data_new_from_file("IMGP0217_modified.JPG"); //exif_loader_get_data(loader);
 	ExifData *pExifData = NULL;
 	
-	pExifData = pExifViewImpl->m_QuiverFile.GetExifData();
+	pExifData = pExifViewImpl->m_pExifData;
 	
 	if (NULL != pExifData)
 	{
 		exif_data_ref(pExifData);
 	
 		GdkPixbuf *pixbuf = pExifViewImpl->m_QuiverFile.GetExifThumbnail();
-		GdkPixbuf *new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(pixbuf,pExifViewImpl->m_QuiverFile.GetOrientation());
-		if (NULL != new_pixbuf)
+		if (NULL != pixbuf)
 		{
-			g_object_unref(pixbuf);
-			pixbuf = new_pixbuf;
+			GdkPixbuf *new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(pixbuf,pExifViewImpl->m_QuiverFile.GetOrientation());
+			if (NULL != new_pixbuf)
+			{
+				g_object_unref(pixbuf);
+				pixbuf = new_pixbuf;
+			}
 		}
-
+		
 		if (NULL != pixbuf)
 		{
 			gtk_tree_store_append (store, &iter1, NULL);  /* Acquire a top-level iterator */
@@ -497,6 +527,12 @@ void
 ExifView::SetQuiverFile(QuiverFile quiverFile)
 {
 	m_ExifViewImplPtr->m_QuiverFile = quiverFile;
+	if (NULL != m_ExifViewImplPtr->m_pExifData)
+	{
+		exif_data_unref(m_ExifViewImplPtr->m_pExifData);
+	}
+	
+	m_ExifViewImplPtr->m_pExifData = quiverFile.GetExifData();
 
 	if (0 != m_ExifViewImplPtr->m_iIdleLoadID)
 	{
@@ -507,6 +543,35 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 
 }
 
+void 
+ExifView::SetUIManager(GtkUIManager *ui_manager)
+{
+	GError *tmp_error;
+	tmp_error = NULL;
+	
+	if (NULL != m_ExifViewImplPtr->m_pUIManager)
+	{
+		g_object_unref(m_ExifViewImplPtr->m_pUIManager);
+	}
+
+	m_ExifViewImplPtr->m_pUIManager = ui_manager;
+	
+	g_object_ref(m_ExifViewImplPtr->m_pUIManager);
+
+/*
+	guint n_entries = G_N_ELEMENTS (action_entries);
+	
+	GtkActionGroup* actions = gtk_action_group_new ("BrowserActions");
+	
+	gtk_action_group_add_actions(actions, action_entries, n_entries, m_ViewerImplPtr.get());
+                                 
+	gtk_action_group_add_toggle_actions(actions,
+										action_entries_toggle, 
+										G_N_ELEMENTS (action_entries_toggle),
+										m_ViewerImplPtr.get());
+	gtk_ui_manager_insert_action_group (m_ViewerImplPtr->m_pUIManager,actions,0);
+*/	
+}
 
 /* misc functions */
 
@@ -619,7 +684,9 @@ static void exif_tree_store_update_iter_entry (ExifView::ExifViewImpl *pExifView
 	
 	if (EXIF_TAG_ORIENTATION == entry->tag)
 	{
-		int orientation = pExifViewImpl->m_QuiverFile.GetOrientation();
+		ExifByteOrder o;
+		o = exif_data_get_byte_order (entry->parent->parent);
+		int orientation = exif_get_short (entry->data, o);
 
 		gtk_tree_store_set (store, iter,
 			EXIF_TREE_COLUMN_TAG_ID,entry->tag,
@@ -645,11 +712,37 @@ static void exif_tree_store_update_iter_entry (ExifView::ExifViewImpl *pExifView
 
 
 
+static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
+{
+	//GtkCellRenderer* renderer = (GtkCellRenderer*)user_data;
+	
+	//printf("losing focus\n");
+	
+	//gtk_cell_renderer_stop_editing(renderer,TRUE);
+	gtk_cell_editable_remove_widget(GTK_CELL_EDITABLE(widget));
+	
+	//gtk_widget_hide(widget);
+	
+	return FALSE; // false to propagate
+}
+
 static void exif_value_editing_started_callback (GtkCellRenderer *renderer,
                                             GtkCellEditable *editable,
                                             gchar *path,
                                             gpointer user_data)
 {
+	ExifView::ExifViewImpl* pExifViewImpl = (ExifView::ExifViewImpl*)user_data;
+	
+	//printf("Editing started\n");
+	
+	if (NULL != pExifViewImpl->m_pUIManager)
+	{
+		QuiverUtils::DisconnectUnmodifiedAccelerators(pExifViewImpl->m_pUIManager);
+	}
+	
+	g_signal_connect (G_OBJECT (editable), "focus-out-event",
+    			G_CALLBACK (entry_focus_out), renderer);
+	
 	if (GTK_IS_COMBO_BOX(editable))
 	{
 
@@ -662,7 +755,20 @@ static void exif_value_editing_started_callback (GtkCellRenderer *renderer,
 		gtk_cell_layout_set_attributes(layout,renderer,
 		  "text", ORIENTATION_COLUMN_TEXT_VALUE,
 		NULL);
+	}
 
+}
+
+static void exif_value_editing_canceled_callback (GtkCellRenderer *renderer,
+                                            gpointer user_data)
+{
+	ExifView::ExifViewImpl* pExifViewImpl = (ExifView::ExifViewImpl*)user_data;
+	
+	//printf("Editing canceled\n");
+	
+	if (NULL != pExifViewImpl->m_pUIManager)
+	{
+		QuiverUtils::ConnectUnmodifiedAccelerators(pExifViewImpl->m_pUIManager);
 	}
 }
 
@@ -690,26 +796,28 @@ exif_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpoint
 		GtkTreeSelection *selection;
 		selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(treeview));
 		
-		/* Note: gtk_tree_selection_count_selected_rows() does not
-		 *   exist in gtk+-2.0, only in gtk+ >= v2.2 ! */
-		if (gtk_tree_selection_count_selected_rows(selection)  <= 1)
+		if (NULL != selection)
 		{
-			GtkTreePath *path;
-			/* Get tree path for row that was clicked */
-			GtkTreeViewColumn *column;
-			if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(treeview),
-									 (gint) event->x, 
-									 (gint) event->y,
-									 &path, &column, NULL, NULL))
+			/* Note: gtk_tree_selection_count_selected_rows() does not
+			 *   exist in gtk+-2.0, only in gtk+ >= v2.2 ! */
+			if (gtk_tree_selection_count_selected_rows(selection)  <= 1)
 			{
-				printf("column: %s\n",gtk_tree_view_column_get_title(column));
-				gtk_tree_view_set_cursor(GTK_TREE_VIEW(treeview),path,NULL,FALSE);
-				gtk_tree_selection_unselect_all(selection);
-				gtk_tree_selection_select_path(selection, path);
-				gtk_tree_path_free(path);
+				GtkTreePath *path;
+				/* Get tree path for row that was clicked */
+				GtkTreeViewColumn *column;
+				if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(treeview),
+										 (gint) event->x, 
+										 (gint) event->y,
+										 &path, &column, NULL, NULL))
+				{
+					printf("column: %s\n",gtk_tree_view_column_get_title(column));
+					gtk_tree_view_set_cursor(GTK_TREE_VIEW(treeview),path,NULL,FALSE);
+					gtk_tree_selection_unselect_all(selection);
+					gtk_tree_selection_select_path(selection, path);
+					gtk_tree_path_free(path);
+				}
 			}
-		}
-		
+		}			
 		exif_tree_show_popup_menu(pExifViewImpl,treeview, event->button, gdk_event_get_time((GdkEvent*)event));
 		return TRUE;
 	}
@@ -721,9 +829,9 @@ static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, Gt
 	int j;
 	GtkWidget *menu, *submenu, *menuitem;
 	
-	ExifData* pExifData = pExifViewImpl->m_QuiverFile.GetExifData();
+	ExifData* pExifData = pExifViewImpl->m_pExifData;
 	
-	menu = gtk_menu_new();
+	
 
 	/* get the group that has been clicked on or is selected */
 	
@@ -738,89 +846,92 @@ static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, Gt
 	gtk_tree_view_get_cursor ( GTK_TREE_VIEW(treeview),&path,&column );
 	GtkTreeModel *model = gtk_tree_view_get_model (GTK_TREE_VIEW(treeview));
 
-	gtk_tree_model_get_iter(GTK_TREE_MODEL(model),&iter,path);
-	gtk_tree_model_get (GTK_TREE_MODEL(model),&iter,EXIF_TREE_COLUMN_TAG_ID,&tag_id,-1);
-	while ( gtk_tree_model_iter_parent(GTK_TREE_MODEL(model),&parent,&iter ) )
+	if (NULL != path)
 	{
-		has_parent = TRUE;
-		iter = parent;
-	}
-
-	gtk_tree_model_get (GTK_TREE_MODEL(model),&iter,EXIF_TREE_COLUMN_TAG_ID,&content_id,-1);
-
-	GtkWidget *image;
-
-	if (0 <= content_id && content_id < EXIF_IFD_COUNT)
-	{
-		/*
-		menuitem = gtk_menu_item_new_with_label( exif_ifd_get_name(i) );
-		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), menuitem);
-		*/
-		if (0 != ifd_editable_tags[content_id][0])
+		menu = gtk_menu_new();
+		gtk_tree_model_get_iter(GTK_TREE_MODEL(model),&iter,path);
+		gtk_tree_model_get (GTK_TREE_MODEL(model),&iter,EXIF_TREE_COLUMN_TAG_ID,&tag_id,-1);
+		while ( gtk_tree_model_iter_parent(GTK_TREE_MODEL(model),&parent,&iter ) )
 		{
-			for (j=0 ; 0 != ifd_editable_tags[content_id][j];j++)
-			{
-				/* only add the tag if it doesnt already exist in the exif data */
-				ExifEntry *e = exif_content_get_entry (pExifData->ifd[content_id],(ExifTag)ifd_editable_tags[content_id][j] );
-				if (!e) 
-				{
-					if (!show_menu)
-					{
-						show_menu = TRUE;
-						image = gtk_image_new_from_stock (GTK_STOCK_ADD,GTK_ICON_SIZE_MENU);
-
-						menuitem = gtk_image_menu_item_new_with_label("Add Tag");
-						gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);
-
-						gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
-						submenu = gtk_menu_new();
-						gtk_menu_item_set_submenu       (GTK_MENU_ITEM(menuitem),submenu);
-					}
-					menuitem = gtk_menu_item_new_with_label( exif_tag_get_title((ExifTag)ifd_editable_tags[content_id][j]) );
-					gtk_menu_shell_append(GTK_MENU_SHELL(submenu), menuitem);
-
-					ExifTagAddRemoveStruct *data = g_new(ExifTagAddRemoveStruct,1);
-					data->pExifViewImpl = pExifViewImpl;
-					data->ifd = content_id;
-					data->tag = (ExifTag)ifd_editable_tags[content_id][j];
-					g_signal_connect(menuitem, "activate",
-						 (GCallback) exif_tree_event_add_tag, data);//ifd_editable_tags[content_id][j]);
-				}
-			}
-		}
-
-
-		if (has_parent)
-		{
-			show_menu = TRUE;
-			image = gtk_image_new_from_stock (GTK_STOCK_REMOVE,GTK_ICON_SIZE_MENU);
-			menuitem = gtk_image_menu_item_new_with_label("Remove Tag");
-
-			gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);
-
-			ExifTagAddRemoveStruct *data = g_new(ExifTagAddRemoveStruct,1);
-			data->pExifViewImpl = pExifViewImpl;
-			data->tag = tag_id;
-			data->ifd = content_id;
-			g_signal_connect(menuitem, "activate",
-							 (GCallback) exif_tree_event_remove_tag, data);//ifd_editable_tags[content_id][j]);
-			/*
-			g_signal_connect(menuitem, "activate",
-							 (GCallback) signal_uncheck_selected, treeview);
-							 */
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
+			has_parent = TRUE;
+			iter = parent;
 		}
 	
-	}
-	if (show_menu)
-	{
-
-		gtk_widget_show_all(menu);
+		gtk_tree_model_get (GTK_TREE_MODEL(model),&iter,EXIF_TREE_COLUMN_TAG_ID,&content_id,-1);
+	
+		GtkWidget *image;
+	
+		if (0 <= content_id && content_id < EXIF_IFD_COUNT)
+		{
+			/*
+			menuitem = gtk_menu_item_new_with_label( exif_ifd_get_name(i) );
+			gtk_menu_shell_append(GTK_MENU_SHELL(submenu), menuitem);
+			*/
+			if (0 != ifd_editable_tags[content_id][0])
+			{
+				for (j=0 ; 0 != ifd_editable_tags[content_id][j];j++)
+				{
+					/* only add the tag if it doesnt already exist in the exif data */
+					ExifEntry *e = exif_content_get_entry (pExifData->ifd[content_id],(ExifTag)ifd_editable_tags[content_id][j] );
+					if (!e) 
+					{
+						if (!show_menu)
+						{
+							show_menu = TRUE;
+							image = gtk_image_new_from_stock (GTK_STOCK_ADD,GTK_ICON_SIZE_MENU);
+	
+							menuitem = gtk_image_menu_item_new_with_label("Add Tag");
+							gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);
+	
+							gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
+							submenu = gtk_menu_new();
+							gtk_menu_item_set_submenu       (GTK_MENU_ITEM(menuitem),submenu);
+						}
+						menuitem = gtk_menu_item_new_with_label( exif_tag_get_title((ExifTag)ifd_editable_tags[content_id][j]) );
+						gtk_menu_shell_append(GTK_MENU_SHELL(submenu), menuitem);
+	
+						ExifTagAddRemoveStruct *data = g_new(ExifTagAddRemoveStruct,1);
+						data->pExifViewImpl = pExifViewImpl;
+						data->ifd = content_id;
+						data->tag = (ExifTag)ifd_editable_tags[content_id][j];
+						g_signal_connect(menuitem, "activate",
+							 (GCallback) exif_tree_event_add_tag, data);//ifd_editable_tags[content_id][j]);
+					}
+				}
+			}
+	
+	
+			if (has_parent)
+			{
+				show_menu = TRUE;
+				image = gtk_image_new_from_stock (GTK_STOCK_REMOVE,GTK_ICON_SIZE_MENU);
+				menuitem = gtk_image_menu_item_new_with_label("Remove Tag");
+	
+				gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);
+	
+				ExifTagAddRemoveStruct *data = g_new(ExifTagAddRemoveStruct,1);
+				data->pExifViewImpl = pExifViewImpl;
+				data->tag = tag_id;
+				data->ifd = content_id;
+				g_signal_connect(menuitem, "activate",
+								 (GCallback) exif_tree_event_remove_tag, data);//ifd_editable_tags[content_id][j]);
+				/*
+				g_signal_connect(menuitem, "activate",
+								 (GCallback) signal_uncheck_selected, treeview);
+								 */
+				gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
+			}
 		
-		gtk_menu_popup(GTK_MENU(menu), NULL, NULL, NULL, NULL,
-						  button, activate_time);
+		}
+		if (show_menu)
+		{
+	
+			gtk_widget_show_all(menu);
+			
+			gtk_menu_popup(GTK_MENU(menu), NULL, NULL, NULL, NULL,
+							  button, activate_time);
+		}
 	}
-
 }
 
 static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
@@ -838,9 +949,16 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 	char * value;
 
 	ExifView::ExifViewImpl *pExifViewImpl = (ExifView::ExifViewImpl*)user_data;
+
+	if (NULL != pExifViewImpl->m_pUIManager)
+	{
+		QuiverUtils::ConnectUnmodifiedAccelerators(pExifViewImpl->m_pUIManager);
+	}
+	printf("finished editing\n");
+
 	GtkTreeModel *pTreeModel = gtk_tree_view_get_model(GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
 
-	ExifData* pExifData = pExifViewImpl->m_QuiverFile.GetExifData();
+	ExifData* pExifData = pExifViewImpl->m_pExifData;
 	
 	path = gtk_tree_path_new_from_string(path_string);
 	gtk_tree_model_get_iter(pTreeModel,&child,path);
@@ -858,6 +976,7 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 	if (EXIF_TAG_ORIENTATION != tag_id && !strcmp(value,new_text) )
 	{
 		printf(" values are the same, we should not update anything \n");
+		return;
 	}
 	
 	int i;
@@ -869,16 +988,15 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 			{
 				if ( !strcmp(new_text,orientation_options[i]) )
 				{
-					if (pExifViewImpl->m_QuiverFile.GetOrientation() != i+1)
+					printf("new/old orientation value: %d [%s] [%s]\n",i,new_text, orientation_options[i]);
+					updated = exif_update_orientation(pExifData, i+1);	
+					
+					if (updated)
 					{
-						printf("new/old orientation value: %d [%s] [%s]\n",i,new_text, orientation_options[i]);
-						exif_update_orientation(pExifData, i+1);	
 						/* let us update the thumbnail as well */
-
 						exif_tree_update_thumbnail(pExifViewImpl, GTK_TREE_STORE(pTreeModel));
-						//gtk_tree_view_columns_autosize(GTK_
-						updated = TRUE;
 					}
+					
 					break;
 				}
 			}
@@ -929,7 +1047,14 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 	if (updated)
 	{
 		printf("updating ... \n");
+		if (pExifViewImpl->m_QuiverFile.Modified())
+			printf("1: quiver file was modified\n");
+			
 		exif_tree_update_entry(pExifViewImpl, ifd_id, tag_id);
+		
+		pExifViewImpl->m_QuiverFile.SetExifData(pExifData);
+		if (pExifViewImpl->m_QuiverFile.Modified())
+			printf("2: quiver file was modified\n");
 		//save_image();
 	}
 }
@@ -1012,10 +1137,31 @@ exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o)
 	}
 }
 
-static void exif_update_orientation(ExifData *pExifData, int value)
+static int exif_data_get_orientation(ExifData *pExifData)
 {
 	ExifEntry *e;
+	int orientation = 1;
+	
+	if (pExifData)
+	{
+		e = exif_content_get_entry (pExifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
+		if (e)
+		{ 
+			ExifByteOrder o;
+			o = exif_data_get_byte_order (e->parent->parent);
+			orientation = exif_get_short (e->data, o);
+		}
+	}
+	return orientation;
+}
 
+static gboolean exif_update_orientation(ExifData *pExifData, int value)
+{
+	gboolean update;
+	ExifEntry *e;
+
+	update = FALSE;
+	
 	/* If the entry doesn't exist, create it. */
 	e = exif_content_get_entry (pExifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
 	if (!e) 
@@ -1023,10 +1169,25 @@ static void exif_update_orientation(ExifData *pExifData, int value)
 		e = exif_entry_new ();
 		exif_content_add_entry (pExifData->ifd[EXIF_IFD_0], e);
 		exif_entry_initialize (e, EXIF_TAG_ORIENTATION);
+		update = TRUE;
+	}
+	else
+	{
+		ExifByteOrder o;
+		o = exif_data_get_byte_order (e->parent->parent);
+		int orientation = exif_get_short (e->data, o);
+		if (orientation != value)
+		{
+			update = TRUE;
+		}
 	}
 
-	/* Now set the value and save the data. */
-	exif_set_short (e->data , exif_data_get_byte_order (pExifData), value);
+	if (update)
+	{
+		/* Now set the value and save the data. */
+		exif_set_short (e->data , exif_data_get_byte_order (pExifData), value);
+	}
+	return update;
 }
 
 static void exif_update_entry(ExifData *pExifData, ExifIfd ifd,ExifTag tag,const char *value)
@@ -1101,7 +1262,7 @@ exif_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data)
 {
 	int i,j;
 	ExifTagAddRemoveStruct *data = (ExifTagAddRemoveStruct*)user_data;
-	ExifData *pExifData = data->pExifViewImpl->m_QuiverFile.GetExifData();
+	ExifData *pExifData = data->pExifViewImpl->m_pExifData;
 
 	for (i = 0;i< EXIF_IFD_COUNT;i++)
 	{
@@ -1149,10 +1310,10 @@ exif_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data)
 								/* update the selection */
 								GtkTreePath *path;
 								path = gtk_tree_model_get_path (model,&new_child);
-								gtk_tree_view_set_cursor(data->tree_view,path,NULL,FALSE);
+								gtk_tree_view_set_cursor(GTK_TREE_VIEW(data->pExifViewImpl->m_pTreeView),path,NULL,FALSE);
 
 								GtkTreeSelection *selection;
-								selection = gtk_tree_view_get_selection(data->tree_view);
+								selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(data->pExifViewImpl->m_pTreeView));
 								gtk_tree_selection_unselect_all(selection);
 								gtk_tree_selection_select_path(selection, path);
 
@@ -1175,7 +1336,7 @@ static void
 exif_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data)
 {
 	ExifTagAddRemoveStruct *data = (ExifTagAddRemoveStruct*)user_data;
-	ExifData *pExifData = data->pExifViewImpl->m_QuiverFile.GetExifData();
+	ExifData *pExifData = data->pExifViewImpl->m_pExifData;
 	ExifEntry *entry = exif_content_get_entry(pExifData->ifd[data->ifd],data->tag);
 	
 	if (NULL != entry)
@@ -1237,7 +1398,7 @@ exif_tree_update_thumbnail(ExifView::ExifViewImpl *pExifViewImpl, GtkTreeStore *
 					{
 						
 						pixbuf = pExifViewImpl->m_QuiverFile.GetExifThumbnail();
-						GdkPixbuf *new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(pixbuf,pExifViewImpl->m_QuiverFile.GetOrientation());
+						GdkPixbuf *new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(pixbuf,exif_data_get_orientation(pExifViewImpl->m_pExifData));
 						if (NULL != new_pixbuf)
 						{
 							g_object_unref(pixbuf);
@@ -1310,7 +1471,9 @@ static void exif_tree_update_iter_entry (ExifView::ExifViewImpl *pExifViewImpl, 
 	
 	if (EXIF_TAG_ORIENTATION == entry->tag)
 	{
-		int orientation = pExifViewImpl->m_QuiverFile.GetOrientation();
+		ExifByteOrder o;
+		o = exif_data_get_byte_order (entry->parent->parent);
+		int orientation = exif_get_short (entry->data, o);
 
 		gtk_tree_store_set (store, iter,
 			EXIF_TREE_COLUMN_TAG_ID,entry->tag,
@@ -1336,7 +1499,7 @@ static void exif_tree_update_iter_entry (ExifView::ExifViewImpl *pExifViewImpl, 
 
 static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifIfd ifd, ExifTag tag)
 {
-	ExifData *pExifData = pExifViewImpl->m_QuiverFile.GetExifData();
+	ExifData *pExifData = pExifViewImpl->m_pExifData;
 	ExifEntry *entry = exif_content_get_entry(pExifData->ifd[ifd],tag);
 	
 	if (NULL != entry)

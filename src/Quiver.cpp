@@ -19,6 +19,8 @@
 #include "Preferences.h"
 #include "PreferencesDlg.h"
 
+#include "ImageSaveManager.h"
+
 // globals needed for preferences
 
 gchar g_szConfigDir[256]      = "";
@@ -32,11 +34,6 @@ gchar g_szConfigFilePath[256] = "";
 #define QUIVER_PREFS_APP_WIDTH       "width"
 #define QUIVER_PREFS_APP_HEIGHT      "height"
 
-
-extern "C" {
-#define JPEG_INTERNALS
-#include <jpeglib.h>
-}
 using namespace std;
 
 // helper functions
@@ -64,17 +61,23 @@ static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *
 class QuiverImpl
 {
 public:
+// methods
 	QuiverImpl(Quiver *parent);
 
 	void LoadExternalToolMenuItems();
-
-
+	
+	void Save();
+	void SaveAs();
+	
+	bool CanClose();
+	
+// member variables
 	Quiver *m_pQuiver;
 
 	Browser m_Browser;
 	Viewer m_Viewer;
 	ExifView m_ExifView;
-
+	
 	Statusbar m_Statusbar;
 	GtkWidget *m_pQuiverWindow;
 	GtkWidget *m_pMenubar;
@@ -84,6 +87,8 @@ public:
 	
 	guint m_iMergedViewerUI;
 	guint m_iMergedBrowserUI;
+	
+	guint m_iMergedExternalTools;
 	
 			
 	ImageList m_ImageList;
@@ -97,10 +102,9 @@ public:
 	bool m_bTimeoutEventMotionNotifyRunning;
 	bool m_bTimeoutEventMotionNotifyMouseMoved;
 	
-	bool m_bSlideshowRunning;
-	guint m_iTimeoutSlideshowID;
-	
 	guint m_iTimeoutMouseMotionNotify;
+	
+	QuiverFile m_CurrentQuiverFile;
 
 	GdkWindowState m_WindowState;
 
@@ -120,6 +124,8 @@ public:
 	
 	std::list<std::string> m_listImages;
 
+// nested classes
+
 	//class BrowserEventHandler;
 	class BrowserEventHandler : public IBrowserEventHandler
 	{
@@ -132,7 +138,7 @@ public:
 		QuiverImpl *parent;
 	};
 	
-	//class BrowserEventHandler;
+	//class ViewerEventHandler;
 	class ViewerEventHandler : public IViewerEventHandler
 	{
 	public:
@@ -227,8 +233,13 @@ void QuiverImpl::LoadExternalToolMenuItems()
 				"	</menubar>"
 				"</ui>";
 
+			if (0 != m_iMergedExternalTools)
+			{
+				gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedExternalTools);
+			}
+
 			GError *error = NULL;
-			guint merge_id = gtk_ui_manager_add_ui_from_string
+			m_iMergedExternalTools = gtk_ui_manager_add_ui_from_string
                 (m_pUIManager,
                  str_ui.c_str(),
                  str_ui.length(),
@@ -239,9 +250,72 @@ void QuiverImpl::LoadExternalToolMenuItems()
 			}
 		}
 	}
-
-	
 }
+
+void QuiverImpl::Save()
+{
+	if (m_CurrentQuiverFile.Modified() && m_CurrentQuiverFile.IsWriteable())
+	{
+		string strMimeType = m_CurrentQuiverFile.GetMimeType();
+		
+		ImageSaveManagerPtr saverPtr = ImageSaveManager::GetInstance();
+		
+		  
+		if (saverPtr->IsFormatSupported(strMimeType))
+		{
+			saverPtr->SaveImage(m_CurrentQuiverFile);
+		}
+	}
+}
+
+void QuiverImpl::SaveAs()
+{
+	cout << "Supported write file types: " << endl;
+	GSList *formats = gdk_pixbuf_get_formats ();
+	//GSList *writable_formats = NULL;
+	GdkPixbufFormat * fmt;
+	while (NULL != formats)
+	{
+		fmt = (GdkPixbufFormat*)formats->data;
+		
+		if (gdk_pixbuf_format_is_writable(fmt))
+		{
+			//cout << gdk_pixbuf_format_get_name(fmt) <<": " << endl;
+			//cout << gdk_pixbuf_format_get_description(fmt) << endl;
+			gchar ** ext_ptr_head = gdk_pixbuf_format_get_extensions(fmt);
+			gchar ** ext_ptr = ext_ptr_head;
+			while (NULL != *ext_ptr)
+			{
+				cout << *ext_ptr << "," ;
+				ext_ptr++;
+			}
+			g_strfreev(ext_ptr_head);
+			//cout << endl;
+			ext_ptr_head = gdk_pixbuf_format_get_mime_types(fmt);
+			ext_ptr = ext_ptr_head;
+			while (NULL != *ext_ptr)
+			{
+				//c_setSupportedMimeTypes.insert(*ext_ptr);
+				cout << *ext_ptr << "," ;
+				ext_ptr++;
+			}
+			g_strfreev(ext_ptr_head);
+			cout << endl;
+		}
+		
+		formats = g_slist_next(formats);
+		//g_slist_foreach (formats, add_if_writable, &writable_formats);
+	}
+	g_slist_free (formats);
+}
+
+bool QuiverImpl::CanClose()
+{
+	gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
+	gtk_window_get_size(GTK_WINDOW(m_pQuiverWindow),&m_iAppWidth,&m_iAppHeight);
+	return true;
+}
+
 
 #define QUIVER_ACTION_SLIDESHOW  "SlideShow"
 #define QUIVER_ACTION_FULLSCREEN "FullScreen"
@@ -262,6 +336,7 @@ char * quiver_ui_main =
 "			<menuitem action='FileOpenLocation'/>"
 "			<separator/>"
 "			<menuitem action='FileSave'/>"
+"			<menuitem action='FileSaveAs'/>"
 "			<separator/>"
 "			<placeholder action='FileMenuAdditions' />"
 "			<separator/>"
@@ -326,12 +401,12 @@ char * quiver_ui_main =
 "		<separator/>"
 "		<placeholder name='TransformToolItems'/>"
 "		<separator/>"
-"		<toolitem action='ImageTrash'/>"
+"		<placeholder name='Trash'/>"
 "		<separator/>"
 "	</toolbar>"
-"	<accelerator action='QuitQ'/>"
-"	<accelerator action='QuitEsc'/>"
-"	<accelerator action='QuitCtrlW'/>"
+"	<accelerator action='Quit_2'/>"
+"	<accelerator action='Quit_3'/>"
+"	<accelerator action='Quit_4'/>"
 "</ui>";
 
 
@@ -353,7 +428,6 @@ char *quiver_ui_browser =
 "			<separator/>"
 "		</placeholder>"
 "		<placeholder name='NavToolItems'>"
-"			<separator/>"
 "			<separator/>"
 "		</placeholder>"
 "	</toolbar>"
@@ -402,17 +476,19 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuWindow", NULL, N_("_Window") },
 	{ "MenuHelp", NULL, N_("_Help") },
 
-	{ "UIModeBrowser",QUIVER_STOCK_BROWSER , "_Browser", "<Control>B", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
-	{ "UIModeViewer", QUIVER_STOCK_APP, "_Viewer", "<Control>B", "View Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ "UIModeBrowser",QUIVER_STOCK_BROWSER , "_Browser", "<Control>b", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
+	{ "UIModeViewer", QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ "FileOpen", GTK_STOCK_OPEN, "_Open", "<Control>O", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
-	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>F", "Open a folder", G_CALLBACK( quiver_action_handler_cb )},
-	{ "FileOpenLocation", NULL, "Open _Location", "<Control>L", "Open a location", G_CALLBACK( quiver_action_handler_cb )},
-	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>S", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ "FileOpen", GTK_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
+	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a folder", G_CALLBACK( quiver_action_handler_cb )},
+	{ "FileOpenLocation", NULL, "Open _Location", "<Control>l", "Open a location", G_CALLBACK( quiver_action_handler_cb )},
+	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ "FileSaveAs", GTK_STOCK_SAVE, "Save _As", "<Shift><Control>s", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
+	
 	{ "Quit", GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ "QuitQ", GTK_STOCK_QUIT, "_Quit", "Q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ "QuitEsc", GTK_STOCK_QUIT, "_Quit", "Escape", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
-	{ "QuitCtrlW", GTK_STOCK_QUIT, "_Quit", "<Control>W", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ "Quit_2", GTK_STOCK_QUIT, "_Quit", "q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ "Quit_3", GTK_STOCK_QUIT, "_Quit", "Escape", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ "Quit_4", GTK_STOCK_QUIT, "_Quit", "<Control>w", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
 
 	{ "Preferences", GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
 
@@ -599,10 +675,17 @@ void Quiver::SetWindowTitle(string s)
 void Quiver::ImageChanged()
 {
 	stringstream ss;
+	
 	QuiverFile f = m_QuiverImplPtr->m_ImageList.GetCurrent();
+	
+	m_QuiverImplPtr->Save();
+	
+	m_QuiverImplPtr->m_CurrentQuiverFile = f;
+	
 	ss << " (" << m_QuiverImplPtr->m_ImageList.GetCurrentIndex()+1 << " of " << m_QuiverImplPtr->m_ImageList.GetSize() << ")";
 	string s = f.GetFileInfo()->name;
 	SetWindowTitle( f.GetFilePath() );
+	
 	m_QuiverImplPtr->m_Statusbar.SetPosition(m_QuiverImplPtr->m_ImageList.GetCurrentIndex()+1,m_QuiverImplPtr->m_ImageList.GetSize());
 	m_QuiverImplPtr->m_ExifView.SetQuiverFile(f);
 }
@@ -640,10 +723,9 @@ gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event
 	GtkAction * action = GetAction(m_QuiverImplPtr->m_pUIManager,QUIVER_ACTION_FULLSCREEN);
 	if (NULL != action)
 	{
-
-		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,m_QuiverImplPtr.get());
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bFullscreen);
-		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,m_QuiverImplPtr.get());
 
 	}
 
@@ -666,6 +748,12 @@ void Quiver::event_destroy( GtkWidget *widget, gpointer   data )
 
 void Quiver::EventDestroy( GtkWidget *widget, gpointer   data )
 {
+	Close();
+}
+
+void Quiver::Close()
+{
+	SaveSettings();
 	// force reference count to 0 for the quiverimplptr
 	m_QuiverImplPtr->m_Browser.RemoveEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
 	m_QuiverImplPtr->m_Viewer.RemoveEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
@@ -689,10 +777,13 @@ gboolean Quiver::EventDelete( GtkWidget *widget,GdkEvent  *event, gpointer   dat
 
 	// are you sure you want to quit
 
-
 	gboolean return_value = FALSE;
-	SaveSettings();
 	
+	if (!m_QuiverImplPtr->CanClose())
+	{
+		return_value = TRUE;
+	}
+
 	/*
 	string s("Are you sure you want to quit?");
 	GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(widget),GTK_DIALOG_MODAL,
@@ -750,9 +841,6 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = false;
 	
-	m_QuiverImplPtr->m_bSlideshowRunning = false;
-	m_QuiverImplPtr->m_iTimeoutSlideshowID = 0;
-
 	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
 
 	//initialize
@@ -763,6 +851,7 @@ void Quiver::Init()
 
 	/* Create the main window */
 	m_QuiverImplPtr->m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
+	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");
 
 	if (LoadSettings())
 	{	
@@ -798,7 +887,7 @@ void Quiver::Init()
 	guint n_entries = G_N_ELEMENTS (m_QuiverImplPtr->action_entries);
 
 	
-	GtkActionGroup* actions = gtk_action_group_new ("Actions");
+	GtkActionGroup* actions = gtk_action_group_new ("GlobalActions");
 	
 	gtk_action_group_add_actions(actions, m_QuiverImplPtr->action_entries, n_entries, m_QuiverImplPtr.get());
                                  
@@ -806,21 +895,14 @@ void Quiver::Init()
 										m_QuiverImplPtr->action_entries_toggle, 
 										G_N_ELEMENTS (m_QuiverImplPtr->action_entries_toggle),
 										m_QuiverImplPtr.get());
-	/* FIXME: i think there's a bug with the user_data when passed in using
-	 * g_signal_connect_data in the following function.
-	gtk_action_group_add_radio_actions(actions,
-										action_entries_radio, 
-										G_N_ELEMENTS (action_entries_radio),
-										1,
-										NULL,
-										NULL);										
-	*/
+
 	gtk_ui_manager_insert_action_group (m_QuiverImplPtr->m_pUIManager,actions,0);
                                              
 	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "connect_proxy",
 		G_CALLBACK (signal_connect_proxy), this);
 	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "disconnect_proxy",
 		G_CALLBACK (signal_disconnect_proxy), this);
+
                                              
 	gtk_window_add_accel_group (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
 								gtk_ui_manager_get_accel_group(m_QuiverImplPtr->m_pUIManager));
@@ -828,6 +910,7 @@ void Quiver::Init()
 
 	m_QuiverImplPtr->m_Browser.SetUIManager(m_QuiverImplPtr->m_pUIManager);
 	m_QuiverImplPtr->m_Viewer.SetUIManager(m_QuiverImplPtr->m_pUIManager);
+	m_QuiverImplPtr->m_ExifView.SetUIManager(m_QuiverImplPtr->m_pUIManager);
 	//GTK_WIDGET_UNSET_FLAGS(toolbar,GTK_CAN_FOCUS);
 
  	//gtk_widget_add_events (m_pQuiverWindow, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);
@@ -872,9 +955,12 @@ void Quiver::Init()
 	
 	vbox = gtk_vbox_new(FALSE,0);
 	m_QuiverImplPtr->m_pHPanedMainArea = gtk_hpaned_new();
+	gtk_widget_set_name(m_QuiverImplPtr->m_pHPanedMainArea,"Quiver hpaned");
 	
 	hbox_browser_viewer_container = gtk_hbox_new(FALSE,0);
+	gtk_widget_set_name(hbox_browser_viewer_container,"Quiver hbox 1");
 	m_QuiverImplPtr->m_pNBProperties = gtk_notebook_new();
+	gtk_widget_set_name(m_QuiverImplPtr->m_pNBProperties ,"Quiver notebook 1");
 	
 	gtk_widget_set_no_show_all(m_QuiverImplPtr->m_pNBProperties,TRUE);
 	
@@ -895,32 +981,36 @@ void Quiver::Init()
 
 	
 	//FIXME: temp notebook stuff
-	gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("File"));
+	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("File"));
 	//gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Exif"));
 	gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),m_QuiverImplPtr->m_ExifView.GetWidget(),gtk_label_new("Exif"));
-	gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("IPTC"));
-	gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Database"));
+	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("IPTC"));
+	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Database"));
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties));
 	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),TRUE);
 	
 	statusbar =  m_QuiverImplPtr->m_Statusbar.GetWidget();
 	m_QuiverImplPtr->m_pMenubar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/MenubarMain");
 	m_QuiverImplPtr->m_pToolbar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain");
+	
+	gtk_widget_set_name(m_QuiverImplPtr->m_pToolbar  ,"Quiver m_QuiverImplPtr->m_pToolbar");
+	
 
 	// pack the browser and viewer area
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Browser.GetWidget(), TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Viewer.GetWidget(), TRUE, TRUE, 0);
 
-	if (1 != m_QuiverImplPtr->m_listImages.size())
+	if (1 == m_QuiverImplPtr->m_listImages.size())
+	{
+		ShowViewer();
+		gtk_widget_grab_focus (m_QuiverImplPtr->m_Viewer.GetWidget());
+	}
+	else
 	{
 		// must do the following to hide the widget on initial
 		// display of app
 		ShowBrowser();
-	}
-	else
-	{
-
-		ShowViewer();
+		gtk_widget_grab_focus (m_QuiverImplPtr->m_Browser.GetWidget());
 	}
 
 	// pack the hpaned (main gui area)
@@ -939,12 +1029,6 @@ void Quiver::Init()
 
 	// add the gui elements to the main window
 	gtk_container_add (GTK_CONTAINER (m_QuiverImplPtr->m_pQuiverWindow),vbox);
-
-
-	// FIXME: viewer should focus when it is displayed
-	//	gtk_widget_grab_focus (m_Viewer.GetWidget());
-
-
 
 
 	/* Show the application window */
@@ -1033,7 +1117,7 @@ void Quiver::SaveSettings()
 	
 	string directory = g_szConfigDir;
 	
-	string strAccelMap = directory + string("/quiver_keys.map");	
+	string strAccelMap = directory + string("/quiver_keys.map");
 	gtk_accel_map_save(strAccelMap.c_str());
 
 
@@ -1042,9 +1126,6 @@ void Quiver::SaveSettings()
 		return;
 	}
 	
-	gtk_window_get_position(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),&m_QuiverImplPtr->m_iAppX,&m_QuiverImplPtr->m_iAppY);
-	gtk_window_get_size(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),&m_QuiverImplPtr->m_iAppWidth,&m_QuiverImplPtr->m_iAppHeight);
-
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_LEFT,m_QuiverImplPtr->m_iAppX);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP,m_QuiverImplPtr->m_iAppY);
@@ -1124,7 +1205,8 @@ int main (int argc, char **argv)
 		files.push_back(buf);
 	}
 	//init gnome-vfs
-	if (!gnome_vfs_init ()) {
+	if (!gnome_vfs_init ()) 
+	{
 		printf ("Could not initialize GnomeVFS\n");
 		return 1;
 	}
@@ -1148,10 +1230,12 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	// put process intenstive startup code in here 
 	// (loading image list, setting first image)
 
-	SetImageList(m_QuiverImplPtr->m_listImages);
 	m_QuiverImplPtr->m_Browser.SetImageList(m_QuiverImplPtr->m_ImageList);
 	m_QuiverImplPtr->m_Viewer.SetImageList(m_QuiverImplPtr->m_ImageList);
+	
+	SetImageList(m_QuiverImplPtr->m_listImages);
 
+	// call this a second time to make sure the list is updated
 	if (0 == m_QuiverImplPtr->m_iMergedBrowserUI)
 	{
 		ShowViewer();
@@ -1163,16 +1247,6 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 
 	return FALSE; // return false so it is never called again
 }
-
-
-void Quiver::SetPixbuf(GdkPixbuf*pixbuf)
-{
-	/*FIXME
-	m_Statusbar.SetZoomPercent((int)m_Viewer.GetZoomLevel());
-	*/
-	//SlideshowAddTimeout();
-}
-
 
 gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
 {
@@ -1268,8 +1342,8 @@ void Quiver::SignalDisconnectProxy(GtkUIManager *manager,GtkAction *action,GtkWi
 
 void Quiver::SignalItemSelect (GtkItem *proxy,gpointer data)
 {
-	GtkAction *action;
-	char      *message;
+	GtkAction* action;
+	char*      message;
 	
 	action = (GtkAction*)g_object_get_data (G_OBJECT (proxy),  "gtk-action");
 	g_return_if_fail (action != NULL);
@@ -1284,8 +1358,8 @@ void Quiver::SignalItemSelect (GtkItem *proxy,gpointer data)
 }
 void Quiver::SignalItemDeselect (GtkItem *proxy,gpointer data)
 {
-	GtkAction *action;
-	char      *message;
+	GtkAction* action;
+	char*      message;
 	
 	action = (GtkAction*)g_object_get_data (G_OBJECT (proxy),  "gtk-action");
 	g_return_if_fail (action != NULL);
@@ -1298,293 +1372,7 @@ void Quiver::SignalItemDeselect (GtkItem *proxy,gpointer data)
 	}
 }
 
-//==============================================================================
-//== action c callbacks ========================================================
-//==============================================================================
 
-void Quiver::action_file_save(GtkAction *action,gpointer data)
-{
-	return ((Quiver*)data)->ActionFileSave(action,data);
-}
-
-void Quiver::SignalClosed(GdkPixbufLoader *loader)
-{
-	/*FIXME m_Statusbar.SetZoomPercent((int)m_Viewer.GetZoomLevel());*/
-	//SlideshowAddTimeout();
-}
-//==============================================================================
-//== action c++ callbacks ======================================================
-//==============================================================================
-typedef enum {
-	JCOPYOPT_NONE,		/* copy no optional markers */
-	JCOPYOPT_COMMENTS,	/* copy only comment (COM) markers */
-	JCOPYOPT_ALL		/* copy all optional markers */
-} JCOPY_OPTION;
-
-/* Copy markers saved in the given source object to the destination object.
- * This should be called just after jpeg_start_compress() or
- * jpeg_write_coefficients().
- * Note that those routines will have written the SOI, and also the
- * JFIF APP0 or Adobe APP14 markers if selected.
- */
-
-GLOBAL(void)
-jcopy_markers_execute (j_decompress_ptr srcinfo, j_compress_ptr dstinfo,
-		       JCOPY_OPTION option)
-{
-  jpeg_saved_marker_ptr marker;
-
-  /* In the current implementation, we don't actually need to examine the
-   * option flag here; we just copy everything that got saved.
-   * But to avoid confusion, we do not output JFIF and Adobe APP14 markers
-   * if the encoder library already wrote one.
-   */
-  for (marker = srcinfo->marker_list; marker != NULL; marker = marker->next) {
-    if (dstinfo->write_JFIF_header &&
-	marker->marker == JPEG_APP0 &&
-	marker->data_length >= 5 &&
-	GETJOCTET(marker->data[0]) == 0x4A &&
-	GETJOCTET(marker->data[1]) == 0x46 &&
-	GETJOCTET(marker->data[2]) == 0x49 &&
-	GETJOCTET(marker->data[3]) == 0x46 &&
-	GETJOCTET(marker->data[4]) == 0)
-      continue;			/* reject duplicate JFIF */
-    if (dstinfo->write_Adobe_marker &&
-	marker->marker == JPEG_APP0+14 &&
-	marker->data_length >= 5 &&
-	GETJOCTET(marker->data[0]) == 0x41 &&
-	GETJOCTET(marker->data[1]) == 0x64 &&
-	GETJOCTET(marker->data[2]) == 0x6F &&
-	GETJOCTET(marker->data[3]) == 0x62 &&
-	GETJOCTET(marker->data[4]) == 0x65)
-      continue;			/* reject duplicate Adobe */
-#ifdef NEED_FAR_POINTERS
-    /* We could use jpeg_write_marker if the data weren't FAR... */
-    {
-      unsigned int i;
-      jpeg_write_m_header(dstinfo, marker->marker, marker->data_length);
-      for (i = 0; i < marker->data_length; i++)
-	jpeg_write_m_byte(dstinfo, marker->data[i]);
-    }
-#else
-    jpeg_write_marker(dstinfo, marker->marker,
-		      marker->data, marker->data_length);
-#endif
-  }
-}
-
-#ifndef SAVE_MARKERS_SUPPORTED
-#error please add a #define JPEG_INTERNALS above jpeglib.h include
-#endif
-GLOBAL(void)
-jcopy_markers_setup (j_decompress_ptr srcinfo, JCOPY_OPTION option)
-{
-#ifdef SAVE_MARKERS_SUPPORTED
-  int m;
-
-  /* Save comments except under NONE option */
-  if (option != JCOPYOPT_NONE) {
-    jpeg_save_markers(srcinfo, JPEG_COM, 0xFFFF);
-  }
-  /* Save all types of APPn markers iff ALL option */
-  if (option == JCOPYOPT_ALL) {
-    for (m = 0; m < 16; m++)
-      jpeg_save_markers(srcinfo, JPEG_APP0 + m, 0xFFFF);
-  }
-#endif /* SAVE_MARKERS_SUPPORTED */
-}
-
-
-static int save_jpeg_file(string filename,ExifData *exifData)
-{
-/*
-int jpeg_transform_files(char *infile, char *outfile,
-			 JXFORM_CODE transform,
-			 unsigned char *comment,
-			 char *thumbnail, int tsize,
-			 unsigned int flags)
-{
-*/
-	int rc;
-	FILE *in;
-	FILE *out;
-
-	string strOriginalFile = filename + "_original.jpg";
-	const char *infile  = strOriginalFile.c_str();
-	const char *outfile = filename.c_str();
-	rename(filename.c_str(),strOriginalFile.c_str());
-
-	/* open infile */
-	in = fopen(infile,"r");
-	if (NULL == in) {
-	//fprintf(stderr,"open %s: %s\n",infile,strerror(errno));
-	return -1;
-	}
-
-	/* open outfile */
-	out = fopen(outfile,"w");
-	if (NULL == out) {
-	//fprintf(stderr,"open %s: %s\n",outfile,strerror(errno));
-	fclose(in);
-	return -1;
-	}
-
-	/* go! */
-
-	//rc = jpeg_transform_fp(in,out,transform,comment,thumbnail,tsize,flags);
-	//
-
-	struct jpeg_decompress_struct src;
-	struct jpeg_compress_struct   dst;
-
-	struct jpeg_error_mgr jdsterr;
-	//struct longjmp_error_mgr jsrcerr;
-
-	src.err = jpeg_std_error(&jdsterr);
-	/* setup src */
-	/*
-	jsrcerr.jpeg.error_exit = longjmp_error_exit;
-	if (setjmp(jsrcerr.setjmp_buffer))
-		printf("ouch\n");
-	*/
-
-
-	jpeg_create_decompress(&src);
-	jpeg_stdio_src(&src, in);
-
-
-
-	/* setup dst */
-	dst.err = jpeg_std_error(&jdsterr);
-	jpeg_create_compress(&dst);
-	jpeg_stdio_dest(&dst, out);
-
-	/* transform image */
-
-	jvirt_barray_ptr * src_coef_arrays;
-	//jvirt_barray_ptr * dst_coef_arrays;
-	//jpeg_transform_info transformoption;
-
-
-	jcopy_markers_setup(&src, JCOPYOPT_ALL);
-	if (JPEG_HEADER_OK != jpeg_read_header(&src, TRUE))
-	return -1;
-
-	/* do exif updating */
-	jpeg_saved_marker_ptr mark;
-	//ExifData *ed = NULL;
-	unsigned char *data;
-	unsigned int  size;
-
-	for (mark = src.marker_list; NULL != mark; mark = mark->next) {
-		printf("searching...\n");
-		if (mark->marker == JPEG_APP0 +1)
-		{
-			printf("found exif marker!\n");
-			break;
-		}
-		continue;
-	}
-
-
-	if (NULL == mark) {
-		mark = (jpeg_marker_struct*)src.mem->alloc_large((j_common_ptr)&src,JPOOL_IMAGE,sizeof(*mark));
-		memset(mark,0,sizeof(*mark));
-		mark->marker = JPEG_APP0 +1;
-		mark->next   = src.marker_list->next;
-		src.marker_list->next = mark;
-	}
-
-	/* build new exif data block */
-	exif_data_save_data(exifData,&data,&size);
-	//exif_data_unref(ed);
-
-	/* update jpeg APP1 (EXIF) marker */
-	mark->data = (JOCTET*)src.mem->alloc_large((j_common_ptr)&src,JPOOL_IMAGE,size);
-	mark->original_length = size;
-	mark->data_length = size;
-	memcpy(mark->data,data,size);
-	free(data);
-
-	/* Any space needed by a transform option must be requested before
-	 * jpeg_read_coefficients so that memory allocation will be done right.
-	 */
-	//jtransform_request_workspace(&src, &transformoption);
-	src_coef_arrays = jpeg_read_coefficients(&src);
-	jpeg_copy_critical_parameters(&src, &dst);
-
-	/*dst_coef_arrays = jtransform_adjust_parameters
-	(&src, &dst, src_coef_arrays, &transformoption);
-	*/
-	/* Start compressor (note no image data is actually written here) */
-	jpeg_write_coefficients(&dst, src_coef_arrays);
-
-	/* Copy to the output file any extra markers that we want to preserve */
-	jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL);
-
-	/* Execute image transformation, if any */
-	/*
-	jtransform_execute_transformation(src, dst,
-					  src_coef_arrays,
-					  &transformoption);
-   */
-	/* Finish compression and release memory */
-	jpeg_finish_compress(&dst);
-	jpeg_finish_decompress(&src);
-
-
-	/* cleanup */
-	jpeg_destroy_decompress(&src);
-	jpeg_destroy_compress(&dst);
-
-	fclose(in);
-	fclose(out);
-
-	return rc;
-
-
-}
-
-static void update_exif_orientation(ExifData *exifData,int value)
-{
-	ExifEntry *e;
-
-	/* If the entry doesn't exist, create it. */
-	e = exif_content_get_entry (exifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
-	if (!e) 
-	{
-		e = exif_entry_new ();
-		exif_content_add_entry (exifData->ifd[EXIF_IFD_0], e);
-		exif_entry_initialize (e, EXIF_TAG_ORIENTATION);
-	}
-
-	/* Now set the value and save the data. */
-	exif_set_short (e->data , exif_data_get_byte_order (exifData), value);
-}
-
-
-void Quiver::ActionFileSave(GtkAction *action,gpointer data)
-{
-	/*
-	 * FIXME
-	printf("save the file! aww yeah baby\n");
-	QuiverFile quiverFile;
-	quiverFile = m_ImageList.GetCurrent();
-	int old_orientation, new_orientation;
-
-	old_orientation = quiverFile.GetOrientation();
-	new_orientation = m_Viewer.GetCurrentOrientation();
-	
-	ExifData *exif_data = quiverFile.GetExifData();
-	if (exif_data && old_orientation != new_orientation)
-	{
-		// hmm...must have a suitable file
-		printf("we certainly should save the file\n");
-		update_exif_orientation(exif_data,new_orientation);
-		save_jpeg_file(quiverFile.GetFilePath(),exif_data);
-	}
-	*/
-}
 void Quiver::ShowViewer()
 {
 	GError *tmp_error;
@@ -1598,12 +1386,8 @@ void Quiver::ShowViewer()
 			&tmp_error);
 	m_QuiverImplPtr->m_Browser.Hide();
 	m_QuiverImplPtr->m_Viewer.Show();
-	// clear the screen of any old image
-	//FIXME 
-	//m_Viewer.SetPixbuf(NULL);
-
-	//printf("%d is the merge id\n",m_iMergedViewerUI);
 }
+
 void Quiver::ShowBrowser()
 {
 	GError *tmp_error;
@@ -1616,7 +1400,6 @@ void Quiver::ShowBrowser()
 			quiver_ui_browser,
 			strlen(quiver_ui_browser),
 			&tmp_error);
-	//printf("%d is the merge id\n",m_iMergedBrowserUI);
 	m_QuiverImplPtr->m_Viewer.Hide();
 	m_QuiverImplPtr->m_Browser.Show();
 }
@@ -1654,84 +1437,11 @@ void Quiver::OnFullScreen()
 	}
 }
 
-void Quiver::ActionImageTrash(GtkAction *action,gpointer data)
-{
-	// FIXME: create a ShowCursor method
-	// and a HideCursor method
-	gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, NULL);
-	
-	//delete the current images
-	if (m_QuiverImplPtr->m_ImageList.GetSize())
-	{
-		char * for_display = gnome_vfs_format_uri_for_display(m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI());
-		GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),GTK_DIALOG_MODAL,
-								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,_("Are you sure you want to move the following image to the trash?"));
-		gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
-		g_free(for_display);
-		gint rval = gtk_dialog_run(GTK_DIALOG(dialog));
-	
-		switch (rval)
-		{
-			case GTK_RESPONSE_YES:
-			{
-				//trash the file
-				cout << "trashing file : " << m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI() << endl;
-				//locate trash folder
-				GnomeVFSURI * trash_vfs_uri = NULL;
-
-				cout << "is this one val? "<< endl;
-				GnomeVFSURI * near_vfs_uri = gnome_vfs_uri_new ( m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI() );
-				gnome_vfs_find_directory (near_vfs_uri, GNOME_VFS_DIRECTORY_KIND_TRASH,&trash_vfs_uri, TRUE, TRUE, 0777);
-
-				if (trash_vfs_uri != NULL) 
-				{
-					// we have trash
-					gchar * short_name = gnome_vfs_uri_extract_short_name (near_vfs_uri);
-					
-
-					
-					GnomeVFSURI *trash_file_vfs_uri = gnome_vfs_uri_append_file_name (trash_vfs_uri,short_name);
-					g_free(short_name);
-					gnome_vfs_uri_unref(trash_vfs_uri);
-					gchar *trash_uri = gnome_vfs_uri_to_string (trash_file_vfs_uri,GNOME_VFS_URI_HIDE_NONE);
-					cout << "trash uri: " << trash_uri << endl;
-					g_free (trash_uri);
-					
-					GnomeVFSResult result = gnome_vfs_move_uri(near_vfs_uri,trash_file_vfs_uri,FALSE);
-					if (GNOME_VFS_OK == result)
-					{
-						cout << "trashed the file " << endl;
-						m_QuiverImplPtr->m_ImageList.Remove(m_QuiverImplPtr->m_ImageList.GetCurrentIndex());
-
-					}
-					else
-					{
-						cout << "could not trash file " << endl;
-					}
-				}
-				else
-				{
-					cout << "could not delete\n" << endl;
-				}
-				gnome_vfs_uri_unref(near_vfs_uri);
-				break;
-			}
-			case GTK_RESPONSE_NO:
-				//fall through
-			default:
-				// do not delete
-				cout << "not trashing file : " << m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI() << endl;
-				break;
-		}
-	
-		gtk_widget_destroy(dialog);
-	}
-}
 
 void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr event_ptr)
 {
-	list<int> selection = parent->m_Browser.GetSelection();
-	list<int>::iterator itr;
+	list<unsigned int> selection = parent->m_Browser.GetSelection();
+	list<unsigned int>::iterator itr;
 	
 	unsigned long long total_size = 0;
 	
@@ -1749,7 +1459,7 @@ void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr eve
 	parent->m_Statusbar.SetLoadTime(-1);
 	
 	char status_text[256];
-	sprintf(status_text,"%d items selected (%d bytes)",selection.size(),total_size);
+	sprintf(status_text,"%d items selected (%qd bytes)",selection.size(), total_size);
 
 	parent->m_Statusbar.SetText(status_text);
 }
@@ -1803,15 +1513,9 @@ void Quiver::OnShowProperties(bool bShow /* = true */)
 
 void Quiver::OnQuit()
 {
-	GdkEvent * e = gdk_event_new(GDK_DELETE);
-
-	gboolean rval = FALSE;
-	g_signal_emit_by_name(m_QuiverImplPtr->m_pQuiverWindow,"delete_event",e,&rval);
-	gdk_event_free(e);
-	
-	if (!rval)
+	if (m_QuiverImplPtr->CanClose())
 	{
-		g_signal_emit_by_name(m_QuiverImplPtr->m_pQuiverWindow, "destroy");
+		Close();
 	}
 }
 
@@ -1922,19 +1626,10 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	pQuiver = pQuiverImpl->m_pQuiver;
 	
 	const gchar * szAction = gtk_action_get_name(action);
-	if (0 == strcmp(szAction,"Quit"))
-	{
-		pQuiver->OnQuit();
-	}
-	else if (0 == strcmp(szAction,"QuitQ"))
-	{
-		pQuiver->OnQuit();
-	}
-	else if (0 == strcmp(szAction,"QuitEsc"))
-	{
-		pQuiver->OnQuit();
-	}
-	else if (0 == strcmp(szAction,"QuitCtrlW"))
+	
+	//printf("quiver_action_handler_cb: %s\n",szAction);
+	
+	if (0 == strcmp(szAction,"Quit") || 0 == strcmp(szAction,"Quit_2") || 0 == strcmp(szAction,"Quit_3") || 0 == strcmp(szAction,"Quit_4"))
 	{
 		pQuiver->OnQuit();
 	}
@@ -2017,6 +1712,14 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		PreferencesDlg prefDlg;
 		prefDlg.Run();
 	}
+	else if(0 == strcmp(szAction,"FileSave"))
+	{
+		pQuiverImpl->Save();
+	}
+	else if(0 == strcmp(szAction,"FileSaveAs"))
+	{
+		pQuiverImpl->SaveAs();	
+	}
 	else if (g_str_has_prefix(szAction,"ExternalTool_"))
 	{
 		// run external tool
@@ -2028,7 +1731,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		bool supports_multiple_files = prefs->GetBoolean(szAction,"supports_multiple_files");
 		bool bInViewer = (0 != pQuiverImpl->m_iMergedViewerUI);
 				
-		list<int> selection = pQuiverImpl->m_Browser.GetSelection();
+		list<unsigned int> selection = pQuiverImpl->m_Browser.GetSelection();
 		
 		list<string> files;
 		
@@ -2047,7 +1750,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		}
 		else if (1 < selection.size())
 		{
-			list<int>::iterator itr;
+			list<unsigned int>::iterator itr;
 			for (itr = selection.begin(); selection.end() != itr; ++itr)
 			{
 				files.push_back(pQuiverImpl->m_ImageList[*itr].GetFilePath());
@@ -2112,11 +1815,13 @@ static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *
 {
 	Quiver *pQuiver;
 	pQuiver = (Quiver*)data;
+
 	if (2 == event->button)
 	{
 		pQuiver->OnFullScreen();
 		return TRUE;
 	}
+
 	return FALSE;
 }
 

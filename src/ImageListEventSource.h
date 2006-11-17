@@ -5,28 +5,38 @@
 #include "EventBase.h"
 #include "BrowserEvent.h"
 
-//#include "ImageListEvent.h"
+#include "ImageListEvent.h"
 
 class ImageListEventSource : public virtual AbstractEventSource
 {
 
 public:
-	virtual ~ImageListEventSource(){};
-
-//	typedef boost::signal<void (ImageListEventPtr)> ImageListSignal;
-	typedef boost::signal<void (EventBasePtr)> ImageListSignal;
+	typedef boost::signal<void (ImageListEventPtr)> ImageListSignal;
 	typedef boost::shared_ptr<ImageListSignal> ImageListSignalPtr;
+
+	ImageListEventSource() : m_sigContentsChangedPtr(new ImageListSignal()),
+									m_sigCurrentIndexChangedPtr(new ImageListSignal()),
+									m_sigItemAddedPtr(new ImageListSignal()),
+									m_sigItemRemovedPtr(new ImageListSignal()),
+									m_sigItemChangedPtr(new ImageListSignal())
+	{};
+	
+	virtual ~ImageListEventSource(){};
 
 	void AddEventHandler(IEventHandlerPtr handler);
 
-	void EmitCurrentItemChangedEvent();
-	void EmitItemsAddedEvent();
-	void EmitItemsRemovedEvent();
+	void EmitContentsChangedEvent();
+	void EmitCurrentIndexChangedEvent(unsigned int iIndex);
+	void EmitItemAddedEvent(unsigned int iIndex);
+	void EmitItemRemovedEvent(unsigned int iIndex);
+	void EmitItemChangedEvent(unsigned int iIndex);
 	
 private:
-	ImageListSignalPtr m_sigCurrentItemChangedPtr;
-	ImageListSignalPtr m_sigItemsAddedPtr; // affected range
-	ImageListSignalPtr m_sigItemsRemovedPtr; // affected range
+	ImageListSignalPtr m_sigContentsChangedPtr;
+	ImageListSignalPtr m_sigCurrentIndexChangedPtr;
+	ImageListSignalPtr m_sigItemAddedPtr; // affected range
+	ImageListSignalPtr m_sigItemRemovedPtr; // affected range
+	ImageListSignalPtr m_sigItemChangedPtr; // affected range
 
 };
 

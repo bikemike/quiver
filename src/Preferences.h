@@ -1,3 +1,6 @@
+#ifndef FILE_PREFERENCES_H
+#define FILE_PREFERENCES_H
+
 #include <boost/shared_ptr.hpp>
 #include <list>
 #include <string>
@@ -51,4 +54,6 @@ private:
 	GKeyFile *m_KeyFile;
 };
 
+
+#endif // FILE_PREFERENCES_H
 

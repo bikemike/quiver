@@ -156,7 +156,9 @@ bool ImageLoader::CommandsPending()
 
 	// must do this outside of the mutext lock because it locks the gui thread
 	if (bLoadPreview)
+	{
 		LoadQuickPreview();
+	}
 	
 	return rval;
 }
@@ -299,15 +301,35 @@ void ImageLoader::Load()
 		if (NULL != pixbuf)
 		{
 			int real_width,real_height;
+			int orientation = m_Command.params.orientation;
 			gint width,height;
 			width = gdk_pixbuf_get_width(pixbuf);
 			height = gdk_pixbuf_get_height(pixbuf);
 			
 			real_width = m_Command.quiverFile.GetWidth();
-			real_height = m_Command.quiverFile.GetWidth();
+			real_height = m_Command.quiverFile.GetHeight();
 			
-			if (4 < m_Command.params.orientation)
+			// we do not need to free the data returned from this - it is not a copy
+			gint* pOrientation = (gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
+			if (NULL != pOrientation)
 			{
+				if(m_Command.params.orientation != *pOrientation)
+				{
+					if ( (4 < m_Command.params.orientation && 4 >= *pOrientation)
+						|| (4 >= m_Command.params.orientation && 4 < *pOrientation) )
+					{
+						// swap because the cached image orientation has a different 
+						// ratio for width/height than the requested orientation
+						swap(width,height);
+					}
+					
+				}
+			}
+
+			if (4 < orientation)
+			{
+				// swap because the actual image has a different 
+				// ratio for width/height than the requested orientation
 				swap(real_width,real_height);
 			}
 			
@@ -351,55 +373,54 @@ void ImageLoader::Load()
 				}
 
 				bool rval = LoadPixbuf(loader);
+
 				
 				if (rval)
 				{
 					GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 					
 					if (NULL == pixbuf  )
-					{if (m_Command.params.fullsize)
-						cout << "pixbuf is null! : " << m_Command.quiverFile.GetURI() << endl;
+					{
+						if (m_Command.params.fullsize)
+							cout << "pixbuf is null! : " << m_Command.quiverFile.GetURI() << endl;
 					}
 					else
 					{
 						g_object_ref(pixbuf);
-						if (1 < m_Command.params.orientation || // TODO: change to get rotate option
-						    m_Command.params.fullsize ) 
-						{
-							if (1 < m_Command.params.orientation)
-							{
-								GdkPixbuf* pixbuf_rotated;
-								pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
-								if (NULL != pixbuf_rotated)
-								{
-									g_object_unref(pixbuf);
-									pixbuf = pixbuf_rotated;
-								}
-							}
-							
-							list<IPixbufLoaderObserver*>::iterator itr;
-							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-							{
 
-								gdk_threads_enter();
-								gint width,height;
-								width = m_Command.quiverFile.GetWidth();
-								height = m_Command.quiverFile.GetHeight();
-								if (4 < m_Command.params.orientation)
-								{
-									swap(width,height);
-								}
-								if (m_Command.params.reload)
-								{
-									(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
-								}
-								else
-								{
-									(*itr)->SetPixbufAtSize(pixbuf,width,height);
-								}
-								gdk_flush();
-								gdk_threads_leave();
+						if (1 < m_Command.params.orientation)
+						{
+							GdkPixbuf* pixbuf_rotated;
+							pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
+							if (NULL != pixbuf_rotated)
+							{
+								g_object_unref(pixbuf);
+								pixbuf = pixbuf_rotated;
 							}
+						}
+						
+						list<IPixbufLoaderObserver*>::iterator itr;
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+
+							gdk_threads_enter();
+							gint width,height;
+							width = m_Command.quiverFile.GetWidth();
+							height = m_Command.quiverFile.GetHeight();
+							if (4 < m_Command.params.orientation)
+							{
+								swap(width,height);
+							}
+							if (m_Command.params.reload)
+							{
+								(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
+							}
+							else
+							{
+								(*itr)->SetPixbufAtSize(pixbuf,width,height);
+							}
+							gdk_flush();
+							gdk_threads_leave();
 						}
 
 						gint *pOrientation = g_new(int,1);
@@ -412,6 +433,7 @@ void ImageLoader::Load()
 				}
 				else
 				{
+					// error loading 
 				}
 				g_object_unref(loader);
 			}
@@ -419,19 +441,25 @@ void ImageLoader::Load()
 		}
 		else
 		{
-			// we'll need to set up the signals ourselves
-			//cout << "load from cache: "  << m_Command.filename << endl;
-
+			// load from cache
+			// we do not need to free the data returned from this - it is not a copy
 			gint *pOrientation = (gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
+		
+			
 			if (NULL != pOrientation && m_Command.params.orientation != *pOrientation)
 			{
 				int new_orientation = reorientation_matrix[*pOrientation][m_Command.params.orientation];
-				
+
 				GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,new_orientation);
 				if (NULL != pixbuf_rotated)
 				{
 					g_object_unref(pixbuf);
 					pixbuf = pixbuf_rotated;
+
+					gint *pNewOrientation = g_new(int,1);
+					*pNewOrientation = m_Command.params.orientation;
+					g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pNewOrientation,g_free);
+
 					m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
 				}
 			}
@@ -496,6 +524,7 @@ void ImageLoader::Load()
 						// what orientation was performed 
 						gint *pOrientation = g_new(int,1);
 						*pOrientation = m_Command.params.orientation;
+
 						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
 
 						if (CACHE_LOAD == m_Command.params.state)
