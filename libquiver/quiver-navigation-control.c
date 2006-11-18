@@ -388,29 +388,36 @@ quiver_navigation_control_expose_event (GtkWidget *widget, GdkEventExpose *event
 
 void quiver_navigation_control_update_adjustments(QuiverNavigationControl *navcontrol, gint x, gint y)
 {
+	int w,h;
+	double xval, yval;
+
 	GtkAdjustment *hadj = navcontrol->priv->hadjustment;
 	GtkAdjustment *vadj = navcontrol->priv->vadjustment;
-
-	int w,h;
-	w  = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-	h  = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
 	
-	double xval, yval;
-	xval = x/(double)w*hadj->upper - hadj->page_size/2;
-	yval = y/(double)h*vadj->upper - vadj->page_size/2;
-
-	if (hadj->upper - hadj->page_size < xval)
-		xval = hadj->upper - hadj->page_size;
-	else if (x < 0)
-		xval = 0;
-
-	if (vadj->upper - vadj->page_size < yval)
-		yval = vadj->upper - vadj->page_size;
-	else if (y < 0)
-		yval = 0;
+	
+	if (NULL != navcontrol->priv->pixbuf)
+	{	
+	
+		w  = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
+		h  = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
 		
-	gtk_adjustment_set_value(hadj,xval);
-	gtk_adjustment_set_value(vadj,yval);
+		
+		xval = x/(double)w*hadj->upper - hadj->page_size/2;
+		yval = y/(double)h*vadj->upper - vadj->page_size/2;
+	
+		if (hadj->upper - hadj->page_size < xval)
+			xval = hadj->upper - hadj->page_size;
+		else if (x < 0)
+			xval = 0;
+	
+		if (vadj->upper - vadj->page_size < yval)
+			yval = vadj->upper - vadj->page_size;
+		else if (y < 0)
+			yval = 0;
+			
+		gtk_adjustment_set_value(hadj,xval);
+		gtk_adjustment_set_value(vadj,yval);
+	}
 }
 
 static gboolean

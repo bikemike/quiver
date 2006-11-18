@@ -326,8 +326,13 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 
 		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
 		GdkPixbuf *pixbuf = f.GetThumbnail();
+
 		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),pixbuf);
-		g_object_unref(pixbuf);
+		
+		if (NULL != pixbuf)
+		{
+			g_object_unref(pixbuf);
+		}
 		
 		m_ImageLoader.LoadImageAtSize(f,width,height);
 		
