@@ -227,19 +227,21 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 		
 		GdkPixbufLoader *pixbuf_loader;
 		
+		pixbuf_loader = NULL;
 		pixbuf_loader = gdk_pixbuf_loader_new();
-		gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)pExifData->data, pExifData->size, &tmp_error);
-
-		gdk_pixbuf_loader_close(pixbuf_loader,&tmp_error);
-		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
-		
-		if (NULL != thumb_pixbuf)
+		if (NULL != pixbuf_loader)
 		{
+			gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)pExifData->data, pExifData->size, &tmp_error);
+	
+			gdk_pixbuf_loader_close(pixbuf_loader,&tmp_error);
+			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
 			
-			g_object_ref(thumb_pixbuf);
-		}				
-		g_object_unref(pixbuf_loader);
-		
+			if (NULL != thumb_pixbuf)
+			{
+				g_object_ref(thumb_pixbuf);
+			}				
+			g_object_unref(pixbuf_loader);
+		}		
 	}
 	
 	return thumb_pixbuf;
@@ -319,22 +321,31 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 	result = gnome_vfs_open (&handle, thumb_path, GNOME_VFS_OPEN_READ);
 	if (GNOME_VFS_OK == result)
 	{
-		GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
-
-		while (GNOME_VFS_OK == result)
-		{
-			result = gnome_vfs_read (handle, buffer, 
-									 sizeof(buffer), &bytes_read);
-			gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-		}
-		gnome_vfs_close(handle);
+		GdkPixbufLoader* loader = NULL;
+		loader = gdk_pixbuf_loader_new ();
 		
-		thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+		if (NULL != loader)
+		{
+
+			while (GNOME_VFS_OK == result)
+			{
+				result = gnome_vfs_read (handle, buffer, 
+										 sizeof(buffer), &bytes_read);
+				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+			}
+			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+			
+			if (NULL != thumb_pixbuf)
+				g_object_ref(thumb_pixbuf);
+			
+			gdk_pixbuf_loader_close(loader,&tmp_error);
+			g_object_unref(loader);
+		}
+		
+		gnome_vfs_close(handle);
 
 		if (NULL != thumb_pixbuf)
 		{
-			g_object_ref(thumb_pixbuf);
-
 			const gchar* thumb_mtime_str = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::MTime");
 			const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
 
@@ -398,8 +409,6 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 
 			}
 		}
-		gdk_pixbuf_loader_close(loader,&tmp_error);
-		g_object_unref(loader);
 	}
 	//gdk_threads_leave ();
 	
@@ -454,35 +463,46 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 		result = gnome_vfs_open (&handle, m_szURI, GNOME_VFS_OPEN_READ);
 		if (GNOME_VFS_OK == result)
 		{
-			GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
 			PixbufLoaderSizeInfo size_info = {0};
-			size_info.size_request = size;
-			g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
+			size_info.size_request = size;			
 
-			while (GNOME_VFS_OK == result) 
+			GdkPixbufLoader* loader = NULL;
+			loader = gdk_pixbuf_loader_new ();	
+
+			if (NULL != loader)
 			{
-				result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
-				tmp_error = NULL;
-				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-				if (NULL != tmp_error)
+				g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
+	
+				while (GNOME_VFS_OK == result) 
 				{
-					//printf("error: %s\n",tmp_error->message);
-					break;
+					result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
+					tmp_error = NULL;
+					gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+					if (NULL != tmp_error)
+					{
+						//printf("error: %s\n",tmp_error->message);
+						break;
+					}
 				}
-			}
 
+				
+				thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+				
+				if (NULL != thumb_pixbuf)
+					g_object_ref(thumb_pixbuf);
+				
+				tmp_error = NULL;
+				gdk_pixbuf_loader_close(loader,&tmp_error);		
+				g_object_unref(loader);		
+			}
+			
 			gnome_vfs_close(handle);
 
-			tmp_error = NULL;
-			gdk_pixbuf_loader_close(loader,&tmp_error);
-			
-			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 		
 			if (NULL != thumb_pixbuf)
 			{
 				// this is just in case we are browsing through the .thumbnail folders
 				// this way it will show the thumbnail at the correct orientation
-				g_object_ref(thumb_pixbuf);
 				//printf("checking for orientation\n");
 				const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
 			
@@ -500,8 +520,6 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 				m_iWidth = size_info.width;
 				m_iHeight = size_info.height;
 			}
-			
-			g_object_unref(loader);
 			
 			if (size_info.width <= size_info.size_request && size_info.height <= size_info.size_request )
 			{
@@ -1035,31 +1053,36 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 	{
 		PixbufLoaderSizeInfo size_info = {0};
 		
-		GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
-		g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
+		GdkPixbufLoader* loader = NULL;
+		loader = gdk_pixbuf_loader_new ();	
 		
-		while (GNOME_VFS_OK == result)
+		if (NULL != loader)
 		{
-			result = gnome_vfs_read (handle, buffer, 
-									 sizeof(buffer), &bytes_read);
-			gboolean success;
-			success = gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-			if (!success)
+			g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
+			
+			while (GNOME_VFS_OK == result)
 			{
-				break;
+				result = gnome_vfs_read (handle, buffer, 
+										 sizeof(buffer), &bytes_read);
+				gboolean success;
+				success = gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+				if (!success)
+				{
+					break;
+				}
+				if (0 != size_info.width || 0 != size_info.height)
+				{
+					*width = size_info.width; 
+					*height = size_info.height;
+					break;
+				}
 			}
-			if (0 != size_info.width || 0 != size_info.height)
-			{
-				*width = size_info.width; 
-				*height = size_info.height;
-				break;
-			}
+			
+			gdk_pixbuf_loader_close(loader,&tmp_error);
+			
+			g_object_unref(loader);
 		}
 		gnome_vfs_close(handle);
-
-		gdk_pixbuf_loader_close(loader,&tmp_error);
-		
-		g_object_unref(loader);
 	}
 }
 int QuiverFile::GetWidth()

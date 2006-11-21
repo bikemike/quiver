@@ -2,6 +2,8 @@
 #define FILE_QUIVER_H
 
 
+#define GDK_PIXBUF_ENABLE_BACKEND
+
 #include <iostream>
 #include <fstream>
 #include <sstream>

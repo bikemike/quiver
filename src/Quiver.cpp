@@ -1213,6 +1213,23 @@ int main (int argc, char **argv)
 	pthread_setconcurrency(4);
 
 	gtk_init_add (CreateQuiver,&files);
+	
+	// FIX FOR BUG: http://bugzilla.gnome.org/show_bug.cgi?id=65041
+	// race condition when registering types
+	// we have many threads that create pixbuf loaders
+	// so must do the following:
+	
+	//GdkPixbufNonAnim
+	GdkPixbufAnimation* anim;
+	anim = gdk_pixbuf_non_anim_new (NULL);
+	g_object_unref(anim);
+	
+
+	GdkPixbufLoader* loader = gdk_pixbuf_loader_new();
+	gdk_pixbuf_loader_close(loader, NULL);
+	g_object_unref(loader);
+	
+	// END BUG FIX items
                                              
 	gtk_main ();
 	
@@ -1227,6 +1244,7 @@ gboolean Quiver::idle_quiver_init (gpointer data)
 }
 gboolean Quiver::IdleQuiverInit(gpointer data)
 {
+	gdk_threads_enter();
 	// put process intenstive startup code in here 
 	// (loading image list, setting first image)
 
@@ -1244,6 +1262,7 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	{
 		ShowBrowser();
 	}
+	gdk_threads_leave();
 
 	return FALSE; // return false so it is never called again
 }
