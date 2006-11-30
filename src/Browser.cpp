@@ -1145,8 +1145,9 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 		quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->iconview),parent->m_QuiverFiles.GetCurrentIndex());
 	}
 
-	parent->m_ThumbnailCacheLarge.Clear();
-	parent->m_ThumbnailCacheNormal.Clear();
+	//parent->m_ThumbnailCacheLarge.Clear();
+	//parent->m_ThumbnailCacheNormal.Clear();
+	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->iconview));
 			
 	parent->m_ThumbnailLoader.UpdateList(true);	
 

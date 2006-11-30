@@ -323,17 +323,21 @@ void ImageList::SetImageList(list<string> *file_list)
 }
 
 
-void ImageList::Sort(SortBy o, bool descending)
+void ImageList::Sort(SortBy o, bool bSortAscending)
 {
 	unsigned int iOldIndex = GetCurrentIndex();	
-
-	m_ImageListImplPtr->Sort(o,descending, true);
-
-	if (iOldIndex != GetCurrentIndex())
+	bool bNewOrder = false;
+	if (o != m_ImageListImplPtr->m_SortBy || bSortAscending != m_ImageListImplPtr->m_bSortAscend)
 	{
-		EmitCurrentIndexChangedEvent(GetCurrentIndex());
+		bNewOrder = true;
 	}
+	
+	m_ImageListImplPtr->Sort(o, bSortAscending, true);
 
+	if (bNewOrder || iOldIndex != GetCurrentIndex())
+	{
+		EmitContentsChangedEvent();
+	}
 }
 
 void ImageList::Reload()
@@ -348,6 +352,14 @@ void ImageList::Reload()
 		//printf("%d: %s\n",GetCurrentIndex(),strURI.c_str());
 	}
 
+}
+
+void ImageList::Reverse()
+{
+	m_ImageListImplPtr->m_bSortAscend = !m_ImageListImplPtr->m_bSortAscend;
+	std::reverse(m_ImageListImplPtr->m_QuiverFileList.begin(),m_ImageListImplPtr->m_QuiverFileList.end());
+	m_ImageListImplPtr->m_iCurrentIndex = GetSize() - m_ImageListImplPtr->m_iCurrentIndex -1;
+	EmitContentsChangedEvent();
 }
 
 void ImageList::Clear()
@@ -554,6 +566,7 @@ ImageListImpl::ImageListImpl(ImageList *pImageList)
 	
 	LoadMimeTypes();
 	m_SortBy = ImageList::SORT_BY_FILENAME;
+
 	m_bSortAscend = true;
 	m_iCurrentIndex = 0;
 }
@@ -1093,6 +1106,24 @@ public:
 	}
 };
 
+
+class SortByDate : public std::binary_function<QuiverFile,QuiverFile,bool>
+{
+public:
+
+	bool operator()(const QuiverFile &a, const QuiverFile &b) const
+	{
+		time_t ta = a.GetTimeT();
+		time_t tb = b.GetTimeT();
+		if (ta == tb)
+		{
+			SortByFilename byFile;
+			return byFile(a,b);
+		}
+		return ( ta < tb );
+	}
+};
+
 void ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurrentIndex)
 {
 	m_SortBy = o;
@@ -1116,8 +1147,12 @@ void ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurre
 			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
 			break;
 		case ImageList::SORT_BY_DATE:
+		{
+			SortByDate sortby;
+			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
 			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
 			break;
+		}
 		default:
 			break;
 	}

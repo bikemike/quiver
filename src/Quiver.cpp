@@ -4,6 +4,9 @@
 
 #include "Quiver.h"
 //#include "QuiverUI.h"
+
+#include <glib.h>
+#include <glib/gstdio.h>
 #include <libgnomevfs/gnome-vfs.h>
 
 #include <boost/algorithm/string.hpp>
@@ -56,6 +59,7 @@ GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
 }
 
 static void quiver_action_handler_cb(GtkAction *action, gpointer data);
+static void quiver_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data);
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data );
 
 class QuiverImpl
@@ -358,8 +362,15 @@ char * quiver_ui_main =
 "			<menuitem action='ViewMenubar'/>"
 "			<menuitem action='ViewToolbarMain'/>"
 "			<menuitem action='ViewProperties'/>"
-"			<placeholder name='UIItems'/>"
 "		 	<menuitem action='ViewStatusbar'/>"
+"			<placeholder name='UIItems'/>"
+"			<separator/>"
+"			<menu action='MenuSort'>"
+"				<menuitem action='SortByName'/>"
+"				<menuitem action='SortByDate'/>"
+"				<separator/>"
+"				<menuitem action='SortDescending'/>"
+"			</menu>"
 "			<separator/>"
 "			<menuitem action='FullScreen'/>"
 "			<menuitem action='SlideShow'/>"
@@ -461,6 +472,18 @@ GtkToggleActionEntry QuiverImpl::action_entries_toggle[] = {
 	{ "ViewToolbarMain", GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
 	{ "ViewStatusbar", GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
 	{ "ViewProperties", GTK_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ "SortDescending", GTK_STOCK_SORT_DESCENDING, "In Descending Order", "", "Arrange the items in descending order", G_CALLBACK(quiver_action_handler_cb),FALSE},
+};
+
+typedef enum
+{
+	SORT_BY_NAME,
+	SORT_BY_DATE,
+} SortBy; 
+
+GtkRadioActionEntry QuiverImpl::action_entries_radio[] = {
+	{ "SortByName", NULL,"By Name", "", "Sort by file name", SORT_BY_NAME},
+	{ "SortByDate", NULL,"By Date", "", "Sort by date", SORT_BY_DATE},
 };
 
 GtkActionEntry QuiverImpl::action_entries[] = {
@@ -470,6 +493,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuTransform", NULL, N_("Transform")},
 	{ "MenuEdit", NULL, N_("_Edit") },
 	{ "MenuView", NULL, N_("_View") },
+	{ "MenuSort", NULL, N_("_Arrange Items") },
 	{ "MenuImage", NULL, N_("_Image") },
 	{ "MenuGo", NULL, N_("_Go") },
 	{ "MenuTools", NULL, N_("_Tools") },
@@ -480,8 +504,8 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "UIModeViewer", QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 
 	{ "FileOpen", GTK_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
-	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a folder", G_CALLBACK( quiver_action_handler_cb )},
-	{ "FileOpenLocation", NULL, "Open _Location", "<Control>l", "Open a location", G_CALLBACK( quiver_action_handler_cb )},
+	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
+	{ "FileOpenLocation", NULL, "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( quiver_action_handler_cb )},
 	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
 	{ "FileSaveAs", GTK_STOCK_SAVE, "Save _As", "<Shift><Control>s", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
 	
@@ -896,6 +920,13 @@ void Quiver::Init()
 										G_N_ELEMENTS (m_QuiverImplPtr->action_entries_toggle),
 										m_QuiverImplPtr.get());
 
+	gtk_action_group_add_radio_actions(actions,
+										m_QuiverImplPtr->action_entries_radio, 
+										G_N_ELEMENTS (m_QuiverImplPtr->action_entries_radio),
+										SORT_BY_NAME,
+										G_CALLBACK(quiver_radio_action_handler_cb),
+										m_QuiverImplPtr.get());										
+
 	gtk_ui_manager_insert_action_group (m_QuiverImplPtr->m_pUIManager,actions,0);
                                              
 	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "connect_proxy",
@@ -1000,7 +1031,22 @@ void Quiver::Init()
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Browser.GetWidget(), TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Viewer.GetWidget(), TRUE, TRUE, 0);
 
+	bool bShowViewer = false;
 	if (1 == m_QuiverImplPtr->m_listImages.size())
+	{
+		bShowViewer = true;
+		struct stat stat_struct = {0};
+		if (0 == g_stat(m_QuiverImplPtr->m_listImages.front().c_str(),&stat_struct))
+		{
+			if (stat_struct.st_mode & S_IFDIR)
+			{
+				//browser
+				bShowViewer = false;
+			}
+		}
+	}
+	
+	if (bShowViewer)
 	{
 		ShowViewer();
 		gtk_widget_grab_focus (m_QuiverImplPtr->m_Viewer.GetWidget());
@@ -1638,6 +1684,13 @@ void Quiver::OnShowMenubar(bool bShow)
 	}
 }
 
+static void
+quiver_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data)
+{
+//	printf("%s: %s\n",gtk_action_get_name(GTK_ACTION(action)),gtk_action_get_name(GTK_ACTION(current)));
+	quiver_action_handler_cb(GTK_ACTION(action), user_data);
+}
+
 static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
@@ -1645,9 +1698,9 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	pQuiver = pQuiverImpl->m_pQuiver;
 	
 	const gchar * szAction = gtk_action_get_name(action);
-	
+
 	//printf("quiver_action_handler_cb: %s\n",szAction);
-	
+
 	if (0 == strcmp(szAction,"Quit") || 0 == strcmp(szAction,"Quit_2") || 0 == strcmp(szAction,"Quit_3") || 0 == strcmp(szAction,"Quit_4"))
 	{
 		pQuiver->OnQuit();
@@ -1738,6 +1791,31 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	else if(0 == strcmp(szAction,"FileSaveAs"))
 	{
 		pQuiverImpl->SaveAs();	
+	}
+	else if(0 == strcmp(szAction,"SortByName"))
+	{
+		GtkAction *sort_desc_action = GetAction(pQuiverImpl->m_pUIManager,"SortDescending");
+		bool bAsc = ( FALSE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
+		
+		gint sortby = gtk_radio_action_get_current_value(GTK_RADIO_ACTION(action));
+		switch (sortby)
+		{
+			pQuiverImpl->m_ImageList.GetCurrent();
+			case SORT_BY_NAME:
+				pQuiverImpl->m_ImageList.Sort(ImageList::SORT_BY_FILENAME,bAsc);
+			break;
+			case SORT_BY_DATE:
+				pQuiverImpl->m_ImageList.Sort(ImageList::SORT_BY_DATE,bAsc);
+				break;
+			default:
+				break;
+			
+		}
+	}
+	else if(0 == strcmp(szAction,"SortDescending"))
+	{
+		// should just reverse the list
+		pQuiverImpl->m_ImageList.Reverse();
 	}
 	else if (g_str_has_prefix(szAction,"ExternalTool_"))
 	{

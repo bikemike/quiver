@@ -41,6 +41,7 @@ public:
 
 	void LoadExifData();
 	int GetOrientation();
+	time_t GetTimeT();
 	
 	ExifData* GetExifData();
 	bool SetExifData(ExifData* pExifData);	
@@ -331,14 +332,18 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 			{
 				result = gnome_vfs_read (handle, buffer, 
 										 sizeof(buffer), &bytes_read);
-				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+				if (!gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error) )
+				{
+					break;
+				}
 			}
+			gdk_pixbuf_loader_close(loader,NULL);
+			
 			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 			
 			if (NULL != thumb_pixbuf)
 				g_object_ref(thumb_pixbuf);
 			
-			gdk_pixbuf_loader_close(loader,&tmp_error);
 			g_object_unref(loader);
 		}
 		
@@ -477,22 +482,21 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 				{
 					result = gnome_vfs_read (handle, buffer, sizeof(buffer), &bytes_read);
 					tmp_error = NULL;
-					gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-					if (NULL != tmp_error)
+					
+					if (!gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error))
 					{
 						//printf("error: %s\n",tmp_error->message);
 						break;
 					}
 				}
 
-				
+				gdk_pixbuf_loader_close(loader,&tmp_error);
+								
 				thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 				
 				if (NULL != thumb_pixbuf)
 					g_object_ref(thumb_pixbuf);
 				
-				tmp_error = NULL;
-				gdk_pixbuf_loader_close(loader,&tmp_error);		
 				g_object_unref(loader);		
 			}
 			
@@ -763,6 +767,63 @@ ExifData* QuiverFile::QuiverFileImpl::GetExifData()
 	LoadExifData();
 	return m_pExifData;
 }
+
+time_t QuiverFile::QuiverFileImpl::GetTimeT()
+{
+	time_t date = 0;
+	ExifData* pExifData = GetExifData();
+	if (NULL != pExifData)
+	{
+		// use date_time_original
+		ExifEntry* pEntry;
+		pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME_ORIGINAL);
+		if (NULL != pEntry)
+		{
+			char szDate[20];
+			exif_entry_get_value(pEntry,szDate,20);
+
+			tm tm_exif_time;
+			int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
+				&tm_exif_time.tm_year,
+				&tm_exif_time.tm_mon,
+				&tm_exif_time.tm_mday,
+				&tm_exif_time.tm_hour,
+				&tm_exif_time.tm_min,
+				&tm_exif_time.tm_sec);
+			tm_exif_time.tm_year -= 1900;
+			tm_exif_time.tm_mon -= 1;
+			if (6 == num_substs)
+			{
+				// successfully parsed date
+				date = timelocal(&tm_exif_time);
+			}
+			
+		}
+	}
+	
+
+	if (0 == date) // unable to get exif date	
+	{
+		// use ctime or mtime
+		GnomeVFSFileInfo *pInfo = GetFileInfo();
+		
+		if (NULL != pInfo)
+		{
+			if (GNOME_VFS_FILE_INFO_FIELDS_CTIME & pInfo->valid_fields)
+			{
+				date = pInfo->ctime;
+			}
+			else if (GNOME_VFS_FILE_INFO_FIELDS_MTIME & pInfo->valid_fields)
+			{
+				date = pInfo->mtime;
+			}
+		}
+	}
+	
+	return date;
+}	
+
+
 
 bool QuiverFile::QuiverFileImpl::SetExifData(ExifData* pExifData)
 {
@@ -1113,6 +1174,11 @@ bool QuiverFile::IsWriteable()
 		gnome_vfs_file_info_unref(vfsFileInfo);
 	}
 	return rval;
+}
+
+time_t QuiverFile::GetTimeT() const
+{
+	return m_QuiverFilePtr->GetTimeT();
 }
 
 GdkPixbuf * QuiverFile::GetExifThumbnail()

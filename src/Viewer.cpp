@@ -892,6 +892,8 @@ void Viewer::Show()
 			g_warning("Viewer::Show() Error: %s\n",tmp_error->message);
 		}
 	}
+	
+	m_ViewerImplPtr->m_ImageList.UnblockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
 
 }
 void Viewer::Hide()
@@ -905,6 +907,8 @@ void Viewer::Hide()
 			m_ViewerImplPtr->m_iMergedViewerUI);
 		m_ViewerImplPtr->m_iMergedViewerUI = 0;
 	}
+	
+	m_ViewerImplPtr->m_ImageList.BlockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
 }
 void Viewer::SetUIManager(GtkUIManager *ui_manager)
 {

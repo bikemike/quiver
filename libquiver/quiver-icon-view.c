@@ -2661,6 +2661,18 @@ void quiver_icon_view_get_visible_range(QuiverIconView *iconview,guint *first, g
 	*last = cell_end;
 }
 
+void
+quiver_icon_view_invalidate_window(QuiverIconView *iconview)
+{
+	GtkWidget* widget;
+	widget = GTK_WIDGET(iconview);
+	GdkRectangle rect = {0};
+	rect.width = widget->allocation.width;
+	rect.height = widget->allocation.height;
+	
+	gdk_window_invalidate_rect(widget->window, &rect, FALSE);
+}
+
 void 
 quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
 		gint cell)

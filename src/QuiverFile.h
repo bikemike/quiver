@@ -63,6 +63,8 @@ public:
 	
 	int GetOrientation() ;
 	
+	time_t GetTimeT() const;
+	
 	double GetLoadTimeInSeconds() const;
 	
 	void SetWidth(int );

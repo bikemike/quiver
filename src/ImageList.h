@@ -33,6 +33,8 @@ public:
 
 	// reload the list from the items in the maps (F5)
 	void Reload();
+	
+	void Reverse(); // reverse the list
 
 	void Clear();
 	
@@ -59,7 +61,7 @@ public:
 	QuiverFile operator[](unsigned int n);
 	QuiverFile const operator[](unsigned int n) const;
 
-	void Sort(SortBy o, bool descending);
+	void Sort(SortBy o, bool bSortAscending);
 
 private:
 	ImageListImplPtr m_ImageListImplPtr;
