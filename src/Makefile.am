@@ -20,6 +20,12 @@ quiver_SOURCES = \
 	Preferences.cpp \
 	PreferencesDlg.h \
 	PreferencesDlg.cpp \
+	FolderTree.h \
+	FolderTree.cpp \
+	FolderTreeEventSource.h \
+	FolderTreeEventSource.cpp \
+	IFolderTreeEventHandler.h \
+	FolderTreeEvent.h \
 	ImageCache.h \
 	ImageCache.cpp \
 	ImageList.h \

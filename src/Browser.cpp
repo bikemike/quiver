@@ -14,6 +14,7 @@ using namespace std;
 #include <libquiver/quiver-image-view.h>
 
 #include "Browser.h"
+#include "FolderTree.h"
 #include "ImageList.h"
 #include "ImageCache.h"
 #include "ImageLoader.h"
@@ -22,6 +23,7 @@ using namespace std;
 #include "Preferences.h"
 #include "QuiverFileOps.h"
 #include "IImageListEventHandler.h"
+#include "IFolderTreeEventHandler.h"
 
 #define QUIVER_PREFS_APP                       "application"
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
@@ -29,7 +31,8 @@ using namespace std;
 
 #define QUIVER_PREFS_BROWSER                   "browser"
 #define QUIVER_PREFS_BROWSER_THUMB_SIZE        "thumb_size"
-
+#define QUIVER_PREFS_BROWSER_FOLDER_HPANE      "folder_hpane"
+#define QUIVER_PREFS_BROWSER_FOLDER_VPANE      "folder_vpane"
 
 // ============================================================================
 // Browser::BrowserImpl: private implementation (hidden from header file)
@@ -123,9 +126,11 @@ public:
 	
 	void SetImageList(ImageList list);
 
-/* member variables */	
-	GtkWidget *iconview;
+/* member variables */
+	FolderTree m_FolderTree;
 	
+	GtkWidget *iconview;
+
 	GtkWidget *m_pBrowserWidget;
 	
 	//GtkWidget *hpaned;
@@ -166,7 +171,19 @@ public:
 		Browser::BrowserImpl *parent;
 	};
 	
+	class FolderTreeEventHandler : public IFolderTreeEventHandler
+	{
+	public:
+		FolderTreeEventHandler(BrowserImpl* pBrowserImpl){this->parent = pBrowserImpl;};
+		virtual void HandleSelectionChanged(FolderTreeEventPtr event);
+		virtual ~FolderTreeEventHandler(){};
+	private:
+		BrowserImpl* parent;
+	};
+
+	
 	IImageListEventHandlerPtr m_ImageListEventHandlerPtr;
+	IFolderTreeEventHandlerPtr m_FolderTreeEventHandlerPtr;
 };
 // ============================================================================
 
@@ -670,13 +687,29 @@ static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpoin
 	return FALSE;
 }
 
+static void pane_size_allocate (GtkWidget* widget, GtkAllocation *allocation, gpointer user_data)
+{
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	if (GTK_IS_HPANED(widget))
+	{
+		prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_HPANE,gtk_paned_get_position(GTK_PANED(widget)));
+	}
+	else if (GTK_IS_VPANED(widget))
+	{
+		prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE,gtk_paned_get_position(GTK_PANED(widget)));
+	} 
+}
+
 
 Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100),
                                        m_ThumbnailCacheLarge(50),
                                        m_ThumbnailLoader(this,4),
-                                       m_ImageListEventHandlerPtr( new ImageListEventHandler(this) )
+                                       m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
+                                       m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) )
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	
+	m_FolderTree.AddEventHandler(m_FolderTreeEventHandlerPtr);
 
 	m_BrowserParent = parent;
 	m_pUIManager = NULL;
@@ -696,7 +729,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	 *       -> icon view
 	 */
 	GtkWidget *hpaned;
-	GtkWidget *scrolled_window;
+	GtkWidget *scrolled_window, *sw_folders;
 	GtkWidget *hbox,*vbox;
 	
 
@@ -735,11 +768,31 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	gtk_paned_pack1(GTK_PANED(hpaned),vpaned,FALSE,FALSE);
 	gtk_paned_pack2(GTK_PANED(hpaned),vbox,TRUE,TRUE);
 	
+	// set the size of the hpane and vpane
+	int hpaned_pos = 200;
+	if ( prefsPtr->HasKey(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDER_HPANE) )
+	{
+		hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_HPANE);
+	}
+	gtk_paned_set_position(GTK_PANED(hpaned),hpaned_pos);
+
+	if ( prefsPtr->HasKey(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE) )
+	{
+		int vpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE);
+		gtk_paned_set_position(GTK_PANED(vpaned),vpaned_pos);
+	}
+	
+	gtk_signal_connect (GTK_OBJECT (hpaned), "size_allocate",
+	      GTK_SIGNAL_FUNC (pane_size_allocate), this);
+	gtk_signal_connect (GTK_OBJECT (vpaned), "size_allocate",
+	      GTK_SIGNAL_FUNC (pane_size_allocate), this);
+	
 	m_pBrowserWidget = hpaned;
 	
-	gtk_notebook_append_page(GTK_NOTEBOOK(notebook),gtk_drawing_area_new(),gtk_label_new("Folders"));
-	gtk_notebook_append_page(GTK_NOTEBOOK(notebook),gtk_drawing_area_new(),gtk_label_new("Calendar"));
-	gtk_notebook_append_page(GTK_NOTEBOOK(notebook),gtk_drawing_area_new(),gtk_label_new("Categories"));
+	sw_folders = gtk_scrolled_window_new(NULL,NULL);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_folders),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
+	gtk_container_add(GTK_CONTAINER(sw_folders),m_FolderTree.GetWidget());
+	gtk_notebook_append_page(GTK_NOTEBOOK(notebook), sw_folders,gtk_label_new("Folders"));
 
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(notebook));
 	gtk_notebook_set_scrollable (GTK_NOTEBOOK(notebook),TRUE);
@@ -809,7 +862,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 
 	// temporarily hide the folder tree until we
 	// get the code written	
-	gtk_widget_hide(vpaned);
+	//gtk_widget_hide(vpaned);
 }
 
 Browser::BrowserImpl::~BrowserImpl()
@@ -893,6 +946,8 @@ void Browser::BrowserImpl::Show()
 	}
 
 	gtk_widget_show(m_pBrowserWidget);
+	
+	m_QuiverFiles.UnblockHandler(m_ImageListEventHandlerPtr);
 
 }
 
@@ -905,6 +960,8 @@ void Browser::BrowserImpl::Hide()
 			m_iMergedBrowserUI);
 		m_iMergedBrowserUI = 0;
 	}
+	
+	m_QuiverFiles.BlockHandler(m_ImageListEventHandlerPtr);
 }
 
 void Browser::BrowserImpl::SetImageList(ImageList list)
@@ -914,6 +971,11 @@ void Browser::BrowserImpl::SetImageList(ImageList list)
 	m_QuiverFiles = list;
 	
 	m_QuiverFiles.AddEventHandler(m_ImageListEventHandlerPtr);
+	
+	if (0 == m_iMergedBrowserUI)
+	{
+		m_QuiverFiles.BlockHandler(m_ImageListEventHandlerPtr);
+	}
 }
 
 ImageList Browser::BrowserImpl::GetImageList()
@@ -988,18 +1050,13 @@ static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpo
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
-	if (GTK_WIDGET_MAPPED(b->imageview))
-	{
-		b->m_ImageLoader.LoadImage(b->m_QuiverFiles[cell]);
-	}
 	
-	b->m_QuiverFiles.BlockHandler(b->m_ImageListEventHandlerPtr);
+	//b->m_QuiverFiles.BlockHandler(b->m_ImageListEventHandlerPtr);
 	
 	b->m_QuiverFiles.SetCurrentIndex(cell);
 	
-	b->m_QuiverFiles.UnblockHandler(b->m_ImageListEventHandlerPtr);
-		
-	b->m_BrowserParent->EmitCursorChangedEvent();
+	//b->m_QuiverFiles.UnblockHandler(b->m_ImageListEventHandlerPtr);
+
 }
 
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data)
@@ -1034,6 +1091,7 @@ static void entry_activate(GtkEntry *entry, gpointer user_data)
 	list<string> file_list;
 	file_list.push_back(entry_text);
 	b->m_QuiverFiles.SetImageList(&file_list);
+	
 }
 
 
@@ -1156,6 +1214,13 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(Imag
 {
 	//printf("Current item changed: %d\n",event->GetIndex());
 	quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->iconview),event->GetIndex());
+	
+	if (GTK_WIDGET_MAPPED(parent->imageview))
+	{
+		parent->m_ImageLoader.LoadImage(parent->m_QuiverFiles[event->GetIndex()]);
+	}
+	
+	parent->m_BrowserParent->EmitCursorChangedEvent();
 }
 void Browser::BrowserImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
 {
@@ -1178,4 +1243,20 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleItemChanged(ImageListEve
 	parent->m_ThumbnailLoader.UpdateList(true);	
 	
 }
+
+void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(FolderTreeEventPtr event)
+{
+	list<string> listFolders = parent->m_FolderTree.GetSelectedFolders();
+	list<string>::iterator itr;
+	parent->m_QuiverFiles.Clear();
+	parent->m_QuiverFiles.SetImageList(&listFolders);
+	/*
+	for (itr = listFolders.begin(); listFolders.end() != itr; ++itr)
+	{
+		
+		//printf("Selected folder: %s\n", itr->c_str());
+	}
+	*/	
+}
+
 

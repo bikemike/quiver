@@ -128,7 +128,7 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 		return;
 	}
 
-	CacheItem c;
+	CacheItem c = {0};
 	c.pPixbuf = pb;
 	// add a reference to the item so it doesnt get deleted
 	// when the viewer switches images
@@ -151,11 +151,13 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 				oldest = itr;
 			}
 		}
+
+		if (m_mapImageCache.end() != oldest)
+		{		
+			g_object_unref(oldest->second.pPixbuf);
+			m_mapImageCache.erase(oldest->first);	
+		}
 		
-		g_object_unref(oldest->second.pPixbuf);
-		//cout << "unreffed " << oldest->first << endl;
-		
-		m_mapImageCache.erase(oldest->first);
 	}
 	//add the new item
 	m_mapImageCache.insert(pair<string,CacheItem>(filename,c));

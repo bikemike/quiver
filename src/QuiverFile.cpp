@@ -398,20 +398,20 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 				{
 					// this is to work around a bug with the gnome thumbnail factory
 					// not saving the correct width/height to the thumbnails
-					save_thumbnail_to_cache = TRUE;		
+					save_thumbnail_to_cache = TRUE;
 				}
 				else if (-1 == m_iWidth || -1 == m_iHeight)
 				{
-					m_iWidth =  new_width;
-					m_iHeight = new_height;
+					if (0 != new_width && 0 != new_height)
+					{
+						m_iWidth =  new_width;
+						m_iHeight = new_height;
+					}
+					else
+					{
+						save_thumbnail_to_cache = TRUE;	
+					}
 				}
-				/*
-				else if (new_width != m_iWidth || new_height != m_iHeight)
-				{
-					save_thumbnail_to_cache = TRUE;					
-				}
-				*/
-
 			}
 		}
 	}
