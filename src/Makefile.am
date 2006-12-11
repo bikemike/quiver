@@ -32,6 +32,7 @@ quiver_SOURCES = \
 	ImageCache.cpp \
 	ImageList.h \
 	ImageList.cpp \
+	ImageListEvent.h \
 	ImageListEventSource.h \
 	ImageListEventSource.cpp \
 	IImageListEventHandler.h \

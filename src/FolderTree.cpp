@@ -149,7 +149,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	
 	/* Create a view */
 	m_pWidget = gtk_tree_view_new_with_model (GTK_TREE_MODEL (store));
+#if GTK_MAJOR_VERSION == 2  &&  GTK_MINOR_VERSION >= 10 || GTK_MAJOR_VERSION > 2
 	gtk_tree_view_set_rubber_banding(GTK_TREE_VIEW(m_pWidget),TRUE);
+#endif
 	//gtk_tree_view_set_enable_tree_lines(GTK_TREE_VIEW(m_pWidget),TRUE);
 	//gtk_tree_view_set_grid_lines(GTK_TREE_VIEW(m_pWidget),GTK_TREE_VIEW_GRID_LINES_BOTH);
 	gtk_widget_show(m_pWidget);

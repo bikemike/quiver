@@ -3,6 +3,7 @@
 SUBDIRS =      \
 	po         \
 	libquiver  \
+	data \
 	src        
 
 quiverdocdir = ${datadir}/doc/quiver
