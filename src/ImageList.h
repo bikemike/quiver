@@ -26,6 +26,7 @@ public:
 
 	void SetImageList(std::list<std::string> *file_list);
 	void Add(std::list<std::string> *file_list);
+	void UpdateImageList(std::list<std::string> *file_list);
 
 
 	void Remove(unsigned int iIndex);

@@ -6,6 +6,7 @@
 
 #include <libgnomevfs/gnome-vfs.h>
 #include <stdlib.h>
+#include <set>
 
 // comment this define out if __gnu_cxx is not available
 #define USE_EXT
@@ -34,7 +35,6 @@ typedef __gnu_cxx::hash_map<std::string,GnomeVFSMonitorEventType> PathChangedMap
 #else
 
 #include <map>
-#include <set>
 
 typedef std::map<std::string,GnomeVFSMonitorHandle*> PathMonitorMap;
 typedef std::set<std::string> StringSet;
@@ -73,6 +73,7 @@ public:
 	
 	void Add(std::list<std::string> *file_list);
 	void SetImageList(std::list<std::string> *file_list);
+	bool UpdateImageList(std::list<std::string> *file_list);
 	
 	bool AddDirectory(const gchar* uri);
 	bool AddFile(const gchar*  uri);
@@ -317,6 +318,23 @@ void ImageList::SetImageList(list<string> *file_list)
 	iNewSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
 	
 	if (!(0 == iOldSize && 0 == iNewSize))
+	{ 
+		EmitContentsChangedEvent();
+	}	
+}
+
+void ImageList::UpdateImageList(list<string> *file_list)
+{
+	int iOldSize, iNewSize;
+	bool bUpdated = false;
+	
+	iOldSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
+	
+	bUpdated = m_ImageListImplPtr->UpdateImageList(file_list);
+	
+	iNewSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
+	
+	if (bUpdated && !(0 == iOldSize && 0 == iNewSize))
 	{ 
 		EmitContentsChangedEvent();
 	}	
@@ -789,7 +807,6 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 
 	if (!strCurrentURI.empty())
 	{
-		printf("setting current image: %s\n",strCurrentURI.c_str());
 		SetCurrentImage(strCurrentURI);
 	}
 	
@@ -814,6 +831,73 @@ void ImageListImpl::SetImageList(list<string> *file_list)
 	Add(file_list);
 
 	//printf("done setting the image list\n");
+}
+
+
+bool ImageListImpl::UpdateImageList(list<string> *file_list)
+{
+	// create a set to find the differences
+	// remove the ones not in the file_list but in
+	// the monitor list, then add the difference of 
+	// the other way around
+	bool bUpdated = false;
+	
+	// can't use hash_set here because we need sorted
+	// sets for set_difference and hash_sets are not 
+	// sorted in the proper fashion
+	std::set<string> setNewFiles;
+	std::set<string> setOldFiles;
+	
+	string strCurrentURI;
+	if (0 < m_QuiverFileList.size())
+	{
+		strCurrentURI = m_QuiverFileList[m_iCurrentIndex].GetURI();
+	}
+	
+	PathMonitorMap::iterator itr;
+	for (itr = m_mapDirs.begin(); m_mapDirs.end() != itr; ++itr)
+	{
+		setOldFiles.insert(itr->first);
+	}
+	for (itr = m_mapFiles.begin(); m_mapFiles.end() != itr; ++itr)
+	{
+		setOldFiles.insert(itr->first);
+	}
+	
+	list<string>::iterator listItr;
+	for (listItr = file_list->begin(); file_list->end() != listItr; ++listItr)
+	{
+		setNewFiles.insert ( PathToURI(*listItr) );
+	}
+	
+	StringSet setOnlyInOld;
+	set_difference(setOldFiles.begin(), setOldFiles.end(), setNewFiles.begin(), setNewFiles.end(), inserter(setOnlyInOld,setOnlyInOld.begin()));
+	
+	StringSet::iterator setItr;
+	for (setItr = setOnlyInOld.begin(); setOnlyInOld.end() != setItr; ++setItr)
+	{
+		bUpdated = true;
+		RemoveMonitor((*setItr));
+	}
+	
+	StringSet setOnlyInNew;
+	set_difference(setNewFiles.begin(), setNewFiles.end(), setOldFiles.begin(), setOldFiles.end(), inserter(setOnlyInNew,setOnlyInOld.begin()));
+	
+	list<string> listNew;
+	listNew.insert(listNew.begin(),setOnlyInNew.begin(), setOnlyInNew.end());
+
+	if (bUpdated && !strCurrentURI.empty())
+	{
+		SetCurrentImage(strCurrentURI);
+	}
+
+	if (0 != listNew.size())
+	{
+		bUpdated = true;
+		Add(&listNew);
+	}
+
+	return bUpdated;
 }
 
 
@@ -974,25 +1058,27 @@ bool ImageListImpl::RemoveMonitor(string path)
 		m_mapDirs.erase(itr);
 		bErased = true;
 	}
-
-	itr = m_mapFiles.find(strURI);
-	if (m_mapFiles.end() != itr)
+	else
 	{
-		QuiverFile qfile(itr->first.c_str());
-		
-		QuiverFileList::iterator qitr = m_QuiverFileList.end();
-		qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
-		if ( m_QuiverFileList.end() != qitr )
+		itr = m_mapFiles.find(strURI);
+		if (m_mapFiles.end() != itr)
 		{
-			int iIndex = qitr - m_QuiverFileList.begin();
-			RemoveFile(iIndex);
-		}
-
-		gnome_vfs_monitor_cancel(itr->second);
-		m_mapFiles.erase(itr);
-		bErased = true;
-	}
+			QuiverFile qfile(itr->first.c_str());
+			
+			QuiverFileList::iterator qitr = m_QuiverFileList.end();
+			qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
+			if ( m_QuiverFileList.end() != qitr )
+			{
+				int iIndex = qitr - m_QuiverFileList.begin();
+				RemoveFile(iIndex);
+			}
 	
+			gnome_vfs_monitor_cancel(itr->second);
+			m_mapFiles.erase(itr);
+			bErased = true;
+		}
+	}
+		
 	return bErased;
 }
 

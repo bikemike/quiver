@@ -56,4 +56,5 @@ po/Makefile.in
 libquiver/Makefile
 src/Makefile
 src/icons/Makefile
+data/Makefile
 ])

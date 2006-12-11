@@ -5,7 +5,7 @@ SUBDIRS =      \
 	libquiver  \
 	src        
 
-quiverdocdir = ${prefix}/doc/quiver
+quiverdocdir = ${datadir}/doc/quiver
 
 quiverdoc_DATA = \
 	README\
@@ -19,12 +19,4 @@ EXTRA_DIST = $(quiverdoc_DATA) \
      intltool-extract.in \
 	 intltool-merge.in \
 	 intltool-update.in
-
-# Copy all the spec files. Of cource, only one is actually used.
-dist-hook:
-	for specfile in *.spec; do \
-		if test -f $$specfile; then \
-			cp -p $$specfile $(distdir); \
-		fi \
-	done
 

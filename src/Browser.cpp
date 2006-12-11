@@ -1248,15 +1248,8 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 {
 	list<string> listFolders = parent->m_FolderTree.GetSelectedFolders();
 	list<string>::iterator itr;
-	parent->m_QuiverFiles.Clear();
-	parent->m_QuiverFiles.SetImageList(&listFolders);
-	/*
-	for (itr = listFolders.begin(); listFolders.end() != itr; ++itr)
-	{
-		
-		//printf("Selected folder: %s\n", itr->c_str());
-	}
-	*/	
+
+	parent->m_QuiverFiles.UpdateImageList(&listFolders);
 }
 
 

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Quiver Image Viewer
+Comment=Explore your 
+Exec=quiver %f %F %u %U %d %D %n %N
+Icon=quiver-icon-app.png
+Type=Application
+Categories=Application;Graphics;Photography;Viewer;GNOME;GTK;
+MimeType=image/jpeg;image/bmp;image/gif;image/png;image/tiff;image/x-bmp;image/x-ico;image/x-png;image/x-tga;
+StartupNotify=true

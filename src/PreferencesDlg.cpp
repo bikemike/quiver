@@ -47,7 +47,7 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
 {
 	PreferencesPtr prefs = Preferences::GetInstance();
 
-	m_pGladeXML = glade_xml_new ("/home/mike/projects/quiver/data/quiver.glade", "QuiverPreferencesDialog", NULL);
+	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "QuiverPreferencesDialog", NULL);
 	
 	g_signal_connect(glade_xml_get_widget (m_pGladeXML, "chkbtn_general_theme_color")
 		,"toggled",(GCallback)on_general_theme_color_toggled,this);	
