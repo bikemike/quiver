@@ -1,6 +1,8 @@
 #include <gtk/gtk.h>
 #include "ExifView.h"
-//#include "Preferences.h"
+
+#include "Preferences.h"
+#include "IPreferencesEventHandler.h"
 
 #include <exif-ifd.h>
 #include <exif-entry.h>
@@ -63,6 +65,7 @@ class ExifView::ExifViewImpl
 {
 public:
 //	methods
+	ExifViewImpl();
 	~ExifViewImpl();
 
 
@@ -73,6 +76,18 @@ public:
 	GtkWidget*    m_pScrolledWindow;
 	GtkUIManager* m_pUIManager;
 	guint         m_iIdleLoadID;
+	
+// nested classes
+	class PreferencesEventHandler : public IPreferencesEventHandler
+	{
+	public:
+		PreferencesEventHandler(ExifViewImpl* parent) {this->parent = parent;};
+		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
+	private:
+		ExifViewImpl* parent;
+	};
+	
+	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
 };
 
 enum
@@ -167,8 +182,20 @@ const int ifd_editable_tags[][10] = {
 	},
 };
 
+
+ExifView::ExifViewImpl::ExifViewImpl() :
+	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) )
+{
+	PreferencesPtr prefPtr = Preferences::GetInstance();
+	prefPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
+}
+
+
 ExifView::ExifViewImpl::~ExifViewImpl()
 {
+	PreferencesPtr prefPtr = Preferences::GetInstance();
+	prefPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
+	
 	if (NULL != m_pExifData)
 	{
 		exif_data_unref(m_pExifData);
@@ -1535,3 +1562,12 @@ static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifI
 	}
 
 }
+
+// nested class methods
+
+void ExifView::ExifViewImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
+{
+
+}
+
+

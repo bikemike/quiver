@@ -202,10 +202,23 @@ std::list<int> Preferences::GetIntegerList(std::string section, std::string key)
 
 void Preferences::SetValue(std::string section, std::string key, std::string value)
 {
-	if (!HasKey(section,key) || GetValue(section,key) != value)
+	string strOldValue = GetValue(section,key);
+	bool bHasKey = HasKey(section,key);
+	if (!bHasKey || strOldValue != value)
 	{
 		g_key_file_set_value(m_KeyFile,section.c_str(),key.c_str(), value.c_str());
 		m_bModified = true;
+		
+		PreferencesEvent::PreferencesEventType type;
+		if (!bHasKey)
+		{
+			type = PreferencesEvent::PREFERENCE_ADDED;
+		}
+		else
+		{
+			type = PreferencesEvent::PREFERENCE_CHANGED;
+		}
+		EmitPreferenceChanged(type,section,key, strOldValue, value);
 	}
 }
 
@@ -216,16 +229,24 @@ void Preferences::SetString(std::string section, std::string key, std::string va
 
 void Preferences::SetLocaleString(std::string section, std::string key, std::string locale, std::string value)
 {
-	if (GetLocaleString(section,key,locale) != value)
+	std::string strOldValue = GetLocaleString(section,key,locale);
+	if (strOldValue != value)
 	{
 		g_key_file_set_locale_string(m_KeyFile,section.c_str(),key.c_str(), locale.c_str(), value.c_str());
 		m_bModified = true;
+		
+		EmitPreferenceChanged(PreferencesEvent::PREFERENCE_CHANGED,
+			section,key,locale, strOldValue, value);
+		
 	}
 }
 
 void Preferences::SetBoolean(std::string section, std::string key, bool value)
 {
-	if (!HasKey(section,key) || GetBoolean(section,key) != value)
+	bool bHasKey = HasKey(section,key);
+	bool bOldVal = GetBoolean(section,key);
+	
+	if (!bHasKey || bOldVal != value)
 	{
 		gboolean val = FALSE;
 		if (value)
@@ -234,15 +255,39 @@ void Preferences::SetBoolean(std::string section, std::string key, bool value)
 		}
 		g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), val);
 		m_bModified = true;
+		
+		PreferencesEvent::PreferencesEventType type;
+		if (!bHasKey)
+		{
+			type = PreferencesEvent::PREFERENCE_ADDED;
+		}
+		else
+		{
+			type = PreferencesEvent::PREFERENCE_CHANGED;
+		}
+		EmitPreferenceChanged(type,section,key, bOldVal, value);
 	}
 }
 
 void Preferences::SetInteger(std::string section, std::string key, int value)
 {
-	if (!HasKey(section,key) || GetInteger(section, key) != value)
+	bool bHasKey = HasKey(section,key);
+	int iOldVal  = GetInteger(section, key);
+	if (!bHasKey || iOldVal != value)
 	{
 		g_key_file_set_integer(m_KeyFile,section.c_str(),key.c_str(), value);
 		m_bModified = true;
+		
+		PreferencesEvent::PreferencesEventType type;
+		if (!bHasKey)
+		{
+			type = PreferencesEvent::PREFERENCE_ADDED;
+		}
+		else
+		{
+			type = PreferencesEvent::PREFERENCE_CHANGED;
+		}
+		EmitPreferenceChanged(type,section,key, iOldVal, value);
 	}
 }
 

@@ -13,24 +13,15 @@
 #include "ImageList.h"
 
 #include "QuiverFile.h"
-#include "Preferences.h"
+
+#include "QuiverPrefs.h"
+#include "IPreferencesEventHandler.h"
 
 #include "QuiverStockIcons.h"
 #include "QuiverFileOps.h"
 
 #include "IImageListEventHandler.h"
 
-#define QUIVER_PREFS_APP                       "application"
-#define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
-#define QUIVER_PREFS_APP_BG_ICONVIEW           "bgcolor_iconview"
-
-
-#define QUIVER_PREFS_VIEWER                    "viewer"
-#define QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW     "filmstrip_show"
-
-#define QUIVER_PREFS_SLIDESHOW                 "slideshow"
-#define QUIVER_PREFS_SLIDESHOW_DURATION        "duration"
-#define QUIVER_PREFS_SLIDESHOW_LOOP            "loop"
 
 #include <gdk/gdkkeysyms.h>
 using namespace std;
@@ -221,14 +212,16 @@ public:
 		BOTH,
 	}ScrollbarType;
 		
-// constructor 
+// constructor / destructor 
 	ViewerImpl(Viewer *pViewer);
+	~ViewerImpl();
 
 // methods
 	void SetImageList(ImageList imgList);
 	void SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal = true );
 	int  GetCurrentOrientation();
 	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
+	void AddFilmstrip();
 
 // member variables
 
@@ -267,15 +260,15 @@ public:
 	Viewer *m_pViewer;
 	
 	guint m_iTimeoutSlideshowID;
-	int m_iSlideShowDuration;
-	bool m_bSlideShowLoop;
+	int   m_iSlideShowDuration;
+	bool  m_bSlideShowLoop;
 
 /* nested classes */
 	//class ViewerEventHandler;
 	class ImageListEventHandler : public IImageListEventHandler
 	{
 	public:
-		ImageListEventHandler(Viewer::ViewerImpl *parent){this->parent = parent;};
+		ImageListEventHandler(Viewer::ViewerImpl* parent){this->parent = parent;};
 		virtual void HandleContentsChanged(ImageListEventPtr event);
 		virtual void HandleCurrentIndexChanged(ImageListEventPtr event) ;
 		virtual void HandleItemAdded(ImageListEventPtr event);
@@ -284,8 +277,18 @@ public:
 	private:
 		Viewer::ViewerImpl *parent;
 	};
+
+	class PreferencesEventHandler : public IPreferencesEventHandler
+	{
+	public:
+		PreferencesEventHandler(ViewerImpl* parent) {this->parent = parent;};
+		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
+	private:
+		ViewerImpl* parent;
+	};
 	
-	IImageListEventHandlerPtr m_ImageListEventHandlerPtr;
+	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
+	IImageListEventHandlerPtr    m_ImageListEventHandlerPtr;
 };
 
 void Viewer::ViewerImpl::SetImageList(ImageList imgList)
@@ -404,6 +407,44 @@ void Viewer::ViewerImpl::SetCurrentOrientation(int iOrientation, bool bUpdateExi
 			exif_data_unref(pExifData);
 		}
 	}
+}
+
+void Viewer::ViewerImpl::AddFilmstrip()
+{
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	int iFilmstripPos = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
+
+	GtkBox* box;
+	
+	switch (iFilmstripPos)
+	{
+		case FSTRIP_POS_TOP:
+		case FSTRIP_POS_BOTTOM:
+			box = GTK_BOX(m_pVBox);
+			quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView),1);
+			gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+			
+			break;
+		case FSTRIP_POS_LEFT:
+		case FSTRIP_POS_RIGHT:
+			box = GTK_BOX(m_pHBox);
+			quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
+			gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+			break;		
+	}
+
+	switch (iFilmstripPos)
+	{
+		case FSTRIP_POS_TOP:
+		case FSTRIP_POS_LEFT:
+			gtk_box_reorder_child (box, m_pIconView,0);
+			break;
+		case FSTRIP_POS_BOTTOM:
+		case FSTRIP_POS_RIGHT:
+			gtk_box_reorder_child (box, m_pIconView,-1);
+			break;		
+	}
+
 }
 
 static void viewer_action_handler_cb(GtkAction *action, gpointer data)
@@ -673,9 +714,18 @@ gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventBut
 	return TRUE;	
 }
 
-Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : m_ImageListEventHandlerPtr( new ImageListEventHandler(this) )
+Viewer::ViewerImpl::~ViewerImpl()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
+}
+
+Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : 
+	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
+	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) )
+{
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
 	
 	m_pViewer = pViewer;
 
@@ -739,11 +789,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : m_ImageListEventHandlerPtr( ne
 	m_pVBox = gtk_vbox_new(FALSE,0);
 
 	gtk_box_pack_start (GTK_BOX (m_pVBox), m_pTable, TRUE, TRUE, 0);
-
-	gtk_box_pack_start (GTK_BOX (m_pHBox), m_pIconView, FALSE, TRUE, 0);
-//	gtk_box_pack_start (GTK_BOX (m_pVBox), m_pIconView, FALSE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (m_pHBox), m_pVBox, TRUE, TRUE, 0);
 
+	AddFilmstrip();
 
 	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
@@ -762,12 +810,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : m_ImageListEventHandlerPtr( ne
 		gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
 	}
 
-	m_iSlideShowDuration = prefsPtr->GetInteger(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_DURATION);
-	if (m_iSlideShowDuration < 500 || m_iSlideShowDuration > 60000)
-	{
-		//default to 2500 (2.5 seconds)
-		m_iSlideShowDuration = 2500;
-	}
+	m_iSlideShowDuration = prefsPtr->GetInteger(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_DURATION, 2500);
+
 	m_bSlideShowLoop = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_LOOP);
 
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
@@ -775,10 +819,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : m_ImageListEventHandlerPtr( ne
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
-
-	quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
-//	quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView),1);
 	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(m_pIconView),TRUE);
+	int iIconSize = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
+	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(m_pIconView),iIconSize,iIconSize);
 
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(viewer_iconview_cell_activated),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(viewer_iconview_cursor_changed),this);
@@ -1141,6 +1184,107 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEvent
 	params.state = ImageLoader::LOAD;
 
 	parent->m_ImageLoader.LoadImage(parent->m_ImageList.GetCurrent(),params);
+}
+
+
+void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
+{
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	if (QUIVER_PREFS_APP == event->GetSection() )
+	{
+		if (QUIVER_PREFS_APP_USE_THEME_COLOR == event->GetKey() )
+		{
+			if (event->GetNewBoolean())
+			{
+				// use theme color
+				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, NULL );
+				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, NULL );
+			}
+			else
+			{
+				GdkColor color;
+				
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
+						
+				gdk_color_parse(strBGColorThumb.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
+				
+				gdk_color_parse(strBGColorImg.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color);
+				
+			}
+		}
+		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() )
+		{
+			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
+			{
+				GdkColor color;
+				
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				
+				gdk_color_parse(strBGColorImg.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color );
+			}			
+		}
+		else if (QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
+		{
+			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
+			{
+				GdkColor color;
+				
+				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
+
+				gdk_color_parse(strBGColorThumb.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
+			}
+		}
+	}
+	else if ( QUIVER_PREFS_VIEWER == event->GetSection () )
+	{
+		if (QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW == event->GetKey() )
+		{
+		}
+		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION == event->GetKey() )
+		{
+			
+			int iFilmstripPos = event->GetOldInteger();
+
+			GtkContainer* container;
+			
+			switch (iFilmstripPos)
+			{
+				case FSTRIP_POS_TOP:
+				case FSTRIP_POS_BOTTOM:
+					container = GTK_CONTAINER(parent->m_pVBox);
+					break;
+				case FSTRIP_POS_LEFT:
+				case FSTRIP_POS_RIGHT:
+					container = GTK_CONTAINER(parent->m_pHBox);
+					break;		
+			}
+			g_object_ref(parent->m_pIconView);
+			gtk_container_remove(container, parent->m_pIconView);
+			parent->AddFilmstrip();
+			g_object_unref(parent->m_pIconView);
+			
+		}
+		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE == event->GetKey() )
+		{
+			quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewInteger(), event->GetNewInteger());
+		}
+	}
+	else if (QUIVER_PREFS_SLIDESHOW == event->GetSection() )
+	{
+		if (QUIVER_PREFS_SLIDESHOW_DURATION == event->GetKey() )
+		{
+			parent->m_iSlideShowDuration = event->GetNewInteger(); 
+		}
+		else if (QUIVER_PREFS_SLIDESHOW_LOOP == event->GetKey() )
+		{
+			parent->m_bSlideShowLoop = event->GetNewBoolean();
+		}
+	}
 }
 
 

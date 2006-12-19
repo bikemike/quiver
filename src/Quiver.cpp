@@ -16,10 +16,11 @@
 
 #include "IBrowserEventHandler.h"
 #include "IViewerEventHandler.h"
+#include "IPreferencesEventHandler.h"
 
 
 
-#include "Preferences.h"
+#include "QuiverPrefs.h"
 #include "PreferencesDlg.h"
 
 #include "ImageSaveManager.h"
@@ -28,14 +29,6 @@
 
 gchar g_szConfigDir[256]      = "";
 gchar g_szConfigFilePath[256] = "";
-
-#define QUIVER_PREFS_APP             "application"
-#define QUIVER_PREFS_APP_PROPS_SHOW  "properties_show"
-#define QUIVER_PREFS_APP_HPANE_POS   "hpane_position"
-#define QUIVER_PREFS_APP_TOP         "top"
-#define QUIVER_PREFS_APP_LEFT        "left"
-#define QUIVER_PREFS_APP_WIDTH       "width"
-#define QUIVER_PREFS_APP_HEIGHT      "height"
 
 using namespace std;
 
@@ -155,14 +148,29 @@ public:
 		QuiverImpl *parent;
 	};
 	
+		
+	class PreferencesEventHandler : public IPreferencesEventHandler
+	{
+	public:
+		PreferencesEventHandler(QuiverImpl* parent) {this->parent = parent;};
+		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
+	private:
+		QuiverImpl* parent;
+	};
+
+	
 	IBrowserEventHandlerPtr m_BrowserEventHandler;
 	IViewerEventHandlerPtr m_ViewerEventHandler;
+	IPreferencesEventHandlerPtr m_PreferencesEventHandler;
+	
+	
 };
 
 
 QuiverImpl::QuiverImpl (Quiver *parent) 
 		: m_BrowserEventHandler(new BrowserEventHandler(this)),
-		  m_ViewerEventHandler(new ViewerEventHandler(this))
+		  m_ViewerEventHandler(new ViewerEventHandler(this)),
+		  m_PreferencesEventHandler( new PreferencesEventHandler(this) )
 {
 	m_pQuiver = parent;	
 }
@@ -782,6 +790,9 @@ void Quiver::Close()
 	m_QuiverImplPtr->m_Browser.RemoveEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
 	m_QuiverImplPtr->m_Viewer.RemoveEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
 	
+	PreferencesPtr prefs = Preferences::GetInstance();
+	prefs->RemoveEventHandler(m_QuiverImplPtr->m_PreferencesEventHandler);
+	
 	QuiverImplPtr quiverImplPtr;
 	m_QuiverImplPtr = quiverImplPtr;
 	
@@ -868,9 +879,10 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
 
 	//initialize
-
-	m_QuiverImplPtr->m_Browser.AddEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	prefsPtr->AddEventHandler(m_QuiverImplPtr->m_PreferencesEventHandler);
 	
+	m_QuiverImplPtr->m_Browser.AddEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
 	m_QuiverImplPtr->m_Viewer.AddEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
 
 	/* Create the main window */
@@ -995,8 +1007,6 @@ void Quiver::Init()
 	
 	gtk_widget_set_no_show_all(m_QuiverImplPtr->m_pNBProperties,TRUE);
 	
-	PreferencesPtr prefsPtr = Preferences::GetInstance();
-
 	bool prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 
 	GtkAction *actionViewProperties = GetAction(m_QuiverImplPtr->m_pUIManager,"ViewProperties");
@@ -1562,6 +1572,12 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),FALSE);
 		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
 	}
+}
+
+
+void QuiverImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
+{
+
 }
 
 void Quiver::OnShowProperties(bool bShow /* = true */)

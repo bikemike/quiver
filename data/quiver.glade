@@ -25,25 +25,10 @@
                     <property name="top_padding">5</property>
                     <property name="bottom_padding">5</property>
                     <property name="left_padding">12</property>
+                    <property name="right_padding">5</property>
                     <child>
                       <widget class="GtkVBox" id="vbox4">
                         <property name="visible">True</property>
-                        <child>
-                          <widget class="GtkCheckButton" id="chkbtn_general_reorientate">
-                            <property name="width_request">440</property>
-                            <property name="height_request">16</property>
-                            <property name="visible">True</property>
-                            <property name="can_focus">True</property>
-                            <property name="label" translatable="yes">Automatically reorientate images containing an exif orientation tag</property>
-                            <property name="use_underline">True</property>
-                            <property name="active">True</property>
-                            <property name="draw_indicator">True</property>
-                          </widget>
-                          <packing>
-                            <property name="expand">False</property>
-                            <property name="fill">False</property>
-                          </packing>
-                        </child>
                         <child>
                           <widget class="GtkVBox" id="vbox11">
                             <property name="visible">True</property>
@@ -72,13 +57,27 @@
                                     <property name="column_spacing">20</property>
                                     <property name="row_spacing">2</property>
                                     <child>
-                                      <widget class="GtkLabel" id="label_general_bg_viewer">
+                                      <widget class="GtkLabel" id="label_general_bg_browser">
                                         <property name="visible">True</property>
                                         <property name="sensitive">False</property>
                                         <property name="xalign">0</property>
-                                        <property name="label" translatable="yes">Viewer background color:</property>
+                                        <property name="label" translatable="yes">Browser background color:</property>
                                       </widget>
                                       <packing>
+                                        <property name="x_options">GTK_FILL</property>
+                                        <property name="y_options"></property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <widget class="GtkColorButton" id="clrbtn_general_bg_viewer">
+                                        <property name="visible">True</property>
+                                        <property name="sensitive">False</property>
+                                        <property name="can_focus">True</property>
+                                        <property name="title" translatable="yes">Pick a Color for the Viewer</property>
+                                      </widget>
+                                      <packing>
+                                        <property name="left_attach">1</property>
+                                        <property name="right_attach">2</property>
                                         <property name="top_attach">1</property>
                                         <property name="bottom_attach">2</property>
                                         <property name="x_options">GTK_FILL</property>
@@ -90,6 +89,7 @@
                                         <property name="visible">True</property>
                                         <property name="sensitive">False</property>
                                         <property name="can_focus">True</property>
+                                        <property name="title" translatable="yes">Pick a Color for the Browser</property>
                                       </widget>
                                       <packing>
                                         <property name="left_attach">1</property>
@@ -99,28 +99,15 @@
                                       </packing>
                                     </child>
                                     <child>
-                                      <widget class="GtkColorButton" id="clrbtn_general_bg_viewer">
-                                        <property name="visible">True</property>
-                                        <property name="sensitive">False</property>
-                                        <property name="can_focus">True</property>
-                                      </widget>
-                                      <packing>
-                                        <property name="left_attach">1</property>
-                                        <property name="right_attach">2</property>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                        <property name="x_options">GTK_FILL</property>
-                                        <property name="y_options"></property>
-                                      </packing>
-                                    </child>
-                                    <child>
-                                      <widget class="GtkLabel" id="label_general_bg_browser">
+                                      <widget class="GtkLabel" id="label_general_bg_viewer">
                                         <property name="visible">True</property>
                                         <property name="sensitive">False</property>
                                         <property name="xalign">0</property>
-                                        <property name="label" translatable="yes">Browser background color:</property>
+                                        <property name="label" translatable="yes">Viewer background color:</property>
                                       </widget>
                                       <packing>
+                                        <property name="top_attach">1</property>
+                                        <property name="bottom_attach">2</property>
                                         <property name="x_options">GTK_FILL</property>
                                         <property name="y_options"></property>
                                       </packing>
@@ -140,15 +127,27 @@
                           <packing>
                             <property name="expand">False</property>
                             <property name="fill">False</property>
-                            <property name="position">1</property>
                           </packing>
                         </child>
                         <child>
                           <widget class="GtkCheckButton" id="chkbtn_general_bg_checkboard">
-                            <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="label" translatable="yes">Use a checkboard background for images with an alpha channel</property>
                             <property name="use_underline">True</property>
+                            <property name="draw_indicator">True</property>
+                          </widget>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">False</property>
+                            <property name="position">1</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <widget class="GtkCheckButton" id="chkbtn_general_reorientate">
+                            <property name="can_focus">True</property>
+                            <property name="label" translatable="yes">Automatically reorientate images containing an exif orientation tag</property>
+                            <property name="use_underline">True</property>
+                            <property name="active">True</property>
                             <property name="draw_indicator">True</property>
                           </widget>
                           <packing>
@@ -188,12 +187,12 @@
                     <property name="top_padding">5</property>
                     <property name="bottom_padding">5</property>
                     <property name="left_padding">12</property>
+                    <property name="right_padding">5</property>
                     <child>
                       <widget class="GtkVBox" id="vbox10">
                         <property name="visible">True</property>
                         <child>
                           <widget class="GtkCheckButton" id="chkbtn_viewer_quickpreview">
-                            <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="label" translatable="yes">Enable quick preview (display a cached thumbnail while loading image)</property>
                             <property name="use_underline">True</property>
@@ -207,9 +206,6 @@
                         </child>
                         <child>
                           <widget class="GtkCheckButton" id="chkbtn_viewer_autosave">
-                            <property name="width_request">248</property>
-                            <property name="height_request">16</property>
-                            <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="label" translatable="yes">Automatically save rotated/flipped images</property>
                             <property name="use_underline">True</property>
@@ -224,7 +220,6 @@
                         </child>
                         <child>
                           <widget class="GtkCheckButton" id="chkbtn_viewer_enable_gif_anim">
-                            <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="label" translatable="yes">Enable GIF animations</property>
                             <property name="use_underline">True</property>
@@ -257,6 +252,7 @@
 Left
 Bottom
 Right</property>
+                                <signal name="changed" handler="on_cbox_viewer_filmstrip_position_changed"/>
                               </widget>
                               <packing>
                                 <property name="expand">False</property>
@@ -268,6 +264,36 @@ Right</property>
                           </widget>
                           <packing>
                             <property name="position">3</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <widget class="GtkHBox" id="hbox1">
+                            <property name="visible">True</property>
+                            <property name="spacing">10</property>
+                            <child>
+                              <widget class="GtkLabel" id="label1">
+                                <property name="visible">True</property>
+                                <property name="label" translatable="yes">Film strip size:</property>
+                              </widget>
+                              <packing>
+                                <property name="expand">False</property>
+                                <property name="fill">False</property>
+                              </packing>
+                            </child>
+                            <child>
+                              <widget class="GtkHScale" id="hscale_viewer_filmstrip_size">
+                                <property name="visible">True</property>
+                                <property name="adjustment">128 20 256 1 10 0</property>
+                                <property name="digits">0</property>
+                                <property name="value_pos">GTK_POS_LEFT</property>
+                              </widget>
+                              <packing>
+                                <property name="position">1</property>
+                              </packing>
+                            </child>
+                          </widget>
+                          <packing>
+                            <property name="position">4</property>
                           </packing>
                         </child>
                       </widget>
@@ -301,6 +327,7 @@ Right</property>
                     <property name="top_padding">5</property>
                     <property name="bottom_padding">5</property>
                     <property name="left_padding">12</property>
+                    <property name="right_padding">5</property>
                     <child>
                       <widget class="GtkVBox" id="vbox6">
                         <property name="visible">True</property>
@@ -323,7 +350,7 @@ Right</property>
                               <widget class="GtkHScale" id="hscale_slideshow_duration">
                                 <property name="visible">True</property>
                                 <property name="can_focus">True</property>
-                                <property name="adjustment">2 0 60 1 5 0</property>
+                                <property name="adjustment">2 1 60 1 5 0</property>
                                 <property name="value_pos">GTK_POS_LEFT</property>
                               </widget>
                               <packing>
@@ -334,9 +361,6 @@ Right</property>
                         </child>
                         <child>
                           <widget class="GtkCheckButton" id="chkbtn_slideshow_fullscreen">
-                            <property name="width_request">128</property>
-                            <property name="height_request">16</property>
-                            <property name="visible">True</property>
                             <property name="can_focus">True</property>
                             <property name="label" translatable="yes">Fullscreen</property>
                             <property name="use_underline">True</property>
@@ -381,6 +405,7 @@ Right</property>
               <packing>
                 <property name="expand">False</property>
                 <property name="fill">False</property>
+                <property name="padding">5</property>
                 <property name="position">2</property>
               </packing>
             </child>

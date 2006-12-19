@@ -4,6 +4,7 @@
 #include <boost/shared_ptr.hpp>
 #include <list>
 #include <string>
+#include "PreferencesEventSource.h"
 
 class Preferences;
 class INIFile;
@@ -13,7 +14,7 @@ extern gchar g_szConfigFilePath[];
 typedef boost::shared_ptr<Preferences> PreferencesPtr;
 typedef boost::shared_ptr<INIFile> INIFilePtr;
 
-class Preferences
+class Preferences : public virtual PreferencesEventSource
 {
 public:
 

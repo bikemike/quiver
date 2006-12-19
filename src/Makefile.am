@@ -19,6 +19,10 @@ quiver_SOURCES = \
 	ExifView.h \
 	ExifView.cpp \
 	Preferences.h \
+	PreferencesEvent.h \
+	IPreferencesEventHandler.h \
+	PreferencesEventSource.h \
+	PreferencesEventSource.cpp \
 	Preferences.cpp \
 	PreferencesDlg.h \
 	PreferencesDlg.cpp \
@@ -61,6 +65,7 @@ quiver_SOURCES = \
 	QuiverStockIcons.cpp \
 	Quiver.h \
 	Quiver.cpp \
+	QuiverPrefs.h \
 	IEvent.h \
 	EventBase.h \
 	BrowserEvent.h \

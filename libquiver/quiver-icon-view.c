@@ -164,6 +164,8 @@ static void      quiver_icon_view_scroll_to_cell_smooth(QuiverIconView *iconview
 
 static gboolean  quiver_icon_view_timeout_smooth_scroll(gpointer data);
 
+static void      quiver_icon_view_style_set(GtkWidget *widget, GtkStyle *prev_style, gpointer data);
+
 /*
 static void      quiver_icon_view_set_property (GObject *object,
                     guint               prop_id,
@@ -418,6 +420,10 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->n_cell_items = 0;
 
 	//iconview->priv->cell_items[0].selected = TRUE;
+
+	g_signal_connect (GTK_WIDGET(iconview), "style-set",
+			G_CALLBACK (quiver_icon_view_style_set),
+			NULL);
 	
 }
 
@@ -1663,6 +1669,25 @@ quiver_icon_view_timeout_smooth_scroll(gpointer data)
 	gdk_threads_leave();
 	
 	return TRUE;
+}
+
+static void
+quiver_icon_view_style_set(GtkWidget *widget, GtkStyle *prev_style, gpointer data)
+{
+	QuiverIconView* iconview = QUIVER_ICON_VIEW(widget);
+
+	gint i,j;
+	for (i = 0;i<5;i++)
+	{
+		for (j = 0;j<8;j++)
+		{
+			if (NULL != iconview->priv->drop_shadow[i][j])
+			{
+				g_object_unref(iconview->priv->drop_shadow[i][j]);
+				iconview->priv->drop_shadow[i][j] = NULL;
+			}
+		}
+	}
 }
 
 /* start callbacks */

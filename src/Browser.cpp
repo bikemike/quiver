@@ -20,19 +20,12 @@ using namespace std;
 #include "ImageLoader.h"
 #include "IPixbufLoaderObserver.h"
 #include "QuiverUtils.h"
-#include "Preferences.h"
+#include "QuiverPrefs.h"
 #include "QuiverFileOps.h"
+
 #include "IImageListEventHandler.h"
+#include "IPreferencesEventHandler.h"
 #include "IFolderTreeEventHandler.h"
-
-#define QUIVER_PREFS_APP                       "application"
-#define QUIVER_PREFS_APP_BG_IMAGEVIEW          "bgcolor_imageview"
-#define QUIVER_PREFS_APP_BG_ICONVIEW           "bgcolor_iconview"
-
-#define QUIVER_PREFS_BROWSER                   "browser"
-#define QUIVER_PREFS_BROWSER_THUMB_SIZE        "thumb_size"
-#define QUIVER_PREFS_BROWSER_FOLDER_HPANE      "folder_hpane"
-#define QUIVER_PREFS_BROWSER_FOLDER_VPANE      "folder_vpane"
 
 // ============================================================================
 // Browser::BrowserImpl: private implementation (hidden from header file)
@@ -48,24 +41,24 @@ typedef struct _thread_data
 class ImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
-	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_ImageView = imageview;};
+	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pImageView = imageview;};
 	virtual ~ImageViewPixbufLoaderObserver(){};
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
-			quiver_image_view_connect_pixbuf_loader_signals(m_ImageView,loader);
+			quiver_image_view_connect_pixbuf_loader_signals(m_pImageView,loader);
 		};
 	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){
-			quiver_image_view_connect_pixbuf_size_prepared_signal(m_ImageView,loader);
+			quiver_image_view_connect_pixbuf_size_prepared_signal(m_pImageView,loader);
 		};
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
-			quiver_image_view_set_pixbuf(m_ImageView,pixbuf);
+			quiver_image_view_set_pixbuf(m_pImageView,pixbuf);
 		};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
 		gboolean bReset = FALSE;
 		if (bResetViewMode) bReset = TRUE;
-		quiver_image_view_set_pixbuf_at_size_ex(m_ImageView,pixbuf,width,height,bReset);
+		quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
 	};
 	// the image that will be displayed immediately
 	virtual void SetQuiverFile(QuiverFile quiverFile){};
@@ -74,7 +67,7 @@ public:
 	virtual void SetCacheQuiverFile(QuiverFile quiverFile){};
 	virtual void SignalBytesRead(long bytes_read,long total){};
 private:
-	QuiverImageView *m_ImageView;
+	QuiverImageView *m_pImageView;
 };
 
 class ThumbnailLoader
@@ -129,14 +122,14 @@ public:
 /* member variables */
 	FolderTree m_FolderTree;
 	
-	GtkWidget *iconview;
+	GtkWidget *m_pIconView;
 
 	GtkWidget *m_pBrowserWidget;
 	
 	//GtkWidget *hpaned;
 	GtkWidget *vpaned;
 	GtkWidget *notebook;
-	GtkWidget *imageview;
+	GtkWidget *m_pImageView;
 
 	GtkWidget *entry;
 	GtkWidget *hscale;
@@ -171,6 +164,16 @@ public:
 		Browser::BrowserImpl *parent;
 	};
 	
+	class PreferencesEventHandler : public IPreferencesEventHandler
+	{
+	public:
+		PreferencesEventHandler(BrowserImpl* parent) {this->parent = parent;};
+		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
+	private:
+		BrowserImpl* parent;
+	};
+	
+
 	class FolderTreeEventHandler : public IFolderTreeEventHandler
 	{
 	public:
@@ -182,7 +185,8 @@ public:
 	};
 
 	
-	IImageListEventHandlerPtr m_ImageListEventHandlerPtr;
+	IImageListEventHandlerPtr    m_ImageListEventHandlerPtr;
+	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
 	IFolderTreeEventHandlerPtr m_FolderTreeEventHandlerPtr;
 };
 // ============================================================================
@@ -259,10 +263,10 @@ void ThumbnailLoader::UpdateList(bool bForce/* = false*/)
 {
 	bool bLargeThumbs = true;
 	guint start,end;
-	quiver_icon_view_get_visible_range(QUIVER_ICON_VIEW(b->iconview),&start,&end);
+	quiver_icon_view_get_visible_range(QUIVER_ICON_VIEW(b->m_pIconView),&start,&end);
 
 	guint width, height;
-	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(b->iconview),&width,&height);
+	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(b->m_pIconView),&width,&height);
 
 	if (width <= 128 && height <= 128)
 	{
@@ -427,7 +431,7 @@ void ThumbnailLoader::Run(int id)
 			//printf("Loading : %s\n",f.GetFilePath().c_str());
 			guint width, height;
 
-			quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(b->iconview),&width,&height);
+			quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(b->m_pIconView),&width,&height);
 
 			GdkPixbuf *pixbuf = NULL;
 			
@@ -476,7 +480,7 @@ void ThumbnailLoader::Run(int id)
 
 					gdk_threads_enter();
 					
-					quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(b->iconview),n);
+					quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(b->m_pIconView),n);
 					
 					gdk_threads_leave();
 
@@ -578,7 +582,7 @@ Browser::~Browser()
 list<unsigned int> Browser::GetSelection()
 {
 	list<unsigned int> selection_list;
-	GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(m_BrowserImplPtr->iconview));
+	GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(m_BrowserImplPtr->m_pIconView));
 	GList *item = selection;
 	while (NULL != item)
 	{
@@ -705,10 +709,11 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
                                        m_ThumbnailCacheLarge(50),
                                        m_ThumbnailLoader(this,4),
                                        m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
+                                       m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
                                        m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) )
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	
+	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
 	m_FolderTree.AddEventHandler(m_FolderTreeEventHandlerPtr);
 
 	m_BrowserParent = parent;
@@ -747,12 +752,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	vpaned = gtk_vpaned_new();
 	notebook = gtk_notebook_new();
 	
-	iconview = quiver_icon_view_new();
-	imageview = quiver_image_view_new();
+	m_pIconView = quiver_icon_view_new();
+	m_pImageView = quiver_image_view_new();
 	scrolled_window = gtk_scrolled_window_new(NULL,NULL);
 	
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
-	gtk_container_add(GTK_CONTAINER(scrolled_window),iconview);
+	gtk_container_add(GTK_CONTAINER(scrolled_window),m_pIconView);
 	
 	hbox = gtk_hbox_new(FALSE,0);
 	vbox = gtk_vbox_new(FALSE,0);
@@ -763,7 +768,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	gtk_box_pack_start (GTK_BOX (vbox), scrolled_window, TRUE, TRUE, 0);
 	
 	gtk_paned_pack1(GTK_PANED(vpaned),notebook,TRUE,TRUE);
-	gtk_paned_pack2(GTK_PANED(vpaned),imageview,FALSE,FALSE);
+	gtk_paned_pack2(GTK_PANED(vpaned),m_pImageView,FALSE,FALSE);
 	
 	gtk_paned_pack1(GTK_PANED(hpaned),vpaned,FALSE,FALSE);
 	gtk_paned_pack2(GTK_PANED(hpaned),vbox,TRUE,TRUE);
@@ -801,20 +806,20 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 /*	
 	quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(real_iconview),(QuiverIconViewGetTextFunc)text_callback,user_data,NULL);
 */
-	//quiver_image_view_set_transition_type(QUIVER_IMAGE_VIEW(imageview),QUIVER_IMAGE_VIEW_TRANSITION_TYPE_CROSSFADE);
-	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(imageview),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
+	//quiver_image_view_set_transition_type(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_TRANSITION_TYPE_CROSSFADE);
+	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 	
-//	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(iconview), TRUE);
-	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
-	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
-	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(iconview),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
+//	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(m_pIconView), TRUE);
+	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
+	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
+	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
 
 	gtk_signal_connect (GTK_OBJECT (hscale), "value_changed",
 	      GTK_SIGNAL_FUNC (icon_size_value_changed), this);
 
-	g_signal_connect(G_OBJECT(iconview),"cell_activated",G_CALLBACK(iconview_cell_activated_cb),this);
-	g_signal_connect(G_OBJECT(iconview),"cursor_changed",G_CALLBACK(iconview_cursor_changed_cb),this);
-	g_signal_connect(G_OBJECT(iconview),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);	
+	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(iconview_cell_activated_cb),this);
+	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(iconview_cursor_changed_cb),this);
+	g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);	
 	
 	g_signal_connect(G_OBJECT(entry),"activate",G_CALLBACK(entry_activate),this);
 
@@ -831,20 +836,20 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	{
 		GdkColor color;
 		gdk_color_parse(strBGColorImg.c_str(),&color);
-		gtk_widget_modify_bg (imageview, GTK_STATE_NORMAL, &color );
+		gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
 	}
 	
 	if (!strBGColorThumb.empty())
 	{
 		GdkColor color;
 		gdk_color_parse(strBGColorThumb.c_str(),&color);
-		gtk_widget_modify_bg (iconview, GTK_STATE_NORMAL, &color );
+		gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
 	}
 /*
 	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(real_iconview),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,user_data,NULL);
 */
 
-	m_pImageViewPixbufLoaderObserver = new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(imageview));
+	m_pImageViewPixbufLoaderObserver = new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView));
 	m_ImageLoader.AddPixbufLoaderObserver(m_pImageViewPixbufLoaderObserver);
 
 	gtk_widget_show_all(m_pBrowserWidget);
@@ -872,6 +877,9 @@ Browser::BrowserImpl::~BrowserImpl()
 	
 	prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE,(int)value);
 
+	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
+	m_QuiverFiles.RemoveEventHandler(m_ImageListEventHandlerPtr);
+	
 	m_ImageLoader.RemovePixbufLoaderObserver(m_pImageViewPixbufLoaderObserver);
 	
 	delete m_pImageViewPixbufLoaderObserver;
@@ -941,7 +949,7 @@ void Browser::BrowserImpl::Show()
 
  	if (0 != m_QuiverFiles.GetSize())
 	{
-		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(iconview),
+		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
 			m_QuiverFiles.GetCurrentIndex() );
 	}
 
@@ -992,7 +1000,7 @@ static void icon_size_value_changed (GtkRange *range,gpointer  user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	gdouble value = gtk_range_get_value (range);
-	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->iconview), (gint)value,(gint)value);
+	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), (gint)value,(gint)value);
 }
 
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data)
@@ -1133,7 +1141,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 			case GTK_RESPONSE_YES:
 			{
 				GList *selection;
-				selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->iconview));
+				selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
 				if (NULL == selection)
 				{
 					// nothing to delete!
@@ -1171,7 +1179,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 					
 					pBrowserImpl->m_QuiverFiles.UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);	
 					
-					quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->iconview),pBrowserImpl->m_QuiverFiles.GetCurrentIndex());					
+					quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView),pBrowserImpl->m_QuiverFiles.GetCurrentIndex());					
 					
 					pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
 				}
@@ -1200,12 +1208,12 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	
 	if (parent->m_QuiverFiles.GetSize())
 	{
-		quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->iconview),parent->m_QuiverFiles.GetCurrentIndex());
+		quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->m_pIconView),parent->m_QuiverFiles.GetCurrentIndex());
 	}
 
 	//parent->m_ThumbnailCacheLarge.Clear();
 	//parent->m_ThumbnailCacheNormal.Clear();
-	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->iconview));
+	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
 			
 	parent->m_ThumbnailLoader.UpdateList(true);	
 
@@ -1213,9 +1221,9 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
 {
 	//printf("Current item changed: %d\n",event->GetIndex());
-	quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->iconview),event->GetIndex());
+	//quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->m_pIconView),event->GetIndex());
 	
-	if (GTK_WIDGET_MAPPED(parent->imageview))
+	if (GTK_WIDGET_MAPPED(parent->m_pImageView))
 	{
 		parent->m_ImageLoader.LoadImage(parent->m_QuiverFiles[event->GetIndex()]);
 	}
@@ -1243,6 +1251,62 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleItemChanged(ImageListEve
 	parent->m_ThumbnailLoader.UpdateList(true);	
 	
 }
+
+void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
+{
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	if (QUIVER_PREFS_APP == event->GetSection() )
+	{
+		if (QUIVER_PREFS_APP_USE_THEME_COLOR == event->GetKey() )
+		{
+			if (event->GetNewBoolean())
+			{
+				// use theme color
+				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, NULL );
+				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, NULL );
+			}
+			else
+			{
+				GdkColor color;
+				
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
+						
+				gdk_color_parse(strBGColorThumb.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
+				
+				gdk_color_parse(strBGColorImg.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color);
+				
+			}
+		}
+		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() )
+		{
+			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
+			{
+				GdkColor color;
+				
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				
+				gdk_color_parse(strBGColorImg.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color );
+			}			
+		}
+		else if (QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
+		{
+			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
+			{
+				GdkColor color;
+				
+				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
+
+				gdk_color_parse(strBGColorThumb.c_str(),&color);
+				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
+			}
+		}
+	}
+}
+
 
 void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(FolderTreeEventPtr event)
 {
