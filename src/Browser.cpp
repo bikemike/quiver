@@ -832,18 +832,21 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
 
-	if (!strBGColorImg.empty())
+	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
 	{
-		GdkColor color;
-		gdk_color_parse(strBGColorImg.c_str(),&color);
-		gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
-	}
-	
-	if (!strBGColorThumb.empty())
-	{
-		GdkColor color;
-		gdk_color_parse(strBGColorThumb.c_str(),&color);
-		gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
+		if (!strBGColorImg.empty())
+		{
+			GdkColor color;
+			gdk_color_parse(strBGColorImg.c_str(),&color);
+			gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
+		}
+		
+		if (!strBGColorThumb.empty())
+		{
+			GdkColor color;
+			gdk_color_parse(strBGColorThumb.c_str(),&color);
+			gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
+		}
 	}
 /*
 	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(real_iconview),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,user_data,NULL);

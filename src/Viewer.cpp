@@ -171,11 +171,11 @@ static GtkActionEntry action_entries[] = {
 };
 
 
-class ImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
+class ViewerImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
-	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pImageView = imageview;};
-	virtual ~ImageViewPixbufLoaderObserver(){};
+	ViewerImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pImageView = imageview;};
+	virtual ~ViewerImageViewPixbufLoaderObserver(){};
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
 		quiver_image_view_connect_pixbuf_loader_signals(m_pImageView,loader);};
@@ -198,7 +198,7 @@ private:
 	QuiverImageView *m_pImageView;
 };
 
-typedef boost::shared_ptr<ImageViewPixbufLoaderObserver> ImageViewPixbufLoaderObserverPtr;
+typedef boost::shared_ptr<IPixbufLoaderObserver> IPixbufLoaderObserverPtr;
 
 
 class Viewer::ViewerImpl
@@ -253,7 +253,7 @@ public:
 	GtkUIManager *m_pUIManager;
 	guint m_iMergedViewerUI;
 
-	ImageViewPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
+	IPixbufLoaderObserverPtr m_PixbufLoaderObserverPtr;
 	ImageLoader m_ImageLoader;
 	ImageList m_ImageList;
 
@@ -313,6 +313,8 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		width = m_pImageView->allocation.width;
 		height = m_pImageView->allocation.height;
 	}
+
+	m_ImageList.BlockHandler(m_ImageListEventHandlerPtr);
 	
 	if (m_ImageList.SetCurrentIndex(index))
 	{
@@ -369,6 +371,8 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
 		}
 	}
+	
+	m_ImageList.UnblockHandler(m_ImageListEventHandlerPtr);
 }
 
 int  Viewer::ViewerImpl::GetCurrentOrientation()
@@ -414,7 +418,7 @@ void Viewer::ViewerImpl::AddFilmstrip()
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	int iFilmstripPos = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
 
-	GtkBox* box;
+	GtkBox* box = NULL;
 	
 	switch (iFilmstripPos)
 	{
@@ -433,16 +437,19 @@ void Viewer::ViewerImpl::AddFilmstrip()
 			break;		
 	}
 
-	switch (iFilmstripPos)
+	if (NULL != box)
 	{
-		case FSTRIP_POS_TOP:
-		case FSTRIP_POS_LEFT:
-			gtk_box_reorder_child (box, m_pIconView,0);
-			break;
-		case FSTRIP_POS_BOTTOM:
-		case FSTRIP_POS_RIGHT:
-			gtk_box_reorder_child (box, m_pIconView,-1);
-			break;		
+		switch (iFilmstripPos)
+		{
+			case FSTRIP_POS_TOP:
+			case FSTRIP_POS_LEFT:
+				gtk_box_reorder_child (box, m_pIconView,0);
+				break;
+			case FSTRIP_POS_BOTTOM:
+			case FSTRIP_POS_RIGHT:
+				gtk_box_reorder_child (box, m_pIconView,-1);
+				break;		
+		}
 	}
 
 }
@@ -796,18 +803,21 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
 
-	if (!strBGColorImg.empty())
+	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
 	{
-		GdkColor color;
-		gdk_color_parse(strBGColorImg.c_str(),&color);
-		gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
-	}
-	
-	if (!strBGColorThumb.empty())
-	{
-		GdkColor color;
-		gdk_color_parse(strBGColorThumb.c_str(),&color);
-		gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
+		if (!strBGColorImg.empty())
+		{
+			GdkColor color;
+			gdk_color_parse(strBGColorImg.c_str(),&color);
+			gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
+		}
+		
+		if (!strBGColorThumb.empty())
+		{
+			GdkColor color;
+			gdk_color_parse(strBGColorThumb.c_str(),&color);
+			gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
+		}
 	}
 
 	m_iSlideShowDuration = prefsPtr->GetInteger(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_DURATION, 2500);
@@ -843,9 +853,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     			G_CALLBACK (image_view_adjustment_changed), this);
 
 	//g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);
-	ImageViewPixbufLoaderObserverPtr tmp( new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView)));
-	m_ImageViewPixbufLoaderObserverPtr = tmp;
-	m_ImageLoader.AddPixbufLoaderObserver(m_ImageViewPixbufLoaderObserverPtr.get());
+	IPixbufLoaderObserverPtr tmp( new ViewerImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView)));
+	m_PixbufLoaderObserverPtr = tmp;
+	m_ImageLoader.AddPixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
 	
 	gtk_widget_show_all(m_pHBox);
 	gtk_widget_hide(m_pHBox);
@@ -1175,15 +1185,19 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleItemRemoved(ImageListEvent
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
 {
-	ImageLoader::LoadParams params = {0};
-
-	params.orientation = parent->GetCurrentOrientation();
-	params.reload = true;
-	params.fullsize = true;
-	params.no_thumb_preview = true;
-	params.state = ImageLoader::LOAD;
-
-	parent->m_ImageLoader.LoadImage(parent->m_ImageList.GetCurrent(),params);
+	if (parent->m_ImageList.GetCurrentIndex() == event->GetIndex())
+	{ 
+		ImageLoader::LoadParams params = {0};
+	
+		params.orientation = parent->GetCurrentOrientation();
+		params.reload = true;
+		params.fullsize = true;
+		params.no_thumb_preview = true;
+		params.state = ImageLoader::LOAD;
+	
+		printf("handle item changed... load image 1\n");
+		parent->m_ImageLoader.LoadImage(parent->m_ImageList.GetCurrent(),params);
+	}
 }
 
 
@@ -1250,7 +1264,7 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 			
 			int iFilmstripPos = event->GetOldInteger();
 
-			GtkContainer* container;
+			GtkContainer* container = NULL;
 			
 			switch (iFilmstripPos)
 			{
@@ -1263,10 +1277,14 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 					container = GTK_CONTAINER(parent->m_pHBox);
 					break;		
 			}
-			g_object_ref(parent->m_pIconView);
-			gtk_container_remove(container, parent->m_pIconView);
-			parent->AddFilmstrip();
-			g_object_unref(parent->m_pIconView);
+
+			if (NULL != container)
+			{
+				g_object_ref(parent->m_pIconView);
+				gtk_container_remove(container, parent->m_pIconView);
+				parent->AddFilmstrip();
+				g_object_unref(parent->m_pIconView);
+			}
 			
 		}
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE == event->GetKey() )

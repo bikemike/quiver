@@ -357,8 +357,11 @@ void ImageLoader::Load()
 				list<IPixbufLoaderObserver*>::iterator itr;
 				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 				{
-					if (m_Command.params.fullsize)
+					if (m_Command.params.reload && m_Command.params.fullsize)
 					{
+						// don't connect any signals
+						// we presume the image is already being shown
+						// and the full size is needed
 
 					}
 					else if ( 1 < m_Command.params.orientation )
@@ -417,7 +420,10 @@ void ImageLoader::Load()
 							}
 							else
 							{
-								(*itr)->SetPixbufAtSize(pixbuf,width,height);
+								if (1 < m_Command.params.orientation)
+								{
+									(*itr)->SetPixbufAtSize(pixbuf,width,height);
+								}
 							}
 							gdk_flush();
 							gdk_threads_leave();
