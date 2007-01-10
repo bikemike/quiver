@@ -73,6 +73,7 @@ public:
 	bool IsWriteable();
 	
 	bool operator== (const QuiverFile &other) const;
+	bool operator!= (const QuiverFile &other) const;
 
 private:
 	class QuiverFileImpl;

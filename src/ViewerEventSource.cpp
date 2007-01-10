@@ -43,3 +43,4 @@ void ViewerEventSource::EmitSlideShowStoppedEvent()
 	ViewerEventPtr n( new ViewerEvent(this) );
 	m_sigSlideShowStopped(n);
 }
+

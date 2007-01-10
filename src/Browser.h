@@ -6,6 +6,9 @@
 #include "QuiverFile.h"
 #include "BrowserEventSource.h"
 
+class Statusbar;
+typedef boost::shared_ptr<Statusbar> StatusbarPtr;
+
 class ImageList;
 
 class Browser : public virtual BrowserEventSource
@@ -21,6 +24,7 @@ public:
 	void SetImageList(ImageList list);
 	
 	void SetUIManager(GtkUIManager *ui_manager);
+	void SetStatusbar(StatusbarPtr statusbarPtr);
 	
 	void Show();
 	void Hide();

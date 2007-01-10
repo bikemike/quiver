@@ -28,6 +28,8 @@ public:
 	void Add(std::list<std::string> *file_list);
 	void UpdateImageList(std::list<std::string> *file_list);
 
+	std::list<std::string> GetFolderList();
+	std::list<std::string> GetFileList();
 
 	void Remove(unsigned int iIndex);
 	void RemoveRange(unsigned int iStart, unsigned int iEnd);

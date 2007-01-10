@@ -340,6 +340,27 @@ void ImageList::UpdateImageList(list<string> *file_list)
 	}	
 }
 
+std::list<std::string> ImageList::GetFolderList()
+{
+	list<string> listFolders;
+	PathMonitorMap::iterator itr;
+	for (itr = m_ImageListImplPtr->m_mapDirs.begin(); m_ImageListImplPtr->m_mapDirs.end() != itr; ++itr)
+	{
+		listFolders.push_back(itr->first);
+	}	return listFolders;
+}
+
+std::list<std::string> ImageList::GetFileList()
+{
+	list<string> listFiles;
+	PathMonitorMap::iterator itr;
+	for (itr = m_ImageListImplPtr->m_mapFiles.begin(); m_ImageListImplPtr->m_mapFiles.end() != itr; ++itr)
+	{
+		listFiles.push_back(itr->first);
+	}
+	return listFiles;
+}
+
 
 void ImageList::Sort(SortBy o, bool bSortAscending)
 {
@@ -778,16 +799,25 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 							}
 							else
 							{
-								pair<PathMonitorMap::iterator,bool> p;
-								p.second = false;
-								p = m_mapFiles.insert(PathMonitorPair(strURI.c_str(),NULL)); 
-								bAdded = p.second;
-								if (bAdded)
+								if ( AddFile(strURI.c_str(),info) )
 								{
-									gnome_vfs_monitor_add(&p.first->second,strURI.c_str(),GNOME_VFS_MONITOR_FILE,vfs_monitor_callback,this);
-									// add a monitor
+									
+									pair<PathMonitorMap::iterator,bool> p;
+									p.second = false;
+	
+									p = m_mapFiles.insert(PathMonitorPair(strURI.c_str(),NULL)); 
+									bAdded = p.second;
+									if (bAdded)
+									{
+										gnome_vfs_monitor_add(&p.first->second,strURI.c_str(),GNOME_VFS_MONITOR_FILE,vfs_monitor_callback,this);
+										// add a monitor
+										printf("monitor: %s\n", strURI.c_str());
+									}
+									else
+									{
+										printf("file not added\n");
+									}
 								}
-								AddFile(strURI.c_str(),info);
 							}
 							
 							g_free(dir_uri);
@@ -922,7 +952,7 @@ bool ImageListImpl::AddDirectory(const gchar* uri)
 			gchar * dirname = g_path_get_dirname(itr->first.c_str());
 			if (gnome_vfs_uris_match (uri,dirname))
 			{
-				//printf("removing path: %s\n",itr->first.c_str());
+				printf("removing monitor: %s\n",itr->first.c_str());
 				QuiverFile qfile(itr->first.c_str());
 				QuiverFileList::iterator qitr = m_QuiverFileList.end();
 				qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
@@ -1072,9 +1102,14 @@ bool ImageListImpl::RemoveMonitor(string path)
 				int iIndex = qitr - m_QuiverFileList.begin();
 				RemoveFile(iIndex);
 			}
-	
-			gnome_vfs_monitor_cancel(itr->second);
-			m_mapFiles.erase(itr);
+			else
+			{
+				printf("removing monitor: %s\n",itr->first.c_str());
+				gnome_vfs_monitor_cancel(itr->second);
+				m_mapFiles.erase(itr);
+			}
+
+
 			bErased = true;
 		}
 	}
@@ -1150,6 +1185,7 @@ bool ImageListImpl::RemoveFile(unsigned int iIndex)
 			path_itr = m_mapFiles.find(itr->GetURI());
 			if (m_mapFiles.end() != path_itr)
 			{
+				printf("removing 2: %s\n",path_itr->first.c_str());
 				gnome_vfs_monitor_cancel(path_itr->second);
 				m_mapFiles.erase(path_itr);
 			}

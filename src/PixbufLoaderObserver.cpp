@@ -37,7 +37,6 @@ void PixbufLoaderObserver::ConnectSignalSizePrepared(GdkPixbufLoader * loader)
 
 void PixbufLoaderObserver::ConnectSignals(GdkPixbufLoader *loader)
 {
-
 	g_signal_connect (loader,"area-prepared",G_CALLBACK (signal_area_prepared), this);
 	g_signal_connect (loader,"area-updated",G_CALLBACK (signal_area_updated), this);
 	g_signal_connect (loader,"closed",G_CALLBACK (signal_closed), this);
@@ -57,14 +56,6 @@ void PixbufLoaderObserver::SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint 
 
 void PixbufLoaderObserver::SignalBytesRead(long bytes_read,long total)
 {
-}
-
-void PixbufLoaderObserver::SetCacheQuiverFile(QuiverFile quiverFile)
-{
-}
-void PixbufLoaderObserver::SetQuiverFile(QuiverFile quiverFile)
-{
-	//printf("PixbufLoaderObserver::SetQuiverFile\n");
 }
 
 void PixbufLoaderObserver::SignalAreaPrepared(GdkPixbufLoader *loader)

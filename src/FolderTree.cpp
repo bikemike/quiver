@@ -407,7 +407,7 @@ gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer use
 			rval = TRUE;			
 		}
 	}
-	if (GDK_Right == event->keyval)
+	else if (GDK_Right == event->keyval)
 	{
 		if ( gtk_tree_view_row_expanded (GTK_TREE_VIEW(treeview),path) )
 		{
@@ -487,6 +487,25 @@ gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer use
 		}
 		rval = TRUE;
 		
+	}
+	else if (GDK_Return == event->keyval)
+	{
+		GtkTreePath* path = NULL;
+		gtk_tree_view_get_cursor (GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget), &path, NULL);
+		
+		GtkTreeModel* model = gtk_tree_view_get_model(GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget));
+
+		if (NULL != path)
+		{
+			GtkTreeIter iter;
+			gtk_tree_model_get_iter(model,&iter,path);
+			folder_tree_clear_all_checkboxes(model);
+			gtk_tree_store_set (GTK_TREE_STORE(model),&iter,FILE_TREE_COLUMN_CHECKBOX,TRUE,-1);
+
+			gtk_tree_path_free(path);
+			pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+			rval = TRUE;
+		}
 	}
 	
 	if (GDK_space == event->keyval &&  !( event->state & (GDK_CONTROL_MASK/*|GDK_SHIFT_MASK*/) ))

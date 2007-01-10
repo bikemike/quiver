@@ -51,6 +51,8 @@ ImageLoader::~ImageLoader()
 	pthread_cond_destroy(&m_Condition);
 	pthread_mutex_destroy(&m_ConditionMutex);
 	pthread_mutex_destroy(&m_CommandMutex);
+
+	RemovePixbufLoaderObserver(this);
 }
 
 
@@ -420,7 +422,11 @@ void ImageLoader::Load()
 							}
 							else
 							{
-								if (1 < m_Command.params.orientation)
+								// FIXME: this was originally only for rotated images
+								// but it has now become the call for all images and
+								// we don't rely on the gdk_pixbuf_loader signals
+								// but this may cause the images to be drawn twice..
+								//if (1 < m_Command.params.orientation)
 								{
 									(*itr)->SetPixbufAtSize(pixbuf,width,height);
 								}
@@ -602,7 +608,8 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	GnomeVFSHandle   *handle;
 	GnomeVFSResult    result;
 	GnomeVFSFileSize  bytes_read;
-	bytes_total = m_Command.quiverFile.GetFileInfo()->size;
+
+	bytes_total = m_Command.quiverFile.GetFileSize();
 	
 
 	result = gnome_vfs_open (&handle, m_Command.quiverFile.GetURI(), GNOME_VFS_OPEN_READ);
@@ -638,6 +645,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		tmp_error = NULL;
 		
 		gdk_threads_enter();
+
 		gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
 		
 		gdk_flush();
@@ -668,6 +676,39 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	return retval;
 }
 
+
+static void get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
+{
+	guint new_width;
+	guint w = *width;
+	guint h = *height;
+
+	if (!fill_if_smaller && 
+			(w < bound_width && h < bound_height) )
+	{
+		return;
+	}
+
+	if (w != bound_width || h != bound_height)
+	{
+		gdouble ratio = (double)w/h;
+		guint new_height;
+
+		new_height = (guint)(bound_width/ratio +.5);
+		if (new_height < bound_height)
+		{
+			*width = bound_width;
+			*height = new_height;
+		}
+		else
+		{
+			new_width = (guint)(bound_height *ratio + .5); 
+			*width = MIN(new_width, bound_width);
+			*height = bound_height;
+		}
+	}
+}	
+
 void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
 	m_Command.quiverFile.SetWidth(width);
@@ -689,21 +730,11 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 		if (max_width < width || max_height < height)
 		{
 			// adjust the image size
-			gdouble ratio = (double)width/height;
-			gint new_width;
-			gint new_height;
-	
-			new_height = (gint)(m_Command.params.max_width/ratio);
-			if (new_height < m_Command.params.max_height)
-			{
-				new_width = m_Command.params.max_width;
-			}
-			else
-			{
-				new_width = (gint)(m_Command.params.max_height *ratio);
-				new_height = m_Command.params.max_height;
-			}
+			guint new_width = width;
+			guint new_height = height;
 			
+			get_bound_size((guint)m_Command.params.max_width,(guint)m_Command.params.max_height,&new_width, &new_height,FALSE);
+
 			if (4 < m_Command.params.orientation)
 			{
 				swap(new_width,new_height);

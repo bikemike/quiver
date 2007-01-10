@@ -32,12 +32,12 @@ enum _QuiverIconOverlayType
 };
 typedef enum _QuiverIconOverlayType QuiverIconOverlayType;
 
-typedef guint (*QuiverIconViewGetNItemsFunc) (QuiverIconView *iconview,gpointer user_data);
-typedef gchar* (*QuiverIconViewGetTextFunc) (QuiverIconView *iconview,guint cell,gpointer user_data);
-typedef GdkPixbuf* (*QuiverIconViewGetIconPixbufFunc) (QuiverIconView *iconview,guint cell,gpointer user_data);
-typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,guint cell,gpointer user_data);
-typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview,guint cell, QuiverIconOverlayType type,gpointer user_data);
-//typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview, guint cell, QuiverIconOverlayType type, gpointer user_data);
+typedef gulong (*QuiverIconViewGetNItemsFunc) (QuiverIconView *iconview,gpointer user_data);
+typedef gchar* (*QuiverIconViewGetTextFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
+typedef GdkPixbuf* (*QuiverIconViewGetIconPixbufFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
+typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
+typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview,gulong cell, QuiverIconOverlayType type,gpointer user_data);
+//typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview, gulong cell, QuiverIconOverlayType type, gpointer user_data);
 
 struct _QuiverIconView
 {
@@ -55,16 +55,16 @@ struct _QuiverIconViewClass
 					 GtkAdjustment  *hadjustment,
 					 GtkAdjustment  *vadjustment);
 
-	void (*cell_activated) (QuiverIconView *iconview,guint cell);
-	void (*cursor_changed) (QuiverIconView *iconview,guint cell);
+	void (*cell_activated) (QuiverIconView *iconview,gulong cell);
+	void (*cursor_changed) (QuiverIconView *iconview,gulong cell);
 	void (*selection_changed) (QuiverIconView *iconview);
 
 	/* Padding for future expansion */
 	
-	void (*_gtk_reserved1) (void);
-	void (*_gtk_reserved2) (void);
-	void (*_gtk_reserved3) (void);
-	void (*_gtk_reserved4) (void);
+	void (*_reserved1) (void);
+	void (*_reserved2) (void);
+	void (*_reserved3) (void);
+	void (*_reserved4) (void);
 
 };
 
@@ -83,19 +83,19 @@ void quiver_icon_view_get_icon_size(QuiverIconView *iconview, guint* width,guint
 guint quiver_icon_view_get_cell_padding(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_width(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_height(QuiverIconView *iconview);
-void quiver_icon_view_activate_cell(QuiverIconView *iconview,guint cell);
+void quiver_icon_view_activate_cell(QuiverIconView *iconview,gulong cell);
 
-gint quiver_icon_view_get_cursor_cell(QuiverIconView *iconview);
-void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gint new_cursor_cell);
+gulong quiver_icon_view_get_cursor_cell(QuiverIconView *iconview);
+void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gulong new_cursor_cell);
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection);
 GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
 
-void quiver_icon_view_get_visible_range(QuiverIconView *iconview,guint *first, guint *last);
+void quiver_icon_view_get_visible_range(QuiverIconView *iconview,gulong *first, gulong *last);
 
 void quiver_icon_view_invalidate_window(QuiverIconView *iconview);
 
-void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,gint cell);
+void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,gulong cell);
 
 void quiver_icon_view_set_n_items_func (QuiverIconView *iconview, 
          QuiverIconViewGetNItemsFunc func,gpointer data,GtkDestroyNotify destroy);

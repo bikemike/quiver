@@ -1,11 +1,14 @@
 #ifndef FILE_PIXBUFLOADEROBSERVER_H
 #define FILE_PIXBUFLOADEROBSERVER_H
 
-#include <gtk/gtk.h>
 //#include <iostream>
 #include "QuiverFile.h"
 #include "IPixbufLoaderObserver.h"
 
+#include <set>
+
+struct _GdkPixbufLoader;
+typedef _GdkPixbufLoader GdkPixbufLoader;
 
 class PixbufLoaderObserver : public IPixbufLoaderObserver
 {
@@ -25,13 +28,11 @@ public:
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf);
 	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height, bool bResetViewMode = true );
-	// the image that will be displayed immediately
-	virtual void SetQuiverFile(QuiverFile quiverFile);
 
-		
-	// the image that is being cached for future use
-	virtual void SetCacheQuiverFile(QuiverFile quiverFile);
 	virtual void SignalBytesRead(long bytes_read,long total);
+protected:
+	//std::set<GdkPixbufLoader*> m_setPixbufLoaders;
+
 private:
 
                                             

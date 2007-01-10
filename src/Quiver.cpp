@@ -17,6 +17,7 @@
 #include "IBrowserEventHandler.h"
 #include "IViewerEventHandler.h"
 #include "IPreferencesEventHandler.h"
+#include "IImageListEventHandler.h"
 
 
 
@@ -60,6 +61,7 @@ class QuiverImpl
 public:
 // methods
 	QuiverImpl(Quiver *parent);
+	~QuiverImpl();
 
 	void LoadExternalToolMenuItems();
 	
@@ -75,7 +77,7 @@ public:
 	Viewer m_Viewer;
 	ExifView m_ExifView;
 	
-	Statusbar m_Statusbar;
+	StatusbarPtr m_StatusbarPtr;
 	GtkWidget *m_pQuiverWindow;
 	GtkWidget *m_pMenubar;
 	GtkWidget *m_pToolbar;
@@ -148,7 +150,19 @@ public:
 		QuiverImpl *parent;
 	};
 	
-		
+	class ImageListEventHandler : public IImageListEventHandler
+	{
+	public:
+		ImageListEventHandler(QuiverImpl *parent){this->parent = parent;};
+		virtual void HandleContentsChanged(ImageListEventPtr event);
+		virtual void HandleCurrentIndexChanged(ImageListEventPtr event) ;
+		virtual void HandleItemAdded(ImageListEventPtr event);
+		virtual void HandleItemRemoved(ImageListEventPtr event);
+		virtual void HandleItemChanged(ImageListEventPtr event);
+	private:
+		QuiverImpl *parent;
+	};
+
 	class PreferencesEventHandler : public IPreferencesEventHandler
 	{
 	public:
@@ -162,17 +176,26 @@ public:
 	IBrowserEventHandlerPtr m_BrowserEventHandler;
 	IViewerEventHandlerPtr m_ViewerEventHandler;
 	IPreferencesEventHandlerPtr m_PreferencesEventHandler;
+	IImageListEventHandlerPtr m_ImageListEventHandler;
 	
 	
 };
 
 
-QuiverImpl::QuiverImpl (Quiver *parent) 
-		: m_BrowserEventHandler(new BrowserEventHandler(this)),
+QuiverImpl::QuiverImpl (Quiver *parent) :
+          m_StatusbarPtr(new Statusbar()),
+		  m_BrowserEventHandler(new BrowserEventHandler(this)),
 		  m_ViewerEventHandler(new ViewerEventHandler(this)),
-		  m_PreferencesEventHandler( new PreferencesEventHandler(this) )
+		  m_PreferencesEventHandler( new PreferencesEventHandler(this) ),
+		  m_ImageListEventHandler ( new ImageListEventHandler(this) )
 {
-	m_pQuiver = parent;	
+	m_pQuiver = parent;
+	
+	m_ImageList.AddEventHandler(m_ImageListEventHandler);	
+}
+
+QuiverImpl::~QuiverImpl()
+{
 }
 
 void QuiverImpl::LoadExternalToolMenuItems()
@@ -515,7 +538,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
 	{ "FileOpenLocation", NULL, "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( quiver_action_handler_cb )},
 	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
-	{ "FileSaveAs", GTK_STOCK_SAVE, "Save _As", "<Shift><Control>s", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
+	{ "FileSaveAs", GTK_STOCK_SAVE, "Save _As", "", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
 	
 	{ "Quit", GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
 	{ "Quit_2", GTK_STOCK_QUIT, "_Quit", "q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
@@ -708,18 +731,29 @@ void Quiver::ImageChanged()
 {
 	stringstream ss;
 	
-	QuiverFile f = m_QuiverImplPtr->m_ImageList.GetCurrent();
-	
-	m_QuiverImplPtr->Save();
-	
-	m_QuiverImplPtr->m_CurrentQuiverFile = f;
-	
-	ss << " (" << m_QuiverImplPtr->m_ImageList.GetCurrentIndex()+1 << " of " << m_QuiverImplPtr->m_ImageList.GetSize() << ")";
-	string s = f.GetFileInfo()->name;
-	SetWindowTitle( f.GetFilePath() );
-	
-	m_QuiverImplPtr->m_Statusbar.SetPosition(m_QuiverImplPtr->m_ImageList.GetCurrentIndex()+1,m_QuiverImplPtr->m_ImageList.GetSize());
-	m_QuiverImplPtr->m_ExifView.SetQuiverFile(f);
+	if ( m_QuiverImplPtr->m_ImageList.GetSize() )
+	{
+		QuiverFile f = m_QuiverImplPtr->m_ImageList.GetCurrent();
+		
+		m_QuiverImplPtr->Save();
+		
+		m_QuiverImplPtr->m_CurrentQuiverFile = f;
+		
+		ss << " (" << m_QuiverImplPtr->m_ImageList.GetCurrentIndex()+1 << " of " << m_QuiverImplPtr->m_ImageList.GetSize() << ")";
+		
+		SetWindowTitle( f.GetFilePath() );
+		
+		m_QuiverImplPtr->m_StatusbarPtr->SetPosition(m_QuiverImplPtr->m_ImageList.GetCurrentIndex()+1,m_QuiverImplPtr->m_ImageList.GetSize());
+		m_QuiverImplPtr->m_ExifView.SetQuiverFile(f);
+		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
+		
+	}
+	else
+	{
+		m_QuiverImplPtr->m_StatusbarPtr->SetPosition(0,0);
+		QuiverFile f;
+		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
+	}
 }
 
 
@@ -733,7 +767,7 @@ gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event
 	{
 		gtk_widget_hide(m_QuiverImplPtr->m_pToolbar);
 		gtk_widget_hide(m_QuiverImplPtr->m_pMenubar);
-		gtk_widget_hide(m_QuiverImplPtr->m_Statusbar.GetWidget());
+		gtk_widget_hide(m_QuiverImplPtr->m_StatusbarPtr->GetWidget());
 		
 		//m_Viewer.HideBorder();
 		m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = true;
@@ -746,7 +780,7 @@ gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event
 		// show widgets
 		gtk_widget_show(m_QuiverImplPtr->m_pToolbar);
 		gtk_widget_show(m_QuiverImplPtr->m_pMenubar);
-		gtk_widget_show(m_QuiverImplPtr->m_Statusbar.GetWidget());
+		gtk_widget_show(m_QuiverImplPtr->m_StatusbarPtr->GetWidget());
 		
 		gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, NULL);
 		//m_Viewer.ShowBorder();
@@ -953,6 +987,10 @@ void Quiver::Init()
 
 	m_QuiverImplPtr->m_Browser.SetUIManager(m_QuiverImplPtr->m_pUIManager);
 	m_QuiverImplPtr->m_Viewer.SetUIManager(m_QuiverImplPtr->m_pUIManager);
+	
+	m_QuiverImplPtr->m_Browser.SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
+	m_QuiverImplPtr->m_Viewer.SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
+	
 	m_QuiverImplPtr->m_ExifView.SetUIManager(m_QuiverImplPtr->m_pUIManager);
 	//GTK_WIDGET_UNSET_FLAGS(toolbar,GTK_CAN_FOCUS);
 
@@ -1030,7 +1068,7 @@ void Quiver::Init()
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties));
 	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),TRUE);
 	
-	statusbar =  m_QuiverImplPtr->m_Statusbar.GetWidget();
+	statusbar =  m_QuiverImplPtr->m_StatusbarPtr->GetWidget();
 	m_QuiverImplPtr->m_pMenubar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/MenubarMain");
 	m_QuiverImplPtr->m_pToolbar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain");
 	
@@ -1304,10 +1342,10 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	// put process intenstive startup code in here 
 	// (loading image list, setting first image)
 
+	SetImageList(m_QuiverImplPtr->m_listImages);
+
 	m_QuiverImplPtr->m_Browser.SetImageList(m_QuiverImplPtr->m_ImageList);
 	m_QuiverImplPtr->m_Viewer.SetImageList(m_QuiverImplPtr->m_ImageList);
-	
-	SetImageList(m_QuiverImplPtr->m_listImages);
 
 	// call this a second time to make sure the list is updated
 	if (0 == m_QuiverImplPtr->m_iMergedBrowserUI)
@@ -1426,7 +1464,7 @@ void Quiver::SignalItemSelect (GtkItem *proxy,gpointer data)
 	g_object_get (G_OBJECT (action), "tooltip", &message, NULL);
 	if (message)
 	{
-		m_QuiverImplPtr->m_Statusbar.PushText(message);
+		m_QuiverImplPtr->m_StatusbarPtr->PushText(message);
 		g_free (message);
 	}
 	
@@ -1442,7 +1480,7 @@ void Quiver::SignalItemDeselect (GtkItem *proxy,gpointer data)
 	g_object_get (G_OBJECT (action), "tooltip", &message, NULL);
 	if (message)
 	{
-		m_QuiverImplPtr->m_Statusbar.PopText();
+		m_QuiverImplPtr->m_StatusbarPtr->PopText();
 		g_free (message);
 	}
 }
@@ -1530,13 +1568,10 @@ void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr eve
 		}
 	}
 	
-	parent->m_Statusbar.SetZoomPercent(-1);
-	parent->m_Statusbar.SetLoadTime(-1);
-	
 	char status_text[256];
-	sprintf(status_text,"%d items selected (%qd bytes)",selection.size(), total_size);
+	g_snprintf(status_text, 256, "%d items selected (%qd bytes)",selection.size(), total_size);
 
-	parent->m_Statusbar.SetText(status_text);
+	//parent->m_StatusbarPtr->SetText(status_text);
 }
 
 void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_ptr)
@@ -1680,11 +1715,11 @@ void Quiver::OnShowStatusbar(bool bShow)
 {
 	if (bShow)
 	{
-		gtk_widget_show(m_QuiverImplPtr->m_Statusbar.GetWidget());
+		gtk_widget_show(m_QuiverImplPtr->m_StatusbarPtr->GetWidget());
 	}
 	else
 	{
-		gtk_widget_hide(m_QuiverImplPtr->m_Statusbar.GetWidget());
+		gtk_widget_hide(m_QuiverImplPtr->m_StatusbarPtr->GetWidget());
 	}
 }
 
@@ -1921,6 +1956,12 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		}
 
 	}
+	else if(0 == strcmp(szAction,"ToolsExternalTools"))
+	{
+		printf("external...\n");
+		//ExternalToolsDlg externalToolsDlg;
+		//externalToolsDlg.Run();
+	}
 }
 
 
@@ -1941,5 +1982,24 @@ static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *
 
 
 
-
+void QuiverImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
+{
+	parent->m_pQuiver->ImageChanged();
+}
+void QuiverImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
+{
+	parent->m_pQuiver->ImageChanged();
+}
+void QuiverImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
+{
+	parent->m_pQuiver->ImageChanged();
+}
+void QuiverImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
+{
+	parent->m_pQuiver->ImageChanged();
+}
+void QuiverImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
+{
+	parent->m_pQuiver->ImageChanged();
+}
 

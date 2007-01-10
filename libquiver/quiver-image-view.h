@@ -64,13 +64,14 @@ struct _QuiverImageViewClass
 
 	void (*activated) (QuiverImageView *imageview);
 	void (*reload) (QuiverImageView *imageview);
+	void (*magnification_changed) (QuiverImageView *imageview);
 
 	/* Padding for future expansion */
 	
-	void (*_gtk_reserved1) (void);
-	void (*_gtk_reserved2) (void);
-	void (*_gtk_reserved3) (void);
-	void (*_gtk_reserved4) (void);
+	void (*_reserved1) (void);
+	void (*_reserved2) (void);
+	void (*_reserved3) (void);
+	void (*_reserved4) (void);
 
 };
 

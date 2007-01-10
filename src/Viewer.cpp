@@ -22,6 +22,9 @@
 
 #include "IImageListEventHandler.h"
 
+#include "Statusbar.h"
+
+#include "IPixbufLoaderObserver.h"
 
 #include <gdk/gdkkeysyms.h>
 using namespace std;
@@ -40,10 +43,11 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 static void viewer_action_handler_cb(GtkAction *action, gpointer data);
 
 static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data );
-static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data);
-static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data);
-static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
-static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
+static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data);
+static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data);
+static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gpointer data);
+static void viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
+static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
 
 static gboolean viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata);
 gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data );
@@ -178,21 +182,22 @@ public:
 	virtual ~ViewerImageViewPixbufLoaderObserver(){};
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
-		quiver_image_view_connect_pixbuf_loader_signals(m_pImageView,loader);};
-	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){quiver_image_view_connect_pixbuf_size_prepared_signal(m_pImageView,loader);};
+		quiver_image_view_connect_pixbuf_loader_signals(m_pImageView,loader);
+		};
+	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){
+		quiver_image_view_connect_pixbuf_size_prepared_signal(m_pImageView,loader);
+		};
 
 	// custom calls
-	virtual void SetPixbuf(GdkPixbuf * pixbuf){quiver_image_view_set_pixbuf(m_pImageView,pixbuf);};
+	virtual void SetPixbuf(GdkPixbuf * pixbuf){
+		quiver_image_view_set_pixbuf(m_pImageView,pixbuf);
+	};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
 		gboolean bReset = FALSE;
 		if (bResetViewMode) bReset = TRUE;
 		quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
 	};
-	// the image that will be displayed immediately
-	virtual void SetQuiverFile(QuiverFile quiverFile){};
 	
-	// the image that is being cached for future use
-	virtual void SetCacheQuiverFile(QuiverFile quiverFile){};
 	virtual void SignalBytesRead(long bytes_read,long total){};
 private:
 	QuiverImageView *m_pImageView;
@@ -218,7 +223,7 @@ public:
 
 // methods
 	void SetImageList(ImageList imgList);
-	void SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal = true );
+	void SetImageIndex(int index, bool bDirectionForward);
 	int  GetCurrentOrientation();
 	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
 	void AddFilmstrip();
@@ -246,12 +251,14 @@ public:
 	GtkWidget *m_pNavigationWindow;
 	GtkWidget *m_pNavigationControl;
 	
-	QuiverFile m_QuiverFile;
+	QuiverFile m_QuiverFileLast;
 
 	int m_iCurrentOrientation;
 	
 	GtkUIManager *m_pUIManager;
 	guint m_iMergedViewerUI;
+
+	StatusbarPtr m_StatusbarPtr;
 
 	IPixbufLoaderObserverPtr m_PixbufLoaderObserverPtr;
 	ImageLoader m_ImageLoader;
@@ -301,7 +308,7 @@ void Viewer::ViewerImpl::SetImageList(ImageList imgList)
 	
 }
 
-void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bBlockCursorChangeSignal /* = true */)
+void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward)
 {
 	gint width=0, height=0;
 
@@ -320,10 +327,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 	{
 		m_pViewer->EmitCursorChangedEvent();
 
-		if (bBlockCursorChangeSignal)
-		{
-			g_signal_handlers_block_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
-		}
+		g_signal_handlers_block_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
 		
 		QuiverFile f;
 
@@ -366,10 +370,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			
 		}
 		
-		if (bBlockCursorChangeSignal)
-		{
-			g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
-		}
+		g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
 	}
 	
 	m_ImageList.UnblockHandler(m_ImageListEventHandlerPtr);
@@ -515,19 +516,19 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction, "ImageFirst"))
 	{
-		pViewerImpl->SetImageIndex(0,true,true);
+		pViewerImpl->SetImageIndex(0,true);
 	}
 	else if (0 == strcmp(szAction, "ImagePrevious") || 0 == strcmp(szAction, "ImagePrevious_2"))
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false,true);
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false);
 	}
 	else if (0 == strcmp(szAction, "ImageNext") || 0 == strcmp(szAction, "ImageNext_2") )
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true,true);
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true);
 	}
 	else if (0 == strcmp(szAction, "ImageLast"))
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetSize()-1,false,true);
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetSize()-1,false);
 	}
 	else if (0 == strcmp(szAction, "ViewFilmStrip"))
 	{
@@ -573,7 +574,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 				if (QuiverFileOps::MoveToTrash(f))
 				{
 					pViewerImpl->m_ImageList.Remove(pViewerImpl->m_ImageList.GetCurrentIndex());
-					pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex(),true,true);
+					pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex(),true);
 				}
 				break;
 			}
@@ -596,33 +597,30 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 	if (event->state & GDK_CONTROL_MASK || event->state & GDK_SHIFT_MASK)
 		return FALSE;
 
-	g_signal_handlers_block_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
 	
 	if (GDK_SCROLL_UP == event->direction)
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false,true);
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false);
 	}
 	else if (GDK_SCROLL_DOWN == event->direction)
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true,true);
+		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true);
 	}
 
-	g_signal_handlers_unblock_by_func(pViewerImpl->m_pIconView,(gpointer)viewer_iconview_cursor_changed,pViewerImpl);
 
 	return TRUE;
 }
 
 
-static gboolean viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
+static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	pViewerImpl->m_pViewer->EmitItemActivatedEvent();
-	return TRUE;
 }
 
-static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
+static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
 {
 	//printf("#### got a reload message from the imageview\n");
 	Viewer::ViewerImpl *pViewerImpl;
@@ -636,28 +634,35 @@ static gboolean viewer_imageview_reload(QuiverImageView *imageview,gpointer data
 	params.state = ImageLoader::LOAD;
 
 	pViewerImpl->m_ImageLoader.LoadImage(pViewerImpl->m_ImageList.GetCurrent(),params);
-
-	return TRUE;
 }
 
 
-static gboolean viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
+static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gpointer data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
+
+	double mag = quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+	pViewerImpl->m_StatusbarPtr->SetMagnification((int)(mag*100+.5));
+	
+}
+
+
+static void viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 
 	//pViewerImpl->m_pViewer->EmitItemActivatedEvent();
-	return TRUE;
 }
 
-static gboolean viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data)
+static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
-	
-	pViewerImpl->SetImageIndex(cell,true,false);
 
-	return TRUE;
+	pViewerImpl->SetImageIndex(cell,true);
+
 }
 
 static gboolean
@@ -723,6 +728,8 @@ gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventBut
 
 Viewer::ViewerImpl::~ViewerImpl()
 {
+	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
+	m_ImageLoader.RemovePixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 }
@@ -845,6 +852,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     g_signal_connect (G_OBJECT (m_pImageView), "reload",
     			G_CALLBACK (viewer_imageview_reload), this);
 
+    g_signal_connect (G_OBJECT (m_pImageView), "magnification-changed",
+    			G_CALLBACK (viewer_imageview_magnification_changed), this);
+
 
     g_signal_connect (G_OBJECT (m_pAdjustmentH), "changed",
     			G_CALLBACK (image_view_adjustment_changed), this);
@@ -919,17 +929,25 @@ void Viewer::Show()
 
 	gint cursor_cell = quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView));
  
-	if ( (gint)m_ViewerImplPtr->m_ImageList.GetCurrentIndex()
-		!= cursor_cell  )
+	if (0 == m_ViewerImplPtr->m_ImageList.GetSize() || m_ViewerImplPtr->m_QuiverFileLast != m_ViewerImplPtr->m_ImageList.GetCurrent())
 	{
 		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),NULL);
+		m_ViewerImplPtr->SetImageIndex(m_ViewerImplPtr->m_ImageList.GetCurrentIndex(),true);
 	}
-
-	if (0 != m_ViewerImplPtr->m_ImageList.GetSize())
+	else if (0 != m_ViewerImplPtr->m_ImageList.GetSize())
 	{
-		quiver_icon_view_set_cursor_cell(
-			QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView),
-			m_ViewerImplPtr->m_ImageList.GetCurrentIndex() );
+		if ( (gint)m_ViewerImplPtr->m_ImageList.GetCurrentIndex() != cursor_cell  )
+		{
+		
+			g_signal_handlers_block_by_func(m_ViewerImplPtr->m_pIconView,(gpointer)viewer_iconview_cursor_changed,m_ViewerImplPtr.get());
+	
+			quiver_icon_view_set_cursor_cell(
+				QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView),
+				m_ViewerImplPtr->m_ImageList.GetCurrentIndex() );
+			
+			g_signal_handlers_unblock_by_func(m_ViewerImplPtr->m_pIconView,(gpointer)viewer_iconview_cursor_changed,m_ViewerImplPtr.get());
+		}
+	
 	}
 
 	gtk_widget_show(m_ViewerImplPtr->m_pHBox);
@@ -960,9 +978,19 @@ void Viewer::Hide()
 			m_ViewerImplPtr->m_iMergedViewerUI);
 		m_ViewerImplPtr->m_iMergedViewerUI = 0;
 	}
+	if (m_ViewerImplPtr->m_ImageList.GetSize())
+	{
+		m_ViewerImplPtr->m_QuiverFileLast = m_ViewerImplPtr->m_ImageList.GetCurrent();
+	}
+	else
+	{
+		QuiverFile f;
+		m_ViewerImplPtr->m_QuiverFileLast = f;
+	}
 	
 	m_ViewerImplPtr->m_ImageList.BlockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
 }
+
 void Viewer::SetUIManager(GtkUIManager *ui_manager)
 {
 	GError *tmp_error;
@@ -991,6 +1019,20 @@ void Viewer::SetUIManager(GtkUIManager *ui_manager)
 	gtk_ui_manager_insert_action_group (m_ViewerImplPtr->m_pUIManager,actions,0);	
 }
 
+void Viewer::SetStatusbar(StatusbarPtr statusbarPtr)
+{
+	m_ViewerImplPtr->m_ImageLoader.RemovePixbufLoaderObserver(m_ViewerImplPtr->m_StatusbarPtr.get());
+	
+	m_ViewerImplPtr->m_StatusbarPtr = statusbarPtr;
+	
+	m_ViewerImplPtr->m_ImageLoader.AddPixbufLoaderObserver(m_ViewerImplPtr->m_StatusbarPtr.get());
+}
+
+double Viewer::GetMagnification() const
+{
+	return quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
+}
+
 GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get);
 
 int Viewer::GetCurrentOrientation()
@@ -1011,7 +1053,7 @@ static gboolean timeout_advance_slideshow (gpointer data)
 	}
 	
 	gdk_threads_enter();
-	pViewerImpl->SetImageIndex(iNextIndex,true,true);
+	pViewerImpl->SetImageIndex(iNextIndex,true);
 	gdk_threads_leave();
 
 	if ( (!pViewerImpl->m_ImageList.HasNext() && !pViewerImpl->m_bSlideShowLoop)
@@ -1169,19 +1211,19 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 //=============================================================================
 void Viewer::ViewerImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 {
-	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true,true);
+	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true);
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
 {
-	parent->SetImageIndex(event->GetIndex(),true,true);
+	parent->SetImageIndex(event->GetIndex(),true);
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
 {
-	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true,true);
+	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true);
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
 {
-	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true,true);
+	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true);
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
 {
@@ -1194,8 +1236,6 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEvent
 		params.fullsize = true;
 		params.no_thumb_preview = true;
 		params.state = ImageLoader::LOAD;
-	
-		printf("handle item changed... load image 1\n");
 		parent->m_ImageLoader.LoadImage(parent->m_ImageList.GetCurrent(),params);
 	}
 }

@@ -117,9 +117,15 @@ QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GnomeVFSFileInfo *i
 void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GnomeVFSFileInfo *info)
 {
 	//m_szURI = (gchar*)malloc (sizeof(gchar) * strlen(uri) + 1 );
-	m_szURI = new gchar [ strlen(uri) + 1 ];
-	g_stpcpy(m_szURI,uri);
-
+	if (NULL != uri)
+	{
+		m_szURI = new gchar [ strlen(uri) + 1 ];
+		g_stpcpy(m_szURI,uri);
+	}
+	else
+	{
+		m_szURI = NULL;
+	}
 
 	m_vfsFileInfo = info;
 
@@ -173,7 +179,7 @@ GnomeVFSFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 		vfsFileInfo = m_vfsFileInfo;
 	}
 	
-	if (!(m_fDataLoaded & QUIVER_FILE_DATA_INFO) && NULL == m_vfsFileInfo)
+	if (!(m_fDataLoaded & QUIVER_FILE_DATA_INFO) && NULL != m_szURI && NULL == m_vfsFileInfo)
 	{
 		GnomeVFSResult result;
 		vfsFileInfo = gnome_vfs_file_info_new ();
@@ -201,7 +207,10 @@ QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 		gnome_vfs_file_info_unref(m_vfsFileInfo);
 	}
 	
-	delete [] m_szURI;
+	if (NULL != m_szURI)
+	{
+		delete [] m_szURI;
+	}
 
 	if (NULL != m_pExifData)
 	{
@@ -978,7 +987,7 @@ int QuiverFile::QuiverFileImpl::GetOrientation()
 // QuiverFile Wrapper Class
 // =================================================================================================
 
-QuiverFile::QuiverFile() : m_QuiverFilePtr( new QuiverFileImpl("") )
+QuiverFile::QuiverFile() : m_QuiverFilePtr( new QuiverFileImpl(NULL) )
 {
 }
 QuiverFile::QuiverFile(const gchar*  uri)  : m_QuiverFilePtr( new QuiverFileImpl(uri) )
@@ -1001,7 +1010,21 @@ bool QuiverFile::Modified() const
 
 bool QuiverFile::operator== (const QuiverFile &other) const
 {
-	return gnome_vfs_uris_match(GetURI(),other.GetURI());
+	bool bMatch = false;
+	if (NULL != GetURI() && NULL != other.GetURI())
+	{
+		bMatch = gnome_vfs_uris_match(GetURI(),other.GetURI());
+	}
+	else if (NULL == GetURI() && NULL == other.GetURI())
+	{
+		bMatch = true;
+	}
+	return bMatch;
+}
+
+bool QuiverFile::operator!= (const QuiverFile &other) const
+{
+	return !operator==(other);
 }
 
 const char* QuiverFile::GetMimeType()
@@ -1009,7 +1032,7 @@ const char* QuiverFile::GetMimeType()
 	return m_QuiverFilePtr->GetMimeType();
 }
 
-GnomeVFSFileInfo *QuiverFile::GetFileInfo()
+GnomeVFSFileInfo* QuiverFile::GetFileInfo()
 {
 	GnomeVFSFileInfo* vfsFileInfo = NULL;
 	vfsFileInfo = m_QuiverFilePtr->GetFileInfo();

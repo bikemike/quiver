@@ -9,6 +9,9 @@
 
 class ImageList;
 
+class Statusbar;
+typedef boost::shared_ptr<Statusbar> StatusbarPtr;
+
 class Viewer : public virtual ViewerEventSource
 {
 public:
@@ -29,7 +32,9 @@ public:
 	void Hide();
 	
 	void SetUIManager(GtkUIManager *ui_manager);
+	void SetStatusbar(StatusbarPtr statusbarPtr);
 
+	double GetMagnification() const;
 
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;

@@ -16,7 +16,7 @@
 /* set up some defaults */
 #define QUIVER_IMAGE_VIEW_MAG_MAX              50.
 #define QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE       32
-#define QUIVER_ICON_VIEW_SCALE_HQ_TIMEOUT      100
+#define QUIVER_ICON_VIEW_SCALE_HQ_TIMEOUT      200
 
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
@@ -29,6 +29,7 @@ G_DEFINE_TYPE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET);
 enum {
 	SIGNAL_ACTIVATED,
 	SIGNAL_RELOAD,
+	SIGNAL_MAGNIFICATION_CHANGED,
 	SIGNAL_COUNT
 };
 
@@ -264,6 +265,14 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 		G_TYPE_FROM_CLASS (obj_class),
 		G_SIGNAL_RUN_LAST,
 		G_STRUCT_OFFSET (QuiverImageViewClass, activated),
+		NULL, NULL,
+		g_cclosure_marshal_VOID__VOID,
+		G_TYPE_NONE, 0);
+		
+	imageview_signals[SIGNAL_MAGNIFICATION_CHANGED] = g_signal_new (/*FIXME: I_*/("magnification-changed"),
+		G_TYPE_FROM_CLASS (obj_class),
+		G_SIGNAL_RUN_LAST,
+		G_STRUCT_OFFSET (QuiverImageViewClass, magnification_changed),
 		NULL, NULL,
 		g_cclosure_marshal_VOID__VOID,
 		G_TYPE_NONE, 0);
@@ -513,7 +522,9 @@ static gboolean
 quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 {
 	QuiverImageView *imageview;
-
+	
+	gdouble old_mag;
+	
 	GdkModifierType mask;
 	int x,y;
 
@@ -526,6 +537,19 @@ quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 
 	quiver_image_view_create_scaled_pixbuf(imageview,interptype);
 	quiver_image_view_add_scale_hq_timeout(imageview);
+
+	// set the magnification
+	if (0 == imageview->priv->magnification_timeout_id)
+	{
+		old_mag = imageview->priv->magnification;
+		imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
+	
+		if (old_mag != imageview->priv->magnification)
+		{
+			// emit a magnification changed signal
+			g_signal_emit(imageview,imageview_signals[SIGNAL_MAGNIFICATION_CHANGED],0);
+		}
+	}
 
 	return TRUE;
 }
@@ -855,8 +879,6 @@ static void draw_pixbuf(QuiverImageView *imageview,GdkRegion *region,gboolean st
 	height = gdk_pixbuf_get_height(pixbuf);
 
 
-
-	
 	GdkRectangle pixbuf_rect;
 	pixbuf_rect.x = MAX(0,((widget->allocation.width - width)/2));
 	pixbuf_rect.y = MAX(0,((widget->allocation.height - height)/2));
@@ -1502,6 +1524,7 @@ quiver_image_view_update_size(QuiverImageView *imageview)
 
 static void quiver_image_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
 {
+	guint new_width;
 	guint w = *width;
 	guint h = *height;
 
@@ -1516,7 +1539,7 @@ static void quiver_image_view_get_bound_size(guint bound_width,guint bound_heigh
 		gdouble ratio = (double)w/h;
 		guint new_height;
 
-		new_height = (guint)(bound_width/ratio);
+		new_height = (guint)(bound_width/ratio +.5);
 		if (new_height < bound_height)
 		{
 			*width = bound_width;
@@ -1524,7 +1547,8 @@ static void quiver_image_view_get_bound_size(guint bound_width,guint bound_heigh
 		}
 		else
 		{
-			*width = (guint)(bound_height *ratio);
+			new_width = (guint)(bound_height *ratio + .5); 
+			*width = MIN(new_width, bound_width);
 			*height = bound_height;
 		}
 	}
@@ -1680,8 +1704,8 @@ static gboolean quiver_image_view_timeout_magnification(gpointer data)
 	
 	if (percent_diff < 5.)
 	{
-		quiver_image_view_set_magnification_full(imageview,imageview->priv->magnification_final);
 		imageview->priv->magnification_timeout_id = 0;
+		quiver_image_view_set_magnification_full(imageview,imageview->priv->magnification_final);
 		rval = FALSE;
 	}
 	else
@@ -1806,8 +1830,8 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 
 	old_region = gdk_region_rectangle(&old_rect);
 	new_region = gdk_region_rectangle(&new_rect);
-	gdk_region_shrink(old_region,-1,-1);
-	gdk_region_shrink(new_region,1,1);
+	//gdk_region_shrink(old_region,-1,-1);
+	//gdk_region_shrink(new_region,1,1);
 	gdk_region_subtract(old_region,new_region);
 	gdk_window_invalidate_region(widget->window,old_region,FALSE);
 	gdk_region_destroy(old_region);
@@ -1907,6 +1931,8 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 
 void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode)
 {
+	gdouble old_mag;
+	
 	quiver_image_view_prepare_for_new_pixbuf(imageview,width,height);
 
 	if (NULL != pixbuf)
@@ -1930,8 +1956,20 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 		
 		imageview->priv->scroll_draw = TRUE;
 	}
+
+
+	// emit magnification changed
+	old_mag = imageview->priv->magnification;
+	imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
+	if (old_mag != imageview->priv->magnification)
+	{
+		// emit a magnification changed signal
+		g_signal_emit(imageview,imageview_signals[SIGNAL_MAGNIFICATION_CHANGED],0);
+	}
+
 	
 	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
+
 	quiver_image_view_invalidate_image_area(imageview,NULL);
 
 	if (GTK_WIDGET_MAPPED (imageview))
@@ -1978,6 +2016,8 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 	GtkWidget *widget;
 	GdkRectangle rect;
 	
+	gdouble old_mag = imageview->priv->magnification;
+	
 	if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode 
 		&& QUIVER_IMAGE_VIEW_MODE_ZOOM == mode)
 	{
@@ -2012,6 +2052,13 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 	// set the magnification to the correct magnification for the current mode.
 	// if we are switching to zoom mode, this essentially does nothing
 	imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
+
+	if (old_mag != imageview->priv->magnification)
+	{
+		// emit a magnification changed signal
+		g_signal_emit(imageview,imageview_signals[SIGNAL_MAGNIFICATION_CHANGED],0);
+	}
+
 
 	if (!invalidate)
 	{
@@ -2144,7 +2191,16 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 		quiver_image_view_send_reload_event(imageview);
 	}
 	
+	
 	imageview->priv->magnification = new_mag;
+
+	if (0 == imageview->priv->magnification_timeout_id
+	    && old_mag != new_mag)
+	{
+		// emit a magnification changed signal
+		g_signal_emit(imageview,imageview_signals[SIGNAL_MAGNIFICATION_CHANGED],0);
+	}
+
 	widget = GTK_WIDGET(imageview);
 
 	gdk_window_get_pointer(widget->window,&x,&y,&mask);
@@ -2471,6 +2527,7 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	
 	imageview->priv->scroll_draw = TRUE;
 	
+	// FIXME: this makes the image not get invalidated on the close signal
 	imageview->priv->area_updated = TRUE;
 
 }
@@ -2522,7 +2579,6 @@ static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, 
 
 		quiver_image_view_invalidate_image_area(imageview,&rect);
 		imageview->priv->area_updated = TRUE;
-		//printf("area updated\n");
 	}
 	else
 	{
@@ -2549,16 +2605,18 @@ static void pixbuf_loader_closed(GdkPixbufLoader *loader,gpointer userdata)
 	
 	if (NULL != pixbuf_animation)
 	{
+		//printf("animation not null!\n");
 		
 		if (!imageview->priv->area_updated)
 		{
-			printf("area not updated!\n");
 	
 			if (gdk_pixbuf_animation_is_static_image(pixbuf_animation))
 			{
-				//printf("->not an animation!\n");
-				quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
+				quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
 				quiver_image_view_invalidate_image_area(imageview,NULL);
+				quiver_image_view_add_scale_hq_timeout(imageview);
+				//quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
+				//quiver_image_view_invalidate_image_area(imageview,NULL);
 				//quiver_image_view_create_transition_pixbuf(imageview);
 				//quiver_image_view_transition_start(imageview);
 	

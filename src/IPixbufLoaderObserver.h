@@ -24,11 +24,6 @@ public:
 	virtual void SetPixbuf(GdkPixbuf * pixbuf) = 0;
 	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf,gint width, gint height, bool bResetViewMode = true) = 0;
 
-	// the image that will be displayed immediately
-	virtual void SetQuiverFile(QuiverFile quiverFile) = 0;
-	
-	// the image that is being cached for future use
-	virtual void SetCacheQuiverFile(QuiverFile quiverFile) = 0;
 	virtual void SignalBytesRead(long bytes_read,long total) = 0;
 	
 	
