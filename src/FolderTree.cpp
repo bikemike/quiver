@@ -149,6 +149,19 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	
 	/* Create a view */
 	m_pWidget = gtk_tree_view_new_with_model (GTK_TREE_MODEL (store));
+	
+	GtkTreeIter iter;
+	if ( gtk_tree_model_get_iter_first (GTK_TREE_MODEL(store), &iter) )
+	{
+		GtkTreePath* first =  gtk_tree_model_get_path(GTK_TREE_MODEL(store), &iter);
+
+		gtk_tree_view_set_cursor (GTK_TREE_VIEW(m_pWidget),
+		                             first,
+		                             NULL,
+		                             FALSE);
+		gtk_tree_path_free(first);
+	}
+			                            
 #if GTK_MAJOR_VERSION == 2  &&  GTK_MINOR_VERSION >= 10 || GTK_MAJOR_VERSION > 2
 	gtk_tree_view_set_rubber_banding(GTK_TREE_VIEW(m_pWidget),TRUE);
 #endif

@@ -1331,7 +1331,7 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 		quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(parent->m_pIconView),parent->m_QuiverFiles.GetCurrentIndex());
 		if (GTK_WIDGET_MAPPED(parent->m_pImageView))
 		{
-			parent->m_ImageLoader.LoadImageAtSize(parent->m_QuiverFiles[event->GetIndex()],width,height);
+			parent->m_ImageLoader.LoadImageAtSize(parent->m_QuiverFiles.GetCurrent(),width,height);
 		}
 
 	}

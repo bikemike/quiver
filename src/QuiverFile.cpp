@@ -219,7 +219,7 @@ QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 	
 	if (NULL != m_pExifDataOriginal)
 	{
-		//exif_data_unref(m_pExifDataOriginal);
+		exif_data_unref(m_pExifDataOriginal);
 	}
 }
 

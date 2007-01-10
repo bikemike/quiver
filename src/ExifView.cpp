@@ -422,14 +422,25 @@ gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 	
 	//exif_loader_write_file(loader,"ginger.jpg");
 	//exifData = exif_data_new_from_file("IMGP0217_modified.JPG"); //exif_loader_get_data(loader);
-	ExifData *pExifData = NULL;
+
+	if (NULL != pExifViewImpl->m_pExifData)
+	{
+		exif_data_unref(pExifViewImpl->m_pExifData);
+	}
 	
-	pExifData = pExifViewImpl->m_pExifData;
+	pExifViewImpl->m_pExifData = pExifViewImpl->m_QuiverFile.GetExifData();
+	
+	if (NULL != pExifViewImpl->m_pExifData)
+	{
+		exif_data_ref(pExifViewImpl->m_pExifData);
+	}
+
+	ExifData *pExifData = pExifViewImpl->m_pExifData;
 	
 	if (NULL != pExifData)
 	{
 		exif_data_ref(pExifData);
-	
+		
 		GdkPixbuf *pixbuf = pExifViewImpl->m_QuiverFile.GetExifThumbnail();
 		if (NULL != pixbuf)
 		{
@@ -557,10 +568,10 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 	if (NULL != m_ExifViewImplPtr->m_pExifData)
 	{
 		exif_data_unref(m_ExifViewImplPtr->m_pExifData);
+		m_ExifViewImplPtr->m_pExifData = NULL;
+		
 	}
 	
-	m_ExifViewImplPtr->m_pExifData = quiverFile.GetExifData();
-
 	if (0 != m_ExifViewImplPtr->m_iIdleLoadID)
 	{
 		g_source_remove(m_ExifViewImplPtr->m_iIdleLoadID );

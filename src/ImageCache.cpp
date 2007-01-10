@@ -43,10 +43,8 @@ bool ImageCache::RemovePixbuf(std::string filename)
 	bool rval = false;
 	if (m_mapImageCache.end() != itr)
 	{
-		// adding the same file again so unref the old pixbuf 
-		// before setting the new one
 		g_object_unref(itr->second.pPixbuf);
-		m_mapImageCache.erase(itr->first);
+		m_mapImageCache.erase(itr);
 		rval = true;
 	}
 	pthread_mutex_unlock (&m_MutexImageCache);
@@ -81,7 +79,8 @@ void ImageCache::SetSize(unsigned int size)
 	
 	while (size < m_mapImageCache.size())
 	{
-		for (itr = oldest = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
+		oldest = m_mapImageCache.begin();
+		for (itr = oldest; itr != m_mapImageCache.end(); ++itr)
 		{
 			if (itr->second.time < oldest->second.time)
 			{
@@ -90,14 +89,8 @@ void ImageCache::SetSize(unsigned int size)
 		}
 		if (oldest != m_mapImageCache.end())
 		{
-			/*
-			if  (1 < G_OBJECT(oldest->second.pPixbuf)->ref_count)
-			{
-				cout << "ERROR: MEMORY LEAK ON (" << G_OBJECT(oldest->second.pPixbuf)->ref_count << "): " << oldest->first << endl;
-			}
-			*/
 			g_object_unref(oldest->second.pPixbuf);
-			m_mapImageCache.erase(oldest->first);
+			m_mapImageCache.erase(oldest);
 		}
 	}
 	
@@ -118,11 +111,10 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 	{
 		// adding the same file again so unref the old pixbuf 
 		// before setting the new one
+		g_object_ref( pb );
 		g_object_unref(itr->second.pPixbuf);
 		itr->second.pPixbuf = pb;
-		g_object_ref( itr->second.pPixbuf );
 		itr->second.time = time;
-
 		pthread_mutex_unlock (&m_MutexImageCache);
 
 		return;
@@ -130,21 +122,16 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 
 	CacheItem c = {0};
 	c.pPixbuf = pb;
-	// add a reference to the item so it doesnt get deleted
-	// when the viewer switches images
-	//printf("0x%08x refcount: %d\n",c.pPixbuf,G_OBJECT(c.pPixbuf)->ref_count);
-	g_object_ref(c.pPixbuf);
-	//printf("0x%08x imagecache::addpixbuf refcount after: %d\n",c.pPixbuf,G_OBJECT(c.pPixbuf)->ref_count);
-	
 	c.time = time;
+	g_object_ref(c.pPixbuf);
 	
 
 	if (m_mapImageCache.size() >= m_iCacheSize)
 	{
 		//remove the oldest item
 		ImageCacheMap::iterator oldest;
-		
-		for (itr = oldest = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
+		oldest = m_mapImageCache.begin();
+		for (itr = oldest; itr != m_mapImageCache.end(); ++itr)
 		{
 			if (itr->second.time < oldest->second.time)
 			{
@@ -155,7 +142,7 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 		if (m_mapImageCache.end() != oldest)
 		{		
 			g_object_unref(oldest->second.pPixbuf);
-			m_mapImageCache.erase(oldest->first);	
+			m_mapImageCache.erase(oldest);	
 		}
 		
 	}

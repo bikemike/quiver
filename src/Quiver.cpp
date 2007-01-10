@@ -192,6 +192,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pQuiver = parent;
 	
 	m_ImageList.AddEventHandler(m_ImageListEventHandler);	
+	m_iMergedExternalTools = 0;
 }
 
 QuiverImpl::~QuiverImpl()
