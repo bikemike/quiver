@@ -122,6 +122,7 @@ public:
 
 /* member variables */
 	FolderTree m_FolderTree;
+	bool m_bFolderTreeEvent;
 	
 	GtkWidget *m_pIconView;
 
@@ -749,6 +750,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCacheNormal(100)
 
 	m_BrowserParent = parent;
 	m_pUIManager = NULL;
+	m_bFolderTreeEvent = false;
 
 	timeout_thumbnail_current = -1;
 	m_iMergedBrowserUI = 0;
@@ -1205,6 +1207,10 @@ static void browser_imageview_reload(QuiverImageView *imageview,gpointer data)
 {
 	//printf("#### got a reload message from the imageview\n");
 	Browser::BrowserImpl* pBrowserImpl = (Browser::BrowserImpl*)data;
+
+	if (!pBrowserImpl->m_QuiverFiles.GetSize())
+		return;
+
 	ImageLoader::LoadParams params = {0};
 
 	params.orientation = pBrowserImpl->m_QuiverFiles.GetCurrent().GetOrientation();
@@ -1341,6 +1347,12 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
 			
 	parent->m_ThumbnailLoader.UpdateList(true);	
+	
+	list<string> dirs  = parent->m_QuiverFiles.GetFolderList();
+	if (!parent->m_bFolderTreeEvent)
+	{
+		parent->m_FolderTree.SetSelectedFolders(dirs);
+	}
 
 }
 void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
@@ -1444,7 +1456,9 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	list<string> listFolders = parent->m_FolderTree.GetSelectedFolders();
 	list<string>::iterator itr;
 
+	parent->m_bFolderTreeEvent = true;
 	parent->m_QuiverFiles.UpdateImageList(&listFolders);
+	parent->m_bFolderTreeEvent = false;
 	
 	// get the list of files and folders in the image list
 	list<string> dirs  = parent->m_QuiverFiles.GetFolderList();

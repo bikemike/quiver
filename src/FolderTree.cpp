@@ -1,9 +1,12 @@
 #include <config.h>
 
 #include "FolderTree.h"
+
 #include <gdk/gdkkeysyms.h>
 #include <libgnomevfs/gnome-vfs.h>
 #include <libgnomeui/libgnomeui.h>
+
+#include <set>
 
 #define QUIVER_TREE_COLUMN_TOGGLE      "column_toggle"
 #define QUIVER_FOLDER_TREE_ROOT_NAME   "Filesystem"
@@ -20,15 +23,18 @@ enum
 	FILE_TREE_COLUMN_COUNT,
 };
 
-gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer user_data);
+static gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer user_data);
 static gboolean folder_tree_is_separator (GtkTreeModel *model,GtkTreeIter *iter,gpointer data);
-void folder_tree_selection_changed (GtkTreeSelection *treeselection, gpointer user_data);
+static void folder_tree_selection_changed (GtkTreeSelection *treeselection, gpointer user_data);
 static void folder_tree_cursor_changed (GtkTreeView *treeview, gpointer user_data);
-gboolean view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userdata);
-gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer userdata);
-gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata);
-void view_onRowActivated (GtkTreeView *treeview, GtkTreePath *path, GtkTreeViewColumn *col, gpointer userdata);
-void signal_folder_tree_row_expanded(GtkTreeView *treeview, GtkTreeIter *iter_parent, GtkTreePath *treepath, gpointer data);
+static gboolean view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userdata);
+static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer userdata);
+static gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata);
+static void view_onRowActivated (GtkTreeView *treeview, GtkTreePath *path, GtkTreeViewColumn *col, gpointer userdata);
+static void signal_folder_tree_row_expanded(GtkTreeView *treeview, GtkTreeIter *iter_parent, GtkTreePath *treepath, gpointer data);
+
+static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *iter_parent, const gchar* name, gboolean duplicate_check);
+static void folder_tree_clear_all_checkboxes(GtkTreeModel *model);
 
 class FolderTree::FolderTreeImpl
 {
@@ -42,13 +48,16 @@ public:
 	void CreateWidget();
 	void PopulateTreeModel(GtkTreeStore *store);
 
-	std::list<std::string> GetSelectedFolders();
+	void SetSelectedFolders(std::list<std::string> &uris);
+	std::list<std::string> GetSelectedFolders() const;
 
 // member variables
-	GtkWidget* m_pWidget;
-	FolderTree* m_pFolderTree;
-	GHashTable* m_pHashRootNodeOrder;
-
+	GtkWidget*      m_pWidget;
+	FolderTree*     m_pFolderTree;
+	GHashTable*     m_pHashRootNodeOrder;
+	GtkTreeIter*    m_pTreeIterScrollTo;
+	std::set<guint> m_setIdleCalls;
+	guint           m_iTimeoutScrollToCell;
 };
 
 
@@ -61,7 +70,7 @@ FolderTree::~FolderTree()
 {
 }
 
-GtkWidget* FolderTree::GetWidget()
+GtkWidget* FolderTree::GetWidget() const
 {
 	return m_FolderTreeImplPtr->m_pWidget;
 }
@@ -70,9 +79,14 @@ void FolderTree::SetUIManager(GtkUIManager* pUIManager)
 {
 }
 
-std::list<std::string> FolderTree::GetSelectedFolders()
+std::list<std::string> FolderTree::GetSelectedFolders() const
 {
 	return m_FolderTreeImplPtr->GetSelectedFolders();	
+}
+
+void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
+{
+	m_FolderTreeImplPtr->SetSelectedFolders(uris);
 }
 
 
@@ -80,6 +94,9 @@ std::list<std::string> FolderTree::GetSelectedFolders()
 FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 {
 	m_pFolderTree = parent;
+	
+	m_pTreeIterScrollTo = NULL;
+	
 	CreateWidget();
 }
 
@@ -106,7 +123,210 @@ static gboolean folder_tree_add_checked_to_list (GtkTreeModel* model, GtkTreePat
 	return FALSE;
 }
 
-std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedFolders()
+GtkTreeIter* add_uri_to_tree(GtkTreeView *treeview, GtkTreeIter* iter, const gchar* uri)
+{
+	GtkTreeIter* iter_added = NULL;
+	
+	GtkTreeModel* model = gtk_tree_view_get_model (treeview);
+	if (NULL != uri)
+	{
+		gchar* base_uri;
+		gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &base_uri, -1);
+		
+		GnomeVFSURI* vfs_tmp;
+		GnomeVFSURI* vfs_uri = gnome_vfs_uri_new(uri);
+		GnomeVFSURI* vfs_base = gnome_vfs_uri_new(base_uri);
+		
+		bool bValid = false;
+		
+		std::list<std::string> strDirsToAdd;
+		
+		do
+		{
+			if (gnome_vfs_uri_equal (vfs_uri, vfs_base))
+			{
+				gnome_vfs_uri_unref(vfs_uri);
+				bValid = true;
+				break;
+			}
+
+			gchar* path_name = gnome_vfs_uri_extract_short_path_name (vfs_uri);				
+			
+			strDirsToAdd.push_front(path_name);	
+			
+			vfs_tmp = gnome_vfs_uri_get_parent(vfs_uri);
+			gnome_vfs_uri_unref(vfs_uri);
+			vfs_uri = vfs_tmp;
+		
+		} while (NULL != vfs_uri);
+		
+		gnome_vfs_uri_unref(vfs_base);
+		
+		if (bValid)
+		{
+			std::list<std::string>::iterator itr;
+			
+			iter = gtk_tree_iter_copy(iter);
+			
+			for (itr = strDirsToAdd.begin(); strDirsToAdd.end() != itr; ++itr)
+			{
+				printf(" add this dir: %s\n",itr->c_str());
+				
+				GtkTreeIter* iter_child = folder_tree_add_subdir(model, iter, itr->c_str(), TRUE);
+				
+				gtk_tree_iter_free(iter);
+				iter = iter_child;
+				
+			}
+
+			
+			gtk_tree_store_set (GTK_TREE_STORE(model),iter,FILE_TREE_COLUMN_CHECKBOX, TRUE, -1);
+
+			iter_added = gtk_tree_iter_copy(iter);
+			
+			gtk_tree_iter_free(iter);
+		}
+	}
+	
+	return iter_added;
+}
+
+static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
+{
+	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)data;
+	gboolean rval = FALSE;
+	
+	gdk_threads_enter();
+	// wait untill all the idle functions have finished
+	if (pFolderTreeImpl->m_setIdleCalls.size() || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
+	{
+		printf("waiting still\n");
+		rval = TRUE;
+	}
+	else
+	{
+		printf("scroll to cell! \n");
+		// do processing
+		GtkTreeView* treeview = GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget);
+		GtkTreeModel* model = gtk_tree_view_get_model (treeview);
+		GtkTreePath* path =  gtk_tree_model_get_path(model, pFolderTreeImpl->m_pTreeIterScrollTo);
+
+		gtk_tree_view_expand_to_path(treeview, path);
+		gtk_tree_view_scroll_to_cell(treeview, path, NULL, TRUE, .125, 0.);
+
+		GtkTreeSelection* selection;
+		selection = gtk_tree_view_get_selection(treeview);
+		
+		gtk_tree_selection_unselect_all(selection);
+		gtk_tree_selection_select_iter(selection, pFolderTreeImpl->m_pTreeIterScrollTo);
+				
+		gtk_tree_path_free(path);
+		
+		pFolderTreeImpl->m_iTimeoutScrollToCell = 0;
+
+		gtk_tree_iter_free(pFolderTreeImpl->m_pTreeIterScrollTo);
+		pFolderTreeImpl->m_pTreeIterScrollTo = NULL;
+		
+		rval =  FALSE;
+	}
+	gdk_threads_leave();
+	return rval;
+}
+
+void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uris)
+{
+	GtkTreeModel *model;
+	
+	GtkTreeIter* iter_parent = NULL;
+	GtkTreeIter iter_child = {0};
+	GtkTreeIter iter_match = {0};
+
+	model = gtk_tree_view_get_model (GTK_TREE_VIEW(m_pWidget));
+	
+	folder_tree_clear_all_checkboxes(gtk_tree_view_get_model(GTK_TREE_VIEW(m_pWidget)));
+	
+	std::list<std::string>::iterator itr;
+	for (itr = uris.begin(); uris.end() != itr; ++itr)
+	{
+		// here we go
+		printf("selecting folder: %s\n", itr->c_str());
+		gint i = 0;
+		std::string strLongestURI;
+		bool found_match = false;
+		
+		gint longest_match = -1;
+		
+		while ( gtk_tree_model_iter_nth_child (model,&iter_child, iter_parent, i) )
+		{
+			i++;
+			gchar* uri;
+			gtk_tree_model_get(model,&iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
+			
+			
+			if (NULL != uri)
+			{
+				std::string strURI = uri;
+				if (std::string::npos != itr->find(strURI))
+				{
+					GnomeVFSURI* vfs_uri, *vfs_parent;
+					vfs_uri = gnome_vfs_uri_new (uri);
+					
+					gint n_parents = 0;
+					while (NULL != (vfs_parent = gnome_vfs_uri_get_parent(vfs_uri)))
+					{
+						gnome_vfs_uri_unref(vfs_uri);
+						vfs_uri = vfs_parent;
+						n_parents++;	
+					}
+					
+					if (longest_match < n_parents)
+					{
+						strLongestURI = strURI;
+						longest_match = n_parents;
+						iter_match = iter_child;
+						found_match = true;
+					}
+					
+					gnome_vfs_uri_unref(vfs_uri);
+					
+				}
+				g_free(uri);
+			}
+			
+		}
+
+		if (found_match)
+		{
+			printf("here is the match: %s\n", strLongestURI.c_str());
+			GtkTreeIter* iter = add_uri_to_tree(GTK_TREE_VIEW(m_pWidget), &iter_match, itr->c_str());
+
+			// we need a timeout here because if the list is still changing we need to wait
+			// before we scroll to the cell
+			if (NULL != m_pTreeIterScrollTo)
+			{
+				gtk_tree_iter_free(m_pTreeIterScrollTo);
+			}
+			m_pTreeIterScrollTo = iter;
+			
+			if (0 != m_iTimeoutScrollToCell)
+			{
+				g_source_remove(m_iTimeoutScrollToCell);
+			}
+			
+			GtkTreePath* path =  gtk_tree_model_get_path(model, iter);
+	
+			gtk_tree_view_expand_to_path(GTK_TREE_VIEW(m_pWidget), path);
+			
+			gtk_tree_path_free(path);	
+		
+			m_iTimeoutScrollToCell = g_timeout_add(50, timeout_folder_tree_scroll_to_cell, this);
+		}
+
+	}
+
+}
+
+std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedFolders() const
 {
 	std::list<std::string> listSelectedFolders;
 
@@ -244,7 +464,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 }
 
 
-char* folder_tree_get_icon_name(const char* uri);
+static char* folder_tree_get_icon_name(const char* uri);
 
 static gboolean from_mouse = FALSE;
 
@@ -283,7 +503,7 @@ static void folder_tree_cursor_changed (GtkTreeView *treeview, gpointer user_dat
 	}
 }
 
-void folder_tree_set_selected_checkbox_value(GtkTreeView* treeview,gboolean value)
+static void folder_tree_set_selected_checkbox_value(GtkTreeView* treeview,gboolean value)
 {
 	GList* paths;
 	GList* path_itr;
@@ -313,7 +533,7 @@ void folder_tree_set_selected_checkbox_value(GtkTreeView* treeview,gboolean valu
 	//FIXME: emit event
 }
 
-void
+static void
 signal_check_selected (GtkWidget *menuitem, gpointer userdata)
 {
 	GtkTreeView *treeview = GTK_TREE_VIEW(userdata);
@@ -321,7 +541,7 @@ signal_check_selected (GtkWidget *menuitem, gpointer userdata)
 	//g_print ("Do something!\n");
 }
 
-void
+static void
 signal_uncheck_selected (GtkWidget *menuitem, gpointer userdata)
 {
 	GtkTreeView *treeview = GTK_TREE_VIEW(userdata);
@@ -356,7 +576,7 @@ void view_popup_menu (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 }
 
 
-void
+static void
 view_onRowActivated (GtkTreeView        *treeview,
                        GtkTreePath        *path,
                        GtkTreeViewColumn  *col,
@@ -372,7 +592,7 @@ view_onRowActivated (GtkTreeView        *treeview,
 	}
 }
 
-gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer userdata)
+static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer userdata)
 {
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
 
@@ -536,7 +756,7 @@ gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer use
 	return rval;
 }
 
-gboolean
+static gboolean
 view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userdata)
 {
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
@@ -625,7 +845,7 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 	return FALSE; 
 }
 
-gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata)
+static gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata)
 {
 	view_popup_menu(treeview, NULL, userdata);
 	return TRUE; 
@@ -638,7 +858,7 @@ static gboolean folder_tree_is_separator (GtkTreeModel *model,GtkTreeIter *iter,
 	return value;
 }
 
-void folder_tree_selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
+static void folder_tree_selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
 {
 	//printf("changed\n");
 }
@@ -654,6 +874,7 @@ typedef enum _MyIdleState
 
 typedef struct _MyDataStruct
 {
+	FolderTree::FolderTreeImpl* pFolderTreeImpl;
 	GtkTreeModel* model;
 	GtkTreeIter* iter_parent;
 	GtkTreeIter* iter_child;
@@ -662,25 +883,80 @@ typedef struct _MyDataStruct
 	MyIdleState state;
 	gboolean has_subdirs;
 	int i;
+	guint idle_id;
 
 } MyDataStruct;
 
 
-void folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *iter_parent, const gchar* name, const gchar* uri)
+static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *iter_parent, const gchar* name, gboolean duplicate_check)
 {
+	g_return_val_if_fail(NULL != name,NULL);
+	g_return_val_if_fail(NULL != iter_parent,NULL);
+	g_return_val_if_fail(NULL != model,NULL);
+	
 	GtkTreeIter iter_child = {0};
-	gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);  
 
-	char* icon_name = folder_tree_get_icon_name(uri);
+	gboolean found_duplicate = FALSE;	
+	
+	if (duplicate_check)
+	{
+		gint n_nodes = gtk_tree_model_iter_n_children  (model, iter_parent);
+		gint i;
 
-	gtk_tree_store_set (GTK_TREE_STORE(model), &iter_child,
-			FILE_TREE_COLUMN_CHECKBOX, FALSE,
-			FILE_TREE_COLUMN_ICON, icon_name,
-			FILE_TREE_COLUMN_DISPLAY_NAME, name,
-			FILE_TREE_COLUMN_SEPARATOR,FALSE,
-			FILE_TREE_COLUMN_URI,uri,
-			-1);
-	free(icon_name);
+		// check to see if the folder is already in the tree
+		for (i = 0 ; i < n_nodes && !found_duplicate; i++)
+		{
+			if ( gtk_tree_model_iter_nth_child(model, &iter_child, iter_parent, i) )
+			{
+				gchar* folder_name = NULL;
+				gtk_tree_model_get(model, &iter_child, FILE_TREE_COLUMN_DISPLAY_NAME, &folder_name, -1);
+
+				if (NULL != name && 0 == strcmp(name,folder_name))
+				{
+					found_duplicate = TRUE;
+				}
+				
+				g_free(folder_name);
+			}
+		}
+	}
+	
+	if (!found_duplicate)
+	{ 
+	
+		gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);  
+	
+		gchar* uri;
+		gtk_tree_model_get(model,iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
+		
+		GnomeVFSURI * vfs_uri_parent = gnome_vfs_uri_new(uri);
+		GnomeVFSURI * vfs_uri_child = gnome_vfs_uri_append_path(vfs_uri_parent, name);
+		
+		gchar* uri_child = gnome_vfs_uri_to_string (vfs_uri_child, GNOME_VFS_URI_HIDE_NONE);
+		
+		char* icon_name = folder_tree_get_icon_name(uri_child);
+	
+		gtk_tree_store_set (GTK_TREE_STORE(model), &iter_child,
+				FILE_TREE_COLUMN_CHECKBOX, FALSE,
+				FILE_TREE_COLUMN_ICON, icon_name,
+				FILE_TREE_COLUMN_DISPLAY_NAME, name,
+				FILE_TREE_COLUMN_SEPARATOR,FALSE,
+				FILE_TREE_COLUMN_URI,uri_child,
+				-1);
+		free(icon_name);
+		
+		g_free(uri_child);
+		
+		gnome_vfs_uri_unref(vfs_uri_child);
+		gnome_vfs_uri_unref(vfs_uri_parent);
+		
+		g_free(uri);
+		
+		
+	}
+	
+	return gtk_tree_iter_copy(&iter_child);
+
 }
 
 
@@ -688,27 +964,11 @@ void folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *iter_parent, const
 static void hash_foreach_sync_add(gpointer key, gpointer value, gpointer user_data)
 {
 	gchar* folder_name = (gchar*)key;
-	gchar* uri;
 
 	MyDataStruct* data = (MyDataStruct*)user_data;
 	GtkTreeModel *model = data->model;
 
-	gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
-	GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(uri);
-	GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,folder_name);
-	gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
-
-	folder_tree_add_subdir(model, data->iter_child, folder_name, str_uri_file);
-
-	g_free (str_uri_file);
-	gnome_vfs_uri_unref(vfs_uri_file);
-	gnome_vfs_uri_unref(vfs_uri_dir);
-
-	if (NULL != uri)
-	{
-		g_free(uri);
-	}
-					
+	folder_tree_add_subdir(model, data->iter_child, folder_name, FALSE);
 }
 
 static gboolean idle_check_for_subdirs(gpointer user_data)
@@ -894,6 +1154,12 @@ static gboolean idle_check_for_subdirs(gpointer user_data)
 
 	if (finished)
 	{
+		if (NULL != data->pFolderTreeImpl)
+		{
+			printf("removing id: %d\n", data->idle_id);
+			data->pFolderTreeImpl->m_setIdleCalls.erase(data->idle_id);
+		}
+		
 		if (NULL != data->iter_parent)
 		{
 			gtk_tree_iter_free(data->iter_parent);
@@ -919,25 +1185,31 @@ static gboolean idle_check_for_subdirs(gpointer user_data)
 
 }
 
-void signal_folder_tree_row_expanded(GtkTreeView *treeview,
+static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 						GtkTreeIter *iter_parent,
 						GtkTreePath *treepath,
 						gpointer data)
 {
+	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)data;
+	
 	GtkTreeModel *model = gtk_tree_view_get_model(treeview);
 	MyDataStruct* mydata = (MyDataStruct*)g_malloc0(sizeof(MyDataStruct));
 	mydata->model = model;
+	mydata->pFolderTreeImpl = pFolderTreeImpl;
 
 	gchar* uri;
 	gtk_tree_model_get(model, iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
 	g_free(uri);
 
 	mydata->iter_parent = gtk_tree_iter_copy(iter_parent);
-	g_idle_add(idle_check_for_subdirs,mydata);
+	guint idle_id = g_idle_add(idle_check_for_subdirs,mydata);
+	mydata->idle_id = idle_id;
+	pFolderTreeImpl->m_setIdleCalls.insert(idle_id);
+	printf("adding id: %d\n", idle_id);
 }
 
 
-char* folder_tree_get_icon_name(const char* uri)
+static char* folder_tree_get_icon_name(const char* uri)
 {
 	GnomeIconLookupResultFlags lookup_result;
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
@@ -1194,7 +1466,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 }
 
 
-gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer user_data)
+static gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer user_data)
 {
 
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)user_data;
@@ -1233,6 +1505,8 @@ gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer use
 	}
 	else
 	{
+		rval = g_ascii_strcasecmp(name_a,name_b);
+		/*
 		gchar* a_casefolded = g_utf8_casefold(name_a, strlen(name_a));
 		gchar* b_casefolded = g_utf8_casefold(name_b, strlen(name_b));
 		gchar* a_collated = g_utf8_collate_key(a_casefolded,strlen(a_casefolded));
@@ -1242,6 +1516,7 @@ gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer use
 		g_free(a_collated);
 		g_free(b_casefolded);
 		g_free(b_collated);
+		*/
 	}
 
 

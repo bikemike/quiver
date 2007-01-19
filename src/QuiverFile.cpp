@@ -243,7 +243,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 		{
 			gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)pExifData->data, pExifData->size, &tmp_error);
 	
-			gdk_pixbuf_loader_close(pixbuf_loader,&tmp_error);
+			gdk_pixbuf_loader_close(pixbuf_loader, NULL);
 			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
 			
 			if (NULL != thumb_pixbuf)
@@ -499,7 +499,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 					}
 				}
 
-				gdk_pixbuf_loader_close(loader,&tmp_error);
+				gdk_pixbuf_loader_close(loader, NULL);
 								
 				thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 				
@@ -1162,7 +1162,7 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 				}
 			}
 			
-			gdk_pixbuf_loader_close(loader,&tmp_error);
+			gdk_pixbuf_loader_close(loader, NULL);
 			
 			g_object_unref(loader);
 		}

@@ -1991,8 +1991,27 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 	gint hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	gint vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
-	guint cell_x = (cell % cols) * cell_width;
-	guint cell_y = (cell / cols) * cell_height;
+	guint cell_x;
+	guint cell_y;
+		
+	if (0 != iconview->priv->n_rows)
+	{
+		// FIXME: this is a bug for anything but row=1
+		// also we should probably switch the drawing order so it draws like this:
+		// 1 3 5 7 9
+		// 2 4 6 8
+		// instead of:
+		// 1 2 3 4 5
+		// 6 7 8 9
+		cell_x = (cell / rows) * cell_width;
+		cell_y = (cell % rows) * cell_height;
+	}
+	else
+	{
+		cell_x = (cell % cols) * cell_width;
+		cell_y = (cell / cols) * cell_height;
+
+	}
 
 	/*
 	if ( force_top || cell_y < vadjust)

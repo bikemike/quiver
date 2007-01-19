@@ -17,11 +17,13 @@ public:
 	FolderTree();
 	~FolderTree();
 
-	GtkWidget* GetWidget();
+	GtkWidget* GetWidget() const;
 
 	void SetUIManager(GtkUIManager *ui_manager);
+	
+	void SetSelectedFolders(std::list<std::string> &uris);
 
-	std::list<std::string> GetSelectedFolders();
+	std::list<std::string> GetSelectedFolders() const;
 
 	class FolderTreeImpl;
 	typedef boost::shared_ptr<FolderTreeImpl> FolderTreeImplPtr;

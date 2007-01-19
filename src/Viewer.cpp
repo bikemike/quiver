@@ -598,11 +598,11 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 		return FALSE;
 
 	
-	if (GDK_SCROLL_UP == event->direction)
+	if (GDK_SCROLL_UP == event->direction || GDK_SCROLL_LEFT == event->direction)
 	{
 		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false);
 	}
-	else if (GDK_SCROLL_DOWN == event->direction)
+	else if (GDK_SCROLL_DOWN == event->direction || GDK_SCROLL_RIGHT == event->direction)
 	{
 		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true);
 	}
