@@ -599,12 +599,12 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	}
 	Timer loadTimer(true); // true for quite mode
 	
-	//int size = 8192;
-	int size = 16384;
+	int size = 8192;
+	//int size = 16384;
 	//int size = 32768;
 	long bytes_read_inc=0, bytes_total=0;
 
-	gchar buffer[size];
+	guchar buffer[size];
 	GnomeVFSHandle   *handle;
 	GnomeVFSResult    result;
 	GnomeVFSFileSize  bytes_read;
@@ -621,7 +621,6 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 			gdk_threads_enter();
 			gdk_pixbuf_loader_close(loader,NULL);
 			gdk_threads_leave();
-			
 			gnome_vfs_close(handle);
 			return retval;
 		}
@@ -630,24 +629,19 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		
 		bytes_read_inc += bytes_read;
 		// notify others of bytes read
+		gdk_threads_enter();
 		
 		for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 		{
 			if (0 < bytes_read_inc && bytes_read_inc <= bytes_total)
 			{
-				gdk_threads_enter();
-				
 				(*itr)->SignalBytesRead(bytes_read_inc,bytes_total);
-				gdk_threads_leave();
 			}
 		}
 		
 		tmp_error = NULL;
-		
-		gdk_threads_enter();
 
-		gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-		
+		gdk_pixbuf_loader_write (loader, buffer, bytes_read, &tmp_error);
 		gdk_flush();
 		gdk_threads_leave();
 
@@ -723,6 +717,15 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 	{
 		swap(max_width,max_height);
 		swap(width,height);
+	}
+	
+	if (10 > max_width)
+	{
+		max_width = 10;
+	}
+	if (10 > max_height)
+	{
+		max_height = 10;
 	}
 	
 	if (0 < max_width && 0 < max_height)

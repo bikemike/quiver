@@ -1030,6 +1030,10 @@ void Browser::BrowserImpl::Show()
 		{
 			width = m_pImageView->allocation.width;
 			height = m_pImageView->allocation.height;
+			if (width < 20 || height < 20)
+			{
+				width = height = 20;
+			}
 		}
 		
 		if (GTK_WIDGET_MAPPED(m_pImageView))

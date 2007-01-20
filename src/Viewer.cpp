@@ -251,7 +251,7 @@ public:
 	GtkWidget *m_pNavigationWindow;
 	GtkWidget *m_pNavigationControl;
 	
-	QuiverFile m_QuiverFileLast;
+	QuiverFile m_QuiverFileCurrent;
 
 	int m_iCurrentOrientation;
 	
@@ -374,6 +374,16 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward)
 	}
 	
 	m_ImageList.UnblockHandler(m_ImageListEventHandlerPtr);
+	
+	if (m_ImageList.GetSize())
+	{
+		m_QuiverFileCurrent = m_ImageList.GetCurrent();
+	}
+	else
+	{
+		QuiverFile f;
+		m_QuiverFileCurrent = f;
+	}
 }
 
 int  Viewer::ViewerImpl::GetCurrentOrientation()
@@ -926,10 +936,9 @@ void Viewer::Show()
 	GError *tmp_error;
 	tmp_error = NULL;
 
-
 	gint cursor_cell = quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView));
  
-	if (0 == m_ViewerImplPtr->m_ImageList.GetSize() || m_ViewerImplPtr->m_QuiverFileLast != m_ViewerImplPtr->m_ImageList.GetCurrent())
+	if (0 == m_ViewerImplPtr->m_ImageList.GetSize() || m_ViewerImplPtr->m_QuiverFileCurrent != m_ViewerImplPtr->m_ImageList.GetCurrent())
 	{
 		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),NULL);
 		m_ViewerImplPtr->SetImageIndex(m_ViewerImplPtr->m_ImageList.GetCurrentIndex(),true);
@@ -967,6 +976,7 @@ void Viewer::Show()
 	m_ViewerImplPtr->m_ImageList.UnblockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
 
 }
+
 void Viewer::Hide()
 {
 	SlideShowStop();
@@ -978,14 +988,15 @@ void Viewer::Hide()
 			m_ViewerImplPtr->m_iMergedViewerUI);
 		m_ViewerImplPtr->m_iMergedViewerUI = 0;
 	}
+	
 	if (m_ViewerImplPtr->m_ImageList.GetSize())
 	{
-		m_ViewerImplPtr->m_QuiverFileLast = m_ViewerImplPtr->m_ImageList.GetCurrent();
+		m_ViewerImplPtr->m_QuiverFileCurrent = m_ViewerImplPtr->m_ImageList.GetCurrent();
 	}
 	else
 	{
 		QuiverFile f;
-		m_ViewerImplPtr->m_QuiverFileLast = f;
+		m_ViewerImplPtr->m_QuiverFileCurrent = f;
 	}
 	
 	m_ViewerImplPtr->m_ImageList.BlockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);

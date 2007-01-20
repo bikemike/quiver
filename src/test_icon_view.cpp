@@ -556,7 +556,7 @@ void PopulateIconView(list<string> &files)
 	if (image_list.GetSize())
 	{
 		
-		QuiverFile f = *image_list.GetCurrent();
+		QuiverFile f = image_list.GetCurrent();
 
 		
 
@@ -578,7 +578,7 @@ void PopulateIconView(list<string> &files)
 		
 
 
-		QuiverFile f = *image_list.GetNext();
+		QuiverFile f = image_list.GetNext();
 
 		GdkPixbuf *pixbuf = GetStockIcon(f);//GetFancyIcon(f);
 		if (NULL != pixbuf)

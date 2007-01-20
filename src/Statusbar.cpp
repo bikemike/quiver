@@ -32,6 +32,7 @@ public:
 	
 	guint m_iDefaultContext;
 	guint m_iTimeoutPulse;
+	guint m_iPulseCount;
 
 };
 
@@ -41,6 +42,9 @@ gboolean progress_bar_pulse (gpointer data);
 Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar)
 {
 	m_pParent = pStatusbar;
+	
+	m_iTimeoutPulse = 0;
+	m_iPulseCount = 0;
 	
 	m_pStatusbar = gtk_statusbar_new();
 	//gtk_frame_set_shadow_type(GTK_FRAME(m_pStatusbar),GTK_SHADOW_OUT);
@@ -295,12 +299,14 @@ void Statusbar::StartProgressPulse()
 	{
 		m_StatusbarImplPtr->m_iTimeoutPulse = g_timeout_add(100, progress_bar_pulse, m_StatusbarImplPtr.get());
 	}
+	m_StatusbarImplPtr->m_iPulseCount++;
 }
 
 
 void Statusbar::StopProgressPulse()
 {
-	if (0 != m_StatusbarImplPtr->m_iTimeoutPulse)
+	m_StatusbarImplPtr->m_iPulseCount--;
+	if (0 == m_StatusbarImplPtr->m_iPulseCount && 0 != m_StatusbarImplPtr->m_iTimeoutPulse)
 	{
 		g_source_remove(m_StatusbarImplPtr->m_iTimeoutPulse);
 		m_StatusbarImplPtr->m_iTimeoutPulse = 0;

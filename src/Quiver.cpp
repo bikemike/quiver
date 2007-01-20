@@ -1494,10 +1494,12 @@ void Quiver::ShowViewer()
 	gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedBrowserUI);
 	m_QuiverImplPtr->m_iMergedBrowserUI = 0;
 	if (0 == m_QuiverImplPtr->m_iMergedViewerUI)
+	{
 		m_QuiverImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_viewer,
 			strlen(quiver_ui_viewer),
 			&tmp_error);
+	}
 	m_QuiverImplPtr->m_Browser.Hide();
 	m_QuiverImplPtr->m_Viewer.Show();
 }
@@ -1510,10 +1512,12 @@ void Quiver::ShowBrowser()
 	gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedViewerUI);
 	m_QuiverImplPtr->m_iMergedViewerUI = 0;
 	if (0 == m_QuiverImplPtr->m_iMergedBrowserUI)
+	{
 		m_QuiverImplPtr->m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_browser,
 			strlen(quiver_ui_browser),
 			&tmp_error);
+	}
 	m_QuiverImplPtr->m_Viewer.Hide();
 	m_QuiverImplPtr->m_Browser.Show();
 }

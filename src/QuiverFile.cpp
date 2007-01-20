@@ -424,7 +424,6 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 			}
 		}
 	}
-	//gdk_threads_leave ();
 	
 	if (NULL == thumb_pixbuf && !bLargeThumb) // no thumbnail in the ~/.thumbnails/ cache
 	{ 
