@@ -2,9 +2,10 @@
 
 #include "FolderTree.h"
 
+#include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include <libgnomevfs/gnome-vfs.h>
-#include <libgnomeui/libgnomeui.h>
+#include <libgnomeui/gnome-icon-lookup.h>
 
 #include <set>
 
@@ -1229,10 +1230,12 @@ static char* folder_tree_get_icon_name(const char* uri)
 	{
 		preferred_icon_name = "gnome-fs-desktop";
 	}
+	/*
 	else if (gnome_vfs_uris_match ("trash://",uri))
 	{
 		preferred_icon_name = GNOME_STOCK_TRASH;
 	}
+	*/
 
 	free(desktop_path);
 	free(desktop_uri);

@@ -32,6 +32,8 @@ AC_PATH_PROG(GLIB_GENMARSHAL, glib-genmarshal)
 
 AC_PATH_PROG(GDK_PIXBUF_CSOURCE, gdk-pixbuf-csource)
 
+AM_PATH_LIBGCRYPT
+
 dnl Set gettext package name
 GETTEXT_PACKAGE=quiver
 AC_SUBST(GETTEXT_PACKAGE)
