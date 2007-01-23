@@ -11,6 +11,14 @@
 
 #include <boost/algorithm/string.hpp>
 
+#include <errno.h>
+#include <gcrypt.h>
+extern "C" 
+{
+	// needed for initialization of gcrypt library
+	GCRY_THREAD_OPTION_PTHREAD_IMPL;
+}
+
 #include "icons/quiver_icon_app.pixdata"
 #include "QuiverStockIcons.h"
 
@@ -1267,7 +1275,10 @@ int main (int argc, char **argv)
 	gdk_threads_init ();
 	gdk_threads_enter ();
 
-
+	// initialize the libgcrypt library (used for generating md5 hash)
+	gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
+	gcry_check_version (NULL);
+	
 	/* Initialize the widget set */
 	gtk_init (&argc, &argv);
 
