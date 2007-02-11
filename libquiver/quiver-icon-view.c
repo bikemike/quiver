@@ -2387,6 +2387,8 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 		g_free (iconview->priv->cell_items);
 		iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(n_items+1) );
 		quiver_icon_view_update_icon_size(iconview);
+		
+		g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 	}
 	return n_items;
 }

@@ -28,6 +28,7 @@ extern "C"
 #include "IImageListEventHandler.h"
 
 
+#include "QuiverUtils.h"
 
 #include "QuiverPrefs.h"
 #include "PreferencesDlg.h"
@@ -43,26 +44,21 @@ using namespace std;
 
 // helper functions
 
-GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
-{
-	GList * action_groups = gtk_ui_manager_get_action_groups(ui);
-	GtkAction * action = NULL;
-	while (NULL != action_groups)
-	{
-		action = gtk_action_group_get_action (GTK_ACTION_GROUP(action_groups->data),action_name);
-		if (NULL != action)
-		{
-			break;
-		}                      
-		action_groups = g_list_next(action_groups);
-	}
-
-	return action;
-}
 
 static void quiver_action_handler_cb(GtkAction *action, gpointer data);
 static void quiver_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data);
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data );
+
+// gtk_ui_manager signals
+static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
+static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
+static void signal_item_select (GtkItem *proxy,gpointer data);
+static void signal_item_deselect (GtkItem *proxy,gpointer data);
+
+static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data );
+static gboolean timeout_event_motion_notify (gpointer data);
+static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
+
 
 class QuiverImpl
 {
@@ -125,7 +121,7 @@ public:
 	//gui actions
 	static GtkActionEntry action_entries[];
 	static GtkToggleActionEntry action_entries_toggle[];
-	static GtkRadioActionEntry action_entries_radio[];
+	static GtkRadioActionEntry sort_radio_action_entries[];
 	
 	GtkUIManager* m_pUIManager;
 	
@@ -360,31 +356,46 @@ bool QuiverImpl::CanClose()
 	return true;
 }
 
+#define ACTION_QUIVER_OPEN                                   "FileOpen"
+#define ACTION_QUIVER_OPEN_FOLDER                            "FileOpenFolder"
+#define ACTION_QUIVER_SAVE                                   "Save"
+#define ACTION_QUIVER_SAVE_AS                                "SaveAs"
+#define ACTION_QUIVER_QUIT                                   "Quit"
+#define ACTION_QUIVER_PREFERENCES                            "Preferences"
+#define ACTION_QUIVER_VIEW_MENUBAR                           "ViewMenubar"
+#define ACTION_QUIVER_VIEW_TOOLBAR_MAIN                      "ViewToolbarMain"
+#define ACTION_QUIVER_VIEW_PROPERTIES                        "ViewProperties"
+#define ACTION_QUIVER_VIEW_STATUSBAR                         "ViewStatusbar"
+#define ACTION_QUIVER_SORT_BY_NAME                           "SortByName"
+#define ACTION_QUIVER_SORT_BY_DATE                           "SortByDate"
+#define ACTION_QUIVER_SORT_DESCENDING                        "SortDescending"
+#define ACTION_QUIVER_FULLSCREEN                             "FullScreen"
+#define ACTION_QUIVER_SLIDESHOW                              "SlideShow"
+#define ACTION_QUIVER_BOOKMARKS_ADD                          "BookmarksAdd"
+#define ACTION_QUIVER_BOOKMARKS_EDIT                         "BookmarksEdit"
+#define ACTION_QUIVER_EXTERNAL_TOOLS                         "ExternalTools"
+#define ACTION_QUIVER_ABOUT                                  "About"
+#define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
+#define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
 
-#define QUIVER_ACTION_SLIDESHOW  "SlideShow"
-#define QUIVER_ACTION_FULLSCREEN "FullScreen"
+#define ACTION_QUIVER_QUIT_2                                 ACTION_QUIVER_QUIT"_2"
+#define ACTION_QUIVER_QUIT_3                                 ACTION_QUIVER_QUIT"_3"
+#define ACTION_QUIVER_QUIT_4                                 ACTION_QUIVER_QUIT"_4"
 
-#define QUIVER_ACTION_UI_MODE_VIEWER "UIModeViewer"
-#define QUIVER_ACTION_UI_MODE_BROWSER "UIModeBrowser"
-
-#define QUIVER_UI_MODE_BROWSER   1
-#define QUIVER_UI_MODE_VIEWER    2
-
-	
 char * quiver_ui_main =
 "<ui>"
 "	<menubar name='MenubarMain'>"
 "		<menu action='MenuFile'>"
-"			<menuitem action='FileOpen'/>"
-"			<menuitem action='FileOpenFolder'/>"
-"			<menuitem action='FileOpenLocation'/>"
+"			<menuitem action='"ACTION_QUIVER_OPEN"'/>"
+"			<menuitem action='"ACTION_QUIVER_OPEN_FOLDER"'/>"
+"			<placeholder action='FileOpenItems' />"
 "			<separator/>"
-"			<menuitem action='FileSave'/>"
-"			<menuitem action='FileSaveAs'/>"
+"			<menuitem action='"ACTION_QUIVER_SAVE"'/>"
+"			<menuitem action='"ACTION_QUIVER_SAVE_AS"'/>"
 "			<separator/>"
 "			<placeholder action='FileMenuAdditions' />"
 "			<separator/>"
-"			<menuitem action='Quit'/>"
+"			<menuitem action='"ACTION_QUIVER_QUIT"'/>"
 "		</menu>"
 "		<menu action='MenuEdit'>"
 "			<placeholder name='UndoRedo'/>"
@@ -395,25 +406,25 @@ char * quiver_ui_main =
 "			<separator/>"
 "			<placeholder name='Trash'/>"
 "			<separator/>"
-"			<menuitem action='Preferences'/>"
+"			<menuitem action='"ACTION_QUIVER_PREFERENCES"'/>"
 "		</menu>"
 "		<menu action='MenuView'>"
 "			<placeholder name='UIModeItems'/>"
-"			<menuitem action='ViewMenubar'/>"
-"			<menuitem action='ViewToolbarMain'/>"
-"			<menuitem action='ViewProperties'/>"
-"		 	<menuitem action='ViewStatusbar'/>"
+"			<menuitem action='"ACTION_QUIVER_VIEW_MENUBAR"'/>"
+"			<menuitem action='"ACTION_QUIVER_VIEW_TOOLBAR_MAIN"'/>"
+"			<menuitem action='"ACTION_QUIVER_VIEW_PROPERTIES"'/>"
+"		 	<menuitem action='"ACTION_QUIVER_VIEW_STATUSBAR"'/>"
 "			<placeholder name='UIItems'/>"
 "			<separator/>"
 "			<menu action='MenuSort'>"
-"				<menuitem action='SortByName'/>"
-"				<menuitem action='SortByDate'/>"
+"				<menuitem action='"ACTION_QUIVER_SORT_BY_NAME"'/>"
+"				<menuitem action='"ACTION_QUIVER_SORT_BY_DATE"'/>"
 "				<separator/>"
-"				<menuitem action='SortDescending'/>"
+"				<menuitem action='"ACTION_QUIVER_SORT_DESCENDING"'/>"
 "			</menu>"
 "			<separator/>"
-"			<menuitem action='FullScreen'/>"
-"			<menuitem action='SlideShow'/>"
+"			<menuitem action='"ACTION_QUIVER_FULLSCREEN"'/>"
+"			<menuitem action='"ACTION_QUIVER_SLIDESHOW"'/>"
 "			<separator/>"
 "			<placeholder name='Zoom'/>"
 "			<separator/>"
@@ -426,27 +437,27 @@ char * quiver_ui_main =
 "			<separator/>"
 "		</menu>"
 "		<menu action='MenuBookmarks'>"
-"			<menuitem action='BookmarksAdd'/>"
-"			<menuitem action='BookmarksEdit'/>"
+"			<menuitem action='"ACTION_QUIVER_BOOKMARKS_ADD"'/>"
+"			<menuitem action='"ACTION_QUIVER_BOOKMARKS_EDIT"'/>"
 "		</menu>"
 "		<menu action='MenuTools'>"
-"			<menuitem action='ToolsExternalTools'/>"
+"			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
 "			<separator/>"
 "			<placeholder name='ToolsExternal'/>"
 "		</menu>"
 "		<menu action='MenuWindow'>"
 "		</menu>"
 "		<menu action='MenuHelp'>"
-"			<menuitem action='About'/>"
+"			<menuitem action='"ACTION_QUIVER_ABOUT"'/>"
 "		</menu>"
 "	</menubar>"
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'/>"
 "		<placeholder name='NavToolItems'/>"
 "		<separator/>"
-"		<toolitem action='FullScreen'/>"
+"		<toolitem action='"ACTION_QUIVER_FULLSCREEN"'/>"
 "		<separator/>"
-"		<toolitem action='SlideShow'/>"
+"		<toolitem action='"ACTION_QUIVER_SLIDESHOW"'/>"
 "		<separator/>"
 "		<placeholder name='ZoomToolItems'/>"
 "		<separator/>"
@@ -455,9 +466,9 @@ char * quiver_ui_main =
 "		<placeholder name='Trash'/>"
 "		<separator/>"
 "	</toolbar>"
-"	<accelerator action='Quit_2'/>"
-"	<accelerator action='Quit_3'/>"
-"	<accelerator action='Quit_4'/>"
+"	<accelerator action='"ACTION_QUIVER_QUIT_2"'/>"
+"	<accelerator action='"ACTION_QUIVER_QUIT_3"'/>"
+"	<accelerator action='"ACTION_QUIVER_QUIT_4"'/>"
 "</ui>";
 
 
@@ -467,7 +478,7 @@ char *quiver_ui_browser =
 "		<menu action='MenuView'>"
 "			<placeholder name='UIModeItems'>"
 "				<separator/>"
-"				<menuitem action='UIModeViewer'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
@@ -475,7 +486,7 @@ char *quiver_ui_browser =
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'>"
 "			<separator/>"
-"			<toolitem action='UIModeViewer'/>"
+"			<toolitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
 "			<separator/>"
 "		</placeholder>"
 "		<placeholder name='NavToolItems'>"
@@ -491,7 +502,7 @@ char *quiver_ui_viewer =
 "		<menu action='MenuView'>"
 "			<placeholder name='UIModeItems'>"
 "				<separator/>"
-"				<menuitem action='UIModeBrowser'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
@@ -499,20 +510,20 @@ char *quiver_ui_viewer =
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'>"
 "			<separator/>"
-"			<toolitem action='UIModeBrowser'/>"
+"			<toolitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
 "			<separator/>"
 "		</placeholder>"
 "	</toolbar>"
 "</ui>";
 
 GtkToggleActionEntry QuiverImpl::action_entries_toggle[] = {
-	{ QUIVER_ACTION_FULLSCREEN, GTK_STOCK_FULLSCREEN, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
-	{ QUIVER_ACTION_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(quiver_action_handler_cb),FALSE},	
-	{ "ViewMenubar", GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ "ViewToolbarMain", GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ "ViewStatusbar", GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ "ViewProperties", GTK_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(quiver_action_handler_cb),FALSE},
-	{ "SortDescending", GTK_STOCK_SORT_DESCENDING, "In Descending Order", "", "Arrange the items in descending order", G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_FULLSCREEN, GTK_STOCK_FULLSCREEN, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(quiver_action_handler_cb),FALSE},	
+	{ ACTION_QUIVER_VIEW_MENUBAR, GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(quiver_action_handler_cb),TRUE},
+	{ ACTION_QUIVER_VIEW_TOOLBAR_MAIN, GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
+	{ ACTION_QUIVER_VIEW_STATUSBAR, GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
+	{ ACTION_QUIVER_VIEW_PROPERTIES, GTK_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_SORT_DESCENDING, GTK_STOCK_SORT_DESCENDING, "In Descending Order", "", "Arrange the items in descending order", G_CALLBACK(quiver_action_handler_cb),FALSE},
 };
 
 typedef enum
@@ -521,9 +532,9 @@ typedef enum
 	SORT_BY_DATE,
 } SortBy; 
 
-GtkRadioActionEntry QuiverImpl::action_entries_radio[] = {
-	{ "SortByName", NULL,"By Name", "", "Sort by file name", SORT_BY_NAME},
-	{ "SortByDate", NULL,"By Date", "", "Sort by date", SORT_BY_DATE},
+GtkRadioActionEntry QuiverImpl::sort_radio_action_entries[] = {
+	{ ACTION_QUIVER_SORT_BY_NAME, NULL,"By Name", "", "Sort by file name", SORT_BY_NAME},
+	{ ACTION_QUIVER_SORT_BY_DATE, NULL,"By Date", "", "Sort by date", SORT_BY_DATE},
 };
 
 GtkActionEntry QuiverImpl::action_entries[] = {
@@ -540,34 +551,32 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuWindow", NULL, N_("_Window") },
 	{ "MenuHelp", NULL, N_("_Help") },
 
-	{ "UIModeBrowser",QUIVER_STOCK_BROWSER , "_Browser", "<Control>b", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
-	{ "UIModeViewer", QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "<Control>b", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ "FileOpen", GTK_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
-	{ "FileOpenFolder", GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
-	{ "FileOpenLocation", NULL, "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( quiver_action_handler_cb )},
-	{ "FileSave", GTK_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
-	{ "FileSaveAs", GTK_STOCK_SAVE, "Save _As", "", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_OPEN, GTK_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_OPEN_FOLDER, GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_SAVE, GTK_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_SAVE_AS, GTK_STOCK_SAVE, "Save _As", "", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
 	
-	{ "Quit", GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ "Quit_2", GTK_STOCK_QUIT, "_Quit", "q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ "Quit_3", GTK_STOCK_QUIT, "_Quit", "Escape", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
-	{ "Quit_4", GTK_STOCK_QUIT, "_Quit", "<Control>w", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_QUIT, GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_QUIT_2, GTK_STOCK_QUIT, "_Quit", "q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_QUIT_3, GTK_STOCK_QUIT, "_Quit", "Escape", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_QUIT_4, GTK_STOCK_QUIT, "_Quit", "<Control>w", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
 
-	{ "Preferences", GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_PREFERENCES, GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
 
 
 
 	{ "MenuBookmarks", NULL, "_Bookmarks" },
-	{ "BookmarksAdd", GTK_STOCK_ADD, "_Add Bookmark", "", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
-	{ "BookmarksEdit", GTK_STOCK_EDIT, "_Edit Bookmarks...", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_ADD, GTK_STOCK_ADD, "_Add Bookmark", "", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_EDIT, GTK_STOCK_EDIT, "_Edit Bookmarks...", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ "ToolsExternalTools", GTK_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_EXTERNAL_TOOLS, GTK_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ "About", GTK_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_ABOUT, GTK_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( quiver_action_handler_cb )},
 
 };
-
 
 
 GtkTargetEntry QuiverImpl::quiver_drag_target_table[] = {
@@ -766,49 +775,47 @@ void Quiver::ImageChanged()
 }
 
 
-gboolean Quiver::EventWindowState( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
+
+static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
 {
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	gboolean bFullscreen = FALSE;
 	//cout << "window state event" << endl;
-	m_QuiverImplPtr->m_WindowState = event->new_window_state;
+	pQuiverImpl->m_WindowState = event->new_window_state;
 	//cout << event->new_window_state << " FS: " << GDK_WINDOW_STATE_FULLSCREEN <<endl;
 	if (GDK_WINDOW_STATE_FULLSCREEN == event->new_window_state)
 	{
-		gtk_widget_hide(m_QuiverImplPtr->m_pToolbar);
-		gtk_widget_hide(m_QuiverImplPtr->m_pMenubar);
-		gtk_widget_hide(m_QuiverImplPtr->m_StatusbarPtr->GetWidget());
+		gtk_widget_hide(pQuiverImpl->m_pToolbar);
+		gtk_widget_hide(pQuiverImpl->m_pMenubar);
+		gtk_widget_hide(pQuiverImpl->m_StatusbarPtr->GetWidget());
 		
 		//m_Viewer.HideBorder();
-		m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = true;
-		g_timeout_add(1500,timeout_event_motion_notify,this);
+		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
+		g_timeout_add(1500, timeout_event_motion_notify,pQuiverImpl);
 		
 		bFullscreen = TRUE;
 	}
 	else
 	{
 		// show widgets
-		gtk_widget_show(m_QuiverImplPtr->m_pToolbar);
-		gtk_widget_show(m_QuiverImplPtr->m_pMenubar);
-		gtk_widget_show(m_QuiverImplPtr->m_StatusbarPtr->GetWidget());
+		gtk_widget_show(pQuiverImpl->m_pToolbar);
+		gtk_widget_show(pQuiverImpl->m_pMenubar);
+		gtk_widget_show(pQuiverImpl->m_StatusbarPtr->GetWidget());
 		
-		gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, NULL);
+		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
 		//m_Viewer.ShowBorder();
 	}
 	
-	GtkAction * action = GetAction(m_QuiverImplPtr->m_pUIManager,QUIVER_ACTION_FULLSCREEN);
+	GtkAction * action = QuiverUtils::GetAction(pQuiverImpl->m_pUIManager,ACTION_QUIVER_FULLSCREEN);
 	if (NULL != action)
 	{
-		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,m_QuiverImplPtr.get());
+		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,pQuiverImpl);
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bFullscreen);
-		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,m_QuiverImplPtr.get());
+		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,pQuiverImpl);
 
 	}
 
 	return TRUE;
-}
-gboolean Quiver::event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
-{
-	return ((Quiver*)data)->EventWindowState(widget,event,data);
 }
 
 gboolean Quiver::event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
@@ -976,8 +983,8 @@ void Quiver::Init()
 										m_QuiverImplPtr.get());
 
 	gtk_action_group_add_radio_actions(actions,
-										m_QuiverImplPtr->action_entries_radio, 
-										G_N_ELEMENTS (m_QuiverImplPtr->action_entries_radio),
+										m_QuiverImplPtr->sort_radio_action_entries, 
+										G_N_ELEMENTS (m_QuiverImplPtr->sort_radio_action_entries),
 										SORT_BY_NAME,
 										G_CALLBACK(quiver_radio_action_handler_cb),
 										m_QuiverImplPtr.get());										
@@ -985,9 +992,9 @@ void Quiver::Init()
 	gtk_ui_manager_insert_action_group (m_QuiverImplPtr->m_pUIManager,actions,0);
                                              
 	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "connect_proxy",
-		G_CALLBACK (signal_connect_proxy), this);
+		G_CALLBACK (signal_connect_proxy), m_QuiverImplPtr.get());
 	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "disconnect_proxy",
-		G_CALLBACK (signal_disconnect_proxy), this);
+		G_CALLBACK (signal_disconnect_proxy), m_QuiverImplPtr.get());
 
                                              
 	gtk_window_add_accel_group (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
@@ -1006,7 +1013,7 @@ void Quiver::Init()
  	//gtk_widget_add_events (m_pQuiverWindow, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);
 	
     g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "window_state_event",
-    			G_CALLBACK (Quiver::event_window_state), this);
+    			G_CALLBACK (event_window_state), m_QuiverImplPtr.get());
 
     g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "delete_event",
     			G_CALLBACK (Quiver::event_delete), this);
@@ -1017,10 +1024,10 @@ void Quiver::Init()
 	g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "destroy",
 				G_CALLBACK (Quiver::event_destroy), this);
 	g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "button_press_event",
-				G_CALLBACK (quiver_window_button_press), this);
+				G_CALLBACK (quiver_window_button_press), m_QuiverImplPtr.get());
 
 	g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "motion_notify_event",
-				G_CALLBACK (Quiver::event_motion_notify), this);
+				G_CALLBACK (event_motion_notify), m_QuiverImplPtr.get());
 				
 			
 
@@ -1056,7 +1063,7 @@ void Quiver::Init()
 	
 	bool prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 
-	GtkAction *actionViewProperties = GetAction(m_QuiverImplPtr->m_pUIManager,"ViewProperties");
+	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,"ViewProperties");
 
 	if (prefs_show)
 	{
@@ -1235,7 +1242,7 @@ void Quiver::SaveSettings()
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH,m_QuiverImplPtr->m_iAppWidth);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT,m_QuiverImplPtr->m_iAppHeight);
 
-	GtkAction *actionViewProperties = GetAction(m_QuiverImplPtr->m_pUIManager,"ViewProperties");
+	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,"ViewProperties");
 	gboolean is_active = gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(actionViewProperties));
 	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW, is_active ?  true : false);
 
@@ -1373,9 +1380,11 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	return FALSE; // return false so it is never called again
 }
 
-gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
+
+static gboolean timeout_event_motion_notify (gpointer data)
 {
-	if (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState)
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
+	if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
 	{
 		gdk_threads_enter();
 		
@@ -1387,7 +1396,7 @@ gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
 		empty_bitmap = gdk_bitmap_create_from_data (NULL,zero,1,1);
 		empty_cursor = gdk_cursor_new_from_pixmap (empty_bitmap,empty_bitmap,&blank,&blank,0,0);
 
-		gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, empty_cursor);
+		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, empty_cursor);
 		
 		g_object_unref(empty_bitmap);
 		gdk_cursor_unref (empty_cursor);
@@ -1395,32 +1404,25 @@ gboolean Quiver::TimeoutEventMotionNotify(gpointer data)
 		//remove the mouse cursor		
 		gdk_threads_leave();
 	}
-	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
+	pQuiverImpl->m_iTimeoutMouseMotionNotify = 0;
 	return FALSE;
 }
 
-gboolean Quiver::timeout_event_motion_notify (gpointer data)
-{
-	return ((Quiver*)data)->TimeoutEventMotionNotify(data);
-}
 
-gboolean Quiver::EventMotionNotify( GtkWidget *widget, GdkEventMotion *event, gpointer data )
+static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data )
 {
-	if (0 != m_QuiverImplPtr->m_iTimeoutMouseMotionNotify)
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
+	if (0 != pQuiverImpl->m_iTimeoutMouseMotionNotify)
 	{
-		g_source_remove(m_QuiverImplPtr->m_iTimeoutMouseMotionNotify);
-		m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
+		g_source_remove(pQuiverImpl->m_iTimeoutMouseMotionNotify);
+		pQuiverImpl->m_iTimeoutMouseMotionNotify = 0;
 	}
 	
-	gdk_window_set_cursor (m_QuiverImplPtr->m_pQuiverWindow->window, NULL);
+	gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
 
-	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
+	pQuiverImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pQuiverImpl);
 
 	return FALSE;
-}
-gboolean Quiver::event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data )
-{
-	return ((Quiver*)data)->EventMotionNotify(widget,event,NULL);
 }
 
 
@@ -1430,26 +1432,7 @@ gboolean Quiver::event_motion_notify( GtkWidget *widget, GdkEventMotion *event, 
 //==============================================================================
 
 	// gtk_ui_manager signals
-void Quiver::signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
-{
-	return ((Quiver*)data)->SignalConnectProxy(manager,action,proxy,data);
-}
-void Quiver::signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
-{
-	return ((Quiver*)data)->SignalDisconnectProxy(manager,action,proxy,data);
-}
-
-void Quiver::signal_item_select (GtkItem *proxy,gpointer data)
-{
-	return ((Quiver*)data)->SignalItemSelect(proxy,data);
-}
-void Quiver::signal_item_deselect (GtkItem *proxy,gpointer data)
-{
-	return ((Quiver*)data)->SignalItemDeselect(proxy,data);
-}
-
-
-void Quiver::SignalConnectProxy(GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
+static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
 {
 	if (GTK_IS_ITEM(proxy))
 	{
@@ -1457,7 +1440,7 @@ void Quiver::SignalConnectProxy(GtkUIManager *manager,GtkAction *action,GtkWidge
 		g_signal_connect (proxy, "deselect",G_CALLBACK (signal_item_deselect), data);
 	}
 }
-void Quiver::SignalDisconnectProxy(GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
+static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
 {
 	/*
 	g_signal_handlers_disconnect_by_func (proxy, G_CALLBACK (signal_item_select), data);
@@ -1465,8 +1448,9 @@ void Quiver::SignalDisconnectProxy(GtkUIManager *manager,GtkAction *action,GtkWi
 	*/
 }
 
-void Quiver::SignalItemSelect (GtkItem *proxy,gpointer data)
+static void signal_item_select (GtkItem *proxy,gpointer data)
 {
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	GtkAction* action;
 	char*      message;
 	
@@ -1476,13 +1460,15 @@ void Quiver::SignalItemSelect (GtkItem *proxy,gpointer data)
 	g_object_get (G_OBJECT (action), "tooltip", &message, NULL);
 	if (message)
 	{
-		m_QuiverImplPtr->m_StatusbarPtr->PushText(message);
+		pQuiverImpl->m_StatusbarPtr->PushText(message);
 		g_free (message);
 	}
-	
+
 }
-void Quiver::SignalItemDeselect (GtkItem *proxy,gpointer data)
+
+static void signal_item_deselect (GtkItem *proxy,gpointer data)
 {
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	GtkAction* action;
 	char*      message;
 	
@@ -1492,9 +1478,10 @@ void Quiver::SignalItemDeselect (GtkItem *proxy,gpointer data)
 	g_object_get (G_OBJECT (action), "tooltip", &message, NULL);
 	if (message)
 	{
-		m_QuiverImplPtr->m_StatusbarPtr->PopText();
+		pQuiverImpl->m_StatusbarPtr->PopText();
 		g_free (message);
 	}
+
 }
 
 
@@ -1616,7 +1603,7 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event_ptr)
 {
-	GtkAction * action = GetAction(parent->m_pUIManager,QUIVER_ACTION_SLIDESHOW);
+	GtkAction * action = QuiverUtils::GetAction(parent->m_pUIManager,ACTION_QUIVER_SLIDESHOW);
 	if (NULL != action)
 	{
 		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
@@ -1768,19 +1755,22 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 
 	//printf("quiver_action_handler_cb: %s\n",szAction);
 
-	if (0 == strcmp(szAction,"Quit") || 0 == strcmp(szAction,"Quit_2") || 0 == strcmp(szAction,"Quit_3") || 0 == strcmp(szAction,"Quit_4"))
+	if (0 == strcmp(szAction,ACTION_QUIVER_QUIT) 
+	    || 0 == strcmp(szAction,ACTION_QUIVER_QUIT_2) 
+	    || 0 == strcmp(szAction,ACTION_QUIVER_QUIT_3) 
+	    || 0 == strcmp(szAction,ACTION_QUIVER_QUIT_4))
 	{
 		pQuiver->OnQuit();
 	}
-	else if (0 == strcmp(szAction,"FileOpen"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_OPEN))
 	{
 		pQuiver->OnOpenFile();
 	}
-	else if (0 == strcmp(szAction,"FileOpenFolder"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_OPEN_FOLDER))
 	{
 		pQuiver->OnOpenFolder();
 	}
-	else if (0 == strcmp(szAction,"ViewProperties"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_VIEW_PROPERTIES))
 	{
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
@@ -1791,7 +1781,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			pQuiver->OnShowProperties(false);
 		}
 	}
-	else if (0 == strcmp(szAction,"ViewToolbarMain"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_VIEW_TOOLBAR_MAIN))
 	{
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
@@ -1802,7 +1792,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			pQuiver->OnShowToolbar(false);
 		}
 	}
-	else if (0 == strcmp(szAction,"ViewMenubar"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_VIEW_MENUBAR))
 	{
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
@@ -1813,7 +1803,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			pQuiver->OnShowMenubar(false);
 		}
 	}
-	else if (0 == strcmp(szAction,"ViewStatusbar"))
+	else if (0 == strcmp(szAction, ACTION_QUIVER_VIEW_STATUSBAR))
 	{
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
@@ -1824,44 +1814,44 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			pQuiver->OnShowStatusbar(false);
 		}
 	}
-	else if (0 == strcmp(szAction,"FullScreen"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_FULLSCREEN))
 	{
 		pQuiver->OnFullScreen();
 	}
-	else if (0 == strcmp(szAction,"UIModeBrowser"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_BROWSER))
 	{
 		pQuiver->ShowBrowser();
 
 	}		
-	else if (0 == strcmp(szAction,"UIModeViewer"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_VIEWER))
 	{
 		pQuiver->ShowViewer();
 	}
-	else if (0 == strcmp(szAction,"About"))
+	else if (0 == strcmp(szAction, ACTION_QUIVER_ABOUT))
 	{
 		pQuiver->OnAbout();
 	}
-	else if (0 == strcmp(szAction,QUIVER_ACTION_SLIDESHOW))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_SLIDESHOW))
 	{
 		pQuiver->OnSlideShow(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
 	}
-	else if (0 == strcmp(szAction,"Preferences"))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_PREFERENCES))
 	{
 		//
 		PreferencesDlg prefDlg;
 		prefDlg.Run();
 	}
-	else if(0 == strcmp(szAction,"FileSave"))
+	else if(0 == strcmp(szAction,ACTION_QUIVER_SAVE))
 	{
 		pQuiverImpl->Save();
 	}
-	else if(0 == strcmp(szAction,"FileSaveAs"))
+	else if(0 == strcmp(szAction,ACTION_QUIVER_SAVE_AS))
 	{
 		pQuiverImpl->SaveAs();	
 	}
-	else if(0 == strcmp(szAction,"SortByName"))
+	else if(0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_NAME))
 	{
-		GtkAction *sort_desc_action = GetAction(pQuiverImpl->m_pUIManager,"SortDescending");
+		GtkAction *sort_desc_action = QuiverUtils::GetAction(pQuiverImpl->m_pUIManager,"SortDescending");
 		bool bAsc = ( FALSE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
 		
 		gint sortby = gtk_radio_action_get_current_value(GTK_RADIO_ACTION(action));
@@ -1879,7 +1869,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			
 		}
 	}
-	else if(0 == strcmp(szAction,"SortDescending"))
+	else if(0 == strcmp(szAction,ACTION_QUIVER_SORT_DESCENDING))
 	{
 		// should just reverse the list
 		pQuiverImpl->m_ImageList.Reverse();
@@ -1972,7 +1962,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		}
 
 	}
-	else if(0 == strcmp(szAction,"ToolsExternalTools"))
+	else if(0 == strcmp(szAction,ACTION_QUIVER_EXTERNAL_TOOLS))
 	{
 		printf("external...\n");
 		//ExternalToolsDlg externalToolsDlg;
@@ -1983,12 +1973,11 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data )
 {
-	Quiver *pQuiver;
-	pQuiver = (Quiver*)data;
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 
 	if (2 == event->button)
 	{
-		pQuiver->OnFullScreen();
+		pQuiverImpl->m_pQuiver->OnFullScreen();
 		return TRUE;
 	}
 

@@ -34,32 +34,11 @@ public:
 	
 	gboolean TimeoutEventMotionNotify(gpointer data);
 
-	gboolean EventMotionNotify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
-
-	
-	static gboolean timeout_event_motion_notify (gpointer data);
-	static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
-
 	static gboolean idle_quiver_init (gpointer data);
 	gboolean IdleQuiverInit(gpointer data);
 
 	static gboolean event_delete( GtkWidget *widget, GdkEvent  *event, gpointer   data );
 	static void event_destroy( GtkWidget *widget,gpointer   data );
-
-	static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data );
-	
-	// gtk_ui_manager signals
-	static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
-	static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
-	static void signal_item_select (GtkItem *proxy,gpointer data);
-	static void signal_item_deselect (GtkItem *proxy,gpointer data);
-	
-	void SignalConnectProxy(GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
-	void SignalDisconnectProxy(GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);	
-	void SignalItemSelect (GtkItem *proxy,gpointer data);
-	void SignalItemDeselect (GtkItem *proxy,gpointer data);
-	
-	gboolean EventWindowState( GtkWidget *widget, GdkEventWindowState *event, gpointer data );
 
 	gboolean EventDelete( GtkWidget *widget,GdkEvent  *event,gpointer data );
 	void EventDestroy(GtkWidget *widget,gpointer data);

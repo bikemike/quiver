@@ -719,17 +719,19 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 		swap(width,height);
 	}
 	
-	if (10 > max_width)
-	{
-		max_width = 10;
-	}
-	if (10 > max_height)
-	{
-		max_height = 10;
-	}
 	
 	if (0 < max_width && 0 < max_height)
 	{
+		if (10 > max_width)
+		{
+			max_width = 20;
+		}
+		
+		if (10 > max_height)
+		{
+			max_height = 20;
+		}
+		
 		if (max_width < width || max_height < height)
 		{
 			// adjust the image size

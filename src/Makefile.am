@@ -8,6 +8,7 @@ AM_CPPFLAGS = \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
 	-DQUIVER_GLADEDIR=\""$(gladedir)"\" \
 	$(PACKAGE_CFLAGS)\
+	$(LIBGCRYPT_CFLAGS) \
 	-Wall 
 ##-I$(top_srcdir)/libquiver \
 
@@ -42,6 +43,8 @@ quiver_SOURCES = \
 	IImageListEventHandler.h \
 	ImageLoader.h \
 	ImageLoader.cpp \
+	IconViewThumbLoader.h \
+	IconViewThumbLoader.cpp \
 	ImageSaveManager.h \
 	ImageSaveManager.cpp \
 	QuiverFile.h \
@@ -84,7 +87,7 @@ quiver_SOURCES = \
 
 quiver_LDFLAGS = 
 
-quiver_LDADD = $(PACKAGE_LIBS) -ljpeg $(top_srcdir)/libquiver/libquiver.la /usr/lib/libboost_signals.a 
+quiver_LDADD = $(PACKAGE_LIBS) $(LIBGCRYPT_LIBS) -ljpeg $(top_srcdir)/libquiver/libquiver.la /usr/lib/libboost_signals.a 
 
 
 TESTS = test_image_list test_quiver_file test_icon_view
