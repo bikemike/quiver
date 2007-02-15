@@ -7,10 +7,10 @@ AM_CPPFLAGS = \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
 	-DQUIVER_GLADEDIR=\""$(gladedir)"\" \
-	$(PACKAGE_CFLAGS)\
+	$(PACKAGE_CFLAGS) \
+	$(BOOST_CPPFLAGS) \
 	$(LIBGCRYPT_CFLAGS) \
 	-Wall 
-##-I$(top_srcdir)/libquiver \
 
 bin_PROGRAMS = quiver
 
@@ -87,7 +87,13 @@ quiver_SOURCES = \
 
 quiver_LDFLAGS = 
 
-quiver_LDADD = $(PACKAGE_LIBS) $(LIBGCRYPT_LIBS) -ljpeg $(top_srcdir)/libquiver/libquiver.la /usr/lib/libboost_signals.a 
+quiver_LDADD = \
+	$(PACKAGE_LIBS) \
+	$(BOOST_LDFLAGS) \
+	$(BOOST_SIGNALS_LIB) \
+	$(LIBGCRYPT_LIBS) \
+	-ljpeg \
+	$(top_srcdir)/libquiver/libquiver.la
 
 
 TESTS = test_image_list test_quiver_file test_icon_view

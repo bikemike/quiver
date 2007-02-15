@@ -3,7 +3,7 @@ SUBDIRS =
 DIST_SUBDIRS = 
 ##icons cursors
 
-AM_CPPFLAGS =		\
+AM_CFLAGS =		\
 	$(PACKAGE_CFLAGS) \
 	-Wall
 

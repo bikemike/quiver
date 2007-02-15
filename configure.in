@@ -19,10 +19,13 @@ AC_HEADER_STDC
 
 AC_CHECK_FUNCS([gettimeofday])
 AC_CHECK_HEADERS([sys/time.h])
+
+AC_CHECK_HEADER([jpeglib.h],, [AC_MSG_ERROR([Could not find jpeglib.h])])
+AC_CHECK_HEADER([pthread.h],, [AC_MSG_ERROR([Could not find pthread.h])])
+
 AC_C_CONST
 AC_HEADER_STDBOOL
 AC_HEADER_TIME
-
 
 
 AC_PROG_CPP
@@ -45,6 +48,8 @@ AM_GLIB_GNU_GETTEXT
 
 AC_PROG_INTLTOOL([0.21])
 
+AX_BOOST_BASE([1.33.1])
+AX_BOOST_SIGNALS
 
 dnl libglade-2.0
 PKG_CHECK_MODULES(PACKAGE, [gtk+-2.0  gnome-vfs-2.0 libgnomeui-2.0 libexif libglade-2.0])
