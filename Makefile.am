@@ -1,5 +1,8 @@
 ## Process this file with automake to produce Makefile.in
 
+## the fikkiwubg kube us needed to include local m4 scripts for detecting boost
+ACLOCAL_AMFLAGS= -I m4
+
 SUBDIRS =      \
 	po         \
 	libquiver  \

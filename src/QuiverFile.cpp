@@ -1,9 +1,10 @@
 #include <config.h>
 #include <glib.h>
-#include <libgnomeui/gnome-thumbnail.h>
 #include <libgnomeui/gnome-icon-lookup.h>
 #include <exif-utils.h>
 #include <glib/gstdio.h>
+
+#include <gcrypt.h>
 
 #include <string>
 
@@ -89,6 +90,8 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height);
 static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
                                             gint             height,
                                             gpointer         user_data);
+gchar* quiver_thumbnail_path_for_uri(const char* uri, bool bLargeThumb);
+
 typedef struct _PixbufLoaderSizeInfoStruct
 {
 	gint width;
@@ -260,19 +263,16 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 bool QuiverFile::QuiverFileImpl::HasThumbnail(bool bLargeThumb) const
 {
 	bool bHasThumb = m_bHasNormalThumbnail;
-	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
 		
 	if (bLargeThumb)
 	{
 		bHasThumb = m_bHasLargeThumbnail;
-		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
 	}
 
 	if (!bHasThumb)
 	{
-	
 		gchar * thumb_path ;
-		thumb_path = gnome_thumbnail_path_for_uri(m_szURI,thumb_size);
+		thumb_path = quiver_thumbnail_path_for_uri(m_szURI,bLargeThumb);
 		
 		struct stat s;
 		if (0 == g_stat(thumb_path,&s))
@@ -288,12 +288,6 @@ bool QuiverFile::QuiverFileImpl::HasThumbnail(bool bLargeThumb) const
 GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false */)
 {
 	GnomeVFSFileInfo* vfsFileInfo = GetFileInfo();
-	
-	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
-	if (bLargeThumb)
-	{
-		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
-	}
 	
 	gboolean save_thumbnail_to_cache = TRUE;
 	
@@ -317,9 +311,9 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 		}
 	}
 	
-	gchar * thumb_path ;
-	thumb_path = gnome_thumbnail_path_for_uri(m_szURI,thumb_size);
-
+	gchar* thumb_path ;
+	thumb_path = quiver_thumbnail_path_for_uri(m_szURI,bLargeThumb);
+	
 	// try to load the thumb from thumb_path
 	GError *tmp_error;
 	gchar buffer[8192];
@@ -543,7 +537,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 
 	}
 	
-	gchar *large_thumb_file = gnome_thumbnail_path_for_uri(m_szURI,GNOME_THUMBNAIL_SIZE_LARGE);
+	gchar *large_thumb_file = quiver_thumbnail_path_for_uri(m_szURI,true);
 	gchar *large_thumb_path = g_path_get_dirname(large_thumb_file);
 	g_free(large_thumb_file);
 	
@@ -1304,12 +1298,6 @@ int QuiverFile::GetOrientation()
 
 void QuiverFile::RemoveCachedThumbnail(bool bLargeThumb)
 {
-	GnomeThumbnailSize thumb_size = GNOME_THUMBNAIL_SIZE_NORMAL;
-	if (bLargeThumb)
-	{
-		thumb_size = GNOME_THUMBNAIL_SIZE_LARGE;
-	}
-	
 	if (bLargeThumb)
 	{
 		m_QuiverFilePtr->c_ThumbnailCacheLarge.RemovePixbuf(m_QuiverFilePtr->m_szURI);
@@ -1319,8 +1307,38 @@ void QuiverFile::RemoveCachedThumbnail(bool bLargeThumb)
 		m_QuiverFilePtr->c_ThumbnailCacheNormal.RemovePixbuf(m_QuiverFilePtr->m_szURI);
 	}
 	gchar * thumb_path ;
-	thumb_path = gnome_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,thumb_size);
+	thumb_path = quiver_thumbnail_path_for_uri(m_QuiverFilePtr->m_szURI,bLargeThumb);
 	g_remove(thumb_path);
 	g_free (thumb_path);
 }
+
+gchar* quiver_thumbnail_path_for_uri(const char* uri, bool bLargeThumb)
+{
+	
+	unsigned char digest[16];
+	gcry_md_hash_buffer (GCRY_MD_MD5, digest, uri, strlen(uri));
+	
+	char szMD5Hash[37];
+	g_snprintf(szMD5Hash,37,"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x.png",
+	           digest[0], digest[1], digest[2], digest[3], digest[4],
+	           digest[5], digest[6], digest[7], digest[8], digest[9],
+    	       digest[10], digest[11], digest[12], digest[13],
+        	   digest[14], digest[15]);
+	
+
+	char* szSize = NULL;
+	
+	if (bLargeThumb)
+	{
+		szSize = "large";
+
+	}
+	else
+	{
+		szSize = "normal";
+	}
+	
+	return g_build_filename( g_get_home_dir(), ".thumbnails", szSize, szMD5Hash, NULL);
+}
+
 

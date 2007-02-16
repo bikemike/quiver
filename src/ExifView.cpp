@@ -848,7 +848,6 @@ exif_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpoint
 										 (gint) event->y,
 										 &path, &column, NULL, NULL))
 				{
-					printf("column: %s\n",gtk_tree_view_column_get_title(column));
 					gtk_tree_view_set_cursor(GTK_TREE_VIEW(treeview),path,NULL,FALSE);
 					gtk_tree_selection_unselect_all(selection);
 					gtk_tree_selection_select_path(selection, path);
@@ -992,7 +991,6 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 	{
 		QuiverUtils::ConnectUnmodifiedAccelerators(pExifViewImpl->m_pUIManager);
 	}
-	printf("finished editing\n");
 
 	GtkTreeModel *pTreeModel = gtk_tree_view_get_model(GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
 
@@ -1008,12 +1006,10 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 	gtk_tree_model_get (pTreeModel,&child,EXIF_TREE_COLUMN_TAG_ID,&tag_id,-1);
 	gtk_tree_model_get (pTreeModel,&child,EXIF_TREE_COLUMN_VALUE_TEXT,&value,-1);
 
-	printf("new value for tag %d: %s\n",tag_id,new_text);
 
 
 	if (EXIF_TAG_ORIENTATION != tag_id && !strcmp(value,new_text) )
 	{
-		printf(" values are the same, we should not update anything \n");
 		return;
 	}
 	
@@ -1026,7 +1022,6 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 			{
 				if ( !strcmp(new_text,orientation_options[i]) )
 				{
-					printf("new/old orientation value: %d [%s] [%s]\n",i,new_text, orientation_options[i]);
 					updated = exif_update_orientation(pExifData, i+1);	
 					
 					if (updated)
@@ -1046,7 +1041,6 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 		case EXIF_TAG_PIXEL_Y_DIMENSION:
 		case EXIF_TAG_RELATED_IMAGE_WIDTH:
 		case EXIF_TAG_RELATED_IMAGE_LENGTH:
-			printf("edited a number field\n");
 			exif_update_entry(pExifData, ifd_id,tag_id,new_text);
 			updated = TRUE;
 			break;
@@ -1057,10 +1051,9 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 			//"YYYY:MM:DD HH:MM:SS" 
 			if ( exif_date_format_is_valid(new_text) )
 			{
-				printf("edited a date field\n");
 				exif_update_entry(pExifData, ifd_id,tag_id,new_text);
 				updated = TRUE;
-			break;
+				break;
 			} 
 			break;
 
@@ -1068,31 +1061,28 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 		case EXIF_TAG_ARTIST:
 		case EXIF_TAG_IMAGE_DESCRIPTION:
 		case EXIF_TAG_COPYRIGHT:
-			printf("edited a text field\n");
 			exif_update_entry(pExifData, ifd_id,tag_id,new_text);
 			updated = TRUE;
 			break;
 
 
 		case EXIF_TAG_USER_COMMENT:
-			printf("USER COMMENT: NOT IMPLEMENTED YET!\n");
 			break;
 
 		default:
-			printf("edited an unknown field!\n");
+			break;
 
 	}
 	if (updated)
 	{
-		printf("updating ... \n");
 		if (pExifViewImpl->m_QuiverFile.Modified())
-			printf("1: quiver file was modified\n");
 			
 		exif_tree_update_entry(pExifViewImpl, ifd_id, tag_id);
 		
 		pExifViewImpl->m_QuiverFile.SetExifData(pExifData);
 		if (pExifViewImpl->m_QuiverFile.Modified())
-			printf("2: quiver file was modified\n");
+		{
+		}
 		//save_image();
 	}
 }
@@ -1118,38 +1108,49 @@ exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o)
 		e->data = (unsigned char*)malloc (e->size);
 		if (!e->data) 
 		{
-			fprintf (stderr, ("Not enough memory."));
-			fputc ('\n', stderr);
-			exit (1);
+			//fprintf (stderr, ("Not enough memory."));
+			//fputc ('\n', stderr);
+			//exit (1);
 		}
-		strcpy ((char*)e->data, set_value);
+		else
+		{
+			strcpy ((char*)e->data, set_value);
+		}
 		return;
 	}
 
 	value_p = (char*) set_value;
-	for (i = 0; i < e->components; i++) {
+	for (i = 0; i < e->components; i++) 
+	{
 		const char *begin, *end;
 		unsigned char *buf, s;
 		const char comp_separ = ' ';
 
 		begin = value_p;
 		value_p = index (begin, comp_separ);
-		if (!value_p) {
-			if (i != e->components - 1) {
-				fprintf (stderr, ("Too few components "
-				"specified!"));
-				fputc ('\n', stderr);
-				exit (1);
+		if (!value_p) 
+		{
+			if (i != e->components - 1)
+			{
+				break;
 			}
-			end = begin + strlen (begin);
-		} else end = value_p++;
+			else
+			{
+				end = begin + strlen (begin);
+			}
+		} 
+		else
+		{
+			end = value_p++;
+		}
 
 		buf = (unsigned char*)malloc ((end - begin + 1) * sizeof (char));
 		strncpy ((char*)buf, begin, end - begin);
 		buf[end - begin] = '\0';
 
 		s = exif_format_get_size (e->format);
-		switch (e->format) {
+		switch (e->format)
+		{
 			case EXIF_FORMAT_ASCII:
 				//internal_error (); /* Previously handled */
 				break;
@@ -1166,9 +1167,7 @@ exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o)
 			case EXIF_FORMAT_SRATIONAL:
 			case EXIF_FORMAT_BYTE:
 			default:
-				fprintf (stderr, ("Not yet implemented!"));
-				fputc ('\n', stderr);
-				exit (1);
+				break;
 		}
 
 		free (buf);
@@ -1261,7 +1260,6 @@ static gboolean exif_date_format_is_valid(const char *date)
 	{
 		int year, month, day, hour, min, sec;
 		sscanf(date,"%d:%d:%d %d:%d:%d",&year, &month, &day, &hour, &min, &sec);
-		printf("date parsed: %d:%d:%d %d:%d:%d\n",year, month, day, hour, min, sec);
 		struct tm tm_date;
 		tm_date.tm_sec = sec;
 		tm_date.tm_min = min;
@@ -1278,18 +1276,15 @@ static gboolean exif_date_format_is_valid(const char *date)
 			tm_date.tm_mon == month -1 &&
 			tm_date.tm_year == year - 1900 )
 		{
-			printf("date is valid\n");
 			retval = TRUE;
 		}
 		else
 		{
-			printf("date is invalid\n");
 		}
 		
 	}
 	else
 	{
-		printf("date is invalid\n");
 	}
 
 	return retval;
@@ -1496,7 +1491,6 @@ static void exif_tree_update_iter_entry (ExifView::ExifViewImpl *pExifViewImpl, 
 			memcpy(val,start,entry->size - character_code_size);
 			val[entry->size - character_code_size] = '\0';
 
-			printf("Size of the user comment filed is %d\n",entry->size);
 		}
 		else
 		{

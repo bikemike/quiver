@@ -30,6 +30,7 @@ enum {
 	SIGNAL_ACTIVATED,
 	SIGNAL_RELOAD,
 	SIGNAL_MAGNIFICATION_CHANGED,
+	SIGNAL_VIEW_MODE_CHANGED,
 	SIGNAL_COUNT
 };
 
@@ -276,6 +277,15 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 		NULL, NULL,
 		g_cclosure_marshal_VOID__VOID,
 		G_TYPE_NONE, 0);
+
+	imageview_signals[SIGNAL_VIEW_MODE_CHANGED] = g_signal_new (/*FIXME: I_*/("view-mode-changed"),
+		G_TYPE_FROM_CLASS (obj_class),
+		G_SIGNAL_RUN_LAST,
+		G_STRUCT_OFFSET (QuiverImageViewClass, view_mode_changed),
+		NULL, NULL,
+		g_cclosure_marshal_VOID__VOID,
+		G_TYPE_NONE, 0);
+
 	/*
 
 	g_object_class_install_property (obj_class,
@@ -1153,7 +1163,10 @@ gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
 		if (GDK_SCROLL_UP == event->direction)
 		{
 			if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode)
+			{
 				quiver_image_view_set_view_mode_full(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM,FALSE);
+			}
+			
 			quiver_image_view_set_magnification(imageview,
 				quiver_image_view_get_magnification(imageview)/1.3);
 			//vadjust -= imageview->priv->vadjustment->step_increment;
@@ -1161,7 +1174,10 @@ gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
 		else if (GDK_SCROLL_DOWN == event->direction)
 		{
 			if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode)
+			{
 				quiver_image_view_set_view_mode_full(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM,FALSE);
+			}
+			
 			quiver_image_view_set_magnification(imageview,
 				quiver_image_view_get_magnification(imageview)*1.3);
 			//vadjust += imageview->priv->vadjustment->step_increment;
@@ -1932,6 +1948,7 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode)
 {
 	gdouble old_mag;
+	old_mag = quiver_image_view_get_magnification(imageview);
 	
 	quiver_image_view_prepare_for_new_pixbuf(imageview,width,height);
 
@@ -1955,11 +1972,11 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 		gtk_adjustment_set_value(imageview->priv->vadjustment,0);
 		
 		imageview->priv->scroll_draw = TRUE;
+		imageview->priv->magnification = 0;
+		old_mag = 0;
 	}
 
-
 	// emit magnification changed
-	old_mag = imageview->priv->magnification;
 	imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
 	if (old_mag != imageview->priv->magnification)
 	{
@@ -2015,6 +2032,7 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 	
 	GtkWidget *widget;
 	GdkRectangle rect;
+	QuiverImageViewMode old_mode;
 	
 	gdouble old_mag = imageview->priv->magnification;
 	
@@ -2045,8 +2063,13 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 	// the current magnification the magnification to be 
 	// that of the current view mode
 	imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
-
+	old_mode = imageview->priv->view_mode;
 	imageview->priv->view_mode = mode;
+	if (old_mode != mode)
+	{
+		g_signal_emit(imageview,imageview_signals[SIGNAL_VIEW_MODE_CHANGED],0);
+	}
+
 
 	// for the case that we are switching away from zoom mode, we must 
 	// set the magnification to the correct magnification for the current mode.
@@ -2131,6 +2154,34 @@ gdouble quiver_image_view_get_magnification(QuiverImageView *imageview)
 	return magnification;
 }
 
+gboolean quiver_image_view_can_magnify(QuiverImageView *imageview, gboolean in)
+{
+	gdouble mag = quiver_image_view_get_magnification(imageview);
+	gboolean can_magnify = FALSE;
+	
+	if (in)
+	{
+		if (QUIVER_IMAGE_VIEW_MAG_MAX > mag)
+		{
+			can_magnify = TRUE;
+		}
+	}
+	else
+	{
+		gdouble w = imageview->priv->pixbuf_width * mag;
+		gdouble h = imageview->priv->pixbuf_height * mag;
+
+		if ( (w > imageview->priv->pixbuf_width && h > imageview->priv->pixbuf_height)
+			 || (QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE < w &&
+			QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE < h) )
+		{
+			can_magnify = TRUE;
+		}
+	}
+		
+	return can_magnify;
+}
+
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_mag)
 {
 	// restrict the zoom amount
@@ -2204,8 +2255,6 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 	widget = GTK_WIDGET(imageview);
 
 	gdk_window_get_pointer(widget->window,&x,&y,&mask);
-	//printf("pointer position: %d x %d\n",x,y);
-
 
 	old_hadjust = gtk_adjustment_get_value(imageview->priv->hadjustment);
 	old_vadjust = gtk_adjustment_get_value(imageview->priv->vadjustment);
@@ -2214,9 +2263,7 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 	// update size must be done befor the code that comes after it
 	imageview->priv->scroll_draw   = FALSE;
 
-	//printf("!!!!!UPDATE SIZE 1\n");
 	quiver_image_view_update_size(imageview);
-	//printf("!!!!!UPDATE SIZE 2\n");
 
 	gint old_hpage_size = imageview->priv->hadjustment->page_size;
 	gint old_vpage_size = imageview->priv->vadjustment->page_size;
@@ -2451,9 +2498,7 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 		imageview->priv->pixbuf = NULL;
 	}
 	
-	imageview->priv->reload_event_sent = FALSE;
-
-
+	imageview->priv->reload_event_sent = FALSE;	
 	
 	/*
 	if (NULL == imageview->priv->pixbuf_scaled)

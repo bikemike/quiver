@@ -5,6 +5,39 @@ static bool g_bAcceleratorsDisabled = false;
 
 namespace QuiverUtils
 {
+	
+	GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
+	{
+		GList * action_groups = gtk_ui_manager_get_action_groups(ui);
+		GtkAction * action = NULL;
+		while (NULL != action_groups)
+		{
+			action = gtk_action_group_get_action (GTK_ACTION_GROUP(action_groups->data),action_name);
+			if (NULL != action)
+			{
+				break;
+			}                      
+			action_groups = g_list_next(action_groups);
+		}
+	
+		return action;
+	}
+	
+	
+	void SetActionsSensitive(GtkUIManager *pUIManager, gchar** actions, gint n_actions, gboolean bSensitive)
+	{
+		gint i;
+		for ( i = 0; i < n_actions; i++)
+		{
+			GtkAction* action = QuiverUtils::GetAction(pUIManager, actions[i]);
+			if (NULL != action)
+			{
+				gtk_action_set_sensitive(action,bSensitive);
+			}
+		}
+	}
+	
+	
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
 	{
 		//printf("orientation is: %d\n",orientation);

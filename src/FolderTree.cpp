@@ -2,9 +2,10 @@
 
 #include "FolderTree.h"
 
+#include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include <libgnomevfs/gnome-vfs.h>
-#include <libgnomeui/libgnomeui.h>
+#include <libgnomeui/gnome-icon-lookup.h>
 
 #include <set>
 
@@ -150,9 +151,13 @@ GtkTreeIter* add_uri_to_tree(GtkTreeView *treeview, GtkTreeIter* iter, const gch
 				break;
 			}
 
-			gchar* path_name = gnome_vfs_uri_extract_short_path_name (vfs_uri);				
-			
+			gchar* path_name_escaped = gnome_vfs_uri_extract_short_path_name (vfs_uri);
+			gchar* path_name = gnome_vfs_unescape_string(path_name_escaped,NULL);
+							
 			strDirsToAdd.push_front(path_name);	
+			
+			g_free(path_name);
+			g_free(path_name_escaped);
 			
 			vfs_tmp = gnome_vfs_uri_get_parent(vfs_uri);
 			gnome_vfs_uri_unref(vfs_uri);
@@ -170,8 +175,6 @@ GtkTreeIter* add_uri_to_tree(GtkTreeView *treeview, GtkTreeIter* iter, const gch
 			
 			for (itr = strDirsToAdd.begin(); strDirsToAdd.end() != itr; ++itr)
 			{
-				printf(" add this dir: %s\n",itr->c_str());
-				
 				GtkTreeIter* iter_child = folder_tree_add_subdir(model, iter, itr->c_str(), TRUE);
 				
 				gtk_tree_iter_free(iter);
@@ -200,12 +203,10 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 	// wait untill all the idle functions have finished
 	if (pFolderTreeImpl->m_setIdleCalls.size() || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
 	{
-		printf("waiting still\n");
 		rval = TRUE;
 	}
 	else
 	{
-		printf("scroll to cell! \n");
 		// do processing
 		GtkTreeView* treeview = GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget);
 		GtkTreeModel* model = gtk_tree_view_get_model (treeview);
@@ -249,7 +250,7 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 	for (itr = uris.begin(); uris.end() != itr; ++itr)
 	{
 		// here we go
-		printf("selecting folder: %s\n", itr->c_str());
+		//printf("selecting folder: %s\n", itr->c_str());
 		gint i = 0;
 		std::string strLongestURI;
 		bool found_match = false;
@@ -297,7 +298,6 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 
 		if (found_match)
 		{
-			printf("here is the match: %s\n", strLongestURI.c_str());
 			GtkTreeIter* iter = add_uri_to_tree(GTK_TREE_VIEW(m_pWidget), &iter_match, itr->c_str());
 
 			// we need a timeout here because if the list is still changing we need to wait
@@ -1156,7 +1156,6 @@ static gboolean idle_check_for_subdirs(gpointer user_data)
 	{
 		if (NULL != data->pFolderTreeImpl)
 		{
-			printf("removing id: %d\n", data->idle_id);
 			data->pFolderTreeImpl->m_setIdleCalls.erase(data->idle_id);
 		}
 		
@@ -1205,7 +1204,6 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 	guint idle_id = g_idle_add(idle_check_for_subdirs,mydata);
 	mydata->idle_id = idle_id;
 	pFolderTreeImpl->m_setIdleCalls.insert(idle_id);
-	printf("adding id: %d\n", idle_id);
 }
 
 
@@ -1229,10 +1227,12 @@ static char* folder_tree_get_icon_name(const char* uri)
 	{
 		preferred_icon_name = "gnome-fs-desktop";
 	}
+	/*
 	else if (gnome_vfs_uris_match ("trash://",uri))
 	{
 		preferred_icon_name = GNOME_STOCK_TRASH;
 	}
+	*/
 
 	free(desktop_path);
 	free(desktop_uri);

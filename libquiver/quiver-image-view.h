@@ -65,6 +65,7 @@ struct _QuiverImageViewClass
 	void (*activated) (QuiverImageView *imageview);
 	void (*reload) (QuiverImageView *imageview);
 	void (*magnification_changed) (QuiverImageView *imageview);
+	void (*view_mode_changed) (QuiverImageView *imageview);
 
 	/* Padding for future expansion */
 	
@@ -99,6 +100,7 @@ void quiver_image_view_set_transition_type(QuiverImageView *imageview,QuiverImag
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble amount);
 void quiver_image_view_set_magnification_mode(QuiverImageView *imageview,QuiverImageViewMagnificationMode mode);
 gdouble quiver_image_view_get_magnification(QuiverImageView *imageview);
+gboolean  quiver_image_view_can_magnify(QuiverImageView *imageview, gboolean in);
 
 void quiver_image_view_get_pixbuf_display_size_for_mode(QuiverImageView *imageview, QuiverImageViewMode mode, gint *width, gint *height);
 void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *imageview, QuiverImageViewMode mode, gint in_width, gint in_height, gint *out_width, gint *out_height);
