@@ -2468,7 +2468,6 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawab
 		cairo_set_source_rgba (cr, 0, 0, 0, .1);
 		cairo_set_line_join(cr,CAIRO_LINE_JOIN_ROUND);
 		int k = 0;
-		int top=shadow_width,left=shadow_width,width=shadow_width,height=shadow_width;
 		for (k = shadow_width*2;k >=1; k-=2)
 		{
 			cairo_set_line_width(cr,k);
