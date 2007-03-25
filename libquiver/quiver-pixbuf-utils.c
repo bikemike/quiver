@@ -1,7 +1,8 @@
+#include <config.h>
 #include <gtk/gtk.h>
 #include "quiver-pixbuf-utils.h"
 
-void pixbuf_set_alpha(const GdkPixbuf *src, guchar alpha)
+void pixbuf_set_alpha(GdkPixbuf *src, guchar alpha)
 {
 	g_return_if_fail (GDK_IS_PIXBUF (src));
 	  
@@ -50,7 +51,7 @@ void pixbuf_set_alpha(const GdkPixbuf *src, guchar alpha)
 	}
 }
 
-void pixbuf_set_grayscale(const GdkPixbuf *src)
+void pixbuf_set_grayscale(GdkPixbuf *src)
 {
 	/* NOTE that src and dest MAY be the same pixbuf! */
 
@@ -136,3 +137,36 @@ void pixbuf_brighten(const GdkPixbuf *src, GdkPixbuf *dest, gint amount)
 		}
 	}
 }
+
+void quiver_rect_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
+{
+	guint new_width;
+	guint w = *width;
+	guint h = *height;
+
+	if (!fill_if_smaller && 
+			(w < bound_width && h < bound_height) )
+	{
+		return;
+	}
+
+	if (w != bound_width || h != bound_height)
+	{
+		gdouble ratio = (double)w/h;
+		guint new_height;
+
+		new_height = (guint)(bound_width/ratio +.5);
+		if (new_height < bound_height)
+		{
+			*width = bound_width;
+			*height = new_height;
+		}
+		else
+		{
+			new_width = (guint)(bound_height *ratio + .5); 
+			*width = MIN(new_width, bound_width);
+			*height = bound_height;
+		}
+	}
+}	
+

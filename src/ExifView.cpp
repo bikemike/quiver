@@ -4,11 +4,11 @@
 #include "Preferences.h"
 #include "IPreferencesEventHandler.h"
 
-#include <exif-ifd.h>
-#include <exif-entry.h>
-#include <exif-data.h>
-#include <exif-loader.h>
-#include <exif-tag.h>
+#include <libexif/exif-ifd.h>
+#include <libexif/exif-entry.h>
+#include <libexif/exif-data.h>
+#include <libexif/exif-loader.h>
+#include <libexif/exif-tag.h>
 
 
 #include "QuiverUtils.h"

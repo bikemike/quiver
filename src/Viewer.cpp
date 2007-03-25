@@ -2,6 +2,7 @@
 
 #include <libquiver/quiver-icon-view.h>
 #include <libquiver/quiver-image-view.h>
+#include <libquiver/quiver-pixbuf-utils.h>
 #include <libquiver/quiver-navigation-control.h>
 
 #include "Viewer.h"
@@ -46,7 +47,7 @@ static int orientation_matrix[4][9] =
 
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
-static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
+static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data);
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
 
@@ -58,6 +59,8 @@ static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
 static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data);
 static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gpointer data);
 static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpointer data);
+static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventKey *event, gpointer userdata);
+
 static void viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
 static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
 
@@ -92,6 +95,7 @@ static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_contex
 #define ACTION_VIEWER_NEXT             "ImageNext"
 #define ACTION_VIEWER_FIRST            "ImageFirst"
 #define ACTION_VIEWER_LAST             "ImageLast"
+#define ACTION_VIEWER_ZOOM             "Zoom"
 #define ACTION_VIEWER_ZOOM_FIT         "ZoomFit"
 #define ACTION_VIEWER_ZOOM_FIT_STRETCH "ZoomFitStretch"
 #define ACTION_VIEWER_ZOOM_100         "Zoom100"
@@ -109,9 +113,18 @@ static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_contex
 #define ACTION_VIEWER_FLIP_H_2          ACTION_VIEWER_FLIP_H"_2"
 #define ACTION_VIEWER_FLIP_V_2          ACTION_VIEWER_FLIP_V"_2"
 
+#ifdef QUIVER_MAEMO
+#define ACTION_VIEWER_ZOOM_IN_MAEMO     ACTION_VIEWER_ZOOM_IN"_MAEMO"
+#define ACTION_VIEWER_ZOOM_OUT_MAEMO    ACTION_VIEWER_ZOOM_OUT"_MAEMO"
+#endif
+
 static char *ui_viewer =
 "<ui>"
+#ifdef QUIVER_MAEMO
+"	<popup name='MenubarMain'>"
+#else
 "	<menubar name='MenubarMain'>"
+#endif
 "		<menu action='MenuEdit'>"
 "			<placeholder name='CopyPaste'>"
 "				<menuitem action='"ACTION_VIEWER_CUT"'/>"
@@ -155,7 +168,11 @@ static char *ui_viewer =
 "			<placeholder name='FolderNavigation'/>"
 "			<separator/>"
 "		</menu>"
+#ifdef QUIVER_MAEMO
+"	</popup>"
+#else
 "	</menubar>"
+#endif
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='NavToolItems'>"
 "			<separator/>"
@@ -184,6 +201,10 @@ static char *ui_viewer =
 "	<accelerator action='"ACTION_VIEWER_FLIP_V_2"'/>"
 "	<accelerator action='"ACTION_VIEWER_PREVIOUS_2"'/>"
 "	<accelerator action='"ACTION_VIEWER_NEXT_2"'/>"
+#ifdef QUIVER_MAEMO
+"	<accelerator action='"ACTION_VIEWER_ZOOM_IN_MAEMO"'/>"
+"	<accelerator action='"ACTION_VIEWER_ZOOM_OUT_MAEMO"'/>"
+#endif
 "</ui>";
 
 
@@ -213,6 +234,10 @@ static gchar* pszActionsImage[] =
 	ACTION_VIEWER_FLIP_V,
 	ACTION_VIEWER_FLIP_H_2,
 	ACTION_VIEWER_FLIP_V_2,
+#ifdef QUIVER_MAEMO
+	ACTION_VIEWER_ZOOM_IN_MAEMO,
+	ACTION_VIEWER_ZOOM_OUT_MAEMO,
+#endif
 };
 
 // has next
@@ -242,6 +267,10 @@ static GtkActionEntry action_entries[] = {
 	{ ACTION_VIEWER_PREVIOUS_2, GTK_STOCK_GO_BACK, "_Previous Image", "<Shift>space", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_NEXT, GTK_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_NEXT_2, GTK_STOCK_GO_FORWARD, "_Next Image", "<Shift>BackSpace", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
+#ifdef QUIVER_MAEMO
+	{ ACTION_VIEWER_ZOOM_IN_MAEMO, GTK_STOCK_ZOOM_IN,"Zoom _In", "F7", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_ZOOM_OUT_MAEMO, GTK_STOCK_ZOOM_OUT,"Zoom _Out", "F8", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
+#endif
 	{ ACTION_VIEWER_FIRST, GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_LAST, GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
 
@@ -263,6 +292,7 @@ static GtkRadioActionEntry zoom_radio_action_entries[] = {
 	{ ACTION_VIEWER_ZOOM_FIT, GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>1", "Fit to Window",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW},
 	{ ACTION_VIEWER_ZOOM_FIT_STRETCH, GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Window Stretch",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH},
 	{ ACTION_VIEWER_ZOOM_100, GTK_STOCK_ZOOM_100, "_Actual Size", "<Control>0", "Actual Size",QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE},
+	{ ACTION_VIEWER_ZOOM, NULL, NULL, NULL, NULL, QUIVER_IMAGE_VIEW_MODE_ZOOM},
 };
 
 
@@ -363,8 +393,7 @@ public:
 	int   m_iSlideShowDuration;
 	bool  m_bSlideShowLoop;
 
-	ImageCache m_ThumbnailCacheNormal;
-	ImageCache m_ThumbnailCacheLarge;
+	ImageCache m_ThumbnailCache;
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -479,20 +508,36 @@ void Viewer::ViewerImpl::UpdateUI()
 	
 	if (!quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), TRUE))
 	{
-		GtkAction* action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_IN);
+		GtkAction* action;
+		action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_IN);
 		if (NULL != action)
 		{
 			gtk_action_set_sensitive(action,FALSE);
 		}
+#ifdef QUIVER_MAEMO
+		action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_IN_MAEMO);
+		if (NULL != action)
+		{
+			gtk_action_set_sensitive(action,FALSE);
+		}
+#endif
 	}
 
 	if (!quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), FALSE))
 	{
-		GtkAction* action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_OUT);
+		GtkAction* action;
+		action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_OUT);
 		if (NULL != action)
 		{
 			gtk_action_set_sensitive(action,FALSE);
 		}
+#ifdef QUIVER_MAEMO
+		action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_OUT_MAEMO);
+		if (NULL != action)
+		{
+			gtk_action_set_sensitive(action,FALSE);
+		}
+#endif
 	}
 }
 
@@ -678,15 +723,23 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 		QuiverImageViewMode zoom_mode = (QuiverImageViewMode)gtk_radio_action_get_current_value(GTK_RADIO_ACTION(action));
 		quiver_image_view_set_view_mode(imageview,zoom_mode);		
 	}
-	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_IN))
-	{		
+	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_IN)
+#ifdef QUIVER_MAEMO
+	        || 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_IN_MAEMO)
+#endif
+	)
+	{
 		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
 				
 		quiver_image_view_set_magnification(imageview,
 						quiver_image_view_get_magnification(imageview)*2);
 	}
-	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_OUT))
+	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_OUT)
+#ifdef QUIVER_MAEMO
+	        || 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_OUT_MAEMO)
+#endif
+	)
 	{
 		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
@@ -718,11 +771,11 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	{
 		pViewerImpl->SetImageIndex(0,true);
 	}
-	else if (0 == strcmp(szAction, ACTION_VIEWER_PREVIOUS) || 0 == strcmp(szAction, ACTION_VIEWER_PREVIOUS_2))
+	else if (0 == strcmp(szAction, ACTION_VIEWER_PREVIOUS) || 0 == strcmp(szAction, ACTION_VIEWER_PREVIOUS_2)) 
 	{
 		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()-1,false);
 	}
-	else if (0 == strcmp(szAction, ACTION_VIEWER_NEXT) || 0 == strcmp(szAction, ACTION_VIEWER_NEXT_2) )
+	else if (0 == strcmp(szAction, ACTION_VIEWER_NEXT) || 0 == strcmp(szAction, ACTION_VIEWER_NEXT_2)) 
 	{
 		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex()+1,true);
 	}
@@ -865,9 +918,114 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 	
-	//QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+	QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+
+	GtkAction* action = NULL;
+	switch (mode)
+	{
+		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
+			action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_ZOOM_FIT);
+			break;
+		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
+			action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_ZOOM_FIT_STRETCH);
+			break;
+		case QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE:
+			action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_ZOOM_100);
+			break;
+		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
+			action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_ZOOM);
+			break;
+	}
+
+	if (NULL != action)
+	{
+		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),TRUE);
+	}
 }
 
+static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventKey *event, gpointer userdata)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)userdata;
+
+	gboolean rval = FALSE;
+	bool bPanMode = true;
+
+	GtkAdjustment *h = pViewerImpl->m_pAdjustmentH;
+	GtkAdjustment *v = pViewerImpl->m_pAdjustmentV;
+
+	if (h->page_size >= h->upper &&
+		v->page_size >= v->upper)
+	{
+		bPanMode = false;
+
+	}
+	
+	GtkAdjustment *adjustment = NULL;
+	gdouble increment;
+
+	if (GDK_Left == event->keyval || GDK_Up == event->keyval)
+	{
+		if (bPanMode)
+		{
+			if (GDK_Left == event->keyval)
+			{
+				adjustment = h;
+			}
+			else
+			{
+				adjustment = v;
+			}
+			increment = -adjustment->step_increment;
+			
+		}
+		else
+		{
+			GtkAction* action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_PREVIOUS);
+			gtk_action_activate(action);
+		}
+		rval = TRUE;
+	}
+	else if (GDK_Right == event->keyval || GDK_Down == event->keyval)
+	{
+		if (bPanMode)
+		{
+			if (GDK_Right == event->keyval)
+			{
+				adjustment = h;
+			}
+			else
+			{
+				adjustment = v;
+			}
+			increment = adjustment->step_increment;
+		}
+		else
+		{
+			GtkAction* action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_NEXT);
+			gtk_action_activate(action);
+		}
+		rval = TRUE;
+	}
+
+	if (NULL != adjustment)
+	{
+		gdouble value = gtk_adjustment_get_value(adjustment);
+		value += increment;
+
+		if (value < adjustment->lower)
+		{
+			value = adjustment->lower;
+		}
+		else if (value > adjustment->upper - adjustment->page_size)
+		{
+			value = adjustment->upper - adjustment->page_size;
+		}
+		gtk_adjustment_set_value(adjustment,value);
+	}
+
+	return rval;
+}
 
 static void viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
 {
@@ -882,7 +1040,14 @@ static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gp
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 
-	pViewerImpl->SetImageIndex(cell,true);
+	bool bDirectionForward = false;
+
+	if (pViewerImpl->m_ImageList.GetSize() && pViewerImpl->m_ImageList.GetCurrentIndex() < cell)
+	{
+		bDirectionForward = true;
+	}
+
+	pViewerImpl->SetImageIndex(cell,bDirectionForward);
 
 }
 
@@ -1041,8 +1206,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 }
 
 Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : 
-	m_ThumbnailCacheNormal(100),
-	m_ThumbnailCacheLarge(50),
+	m_ThumbnailCache(100),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_ThumbnailLoader(this,2)
@@ -1116,10 +1280,14 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	AddFilmstrip();
 
-	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
-	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
+	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW,"#000");
+	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW, "#444");
 
+#ifdef QUIVER_MAEMO
+	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,false))
+#else
 	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
+#endif
 	{
 		if (!strBGColorImg.empty())
 		{
@@ -1176,7 +1344,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
-	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)icon_pixbuf_callback,this,NULL);
+	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetIconPixbufFunc)icon_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(m_pIconView),TRUE);
 	int iIconSize = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(m_pIconView),iIconSize,iIconSize);
@@ -1198,6 +1366,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
     g_signal_connect (G_OBJECT (m_pImageView), "view-mode-changed",
     			G_CALLBACK (viewer_imageview_view_mode_changed), this);
+
+    g_signal_connect (G_OBJECT (m_pImageView), "key-press-event",
+    			G_CALLBACK (viewer_imageview_key_press_event), this);
 
     g_signal_connect (G_OBJECT (m_pAdjustmentH), "changed",
     			G_CALLBACK (image_view_adjustment_changed), this);
@@ -1231,7 +1402,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_container_add (GTK_CONTAINER (frame), m_pNavigationControl);
 	gtk_container_add (GTK_CONTAINER (m_pNavigationWindow), frame);
 	
-	bool bShowFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW);
+	bool bShowFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW,true);
 	if (!bShowFilmstrip)
 	{
 		gtk_widget_hide(m_pIconView);
@@ -1262,6 +1433,19 @@ GtkWidget *Viewer::GetWidget()
 void Viewer::SetImageList(ImageList imgList)
 {
 	m_ViewerImplPtr->SetImageList(imgList);
+}
+
+bool Viewer::ResetViewMode()
+{
+	bool bReset = false;
+	QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
+
+	if (QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW != mode)
+	{
+		quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView), QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+		bReset = true;
+	}
+	return bReset;
 }
 
 void Viewer::Show()
@@ -1298,6 +1482,9 @@ void Viewer::Show()
 				ui_viewer,
 				strlen(ui_viewer),
 				&tmp_error);
+
+		gtk_ui_manager_ensure_update(m_ViewerImplPtr->m_pUIManager);
+
 		if (NULL != tmp_error)
 		{
 			g_warning("Viewer::Show() Error: %s\n",tmp_error->message);
@@ -1313,11 +1500,12 @@ void Viewer::Hide()
 	SlideShowStop();
 	
 	gtk_widget_hide(m_ViewerImplPtr->m_pHBox);
-	if (m_ViewerImplPtr->m_pUIManager)
+	if (m_ViewerImplPtr->m_pUIManager && 0 != m_ViewerImplPtr->m_iMergedViewerUI)
 	{	
 		gtk_ui_manager_remove_ui(m_ViewerImplPtr->m_pUIManager,
 			m_ViewerImplPtr->m_iMergedViewerUI);
 		m_ViewerImplPtr->m_iMergedViewerUI = 0;
+		gtk_ui_manager_ensure_update(m_ViewerImplPtr->m_pUIManager);
 	}
 
 	m_ViewerImplPtr->m_ImageList.BlockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
@@ -1474,30 +1662,50 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 	return f.GetIcon(width,height);
 }
 
-static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data)
+static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data)
+
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;	
 
-	GdkPixbuf *pixbuf;
+	GdkPixbuf *pixbuf = NULL;
+	gboolean need_new_thumb = TRUE;
 	
 	guint width, height;
+	guint thumb_width, thumb_height;
+	guint bound_width, bound_height;
 	quiver_icon_view_get_icon_size(iconview,&width,&height);
 	
-	if (width <= 128 && height <= 128)
-	{
-		pixbuf = pViewerImpl->m_ThumbnailCacheNormal.GetPixbuf(pViewerImpl->m_ImageList[cell].GetURI());
-	}
-	else
-	{
-		pixbuf = pViewerImpl->m_ThumbnailCacheLarge.GetPixbuf(pViewerImpl->m_ImageList[cell].GetURI());
-		if (NULL == pixbuf)
-		{
-			pixbuf = pViewerImpl->m_ThumbnailCacheNormal.GetPixbuf(pViewerImpl->m_ImageList[cell].GetURI());
-		}
-			
-	}
+	pixbuf = pViewerImpl->m_ThumbnailCache.GetPixbuf(pViewerImpl->m_ImageList[cell].GetURI());
 
-	pViewerImpl->m_ThumbnailLoader.UpdateList();
+	if (pixbuf)
+	{
+		*actual_width = pViewerImpl->m_ImageList[cell].GetWidth();
+		*actual_height = pViewerImpl->m_ImageList[cell].GetHeight();
+
+		if (4 < pViewerImpl->m_ImageList[cell].GetOrientation())
+		{
+			swap(*actual_width,*actual_height);
+		}
+
+		thumb_width = gdk_pixbuf_get_width(pixbuf);
+		thumb_height = gdk_pixbuf_get_height(pixbuf);
+
+		bound_width = *actual_width;
+		bound_height = *actual_height;
+		quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
+
+		if (bound_width == thumb_width || bound_height == thumb_height)
+		{
+			need_new_thumb = FALSE;
+		}
+
+		
+	}
+	
+	if (need_new_thumb)
+	{
+		pViewerImpl->m_ThumbnailLoader.UpdateList();
+	}
 	
 	return pixbuf;
 }
@@ -1605,8 +1813,7 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEvent
 {
 	if (parent->m_ImageList.GetCurrentIndex() == event->GetIndex())
 	{
-		parent->m_ThumbnailCacheLarge.RemovePixbuf(parent->m_ImageList.GetCurrent().GetURI());
-		parent->m_ThumbnailCacheNormal.RemovePixbuf(parent->m_ImageList.GetCurrent().GetURI());
+		parent->m_ThumbnailCache.RemovePixbuf(parent->m_ImageList.GetCurrent().GetURI());
 		parent->m_ThumbnailLoader.UpdateList(true);
 	
 		ImageLoader::LoadParams params = {0};
@@ -1736,22 +1943,37 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 		QuiverFile f = m_pViewerImpl->m_ImageList[ulIndex];
 	
 		GdkPixbuf *pixbuf = NULL;
-		
-		if (width <= 128 && height <= 128)
-		{
-			pixbuf = m_pViewerImpl->m_ThumbnailCacheNormal.GetPixbuf(f.GetURI());				
-		}
-		else
-		{
-			pixbuf = m_pViewerImpl->m_ThumbnailCacheLarge.GetPixbuf(f.GetURI());	
-		}
+		pixbuf = m_pViewerImpl->m_ThumbnailCache.GetPixbuf(f.GetURI());				
 	
-	
+		if (NULL != pixbuf)
+		{
+			// check if the thumbnail is the correct size
+			guint thumb_width, thumb_height;
+			guint bound_width = f.GetWidth();
+			guint bound_height = f.GetHeight();
+
+			if (4 < f.GetOrientation())
+			{
+				swap(bound_width,bound_height);
+			}
+
+			thumb_width = gdk_pixbuf_get_width(pixbuf);
+			thumb_height = gdk_pixbuf_get_height(pixbuf);
+			
+			quiver_rect_get_bound_size(uiWidth,uiHeight, &bound_width,&bound_height,FALSE);
+			if (thumb_width != bound_width || thumb_height != bound_height)
+			{
+				// need a new thumbnail because the current cached size
+				// is not the same as the size needed
+				g_object_unref(pixbuf);
+				pixbuf = NULL;
+			}
+				
+		}
+
 		if (NULL == pixbuf)
 		{
-			//printf ("[%d] loading thumb : %s\n",id,f.GetURI());
-	
-			if (width <= 128 && height <= 128)
+			if (uiWidth <= 128 && uiHeight <= 128)
 			{
 				pixbuf = f.GetThumbnail();
 			}
@@ -1759,37 +1981,48 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 			{
 				pixbuf = f.GetThumbnail(true);
 			}
-			
-			
-			if (NULL != pixbuf)
-			{
-				if (width <= 128 && height <= 128)
-				{
-					m_pViewerImpl->m_ThumbnailCacheNormal.AddPixbuf(f.GetURI(),pixbuf);
-				}
-				else
-				{
-					m_pViewerImpl->m_ThumbnailCacheLarge.AddPixbuf(f.GetURI(),pixbuf);
-				}
-				
-	
-				g_object_unref(pixbuf);
-	
-				gdk_threads_enter();
-				
-				quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),ulIndex);
-				
-				gdk_threads_leave();
-	
-				pthread_yield();
-			}
 	
 		}
-		else
+
+		if (NULL != pixbuf)
 		{
+			guint thumb_width, thumb_height;
+			thumb_width = gdk_pixbuf_get_width(pixbuf);
+			thumb_height = gdk_pixbuf_get_height(pixbuf);
+
+			guint bound_width = f.GetWidth();
+			guint bound_height = f.GetHeight();
+			
+			if (4 < f.GetOrientation())
+			{
+				swap(bound_width,bound_height);
+			}
+			quiver_rect_get_bound_size(uiWidth,uiHeight, &bound_width,&bound_height,FALSE);
+
+			if (thumb_width != bound_width || thumb_height != bound_height)
+			{
+				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
+								pixbuf,
+								bound_width,
+								bound_height,
+								GDK_INTERP_BILINEAR);
+				g_object_unref(pixbuf);
+				pixbuf = newpixbuf;
+			}
+
+			m_pViewerImpl->m_ThumbnailCache.AddPixbuf(f.GetURI(),pixbuf);
 			g_object_unref(pixbuf);
+
+			gdk_threads_enter();
+			
+			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),ulIndex);
+			
+			gdk_threads_leave();
+
+			pthread_yield();
 		}
 	}
+
 }
 
 void Viewer::ViewerImpl::ViewerThumbLoader::GetVisibleRange(gulong* pulStart, gulong* pulEnd)
@@ -1828,15 +2061,5 @@ void Viewer::ViewerImpl::ViewerThumbLoader::SetIsRunning(bool bIsRunning)
 
 void Viewer::ViewerImpl::ViewerThumbLoader::SetCacheSize(guint uiCacheSize)
 {
-	guint width, height;
-	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),&width,&height);
-
-	if (width <= 128 && height <= 128)
-	{
-		m_pViewerImpl->m_ThumbnailCacheNormal.SetSize(uiCacheSize);
-	}
-	else
-	{
-		m_pViewerImpl->m_ThumbnailCacheLarge.SetSize(uiCacheSize);
-	}
+	m_pViewerImpl->m_ThumbnailCache.SetSize(uiCacheSize);
 }

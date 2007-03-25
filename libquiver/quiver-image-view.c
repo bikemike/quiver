@@ -1,3 +1,4 @@
+#include <config.h>
 #include <gtk/gtk.h>
 
 #include <math.h>
@@ -21,6 +22,14 @@
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
 G_DEFINE_TYPE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET);
+
+#if (GLIB_MAJOR_VERSION < 2) || (GLIB_MAJOR_VERSION == 2 && GLIB_MINOR_VERSION < 10)
+#define g_object_ref_sink(o) G_STMT_START{	\
+	  g_object_ref (o);				\
+	  gtk_object_sink ((GtkObject*)o);		\
+}G_STMT_END
+#endif
+
 
 /* start private data structures */
 
@@ -158,8 +167,6 @@ quiver_image_view_set_adjustment_upper (GtkAdjustment *adj,
 				 gboolean       always_emit_changed);
 
 
-
-static void quiver_image_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller);
 static void quiver_image_view_add_scale_hq_timeout(QuiverImageView *imageview);
 static gboolean quiver_image_view_timeout_scale_hq(gpointer data);
 //static void quiver_image_view_create_transition_pixbuf(QuiverImageView *imageview);
@@ -1538,38 +1545,6 @@ quiver_image_view_update_size(QuiverImageView *imageview)
 	
 }
 
-static void quiver_image_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
-{
-	guint new_width;
-	guint w = *width;
-	guint h = *height;
-
-	if (!fill_if_smaller && 
-			(w < bound_width && h < bound_height) )
-	{
-		return;
-	}
-
-	if (w != bound_width || h != bound_height)
-	{
-		gdouble ratio = (double)w/h;
-		guint new_height;
-
-		new_height = (guint)(bound_width/ratio +.5);
-		if (new_height < bound_height)
-		{
-			*width = bound_width;
-			*height = new_height;
-		}
-		else
-		{
-			new_width = (guint)(bound_height *ratio + .5); 
-			*width = MIN(new_width, bound_width);
-			*height = bound_height;
-		}
-	}
-}	
-
 static void quiver_image_view_start_animation(QuiverImageView *imageview)
 {
 
@@ -1787,10 +1762,10 @@ void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *ima
 			break;
 
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
-			quiver_image_view_get_bound_size(widget->allocation.width,widget->allocation.height,(guint*)out_width,(guint*)out_height,FALSE);
+			quiver_rect_get_bound_size(widget->allocation.width,widget->allocation.height,(guint*)out_width,(guint*)out_height,FALSE);
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
-			quiver_image_view_get_bound_size(widget->allocation.width,widget->allocation.height,(guint*)out_width,(guint*)out_height,TRUE);
+			quiver_rect_get_bound_size(widget->allocation.width,widget->allocation.height,(guint*)out_width,(guint*)out_height,TRUE);
 			break;
 		default:
 			break;
@@ -1992,7 +1967,7 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 	if (GTK_WIDGET_MAPPED (imageview))
 	{
 		// FIXME: should this really be here?
-		gdk_window_process_updates (GTK_WIDGET(imageview)->window, FALSE);
+		//gdk_window_process_updates (GTK_WIDGET(imageview)->window, FALSE);
 	}
 
 	quiver_image_view_add_scale_hq_timeout(imageview);

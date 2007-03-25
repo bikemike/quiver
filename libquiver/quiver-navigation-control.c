@@ -1,3 +1,4 @@
+#include <config.h>
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include "quiver-navigation-control.h"

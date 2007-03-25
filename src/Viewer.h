@@ -28,6 +28,9 @@ public:
 	void SlideShowStart();
 	void SlideShowStop();
 
+	// returns true if the view mode was reset, false if it did not need to be reset
+	bool ResetViewMode();
+
 	void Show();
 	void Hide();
 	

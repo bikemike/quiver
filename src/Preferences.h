@@ -26,8 +26,8 @@ public:
 	std::list<std::string> GetKeys(std::string section);
 	bool HasSection(std::string section);
 	bool HasKey(std::string section, std::string key);
-	std::string GetValue(std::string section, std::string key);
-	std::string GetString(std::string section, std::string key);
+	std::string GetValue(std::string section, std::string key,std::string default_val = "");
+	std::string GetString(std::string section, std::string key, std::string default_val = "");
 	std::string GetLocaleString(std::string section, std::string key, std::string locale);
 	bool GetBoolean(std::string section, std::string key, bool default_value = false);
 	int GetInteger(std::string section, std::string key, int default_value = 0);

@@ -3,6 +3,7 @@
 #include "ImageLoader.h"
 #include "QuiverUtils.h"
 #include <libgnomevfs/gnome-vfs.h>
+#include <libquiver/quiver-pixbuf-utils.h>
 
 using namespace std;
 
@@ -650,6 +651,8 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 			//printf("Error loading image: %s\n",tmp_error->message);
 			break;
 		}
+
+		pthread_yield();
 	}
 
 	m_Command.quiverFile.SetLoadTimeInSeconds( loadTimer.GetRunningTimeInSeconds() );
@@ -670,38 +673,6 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	return retval;
 }
 
-
-static void get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
-{
-	guint new_width;
-	guint w = *width;
-	guint h = *height;
-
-	if (!fill_if_smaller && 
-			(w < bound_width && h < bound_height) )
-	{
-		return;
-	}
-
-	if (w != bound_width || h != bound_height)
-	{
-		gdouble ratio = (double)w/h;
-		guint new_height;
-
-		new_height = (guint)(bound_width/ratio +.5);
-		if (new_height < bound_height)
-		{
-			*width = bound_width;
-			*height = new_height;
-		}
-		else
-		{
-			new_width = (guint)(bound_height *ratio + .5); 
-			*width = MIN(new_width, bound_width);
-			*height = bound_height;
-		}
-	}
-}	
 
 void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
@@ -738,7 +709,7 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 			guint new_width = width;
 			guint new_height = height;
 			
-			get_bound_size((guint)m_Command.params.max_width,(guint)m_Command.params.max_height,&new_width, &new_height,FALSE);
+			quiver_rect_get_bound_size((guint)m_Command.params.max_width,(guint)m_Command.params.max_height,&new_width, &new_height,FALSE);
 
 			if (4 < m_Command.params.orientation)
 			{

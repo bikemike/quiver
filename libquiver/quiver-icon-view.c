@@ -1,3 +1,4 @@
+#include <config.h>
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include "quiver-icon-view.h"
@@ -22,6 +23,12 @@
 
 G_DEFINE_TYPE(QuiverIconView,quiver_icon_view,GTK_TYPE_WIDGET);
 
+#if (GLIB_MAJOR_VERSION < 2) || (GLIB_MAJOR_VERSION == 2 && GLIB_MINOR_VERSION < 10)
+#define g_object_ref_sink(o) G_STMT_START{	\
+	  g_object_ref (o);				\
+	  gtk_object_sink ((GtkObject*)o);		\
+}G_STMT_END
+#endif
 /* start private data structures */
 typedef struct _CellItem CellItem;
 struct _CellItem
@@ -198,9 +205,8 @@ static void quiver_icon_view_update_rubber_band(QuiverIconView *iconview);
 static void quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview);
 static void quiver_icon_view_update_icon_size(QuiverIconView *iconview);
 static gulong quiver_icon_view_get_n_items(QuiverIconView* iconview);
-static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell);
+static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height);
 static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulong cell);
-static void quiver_icon_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller);
 
 static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawable *drawable,GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h);
 /* end utility function prototypes*/
@@ -779,115 +785,127 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 		
 
 			gboolean stock = FALSE;
-			GdkPixbuf *pixbuf = quiver_icon_view_get_thumbnail_pixbuf(iconview,current_cell);
+
+			gint aw = 0, ah = 0;
+			GdkPixbuf *pixbuf = quiver_icon_view_get_thumbnail_pixbuf(iconview,current_cell, &aw, &ah);
 			if (NULL == pixbuf)
 			{
 				pixbuf = quiver_icon_view_get_icon_pixbuf(iconview,current_cell);
 				stock = TRUE;
 			}
 
-			guint pixbuf_width,pixbuf_height;
-
-			pixbuf_width = gdk_pixbuf_get_width(pixbuf);
-			pixbuf_height = gdk_pixbuf_get_height(pixbuf);
-
-			guint nw = pixbuf_width;
-			guint nh = pixbuf_height;
-
-			quiver_icon_view_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,TRUE);
-
-			if (!stock && (pixbuf_width != nw || pixbuf_height != nh ))
+			if (NULL != pixbuf)
 			{
-				pixbuf_width = nw;
-				pixbuf_height = nh;
-				//printf("new size %d %d\n",nw,nh);
-				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
-									pixbuf,
-									nw,
-									nh,
-									//GDK_INTERP_BILINEAR);
-									GDK_INTERP_NEAREST);
-				//printf("resized\n");
-				g_object_unref(pixbuf);
-				pixbuf = newpixbuf;
-				//printf("adding: %d - %s\n",current_cell,f.GetFilePath().c_str());
-				//pixbuf_cache.AddPixbuf(f.GetFilePath(),pixbuf);
+				guint pixbuf_width,pixbuf_height;
 
-			}
+				pixbuf_width = gdk_pixbuf_get_width(pixbuf);
+				pixbuf_height = gdk_pixbuf_get_height(pixbuf);
 
-			int x_icon_offset = (cell_width - pixbuf_width) /2;
-			int y_icon_offset = (cell_height - pixbuf_height) /2;
+				guint nw = pixbuf_width;
+				guint nh = pixbuf_height;
 
-			if (current_cell == iconview->priv->prelight_cell)
-			{
-				GdkPixbuf *pixbuf2 = gdk_pixbuf_new(GDK_COLORSPACE_RGB,gdk_pixbuf_get_has_alpha(pixbuf),
-						gdk_pixbuf_get_bits_per_sample(pixbuf),
-						pixbuf_width,pixbuf_height);
 
-				pixbuf_brighten (pixbuf, pixbuf2, 25);
-
-				gdk_draw_pixbuf	(widget->window,
-	                     widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
-	                     pixbuf2,0,0,x_cell_offset + x_icon_offset,y_cell_offset+y_icon_offset,-1,-1,
-	                     GDK_RGB_DITHER_NONE,0,0);
-				g_object_unref(pixbuf2);
-			}
-			else
-			{
-				/*
-				if (!GTK_WIDGET_HAS_FOCUS(widget))
+				if (aw <= iconview->priv->icon_width && ah <= iconview->priv->icon_height)
 				{
-					GdkPixbuf *pixbuf_gray = gdk_pixbuf_copy(pixbuf);
-					pixbuf_set_grayscale(pixbuf_gray);
+					quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,FALSE);
+				}
+				else
+				{
+					quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,TRUE);
+				}
+
+				if (!stock && (pixbuf_width != nw || pixbuf_height != nh ))
+				{
+					pixbuf_width = nw;
+					pixbuf_height = nh;
+					GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
+										pixbuf,
+										nw,
+										nh,
+										//GDK_INTERP_BILINEAR);
+										GDK_INTERP_NEAREST);
+					//printf("resized\n");
 					g_object_unref(pixbuf);
-					pixbuf = pixbuf_gray;
+					pixbuf = newpixbuf;
+					//printf("adding: %d - %s\n",current_cell,f.GetFilePath().c_str());
+					//pixbuf_cache.AddPixbuf(f.GetFilePath(),pixbuf);
 
 				}
-				*/
 
-				gdk_draw_pixbuf	(widget->window,
-	                     widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
-	                     pixbuf,0,0,x_cell_offset + x_icon_offset,y_cell_offset+y_icon_offset,-1,-1,
-	                     GDK_RGB_DITHER_NONE,0,0);
-			}
+				int x_icon_offset = (cell_width - pixbuf_width) /2;
+				int y_icon_offset = (cell_height - pixbuf_height) /2;
 
-			g_object_unref(pixbuf);
-
-			if (!stock)
-			{
-				/*
-				if (40 <= iconview->priv->icon_width)
+				if (current_cell == iconview->priv->prelight_cell)
 				{
-				*/
-				guint border = iconview->priv->icon_border_size;
-				quiver_icon_view_draw_drop_shadow(iconview,widget->window,	state, 
-						x_cell_offset + x_icon_offset - border, 
-						y_cell_offset + y_icon_offset - border, 
-						pixbuf_width + border*2, 
-						pixbuf_height + border *2);
+					GdkPixbuf *pixbuf2 = gdk_pixbuf_new(GDK_COLORSPACE_RGB,gdk_pixbuf_get_has_alpha(pixbuf),
+							gdk_pixbuf_get_bits_per_sample(pixbuf),
+							pixbuf_width,pixbuf_height);
+
+					pixbuf_brighten (pixbuf, pixbuf2, 25);
+
+					gdk_draw_pixbuf	(widget->window,
+							 widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
+							 pixbuf2,0,0,x_cell_offset + x_icon_offset,y_cell_offset+y_icon_offset,-1,-1,
+							 GDK_RGB_DITHER_NONE,0,0);
+					g_object_unref(pixbuf2);
+				}
+				else
+				{
 					/*
-				}
-				*/
-				// draw a border around the thumbnail
-				if (0 < border)
-				{
-					gint border_offset = ceill(border/2.);
-					//printf("border offset: %d\n",border_offset);
-					gdk_draw_rectangle (widget->window, border_gc,FALSE,
-						x_cell_offset + x_icon_offset - border_offset,
-						y_cell_offset + y_icon_offset - border_offset,
-						pixbuf_width + border,
-						pixbuf_height + border);
-				}
-				/*
-						x_cell_offset + x_icon_offset - (ceill(border/2.)),
-						y_cell_offset + y_icon_offset - (ceill(border/2.)),
-						pixbuf_width + border,
-						pixbuf_height + border);
-						*/
-				//gdk_draw_rectangle (widget->window, widget->style->white_gc,FALSE,x_cell_offset + x_icon_offset -1, y_cell_offset + y_icon_offset -1, pixbuf_width+1, pixbuf_height+1);
-			}
+					if (!GTK_WIDGET_HAS_FOCUS(widget))
+					{
+						GdkPixbuf *pixbuf_gray = gdk_pixbuf_copy(pixbuf);
+						pixbuf_set_grayscale(pixbuf_gray);
+						g_object_unref(pixbuf);
+						pixbuf = pixbuf_gray;
 
+					}
+					*/
+
+					gdk_draw_pixbuf	(widget->window,
+							 widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
+							 pixbuf,0,0,x_cell_offset + x_icon_offset,y_cell_offset+y_icon_offset,-1,-1,
+							 GDK_RGB_DITHER_NONE,0,0);
+				}
+
+				g_object_unref(pixbuf);
+
+				if (!stock)
+				{
+					/*
+					if (40 <= iconview->priv->icon_width)
+					{
+					*/
+					guint border = iconview->priv->icon_border_size;
+					quiver_icon_view_draw_drop_shadow(iconview,widget->window,	state, 
+							x_cell_offset + x_icon_offset - border, 
+							y_cell_offset + y_icon_offset - border, 
+							pixbuf_width + border*2, 
+							pixbuf_height + border *2);
+						/*
+					}
+					*/
+					// draw a border around the thumbnail
+					if (0 < border)
+					{
+						gint border_offset = ceill(border/2.);
+						//printf("border offset: %d\n",border_offset);
+						gdk_draw_rectangle (widget->window, border_gc,FALSE,
+							x_cell_offset + x_icon_offset - border_offset,
+							y_cell_offset + y_icon_offset - border_offset,
+							pixbuf_width + border,
+							pixbuf_height + border);
+					}
+					/*
+							x_cell_offset + x_icon_offset - (ceill(border/2.)),
+							y_cell_offset + y_icon_offset - (ceill(border/2.)),
+							pixbuf_width + border,
+							pixbuf_height + border);
+							*/
+					//gdk_draw_rectangle (widget->window, widget->style->white_gc,FALSE,x_cell_offset + x_icon_offset -1, y_cell_offset + y_icon_offset -1, pixbuf_width+1, pixbuf_height+1);
+				}
+
+			}
 			// draw a border around the cell
 			// gdk_draw_rectangle (widget->window, dotted_line_gc,FALSE, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width-1, bound_height-1);
 			
@@ -966,6 +984,7 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 	
 	if (iconview->priv->rubberband_mode)
 	{
+#ifdef HAVE_CAIRO
 		cairo_t *cr = gdk_cairo_create(widget->window);
 
 		GdkColor *fill_color_gdk;
@@ -1034,6 +1053,7 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 		g_object_unref(color_gc);
 		
 		gdk_color_free (fill_color_gdk);
+#endif
 	}
 
 
@@ -1877,14 +1897,22 @@ quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y)
 		return G_MAXULONG;
 
 
-	GdkPixbuf *pixbuf = quiver_icon_view_get_thumbnail_pixbuf(iconview,cell);
+	gint aw, ah;
+	GdkPixbuf *pixbuf = quiver_icon_view_get_thumbnail_pixbuf(iconview,cell, &aw, &ah);
 	if (NULL != pixbuf)
 	{
 		guint pixbuf_width,pixbuf_height;
 		pixbuf_width = gdk_pixbuf_get_width(pixbuf);
 		pixbuf_height = gdk_pixbuf_get_height(pixbuf);
 
-		quiver_icon_view_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&pixbuf_width,&pixbuf_height,TRUE);
+		if (aw <= iconview->priv->icon_width && ah <= iconview->priv->icon_height)
+		{
+			quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&pixbuf_width,&pixbuf_height, FALSE);
+		}
+		else
+		{
+			quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&pixbuf_width,&pixbuf_height,TRUE);
+		}
 
 		GdkRectangle rect;
 		rect.x = current_col * cell_width + ((cell_width - pixbuf_width)/2);
@@ -2393,11 +2421,11 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 	return n_items;
 }
 
-static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell)
+static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height)
 {
 	GdkPixbuf *pixbuf = NULL;
 	if (iconview->priv->callback_get_thumbnail_pixbuf)
-		pixbuf = (*iconview->priv->callback_get_thumbnail_pixbuf)(iconview,cell,iconview->priv->callback_get_thumbnail_pixbuf_data);
+		pixbuf = (*iconview->priv->callback_get_thumbnail_pixbuf)(iconview,cell, actual_width, actual_height, iconview->priv->callback_get_thumbnail_pixbuf_data);
 	return pixbuf;
 }
 
@@ -2409,37 +2437,6 @@ static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulo
 	return pixbuf;
 }
 
-static void quiver_icon_view_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
-{
-	guint new_width;
-	guint w = *width;
-	guint h = *height;
-
-	if (!fill_if_smaller && 
-			(w < bound_width && h < bound_height) )
-	{
-		return;
-	}
-
-	if (w != bound_width || h != bound_height)
-	{
-		gdouble ratio = (double)w/h;
-		guint new_height;
-
-		new_height = (guint)(bound_width/ratio +.5);
-		if (new_height < bound_height)
-		{
-			*width = bound_width;
-			*height = new_height;
-		}
-		else
-		{
-			new_width = (guint)(bound_height *ratio + .5); 
-			*width = MIN(new_width, bound_width);
-			*height = bound_height;
-		}
-	}
-}	
 
 static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawable *drawable,GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h)
 {
@@ -2463,13 +2460,14 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawab
 			shadow_width*3,
 			shadow_width*3);			
 
+		int top=shadow_width,left=shadow_width,width=shadow_width,height=shadow_width;
+#ifdef HAVE_CAIRO
 		cairo_t *cr;
 		cr = gdk_cairo_create(drop_shadow_src);
 
 		cairo_set_source_rgba (cr, 0, 0, 0, .1);
 		cairo_set_line_join(cr,CAIRO_LINE_JOIN_ROUND);
 		int k = 0;
-		int top=shadow_width,left=shadow_width,width=shadow_width,height=shadow_width;
 		for (k = shadow_width*2;k >=1; k-=2)
 		{
 			cairo_set_line_width(cr,k);
@@ -2477,7 +2475,7 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawab
 			cairo_stroke(cr);
 		}
 		cairo_destroy(cr);
-
+#endif
 
 
 		//top left offset

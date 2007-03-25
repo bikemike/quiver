@@ -6,8 +6,8 @@
 #include <libgnomevfs/gnome-vfs.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
-#include <exif-data.h>
-#include <exif-loader.h>
+#include <libexif/exif-data.h>
+#include <libexif/exif-loader.h>
 #include <boost/shared_ptr.hpp>
 
 

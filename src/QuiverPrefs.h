@@ -17,6 +17,8 @@
 #define QUIVER_PREFS_BROWSER_THUMB_SIZE        "thumb_size"
 #define QUIVER_PREFS_BROWSER_FOLDER_HPANE      "folder_hpane"
 #define QUIVER_PREFS_BROWSER_FOLDER_VPANE      "folder_vpane"
+#define QUIVER_PREFS_BROWSER_PREVIEW_SHOW      "preview_show"
+
 
 // viewer preferences
 #define QUIVER_PREFS_VIEWER                    "viewer"

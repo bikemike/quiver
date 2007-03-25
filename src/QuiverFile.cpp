@@ -1,7 +1,13 @@
 #include <config.h>
 #include <glib.h>
+
+#ifndef QUIVER_MAEMO
 #include <libgnomeui/gnome-icon-lookup.h>
-#include <exif-utils.h>
+#else
+#include <osso-mime.h>
+#endif
+
+#include <libexif/exif-utils.h>
 #include <glib/gstdio.h>
 
 #include <gcrypt.h>
@@ -1214,13 +1220,13 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 
 GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 {
-	
+	GdkPixbuf* pixbuf = NULL;
 	GError *error = NULL;
+	gchar *icon_name = NULL;
 
 
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
-	GnomeIconLookupResultFlags result;
 	/*
 	GNOME_ICON_LOOKUP_RESULT_FLAGS_NONE
 	GNOME_ICON_LOOKUP_FLAGS_NONE
@@ -1228,9 +1234,25 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 	GnomeVFSFileInfo *file_info = GetFileInfo();
 	
 	if (NULL == file_info)
-		return NULL;
+		return pixbuf;
 	
-	char* icon_name = gnome_icon_lookup (icon_theme,
+#ifdef QUIVER_MAEMO
+	gchar** icon_names = osso_mime_get_icon_names(file_info->mime_type, file_info);
+	
+	gint i = 0;
+	for (i = 0; NULL != icon_names[i]; i++)
+	{
+		if (gtk_icon_theme_has_icon(icon_theme, icon_names[i]))
+		{
+			break;
+		}
+	}
+	icon_name = g_strdup(icon_names[i]);
+	g_strfreev(icon_names);
+
+#else
+	GnomeIconLookupResultFlags result;
+	icon_name = gnome_icon_lookup (icon_theme,
 										 NULL,
 										 GetURI(),
 										 NULL,
@@ -1238,31 +1260,41 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 										 file_info->mime_type,
 										 GNOME_ICON_LOOKUP_FLAGS_NONE,
 										 &result);
-	gint* sizes_orig = gtk_icon_theme_get_icon_sizes   (icon_theme, icon_name);
-	gint* sizes = sizes_orig;
-
-	gint size_wanted = MIN(width_desired,height_desired);
-	
-	gint size;
-	gint size_to_get = 0;
-	while (0 != (size = *sizes))
+#endif
+	if (NULL != icon_name)
 	{
-		if (size <= size_wanted)
+		gint* sizes_orig = gtk_icon_theme_get_icon_sizes   (icon_theme, icon_name);
+		gint* sizes = sizes_orig;
+
+		gint size_wanted = MIN(width_desired,height_desired);
+		
+		gint size;
+		gint size_to_get = 0;
+		gint min_size = G_MAXINT;
+		while (0 != (size = *sizes))
 		{
-			size_to_get = MAX(size_to_get,size);
+			min_size = MIN(min_size, size);
+			if (size <= size_wanted)
+			{
+				size_to_get = MAX(size_to_get,size);
+			}
+			sizes++;
 		}
-		sizes++;
+		g_free(sizes_orig);
+
+		if (0 == size_to_get)
+		{
+			size_to_get = min_size;
+		}
+
+		pixbuf = gtk_icon_theme_load_icon (icon_theme,
+												 icon_name,
+												 size_to_get,
+												 GTK_ICON_LOOKUP_USE_BUILTIN,
+												 &error);
+		gnome_vfs_file_info_unref(file_info);
+		g_free(icon_name);
 	}
-	g_free(sizes_orig);
-
-	GdkPixbuf* pixbuf = gtk_icon_theme_load_icon (icon_theme,
-                                             icon_name,
-                                             size_to_get,
-                                             GTK_ICON_LOOKUP_USE_BUILTIN,
-                                             &error);
-	gnome_vfs_file_info_unref(file_info);
-	g_free(icon_name);
-
 	return pixbuf;
 }
 
