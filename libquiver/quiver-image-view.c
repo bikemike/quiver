@@ -1167,7 +1167,7 @@ gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
 	if (event->state & GDK_CONTROL_MASK)
 	{
 		/* magnification in on the image */
-		if (GDK_SCROLL_UP == event->direction)
+		if (GDK_SCROLL_DOWN == event->direction)
 		{
 			if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode)
 			{
@@ -1178,7 +1178,7 @@ gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
 				quiver_image_view_get_magnification(imageview)/1.3);
 			//vadjust -= imageview->priv->vadjustment->step_increment;
 		}
-		else if (GDK_SCROLL_DOWN == event->direction)
+		else if (GDK_SCROLL_UP == event->direction)
 		{
 			if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode)
 			{

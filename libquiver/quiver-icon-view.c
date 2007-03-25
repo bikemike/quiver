@@ -788,6 +788,7 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 
 			gint aw = 0, ah = 0;
 			GdkPixbuf *pixbuf = quiver_icon_view_get_thumbnail_pixbuf(iconview,current_cell, &aw, &ah);
+
 			if (NULL == pixbuf)
 			{
 				pixbuf = quiver_icon_view_get_icon_pixbuf(iconview,current_cell);
@@ -801,18 +802,10 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 				pixbuf_width = gdk_pixbuf_get_width(pixbuf);
 				pixbuf_height = gdk_pixbuf_get_height(pixbuf);
 
-				guint nw = pixbuf_width;
-				guint nh = pixbuf_height;
+				guint nw = aw;
+				guint nh = ah;
 
-
-				if (aw <= iconview->priv->icon_width && ah <= iconview->priv->icon_height)
-				{
-					quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,FALSE);
-				}
-				else
-				{
-					quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,TRUE);
-				}
+				quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,FALSE);
 
 				if (!stock && (pixbuf_width != nw || pixbuf_height != nh ))
 				{

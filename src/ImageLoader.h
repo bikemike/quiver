@@ -59,6 +59,8 @@ public:
 	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
 	void AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 	void RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
+
+	bool IsWorking();
 	
 private:	
 	void Load();
@@ -88,6 +90,7 @@ private:
 	Command m_Command;
 	
 	bool m_bStopThread;
+	bool m_bWorking;
 	
 };
 

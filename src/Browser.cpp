@@ -110,10 +110,10 @@ public:
 	ImageList m_ImageList;
 	QuiverFile m_QuiverFileCurrent;
 	ImageCache m_ThumbnailCache;
+	ImageCache m_IconCache;
 	
-	guint timeout_thumbnail_id;
-	gint timeout_thumbnail_current;
-	
+	guint m_iTimeoutUpdateListID;
+
 	Browser *m_BrowserParent;
 
 	ImageLoader m_ImageLoader;
@@ -224,7 +224,10 @@ static char *ui_browser =
 "			<placeholder name='CopyPaste'>"
 "				<menuitem action='"ACTION_BROWSER_CUT"'/>"
 "				<menuitem action='"ACTION_BROWSER_COPY"'/>"
+#ifdef UNDEFINED
+// disable until implemented
 "				<menuitem action='"ACTION_BROWSER_PASTE"'/>"
+#endif
 "			</placeholder>"
 "			<placeholder name='Selection'>"
 "				<menuitem action='"ACTION_BROWSER_SELECT_ALL"'/>"
@@ -325,6 +328,12 @@ Browser::SetStatusbar(StatusbarPtr statusbarPtr)
 }
 
 void 
+Browser::GrabFocus()
+{
+	gtk_widget_grab_focus (m_BrowserImplPtr->m_pIconView);
+}
+
+void 
 Browser::Show()
 {
 	m_BrowserImplPtr->Show();
@@ -417,6 +426,7 @@ static void pane_size_allocate (GtkWidget* widget, GtkAllocation *allocation, gp
 
 
 Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
+                                       m_IconCache(100),
                                        m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
                                        m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
                                        m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
@@ -430,7 +440,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	m_pUIManager = NULL;
 	m_bFolderTreeEvent = false;
 
-	timeout_thumbnail_current = -1;
+	m_iTimeoutUpdateListID = 0;
 	m_iMergedBrowserUI = 0;
 	/*
 	 * layout for the browser gui:
@@ -604,10 +614,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 		thumb_size = 128.;
 	}
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
-
-	// temporarily hide the folder tree until we
-	// get the code written	
-	//gtk_widget_hide(vpaned);
 }
 
 Browser::BrowserImpl::~BrowserImpl()
@@ -849,10 +855,35 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	QuiverFile f = b->m_ImageList[cell];
+	GdkPixbuf* pixbuf = NULL;
 
 	guint width, height;
 	quiver_icon_view_get_icon_size(iconview,&width, &height);
-	return f.GetIcon(width,height);
+
+	gchar* icon_name = f.GetIconName();
+	if (icon_name)
+	{
+		gchar cache_icon_name [256] = "";
+		g_snprintf(cache_icon_name,256,"%s%d-%d",icon_name,width,height);
+		pixbuf = b->m_IconCache.GetPixbuf(cache_icon_name);
+		if (NULL == pixbuf)
+		{
+			pixbuf = f.GetIcon(width,height);
+			b->m_IconCache.AddPixbuf(cache_icon_name,pixbuf);
+		}
+		g_free(icon_name);
+	}
+
+	return pixbuf;
+}
+
+static gboolean thumbnail_loader_udpate_list (gpointer data)
+{
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)data;
+	gdk_threads_enter();
+	b->m_ThumbnailLoader.UpdateList();
+	gdk_threads_leave();
+	return FALSE;
 }
 
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data)
@@ -887,17 +918,20 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 		bound_height = *actual_height;
 		quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
 
-		if (bound_width == thumb_width || bound_height == thumb_height)
+		if (bound_width == thumb_width && bound_height == thumb_height)
 		{
 			need_new_thumb = FALSE;
 		}
-
-		
 	}
 	
 	if (need_new_thumb)
 	{
-		b->m_ThumbnailLoader.UpdateList();
+		// add a timeout
+		if (b->m_iTimeoutUpdateListID)
+		{
+			g_source_remove (b->m_iTimeoutUpdateListID);
+		}
+		b->m_iTimeoutUpdateListID = g_timeout_add(20,thumbnail_loader_udpate_list,b);
 	}
 	
 	return pixbuf;

@@ -479,10 +479,13 @@ char * quiver_ui_main =
 "			<placeholder name='FolderNavigation'/>"
 "			<separator/>"
 "		</menu>"
+#ifdef UNDEFINED
+// disable bookmarks menu until implemented
 "		<menu action='MenuBookmarks'>"
 "			<menuitem action='"ACTION_QUIVER_BOOKMARKS_ADD"'/>"
 "			<menuitem action='"ACTION_QUIVER_BOOKMARKS_EDIT"'/>"
 "		</menu>"
+#endif
 "		<menu action='MenuTools'>"
 "			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
 "			<separator/>"
@@ -1213,14 +1216,12 @@ void Quiver::Init()
 	if (bShowViewer)
 	{
 		ShowViewer();
-		gtk_widget_grab_focus (m_QuiverImplPtr->m_Viewer.GetWidget());
 	}
 	else
 	{
 		// must do the following to hide the widget on initial
 		// display of app
 		ShowBrowser();
-		gtk_widget_grab_focus (m_QuiverImplPtr->m_Browser.GetWidget());
 	}
 
 	// pack the hpaned (main gui area)
@@ -1296,6 +1297,15 @@ void Quiver::Init()
 	
 	gtk_widget_show_all (GTK_WIDGET(m_QuiverImplPtr->m_pQuiverWindow));
 
+	if (bShowViewer)
+	{
+		m_QuiverImplPtr->m_Viewer.GrabFocus();
+	}
+	else
+	{
+		m_QuiverImplPtr->m_Browser.GrabFocus();
+	}
+	
 #ifdef QUIVER_MAEMO
 	gtk_widget_hide(statusbar);
 #endif
@@ -1333,7 +1343,7 @@ bool Quiver::LoadSettings()
 
 void Quiver::SaveSettings()
 {
-	Timer t("Quiver::SaveSettings()");
+	//Timer t("Quiver::SaveSettings()");
 	
 	string directory = g_szConfigDir;
 	

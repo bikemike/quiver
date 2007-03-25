@@ -31,6 +31,7 @@ public:
 	// returns true if the view mode was reset, false if it did not need to be reset
 	bool ResetViewMode();
 
+	void GrabFocus();
 	void Show();
 	void Hide();
 	

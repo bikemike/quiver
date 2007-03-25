@@ -9,8 +9,7 @@ class Timer
 {
 public:
 	Timer();
-	Timer(bool);
-	Timer(std::string strFunctionName);
+	Timer(std::string strFunctionName, bool bQuiet = false);
 	double GetRunningTimeInSeconds();
 	
 	~Timer();

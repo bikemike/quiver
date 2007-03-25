@@ -3,23 +3,25 @@
 
 using namespace std;
 
-
+/*
 Timer::Timer(bool quiet)
 {
 	m_bQuiet = quiet;
 	StartTimer();
 }
+*/
+
 Timer::Timer()
 {
-	StartTimer();
 	m_bQuiet = true;
+	StartTimer();
 }
 
-Timer::Timer(string strFunctionName)
+Timer::Timer(string strFunctionName, bool bQuiet /* = false */)
 {
 	m_strFunctionName = strFunctionName;
+	m_bQuiet = bQuiet;
 	StartTimer();
-	m_bQuiet = true;
 }
 
 void Timer::StartTimer()

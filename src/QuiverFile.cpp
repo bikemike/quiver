@@ -18,6 +18,8 @@
 #include "Timer.h"
 #include "QuiverUtils.h"
 
+#include <libquiver/quiver-pixbuf-utils.h>
+
 // =================================================================================================
 // Implementation
 // =================================================================================================
@@ -411,7 +413,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 				}
 				else if (-1 == m_iWidth || -1 == m_iHeight)
 				{
-					if (0 != new_width && 0 != new_height)
+					if (0 < new_width && 0 < new_height)
 					{
 						m_iWidth =  new_width;
 						m_iHeight = new_height;
@@ -431,30 +433,18 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(bool bLargeThumb /* = false
 		thumb_pixbuf = GetExifThumbnail();
 		if (NULL != thumb_pixbuf)
 		{
-			int size = 128;
-			gint pixbuf_width = gdk_pixbuf_get_width(thumb_pixbuf);
-			gint pixbuf_height = gdk_pixbuf_get_height(thumb_pixbuf);
+			guint size = 128;
+			guint pixbuf_width = gdk_pixbuf_get_width(thumb_pixbuf);
+			guint pixbuf_height = gdk_pixbuf_get_height(thumb_pixbuf);
 			// resize it to the proper size
 			if (pixbuf_width > size || pixbuf_height > size)
 			{
-				int nw,nh;
-				if (size < pixbuf_width && pixbuf_width > pixbuf_height)
-				{
-					nw = size;
-					nh = (int) (size * (double)pixbuf_height/(double)pixbuf_width);
-				}
-				else
-				{
-					nh = size;
-					nw = (int)(size * (double)pixbuf_width / (double)pixbuf_height);
-				}
-				pixbuf_width = nw;
-				pixbuf_height = nh;
-				//printf("new size %d %d\n",nw,nh);
+				quiver_rect_get_bound_size(size,size, &pixbuf_width,&pixbuf_height,FALSE);
+
 				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
 									thumb_pixbuf,
-									nw,
-									nh,
+									pixbuf_width,
+									pixbuf_height,
 									GDK_INTERP_BILINEAR);
 									//GDK_INTERP_NEAREST);
 				g_object_unref(thumb_pixbuf);
@@ -1098,21 +1088,14 @@ static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
 	int size = loader_size->size_request;
 	if (size != 0)
 	{
-		if (size < width || size < height)
+		guint new_width,new_height;
+		new_width = width;
+		new_height = height;
+
+		quiver_rect_get_bound_size(size, size, &new_width, &new_height, FALSE);
+
+		if ((guint)width != new_height && (guint)height != new_height)
 		{
-			//printf("resize thumbnail to size: %d from %dx%d\n",size,width,height);
-			gint new_width,new_height;
-			if (size < width && height < width)
-			{
-				new_width = size;
-				new_height = (gint)(size*(double)height/(double)width);
-			}
-			else
-			{
-				new_height = size;
-				new_width = (gint)(size* (double)width/(double)height);
-			}
-			//printf("resize thumbnail to size: %dx%d\n",new_width,new_height);
 			gdk_pixbuf_loader_set_size(loader,new_width,new_height);
 		}
 	}
@@ -1153,15 +1136,19 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 				{
 					break;
 				}
-				if (0 != size_info.width || 0 != size_info.height)
+				if (0 != size_info.width && 0 != size_info.height)
 				{
-					*width = size_info.width; 
-					*height = size_info.height;
 					break;
 				}
 			}
 			
 			gdk_pixbuf_loader_close(loader, NULL);
+
+			if (0 != size_info.width && 0 != size_info.height)
+			{
+				*width = size_info.width; 
+				*height = size_info.height;
+			}
 			
 			g_object_unref(loader);
 		}
@@ -1218,23 +1205,17 @@ GdkPixbuf * QuiverFile::GetThumbnail(bool bLargeThumb /* = false */)
 	return m_QuiverFilePtr->GetThumbnail(bLargeThumb);
 }
 
-GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
+gchar* QuiverFile::GetIconName()
 {
-	GdkPixbuf* pixbuf = NULL;
-	GError *error = NULL;
 	gchar *icon_name = NULL;
 
 
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
-	/*
-	GNOME_ICON_LOOKUP_RESULT_FLAGS_NONE
-	GNOME_ICON_LOOKUP_FLAGS_NONE
-	*/
 	GnomeVFSFileInfo *file_info = GetFileInfo();
 	
 	if (NULL == file_info)
-		return pixbuf;
+		return NULL;
 	
 #ifdef QUIVER_MAEMO
 	gchar** icon_names = osso_mime_get_icon_names(file_info->mime_type, file_info);
@@ -1261,6 +1242,20 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 										 GNOME_ICON_LOOKUP_FLAGS_NONE,
 										 &result);
 #endif
+	gnome_vfs_file_info_unref(file_info);
+	return icon_name;
+}
+
+GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
+{
+	GdkPixbuf* pixbuf = NULL;
+	GError *error = NULL;
+	gchar *icon_name = NULL;
+
+
+	icon_name = GetIconName();
+	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
+
 	if (NULL != icon_name)
 	{
 		gint* sizes_orig = gtk_icon_theme_get_icon_sizes   (icon_theme, icon_name);
@@ -1292,7 +1287,6 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 												 size_to_get,
 												 GTK_ICON_LOOKUP_USE_BUILTIN,
 												 &error);
-		gnome_vfs_file_info_unref(file_info);
 		g_free(icon_name);
 	}
 	return pixbuf;

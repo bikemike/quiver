@@ -31,6 +31,7 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	AddPixbufLoaderObserver(this);
 
 	m_bStopThread = false;
+	m_bWorking = false;
 	//Timer t("ImageLoader::Start()");
 	pthread_create(&m_pthread_id, NULL, run, this);
 }
@@ -65,11 +66,15 @@ int ImageLoader::Run()
 
 		if (0 == m_Commands.size() && !m_bStopThread)
 		{
+			m_bWorking = false;
 			// unlock mutex
 			pthread_mutex_unlock (&m_CommandMutex);
 			
 			pthread_mutex_lock (&m_ConditionMutex);
 			pthread_cond_wait(&m_Condition,&m_ConditionMutex);
+
+			m_bWorking = true;
+
 			pthread_mutex_unlock (&m_ConditionMutex);
 
 		}
@@ -106,6 +111,11 @@ int ImageLoader::Run()
 	}
 	
 	return 0;
+}
+
+bool ImageLoader::IsWorking()
+{
+	return m_bWorking;
 }
 
 
@@ -598,7 +608,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		gdk_threads_leave();
 		return retval;
 	}
-	Timer loadTimer(true); // true for quite mode
+	Timer loadTimer; // true for quite mode
 	
 	int size = 8192;
 	//int size = 16384;

@@ -54,6 +54,7 @@ public:
 	unsigned long long GetFileSize();
 	
 	GdkPixbuf *GetIcon(int width_desired,int height_desired);
+	gchar *GetIconName();
 	
 	void Reload();
 	

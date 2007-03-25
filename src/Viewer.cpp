@@ -389,6 +389,7 @@ public:
 
 	Viewer *m_pViewer;
 	
+	guint m_iTimeoutUpdateListID;
 	guint m_iTimeoutSlideshowID;
 	int   m_iSlideShowDuration;
 	bool  m_bSlideShowLoop;
@@ -1224,6 +1225,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pUIManager = NULL;
 	m_iMergedViewerUI = 0;
 	
+	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutSlideshowID = 0;
 
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
@@ -1304,8 +1306,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		}
 	}
 
-	m_iSlideShowDuration = prefsPtr->GetInteger(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_DURATION, 2500);
-	m_bSlideShowLoop = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_LOOP);
+	m_iSlideShowDuration = prefsPtr->GetInteger(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_DURATION, 3000);
+	m_bSlideShowLoop = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_LOOP,true);
 	
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 	
@@ -1448,6 +1450,10 @@ bool Viewer::ResetViewMode()
 	return bReset;
 }
 
+void Viewer::GrabFocus()
+{
+	gtk_widget_grab_focus(m_ViewerImplPtr->m_pImageView);
+}
 void Viewer::Show()
 {
 	GError *tmp_error;
@@ -1585,24 +1591,35 @@ static gboolean timeout_advance_slideshow (gpointer data)
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	int iNextIndex = pViewerImpl->m_ImageList.GetCurrentIndex()+1;
-	
-	if (!pViewerImpl->m_ImageList.HasNext() && pViewerImpl->m_bSlideShowLoop)
+	if (pViewerImpl->m_ImageLoader.IsWorking())
 	{
-		iNextIndex = 0;
+		// wait until the imageloader has finished working
+		// before advancing the slideshow
+		pViewerImpl->m_iTimeoutSlideshowID = g_timeout_add(100,timeout_advance_slideshow, pViewerImpl);
 	}
-	
-	gdk_threads_enter();
-	pViewerImpl->SetImageIndex(iNextIndex,true);
-	gdk_threads_leave();
+	else
+	{
+		if (!pViewerImpl->m_ImageList.HasNext() && pViewerImpl->m_bSlideShowLoop)
+		{
+			iNextIndex = 0;
+		}
+		
+		gdk_threads_enter();
+		pViewerImpl->SetImageIndex(iNextIndex,true);
+		gdk_threads_leave();
 
-	if ( (!pViewerImpl->m_ImageList.HasNext() && !pViewerImpl->m_bSlideShowLoop)
-		|| pViewerImpl->m_ImageList.GetSize() < 2)
-	{
-		pViewerImpl->m_pViewer->SlideShowStop();
-		return FALSE;
+		if ( (!pViewerImpl->m_ImageList.HasNext() && !pViewerImpl->m_bSlideShowLoop)
+			|| pViewerImpl->m_ImageList.GetSize() < 2)
+		{
+			pViewerImpl->m_pViewer->SlideShowStop();
+		}
+		else
+		{
+			pViewerImpl->m_iTimeoutSlideshowID = g_timeout_add(pViewerImpl->m_iSlideShowDuration,timeout_advance_slideshow, pViewerImpl);
+		}
 	}
 	
-	return TRUE;
+	return FALSE;
 }
 
 
@@ -1662,6 +1679,17 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 	return f.GetIcon(width,height);
 }
 
+
+static gboolean thumbnail_loader_udpate_list (gpointer data)
+{
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)data;	
+	gdk_threads_enter();
+	pViewerImpl->m_ThumbnailLoader.UpdateList();
+	gdk_threads_leave();
+	return FALSE;
+}
+
+
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data)
 
 {
@@ -1694,17 +1722,21 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 		bound_height = *actual_height;
 		quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
 
-		if (bound_width == thumb_width || bound_height == thumb_height)
+		if (bound_width == thumb_width && bound_height == thumb_height)
 		{
 			need_new_thumb = FALSE;
 		}
-
-		
 	}
 	
 	if (need_new_thumb)
 	{
-		pViewerImpl->m_ThumbnailLoader.UpdateList();
+		// add a timeout
+		if (pViewerImpl->m_iTimeoutUpdateListID)
+		{
+			g_source_remove (pViewerImpl->m_iTimeoutUpdateListID);
+		}
+		pViewerImpl->m_iTimeoutUpdateListID = g_timeout_add(20,thumbnail_loader_udpate_list,pViewerImpl);
+
 	}
 	
 	return pixbuf;
