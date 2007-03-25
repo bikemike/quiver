@@ -3,6 +3,13 @@
 #include "quiver-i18n.h"
 
 #include "Quiver.h"
+
+#ifdef QUIVER_MAEMO
+#include <hildon-widgets/hildon-program.h>
+#include <libosso.h>
+#endif
+
+#include <gdk-pixbuf/gdk-pixbuf-animation.h>
 //#include "QuiverUI.h"
 
 #include <glib.h>
@@ -13,11 +20,22 @@
 
 #include <errno.h>
 #include <gcrypt.h>
+
+#ifndef QUIVER_MAEMO
 extern "C" 
 {
 	// needed for initialization of gcrypt library
 	GCRY_THREAD_OPTION_PTHREAD_IMPL;
 }
+#else
+#include "gcrypt_macro.h"
+extern "C" 
+{
+	// needed for initialization of gcrypt library
+	QUIVER_GCRY_THREAD_OPTION_PTHREAD_IMPL;
+}
+#endif
+
 
 #include "icons/quiver_icon_app.pixdata"
 #include "QuiverStockIcons.h"
@@ -82,7 +100,9 @@ public:
 	ExifView m_ExifView;
 	
 	StatusbarPtr m_StatusbarPtr;
+
 	GtkWidget *m_pQuiverWindow;
+
 	GtkWidget *m_pMenubar;
 	GtkWidget *m_pToolbar;
 	GtkWidget *m_pNBProperties;
@@ -258,7 +278,11 @@ void QuiverImpl::LoadExternalToolMenuItems()
 			
 			string str_ui =
 				"<ui>"
+#ifdef QUIVER_MAEMO
+				"	<popup name='MenubarMain'>"
+#else
 				"	<menubar name='MenubarMain'>"
+#endif
 				"		<menu action='MenuTools'>"
 				"			<placeholder name='ToolsExternal'>";
 			for (itr = ui_commands.begin(); ui_commands.end() != itr; ++itr)
@@ -270,7 +294,11 @@ void QuiverImpl::LoadExternalToolMenuItems()
 			str_ui +=
 				"			</placeholder>"
 				"		</menu>"
+#ifdef QUIVER_MAEMO
+				"	</popup>"
+#else
 				"	</menubar>"
+#endif
 				"</ui>";
 
 			if (0 != m_iMergedExternalTools)
@@ -284,6 +312,9 @@ void QuiverImpl::LoadExternalToolMenuItems()
                  str_ui.c_str(),
                  str_ui.length(),
                  &error);
+
+			gtk_ui_manager_ensure_update(m_pUIManager);
+
 			if (NULL != error)
 			{
 				printf("error: %s\n",error->message);
@@ -351,8 +382,10 @@ void QuiverImpl::SaveAs()
 
 bool QuiverImpl::CanClose()
 {
+#ifndef QUIVER_MAEMO
 	gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
 	gtk_window_get_size(GTK_WINDOW(m_pQuiverWindow),&m_iAppWidth,&m_iAppHeight);
+#endif
 	return true;
 }
 
@@ -377,14 +410,24 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_ABOUT                                  "About"
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
-
+#define ACTION_QUIVER_ESCAPE                                 "QuiverEscape"
 #define ACTION_QUIVER_QUIT_2                                 ACTION_QUIVER_QUIT"_2"
 #define ACTION_QUIVER_QUIT_3                                 ACTION_QUIVER_QUIT"_3"
 #define ACTION_QUIVER_QUIT_4                                 ACTION_QUIVER_QUIT"_4"
 
+#ifdef QUIVER_MAEMO
+#define ACTION_QUIVER_UI_MODE_SWITCH_MAEMO                   "UIModeSwitch_MAEMO"
+#define ACTION_QUIVER_UI_MODE_VIEWER_MAEMO                   ACTION_QUIVER_UI_MODE_VIEWER"_MAEMO"
+#define ACTION_QUIVER_FULLSCREEN_MAEMO                       ACTION_QUIVER_FULLSCREEN"_MAEMO"
+#endif
+
 char * quiver_ui_main =
 "<ui>"
+#ifdef QUIVER_MAEMO
+"	<popup name='MenubarMain'>"
+#else
 "	<menubar name='MenubarMain'>"
+#endif
 "		<menu action='MenuFile'>"
 "			<menuitem action='"ACTION_QUIVER_OPEN"'/>"
 "			<menuitem action='"ACTION_QUIVER_OPEN_FOLDER"'/>"
@@ -450,7 +493,11 @@ char * quiver_ui_main =
 "		<menu action='MenuHelp'>"
 "			<menuitem action='"ACTION_QUIVER_ABOUT"'/>"
 "		</menu>"
+#ifdef QUIVER_MAEMO
+"	</popup>"
+#else
 "	</menubar>"
+#endif
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'/>"
 "		<placeholder name='NavToolItems'/>"
@@ -469,12 +516,21 @@ char * quiver_ui_main =
 "	<accelerator action='"ACTION_QUIVER_QUIT_2"'/>"
 "	<accelerator action='"ACTION_QUIVER_QUIT_3"'/>"
 "	<accelerator action='"ACTION_QUIVER_QUIT_4"'/>"
+"	<accelerator action='"ACTION_QUIVER_ESCAPE"'/>"
+#ifdef QUIVER_MAEMO
+"	<accelerator action='"ACTION_QUIVER_FULLSCREEN_MAEMO"'/>"
+"	<accelerator action='"ACTION_QUIVER_UI_MODE_SWITCH_MAEMO"'/>"
+#endif
 "</ui>";
 
 
 char *quiver_ui_browser =
 "<ui>"
+#ifdef QUIVER_MAEMO
+"	<popup name='MenubarMain'>"
+#else
 "	<menubar name='MenubarMain'>"
+#endif
 "		<menu action='MenuView'>"
 "			<placeholder name='UIModeItems'>"
 "				<separator/>"
@@ -482,7 +538,11 @@ char *quiver_ui_browser =
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
+#ifdef QUIVER_MAEMO
+"	</popup>"
+#else
 "	</menubar>"
+#endif
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'>"
 "			<separator/>"
@@ -498,7 +558,11 @@ char *quiver_ui_browser =
 
 char *quiver_ui_viewer =
 "<ui>"
+#ifdef QUIVER_MAEMO
+"	<popup name='MenubarMain'>"
+#else
 "	<menubar name='MenubarMain'>"
+#endif
 "		<menu action='MenuView'>"
 "			<placeholder name='UIModeItems'>"
 "				<separator/>"
@@ -506,7 +570,11 @@ char *quiver_ui_viewer =
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
+#ifdef QUIVER_MAEMO
+"	</popup>"
+#else
 "	</menubar>"
+#endif
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'>"
 "			<separator/>"
@@ -517,7 +585,17 @@ char *quiver_ui_viewer =
 "</ui>";
 
 GtkToggleActionEntry QuiverImpl::action_entries_toggle[] = {
-	{ ACTION_QUIVER_FULLSCREEN, GTK_STOCK_FULLSCREEN, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_FULLSCREEN, 
+#if GTK_MAJOR_VERSION > 2 || GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION >= 8
+	GTK_STOCK_FULLSCREEN
+#else
+	GTK_STOCK_GOTO_TOP
+#endif
+		, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
+
+#ifdef QUIVER_MAEMO
+	{ ACTION_QUIVER_FULLSCREEN_MAEMO, NULL, N_("_Full Screen"), "F6", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
+#endif
 	{ ACTION_QUIVER_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(quiver_action_handler_cb),FALSE},	
 	{ ACTION_QUIVER_VIEW_MENUBAR, GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(quiver_action_handler_cb),TRUE},
 	{ ACTION_QUIVER_VIEW_TOOLBAR_MAIN, GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
@@ -553,6 +631,9 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 
 	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "<Control>b", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
+#ifdef QUIVER_MAEMO
+	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, NULL , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
+#endif
 
 	{ ACTION_QUIVER_OPEN, GTK_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_OPEN_FOLDER, GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
@@ -561,8 +642,9 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	
 	{ ACTION_QUIVER_QUIT, GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
 	{ ACTION_QUIVER_QUIT_2, GTK_STOCK_QUIT, "_Quit", "q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_QUIT_3, GTK_STOCK_QUIT, "_Quit", "Escape", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_QUIT_3, GTK_STOCK_QUIT, "_Quit", "<Control>q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
 	{ ACTION_QUIVER_QUIT_4, GTK_STOCK_QUIT, "_Quit", "<Control>w", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_ESCAPE, NULL, NULL, "Escape", NULL, G_CALLBACK( quiver_action_handler_cb )},	
 
 	{ ACTION_QUIVER_PREFERENCES, GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
 
@@ -742,7 +824,9 @@ void  Quiver::signal_drag_data_delete  (GtkWidget *widget,GdkDragContext *contex
 void Quiver::SetWindowTitle(string s)
 {
 	string title = "quiver - " + s;
-	gtk_window_set_title (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow), title.c_str());	
+#ifndef QUIVER_MAEMO
+	gtk_window_set_title (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow), title.c_str());
+#endif	
 }
 
 void Quiver::ImageChanged()
@@ -800,9 +884,11 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		// show widgets
 		gtk_widget_show(pQuiverImpl->m_pToolbar);
 		gtk_widget_show(pQuiverImpl->m_pMenubar);
+#ifndef QUIVER_MAEMO		
+		//FIXME: must have preferences for statusbar show/hide
 		gtk_widget_show(pQuiverImpl->m_StatusbarPtr->GetWidget());
-		
 		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
+#endif
 		//m_Viewer.ShowBorder();
 	}
 	
@@ -815,7 +901,7 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 
 	}
 
-	return TRUE;
+	return FALSE;
 }
 
 gboolean Quiver::event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
@@ -936,15 +1022,28 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_Viewer.AddEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
 
 	/* Create the main window */
+#ifdef QUIVER_MAEMO
+	HildonProgram* program;
+	program = HILDON_PROGRAM(hildon_program_get_instance());
+
+	g_set_application_name("quiver");
+
+	m_QuiverImplPtr->m_pQuiverWindow = hildon_window_new();
+	hildon_program_add_window(program, HILDON_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
+#else
 	m_QuiverImplPtr->m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");
+#endif
+
 
 	if (LoadSettings())
 	{	
 		//set the size and position of the window
 		//gtk_widget_set_uposition(quiver_window,m_iAppX,m_iAppY);
+#ifndef QUIVER_MAEMO
 		gtk_window_move(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppX,m_QuiverImplPtr->m_iAppY);
 		gtk_window_set_default_size (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppWidth,m_QuiverImplPtr->m_iAppHeight);
+#endif
 
 	}
 
@@ -969,6 +1068,7 @@ void Quiver::Init()
 			quiver_ui_main,
 			strlen(quiver_ui_main),
 			&tmp_error);
+	
 
 	guint n_entries = G_N_ELEMENTS (m_QuiverImplPtr->action_entries);
 
@@ -1063,7 +1163,7 @@ void Quiver::Init()
 	
 	bool prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 
-	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,"ViewProperties");
+	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
 
 	if (prefs_show)
 	{
@@ -1132,8 +1232,14 @@ void Quiver::Init()
 
 	// pack the main gui ara with the rest of the gui compoents
 	//gtk_container_add (GTK_CONTAINER (vbox),menubar);
+#ifdef QUIVER_MAEMO
+	hildon_program_set_common_menu (program, GTK_MENU(m_QuiverImplPtr->m_pMenubar));
+	hildon_program_set_common_toolbar (program, GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar));
+#else
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pMenubar, FALSE, FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pToolbar, FALSE, FALSE, 0);
+#endif
+
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pHPanedMainArea, TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox),statusbar , FALSE, FALSE, 0);
 
@@ -1188,11 +1294,15 @@ void Quiver::Init()
 					
 	g_idle_add(idle_quiver_init,this);
 	
-	gtk_widget_show_all (m_QuiverImplPtr->m_pQuiverWindow);
+	gtk_widget_show_all (GTK_WIDGET(m_QuiverImplPtr->m_pQuiverWindow));
 
+#ifdef QUIVER_MAEMO
+	gtk_widget_hide(statusbar);
+#endif
 	
 	//test adding a custom item to the menu
 	m_QuiverImplPtr->LoadExternalToolMenuItems();
+
 
 }
 
@@ -1242,7 +1352,7 @@ void Quiver::SaveSettings()
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH,m_QuiverImplPtr->m_iAppWidth);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT,m_QuiverImplPtr->m_iAppHeight);
 
-	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,"ViewProperties");
+	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
 	gboolean is_active = gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(actionViewProperties));
 	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW, is_active ?  true : false);
 
@@ -1281,6 +1391,19 @@ int main (int argc, char **argv)
 	g_thread_init (NULL);
 	gdk_threads_init ();
 	gdk_threads_enter ();
+
+#ifdef QUIVER_MAEMO
+	/* Initialize maemo application */
+	osso_context_t* osso_context;
+	osso_context = osso_initialize("quiver", PACKAGE_VERSION, TRUE, NULL);
+
+    
+	/* Check that initialization was ok */
+	if (osso_context == NULL)
+	{
+		return OSSO_ERROR;
+	}
+#endif
 
 	// initialize the libgcrypt library (used for generating md5 hash)
 	gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
@@ -1346,6 +1469,10 @@ int main (int argc, char **argv)
                                              
 	gtk_main ();
 	
+#ifdef QUIVER_MAEMO
+	osso_deinitialize(osso_context);
+#endif
+
 	gdk_threads_leave();
 	
 	return 0;
@@ -1396,7 +1523,9 @@ static gboolean timeout_event_motion_notify (gpointer data)
 		empty_bitmap = gdk_bitmap_create_from_data (NULL,zero,1,1);
 		empty_cursor = gdk_cursor_new_from_pixmap (empty_bitmap,empty_bitmap,&blank,&blank,0,0);
 
+#ifndef QUIVER_MAEMO
 		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, empty_cursor);
+#endif
 		
 		g_object_unref(empty_bitmap);
 		gdk_cursor_unref (empty_cursor);
@@ -1417,8 +1546,10 @@ static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, g
 		g_source_remove(pQuiverImpl->m_iTimeoutMouseMotionNotify);
 		pQuiverImpl->m_iTimeoutMouseMotionNotify = 0;
 	}
-	
+
+#ifndef QUIVER_MAEMO	
 	gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
+#endif
 
 	pQuiverImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pQuiverImpl);
 
@@ -1489,16 +1620,25 @@ void Quiver::ShowViewer()
 {
 	GError *tmp_error;
 	tmp_error = NULL;
-	gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedBrowserUI);
-	m_QuiverImplPtr->m_iMergedBrowserUI = 0;
+
+	m_QuiverImplPtr->m_Browser.Hide();
+
+	if (0 != m_QuiverImplPtr->m_iMergedBrowserUI)
+	{
+		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedBrowserUI);
+		m_QuiverImplPtr->m_iMergedBrowserUI = 0;
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+	}
+
 	if (0 == m_QuiverImplPtr->m_iMergedViewerUI)
 	{
 		m_QuiverImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_viewer,
 			strlen(quiver_ui_viewer),
 			&tmp_error);
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
-	m_QuiverImplPtr->m_Browser.Hide();
+
 	m_QuiverImplPtr->m_Viewer.Show();
 }
 
@@ -1507,16 +1647,24 @@ void Quiver::ShowBrowser()
 	GError *tmp_error;
 	tmp_error = NULL;
 
-	gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedViewerUI);
-	m_QuiverImplPtr->m_iMergedViewerUI = 0;
+	m_QuiverImplPtr->m_Viewer.Hide();
+	gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+
+	if (0 != m_QuiverImplPtr->m_iMergedViewerUI)
+	{
+		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedViewerUI);
+		m_QuiverImplPtr->m_iMergedViewerUI = 0;
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+	}
+
 	if (0 == m_QuiverImplPtr->m_iMergedBrowserUI)
 	{
 		m_QuiverImplPtr->m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_browser,
 			strlen(quiver_ui_browser),
 			&tmp_error);
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
-	m_QuiverImplPtr->m_Viewer.Hide();
 	m_QuiverImplPtr->m_Browser.Show();
 }
 
@@ -1641,6 +1789,7 @@ void Quiver::OnQuit()
 void Quiver::OnOpenFile()
 {
 	GtkWidget *dialog;
+#ifndef QUIVER_MAEMO
 	
 	dialog = gtk_file_chooser_dialog_new ("Open File",
 					      GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
@@ -1662,12 +1811,14 @@ void Quiver::OnOpenFile()
 	  }
 	
 	gtk_widget_destroy (dialog);
+#endif
 }
 
 void Quiver::OnOpenFolder()
 {
 	GtkWidget *dialog;
 	
+#ifndef QUIVER_MAEMO
 	dialog = gtk_file_chooser_dialog_new ("Open Folder",
 					      GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
 					      GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
@@ -1687,6 +1838,7 @@ void Quiver::OnOpenFolder()
 	  }
 	
 	gtk_widget_destroy (dialog);
+#endif
 }
 
 void Quiver::OnSlideShow(bool bStart)
@@ -1762,6 +1914,41 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	{
 		pQuiver->OnQuit();
 	}
+	else if (0 == strcmp(szAction,ACTION_QUIVER_ESCAPE) )
+	{
+		// this action will do one of the following
+
+		bool bDoneSomething = false;
+
+		if (0 != pQuiverImpl->m_iMergedViewerUI)
+		{
+			// 1. if in viewer and zoomed return to zoom fit
+			bDoneSomething = pQuiverImpl->m_Viewer.ResetViewMode();
+
+			if (!bDoneSomething)
+			{
+				// 2. if in viewer and zoom fit return to browser
+				pQuiver->ShowBrowser();
+				bDoneSomething = true;
+			}
+		}
+
+		if (!bDoneSomething)
+		{
+			if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
+			{
+				// 3. if in browser and fullscreen, return to unfullscreen mode
+				pQuiver->OnFullScreen();
+				bDoneSomething = true;
+			}
+		}
+
+		if (!bDoneSomething)
+		{
+			// 4. if in browser quit
+			pQuiver->OnQuit();
+		}
+	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_OPEN))
 	{
 		pQuiver->OnOpenFile();
@@ -1814,19 +2001,38 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			pQuiver->OnShowStatusbar(false);
 		}
 	}
-	else if (0 == strcmp(szAction,ACTION_QUIVER_FULLSCREEN))
+	else if (0 == strcmp(szAction,ACTION_QUIVER_FULLSCREEN)
+#ifdef QUIVER_MAEMO
+	 || 0 == strcmp(szAction,ACTION_QUIVER_FULLSCREEN_MAEMO)
+#endif
+	)
 	{
 		pQuiver->OnFullScreen();
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_BROWSER))
 	{
 		pQuiver->ShowBrowser();
-
 	}		
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_VIEWER))
 	{
 		pQuiver->ShowViewer();
 	}
+#ifdef QUIVER_MAEMO
+	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_SWITCH_MAEMO))
+	{
+		if (0 == pQuiverImpl->m_iMergedViewerUI)
+		{
+			pQuiver->ShowViewer();
+		}
+		else
+		{
+			if (! pQuiverImpl->m_Viewer.ResetViewMode() )
+			{
+				pQuiver->ShowBrowser();
+			}
+		}
+	}
+#endif
 	else if (0 == strcmp(szAction, ACTION_QUIVER_ABOUT))
 	{
 		pQuiver->OnAbout();

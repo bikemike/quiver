@@ -3,6 +3,7 @@ SUBDIRS = icons
 
 gladedir = $(datadir)/quiver/glade
 AM_CPPFLAGS = \
+	-I$(top_srcdir) \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
@@ -10,12 +11,14 @@ AM_CPPFLAGS = \
 	$(PACKAGE_CFLAGS) \
 	$(BOOST_CPPFLAGS) \
 	$(LIBGCRYPT_CFLAGS) \
+	$(LIBEXIF_CFLAGS) \
 	-Wall 
 
 bin_PROGRAMS = quiver
 
 quiver_SOURCES = \
 	quiver-i18n.h \
+	gcrypt_macro.h \
 	QuiverUI.h \
 	ExifView.h \
 	ExifView.cpp \
@@ -92,8 +95,10 @@ quiver_LDADD = \
 	$(BOOST_LDFLAGS) \
 	$(BOOST_SIGNALS_LIB) \
 	$(LIBGCRYPT_LIBS) \
+	$(LIBEXIF_LIBS) \
 	-ljpeg \
-	$(top_srcdir)/libquiver/libquiver.la
+	../libquiver/libquiver.la
+
 
 
 TESTS = test_image_list test_quiver_file test_icon_view

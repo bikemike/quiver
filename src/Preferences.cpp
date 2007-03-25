@@ -106,11 +106,11 @@ bool Preferences::HasKey(std::string section, std::string key)
 	return rval;
 }
 
-std::string Preferences::GetValue(std::string section, std::string key)
+std::string Preferences::GetValue(std::string section, std::string key, std::string default_val /* = "" */)
 {
 	GError *error = NULL;
 	gchar *value;
-	string strValue;
+	string strValue = default_val;
 
 	value = g_key_file_get_value(m_KeyFile,section.c_str(),key.c_str(), &error);
 
@@ -119,13 +119,17 @@ std::string Preferences::GetValue(std::string section, std::string key)
 		strValue = value;
 		g_free(value);
 	}
+	else
+	{
+		g_key_file_set_value(m_KeyFile,section.c_str(),key.c_str(), default_val.c_str());
+	}
 
 	return strValue;
 }
 
-std::string Preferences::GetString(std::string section, std::string key)
+std::string Preferences::GetString(std::string section, std::string key, std::string default_val /* = ""*/)
 {
-	return GetValue(section,key);
+	return GetValue(section,key,default_val);
 }
 
 std::string Preferences::GetLocaleString(std::string section, std::string key, std::string locale)
@@ -157,6 +161,10 @@ bool Preferences::GetBoolean(std::string section, std::string key, bool default_
 	{
 		bValue = value ? true : false;
 	}
+	else
+	{
+		g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), bValue ? TRUE : FALSE);
+	}
 
 	return bValue;
 }
@@ -171,6 +179,10 @@ int Preferences::GetInteger(std::string section, std::string key, int default_va
 	if (NULL == error)
 	{
 		value = tmpvalue;
+	}
+	else
+	{
+		g_key_file_set_integer(m_KeyFile,section.c_str(),key.c_str(), value);
 	}
 
 	return value;
@@ -248,12 +260,7 @@ void Preferences::SetBoolean(std::string section, std::string key, bool value)
 	
 	if (!bHasKey || bOldVal != value)
 	{
-		gboolean val = FALSE;
-		if (value)
-		{
-			val = TRUE;
-		}
-		g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), val);
+		g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), value ? TRUE : FALSE);
 		m_bModified = true;
 		
 		PreferencesEvent::PreferencesEventType type;

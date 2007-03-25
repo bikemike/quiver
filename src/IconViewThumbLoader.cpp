@@ -6,7 +6,6 @@ IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 	m_bStopThreads    = false;
 	m_ulRangeStart    = 0;
 	m_ulRangeEnd      = 0;
-	m_bLargeThumbs    = false;
 	
 	m_iThreads = iThreads;
 	
@@ -73,26 +72,17 @@ void IconViewThumbLoader::SetNumCachePages(guint uiNumCachePages)
 
 void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 {
-	bool bLargeThumbs = true;
 	gulong iNewStart,iNewEnd;
-	guint width, height;
 
 	GetVisibleRange(&iNewStart, &iNewEnd);
-	GetIconSize(&width, &height);
 
-	if (width <= 128 && height <= 128)
-	{
-		bLargeThumbs = false;
-	}
-	
-	if (bForce || m_ulRangeStart != iNewStart || m_ulRangeEnd != iNewEnd || bLargeThumbs != m_bLargeThumbs)
+	if (bForce || m_ulRangeStart != iNewStart || m_ulRangeEnd != iNewEnd )
 	{
 		pthread_mutex_lock (&m_ListMutex);
 		// view is different, we'll need to create a new list of items to cache
 		
 		m_ulRangeStart = iNewStart;
 		m_ulRangeEnd   = iNewEnd;
-		m_bLargeThumbs = bLargeThumbs;
 		
 		m_listThumbIndexes.clear();
 		

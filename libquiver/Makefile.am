@@ -31,11 +31,11 @@ libquiver_la_SOURCES =     \
 
 
 quiver-marshallers.h: quiver-marshallers.list $(GLIB_GENMARSHAL)
-	$(GLIB_GENMARSHAL) quiver-marshallers.list --header --prefix=_quiver_marshal > $@
+	$(GLIB_GENMARSHAL) '$(srcdir)/quiver-marshallers.list'	--header --prefix=_quiver_marshal > $@
 
 quiver-marshallers.c: quiver-marshallers.h quiver-marshallers.list $(GLIB_GENMARSHAL)
 	echo "#include \"quiver-marshallers.h\"" > $@ && \
-	$(GLIB_GENMARSHAL) quiver-marshallers.list --body --prefix=_quiver_marshal >> $@
+	$(GLIB_GENMARSHAL) '$(srcdir)/quiver-marshallers.list'	--body --prefix=_quiver_marshal > $@
 
 CLEANFILES = $(MARSHALLERS) 
 EXTRA_DIST = quiver-marshallers.list

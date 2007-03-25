@@ -35,7 +35,7 @@ typedef enum _QuiverIconOverlayType QuiverIconOverlayType;
 typedef gulong (*QuiverIconViewGetNItemsFunc) (QuiverIconView *iconview,gpointer user_data);
 typedef gchar* (*QuiverIconViewGetTextFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetIconPixbufFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
-typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
+typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,gulong cell,gint* actual_width, gint *actual_height, gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview,gulong cell, QuiverIconOverlayType type,gpointer user_data);
 //typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview, gulong cell, QuiverIconOverlayType type, gpointer user_data);
 
