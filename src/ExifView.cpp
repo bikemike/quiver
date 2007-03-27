@@ -60,6 +60,9 @@ static void exif_tree_update_thumbnail(ExifView::ExifViewImpl *pExifViewImpl, Gt
 static void exif_tree_update_iter_entry (ExifView::ExifViewImpl *pExifViewImpl, GtkTreeIter *iter, ExifEntry *entry);
 static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifIfd ifd, ExifTag tag);	
 
+static void exif_view_map(GtkWidget *widget, gpointer user_data);
+static gboolean exif_view_idle_load_exif_tree_view(gpointer data);
+
 /* private implementation */
 class ExifView::ExifViewImpl
 {
@@ -77,6 +80,8 @@ public:
 	GtkUIManager* m_pUIManager;
 	guint         m_iIdleLoadID;
 	
+	gboolean      m_bLoaded;
+
 // nested classes
 	class PreferencesEventHandler : public IPreferencesEventHandler
 	{
@@ -208,9 +213,26 @@ ExifView::ExifViewImpl::~ExifViewImpl()
 	}
 }
 
+static void exif_view_map(GtkWidget *widget, gpointer user_data)
+{
+	ExifView::ExifViewImpl *pExifViewImpl = static_cast<ExifView::ExifViewImpl*>(user_data);
+	if (!pExifViewImpl->m_bLoaded)
+	{
+		if (0 != pExifViewImpl->m_iIdleLoadID)
+		{
+			g_source_remove(pExifViewImpl->m_iIdleLoadID );
+			pExifViewImpl->m_iIdleLoadID = 0;
+		}
+		
+		pExifViewImpl->m_iIdleLoadID = g_timeout_add(10,exif_view_idle_load_exif_tree_view,pExifViewImpl);
+		pExifViewImpl->m_bLoaded = TRUE;
+	}
+}
+
 ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 {
 	m_ExifViewImplPtr->m_iIdleLoadID = 0;
+	m_ExifViewImplPtr->m_bLoaded     = FALSE;
 	m_ExifViewImplPtr->m_pTreeView   = NULL;
 	m_ExifViewImplPtr->m_pExifData   = NULL;
 	m_ExifViewImplPtr->m_pUIManager  = NULL;
@@ -379,6 +401,7 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 	m_ExifViewImplPtr->m_pTreeView = treeview;
 	m_ExifViewImplPtr->m_pScrolledWindow = scrolled_window;	
 	
+	g_signal_connect(scrolled_window, "map", (GCallback) exif_view_map, m_ExifViewImplPtr.get());
 }
 
 ExifView::~ExifView()
@@ -391,7 +414,7 @@ ExifView::GetWidget()
 	return m_ExifViewImplPtr->m_pScrolledWindow;
 }
 
-gboolean exif_view_idle_load_exif_tree_view(gpointer data)
+static gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 {
 	ExifView::ExifViewImpl *pExifViewImpl = static_cast<ExifView::ExifViewImpl*>(data);
 	
@@ -547,15 +570,30 @@ gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 	}
 
 	gdk_threads_enter();
-	
+
+	/*
+	GtkAdjustment *h = gtk_tree_view_get_hadjustment(GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
+	GtkAdjustment *v = gtk_tree_view_get_vadjustment(GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
+
+	gdouble hval = gtk_adjustment_get_value(h);
+	gdouble vval = gtk_adjustment_get_value(v);
+	*/
+
 	gtk_tree_view_set_model(GTK_TREE_VIEW(pExifViewImpl->m_pTreeView),GTK_TREE_MODEL (store));
 
 	gtk_tree_view_expand_all (GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
 
+	/*
+	printf("setting : %f %f \n",hval,vval);
+	gtk_adjustment_set_value(h,hval);
+	gtk_adjustment_set_value(v,vval);
+	*/
+
 	pExifViewImpl->m_iIdleLoadID = 0;
+	g_object_unref (G_OBJECT (store));
+
 	gdk_threads_leave();
 
-	g_object_unref (G_OBJECT (store));
 
 
 	return FALSE;
@@ -571,13 +609,22 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 		m_ExifViewImplPtr->m_pExifData = NULL;
 		
 	}
-	
-	if (0 != m_ExifViewImplPtr->m_iIdleLoadID)
+
+	if (GTK_WIDGET_MAPPED(m_ExifViewImplPtr->m_pScrolledWindow))
 	{
-		g_source_remove(m_ExifViewImplPtr->m_iIdleLoadID );
-		m_ExifViewImplPtr->m_iIdleLoadID = 0;
+		if (0 != m_ExifViewImplPtr->m_iIdleLoadID)
+		{
+			g_source_remove(m_ExifViewImplPtr->m_iIdleLoadID );
+			m_ExifViewImplPtr->m_iIdleLoadID = 0;
+		}
+		
+		m_ExifViewImplPtr->m_iIdleLoadID = g_timeout_add(300,exif_view_idle_load_exif_tree_view,m_ExifViewImplPtr.get());
+		m_ExifViewImplPtr->m_bLoaded = TRUE;
 	}
-	m_ExifViewImplPtr->m_iIdleLoadID = g_timeout_add(300,exif_view_idle_load_exif_tree_view,m_ExifViewImplPtr.get());
+	else
+	{
+		m_ExifViewImplPtr->m_bLoaded = FALSE;
+	}
 
 }
 
@@ -864,7 +911,7 @@ exif_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpoint
 static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, GtkWidget *treeview, guint button, guint32 activate_time)
 {
 	int j;
-	GtkWidget *menu, *submenu, *menuitem;
+	GtkWidget *menu, *submenu=NULL, *menuitem;
 	
 	ExifData* pExifData = pExifViewImpl->m_pExifData;
 	
