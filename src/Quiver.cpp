@@ -58,6 +58,9 @@ extern "C"
 gchar g_szConfigDir[256]      = "";
 gchar g_szConfigFilePath[256] = "";
 
+
+osso_context_t* osso_context  = NULL;
+
 using namespace std;
 
 // helper functions
@@ -77,6 +80,7 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 static gboolean timeout_event_motion_notify (gpointer data);
 static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 
+static gboolean timeout_keep_screen_on (gpointer data);
 
 class QuiverImpl
 {
@@ -126,6 +130,8 @@ public:
 	bool m_bTimeoutEventMotionNotifyMouseMoved;
 	
 	guint m_iTimeoutMouseMotionNotify;
+
+	guint m_iTimeoutKeepScreenOn;
 	
 	QuiverFile m_CurrentQuiverFile;
 
@@ -1016,6 +1022,7 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = false;
 	
 	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
+	m_QuiverImplPtr->m_iTimeoutKeepScreenOn = 0;
 
 	//initialize
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -1404,9 +1411,7 @@ int main (int argc, char **argv)
 
 #ifdef QUIVER_MAEMO
 	/* Initialize maemo application */
-	osso_context_t* osso_context;
-	osso_context = osso_initialize("quiver", PACKAGE_VERSION, TRUE, NULL);
-
+	osso_context = osso_initialize("org.yi.mike.quiver", PACKAGE_VERSION, TRUE, NULL);
     
 	/* Check that initialization was ok */
 	if (osso_context == NULL)
@@ -1755,8 +1760,23 @@ void QuiverImpl::ViewerEventHandler::HandleCursorChanged(ViewerEventPtr event_pt
 	parent->m_pQuiver->ImageChanged();
 }
 
+static gboolean timeout_keep_screen_on (gpointer data)
+{
+#ifdef QUIVER_MAEMO 
+	osso_display_blanking_pause(osso_context);
+	return TRUE;
+#endif
+}
+
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event_ptr)
 {
+	// start a timer to keep the display on
+	if (0 == parent->m_iTimeoutKeepScreenOn)
+	{
+#ifdef QUIVER_MAEMO 
+		parent->m_iTimeoutKeepScreenOn = g_timeout_add(55000, timeout_keep_screen_on, parent);
+#endif
+	}
 }
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event_ptr)
@@ -1767,6 +1787,13 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),FALSE);
 		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
+	}
+
+	// stop the timer that keeps the display on
+	if (0 != parent->m_iTimeoutKeepScreenOn)
+	{
+		g_source_remove(parent->m_iTimeoutKeepScreenOn);
+		parent->m_iTimeoutKeepScreenOn = 0;
 	}
 }
 

@@ -1,10 +1,17 @@
 [Desktop Entry]
 Encoding=UTF-8
+Version=1.0
+Type=Application
 Name=Quiver Image Viewer
 Comment=View and manage your photos and images
-Exec=quiver %f %F %u %U %d %D %n %N
+#Exec=quiver %U %d %D %n %N
+Exec=quiver
 Icon=quiver-icon-app
-Type=Application
 Categories=Application;Graphics;Photography;Viewer;GNOME;GTK;
-MimeType=image/jpeg;image/bmp;image/gif;image/png;image/tiff;image/x-bmp;image/x-ico;image/x-png;image/x-tga;
+MimeType=image/x-ico;image/x-png;application/x-navi-animation;image/bmp;image/x-bmp;image/x-MS-bmp;image/gif;image/x-icon;image/jpeg;image/x-pcx;image/png;image/x-portable-anymap;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-cmu-raster;image/x-sun-raster;image/x-tga;image/tiff;image/vnd.wap.wbmp;image/x-xbitmap;image/x-xpixmap;sketch/png
 StartupNotify=true
+Terminal=false
+X-Window-Icon=quiver-icon-app
+X-Window-Icon-Dimmed=quiver-icon-app
+X-Osso-Type=application/x-executable
+X-Osso-Service=org.yi.mike.quiver

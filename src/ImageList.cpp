@@ -651,6 +651,9 @@ void ImageListImpl::LoadMimeTypes()
 		cout << endl;
 		//g_slist_foreach (formats, add_if_writable, &writable_formats);
 		g_slist_free (formats);
+#ifdef QUIVER_MAEMO
+		c_setSupportedMimeTypes.insert("sketch/png");
+#endif
 	}
 }
 

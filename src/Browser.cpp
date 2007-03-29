@@ -1098,14 +1098,10 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 	else if (0 == strcmp(szAction, ACTION_BROWSER_TRASH))
 	{
 		gint rval = GTK_RESPONSE_YES;
-		if (0) // FIXME: add preference to display trash dialog
-		{
-		
-			GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
-									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected images to the trash?"));
-			rval = gtk_dialog_run(GTK_DIALOG(dialog));
-			gtk_widget_destroy(dialog);
-		}
+		GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
+								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected images to the trash?"));
+		rval = gtk_dialog_run(GTK_DIALOG(dialog));
+		gtk_widget_destroy(dialog);
 
 		switch (rval)
 		{
@@ -1160,7 +1156,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 				//fall through
 			default:
 				// do not delete
-				cout << "not trashing file : " << endl;//m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI() << endl;
+				// cout << "not trashing file : " << endl;//m_QuiverImplPtr->m_ImageList.GetCurrent().GetURI() << endl;
 				break;
 		}
 	

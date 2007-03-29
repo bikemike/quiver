@@ -804,21 +804,16 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 
 		QuiverFile f = pViewerImpl->m_ImageList.GetCurrent();
 
-		if (0) // FIXME: add preference to display trash dialog
-		{
-	
-			GtkWidget* dialog = gtk_message_dialog_new (NULL,GTK_DIALOG_MODAL,
-									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected image to the trash?"));
-	
-			char *for_display = gnome_vfs_format_uri_for_display(f.GetURI());
-			gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
-			g_free(for_display);
-			
-			rval = gtk_dialog_run(GTK_DIALOG(dialog));
-	
-			gtk_widget_destroy(dialog);
-		}
+		GtkWidget* dialog = gtk_message_dialog_new (NULL,GTK_DIALOG_MODAL,
+								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected image to the trash?"));
 
+		char *for_display = gnome_vfs_format_uri_for_display(f.GetURI());
+		gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
+		g_free(for_display);
+		
+		rval = gtk_dialog_run(GTK_DIALOG(dialog));
+
+		gtk_widget_destroy(dialog);
 	
 		switch (rval)
 		{
@@ -1814,6 +1809,7 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 	else
 	{
 		// disable drag n drop
+		gtk_widget_grab_focus(pViewerImpl->m_pImageView);
 		gtk_drag_source_unset (pViewerImpl->m_pImageView);
 	}
 }
