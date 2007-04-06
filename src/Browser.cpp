@@ -31,6 +31,12 @@ using namespace std;
 #include "IFolderTreeEventHandler.h"
 #include "IconViewThumbLoader.h"
 
+#ifdef QUIVER_MAEMO
+#include <hildon-widgets/hildon-controlbar.h>
+#include <math.h>
+#endif
+
+
 // ============================================================================
 // Browser::BrowserImpl: private implementation (hidden from header file)
 // ============================================================================
@@ -101,6 +107,10 @@ public:
 
 	GtkWidget *m_pLocationEntry;
 	GtkWidget *hscale;
+
+#ifdef QUIVER_MAEMO
+	GtkToolItem *m_pToolItemThumbnSizer;
+#endif
 	
 	GtkUIManager *m_pUIManager;
 	guint m_iMergedBrowserUI;
@@ -390,6 +400,10 @@ static void entry_activate(GtkEntry *entry, gpointer user_data);
 static void browser_imageview_magnification_changed(QuiverImageView *imageview,gpointer data);
 static void browser_imageview_reload(QuiverImageView *imageview,gpointer data);
 
+#ifdef QUIVER_MAEMO
+static int get_interpreted_thumb_size(gdouble value);
+static gdouble get_range_val_from_thumb_size(gint thumbsize);
+#endif
 
 static gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
 {
@@ -460,13 +474,33 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	GtkWidget *hbox,*vbox;
 	
 
+#ifndef QUIVER_MAEMO
 	hscale = gtk_hscale_new_with_range(20,256,1);
 	gtk_range_set_value(GTK_RANGE(hscale),128);
 	gtk_scale_set_value_pos (GTK_SCALE(hscale),GTK_POS_LEFT);
 	gtk_scale_set_draw_value(GTK_SCALE(hscale),FALSE);
 
 	gtk_widget_set_size_request(hscale,100,-1);
+#else
+	hscale = hildon_controlbar_new();
+	hildon_controlbar_set_range(HILDON_CONTROLBAR(hscale),0,11);
+	hildon_controlbar_set_value(HILDON_CONTROLBAR(hscale),5);
+	/*
+	GtkRequisition requisition = {0};
+	gtk_widget_size_request(hscale,&requisition);
+	gtk_widget_set_size_request(hscale, 200, requisition.height);
+	*/
 
+	m_pToolItemThumbnSizer = gtk_tool_item_new();
+	gtk_tool_item_set_expand(m_pToolItemThumbnSizer, TRUE);
+
+	GtkWidget* alignment = gtk_alignment_new(1.,5.,0.,1.);
+	gtk_container_add(GTK_CONTAINER(alignment), hscale);
+	gtk_container_add(GTK_CONTAINER(m_pToolItemThumbnSizer), alignment);
+
+	gtk_widget_show_all(GTK_WIDGET(m_pToolItemThumbnSizer));
+	g_object_ref(m_pToolItemThumbnSizer);
+#endif
 	
 	m_pLocationEntry = gtk_entry_new();
 	
@@ -497,9 +531,11 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	hbox = gtk_hbox_new(FALSE,0);
 	vbox = gtk_vbox_new(FALSE,0);
 	
+#ifndef QUIVER_MAEMO
 	gtk_box_pack_start (GTK_BOX (hbox), m_pLocationEntry, TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (hbox), hscale, FALSE, FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
+#endif
 	gtk_box_pack_start (GTK_BOX (vbox), scrolled_window, TRUE, TRUE, 0);
 	
 	gtk_paned_pack1(GTK_PANED(vpaned),notebook,TRUE,TRUE);
@@ -613,7 +649,11 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	{
 		thumb_size = 128.;
 	}
+#ifndef QUIVER_MAEMO
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
+#else
+	gtk_range_set_value(GTK_RANGE(hscale),get_range_val_from_thumb_size(thumb_size));
+#endif
 }
 
 Browser::BrowserImpl::~BrowserImpl()
@@ -623,12 +663,22 @@ Browser::BrowserImpl::~BrowserImpl()
 	
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	gdouble value = gtk_range_get_value (GTK_RANGE(hscale));
-	
-	prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE,(int)value);
+
+	gint val;
+
+#ifdef QUIVER_MAEMO
+	val = get_interpreted_thumb_size(value);
+#else
+	val = (int)value;
+#endif
+
+	prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE,val);
 
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 	m_ImageList.RemoveEventHandler(m_ImageListEventHandlerPtr);
 	
+	g_object_unref(m_pToolItemThumbnSizer);
+
 	if (m_pUIManager)
 	{
 		g_object_unref(m_pUIManager);
@@ -668,6 +718,7 @@ void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 		bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW);
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShowPreview ? TRUE : FALSE);
 	}
+
 }
 
 void Browser::BrowserImpl::Show()
@@ -682,8 +733,14 @@ void Browser::BrowserImpl::Show()
 				strlen(ui_browser),
 				&tmp_error);
 		gtk_ui_manager_ensure_update(m_pUIManager);
-				
 
+#ifdef QUIVER_MAEMO
+		GtkWidget* toolbar = gtk_ui_manager_get_widget(m_pUIManager,"/ui/ToolbarMain/");
+		if (NULL != toolbar)
+		{
+			gtk_toolbar_insert(GTK_TOOLBAR(toolbar),m_pToolItemThumbnSizer,-1);
+		}
+#endif
 		if (NULL != tmp_error)
 		{
 			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
@@ -737,6 +794,13 @@ void Browser::BrowserImpl::Hide()
 		gtk_ui_manager_remove_ui(m_pUIManager, m_iMergedBrowserUI);
 		m_iMergedBrowserUI = 0;
 		gtk_ui_manager_ensure_update(m_pUIManager);
+#ifdef QUIVER_MAEMO
+		GtkWidget* toolbar = gtk_ui_manager_get_widget(m_pUIManager,"/ui/ToolbarMain/");
+		if (NULL != toolbar)
+		{
+			gtk_container_remove(GTK_CONTAINER(toolbar),GTK_WIDGET(m_pToolItemThumbnSizer));
+		}
+#endif
 	}
 	
 	m_ImageList.BlockHandler(m_ImageListEventHandlerPtr);
@@ -838,11 +902,32 @@ ImageList Browser::BrowserImpl::GetImageList()
 // BrowswerImpl Callbacks
 //=============================================================================
 
+#ifdef QUIVER_MAEMO
+static int get_interpreted_thumb_size(gdouble value)
+{
+	gint val;
+	value = 20. + value * 21.51;
+	val = (gint)ceil(value);
+	val = min(val,256);
+	return val;
+}
+static gdouble get_range_val_from_thumb_size(gint thumbsize)
+{
+	gdouble value = floor( ((thumbsize - 20) / 21.51) + .5);
+	return value;
+}
+#endif
+
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	gdouble value = gtk_range_get_value (range);
+#ifndef QUIVER_MAEMO
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), (gint)value,(gint)value);
+#else
+	gint val = get_interpreted_thumb_size(value);
+	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), val,val);
+#endif
 }
 
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data)
@@ -1048,11 +1133,11 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 #ifdef QUIVER_MAEMO
 	else if (0 == strcmp(szAction,ACTION_BROWSER_ZOOM_IN_MAEMO))
 	{
-		gtk_range_set_value (GTK_RANGE(pBrowserImpl->hscale), gtk_range_get_value (GTK_RANGE(pBrowserImpl->hscale)) + 10.);
+		gtk_range_set_value (GTK_RANGE(pBrowserImpl->hscale), gtk_range_get_value (GTK_RANGE(pBrowserImpl->hscale)) + 1.);
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_ZOOM_OUT_MAEMO))
 	{
-		gtk_range_set_value (GTK_RANGE(pBrowserImpl->hscale), gtk_range_get_value (GTK_RANGE(pBrowserImpl->hscale)) - 10.);
+		gtk_range_set_value (GTK_RANGE(pBrowserImpl->hscale), gtk_range_get_value (GTK_RANGE(pBrowserImpl->hscale)) - 1.);
 	}
 #endif
 	else if (0 == strcmp(szAction,ACTION_BROWSER_OPEN_LOCATION))

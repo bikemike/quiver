@@ -17,6 +17,26 @@
 #define QUIVER_TREE_COLUMN_TOGGLE      "column_toggle"
 #define QUIVER_FOLDER_TREE_ROOT_NAME   "Filesystem"
 
+
+#ifdef QUIVER_MAEMO
+
+#define ICON_MAEMO_DEVICE "qgn_list_filesys_divc_cls"
+#define ICON_MAEMO_AUDIO "qgn_list_filesys_audio_fldr"
+#define ICON_MAEMO_DOCUMENTS "qgn_list_filesys_doc_fldr"
+#define ICON_MAEMO_GAMES "qgn_list_filesys_games_fldr"
+#define ICON_MAEMO_IMAGES "qgn_list_filesys_image_fldr"
+#define ICON_MAEMO_VIDEO "qgn_list_filesys_video_fldr"
+#define ICON_MAEMO_MMC "qgn_list_filesys_mmc_root"
+
+// folder expanders
+#define ICON_MAEMO_EXPAND "qgn_list_gene_fldr_exp"
+#define ICON_MAEMO_COLAPSE "qgn_list_gene_fldr_clp"
+
+// folder open / closed
+#define ICON_MAEMO_FOLDER_CLOSED "qgn_list_gene_fldr_cls"
+#define ICON_MAEMO_FOLDER_OPEN "qgn_list_gene_fldr_opn"
+#endif
+
 /*GtkTreeStore *store;*/
 
 enum
@@ -1240,6 +1260,7 @@ static char* folder_tree_get_icon_name(const char* uri)
 	char* home_uri = gnome_vfs_get_uri_from_local_path (homedir);
 	char* desktop_uri = gnome_vfs_get_uri_from_local_path (desktop_path);
 
+#ifndef QUIVER_MAEMO
 	if (gnome_vfs_uris_match (home_uri,uri))
 	{
 		preferred_icon_name = "gnome-fs-home";
@@ -1248,31 +1269,33 @@ static char* folder_tree_get_icon_name(const char* uri)
 	{
 		preferred_icon_name = "gnome-fs-desktop";
 	}
-#ifndef QUIVER_MAEMO
 	/*
 	else if (gnome_vfs_uris_match ("trash://",uri))
 	{
 		preferred_icon_name = GNOME_STOCK_TRASH;
 	}
 	*/
+#else
+	preferred_icon_name = ICON_MAEMO_FOLDER_CLOSED;
 #endif
 
 	free(desktop_path);
 	free(desktop_uri);
 	free(home_uri);
 
+	char* icon_name;
 #ifndef QUIVER_MAEMO
 	GnomeIconLookupResultFlags lookup_result;
-	char* icon_name = gnome_icon_lookup_sync (icon_theme,
+	icon_name = gnome_icon_lookup_sync (icon_theme,
 										 NULL,
 										 uri,
 										 preferred_icon_name,
 										 GNOME_ICON_LOOKUP_FLAGS_NONE,
 										 &lookup_result);
-	return icon_name;
 #else
-	return g_strdup("qgn_list_gene_fldr_cls");
+	icon_name = g_strdup(preferred_icon_name);
 #endif
+	return icon_name;
 
 }
 
@@ -1325,22 +1348,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
                                              0);
 #ifdef QUIVER_MAEMO
 
-#define ICON_MAEMO_DEVICE "qgn_list_filesys_divc_cls"
-#define ICON_MAEMO_AUDIO "qgn_list_filesys_audio_fldr"
-#define ICON_MAEMO_DOCUMENTS "qgn_list_filesys_doc_fldr"
-#define ICON_MAEMO_GAMES "qgn_list_filesys_games_fldr"
-#define ICON_MAEMO_IMAGES "qgn_list_filesys_image_fldr"
-#define ICON_MAEMO_VIDEO "qgn_list_filesys_video_fldr"
-#define ICON_MAEMO_MMC "qgn_list_filesys_mmc_root"
-
-// folder expanders
-#define ICON_MAEMO_EXPAND "qgn_list_gene_fldr_exp"
-#define ICON_MAEMO_COLAPSE "qgn_list_gene_fldr_clp"
-
-// folder open / closed
-#define ICON_MAEMO_FOLDER_CLOSED "qgn_list_gene_fldr_cls"
-#define ICON_MAEMO_FOLDER_OPEN "qgn_list_gene_fldr_opn"
-
 /*
 	const gchar *env;
 	env = g_getenv("MYDOCSDIR");
@@ -1359,10 +1366,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 ".documents"
 ".games"
 
-*/
-/*
- setup_mmc(rootnode, g_getenv("MMC_MOUNTPOINT"), FALSE);
- setup_mmc(rootnode, g_getenv("INTERNAL_MMC_MOUNTPOINT"), TRUE);
 */
 
 	gchar* docs_dir = NULL;

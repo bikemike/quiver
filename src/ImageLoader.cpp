@@ -701,25 +701,15 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 	}
 	
 	
-	if (0 < max_width && 0 < max_height)
+	if (10 < max_width && 10 < max_height)
 	{
-		if (10 > max_width)
-		{
-			max_width = 20;
-		}
-		
-		if (10 > max_height)
-		{
-			max_height = 20;
-		}
-		
 		if (max_width < width || max_height < height)
 		{
 			// adjust the image size
 			guint new_width = width;
 			guint new_height = height;
 			
-			quiver_rect_get_bound_size((guint)m_Command.params.max_width,(guint)m_Command.params.max_height,&new_width, &new_height,FALSE);
+			quiver_rect_get_bound_size(max_width,max_height,&new_width, &new_height,FALSE);
 
 			if (4 < m_Command.params.orientation)
 			{

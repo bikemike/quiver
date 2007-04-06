@@ -977,6 +977,15 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 	
 	if (iconview->priv->rubberband_mode)
 	{
+		GdkRectangle rub_rect = iconview->priv->rubberband_rect;
+		rub_rect.x -= hadjust;
+		rub_rect.y -= vadjust;
+		
+		GdkRegion *rubber_region = gdk_region_rectangle(&rub_rect);
+
+		gdk_region_intersect(rubber_region,in_region);
+		
+		GdkGC *color_gc = gdk_gc_new(widget->window);
 #ifdef HAVE_CAIRO
 		cairo_t *cr = gdk_cairo_create(widget->window);
 
@@ -997,18 +1006,10 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 			fill_color_gdk->blue / 65535.,
 			fill_color_alpha / 255.);
 
-		GdkRectangle rub_rect = iconview->priv->rubberband_rect;
-		rub_rect.x -= hadjust;
-		rub_rect.y -= vadjust;
-		
-		GdkRegion *rubber_region = gdk_region_rectangle(&rub_rect);
-
-		gdk_region_intersect(rubber_region,in_region);
-		
-		int i;
-		int n_rectangles =0;
 		GdkRectangle *rects = NULL;
 
+		int i;
+		int n_rectangles =0;
 		gdk_region_get_rectangles(rubber_region,&rects,&n_rectangles);
 		for (i = 0; i < n_rectangles; i++)
 		{
@@ -1032,8 +1033,9 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 
 		cairo_destroy(cr);
 		
-		GdkGC *color_gc = gdk_gc_new(widget->window);
 		gdk_gc_set_rgb_fg_color(color_gc,fill_color_gdk);
+		gdk_color_free (fill_color_gdk);
+#endif
 
 		gdk_draw_rectangle (widget->window,
 				color_gc,
@@ -1045,8 +1047,6 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 				);
 		g_object_unref(color_gc);
 		
-		gdk_color_free (fill_color_gdk);
-#endif
 	}
 
 

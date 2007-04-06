@@ -58,8 +58,9 @@ extern "C"
 gchar g_szConfigDir[256]      = "";
 gchar g_szConfigFilePath[256] = "";
 
-
+#ifdef QUIVER_MAEMO
 osso_context_t* osso_context  = NULL;
+#endif
 
 using namespace std;
 
@@ -81,6 +82,10 @@ static gboolean timeout_event_motion_notify (gpointer data);
 static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 
 static gboolean timeout_keep_screen_on (gpointer data);
+
+#ifdef QUIVER_MAEMO
+static void mime_open_handler (gpointer raw_data, int argc, char **argv);
+#endif
 
 class QuiverImpl
 {
@@ -125,6 +130,7 @@ public:
 	int m_iAppWidth;
 	int m_iAppHeight;
 	
+	bool m_bInitialized;
 	
 	bool m_bTimeoutEventMotionNotifyRunning;
 	bool m_bTimeoutEventMotionNotifyMouseMoved;
@@ -522,6 +528,8 @@ char * quiver_ui_main =
 "		<placeholder name='Trash'/>"
 "		<separator/>"
 "	</toolbar>"
+"	<popup name='ContextMenu'>"
+"	</popup>"
 "	<accelerator action='"ACTION_QUIVER_QUIT_2"'/>"
 "	<accelerator action='"ACTION_QUIVER_QUIT_3"'/>"
 "	<accelerator action='"ACTION_QUIVER_QUIT_4"'/>"
@@ -562,6 +570,9 @@ char *quiver_ui_browser =
 "			<separator/>"
 "		</placeholder>"
 "	</toolbar>"
+"	<popup name='ContextMenu'>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
+"	</popup>"
 "</ui>";
 
 
@@ -591,6 +602,9 @@ char *quiver_ui_viewer =
 "			<separator/>"
 "		</placeholder>"
 "	</toolbar>"
+"	<popup name='ContextMenu'>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
+"	</popup>"
 "</ui>";
 
 GtkToggleActionEntry QuiverImpl::action_entries_toggle[] = {
@@ -1007,6 +1021,22 @@ Quiver::Quiver(list<string> &images) : 	m_QuiverImplPtr(new QuiverImpl(this) )
 {
 	m_QuiverImplPtr->m_listImages = images;
 	Init();
+
+#ifdef QUIVER_MAEMO
+	/* Initialize maemo application */
+	osso_context = osso_initialize("org.yi.mike.quiver", PACKAGE_VERSION, TRUE, NULL);
+    
+	/* Check that initialization was ok */
+	if (osso_context == NULL)
+	{
+		//return OSSO_ERROR;
+	}
+	else
+	{
+		osso_mime_set_cb (osso_context, mime_open_handler, m_QuiverImplPtr.get());
+	}
+#endif
+
 }
 
 void Quiver::Init()
@@ -1018,6 +1048,7 @@ void Quiver::Init()
 
 	QuiverStockIcons::Load();
 	
+	m_QuiverImplPtr->m_bInitialized = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = false;
 	
@@ -1100,6 +1131,15 @@ void Quiver::Init()
 										m_QuiverImplPtr.get());										
 
 	gtk_ui_manager_insert_action_group (m_QuiverImplPtr->m_pUIManager,actions,0);
+
+	GtkWidget* toolbar = gtk_ui_manager_get_widget(m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain/");
+	if (NULL != toolbar)
+	{
+		gtk_toolbar_set_style(GTK_TOOLBAR(toolbar),GTK_TOOLBAR_ICONS);
+#ifdef QUIVER_MAEMO
+		gtk_toolbar_set_tooltips(GTK_TOOLBAR(toolbar),FALSE);
+#endif
+	}
                                              
 	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "connect_proxy",
 		G_CALLBACK (signal_connect_proxy), m_QuiverImplPtr.get());
@@ -1197,6 +1237,7 @@ void Quiver::Init()
 	statusbar =  m_QuiverImplPtr->m_StatusbarPtr->GetWidget();
 	m_QuiverImplPtr->m_pMenubar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/MenubarMain");
 	m_QuiverImplPtr->m_pToolbar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain");
+	GtkWidget *context_menu = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ContextMenu");
 	
 	gtk_widget_set_name(m_QuiverImplPtr->m_pToolbar  ,"Quiver m_QuiverImplPtr->m_pToolbar");
 	
@@ -1204,32 +1245,6 @@ void Quiver::Init()
 	// pack the browser and viewer area
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Browser.GetWidget(), TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Viewer.GetWidget(), TRUE, TRUE, 0);
-
-	bool bShowViewer = false;
-	if (1 == m_QuiverImplPtr->m_listImages.size())
-	{
-		bShowViewer = true;
-		struct stat stat_struct = {0};
-		if (0 == g_stat(m_QuiverImplPtr->m_listImages.front().c_str(),&stat_struct))
-		{
-			if (stat_struct.st_mode & S_IFDIR)
-			{
-				//browser
-				bShowViewer = false;
-			}
-		}
-	}
-	
-	if (bShowViewer)
-	{
-		ShowViewer();
-	}
-	else
-	{
-		// must do the following to hide the widget on initial
-		// display of app
-		ShowBrowser();
-	}
 
 	// pack the hpaned (main gui area)
 	gtk_paned_pack1(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),hbox_browser_viewer_container,TRUE,TRUE);
@@ -1243,6 +1258,7 @@ void Quiver::Init()
 #ifdef QUIVER_MAEMO
 	hildon_program_set_common_menu (program, GTK_MENU(m_QuiverImplPtr->m_pMenubar));
 	hildon_program_set_common_toolbar (program, GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar));
+	//gtk_widget_tap_and_hold_setup(m_QuiverImplPtr->m_pQuiverWindow, context_menu, NULL, GTK_TAP_AND_HOLD_NONE  ); 
 #else
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pMenubar, FALSE, FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pToolbar, FALSE, FALSE, 0);
@@ -1304,14 +1320,6 @@ void Quiver::Init()
 	
 	gtk_widget_show_all (GTK_WIDGET(m_QuiverImplPtr->m_pQuiverWindow));
 
-	if (bShowViewer)
-	{
-		m_QuiverImplPtr->m_Viewer.GrabFocus();
-	}
-	else
-	{
-		m_QuiverImplPtr->m_Browser.GrabFocus();
-	}
 	
 #ifdef QUIVER_MAEMO
 	gtk_widget_hide(statusbar);
@@ -1327,6 +1335,9 @@ void Quiver::Init()
 Quiver::~Quiver()
 {
 	//destructor
+#ifdef QUIVER_MAEMO
+	osso_deinitialize(osso_context);
+#endif
 }
 
 bool Quiver::LoadSettings()
@@ -1379,6 +1390,39 @@ void Quiver::SaveSettings()
 
 void Quiver::SetImageList(list<string> &files)
 {
+	bool bShowViewer = false;
+	if (1 == files.size())
+	{
+		bShowViewer = true;
+		struct stat stat_struct = {0};
+		if (0 == g_stat(files.front().c_str(),&stat_struct))
+		{
+			if (stat_struct.st_mode & S_IFDIR)
+			{
+				//browser
+				bShowViewer = false;
+			}
+		}
+		else
+		{
+			bShowViewer = false;
+		}
+	}
+	
+	if (bShowViewer)
+	{
+		ShowViewer();
+		m_QuiverImplPtr->m_Viewer.GrabFocus();
+	}
+	else
+	{
+		// must do the following to hide the widget on initial
+		// display of app
+		ShowBrowser();
+
+		m_QuiverImplPtr->m_Browser.GrabFocus();
+	}
+
 	m_QuiverImplPtr->m_ImageList.SetImageList(&files);
 }
 
@@ -1390,6 +1434,49 @@ static gboolean DestroyQuiver (gpointer data)
 	return TRUE;
 }
 
+#ifdef QUIVER_MAEMO
+
+static void
+mime_open_handler (gpointer raw_data, int argc, char **argv)
+{
+	QuiverImpl* pQuiverImpl = static_cast<QuiverImpl*>(raw_data);
+	gdk_threads_enter();
+	if (argc > 0)
+	{
+		list<string> files;
+		for (int i = 0;i<argc;i++)
+		{	
+			gchar* filename = g_filename_from_uri(argv[i],NULL,NULL);
+			if (NULL != filename)
+			{
+				files.push_back(filename);
+				g_free(filename);
+			}
+			else
+			{
+				files.push_back(argv[i]);
+			}
+		}
+
+		if (pQuiverImpl->m_bInitialized)
+		{
+			// just set the image list
+			pQuiverImpl->m_pQuiver->SetImageList(files);
+
+			// and present the window (bring it to the front)
+			gtk_window_present(GTK_WINDOW(pQuiverImpl->m_pQuiverWindow));
+		}
+		else
+		{
+			// not initialized yet, set the file list
+			pQuiverImpl->m_listImages = files;
+		}
+	}
+	gdk_threads_leave();
+}
+
+
+#endif
 static gboolean CreateQuiver (gpointer data)
 {
 	list<string> *pFiles = (list<string>*)data;
@@ -1409,16 +1496,6 @@ int main (int argc, char **argv)
 	gdk_threads_init ();
 	gdk_threads_enter ();
 
-#ifdef QUIVER_MAEMO
-	/* Initialize maemo application */
-	osso_context = osso_initialize("org.yi.mike.quiver", PACKAGE_VERSION, TRUE, NULL);
-    
-	/* Check that initialization was ok */
-	if (osso_context == NULL)
-	{
-		return OSSO_ERROR;
-	}
-#endif
 
 	// initialize the libgcrypt library (used for generating md5 hash)
 	gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
@@ -1447,7 +1524,16 @@ int main (int argc, char **argv)
 	list<string> files;
 	for (int i =1;i<argc;i++)
 	{	
-		files.push_back(argv[i]);
+		gchar* filename = g_filename_from_uri(argv[i],NULL,NULL);
+		if (NULL != filename)
+		{
+			files.push_back(filename);
+			g_free(filename);
+		}
+		else
+		{
+			files.push_back(argv[i]);
+		}
 	}
 	if (argc == 1)
 	{	
@@ -1484,9 +1570,6 @@ int main (int argc, char **argv)
                                              
 	gtk_main ();
 	
-#ifdef QUIVER_MAEMO
-	osso_deinitialize(osso_context);
-#endif
 
 	gdk_threads_leave();
 	
@@ -1517,6 +1600,9 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	{
 		ShowBrowser();
 	}
+
+	m_QuiverImplPtr->m_bInitialized = true;
+
 	gdk_threads_leave();
 
 	return FALSE; // return false so it is never called again
@@ -1692,7 +1778,7 @@ void Quiver::OnAbout()
 	gtk_show_about_dialog(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
 		"name",GETTEXT_PACKAGE,
 		"version",PACKAGE_VERSION,
-		"copyright","copyright (c) 2005\nmike morrison",
+		"copyright","copyright (c) 2007\nmike morrison",
 		"comments","a gtk image viewer",
 		"authors",authors,
 		"artists",artists,
@@ -1763,9 +1849,12 @@ void QuiverImpl::ViewerEventHandler::HandleCursorChanged(ViewerEventPtr event_pt
 static gboolean timeout_keep_screen_on (gpointer data)
 {
 #ifdef QUIVER_MAEMO 
-	osso_display_blanking_pause(osso_context);
-	return TRUE;
+	if (NULL != osso_context)
+	{
+		osso_display_blanking_pause(osso_context);
+	}
 #endif
+	return TRUE;
 }
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event_ptr)
@@ -1774,7 +1863,7 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event
 	if (0 == parent->m_iTimeoutKeepScreenOn)
 	{
 #ifdef QUIVER_MAEMO 
-		parent->m_iTimeoutKeepScreenOn = g_timeout_add(55000, timeout_keep_screen_on, parent);
+		parent->m_iTimeoutKeepScreenOn = g_timeout_add(5000, timeout_keep_screen_on, parent);
 #endif
 	}
 }
@@ -2217,12 +2306,14 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data )
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
-
+	// don't do anything for MAEMO because of weirdness in HildonControlbar
+#ifndef QUIVER_MAEMO
 	if (2 == event->button)
 	{
 		pQuiverImpl->m_pQuiver->OnFullScreen();
 		return TRUE;
 	}
+#endif
 
 	return FALSE;
 }
