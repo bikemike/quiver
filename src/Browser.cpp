@@ -109,7 +109,7 @@ public:
 	GtkWidget *hscale;
 
 #ifdef QUIVER_MAEMO
-	GtkToolItem *m_pToolItemThumbnSizer;
+	GtkToolItem *m_pToolItemThumbSizer;
 #endif
 	
 	GtkUIManager *m_pUIManager;
@@ -491,15 +491,15 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_widget_set_size_request(hscale, 200, requisition.height);
 	*/
 
-	m_pToolItemThumbnSizer = gtk_tool_item_new();
-	gtk_tool_item_set_expand(m_pToolItemThumbnSizer, TRUE);
+	m_pToolItemThumbSizer = gtk_tool_item_new();
+	gtk_tool_item_set_expand(m_pToolItemThumbSizer, TRUE);
 
 	GtkWidget* alignment = gtk_alignment_new(1.,5.,0.,1.);
 	gtk_container_add(GTK_CONTAINER(alignment), hscale);
-	gtk_container_add(GTK_CONTAINER(m_pToolItemThumbnSizer), alignment);
+	gtk_container_add(GTK_CONTAINER(m_pToolItemThumbSizer), alignment);
 
-	gtk_widget_show_all(GTK_WIDGET(m_pToolItemThumbnSizer));
-	g_object_ref(m_pToolItemThumbnSizer);
+	gtk_widget_show_all(GTK_WIDGET(m_pToolItemThumbSizer));
+	g_object_ref(m_pToolItemThumbSizer);
 #endif
 	
 	m_pLocationEntry = gtk_entry_new();
@@ -667,6 +667,7 @@ Browser::BrowserImpl::~BrowserImpl()
 	gint val;
 
 #ifdef QUIVER_MAEMO
+	g_object_unref(m_pToolItemThumbSizer);
 	val = get_interpreted_thumb_size(value);
 #else
 	val = (int)value;
@@ -677,7 +678,6 @@ Browser::BrowserImpl::~BrowserImpl()
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 	m_ImageList.RemoveEventHandler(m_ImageListEventHandlerPtr);
 	
-	g_object_unref(m_pToolItemThumbnSizer);
 
 	if (m_pUIManager)
 	{
@@ -738,7 +738,7 @@ void Browser::BrowserImpl::Show()
 		GtkWidget* toolbar = gtk_ui_manager_get_widget(m_pUIManager,"/ui/ToolbarMain/");
 		if (NULL != toolbar)
 		{
-			gtk_toolbar_insert(GTK_TOOLBAR(toolbar),m_pToolItemThumbnSizer,-1);
+			gtk_toolbar_insert(GTK_TOOLBAR(toolbar),m_pToolItemThumbSizer,-1);
 		}
 #endif
 		if (NULL != tmp_error)
@@ -798,7 +798,7 @@ void Browser::BrowserImpl::Hide()
 		GtkWidget* toolbar = gtk_ui_manager_get_widget(m_pUIManager,"/ui/ToolbarMain/");
 		if (NULL != toolbar)
 		{
-			gtk_container_remove(GTK_CONTAINER(toolbar),GTK_WIDGET(m_pToolItemThumbnSizer));
+			gtk_container_remove(GTK_CONTAINER(toolbar),GTK_WIDGET(m_pToolItemThumbSizer));
 		}
 #endif
 	}
