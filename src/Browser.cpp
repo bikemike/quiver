@@ -90,7 +90,7 @@ public:
 	
 	void SetImageList(ImageList list);
 	
-	void SetImageIndex(int index, bool bDirectionForward);
+	void SetImageIndex(int index, bool bDirectionForward, bool bFromIconView = false);
 
 /* member variables */
 	FolderTree m_FolderTree;
@@ -108,9 +108,7 @@ public:
 	GtkWidget *m_pLocationEntry;
 	GtkWidget *hscale;
 
-#ifdef QUIVER_MAEMO
 	GtkToolItem *m_pToolItemThumbSizer;
-#endif
 	
 	GtkUIManager *m_pUIManager;
 	guint m_iMergedBrowserUI;
@@ -490,7 +488,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_widget_size_request(hscale,&requisition);
 	gtk_widget_set_size_request(hscale, 200, requisition.height);
 	*/
-
+#endif
 	m_pToolItemThumbSizer = gtk_tool_item_new();
 	gtk_tool_item_set_expand(m_pToolItemThumbSizer, TRUE);
 
@@ -500,7 +498,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 
 	gtk_widget_show_all(GTK_WIDGET(m_pToolItemThumbSizer));
 	g_object_ref(m_pToolItemThumbSizer);
-#endif
 	
 	m_pLocationEntry = gtk_entry_new();
 	
@@ -533,7 +530,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	
 #ifndef QUIVER_MAEMO
 	gtk_box_pack_start (GTK_BOX (hbox), m_pLocationEntry, TRUE, TRUE, 0);
-	gtk_box_pack_start (GTK_BOX (hbox), hscale, FALSE, FALSE, 0);
+	//gtk_box_pack_start (GTK_BOX (hbox), hscale, FALSE, FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
 #endif
 	gtk_box_pack_start (GTK_BOX (vbox), scrolled_window, TRUE, TRUE, 0);
@@ -577,7 +574,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 /*	
 	quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(real_iconview),(QuiverIconViewGetTextFunc)text_callback,user_data,NULL);
 */
-	//quiver_image_view_set_transition_type(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_TRANSITION_TYPE_CROSSFADE);
+	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_pImageView), true);
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 
     g_signal_connect (G_OBJECT (m_pImageView), "magnification-changed",
@@ -734,13 +731,12 @@ void Browser::BrowserImpl::Show()
 				&tmp_error);
 		gtk_ui_manager_ensure_update(m_pUIManager);
 
-#ifdef QUIVER_MAEMO
 		GtkWidget* toolbar = gtk_ui_manager_get_widget(m_pUIManager,"/ui/ToolbarMain/");
 		if (NULL != toolbar)
 		{
 			gtk_toolbar_insert(GTK_TOOLBAR(toolbar),m_pToolItemThumbSizer,-1);
 		}
-#endif
+
 		if (NULL != tmp_error)
 		{
 			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
@@ -794,13 +790,12 @@ void Browser::BrowserImpl::Hide()
 		gtk_ui_manager_remove_ui(m_pUIManager, m_iMergedBrowserUI);
 		m_iMergedBrowserUI = 0;
 		gtk_ui_manager_ensure_update(m_pUIManager);
-#ifdef QUIVER_MAEMO
+
 		GtkWidget* toolbar = gtk_ui_manager_get_widget(m_pUIManager,"/ui/ToolbarMain/");
 		if (NULL != toolbar)
 		{
 			gtk_container_remove(GTK_CONTAINER(toolbar),GTK_WIDGET(m_pToolItemThumbSizer));
 		}
-#endif
 	}
 	
 	m_ImageList.BlockHandler(m_ImageListEventHandlerPtr);
@@ -821,7 +816,7 @@ void Browser::BrowserImpl::SetImageList(ImageList list)
 }
 
 
-void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward)
+void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool bFromIconView /* = false */)
 {
 	gint width=0, height=0;
 
@@ -838,13 +833,16 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward)
 	
 	if (m_ImageList.SetCurrentIndex(index))
 	{
-		g_signal_handlers_block_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
+		if (!bFromIconView)
+		{
+			g_signal_handlers_block_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
+			
+			quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
+			      m_ImageList.GetCurrentIndex() );	
+	
+			g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
+		}
 		
-		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
-		      m_ImageList.GetCurrentIndex() );	
-
-		g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
-
 		if (GTK_WIDGET_MAPPED(m_pImageView))
 		{
 			
@@ -1033,7 +1031,7 @@ static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpo
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	
-	b->SetImageIndex(cell,true);
+	b->SetImageIndex(cell,true,true);
 }
 
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data)
@@ -1456,15 +1454,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(gulong ulIndex, gui
 
 		if (NULL == pixbuf)
 		{
-			if (uiWidth <= 128 && uiHeight <= 128)
-			{
-				pixbuf = f.GetThumbnail();
-			}
-			else
-			{
-				pixbuf = f.GetThumbnail(true);
-			}
-	
+			pixbuf = f.GetThumbnail(MAX(uiWidth,uiHeight));
 		}
 
 		if (NULL != pixbuf)

@@ -1,5 +1,7 @@
 #include <config.h>
 
+#include <pthread.h>
+
 #include "FolderTree.h"
 
 #include <gtk/gtk.h>
@@ -82,7 +84,7 @@ public:
 	FolderTree*     m_pFolderTree;
 	GHashTable*     m_pHashRootNodeOrder;
 	GtkTreeIter*    m_pTreeIterScrollTo;
-	std::set<guint> m_setIdleCalls;
+	std::set<guint> m_setFolderThreads;
 	guint           m_iTimeoutScrollToCell;
 };
 
@@ -226,7 +228,7 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 	
 	gdk_threads_enter();
 	// wait untill all the idle functions have finished
-	if (pFolderTreeImpl->m_setIdleCalls.size() || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
+	if (pFolderTreeImpl->m_setFolderThreads.size() || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
 	{
 		rval = TRUE;
 	}
@@ -912,8 +914,6 @@ typedef struct _MyDataStruct
 	MyIdleState state;
 	gboolean has_subdirs;
 	int i;
-	guint idle_id;
-
 } MyDataStruct;
 
 
@@ -1004,225 +1004,240 @@ static void hash_foreach_sync_add(gpointer key, gpointer value, gpointer user_da
 	}
 }
 
-static gboolean idle_check_for_subdirs(gpointer user_data)
+static void* thread_check_for_subdirs(void* user_data)
 {
-	gdk_threads_enter();
 	MyDataStruct* data = (MyDataStruct*)user_data;
-	GtkTreeIter* iter_parent = data->iter_parent;
-
 	GtkTreeModel *model = data->model;
+	GtkTreeIter* iter_parent = NULL;
 
 	gboolean finished = FALSE;
-	char* uri = NULL;
-	GnomeVFSResult result;
-
-	switch (data->state)
+	
+	while (!finished)
 	{
-		case SYNC_TREE:
-			{
-				if ( 0 == g_hash_table_size(data->hash_table) )
+		iter_parent = data->iter_parent;
+		char* uri = NULL;
+		GnomeVFSResult result;
+	
+		switch (data->state)
+		{
+			case SYNC_TREE:
 				{
-					// dir has no children so remove any existing ones
-					GtkTreeIter iter =  {0};
-					gint n_nodes = gtk_tree_model_iter_n_children  (model, data->iter_child);
-					gint i;
-					for (i = 0 ; i < n_nodes ; i++)
+					gdk_threads_enter();
+					if ( 0 == g_hash_table_size(data->hash_table) )
 					{
-						if ( gtk_tree_model_iter_nth_child(model, &iter, NULL, i) )
+						// dir has no children so remove any existing ones
+						GtkTreeIter iter =  {0};
+						gint n_nodes = gtk_tree_model_iter_n_children  (model, data->iter_child);
+						gint i;
+						for (i = 0 ; i < n_nodes ; i++)
 						{
-							gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
+							if ( gtk_tree_model_iter_nth_child(model, &iter, NULL, i) )
+							{
+								gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
+							}
 						}
 					}
-				}
-				else
-				{
-					// sync the directories
-					GtkTreeIter iter =  {0};
-					gint n_nodes = gtk_tree_model_iter_n_children  (model, data->iter_child);
-					gint i;
-					// remove items no longer in the tree
-					for (i = 0 ; i < n_nodes ; i++)
+					else
 					{
-						if ( gtk_tree_model_iter_nth_child(model, &iter, data->iter_child, i) )
+						// sync the directories
+						GtkTreeIter iter =  {0};
+						gint n_nodes = gtk_tree_model_iter_n_children  (model, data->iter_child);
+						gint i;
+						// remove items no longer in the tree
+						for (i = 0 ; i < n_nodes ; i++)
 						{
-							gchar* uri = NULL;
-							gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_URI, &uri, -1);
-
-							gchar* local_filename = g_filename_from_uri(uri,NULL, NULL);
-							gchar* dir_name = g_path_get_basename(local_filename);
-
-
-							gpointer* orig_key = NULL;
-							gpointer* value    = NULL;
-
-							if (g_hash_table_lookup_extended(data->hash_table, dir_name, orig_key, value))
+							if ( gtk_tree_model_iter_nth_child(model, &iter, data->iter_child, i) )
 							{
-								// if the key exists, remove it from the hash
-								g_hash_table_remove(data->hash_table, dir_name);
+								gchar* uri = NULL;
+								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_URI, &uri, -1);
+	
+								gchar* local_filename = g_filename_from_uri(uri,NULL, NULL);
+								gchar* dir_name = g_path_get_basename(local_filename);
+	
+	
+								gpointer* orig_key = NULL;
+								gpointer* value    = NULL;
+	
+								if (g_hash_table_lookup_extended(data->hash_table, dir_name, orig_key, value))
+								{
+									// if the key exists, remove it from the hash
+									g_hash_table_remove(data->hash_table, dir_name);
+								}
+								else
+								{
+									// if the key does not exist, remove the iterator
+									gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
+									// one less item now so i much be adjusted
+									i--;
+								}
+								g_free(dir_name);
+								g_free(local_filename);
+								g_free(uri);
+							}
+						}
+						// add new items
+						g_hash_table_foreach(data->hash_table, hash_foreach_sync_add, data);
+	
+					}
+	
+					gtk_tree_iter_free(data->iter_child);
+					gdk_threads_leave();
+					data->iter_child = NULL;
+					data->state = TRAVERSE_TREE;
+	
+					if (NULL != data->hash_table)
+					{
+						g_hash_table_destroy( data->hash_table );
+						data->hash_table = NULL;
+					}
+						
+				}
+				break;
+			case TRAVERSE_DIR:
+				{
+					gdk_threads_enter();
+					
+					gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
+					GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(uri);
+					GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();;
+					gdk_threads_leave();
+					
+					result = gnome_vfs_directory_read_next(data->dir_handle,info);
+						
+					if (GNOME_VFS_OK == result )
+					{
+						GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,info->name);
+						gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
+						
+						if ( ( 0 == strstr(uri,str_uri_file)) &&
+							(GNOME_VFS_FILE_INFO_FIELDS_TYPE  & info->valid_fields) &&
+							 (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY) )
+						{
+							/*
+							if ('.' == info->name[0])
+							{
+								// FIXME: show hidden?
 							}
 							else
+							*/
 							{
-								// if the key does not exist, remove the iterator
-								gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
-								// one less item now so i much be adjusted
-								i--;
+								g_hash_table_insert(data->hash_table,g_strdup(info->name),NULL);
 							}
-							g_free(dir_name);
-							g_free(local_filename);
-							g_free(uri);
 						}
+						g_free (str_uri_file);
+						gnome_vfs_uri_unref(vfs_uri_file);
 					}
-					// add new items
-					g_hash_table_foreach(data->hash_table, hash_foreach_sync_add, data);
-
-				}
-
-				gtk_tree_iter_free(data->iter_child);
-				data->iter_child = NULL;
-				data->state = TRAVERSE_TREE;
-
-				if (NULL != data->hash_table)
-				{
-					g_hash_table_destroy( data->hash_table );
-					data->hash_table = NULL;
-				}
-					
-			}
-			break;
-		case TRAVERSE_DIR:
-			{
-				gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
-				GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(uri);
-				GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();;
-				result = gnome_vfs_directory_read_next(data->dir_handle,info);
-					
-				if (GNOME_VFS_OK == result )
-				{
-					GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,info->name);
-					gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
-					
-					if ( ( 0 == strstr(uri,str_uri_file)) &&
-						(GNOME_VFS_FILE_INFO_FIELDS_TYPE  & info->valid_fields) &&
-						 (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY) )
+					else
 					{
-						/*
-						if ('.' == info->name[0])
-						{
-							// FIXME: show hidden?
-						}
-						else
-						*/
-						{
-							g_hash_table_insert(data->hash_table,g_strdup(info->name),NULL);
-						}
+						gnome_vfs_directory_close (data->dir_handle);
+						data->state = SYNC_TREE;
+	
 					}
-					g_free (str_uri_file);
-					gnome_vfs_uri_unref(vfs_uri_file);
-				}
-				else
-				{
-					gnome_vfs_directory_close (data->dir_handle);
-					data->state = SYNC_TREE;
-
-				}
-
-				gnome_vfs_file_info_unref (info);
-				gnome_vfs_uri_unref(vfs_uri_dir);
-
-				if (NULL != uri)
-				{
-					g_free(uri);
-				}
-			}
-			break;
-		case OPEN_DIR:
-			{
-				gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
-
-				GnomeVFSResult result;
-				GnomeVFSDirectoryHandle *dir_handle;
-
-				result = gnome_vfs_directory_open (&dir_handle,uri,
-						(GnomeVFSFileInfoOptions)(GNOME_VFS_FILE_INFO_DEFAULT|
-							GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
-							GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-							GNOME_VFS_FILE_INFO_FOLLOW_LINKS));
-				if ( GNOME_VFS_OK == result )
-				{
-					data->dir_handle  = dir_handle;
-					data->state       = TRAVERSE_DIR;
-					data->has_subdirs = FALSE;
-					data->hash_table  = g_hash_table_new(g_str_hash, g_str_equal);
-				}
-				else
-				{
-					data->state = TRAVERSE_TREE;
-
-					if (GNOME_VFS_ERROR_NOT_FOUND == result)
+	
+					gnome_vfs_file_info_unref (info);
+					gnome_vfs_uri_unref(vfs_uri_dir);
+	
+					if (NULL != uri)
 					{
-						gtk_tree_store_remove (GTK_TREE_STORE(model),data->iter_child);		
-						data->i--;
+						g_free(uri);
 					}
-
-					gtk_tree_iter_free(data->iter_child);
-					data->iter_child = NULL;
-
 				}
-				if (NULL != uri)
+				break;
+			case OPEN_DIR:
 				{
-					g_free(uri);
+					gdk_threads_enter();
+					gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
+					gdk_threads_leave();
+					
+					GnomeVFSResult result;
+					GnomeVFSDirectoryHandle *dir_handle;
+					result = gnome_vfs_directory_open (&dir_handle,uri,
+							(GnomeVFSFileInfoOptions)(GNOME_VFS_FILE_INFO_DEFAULT|
+								GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
+								GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
+								GNOME_VFS_FILE_INFO_FOLLOW_LINKS));
+					if ( GNOME_VFS_OK == result )
+					{
+						data->dir_handle  = dir_handle;
+						data->state       = TRAVERSE_DIR;
+						data->has_subdirs = FALSE;
+						data->hash_table  = g_hash_table_new(g_str_hash, g_str_equal);
+					}
+					else
+					{
+						data->state = TRAVERSE_TREE;
+	
+						if (GNOME_VFS_ERROR_NOT_FOUND == result)
+						{
+							gdk_threads_enter();
+							gtk_tree_store_remove (GTK_TREE_STORE(model),data->iter_child);
+							gdk_threads_leave();		
+							data->i--;
+						}
+						gdk_threads_enter();
+						gtk_tree_iter_free(data->iter_child);
+						data->iter_child = NULL;
+						gdk_threads_leave();
+	
+					}
+					if (NULL != uri)
+					{
+						g_free(uri);
+					}
 				}
-			}
-			break;
-		case TRAVERSE_TREE:
-			{
-				GtkTreeIter iter_child =  {0};
-
-				if ( gtk_tree_model_iter_nth_child (model,&iter_child, iter_parent, data->i) )
+				break;
+			case TRAVERSE_TREE:
 				{
-					data->iter_child = gtk_tree_iter_copy(&iter_child);
-					data->state = OPEN_DIR;
+					GtkTreeIter iter_child =  {0};
+					gdk_threads_enter();
+					if ( gtk_tree_model_iter_nth_child (model,&iter_child, iter_parent, data->i) )
+					{
+						data->iter_child = gtk_tree_iter_copy(&iter_child);
+						data->state = OPEN_DIR;
+					}
+					else
+					{
+						finished = TRUE;
+					}
+					gdk_threads_leave();
+					data->i++;
 				}
-				else
-				{
-					finished = TRUE;
-				}
-				data->i++;
-			}
-			break;
-		default:
-			break;
+				break;
+			default:
+				break;
+		}
+		pthread_yield();
 	}
 
-	if (finished)
+	if (NULL != data->pFolderTreeImpl)
 	{
-		if (NULL != data->pFolderTreeImpl)
-		{
-			data->pFolderTreeImpl->m_setIdleCalls.erase(data->idle_id);
-		}
-		
-		if (NULL != data->iter_parent)
-		{
-			gtk_tree_iter_free(data->iter_parent);
-			data->iter_parent = NULL;
-		}
-
-		if (NULL != data->iter_child)
-		{
-			gtk_tree_iter_free(data->iter_child);
-			data->iter_child = NULL;
-		}
-
-		if (NULL != data->hash_table)
-		{
-			g_hash_table_destroy( data->hash_table );
-		}
-		g_free(data);
+		pthread_t thread_id = pthread_self();
+		data->pFolderTreeImpl->m_setFolderThreads.erase(thread_id);
+	}
+	
+	if (NULL != data->iter_parent)
+	{
+		gdk_threads_enter();
+		gtk_tree_iter_free(data->iter_parent);
+		data->iter_parent = NULL;
+		gdk_threads_leave();
 	}
 
-	gdk_threads_leave();
+	if (NULL != data->iter_child)
+	{
+		gdk_threads_enter();
+		gtk_tree_iter_free(data->iter_child);
+		data->iter_child = NULL;
+		gdk_threads_leave();
+	}
 
-	return !finished;
+	if (NULL != data->hash_table)
+	{
+		g_hash_table_destroy( data->hash_table );
+	}
+	g_free(data);
+	
+	return NULL;
 
 }
 
@@ -1243,9 +1258,9 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 	g_free(uri);
 
 	mydata->iter_parent = gtk_tree_iter_copy(iter_parent);
-	guint idle_id = g_idle_add(idle_check_for_subdirs,mydata);
-	mydata->idle_id = idle_id;
-	pFolderTreeImpl->m_setIdleCalls.insert(idle_id);
+	pthread_t thread_id;
+	pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
+	pFolderTreeImpl->m_setFolderThreads.insert(thread_id);
 }
 
 
@@ -1703,7 +1718,9 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	mydata = (MyDataStruct*)g_malloc0(sizeof(MyDataStruct));
 	mydata->model = GTK_TREE_MODEL(store);
 	mydata->iter_parent = NULL; // special case
-	g_idle_add(idle_check_for_subdirs,mydata);
+	pthread_t thread_id;
+	pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
+	m_setFolderThreads.insert(thread_id);
 
 	free(home_uri);
 	free(desktop_uri);

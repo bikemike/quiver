@@ -32,6 +32,7 @@ public:
 		bool reload;
 		bool fullsize;
 		bool no_thumb_preview;
+		bool loaded_quick_preview;
 		int max_width;
 		int max_height;
 		State state;
@@ -61,13 +62,14 @@ public:
 	void RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 
 	bool IsWorking();
+	void SetLoadOrientation(int iLoadOrientation){m_iLoadOrientation=iLoadOrientation;};
 	
 private:	
 	void Load();
 	bool LoadPixbuf(GdkPixbufLoader *loader);
 	bool CommandsPending();
 	
-	void LoadQuickPreview();
+	bool LoadQuickPreview();
 
 	pthread_t m_pthread_id;
 
@@ -91,7 +93,7 @@ private:
 	
 	bool m_bStopThread;
 	bool m_bWorking;
-	
+	int m_iLoadOrientation;
 };
 
 #endif

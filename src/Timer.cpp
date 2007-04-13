@@ -26,10 +26,6 @@ Timer::Timer(string strFunctionName, bool bQuiet /* = false */)
 
 void Timer::StartTimer()
 {
-	if (!m_bQuiet)
-	{
-		cout << "Starting timer for " << m_strFunctionName << endl;
-	}
 	gettimeofday(&m_tv_start,NULL);
 }
 

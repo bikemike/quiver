@@ -11,7 +11,7 @@
 
 #include "QuiverUtils.h"
 #include "ImageLoader.h"
-#include "ImageList.h"
+#include "ImageList.h"`
 
 #include "QuiverFile.h"
 
@@ -98,6 +98,7 @@ static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_contex
 #define ACTION_VIEWER_ZOOM             "Zoom"
 #define ACTION_VIEWER_ZOOM_FIT         "ZoomFit"
 #define ACTION_VIEWER_ZOOM_FIT_STRETCH "ZoomFitStretch"
+#define ACTION_VIEWER_ZOOM_FILL_SCREEN "ZoomFillScreen"
 #define ACTION_VIEWER_ZOOM_100         "Zoom100"
 #define ACTION_VIEWER_ZOOM_IN          "ZoomIn"
 #define ACTION_VIEWER_ZOOM_OUT         "ZoomOut"
@@ -145,6 +146,7 @@ static char *ui_viewer =
 "					<menuitem action='"ACTION_VIEWER_ZOOM_100"'/>"
 "					<menuitem action='"ACTION_VIEWER_ZOOM_FIT"'/>"
 "					<menuitem action='"ACTION_VIEWER_ZOOM_FIT_STRETCH"'/>"
+"					<menuitem action='"ACTION_VIEWER_ZOOM_FILL_SCREEN"'/>"
 "				</menu>"
 "			</placeholder>"
 "		</menu>"
@@ -292,6 +294,7 @@ static GtkRadioActionEntry zoom_radio_action_entries[] = {
 	{ ACTION_VIEWER_ZOOM_FIT, GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>1", "Fit to Window",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW},
 	{ ACTION_VIEWER_ZOOM_FIT_STRETCH, GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Window Stretch",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH},
 	{ ACTION_VIEWER_ZOOM_100, GTK_STOCK_ZOOM_100, "_Actual Size", "<Control>0", "Actual Size",QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE},
+	{ ACTION_VIEWER_ZOOM_FILL_SCREEN, NULL, "Fill Screen", NULL, "Fill the screen with the image",QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN},
 	{ ACTION_VIEWER_ZOOM, NULL, NULL, NULL, NULL, QUIVER_IMAGE_VIEW_MODE_ZOOM},
 };
 
@@ -389,6 +392,7 @@ public:
 
 	Viewer *m_pViewer;
 	
+	guint m_iTimeoutScrollbars;
 	guint m_iTimeoutUpdateListID;
 	guint m_iTimeoutSlideshowID;
 	int   m_iSlideShowDuration;
@@ -568,7 +572,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward)
 		f = m_ImageList.GetCurrent();
 
 		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
-		GdkPixbuf *pixbuf = f.GetThumbnail();
+		GdkPixbuf *pixbuf = f.GetThumbnail(128);
 
 		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),pixbuf);
 		
@@ -590,6 +594,11 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward)
 			if (m_ImageList.HasNext())
 			{
 				f = m_ImageList.GetNext();
+				m_ImageLoader.CacheImageAtSize(f,width,height);
+			}
+			else if (0 != m_iTimeoutSlideshowID && m_bSlideShowLoop)
+			{
+				f = m_ImageList[0];
 				m_ImageLoader.CacheImageAtSize(f,width,height);
 			}
 		}
@@ -659,6 +668,8 @@ void Viewer::ViewerImpl::SetCurrentOrientation(int iOrientation, bool bUpdateExi
 			
 			exif_data_unref(pExifData);
 		}
+		
+		m_ImageLoader.SetLoadOrientation(m_iCurrentOrientation);
 	}
 }
 
@@ -930,6 +941,9 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
 			action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_ZOOM);
+		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
+			action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_ZOOM_FILL_SCREEN);
+
 			break;
 	}
 
@@ -1163,7 +1177,7 @@ static void signal_drag_begin (GtkWidget *widget,GdkDragContext *drag_context,gp
 	
 	// TODO
 	// set icon
-	GdkPixbuf *thumb = pViewerImpl->m_ImageList.GetCurrent().GetThumbnail();
+	GdkPixbuf *thumb = pViewerImpl->m_ImageList.GetCurrent().GetThumbnail(128);
 
 	if (NULL != thumb)
 	{
@@ -1220,6 +1234,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pUIManager = NULL;
 	m_iMergedViewerUI = 0;
 	
+	m_iTimeoutScrollbars = 0;
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutSlideshowID = 0;
 
@@ -1586,7 +1601,7 @@ static gboolean timeout_advance_slideshow (gpointer data)
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	int iNextIndex = pViewerImpl->m_ImageList.GetCurrentIndex()+1;
-	if (pViewerImpl->m_ImageLoader.IsWorking())
+	if (pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) )
 	{
 		// wait until the imageloader has finished working
 		// before advancing the slideshow
@@ -1620,6 +1635,7 @@ static gboolean timeout_advance_slideshow (gpointer data)
 
 void Viewer::SlideShowStart()
 {
+	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),TRUE);
 	if (!m_ViewerImplPtr->m_iTimeoutSlideshowID && m_ViewerImplPtr->m_ImageList.GetSize() > 2 )
 	{
 		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(m_ViewerImplPtr->m_iSlideShowDuration,timeout_advance_slideshow, m_ViewerImplPtr.get());
@@ -1634,6 +1650,7 @@ void Viewer::SlideShowStart()
 
 void Viewer::SlideShowStop()
 {
+	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),FALSE);
 	if (0 != m_ViewerImplPtr->m_iTimeoutSlideshowID)
 	{
 		g_source_remove (m_ViewerImplPtr->m_iTimeoutSlideshowID);
@@ -1737,23 +1754,81 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	return pixbuf;
 }
 
-
-
-static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data)
+static gboolean timeout_update_scrollbars(gpointer user_data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	gint width, height;
 
+	gdk_threads_enter();
+
+	QuiverImageViewMode view_mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+	
+	quiver_image_view_get_pixbuf_display_size_for_mode(
+		QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView),
+		view_mode,
+		&width,
+		&height);
+		
+	GtkWidget *pScrollbarH = pViewerImpl->m_pScrollbarH;
+	GtkWidget *pScrollbarV = pViewerImpl->m_pScrollbarV;
+	
 	GtkAdjustment *h = pViewerImpl->m_pAdjustmentH;
 	GtkAdjustment *v = pViewerImpl->m_pAdjustmentV;
 	
-	GtkWidget *pScrollbarH = pViewerImpl->m_pScrollbarH;
-	GtkWidget *pScrollbarV = pViewerImpl->m_pScrollbarV;
+	
+	gint sb_width = pScrollbarV->allocation.width;
+	gint sb_height = pScrollbarH->allocation.height;
+	
 	GtkWidget * pNavigationBox = pViewerImpl->m_pNavigationBox;
 
 	GtkTableChild * child = GetGtkTableChild(GTK_TABLE(pViewerImpl->m_pTable),pViewerImpl->m_pImageView);
 	
-	if (h->page_size >= h->upper &&
-		v->page_size >= v->upper)
+	gint area_w = pViewerImpl->m_pTable->allocation.width;
+	gint area_h = pViewerImpl->m_pTable->allocation.height;
+
+	if (QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN == view_mode)
+	{
+		//FIXME: just don't show scrollbars because they jump around in an
+		// infinite loop for certain situations in this mode
+		// hide h hide v
+		gtk_widget_hide (pScrollbarV); 	
+		gtk_widget_hide (pScrollbarH);
+		gtk_widget_hide (pNavigationBox);
+
+		child->bottom_attach = 1;
+		child->right_attach = 1;
+	}
+	else if ( (area_w < width && area_h < height) ||
+		(area_w < width && area_h - sb_height < height) ||
+		(area_w - sb_width < width && area_h < height) )
+	{
+		// show h show v
+		child->bottom_attach = 1;
+		child->right_attach = 1;
+
+		gtk_widget_show (pScrollbarV); 	
+		gtk_widget_show (pScrollbarH);
+		gtk_widget_show (pNavigationBox);
+	}
+	else if (area_w < width)
+	{
+		// show h hide v
+		child->right_attach = 2;
+		child->bottom_attach = 1;
+		gtk_widget_show (pNavigationBox);	
+		gtk_widget_hide (pScrollbarV);
+		gtk_widget_show (pScrollbarH);		
+	}
+	else if (area_h < height)
+	{
+		// hide h show v
+		child->bottom_attach = 2;
+		child->right_attach = 1;
+		gtk_widget_show (pNavigationBox);	
+		gtk_widget_hide (pScrollbarH);
+		gtk_widget_show (pScrollbarV);	
+	}
+	else
 	{
 		// hide h hide v
 		gtk_widget_hide (pScrollbarV); 	
@@ -1763,37 +1838,8 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 		child->bottom_attach = 1;
 		child->right_attach = 1;
 	}
-	else if (h->page_size >= h->upper)
-	{
-		// hide h show v
-		child->bottom_attach = 2;
-		child->right_attach = 1;
-		gtk_widget_show (pNavigationBox);	
-		gtk_widget_show (pScrollbarV);
-		gtk_widget_hide (pScrollbarH);
-		
-	}
-	else if (v->page_size >= v->upper)
-	{
-		// show h hide v
-		child->right_attach = 2;
-		child->bottom_attach = 1;
-		gtk_widget_show (pNavigationBox);	
-		gtk_widget_show (pScrollbarH);
-		gtk_widget_hide (pScrollbarV);
 
-	}
-	else
-	{
-		// show h show v
-		child->bottom_attach = 1;
-		child->right_attach = 1;
-
-		gtk_widget_show (pScrollbarV); 	
-		gtk_widget_show (pScrollbarH);
-		gtk_widget_show (pNavigationBox);
-
-	}
+	pViewerImpl->m_iTimeoutScrollbars = 0;
 
 	if (h->page_size >= h->upper &&
 		v->page_size >= v->upper)
@@ -1812,6 +1858,22 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 		gtk_widget_grab_focus(pViewerImpl->m_pImageView);
 		gtk_drag_source_unset (pViewerImpl->m_pImageView);
 	}
+
+	gdk_threads_leave();
+
+	return FALSE;
+}
+
+static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data)
+{
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	
+	if (0 != pViewerImpl->m_iTimeoutScrollbars)
+	{
+		g_source_remove(pViewerImpl->m_iTimeoutScrollbars);
+	}
+	
+	pViewerImpl->m_iTimeoutScrollbars = g_timeout_add(20, timeout_update_scrollbars, pViewerImpl);
 }
 
 
@@ -2001,14 +2063,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 
 		if (NULL == pixbuf)
 		{
-			if (uiWidth <= 128 && uiHeight <= 128)
-			{
-				pixbuf = f.GetThumbnail();
-			}
-			else
-			{
-				pixbuf = f.GetThumbnail(true);
-			}
+			pixbuf = f.GetThumbnail(MAX(uiWidth,uiHeight));
 	
 		}
 

@@ -30,14 +30,9 @@ typedef enum _QuiverImageViewMode {
 	QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH,
 	QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE,
 	QUIVER_IMAGE_VIEW_MODE_ZOOM,
+	QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN,
 	QUIVER_IMAGE_VIEW_MODE_COUNT
 } QuiverImageViewMode;
-
-typedef enum _QuiverImageViewTransitionType{
-	QUIVER_IMAGE_VIEW_TRANSITION_TYPE_NONE,
-	QUIVER_IMAGE_VIEW_TRANSITION_TYPE_CROSSFADE,
-	QUIVER_IMAGE_VIEW_TRANSITION_TYPE_COUNT
-} QuiverImageViewTransitionType;
 
 typedef enum QuiverImageViewMagnificationMode{
 	QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_DEFAULT,
@@ -96,7 +91,9 @@ QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview);
 QuiverImageViewMode quiver_image_view_get_view_mode_unmagnified(QuiverImageView *imageview);
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode);
 
-void quiver_image_view_set_transition_type(QuiverImageView *imageview,QuiverImageViewTransitionType type);
+void quiver_image_view_set_enable_transitions(QuiverImageView *imageview,gboolean enable);
+gboolean quiver_image_view_is_in_transition(QuiverImageView *imageview);
+
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble amount);
 void quiver_image_view_set_magnification_mode(QuiverImageView *imageview,QuiverImageViewMagnificationMode mode);
 gdouble quiver_image_view_get_magnification(QuiverImageView *imageview);
@@ -116,34 +113,8 @@ GtkAdjustment * quiver_image_view_get_vadjustment(QuiverImageView *imageview);
 
 void quiver_image_view_activate(QuiverImageView *iconview);
 
-/*
-void quiver_image_view_set_n_items_func (QuiverImageView *imageview, 
-         QuiverImageViewGetNItemsFunc func,gpointer data,GtkDestroyNotify destroy);
 
-void quiver_image_view_set_icon_pixbuf_func (QuiverImageView *imageview,
-         QuiverImageViewGetIconPixbufFunc func,gpointer data,GtkDestroyNotify destroy);
-
-void quiver_image_view_set_thumbnail_pixbuf_func (QuiverImageView *imageview,
-         QuiverImageViewGetThumbnailPixbufFunc func,gpointer data,GtkDestroyNotify destroy);
-
-void quiver_image_view_set_text_func (QuiverImageView *imageview,
-         QuiverImageViewGetTextFunc func,gpointer data,GtkDestroyNotify destroy);
-
-void quiver_image_view_set_overlay_pixbuf_func (QuiverImageView *imageview,
-         QuiverImageViewGetOverlayPixbufFunc func,gpointer data,GtkDestroyNotify destroy);
-
-*/
 G_END_DECLS
 
-/*
-#include <string>
-#include <list>
-using namespace std;
-
-
-//GtkWidget* quiver_image_view_new		(void);
-GtkWidget* quiver_image_view_new		(list<string> *files);
-
-*/
 #endif
 

@@ -36,14 +36,14 @@ public:
 
 	const gchar* GetURI() const;
 
-	bool HasThumbnail(bool large = false) const;
+	bool HasThumbnail(int iSize = 0);
 
 	bool Modified() const;
 
 	GdkPixbuf *GetExifThumbnail();
-	GdkPixbuf *GetThumbnail(bool bLargeThumb = false);
+	GdkPixbuf *GetThumbnail(int iSize = 0);
 	
-	void RemoveCachedThumbnail(bool bLargeThumb);
+	void RemoveCachedThumbnail(int iSize = 0);
 
 	ExifData *GetExifData();
 	bool SetExifData(ExifData* pExifData);

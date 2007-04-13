@@ -1547,7 +1547,7 @@ int main (int argc, char **argv)
 		printf ("Could not initialize GnomeVFS\n");
 		return 1;
 	}
-	pthread_setconcurrency(4);
+	//pthread_setconcurrency(4);
 
 	gtk_init_add (CreateQuiver,&files);
 	

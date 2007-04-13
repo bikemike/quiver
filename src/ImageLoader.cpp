@@ -29,6 +29,7 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	pthread_mutex_init(&m_CommandMutex, NULL);
 	
 	AddPixbufLoaderObserver(this);
+	m_iLoadOrientation = 1;
 
 	m_bStopThread = false;
 	m_bWorking = false;
@@ -170,7 +171,7 @@ bool ImageLoader::CommandsPending()
 	// must do this outside of the mutext lock because it locks the gui thread
 	if (bLoadPreview)
 	{
-		LoadQuickPreview();
+		m_Command.params.loaded_quick_preview = LoadQuickPreview();
 	}
 	
 	return rval;
@@ -260,20 +261,23 @@ void ImageLoader::RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_obse
 
 
 
-void ImageLoader::LoadQuickPreview()
+bool ImageLoader::LoadQuickPreview()
 {
+	bool rval = false;
 	if (!m_Command.params.no_thumb_preview)
 	{
 		
 		GdkPixbuf *thumb_pixbuf = NULL;
 		
-		if (m_Command.quiverFile.HasThumbnail(true))
+		//FIXME: should not hard code 128/256. make a new
+		// function to get the largest available thumbnail
+		if (m_Command.quiverFile.HasThumbnail(256))
 		{
-			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(true);
+			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(256);
 		}
-		else if (m_Command.quiverFile.HasThumbnail(false))
+		else if (m_Command.quiverFile.HasThumbnail(128))
 		{
-			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(false);
+			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(128);
 		}
 	
 	
@@ -283,7 +287,7 @@ void ImageLoader::LoadQuickPreview()
 			int width = m_Command.quiverFile.GetWidth();
 			int height = m_Command.quiverFile.GetHeight();
 			
-			if (4 < m_Command.params.orientation)
+			if (4 < m_iLoadOrientation)
 			{
 				swap(width,height);
 			}
@@ -296,13 +300,17 @@ void ImageLoader::LoadQuickPreview()
 				gdk_threads_leave();
 			}
 			g_object_unref(thumb_pixbuf);
+			
+			rval = true;
 		}
 	}
+	return rval;
 }
 
 void ImageLoader::Load()
 {
-
+	m_iLoadOrientation = m_Command.params.orientation;
+	
 	if (m_Command.params.reload)
 	{
 		m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
@@ -314,7 +322,7 @@ void ImageLoader::Load()
 		if (NULL != pixbuf)
 		{
 			int real_width,real_height;
-			int orientation = m_Command.params.orientation;
+
 			gint width,height;
 			width = gdk_pixbuf_get_width(pixbuf);
 			height = gdk_pixbuf_get_height(pixbuf);
@@ -326,10 +334,10 @@ void ImageLoader::Load()
 			gint* pOrientation = (gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
 			if (NULL != pOrientation)
 			{
-				if(m_Command.params.orientation != *pOrientation)
+				if(m_iLoadOrientation != *pOrientation)
 				{
-					if ( (4 < m_Command.params.orientation && 4 >= *pOrientation)
-						|| (4 >= m_Command.params.orientation && 4 < *pOrientation) )
+					if ( (4 < m_iLoadOrientation && 4 >= *pOrientation)
+						|| (4 >= m_iLoadOrientation && 4 < *pOrientation) )
 					{
 						// swap because the cached image orientation has a different 
 						// ratio for width/height than the requested orientation
@@ -339,7 +347,7 @@ void ImageLoader::Load()
 				}
 			}
 
-			if (4 < orientation)
+			if (4 < m_iLoadOrientation)
 			{
 				// swap because the actual image has a different 
 				// ratio for width/height than the requested orientation
@@ -363,7 +371,7 @@ void ImageLoader::Load()
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
-				LoadQuickPreview();
+				bool bLoadedQuickPreview = LoadQuickPreview();
 
 				GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
 				
@@ -377,20 +385,24 @@ void ImageLoader::Load()
 						// and the full size is needed
 
 					}
-					else if ( 1 < m_Command.params.orientation )
+					else // if ( 1 < m_Command.params.orientation )
 					{
 						(*itr)->ConnectSignalSizePrepared(loader);
 					}
-					else
+					/*
+					 * else
 					{
+						// FIXME: maybe we should show images loading
+						// if they are loading at full size or loading
+						// over the network
 						(*itr)->ConnectSignals(loader);
 					}
+					*/
 					
 				}
 
 				bool rval = LoadPixbuf(loader);
 
-				
 				if (rval)
 				{
 					GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
@@ -403,11 +415,13 @@ void ImageLoader::Load()
 					else
 					{
 						g_object_ref(pixbuf);
-
-						if (1 < m_Command.params.orientation)
+						// set up a temp orientation as m_iLoadOrientation could 
+						// change at any time
+						int orientation = m_iLoadOrientation;
+						if (1 < orientation)
 						{
 							GdkPixbuf* pixbuf_rotated;
-							pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
+							pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_iLoadOrientation);
 							if (NULL != pixbuf_rotated)
 							{
 								g_object_unref(pixbuf);
@@ -423,31 +437,27 @@ void ImageLoader::Load()
 							gint width,height;
 							width = m_Command.quiverFile.GetWidth();
 							height = m_Command.quiverFile.GetHeight();
-							if (4 < m_Command.params.orientation)
+							if (4 < orientation)
 							{
 								swap(width,height);
 							}
 							if (m_Command.params.reload)
 							{
+								// FIXME: if the rotation changes at some point, we
+								// need to rotate this image
 								(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
 							}
 							else
 							{
-								// FIXME: this was originally only for rotated images
-								// but it has now become the call for all images and
-								// we don't rely on the gdk_pixbuf_loader signals
-								// but this may cause the images to be drawn twice..
-								//if (1 < m_Command.params.orientation)
-								{
-									(*itr)->SetPixbufAtSize(pixbuf,width,height);
-								}
+								bool bResetViewMode = !bLoadedQuickPreview;
+								(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 							}
 							gdk_flush();
 							gdk_threads_leave();
 						}
 
 						gint *pOrientation = g_new(int,1);
-						*pOrientation = m_Command.params.orientation;
+						*pOrientation = orientation;
 						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
 
 						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
@@ -498,7 +508,8 @@ void ImageLoader::Load()
 				{
 					swap(width,height);
 				}
-				(*itr)->SetPixbufAtSize(pixbuf,width,height);
+				bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+				(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 				gdk_threads_leave();
 			}
 			g_object_unref(pixbuf);
@@ -563,7 +574,8 @@ void ImageLoader::Load()
 								{
 									swap(width,height);
 								}
-								(*itr)->SetPixbufAtSize(pixbuf,width,height);
+								bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+								(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 
 								gdk_flush();
 								gdk_threads_leave();
@@ -690,13 +702,17 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 	m_Command.quiverFile.SetHeight(height);
 	
 	int max_width, max_height;
+	int orientation = m_iLoadOrientation;
+	if (LOAD != m_Command.params.state)
+	{
+		orientation = m_Command.params.orientation;
+	}
 	
 	max_width = m_Command.params.max_width;
 	max_height = m_Command.params.max_height;
 	
-	if (4 < m_Command.params.orientation)
+	if (4 < orientation)
 	{
-		swap(max_width,max_height);
 		swap(width,height);
 	}
 	
