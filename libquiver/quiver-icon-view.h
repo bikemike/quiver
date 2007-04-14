@@ -32,12 +32,20 @@ enum _QuiverIconOverlayType
 };
 typedef enum _QuiverIconOverlayType QuiverIconOverlayType;
 
+enum _QuiverIconViewDragBehavior
+{
+	QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND,
+	QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL,
+	QUIVER_ICON_VIEW_DRAG_BEHAVIOR_COUNT,
+	
+};
+typedef enum _QuiverIconViewDragBehavior QuiverIconViewDragBehavior;
+
 typedef gulong (*QuiverIconViewGetNItemsFunc) (QuiverIconView *iconview,gpointer user_data);
 typedef gchar* (*QuiverIconViewGetTextFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetIconPixbufFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,gulong cell,gint* actual_width, gint *actual_height, gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview,gulong cell, QuiverIconOverlayType type,gpointer user_data);
-//typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview, gulong cell, QuiverIconOverlayType type, gpointer user_data);
 
 struct _QuiverIconView
 {
@@ -77,6 +85,8 @@ void quiver_icon_view_set_n_columns(QuiverIconView *iconview,guint n_columns);
 void quiver_icon_view_set_n_rows(QuiverIconView *iconview,guint n_rows);
 void quiver_icon_view_set_smooth_scroll(QuiverIconView *iconview,gboolean smooth_scroll);
 
+void quiver_icon_view_set_drag_behavior(QuiverIconView *iconview,QuiverIconViewDragBehavior behavior);
+
 void quiver_icon_view_set_icon_size(QuiverIconView *iconview, guint width,guint height);
 void quiver_icon_view_set_cell_padding(QuiverIconView *iconview,guint padding);
 void quiver_icon_view_get_icon_size(QuiverIconView *iconview, guint* width,guint* height);
@@ -114,15 +124,6 @@ void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
 
 G_END_DECLS
 
-/*
-#include <string>
-#include <list>
-using namespace std;
 
-
-//GtkWidget* quiver_icon_view_new		(void);
-GtkWidget* quiver_icon_view_new		(list<string> *files);
-
-*/
 #endif
 

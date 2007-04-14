@@ -567,17 +567,22 @@ static void folder_tree_set_selected_checkbox_value(GtkTreeView* treeview,gboole
 static void
 signal_check_selected (GtkWidget *menuitem, gpointer userdata)
 {
-	GtkTreeView *treeview = GTK_TREE_VIEW(userdata);
+	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
+	GtkTreeView *treeview = GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget);
 	folder_tree_set_selected_checkbox_value(treeview,TRUE);
 	//g_print ("Do something!\n");
+	pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+	
 }
 
 static void
 signal_uncheck_selected (GtkWidget *menuitem, gpointer userdata)
 {
-	GtkTreeView *treeview = GTK_TREE_VIEW(userdata);
+	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
+	GtkTreeView *treeview = GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget);
 	folder_tree_set_selected_checkbox_value(treeview,FALSE);
 	//g_print ("Do something!\n");
+	pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
 }
 
 void view_popup_menu (GtkWidget *treeview, GdkEventButton *event, gpointer userdata)
@@ -588,12 +593,12 @@ void view_popup_menu (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 	
 	menuitem = gtk_menu_item_new_with_label("Check Selected Item(s)");
 	g_signal_connect(menuitem, "activate",
-	                 (GCallback) signal_check_selected, treeview);
+	                 (GCallback) signal_check_selected, userdata);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
 
 	menuitem = gtk_menu_item_new_with_label("Uncheck Selected Item(s)");
 	g_signal_connect(menuitem, "activate",
-	                 (GCallback) signal_uncheck_selected, treeview);
+	                 (GCallback) signal_uncheck_selected, userdata);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
 
 	menuitem = gtk_menu_item_new();

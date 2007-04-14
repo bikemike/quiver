@@ -76,8 +76,8 @@ struct _QuiverIconViewPrivate
 
 	gboolean scroll_draw;
 
-	gboolean rubberband_mode_start;
-	gboolean rubberband_mode;
+	gboolean drag_mode_start;
+	gboolean drag_mode_enabled;
 	GdkRectangle rubberband_rect;
 	GdkRectangle rubberband_rect_old;
 
@@ -95,6 +95,8 @@ struct _QuiverIconViewPrivate
 	gboolean idle_load_running;
 	gboolean smooth_scroll;
 	gulong smooth_scroll_cell;
+	
+	QuiverIconViewDragBehavior drag_behavior;
 	
 	guint timeout_id_smooth_scroll;
 
@@ -389,12 +391,14 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->smooth_scroll = FALSE;
 	iconview->priv->smooth_scroll_cell = G_MAXULONG;
 	
+	iconview->priv->drag_behavior = QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND;
+	
 	iconview->priv->rubberband_x1 = 0;
 	iconview->priv->rubberband_y1 = 0;
 	iconview->priv->rubberband_x2 = 0;
 	iconview->priv->rubberband_y2 = 0;
-	iconview->priv->rubberband_mode_start = FALSE;
-	iconview->priv->rubberband_mode = FALSE;
+	iconview->priv->drag_mode_start = FALSE;
+	iconview->priv->drag_mode_enabled = FALSE;
 	
 	iconview->priv->timeout_id_rubberband_scroll = 0;
 	
@@ -975,7 +979,8 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 	g_object_unref(border_gc);
 	
 	
-	if (iconview->priv->rubberband_mode)
+	if (iconview->priv->drag_mode_enabled && 
+	    QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
 	{
 		GdkRectangle rub_rect = iconview->priv->rubberband_rect;
 		rub_rect.x -= hadjust;
@@ -1079,35 +1084,43 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 
-	iconview->priv->mouse_button_is_down = TRUE;
-
-	iconview->priv->rubberband_x1 = iconview->priv->rubberband_x2 = x + hadjust;
-	iconview->priv->rubberband_y1 = iconview->priv->rubberband_y2 = y + vadjust;
-
-	//int cell_x,cell_y;
-	int cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
-
 	if (!GTK_WIDGET_HAS_FOCUS (widget))
 	{
 		gtk_widget_grab_focus (widget);
 	}
 
-
-	if (cell == G_MAXULONG)
+	if (1 == event->button)
 	{
-		if (0 == (event->state & GDK_CONTROL_MASK))
-		{
-			quiver_icon_view_set_select_all(iconview,FALSE);
-		}
-		iconview->priv->rubberband_mode_start = TRUE;
-	}
-	else if (1 == event->button && GDK_2BUTTON_PRESS == event->type)
-	{
-		iconview->priv->mouse_button_is_down = FALSE;
-		quiver_icon_view_activate_cell(iconview,cell);
-	}
-	return FALSE;
+		iconview->priv->mouse_button_is_down = TRUE;
 	
+		iconview->priv->rubberband_x1 = iconview->priv->rubberband_x2 = x + hadjust;
+		iconview->priv->rubberband_y1 = iconview->priv->rubberband_y2 = y + vadjust;
+	
+		//int cell_x,cell_y;
+		int cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
+	
+
+		if (cell != G_MAXULONG && GDK_2BUTTON_PRESS == event->type)
+		{
+			iconview->priv->mouse_button_is_down = FALSE;
+			quiver_icon_view_activate_cell(iconview,cell);
+		}			    
+		else if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
+		{
+			iconview->priv->drag_mode_start = TRUE;
+		}
+		else if (cell == G_MAXULONG &&
+		    QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
+		{
+			if (0 == (event->state & GDK_CONTROL_MASK))
+			{
+				quiver_icon_view_set_select_all(iconview,FALSE);
+			}
+			iconview->priv->drag_mode_start = TRUE;
+		}
+	
+	}
+	return FALSE;	
 }
 
 static gboolean 
@@ -1126,49 +1139,56 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 	iconview->priv->rubberband_x1 = iconview->priv->rubberband_x2 = x + hadjust;
 	iconview->priv->rubberband_y1 = iconview->priv->rubberband_y2 = y + vadjust;
 
-	//int cell_x,cell_y;
-	gulong cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
-
-	if (iconview->priv->rubberband_mode)
+	if (1 == event->button)
 	{
-		/* this commented out code is for non-solid rect only
-		GdkRegion *invalid_region;
-		GdkRegion *tmp_region;
-
-		tmp_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
-		gdk_region_shrink(tmp_region,1,1);
-
-		invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
-
-		gdk_region_subtract(invalid_region,tmp_region);
-		gdk_region_shrink(invalid_region,-1,-1);
-
-		gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
-		gdk_region_destroy(invalid_region);
-		gdk_region_destroy(tmp_region);
-		*/		
-		GdkRegion *invalid_region;
-		invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
-		gdk_region_shrink(invalid_region,-1,-1);
-		gdk_region_offset(invalid_region,-hadjust,-vadjust);
-		
-		gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
-		
-		if (iconview->priv->timeout_id_rubberband_scroll != 0)
+		gulong cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
+	
+		if (iconview->priv->drag_mode_enabled)
 		{
-			g_source_remove (iconview->priv->timeout_id_rubberband_scroll);
-			iconview->priv->timeout_id_rubberband_scroll = 0;
-		}
+			if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
+			{
+	#ifdef QUIVER_MAEMO
+				GdkRegion *invalid_region;
+				GdkRegion *tmp_region;
 		
+				tmp_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
+				gdk_region_shrink(tmp_region,1,1);
+		
+				invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
+		
+				gdk_region_subtract(invalid_region,tmp_region);
+				gdk_region_shrink(invalid_region,-1,-1);
+		
+				gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
+				gdk_region_destroy(invalid_region);
+				gdk_region_destroy(tmp_region);
+	#else
+				GdkRegion *invalid_region;
+				invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
+				gdk_region_shrink(invalid_region,-1,-1);
+				gdk_region_offset(invalid_region,-hadjust,-vadjust);
+	
+				gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
+	#endif			
+				if (iconview->priv->timeout_id_rubberband_scroll != 0)
+				{
+					g_source_remove (iconview->priv->timeout_id_rubberband_scroll);
+					iconview->priv->timeout_id_rubberband_scroll = 0;
+				}
+			}
+		}
+		else if (G_MAXULONG != cell && iconview->priv->mouse_button_is_down)
+		{
+			quiver_icon_view_set_cursor_cell_full(iconview,cell,(GdkModifierType)event->state,TRUE);
+		}
+		iconview->priv->mouse_button_is_down = FALSE;
+		iconview->priv->drag_mode_start = FALSE;
+		iconview->priv->drag_mode_enabled = FALSE;
+
 	}
-	else if (G_MAXULONG != cell && iconview->priv->mouse_button_is_down)
-	{
-		quiver_icon_view_set_cursor_cell_full(iconview,cell,(GdkModifierType)event->state,TRUE);
-	}
-	iconview->priv->mouse_button_is_down = FALSE;
-	iconview->priv->rubberband_mode_start = FALSE;
-	iconview->priv->rubberband_mode = FALSE;
-	return TRUE;
+
+	return FALSE;
+
 }
 
 static gboolean
@@ -1222,10 +1242,10 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 		
 	}
 
-	if (iconview->priv->rubberband_mode_start)
+	if (iconview->priv->drag_mode_start)
 	{
-		iconview->priv->rubberband_mode_start = FALSE;
-		iconview->priv->rubberband_mode = TRUE;
+		iconview->priv->drag_mode_start = FALSE;
+		iconview->priv->drag_mode_enabled = TRUE;
 	}
 
 	gulong new_cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
@@ -1252,7 +1272,8 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 
 	//printf("new_cell : %d \n",new_cell);
 
-	if (iconview->priv->rubberband_mode)
+	if (iconview->priv->drag_mode_enabled && 
+		QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
 	{
 		quiver_icon_view_update_rubber_band(iconview);
 		iconview->priv->rubberband_scroll_x = 0;
@@ -1299,8 +1320,26 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 				iconview->priv->timeout_id_rubberband_scroll = 0;
 			}
 		}
-		return TRUE;
 
+	}
+	else if (iconview->priv->drag_mode_enabled && 
+		QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
+	{
+		gdouble hadjust = gtk_adjustment_get_value(iconview->priv->hadjustment);
+		gdouble vadjust = gtk_adjustment_get_value(iconview->priv->vadjustment);
+		
+		iconview->priv->rubberband_x2 = x + hadjust;
+		iconview->priv->rubberband_y2 = y + vadjust;
+	
+		hadjust += iconview->priv->rubberband_x1 - iconview->priv->rubberband_x2;
+		hadjust = MAX(0,MIN(iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size,hadjust));
+		vadjust += iconview->priv->rubberband_y1 - iconview->priv->rubberband_y2;
+		vadjust = MAX(0,MIN(iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size,vadjust));
+		gtk_adjustment_set_value(iconview->priv->hadjustment,hadjust);
+		gtk_adjustment_set_value(iconview->priv->vadjustment,vadjust);
+
+		iconview->priv->rubberband_x1 = x + hadjust;
+		iconview->priv->rubberband_y1 = y + vadjust;
 	}
 	return FALSE;
 
@@ -2560,6 +2599,12 @@ void quiver_icon_view_set_n_rows(QuiverIconView *iconview,guint n_rows)
 void quiver_icon_view_set_smooth_scroll(QuiverIconView *iconview,gboolean smooth_scroll)
 {
 	iconview->priv->smooth_scroll = smooth_scroll;
+}
+
+void 
+quiver_icon_view_set_drag_behavior(QuiverIconView *iconview,QuiverIconViewDragBehavior behavior)
+{
+	iconview->priv->drag_behavior = behavior;
 }
 
 void 
