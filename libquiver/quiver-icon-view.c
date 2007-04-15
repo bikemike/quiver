@@ -71,6 +71,7 @@ struct _QuiverIconViewPrivate
 
 	GdkPixmap *drop_shadow[5][8];
 
+	gint last_x, last_y;
 	gint rubberband_x1, rubberband_y1;
 	gint rubberband_x2, rubberband_y2;
 
@@ -397,6 +398,8 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->rubberband_y1 = 0;
 	iconview->priv->rubberband_x2 = 0;
 	iconview->priv->rubberband_y2 = 0;
+	iconview->priv->last_x        = 0;
+	iconview->priv->last_y        = 0;
 	iconview->priv->drag_mode_start = FALSE;
 	iconview->priv->drag_mode_enabled = FALSE;
 	
@@ -1081,6 +1084,9 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 	x = (gint)event->x;
 	y = (gint)event->y;
 
+	iconview->priv->last_x = x;
+	iconview->priv->last_y = y;
+
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 
@@ -1133,6 +1139,9 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 	x = (gint)event->x;
 	y = (gint)event->y;
 	
+	iconview->priv->last_x = x;
+	iconview->priv->last_y = y;
+
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 
@@ -1242,11 +1251,15 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 		
 	}
 
-	if (iconview->priv->drag_mode_start)
+	if (iconview->priv->drag_mode_start && 
+		(10 < abs(x -iconview->priv->last_x) || 10 < abs(y -iconview->priv->last_y)))
 	{
 		iconview->priv->drag_mode_start = FALSE;
 		iconview->priv->drag_mode_enabled = TRUE;
 	}
+
+	iconview->priv->last_x = x;
+	iconview->priv->last_y = y;
 
 	gulong new_cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
 
