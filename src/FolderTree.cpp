@@ -11,7 +11,7 @@
 #ifndef QUIVER_MAEMO
 #include <libgnomeui/gnome-icon-lookup.h>
 #else
-#include <hildon-widgets/hildon-file-system-model.h>
+#include <hildon-widgets/hildon-file-system-info.h>
 #endif
 
 #include <set>
@@ -19,25 +19,7 @@
 #define QUIVER_TREE_COLUMN_TOGGLE      "column_toggle"
 #define QUIVER_FOLDER_TREE_ROOT_NAME   "Filesystem"
 
-
-#ifdef QUIVER_MAEMO
-
-#define ICON_MAEMO_DEVICE "qgn_list_filesys_divc_cls"
-#define ICON_MAEMO_AUDIO "qgn_list_filesys_audio_fldr"
-#define ICON_MAEMO_DOCUMENTS "qgn_list_filesys_doc_fldr"
-#define ICON_MAEMO_GAMES "qgn_list_filesys_games_fldr"
-#define ICON_MAEMO_IMAGES "qgn_list_filesys_image_fldr"
-#define ICON_MAEMO_VIDEO "qgn_list_filesys_video_fldr"
-#define ICON_MAEMO_MMC "qgn_list_filesys_mmc_root"
-
-// folder expanders
-#define ICON_MAEMO_EXPAND "qgn_list_gene_fldr_exp"
-#define ICON_MAEMO_COLAPSE "qgn_list_gene_fldr_clp"
-
-// folder open / closed
-#define ICON_MAEMO_FOLDER_CLOSED "qgn_list_gene_fldr_cls"
-#define ICON_MAEMO_FOLDER_OPEN "qgn_list_gene_fldr_opn"
-#endif
+#include "QuiverStockIcons.h"
 
 /*GtkTreeStore *store;*/
 
@@ -48,8 +30,42 @@ enum
 	FILE_TREE_COLUMN_DISPLAY_NAME,
 	FILE_TREE_COLUMN_URI,
 	FILE_TREE_COLUMN_SEPARATOR,
+	FILE_TREE_COLUMN_PERMANENT,
+	FILE_TREE_COLUMN_USE_DEFAULT_ORDER,
 	FILE_TREE_COLUMN_COUNT,
 };
+
+typedef enum _FolderID
+{
+#ifdef QUIVER_MAEMO
+	MAEMO_FOLDER_DEVICE,
+	MAEMO_FOLDER_AUDIO,
+	MAEMO_FOLDER_DOCUMENTS,
+	MAEMO_FOLDER_GAMES,
+	MAEMO_FOLDER_IMAGES,
+	MAEMO_FOLDER_VIDEOS,
+	MAEMO_FOLDER_MMC1,
+	MAEMO_FOLDER_MMC2,
+#endif
+	FOLDER_ID_COUNT,
+} FolderID;
+
+gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id);
+
+// this array is a lookup for the icon name basedo n the folderID
+/*
+gchar* FolderIDIcon[] = 
+{
+	ICON_MAEMO_DEVICE,
+	ICON_MAEMO_AUDIO,
+	ICON_MAEMO_DOCUMENTS,
+	ICON_MAEMO_GAMES,
+	ICON_MAEMO_IMAGES,
+	ICON_MAEMO_VIDEOS,
+	ICON_MAEMO_MMC,
+	ICON_MAEMO_MMC
+};
+*/
 
 static gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer user_data);
 static gboolean folder_tree_is_separator (GtkTreeModel *model,GtkTreeIter *iter,gpointer data);
@@ -59,7 +75,9 @@ static gboolean view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event
 static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer userdata);
 static gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata);
 static void view_onRowActivated (GtkTreeView *treeview, GtkTreePath *path, GtkTreeViewColumn *col, gpointer userdata);
+static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter);
 static void signal_folder_tree_row_expanded(GtkTreeView *treeview, GtkTreeIter *iter_parent, GtkTreePath *treepath, gpointer data);
+static void signal_folder_tree_row_collapsed(GtkTreeView *treeview, GtkTreeIter *iter_parent, GtkTreePath *treepath, gpointer data);
 
 static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *iter_parent, const gchar* name, gboolean duplicate_check);
 static void folder_tree_clear_all_checkboxes(GtkTreeModel *model);
@@ -294,6 +312,7 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 			if (NULL != uri)
 			{
 				std::string strURI = uri;
+
 				if (std::string::npos != itr->find(strURI))
 				{
 					GnomeVFSURI* vfs_uri, *vfs_parent;
@@ -306,7 +325,6 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 						vfs_uri = vfs_parent;
 						n_parents++;	
 					}
-					
 					if (longest_match < n_parents)
 					{
 						strLongestURI = strURI;
@@ -382,6 +400,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	 G_TYPE_STRING,
 	 G_TYPE_STRING,
  	 G_TYPE_STRING,
+	 G_TYPE_BOOLEAN,
+	 G_TYPE_BOOLEAN,
 	 G_TYPE_BOOLEAN
 	 );
 	
@@ -490,12 +510,13 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	g_signal_connect(m_pWidget, "popup-menu", (GCallback) view_onPopupMenu, this);
 	g_signal_connect(m_pWidget, "row-activated", (GCallback) view_onRowActivated, this);
 	g_signal_connect(m_pWidget, "row-expanded", (GCallback) signal_folder_tree_row_expanded,this);
+	g_signal_connect(m_pWidget, "row-collapsed", (GCallback) signal_folder_tree_row_collapsed,this);
 	
 	//printf("quiver_folder_tree_new end\n");
 }
 
 
-static char* folder_tree_get_icon_name(const char* uri);
+static char* folder_tree_get_icon_name(const char* uri, gboolean expanded);
 
 static gboolean from_mouse = FALSE;
 
@@ -932,6 +953,31 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 
 	gboolean found_duplicate = FALSE;	
 	
+	gchar* uri;
+	const gchar* display_name;
+
+	gtk_tree_model_get(model,iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
+	
+	GnomeVFSURI * vfs_uri_parent = gnome_vfs_uri_new(uri);
+	GnomeVFSURI * vfs_uri_child = gnome_vfs_uri_append_path(vfs_uri_parent, name);
+	
+	gchar* uri_child = gnome_vfs_uri_to_string (vfs_uri_child, GNOME_VFS_URI_HIDE_NONE);
+	
+#ifdef QUIVER_MAEMO
+	GError* error = NULL;
+	HildonFileSystemInfo *fs_info = hildon_file_system_info_new(uri_child, &error);
+	if (NULL != fs_info)
+	{
+		display_name = hildon_file_system_info_get_display_name(fs_info);
+	}
+	else
+	{
+		display_name = name;
+	}
+#else
+	display_name = name;
+#endif
+
 	if (duplicate_check)
 	{
 		gint n_nodes = gtk_tree_model_iter_n_children  (model, iter_parent);
@@ -942,15 +988,15 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 		{
 			if ( gtk_tree_model_iter_nth_child(model, &iter_child, iter_parent, i) )
 			{
-				gchar* folder_name = NULL;
-				gtk_tree_model_get(model, &iter_child, FILE_TREE_COLUMN_DISPLAY_NAME, &folder_name, -1);
+				gchar* disp_name = NULL;
+				gtk_tree_model_get(model, &iter_child, FILE_TREE_COLUMN_DISPLAY_NAME, &disp_name, -1);
 
-				if (NULL != name && 0 == strcmp(name,folder_name))
+				if (0 == strcmp(display_name,disp_name))
 				{
 					found_duplicate = TRUE;
 				}
 				
-				g_free(folder_name);
+				g_free(disp_name);
 			}
 		}
 	}
@@ -960,35 +1006,31 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 	
 		gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);  
 	
-		gchar* uri;
-		gtk_tree_model_get(model,iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
 		
-		GnomeVFSURI * vfs_uri_parent = gnome_vfs_uri_new(uri);
-		GnomeVFSURI * vfs_uri_child = gnome_vfs_uri_append_path(vfs_uri_parent, name);
-		
-		gchar* uri_child = gnome_vfs_uri_to_string (vfs_uri_child, GNOME_VFS_URI_HIDE_NONE);
-		
-		char* icon_name = folder_tree_get_icon_name(uri_child);
+		char* icon_name = folder_tree_get_icon_name(uri_child,FALSE);
 	
 		gtk_tree_store_set (GTK_TREE_STORE(model), &iter_child,
 				FILE_TREE_COLUMN_CHECKBOX, FALSE,
 				FILE_TREE_COLUMN_ICON, icon_name,
-				FILE_TREE_COLUMN_DISPLAY_NAME, name,
+				FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
 				FILE_TREE_COLUMN_SEPARATOR,FALSE,
 				FILE_TREE_COLUMN_URI,uri_child,
 				-1);
 		free(icon_name);
-		
-		g_free(uri_child);
-		
-		gnome_vfs_uri_unref(vfs_uri_child);
-		gnome_vfs_uri_unref(vfs_uri_parent);
-		
-		g_free(uri);
-		
-		
 	}
+
+#ifdef QUIVER_MAEMO
+	if (NULL != fs_info)
+		hildon_file_system_info_free(fs_info);
+#endif
 	
+	g_free(uri_child);
+	
+	gnome_vfs_uri_unref(vfs_uri_child);
+	gnome_vfs_uri_unref(vfs_uri_parent);
+	
+	g_free(uri);
+
 	return gtk_tree_iter_copy(&iter_child);
 
 }
@@ -1054,7 +1096,9 @@ static void* thread_check_for_subdirs(void* user_data)
 							if ( gtk_tree_model_iter_nth_child(model, &iter, data->iter_child, i) )
 							{
 								gchar* uri = NULL;
+								gboolean permanent = FALSE;
 								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_URI, &uri, -1);
+								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_PERMANENT, &permanent, -1);
 	
 								gchar* local_filename = g_filename_from_uri(uri,NULL, NULL);
 								gchar* dir_name = g_path_get_basename(local_filename);
@@ -1068,7 +1112,7 @@ static void* thread_check_for_subdirs(void* user_data)
 									// if the key exists, remove it from the hash
 									g_hash_table_remove(data->hash_table, dir_name);
 								}
-								else
+								else if (!permanent)
 								{
 									// if the key does not exist, remove the iterator
 									gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
@@ -1084,7 +1128,10 @@ static void* thread_check_for_subdirs(void* user_data)
 						g_hash_table_foreach(data->hash_table, hash_foreach_sync_add, data);
 	
 					}
-	
+
+					// update the icon for this entry
+					folder_tree_iter_set_icon(GTK_TREE_VIEW(data->pFolderTreeImpl->m_pWidget),data->iter_child);
+
 					gtk_tree_iter_free(data->iter_child);
 					gdk_threads_leave();
 					data->iter_child = NULL;
@@ -1246,8 +1293,47 @@ static void* thread_check_for_subdirs(void* user_data)
 
 }
 
+static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
+{
+	GtkTreeModel *model = gtk_tree_view_get_model(treeview);
+	gchar* uri;
+	GtkTreePath* path =  gtk_tree_model_get_path(model, iter);
+
+	gboolean expanded = gtk_tree_view_row_expanded(treeview,path);
+
+	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &uri, -1);
+	gchar* icon_name = folder_tree_get_icon_name(uri,expanded);	
+
+#ifdef QUIVER_MAEMO
+	gint n_nodes = gtk_tree_model_iter_n_children  (model, iter);
+	if (0 == n_nodes)
+	{
+		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name, -1);
+	}
+	else
+	{
+		gchar* icon_name_full = g_strconcat(icon_name,expanded ? MAEMO_EXPANDED : MAEMO_COLLAPSED,NULL);
+		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name_full , -1);
+		g_free(icon_name_full);
+	}
+#else
+	gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name, -1);
+#endif
+
+	g_free(icon_name);
+	g_free(uri);
+	gtk_tree_path_free(path);
+}
+
+static void signal_folder_tree_row_collapsed(GtkTreeView *treeview,
+						GtkTreeIter *iter,
+						GtkTreePath *treepath,
+						gpointer data)
+{
+	folder_tree_iter_set_icon(treeview,iter);
+}
 static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
-						GtkTreeIter *iter_parent,
+						GtkTreeIter *iter,
 						GtkTreePath *treepath,
 						gpointer data)
 {
@@ -1258,29 +1344,27 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 	mydata->model = model;
 	mydata->pFolderTreeImpl = pFolderTreeImpl;
 
-	gchar* uri;
-	gtk_tree_model_get(model, iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
-	g_free(uri);
+	folder_tree_iter_set_icon(treeview,iter);
 
-	mydata->iter_parent = gtk_tree_iter_copy(iter_parent);
+	mydata->iter_parent = gtk_tree_iter_copy(iter);
 	pthread_t thread_id;
 	pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
 	pFolderTreeImpl->m_setFolderThreads.insert(thread_id);
 }
 
 
-static char* folder_tree_get_icon_name(const char* uri)
+static char* folder_tree_get_icon_name(const char* uri, gboolean expanded)
 {
+	char* preferred_icon_name = NULL;
+#ifndef QUIVER_MAEMO
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
-	char* preferred_icon_name = NULL;
 	const char* homedir = g_get_home_dir();
 	char* desktop_path = g_build_filename (homedir, "Desktop", NULL);
 
 	char* home_uri = gnome_vfs_get_uri_from_local_path (homedir);
 	char* desktop_uri = gnome_vfs_get_uri_from_local_path (desktop_path);
 
-#ifndef QUIVER_MAEMO
 	if (gnome_vfs_uris_match (home_uri,uri))
 	{
 		preferred_icon_name = "gnome-fs-home";
@@ -1295,13 +1379,91 @@ static char* folder_tree_get_icon_name(const char* uri)
 		preferred_icon_name = GNOME_STOCK_TRASH;
 	}
 	*/
-#else
-	preferred_icon_name = ICON_MAEMO_FOLDER_CLOSED;
-#endif
-
 	free(desktop_path);
 	free(desktop_uri);
 	free(home_uri);
+#else
+	if (expanded)
+	{
+		preferred_icon_name = ICON_MAEMO_FOLDER_OPEN;
+	}
+	else
+	{
+		preferred_icon_name = ICON_MAEMO_FOLDER_CLOSED;
+	}
+
+	if (NULL != uri)
+	{
+		// Device icon
+		gchar* device_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_DEVICE);
+		// Audio clips
+		gchar* audio_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_AUDIO);
+		//docs
+		gchar* docs_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_DOCUMENTS);
+		// Games
+		gchar* games_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_GAMES);
+		// Images
+		gchar* images_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_IMAGES);
+		// Video clips
+		gchar* video_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_VIDEOS);
+		// MMC 1
+		gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
+		// MMC 2
+		gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
+
+		if (NULL != device_uri && gnome_vfs_uris_match (uri,device_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_DEVICE;
+		}
+		else if (NULL != audio_uri && gnome_vfs_uris_match (uri,audio_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_AUDIO;
+		}
+		else if (NULL != docs_uri && gnome_vfs_uris_match (uri,docs_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_DOCUMENTS;
+		}
+		else if (NULL != games_uri && gnome_vfs_uris_match (uri,games_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_GAMES;
+		}
+		else if (NULL != video_uri && gnome_vfs_uris_match (uri,video_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_VIDEOS;
+		}
+		else if (NULL != images_uri && gnome_vfs_uris_match (uri,images_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_IMAGES;
+		}
+		else if (NULL != mmc1_uri && gnome_vfs_uris_match (uri,mmc1_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_MMC;
+		}
+		else if (NULL != mmc2_uri && gnome_vfs_uris_match (uri,mmc2_uri))
+		{
+			preferred_icon_name = ICON_MAEMO_MMC;
+		}
+
+		if (NULL != device_uri)
+			g_free(device_uri);
+		if (NULL != audio_uri)
+			g_free(audio_uri);
+		if (NULL != docs_uri)
+			g_free(docs_uri);
+		if (NULL != video_uri)
+			g_free(video_uri);
+		if (NULL != images_uri)
+			g_free(images_uri);
+		if (NULL != games_uri)
+			g_free(games_uri);
+		if (NULL != mmc1_uri)
+			g_free(mmc1_uri);
+		if (NULL != mmc2_uri)
+			g_free(mmc2_uri);
+	}
+
+#endif
+
 
 	char* icon_name;
 #ifndef QUIVER_MAEMO
@@ -1319,13 +1481,103 @@ static char* folder_tree_get_icon_name(const char* uri)
 
 }
 
+#ifdef QUIVER_MAEMO
+gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id)
+{
+	gchar* folder_uri = NULL;
+
+	gchar* docs_dir = NULL;
+	const gchar *env;
+	env = g_getenv("MYDOCSDIR");
+
+	if (env && env[0])
+	{
+		docs_dir = g_strdup(env);
+	}
+	else
+	{
+		env = g_getenv("HOME");
+		docs_dir = g_build_filename((env && env[0]) ? env : g_get_home_dir(), "MyDocs", NULL);
+	}
+
+	switch (folder_id)
+	{
+		case MAEMO_FOLDER_DEVICE:
+			folder_uri = g_filename_to_uri(docs_dir, NULL, NULL);
+			break;
+		case MAEMO_FOLDER_AUDIO:
+			{
+				gchar* subpath = g_build_filename(docs_dir,".sounds", NULL);
+				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
+				g_free(subpath);
+			}
+			break;
+		case MAEMO_FOLDER_DOCUMENTS:
+			{
+				gchar* subpath = g_build_filename(docs_dir,".documents", NULL);
+				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
+				g_free(subpath);
+			}
+			break;
+		case MAEMO_FOLDER_GAMES:
+			{
+				gchar* subpath = g_build_filename(docs_dir,".games", NULL);
+				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
+				g_free(subpath);
+			}
+			break;
+		case MAEMO_FOLDER_IMAGES:
+			{
+				gchar* subpath = g_build_filename(docs_dir,".images", NULL);
+				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
+				g_free(subpath);
+			}
+			break;
+		case MAEMO_FOLDER_VIDEOS:
+			{
+				gchar* subpath = g_build_filename(docs_dir,".videos", NULL);
+				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
+				g_free(subpath);
+			}
+			break;
+		case MAEMO_FOLDER_MMC1:
+			{
+				// MMC 1
+				const gchar* mmc_dir = g_getenv("INTERNAL_MMC_MOUNTPOINT");
+				if (NULL != mmc_dir)
+				{
+					folder_uri = g_filename_to_uri(mmc_dir, NULL, NULL);
+				}
+			}
+			break;
+		case MAEMO_FOLDER_MMC2:
+			{
+				// MMC 2
+				const gchar* mmc_dir = g_getenv("MMC_MOUNTPOINT");
+				if (NULL != mmc_dir)
+				{
+					folder_uri = g_filename_to_uri(mmc_dir, NULL, NULL);
+				}
+			}
+			break;
+		default:
+			break;
+	}
+
+	g_free(docs_dir);
+
+	return folder_uri;
+}
+
+#endif
+
 void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 {
 	int iNodeOrder = 0;
 
 	//printf("populate_tree_model start\n");
 	GtkTreeIter iter1 = {0};  /* Parent iter */
-	//GtkTreeIter iter2 = {0};  /* Child iter  */
+	GtkTreeIter iter2 = {0};  /* Child iter  */
 	const char* homedir = g_get_home_dir();
 
 	char* desktop_path = g_build_filename (homedir, "Desktop", NULL);
@@ -1367,186 +1619,53 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
                                              FALSE,
                                              0);
 #ifdef QUIVER_MAEMO
-
-/*
-	const gchar *env;
-	env = g_getenv("MYDOCSDIR");
-	if (env && env[0])
-		return g_strdup(env);
-
-	env = g_getenv("HOME");
-
-	return g_build_path(G_DIR_SEPARATOR_S, 
-		(env && env[0]) ? env : g_get_home_dir(), 
-		"MyDocs", NULL);
-
-".images"
-".videos"
-".sounds"
-".documents"
-".games"
-
-*/
-
-	gchar* docs_dir = NULL;
-	const gchar *env;
-	env = g_getenv("MYDOCSDIR");
-
-	if (env && env[0])
+	for (int i = 0; i < FOLDER_ID_COUNT; i++)
 	{
-		docs_dir = g_strdup(env);
-	}
-	else
-	{
-		env = g_getenv("HOME");
-		docs_dir = g_build_filename((env && env[0]) ? env : g_get_home_dir(), "MyDocs", NULL);
-	}
+		GError *error = NULL;
+		gchar* folder_uri = folder_tree_get_folder_uri_from_id((FolderID)i);
 
-	gchar* uri;
+		if (NULL != folder_uri)
+		{
+		
+			icon_name  = folder_tree_get_icon_name(folder_uri,FALSE);
+
+			HildonFileSystemInfo *fs_info = hildon_file_system_info_new(folder_uri, &error);
+			const gchar *display_name = hildon_file_system_info_get_display_name(fs_info);
+
+			GtkTreeIter* parent = &iter1;
+			GtkTreeIter* child  = &iter2;
+			if (0 == i)
+			{
+				parent = NULL;
+				child = &iter1;
+			}
+
+			gtk_tree_store_append (store, child, parent);  
+			gtk_tree_store_set (store, child,
+				FILE_TREE_COLUMN_CHECKBOX, FALSE,
+				FILE_TREE_COLUMN_ICON, icon_name,
+					FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
+					FILE_TREE_COLUMN_SEPARATOR,FALSE,
+					FILE_TREE_COLUMN_URI,folder_uri,
+					FILE_TREE_COLUMN_PERMANENT,TRUE,
+					FILE_TREE_COLUMN_USE_DEFAULT_ORDER,TRUE,
+					-1);
+
+			g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
+
+			hildon_file_system_info_free(fs_info);
+			g_free(icon_name);
+			g_free(folder_uri);
+		}
+		
+	}
 	
-	printf("docs path: %s\n",docs_dir);
-	uri = g_filename_to_uri(docs_dir, NULL, NULL);
-	printf("docs path: %s\n",docs_dir);
-	gtk_tree_store_append (store, &iter1, NULL);  
-	gtk_tree_store_set (store, &iter1,
-		FILE_TREE_COLUMN_CHECKBOX, FALSE,
-		FILE_TREE_COLUMN_ICON, ICON_MAEMO_DEVICE,
-			FILE_TREE_COLUMN_DISPLAY_NAME, "N800",
-			FILE_TREE_COLUMN_SEPARATOR,FALSE,
-			FILE_TREE_COLUMN_URI,uri,
-			-1);
-	printf("added uri: %s\n",uri);
-	g_free(uri);
-			
-	g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("N800"),(gpointer)iNodeOrder++);
-
-
-	GtkTreeIter iter2 = {0};  /* Parent iter */
-	gchar* subpath;
-	
-	// Audio clips
-	subpath = g_build_filename(docs_dir,".sounds", NULL);
-	uri = g_filename_to_uri(subpath, NULL, NULL);
-	gtk_tree_store_append (store, &iter2, &iter1);  
-	gtk_tree_store_set (store, &iter2,
-		FILE_TREE_COLUMN_CHECKBOX, FALSE,
-		FILE_TREE_COLUMN_ICON, ICON_MAEMO_AUDIO,
-			FILE_TREE_COLUMN_DISPLAY_NAME, "Audio clips",
-			FILE_TREE_COLUMN_SEPARATOR,FALSE,
-			FILE_TREE_COLUMN_URI,uri,
-			-1);
-	g_free(uri);
-	g_free(subpath);
-
-	g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Audio clips"),(gpointer)iNodeOrder++);
-
-
-	// Documents
-
-	subpath = g_build_filename(docs_dir,".documents", NULL);
-	uri = g_filename_to_uri(subpath, NULL, NULL);
-	gtk_tree_store_append (store, &iter2, &iter1);  
-	gtk_tree_store_set (store, &iter2,
-		FILE_TREE_COLUMN_CHECKBOX, FALSE,
-		FILE_TREE_COLUMN_ICON, ICON_MAEMO_DOCUMENTS,
-			FILE_TREE_COLUMN_DISPLAY_NAME, "Documents",
-			FILE_TREE_COLUMN_SEPARATOR,FALSE,
-			FILE_TREE_COLUMN_URI,uri,
-			-1);
-			
-	g_free(uri);
-	g_free(subpath);
-	g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Documents"),(gpointer)iNodeOrder++);
-
-	// Games
-	subpath = g_build_filename(docs_dir,".games", NULL);
-	uri = g_filename_to_uri(subpath, NULL, NULL);
-	gtk_tree_store_append (store, &iter2, &iter1);  
-	gtk_tree_store_set (store, &iter2,
-		FILE_TREE_COLUMN_CHECKBOX, FALSE,
-		FILE_TREE_COLUMN_ICON, ICON_MAEMO_GAMES,
-			FILE_TREE_COLUMN_DISPLAY_NAME, "Games",
-			FILE_TREE_COLUMN_SEPARATOR,FALSE,
-			FILE_TREE_COLUMN_URI,uri,
-			-1);
-	g_free(uri);
-	g_free(subpath);
-			
-	g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Games"),(gpointer)iNodeOrder++);
-
-	// Images
-	subpath = g_build_filename(docs_dir,".images", NULL);
-	uri = g_filename_to_uri(subpath, NULL, NULL);
-	gtk_tree_store_append (store, &iter2, &iter1);  
-	gtk_tree_store_set (store, &iter2,
-		FILE_TREE_COLUMN_CHECKBOX, FALSE,
-		FILE_TREE_COLUMN_ICON, ICON_MAEMO_IMAGES,
-			FILE_TREE_COLUMN_DISPLAY_NAME, "Images",
-			FILE_TREE_COLUMN_SEPARATOR,FALSE,
-			FILE_TREE_COLUMN_URI,uri,
-			-1);
-	g_free(uri);
-	g_free(subpath);
-			
-	g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Images"),(gpointer)iNodeOrder++);
-
-	// Video clips
-	subpath = g_build_filename(docs_dir,".videos", NULL);
-	uri = g_filename_to_uri(subpath, NULL, NULL);
-	gtk_tree_store_append (store, &iter2, &iter1);  
-	gtk_tree_store_set (store, &iter2,
-		FILE_TREE_COLUMN_CHECKBOX, FALSE,
-		FILE_TREE_COLUMN_ICON, ICON_MAEMO_VIDEO,
-			FILE_TREE_COLUMN_DISPLAY_NAME, "Video clips",
-			FILE_TREE_COLUMN_SEPARATOR,FALSE,
-			FILE_TREE_COLUMN_URI,uri,
-			-1);
-	g_free(uri);
-	g_free(subpath);
-			
-	g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Video clips"),(gpointer)iNodeOrder++);
-
-	// MMC 1
-	const gchar* mmc_dir = g_getenv("INTERNAL_MMC_MOUNTPOINT");
-	if (NULL != mmc_dir)
-	{
-		uri = g_filename_to_uri(mmc_dir, NULL, NULL);
-		gtk_tree_store_append (store, &iter2, &iter1);  
-		gtk_tree_store_set (store, &iter2,
-			FILE_TREE_COLUMN_CHECKBOX, FALSE,
-			FILE_TREE_COLUMN_ICON, ICON_MAEMO_MMC,
-				FILE_TREE_COLUMN_DISPLAY_NAME, "Internal MMC",
-				FILE_TREE_COLUMN_SEPARATOR,FALSE,
-				FILE_TREE_COLUMN_URI,uri,
-				-1);
-		g_free(uri);
-		g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Internal MMC"),(gpointer)iNodeOrder++);
-	}
-
-	// MMC 2
-	mmc_dir = g_getenv("MMC_MOUNTPOINT");
-	if (NULL != mmc_dir)
-	{
-		uri = g_filename_to_uri(mmc_dir, NULL, NULL);
-		gtk_tree_store_append (store, &iter2, &iter1);  
-		gtk_tree_store_set (store, &iter2,
-			FILE_TREE_COLUMN_CHECKBOX, FALSE,
-			FILE_TREE_COLUMN_ICON, ICON_MAEMO_MMC,
-				FILE_TREE_COLUMN_DISPLAY_NAME, "External MMC",
-				FILE_TREE_COLUMN_SEPARATOR,FALSE,
-				FILE_TREE_COLUMN_URI,uri,
-				-1);
-		g_free(uri);
-		g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("External MMC"),(gpointer)iNodeOrder++);
-	}
-
-	g_free(docs_dir);
 #else
 
 	if (GNOME_VFS_OK == result)
 	{
 		gchar* uri = gnome_vfs_uri_to_string(vfsURI,(GnomeVFSURIHideOptions)0);
-		icon_name = folder_tree_get_icon_name(uri);
+		icon_name = folder_tree_get_icon_name(uri,FALSE);
 
 		gtk_tree_store_append (store, &iter1, NULL);  
 		gtk_tree_store_set (store, &iter1,
@@ -1581,7 +1700,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	}
 	
 
-	icon_name = folder_tree_get_icon_name(home_uri);
+	icon_name = folder_tree_get_icon_name(home_uri,FALSE);
 
 	gtk_tree_store_append (store, &iter1, NULL);  
 	gtk_tree_store_set (store, &iter1,
@@ -1597,7 +1716,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 
 
-	icon_name = folder_tree_get_icon_name(documents_uri);
+	icon_name = folder_tree_get_icon_name(documents_uri,FALSE);
 
 	gtk_tree_store_append (store, &iter1, NULL);  
 	gtk_tree_store_set (store, &iter1,
@@ -1612,7 +1731,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 	free(icon_name);
 
-	icon_name = folder_tree_get_icon_name(pictures_uri);
+	icon_name = folder_tree_get_icon_name(pictures_uri,FALSE);
 
 	gtk_tree_store_append (store, &iter1, NULL);  
 	gtk_tree_store_set (store, &iter1,
@@ -1664,52 +1783,69 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 		if (gnome_vfs_volume_is_user_visible(volume)  )
 		{
 
+			char* uri  = gnome_vfs_volume_get_activation_uri(volume);
+
+#ifdef QUIVER_MAEMO
+			gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
+			gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
+			gboolean skip = FALSE;
+			if (NULL != mmc1_uri)
+			{
+				skip = gnome_vfs_uris_match (mmc1_uri,uri);
+				g_free(mmc1_uri);
+			}
+			if (NULL != mmc1_uri)
+			{
+				skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
+				g_free(mmc2_uri);
+			}
+			if (skip)
+			{
+				g_free(uri);
+				continue;
+			}
+#endif
 			char* name = gnome_vfs_volume_get_display_name(volume);
 			char* display_name = name;
 			char* path = gnome_vfs_volume_get_device_path(volume);
-
-#ifdef QUIVER_MAEMO
-			char* icon2 = g_strdup(ICON_MAEMO_FOLDER_CLOSED);
-#else
-			char* icon2 = gnome_vfs_volume_get_icon(volume);
-#endif
-			char* uri  = gnome_vfs_volume_get_activation_uri(volume);
 			char* type = gnome_vfs_volume_get_filesystem_type(volume);
-
-			if (NULL == uri)
+			
+			if (NULL != uri)
 			{
-				//printf("null uri \n");
-				//printf("null uri for %s\n",name);
-				continue;
-			}
-			
-			if (0 == strcmp(uri,"file:///"))
-			{
-				display_name = QUIVER_FOLDER_TREE_ROOT_NAME;
-			}
-			
-			{	
-				/*
-				 * FIXME: show type: GNOME_VFS_DEVICE_TYPE_HARDDRIVE first,
-				 * then others sorted on uri
-				 */
-				gtk_tree_store_append (store, &iter1, NULL);  
-				gtk_tree_store_set (store, &iter1,
-	                    FILE_TREE_COLUMN_CHECKBOX, FALSE,
-	                FILE_TREE_COLUMN_ICON, icon2,
-	                    FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
-	                    FILE_TREE_COLUMN_SEPARATOR,FALSE,
-	                    FILE_TREE_COLUMN_URI,uri,
-	                    -1);
+				
+				if (0 == strcmp(uri,"file:///"))
+				{
+					display_name = QUIVER_FOLDER_TREE_ROOT_NAME;
+				}
+				
+				{	
+#ifdef QUIVER_MAEMO
+					char* icon2 = folder_tree_get_icon_name(uri,false);
+#else
+					char* icon2 = gnome_vfs_volume_get_icon(volume);
+#endif
+					/*
+					 * FIXME: show type: GNOME_VFS_DEVICE_TYPE_HARDDRIVE first,
+					 * then others sorted on uri
+					 */
+					gtk_tree_store_append (store, &iter1, NULL);  
+					gtk_tree_store_set (store, &iter1,
+							FILE_TREE_COLUMN_CHECKBOX, FALSE,
+						FILE_TREE_COLUMN_ICON, icon2,
+							FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
+							FILE_TREE_COLUMN_SEPARATOR,FALSE,
+							FILE_TREE_COLUMN_URI,uri,
+							-1);
 
-				g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
+					g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
 
+					free(icon2);
+				}
 			}
-			
+				
 			
 			free(name);
 			free(path);
-			free(icon2);
 			free(uri);
 			free(type);
 		}
@@ -1723,6 +1859,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	mydata = (MyDataStruct*)g_malloc0(sizeof(MyDataStruct));
 	mydata->model = GTK_TREE_MODEL(store);
 	mydata->iter_parent = NULL; // special case
+	mydata->pFolderTreeImpl = this;
 	pthread_t thread_id;
 	pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
 	m_setFolderThreads.insert(thread_id);
@@ -1765,7 +1902,10 @@ static gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpoin
 
 	int rval = 0;
 
-	if (!gtk_tree_model_iter_parent(model,&parent,a))
+	gboolean use_default_order = FALSE;
+	gtk_tree_model_get(model, a, FILE_TREE_COLUMN_USE_DEFAULT_ORDER, &use_default_order, -1);
+
+	if (!gtk_tree_model_iter_parent(model,&parent,a) || use_default_order)
 	{
 		int a_int = (int)g_hash_table_lookup(pFolderTreeImpl->m_pHashRootNodeOrder, name_a);
 		int b_int = (int)g_hash_table_lookup(pFolderTreeImpl->m_pHashRootNodeOrder, name_b);

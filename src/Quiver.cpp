@@ -37,7 +37,6 @@ extern "C"
 #endif
 
 
-#include "icons/quiver_icon_app.pixdata"
 #include "QuiverStockIcons.h"
 
 #include "IBrowserEventHandler.h"
@@ -1047,7 +1046,7 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_iMergedBrowserUI = 0;	
 
 	QuiverStockIcons::Load();
-	
+
 	m_QuiverImplPtr->m_bInitialized = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = false;
@@ -1091,14 +1090,7 @@ void Quiver::Init()
 	GError *tmp_error;
 	tmp_error = NULL;
 	
-
-	GdkPixdata pixdata;
-	gdk_pixdata_deserialize (&pixdata,sizeof(quiver_icon_app),quiver_icon_app,&tmp_error);
-	GdkPixbuf *pixbuf_icon = gdk_pixbuf_from_pixdata(&pixdata,FALSE,&tmp_error);
-	
-	gtk_window_set_default_icon     (pixbuf_icon);
-	
-	g_object_unref(pixbuf_icon);
+	gtk_window_set_default_icon_name (QUIVER_STOCK_APP);	
 
 	/* Set up GUI elements */
 
@@ -1537,9 +1529,17 @@ int main (int argc, char **argv)
 	}
 	if (argc == 1)
 	{	
-		char buf[1024];
-		getcwd(buf,sizeof(buf));
-		files.push_back(buf);
+		gchar* dir;
+		// FIXME: should default to a directory
+		// specified in preferences
+#ifdef QUIVER_MAEMO
+		dir = g_strdup("~/MyDocs/.images");
+#else
+		dir = g_get_current_dir();
+#endif
+		files.push_back(dir);
+		g_free(dir);
+		
 	}
 	//init gnome-vfs
 	if (!gnome_vfs_init ()) 

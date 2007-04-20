@@ -1684,7 +1684,10 @@ static void quiver_image_view_transition_stop(QuiverImageView *imageview)
 		pixbuf_rect.width = MIN(width,widget->allocation.width);
 		pixbuf_rect.height = MIN(height,widget->allocation.height);
 	
-		gdk_window_invalidate_rect(widget->window,&pixbuf_rect,FALSE);
+		if (GTK_WIDGET_MAPPED (widget))
+		{
+			gdk_window_invalidate_rect(widget->window,&pixbuf_rect,FALSE);
+		}
 	}
 	
 	imageview->priv->transition_percent = 0.;
@@ -1762,7 +1765,10 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 	pixbuf_rect.width = MIN(width,widget->allocation.width);
 	pixbuf_rect.height = MIN(height,widget->allocation.height);
 
-	gdk_window_invalidate_rect(widget->window,&pixbuf_rect,FALSE);
+	if (GTK_WIDGET_MAPPED (widget))
+	{
+		gdk_window_invalidate_rect(widget->window,&pixbuf_rect,FALSE);
+	}
 
 	gdk_threads_leave();
 	return rval;	

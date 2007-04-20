@@ -653,8 +653,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 #ifndef QUIVER_MAEMO
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
 #else
-	gtk_range_set_value(GTK_RANGE(hscale),get_range_val_from_thumb_size(thumb_size));
+	gtk_range_set_value(GTK_RANGE(hscale),get_range_val_from_thumb_size((gint)thumb_size));
 #endif
+
 }
 
 Browser::BrowserImpl::~BrowserImpl()
@@ -805,11 +806,11 @@ void Browser::BrowserImpl::Hide()
 	m_ImageList.BlockHandler(m_ImageListEventHandlerPtr);
 }
 
-void Browser::BrowserImpl::SetImageList(ImageList list)
+void Browser::BrowserImpl::SetImageList(ImageList imglist)
 {
 	m_ImageList.RemoveEventHandler(m_ImageListEventHandlerPtr);
 	
-	m_ImageList = list;
+	m_ImageList = imglist;
 	
 	m_ImageList.AddEventHandler(m_ImageListEventHandlerPtr);
 	
@@ -817,6 +818,9 @@ void Browser::BrowserImpl::SetImageList(ImageList list)
 	{
 		m_ImageList.BlockHandler(m_ImageListEventHandlerPtr);
 	}
+
+	list<string> dirs = m_ImageList.GetFolderList();
+	m_FolderTree.SetSelectedFolders(dirs);
 }
 
 
