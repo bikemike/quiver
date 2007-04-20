@@ -62,6 +62,7 @@ public:
 	void RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 
 	bool IsWorking();
+	void EnableQuickPreview(bool bQuickPreview){m_bQuickPreview = bQuickPreview;};
 	void SetLoadOrientation(int iLoadOrientation){m_iLoadOrientation=iLoadOrientation;};
 	
 private:	
@@ -94,6 +95,7 @@ private:
 	bool m_bStopThread;
 	bool m_bWorking;
 	int m_iLoadOrientation;
+	bool m_bQuickPreview;
 };
 
 #endif

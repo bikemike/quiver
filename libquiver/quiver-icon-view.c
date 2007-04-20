@@ -71,7 +71,7 @@ struct _QuiverIconViewPrivate
 
 	GdkPixmap *drop_shadow[5][8];
 
-	gint last_x, last_y;
+	gint start_x, start_y;
 	gint rubberband_x1, rubberband_y1;
 	gint rubberband_x2, rubberband_y2;
 
@@ -398,8 +398,8 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->rubberband_y1 = 0;
 	iconview->priv->rubberband_x2 = 0;
 	iconview->priv->rubberband_y2 = 0;
-	iconview->priv->last_x        = 0;
-	iconview->priv->last_y        = 0;
+	iconview->priv->start_x        = 0;
+	iconview->priv->start_y        = 0;
 	iconview->priv->drag_mode_start = FALSE;
 	iconview->priv->drag_mode_enabled = FALSE;
 	
@@ -1084,8 +1084,8 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 	x = (gint)event->x;
 	y = (gint)event->y;
 
-	iconview->priv->last_x = x;
-	iconview->priv->last_y = y;
+	iconview->priv->start_x = x;
+	iconview->priv->start_y = y;
 
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
@@ -1139,9 +1139,6 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 	x = (gint)event->x;
 	y = (gint)event->y;
 	
-	iconview->priv->last_x = x;
-	iconview->priv->last_y = y;
-
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 
@@ -1156,7 +1153,7 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 		{
 			if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
 			{
-	#ifdef QUIVER_MAEMO
+#ifdef QUIVER_MAEMO
 				GdkRegion *invalid_region;
 				GdkRegion *tmp_region;
 		
@@ -1171,14 +1168,14 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 				gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
 				gdk_region_destroy(invalid_region);
 				gdk_region_destroy(tmp_region);
-	#else
+#else
 				GdkRegion *invalid_region;
 				invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
 				gdk_region_shrink(invalid_region,-1,-1);
 				gdk_region_offset(invalid_region,-hadjust,-vadjust);
 	
 				gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
-	#endif			
+#endif			
 				if (iconview->priv->timeout_id_rubberband_scroll != 0)
 				{
 					g_source_remove (iconview->priv->timeout_id_rubberband_scroll);
@@ -1252,14 +1249,11 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 	}
 
 	if (iconview->priv->drag_mode_start && 
-		(10 < abs(x -iconview->priv->last_x) || 10 < abs(y -iconview->priv->last_y)))
+		(10 < abs(x -iconview->priv->start_x) || 10 < abs(y -iconview->priv->start_y)))
 	{
 		iconview->priv->drag_mode_start = FALSE;
 		iconview->priv->drag_mode_enabled = TRUE;
 	}
-
-	iconview->priv->last_x = x;
-	iconview->priv->last_y = y;
 
 	gulong new_cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
 

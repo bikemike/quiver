@@ -3,6 +3,8 @@
 
 static bool g_bAcceleratorsDisabled = false;
 
+#define N_LOOPS 10
+
 namespace QuiverUtils
 {
 	
@@ -145,8 +147,8 @@ namespace QuiverUtils
 	
 						if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
 						{
-							gtk_action_disconnect_accelerator(action);
-							gtk_action_disconnect_accelerator(action);							
+							for (int i = 0; i < N_LOOPS; i++)
+								gtk_action_disconnect_accelerator(action);
 						}
 						//printf("disabled accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
 						g_free(accel_label);
@@ -195,8 +197,8 @@ namespace QuiverUtils
 							accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
 							//printf("enable accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
 							//printf("enable accel key: %s - %d\n",accel_label, accel_key.accel_key);
-							gtk_action_connect_accelerator(action);
-							gtk_action_connect_accelerator(action);
+							for (int i = 0; i < N_LOOPS; i++)
+								gtk_action_connect_accelerator(action);
 							g_free(accel_label);
 						}
 					}

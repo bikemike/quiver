@@ -511,9 +511,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_widget_set_no_show_all(m_pImageView, TRUE);
 
 #ifdef QUIVER_MAEMO
-	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
+	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,false);
 #else
-	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
+	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,true);
 #endif
 	if (bShowPreview)
 	{
@@ -717,7 +717,7 @@ void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 	if (NULL != action)
 	{
 		PreferencesPtr prefsPtr = Preferences::GetInstance();
-		bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW);
+		bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE);
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShowPreview ? TRUE : FALSE);
 	}
 
@@ -1128,12 +1128,12 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
 			gtk_widget_show(pBrowserImpl->m_pImageView);	
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
+			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,true);
 		}
 		else
 		{
 			gtk_widget_hide(pBrowserImpl->m_pImageView);	
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
+			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,false);
 		}
 	}
 #ifdef QUIVER_MAEMO

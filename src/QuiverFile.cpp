@@ -727,7 +727,7 @@ void QuiverFile::QuiverFileImpl::Reload()
 void QuiverFile::QuiverFileImpl::LoadExifData()
 {
 	//Timer t("QuiverFile::LoadExifData()");
-	if (! ( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
+	if (NULL != m_szURI && !( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
 	{
 		ExifLoader *loader;
 		//	unsigned char data[1024];

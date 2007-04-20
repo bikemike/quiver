@@ -2,7 +2,7 @@
 #define FILE_QUIVER_STOCK_ICONS_H
 
 
-#define QUIVER_STOCK_APP        "quiver-icon_app"
+#define QUIVER_STOCK_APP        "quiver-icon-app"
 #define QUIVER_STOCK_SLIDESHOW  "quiver-icon-slideshow"
 #define QUIVER_STOCK_BROWSER    "quiver-icon-browser"
 #define QUIVER_STOCK_ROTATE_CW  "quiver-icon-rotate-cw"

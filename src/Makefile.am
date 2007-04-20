@@ -1,7 +1,6 @@
 ##test
 SUBDIRS = icons
 
-gladedir = $(datadir)/quiver/glade
 AM_CPPFLAGS = \
 	-I$(top_srcdir) \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \

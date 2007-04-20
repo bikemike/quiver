@@ -66,6 +66,8 @@ static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gp
 
 static gboolean viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata);
 gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data );
+static GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get);
+
 
 
 // drag/drop targets
@@ -353,6 +355,8 @@ public:
 	int  GetCurrentOrientation();
 	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
 	void AddFilmstrip();
+	
+	void UpdateScrollbars();
 
 // member variables
 
@@ -544,6 +548,113 @@ void Viewer::ViewerImpl::UpdateUI()
 		}
 #endif
 	}
+}
+
+void Viewer::ViewerImpl::UpdateScrollbars()
+{
+	gint width, height;
+	QuiverImageViewMode view_mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
+	
+	quiver_image_view_get_pixbuf_display_size_for_mode(
+		QUIVER_IMAGE_VIEW(m_pImageView),
+		view_mode,
+		&width,
+		&height);
+		
+	GtkWidget *pScrollbarH = m_pScrollbarH;
+	GtkWidget *pScrollbarV = m_pScrollbarV;
+	
+	GtkAdjustment *h = m_pAdjustmentH;
+	GtkAdjustment *v = m_pAdjustmentV;
+	
+	
+	gint sb_width = pScrollbarV->allocation.width;
+	gint sb_height = pScrollbarH->allocation.height;
+	
+	GtkWidget * pNavigationBox = m_pNavigationBox;
+
+	GtkTableChild * child = GetGtkTableChild(GTK_TABLE(m_pTable),m_pImageView);
+	
+	gint area_w = m_pTable->allocation.width;
+	gint area_h = m_pTable->allocation.height;
+
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	bool bHideScrollbars = 	prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE);
+		
+	if (bHideScrollbars || QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN == view_mode)
+	{
+		//FIXME: just don't show scrollbars because they jump around in an
+		// infinite loop for certain situations in this mode
+		// hide h hide v
+		gtk_widget_hide (pScrollbarV); 	
+		gtk_widget_hide (pScrollbarH);
+		gtk_widget_hide (pNavigationBox);
+
+		child->bottom_attach = 1;
+		child->right_attach = 1;
+	}
+	else if ( (area_w < width && area_h < height) ||
+		(area_w < width && area_h - sb_height < height) ||
+		(area_w - sb_width < width && area_h < height) )
+	{
+		// show h show v
+		child->bottom_attach = 1;
+		child->right_attach = 1;
+
+		gtk_widget_show (pScrollbarV); 	
+		gtk_widget_show (pScrollbarH);
+		gtk_widget_show (pNavigationBox);
+	}
+	else if (area_w < width)
+	{
+		// show h hide v
+		child->right_attach = 2;
+		child->bottom_attach = 1;
+		gtk_widget_show (pNavigationBox);	
+		gtk_widget_hide (pScrollbarV);
+		gtk_widget_show (pScrollbarH);		
+	}
+	else if (area_h < height)
+	{
+		// hide h show v
+		child->bottom_attach = 2;
+		child->right_attach = 1;
+		gtk_widget_show (pNavigationBox);	
+		gtk_widget_hide (pScrollbarH);
+		gtk_widget_show (pScrollbarV);	
+	}
+	else
+	{
+		// hide h hide v
+		gtk_widget_hide (pScrollbarV); 	
+		gtk_widget_hide (pScrollbarH);
+		gtk_widget_hide (pNavigationBox);
+
+		child->bottom_attach = 1;
+		child->right_attach = 1;
+	}
+
+	m_iTimeoutScrollbars = 0;
+
+	if (h->page_size >= h->upper &&
+		v->page_size >= v->upper)
+	{
+		// enable drag n drop
+		gtk_drag_source_set (m_pImageView, (GdkModifierType)(GDK_BUTTON1_MASK | GDK_BUTTON3_MASK),
+				   quiver_drag_target_table, G_N_ELEMENTS(quiver_drag_target_table), (GdkDragAction)( GDK_ACTION_COPY |
+			       GDK_ACTION_MOVE |
+		           GDK_ACTION_LINK |
+		           GDK_ACTION_ASK ));
+
+	}
+	else
+	{
+		// disable drag n drop
+		gtk_widget_grab_focus(m_pImageView);
+		gtk_drag_source_unset (m_pImageView);
+	}
+
+	
 }
 
 void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward)
@@ -1422,6 +1533,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		gtk_widget_hide(m_pIconView);
 	}
 	
+	gboolean bQuickPreview = (gboolean)prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, true);
+	m_ImageLoader.EnableQuickPreview(bQuickPreview);
 	
 }
 
@@ -1590,8 +1703,6 @@ double Viewer::GetMagnification() const
 	return quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
 }
 
-GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get);
-
 int Viewer::GetCurrentOrientation()
 {
 	return m_ViewerImplPtr->GetCurrentOrientation();	
@@ -1637,9 +1748,22 @@ static gboolean timeout_advance_slideshow (gpointer data)
 
 void Viewer::SlideShowStart()
 {
-	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),TRUE);
-	if (!m_ViewerImplPtr->m_iTimeoutSlideshowID && m_ViewerImplPtr->m_ImageList.GetSize() > 2 )
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,true);
+	bool bHideFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, false);
+	
+	if (bTransition)
 	{
+		quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),TRUE);
+	}
+
+	if (!m_ViewerImplPtr->m_iTimeoutSlideshowID && m_ViewerImplPtr->m_ImageList.GetSize() >= 2 )
+	{
+		// hide film strip if necessary
+		if (bHideFilmStrip)
+		{
+			gtk_widget_hide(m_ViewerImplPtr->m_pIconView);
+		}
 		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(m_ViewerImplPtr->m_iSlideShowDuration,timeout_advance_slideshow, m_ViewerImplPtr.get());
 		EmitSlideShowStartedEvent();
 	}
@@ -1652,14 +1776,22 @@ void Viewer::SlideShowStart()
 
 void Viewer::SlideShowStop()
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	bool bShowFilmStrip = 	prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW);
+	if( bShowFilmStrip )
+	{
+		gtk_widget_show(m_ViewerImplPtr->m_pIconView);
+	}
+
 	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),FALSE);
+
 	if (0 != m_ViewerImplPtr->m_iTimeoutSlideshowID)
 	{
 		g_source_remove (m_ViewerImplPtr->m_iTimeoutSlideshowID);
-		EmitSlideShowStoppedEvent();
 	}
 	// reset timout id
 	m_ViewerImplPtr->m_iTimeoutSlideshowID = 0;
+	EmitSlideShowStoppedEvent();
 }
 
 
@@ -1759,108 +1891,8 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 static gboolean timeout_update_scrollbars(gpointer user_data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	gint width, height;
-
 	gdk_threads_enter();
-
-	QuiverImageViewMode view_mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
-	
-	quiver_image_view_get_pixbuf_display_size_for_mode(
-		QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView),
-		view_mode,
-		&width,
-		&height);
-		
-	GtkWidget *pScrollbarH = pViewerImpl->m_pScrollbarH;
-	GtkWidget *pScrollbarV = pViewerImpl->m_pScrollbarV;
-	
-	GtkAdjustment *h = pViewerImpl->m_pAdjustmentH;
-	GtkAdjustment *v = pViewerImpl->m_pAdjustmentV;
-	
-	
-	gint sb_width = pScrollbarV->allocation.width;
-	gint sb_height = pScrollbarH->allocation.height;
-	
-	GtkWidget * pNavigationBox = pViewerImpl->m_pNavigationBox;
-
-	GtkTableChild * child = GetGtkTableChild(GTK_TABLE(pViewerImpl->m_pTable),pViewerImpl->m_pImageView);
-	
-	gint area_w = pViewerImpl->m_pTable->allocation.width;
-	gint area_h = pViewerImpl->m_pTable->allocation.height;
-
-	if (QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN == view_mode)
-	{
-		//FIXME: just don't show scrollbars because they jump around in an
-		// infinite loop for certain situations in this mode
-		// hide h hide v
-		gtk_widget_hide (pScrollbarV); 	
-		gtk_widget_hide (pScrollbarH);
-		gtk_widget_hide (pNavigationBox);
-
-		child->bottom_attach = 1;
-		child->right_attach = 1;
-	}
-	else if ( (area_w < width && area_h < height) ||
-		(area_w < width && area_h - sb_height < height) ||
-		(area_w - sb_width < width && area_h < height) )
-	{
-		// show h show v
-		child->bottom_attach = 1;
-		child->right_attach = 1;
-
-		gtk_widget_show (pScrollbarV); 	
-		gtk_widget_show (pScrollbarH);
-		gtk_widget_show (pNavigationBox);
-	}
-	else if (area_w < width)
-	{
-		// show h hide v
-		child->right_attach = 2;
-		child->bottom_attach = 1;
-		gtk_widget_show (pNavigationBox);	
-		gtk_widget_hide (pScrollbarV);
-		gtk_widget_show (pScrollbarH);		
-	}
-	else if (area_h < height)
-	{
-		// hide h show v
-		child->bottom_attach = 2;
-		child->right_attach = 1;
-		gtk_widget_show (pNavigationBox);	
-		gtk_widget_hide (pScrollbarH);
-		gtk_widget_show (pScrollbarV);	
-	}
-	else
-	{
-		// hide h hide v
-		gtk_widget_hide (pScrollbarV); 	
-		gtk_widget_hide (pScrollbarH);
-		gtk_widget_hide (pNavigationBox);
-
-		child->bottom_attach = 1;
-		child->right_attach = 1;
-	}
-
-	pViewerImpl->m_iTimeoutScrollbars = 0;
-
-	if (h->page_size >= h->upper &&
-		v->page_size >= v->upper)
-	{
-		// enable drag n drop
-		gtk_drag_source_set (pViewerImpl->m_pImageView, (GdkModifierType)(GDK_BUTTON1_MASK | GDK_BUTTON3_MASK),
-				   quiver_drag_target_table, G_N_ELEMENTS(quiver_drag_target_table), (GdkDragAction)( GDK_ACTION_COPY |
-			       GDK_ACTION_MOVE |
-		           GDK_ACTION_LINK |
-		           GDK_ACTION_ASK ));
-
-	}
-	else
-	{
-		// disable drag n drop
-		gtk_widget_grab_focus(pViewerImpl->m_pImageView);
-		gtk_drag_source_unset (pViewerImpl->m_pImageView);
-	}
-
+	pViewerImpl->UpdateScrollbars();
 	gdk_threads_leave();
 
 	return FALSE;
@@ -2010,6 +2042,14 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		{
 			quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewInteger(), event->GetNewInteger());
 		}
+		else if (QUIVER_PREFS_VIEWER_QUICK_PREVIEW == event->GetKey() )
+		{
+			parent->m_ImageLoader.EnableQuickPreview(event->GetNewBoolean());
+		}
+		else if (QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE == event->GetKey() )
+		{
+			parent->UpdateScrollbars();
+		}
 	}
 	else if (QUIVER_PREFS_SLIDESHOW == event->GetSection() )
 	{
@@ -2020,6 +2060,13 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		else if (QUIVER_PREFS_SLIDESHOW_LOOP == event->GetKey() )
 		{
 			parent->m_bSlideShowLoop = event->GetNewBoolean();
+		}
+		else if (QUIVER_PREFS_SLIDESHOW_TRANSITION == event->GetKey() )
+		{
+			if (0 != parent->m_iTimeoutSlideshowID)
+			{
+				quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(parent->m_pImageView),(gboolean)event->GetNewBoolean());
+			}
 		}
 	}
 }

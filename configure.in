@@ -1,7 +1,7 @@
 dnl Process this file with autoconf to produce a configure script.
 dnl Created by Anjuta application wizard.
 
-AC_INIT([quiver], [0.1.15], [http://mike.yi.org/quiver])
+AC_INIT([quiver], [0.1.16], [http://mike.yi.org/quiver])
 AC_CONFIG_SRCDIR([src/Quiver.cpp])
 
 AM_INIT_AUTOMAKE
@@ -131,6 +131,17 @@ AC_SUBST([PACKAGE_LIBS])
 
 AC_SUBST([LIBEXIF_CFLAGS])
 AC_SUBST([LIBEXIF_LIBS])
+
+AC_ARG_WITH(
+	[glade-dir], 
+	[AS_HELP_STRING(
+		[--with-glade-dir=GLADE_DIR],
+		[where GLADE_DIR is the directory that quiver.glade lives])
+	],
+	[gladedir=$withval],
+	[gladedir=${datadir}/quiver/glade])
+
+AC_SUBST([gladedir])
 
 AC_OUTPUT([
 Makefile

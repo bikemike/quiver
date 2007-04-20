@@ -10,8 +10,6 @@ endif
 
 desktop_DATA = quiver.desktop
 
-
-gladedir = ${datadir}/quiver/glade
 glade_DATA = quiver.glade
 
 EXTRA_DIST = ${desktop_DATA} ${glade_DATA} ${service_DATA} ${icons_26x26_DATA}

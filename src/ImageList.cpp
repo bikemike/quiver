@@ -439,7 +439,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 	printf("==================\n\n");
 	*/
 	
-	bool bFewItems = (impl->m_mapPathChanged.size() <= 2);
+	bool bContentsChanged = false;
 	
 	for (itr = impl->m_mapPathChanged.begin(); impl->m_mapPathChanged.end() != itr; ++itr)
 	{
@@ -457,10 +457,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 						// FIXME: if this is just a file, we should 
 						// emit an item removed event rather than
 						// a contents changed event
-						if (bFewItems)
-						{
-							impl->m_pImageList->EmitContentsChangedEvent();
-						}
+						bContentsChanged = true;
 					}
 				}
 				else
@@ -471,7 +468,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 					int iIndex = qitr - impl->m_QuiverFileList.begin();
 					if (impl->RemoveFile(iIndex))
 					{
-						if (bFewItems)
+						if (!bContentsChanged)
 						{
 							impl->m_pImageList->EmitItemRemovedEvent(iIndex);
 						}
@@ -500,14 +497,12 @@ static gboolean timeout_path_changed(gpointer user_data)
 				// basically we have to deal with all these events in the same way,
 				// if the item is not in the list, add it, and reload it.
 				
-				
 				{
 					QuiverFileList::iterator qitr;
 					QuiverFile f(itr->first.c_str());
 					qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
 					if (impl->m_QuiverFileList.end() == qitr)
 					{
-						//printf("adding file %s\n",itr->first.c_str());
 						// file did not exist in list so emit an add event
 						if (impl->AddFile(itr->first.c_str()))
 						{
@@ -519,7 +514,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 							qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
 							if (impl->m_QuiverFileList.end() != qitr)
 							{
-								if (bFewItems)
+								if (!bContentsChanged)
 								{
 									impl->m_pImageList->EmitItemAddedEvent(qitr - impl->m_QuiverFileList.begin());
 								}
@@ -531,7 +526,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 						// file was already in the list, so emit a changed event
 						//printf("change file %s\n",itr->first.c_str());
 						qitr->Reload();
-						if (bFewItems)
+						if (!bContentsChanged)
 						{
 							impl->m_pImageList->EmitItemChangedEvent(qitr - impl->m_QuiverFileList.begin());
 						}
@@ -544,7 +539,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 		}
 	}
 	
-	if (!bFewItems)
+	if (bContentsChanged)
 	{
 		impl->m_pImageList->EmitContentsChangedEvent();
 	}

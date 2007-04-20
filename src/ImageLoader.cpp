@@ -33,6 +33,7 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 
 	m_bStopThread = false;
 	m_bWorking = false;
+	m_bQuickPreview = true;
 	//Timer t("ImageLoader::Start()");
 	pthread_create(&m_pthread_id, NULL, run, this);
 }
@@ -264,9 +265,8 @@ void ImageLoader::RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_obse
 bool ImageLoader::LoadQuickPreview()
 {
 	bool rval = false;
-	if (!m_Command.params.no_thumb_preview)
+	if (m_bQuickPreview && !m_Command.params.no_thumb_preview)
 	{
-		
 		GdkPixbuf *thumb_pixbuf = NULL;
 		
 		//FIXME: should not hard code 128/256. make a new

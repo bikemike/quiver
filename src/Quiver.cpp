@@ -121,6 +121,7 @@ public:
 	
 	guint m_iMergedExternalTools;
 	
+	bool m_bSlideShowRestoreFromFS;
 			
 	ImageList m_ImageList;
 	
@@ -445,7 +446,9 @@ char * quiver_ui_main =
 "			<placeholder action='FileOpenItems' />"
 "			<separator/>"
 "			<menuitem action='"ACTION_QUIVER_SAVE"'/>"
+#ifdef FIXME_DISABLED
 "			<menuitem action='"ACTION_QUIVER_SAVE_AS"'/>"
+#endif
 "			<separator/>"
 "			<placeholder action='FileMenuAdditions' />"
 "			<separator/>"
@@ -903,6 +906,7 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 	}
 	else
 	{
+		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 		// show widgets
 		gtk_widget_show(pQuiverImpl->m_pToolbar);
 		gtk_widget_show(pQuiverImpl->m_pMenubar);
@@ -1047,6 +1051,8 @@ void Quiver::Init()
 
 	QuiverStockIcons::Load();
 
+	m_QuiverImplPtr->m_bSlideShowRestoreFromFS = false;
+	
 	m_QuiverImplPtr->m_bInitialized = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = false;
@@ -1373,8 +1379,6 @@ void Quiver::SaveSettings()
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT,m_QuiverImplPtr->m_iAppHeight);
 
 	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
-	gboolean is_active = gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(actionViewProperties));
-	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW, is_active ?  true : false);
 
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS,gtk_paned_get_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea)));
 }
@@ -1483,7 +1487,7 @@ int main (int argc, char **argv)
 	bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
 	textdomain (GETTEXT_PACKAGE);
 
-  /* init threads */
+ 	/* init threads */
 	g_thread_init (NULL);
 	gdk_threads_init ();
 	gdk_threads_enter ();
@@ -1527,19 +1531,20 @@ int main (int argc, char **argv)
 			files.push_back(argv[i]);
 		}
 	}
+	
 	if (argc == 1)
 	{	
-		gchar* dir;
+		const gchar* dir;
 		// FIXME: should default to a directory
 		// specified in preferences
+		PreferencesPtr prefsPtr = Preferences::GetInstance();
 #ifdef QUIVER_MAEMO
-		dir = g_strdup("~/MyDocs/.images");
+				dir = "~/MyDocs/.images";
 #else
-		dir = g_get_current_dir();
+				dir = g_get_home_dir();
 #endif
-		files.push_back(dir);
-		g_free(dir);
-		
+		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
+		files.push_back(photo_library);
 	}
 	//init gnome-vfs
 	if (!gnome_vfs_init ()) 
@@ -1859,6 +1864,21 @@ static gboolean timeout_keep_screen_on (gpointer data)
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event_ptr)
 {
+	PreferencesPtr prefs = Preferences::GetInstance();
+	
+	gtk_widget_hide(parent->m_pNBProperties);
+	
+	bool bFS = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, false);
+	if (bFS)
+	{
+		if ( !(GDK_WINDOW_STATE_FULLSCREEN & parent->m_WindowState) )
+		{
+			parent->m_bSlideShowRestoreFromFS = true;
+			parent->m_pQuiver->OnFullScreen();
+		}
+	}
+	// full screen
+	
 	// start a timer to keep the display on
 	if (0 == parent->m_iTimeoutKeepScreenOn)
 	{
@@ -1870,6 +1890,19 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event_ptr)
 {
+	// return from FS if necessary
+	if (parent->m_bSlideShowRestoreFromFS)
+	{
+		parent->m_pQuiver->OnFullScreen();
+	}
+
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
+	if (bShow)
+	{
+		gtk_widget_show(parent->m_pNBProperties);
+	}
+
 	GtkAction * action = QuiverUtils::GetAction(parent->m_pUIManager,ACTION_QUIVER_SLIDESHOW);
 	if (NULL != action)
 	{
@@ -1894,6 +1927,9 @@ void QuiverImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEve
 
 void Quiver::OnShowProperties(bool bShow /* = true */)
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW, bShow);
+	
 	if (bShow)
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_pNBProperties);
@@ -2046,7 +2082,14 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 
 		bool bDoneSomething = false;
 
-		if (0 != pQuiverImpl->m_iMergedViewerUI)
+		if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
+		{
+			// 3. if in browser and fullscreen, return to unfullscreen mode
+			pQuiver->OnFullScreen();
+			bDoneSomething = true;
+		}
+
+		if (!bDoneSomething && 0 != pQuiverImpl->m_iMergedViewerUI)
 		{
 			// 1. if in viewer and zoomed return to zoom fit
 			bDoneSomething = pQuiverImpl->m_Viewer.ResetViewMode();
@@ -2059,21 +2102,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			}
 		}
 
-		if (!bDoneSomething)
-		{
-			if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
-			{
-				// 3. if in browser and fullscreen, return to unfullscreen mode
-				pQuiver->OnFullScreen();
-				bDoneSomething = true;
-			}
-		}
 
-		if (!bDoneSomething)
-		{
-			// 4. if in browser quit
-			pQuiver->OnQuit();
-		}
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_OPEN))
 	{
