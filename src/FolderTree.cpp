@@ -1573,6 +1573,7 @@ gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id)
 
 void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 {
+	printf("populating folder tree\n");
 	int iNodeOrder = 0;
 
 	//printf("populate_tree_model start\n");
@@ -1825,7 +1826,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 						 * then others sorted on uri
 						 */
 						gtk_tree_store_append (store, &iter1, NULL);  
-						quiver-webgtk_tree_store_set (store, &iter1,
+						gtk_tree_store_set (store, &iter1,
 								FILE_TREE_COLUMN_CHECKBOX, FALSE,
 							FILE_TREE_COLUMN_ICON, icon2,
 								FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
