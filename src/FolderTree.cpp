@@ -1785,10 +1785,10 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 			char* uri  = gnome_vfs_volume_get_activation_uri(volume);
 
+			gboolean skip = FALSE;
 #ifdef QUIVER_MAEMO
 			gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
 			gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
-			gboolean skip = FALSE;
 			if (NULL != mmc1_uri)
 			{
 				skip = gnome_vfs_uris_match (mmc1_uri,uri);
@@ -1799,11 +1799,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 				skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
 				g_free(mmc2_uri);
 			}
-			if (skip)
-			{
-				g_free(uri);
-				continue;
-			}
 #endif
 			char* name = gnome_vfs_volume_get_display_name(volume);
 			char* display_name = name;
@@ -1812,42 +1807,47 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 			
 			if (NULL != uri)
 			{
-				
-				if (0 == strcmp(uri,"file:///"))
-				{
-					display_name = QUIVER_FOLDER_TREE_ROOT_NAME;
-				}
-				
+				if (!skip)
 				{	
+					if (0 == strcmp(uri,"file:///"))
+					{
+						display_name = QUIVER_FOLDER_TREE_ROOT_NAME;
+					}
+					
+					{	
 #ifdef QUIVER_MAEMO
-					char* icon2 = folder_tree_get_icon_name(uri,false);
+						char* icon2 = folder_tree_get_icon_name(uri,false);
 #else
-					char* icon2 = gnome_vfs_volume_get_icon(volume);
+						char* icon2 = gnome_vfs_volume_get_icon(volume);
 #endif
-					/*
-					 * FIXME: show type: GNOME_VFS_DEVICE_TYPE_HARDDRIVE first,
-					 * then others sorted on uri
-					 */
-					gtk_tree_store_append (store, &iter1, NULL);  
-					gtk_tree_store_set (store, &iter1,
-							FILE_TREE_COLUMN_CHECKBOX, FALSE,
-						FILE_TREE_COLUMN_ICON, icon2,
-							FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
-							FILE_TREE_COLUMN_SEPARATOR,FALSE,
-							FILE_TREE_COLUMN_URI,uri,
-							-1);
+						/*
+						 * FIXME: show type: GNOME_VFS_DEVICE_TYPE_HARDDRIVE first,
+						 * then others sorted on uri
+						 */
+						gtk_tree_store_append (store, &iter1, NULL);  
+						quiver-webgtk_tree_store_set (store, &iter1,
+								FILE_TREE_COLUMN_CHECKBOX, FALSE,
+							FILE_TREE_COLUMN_ICON, icon2,
+								FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
+								FILE_TREE_COLUMN_SEPARATOR,FALSE,
+								FILE_TREE_COLUMN_URI,uri,
+								-1);
 
-					g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
+						g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
 
-					free(icon2);
+						free(icon2);
+					}
 				}
+				free(uri);
 			}
 				
 			
-			free(name);
-			free(path);
-			free(uri);
-			free(type);
+			if (NULL != name)
+				free(name);
+			if (NULL != path)
+				free(path);
+			if (NULL != type)
+				free(type);
 		}
 		gnome_vfs_volume_unref(volume);
 		

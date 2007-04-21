@@ -336,8 +336,11 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 	g_object_set (G_OBJECT (renderer),  "cell-background-gdk", &highlight_color2,  NULL);
 	g_object_set (G_OBJECT (renderer),  "background-gdk", &highlight_color1,  NULL);
 
+
+#if GTK_MAJOR_VERSION > 2 || GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION >= 8
 	g_object_set (G_OBJECT (renderer),  "wrap-width",200,  NULL);
 	g_object_set (G_OBJECT (renderer),  "wrap-mode",PANGO_WRAP_WORD_CHAR,  NULL);
+#endif
 
 	column = gtk_tree_view_column_new();
 	gtk_tree_view_column_set_title(column,"Value");
