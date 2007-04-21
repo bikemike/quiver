@@ -1628,30 +1628,37 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 			icon_name  = folder_tree_get_icon_name(folder_uri,FALSE);
 
 			HildonFileSystemInfo *fs_info = hildon_file_system_info_new(folder_uri, &error);
-			const gchar *display_name = hildon_file_system_info_get_display_name(fs_info);
-
-			GtkTreeIter* parent = &iter1;
-			GtkTreeIter* child  = &iter2;
-			if (0 == i)
+			if (NULL == fs_info)
 			{
-				parent = NULL;
-				child = &iter1;
+				printf("hildon_file_system_info is null for: %s\n",icon_name);
 			}
+			else
+			{
+				const gchar *display_name = hildon_file_system_info_get_display_name(fs_info);
 
-			gtk_tree_store_append (store, child, parent);  
-			gtk_tree_store_set (store, child,
-				FILE_TREE_COLUMN_CHECKBOX, FALSE,
-				FILE_TREE_COLUMN_ICON, icon_name,
-					FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
-					FILE_TREE_COLUMN_SEPARATOR,FALSE,
-					FILE_TREE_COLUMN_URI,folder_uri,
-					FILE_TREE_COLUMN_PERMANENT,TRUE,
-					FILE_TREE_COLUMN_USE_DEFAULT_ORDER,TRUE,
-					-1);
+				GtkTreeIter* parent = &iter1;
+				GtkTreeIter* child  = &iter2;
+				if (0 == i)
+				{
+					parent = NULL;
+					child = &iter1;
+				}
 
-			g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
+				gtk_tree_store_append (store, child, parent);  
+				gtk_tree_store_set (store, child,
+					FILE_TREE_COLUMN_CHECKBOX, FALSE,
+					FILE_TREE_COLUMN_ICON, icon_name,
+						FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
+						FILE_TREE_COLUMN_SEPARATOR,FALSE,
+						FILE_TREE_COLUMN_URI,folder_uri,
+						FILE_TREE_COLUMN_PERMANENT,TRUE,
+						FILE_TREE_COLUMN_USE_DEFAULT_ORDER,TRUE,
+						-1);
 
-			hildon_file_system_info_free(fs_info);
+				g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
+
+				hildon_file_system_info_free(fs_info);
+			}
 			g_free(icon_name);
 			g_free(folder_uri);
 		}
