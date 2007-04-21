@@ -1049,8 +1049,6 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_iMergedViewerUI = 0;
 	m_QuiverImplPtr->m_iMergedBrowserUI = 0;	
 
-	QuiverStockIcons::Load();
-
 	m_QuiverImplPtr->m_bSlideShowRestoreFromFS = false;
 	
 	m_QuiverImplPtr->m_bInitialized = false;
@@ -1590,6 +1588,9 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	gdk_threads_enter();
 	// put process intenstive startup code in here 
 	// (loading image list, setting first image)
+
+	// set up the stock icons
+	QuiverStockIcons::Load();
 
 	SetImageList(m_QuiverImplPtr->m_listImages);
 

@@ -1573,10 +1573,8 @@ gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id)
 
 void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 {
-	printf("populating folder tree\n");
 	int iNodeOrder = 0;
 
-	//printf("populate_tree_model start\n");
 	GtkTreeIter iter1 = {0};  /* Parent iter */
 	GtkTreeIter iter2 = {0};  /* Child iter  */
 	const char* homedir = g_get_home_dir();
@@ -1585,12 +1583,11 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	char* pictures_path = g_build_filename (homedir, "Pictures", NULL);
 	char* documents_path = g_build_filename (homedir, "Documents", NULL);
 
-	char* home_uri = gnome_vfs_get_uri_from_local_path (homedir);
-
-	char* desktop_uri = gnome_vfs_get_uri_from_local_path (desktop_path);
-	char* pictures_uri = gnome_vfs_get_uri_from_local_path (pictures_path);
-	char* documents_uri = gnome_vfs_get_uri_from_local_path (documents_path);
-	char* root_uri = gnome_vfs_get_uri_from_local_path ("/");
+	char* home_uri = g_filename_to_uri (homedir,NULL,NULL);
+	char* desktop_uri = g_filename_to_uri (desktop_path,NULL,NULL);
+	char* pictures_uri = g_filename_to_uri (pictures_path,NULL,NULL);
+	char* documents_uri = g_filename_to_uri (documents_path,NULL,NULL);
+	char* root_uri = g_filename_to_uri ("/",NULL,NULL);
 
 
 	free(desktop_path);
@@ -1774,6 +1771,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 		free(icon2);
 
 		g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Filesystem"),(gpointer)iNodeOrder++);
+		gnome_vfs_volume_unref(volume);
 	}
 
 	GList *volumes = gnome_vfs_volume_monitor_get_mounted_volumes(monitor);
@@ -1781,76 +1779,75 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	while (NULL != volume_itr)
 	{
 		GnomeVFSVolume *volume = GNOME_VFS_VOLUME(volume_itr->data);
-		if (gnome_vfs_volume_is_user_visible(volume)  )
+		if (NULL != volume && gnome_vfs_volume_is_user_visible(volume)  )
 		{
 
 			char* uri  = gnome_vfs_volume_get_activation_uri(volume);
 
-			gboolean skip = FALSE;
-#ifdef QUIVER_MAEMO
-			gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
-			gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
-			if (NULL != mmc1_uri)
-			{
-				skip = gnome_vfs_uris_match (mmc1_uri,uri);
-				g_free(mmc1_uri);
-			}
-			if (NULL != mmc1_uri)
-			{
-				skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
-				g_free(mmc2_uri);
-			}
-#endif
-			char* name = gnome_vfs_volume_get_display_name(volume);
-			char* display_name = name;
-			char* path = gnome_vfs_volume_get_device_path(volume);
-			char* type = gnome_vfs_volume_get_filesystem_type(volume);
 			
 			if (NULL != uri)
 			{
+				gboolean skip = FALSE;
+#ifdef QUIVER_MAEMO
+				gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
+				gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
+				if (NULL != mmc1_uri)
+				{
+					skip = gnome_vfs_uris_match (mmc1_uri,uri);
+					g_free(mmc1_uri);
+				}
+				if (NULL != mmc2_uri)
+				{
+					skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
+					g_free(mmc2_uri);
+				}
+#endif
 				if (!skip)
 				{	
+					char* name = gnome_vfs_volume_get_display_name(volume);
+					char* display_name = name;
+					char* path = gnome_vfs_volume_get_device_path(volume);
+					char* type = gnome_vfs_volume_get_filesystem_type(volume);
+
 					if (0 == strcmp(uri,"file:///"))
 					{
 						display_name = QUIVER_FOLDER_TREE_ROOT_NAME;
+						printf("display name: %s: %s\n",name, display_name);
 					}
-					
-					{	
 #ifdef QUIVER_MAEMO
-						char* icon2 = folder_tree_get_icon_name(uri,false);
+					char* icon2 = folder_tree_get_icon_name(uri,false);
 #else
-						char* icon2 = gnome_vfs_volume_get_icon(volume);
+					char* icon2 = gnome_vfs_volume_get_icon(volume);
 #endif
-						/*
-						 * FIXME: show type: GNOME_VFS_DEVICE_TYPE_HARDDRIVE first,
-						 * then others sorted on uri
-						 */
-						gtk_tree_store_append (store, &iter1, NULL);  
-						gtk_tree_store_set (store, &iter1,
-								FILE_TREE_COLUMN_CHECKBOX, FALSE,
-							FILE_TREE_COLUMN_ICON, icon2,
-								FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
-								FILE_TREE_COLUMN_SEPARATOR,FALSE,
-								FILE_TREE_COLUMN_URI,uri,
-								-1);
+					/*
+					 * FIXME: show type: GNOME_VFS_DEVICE_TYPE_HARDDRIVE first,
+					 * then others sorted on uri
+					 */
+					gtk_tree_store_append (store, &iter1, NULL);  
+					gtk_tree_store_set (store, &iter1,
+							FILE_TREE_COLUMN_CHECKBOX, FALSE,
+						FILE_TREE_COLUMN_ICON, icon2,
+							FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
+							FILE_TREE_COLUMN_SEPARATOR,FALSE,
+							FILE_TREE_COLUMN_URI,uri,
+							-1);
 
-						g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
+					g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
 
-						free(icon2);
-					}
+					free(icon2);
+
+					if (NULL != name)
+						free(name);
+					if (NULL != path)
+						free(path);
+					if (NULL != type)
+						free(type);
 				}
 				free(uri);
 			}
 				
-			
-			if (NULL != name)
-				free(name);
-			if (NULL != path)
-				free(path);
-			if (NULL != type)
-				free(type);
+			gnome_vfs_volume_unref(volume);
 		}
-		gnome_vfs_volume_unref(volume);
 		
 		volume_itr = g_list_next(volume_itr);
 	}
