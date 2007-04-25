@@ -211,7 +211,7 @@ static gulong quiver_icon_view_get_n_items(QuiverIconView* iconview);
 static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height);
 static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulong cell);
 
-static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawable *drawable,GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h);
+static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, GdkDrawable *drawable, GdkGC* gc, GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h);
 /* end utility function prototypes*/
 
 /* end private function prototypes */
@@ -659,11 +659,14 @@ quiver_icon_view_get_col_row_count(QuiverIconView *iconview,guint *cols, guint *
 }
 
 static void
-draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
+quiver_icon_view_draw_icons (GtkWidget *widget, GdkRegion *in_region)
 {
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
-
+	
+	GdkGC* gc_clip = gdk_gc_new(widget->window);
+	gdk_gc_set_clip_region(gc_clip, in_region);
+	
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
 
@@ -709,23 +712,26 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 		}
 	}
 
-	GdkGC *dotted_line_gc = gdk_gc_new(widget->window);
-	GdkColor color;
-	gdk_color_parse("#ddd",&color);
-	gdk_gc_set_rgb_fg_color(dotted_line_gc,&color);
-	gdk_gc_set_line_attributes(dotted_line_gc,1,GDK_LINE_ON_OFF_DASH,GDK_CAP_BUTT,GDK_JOIN_MITER);
-
 	GdkGC *border_gc = gdk_gc_new(widget->window);
 	
-	//GdkColor color;
+	GdkColor color;
 	gdk_color_parse("white",&color);
 	gdk_gc_set_rgb_fg_color(border_gc,&color);
-
 	gdk_gc_set_line_attributes(border_gc,iconview->priv->icon_border_size,GDK_LINE_SOLID,GDK_CAP_BUTT,GDK_JOIN_MITER);//GDK_CAP_BUTT,GDK_JOIN_MITER);
 
 
 	// invalidate the free space region to the right of the item
-	gdk_draw_rectangle (widget->window, widget->style->bg_gc[GTK_WIDGET_STATE(widget)],TRUE, num_cols*cell_width,r.y,widget->allocation.width - num_cols*cell_width,r.height);
+	gdk_gc_copy(gc_clip,widget->style->bg_gc[GTK_WIDGET_STATE(widget)]);
+	gdk_gc_set_clip_region(gc_clip, in_region);
+
+	gdk_draw_rectangle (widget->window, 
+		//gc_clip,
+		widget->style->bg_gc[GTK_WIDGET_STATE(widget)],
+		TRUE,
+		num_cols*cell_width,
+		r.y,
+		widget->allocation.width - num_cols*cell_width,
+		r.height);
 
 	GtkStateType state;
 	guint bound_width = cell_width - padding;
@@ -761,7 +767,13 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 			}
 
 			// clear the cell
-			gdk_draw_rectangle (widget->window, widget->style->bg_gc[GTK_WIDGET_STATE(widget)],TRUE, tmp_rect.x,tmp_rect.y,tmp_rect.width,tmp_rect.height);
+			gdk_gc_copy(gc_clip,widget->style->bg_gc[GTK_WIDGET_STATE(widget)]);
+			gdk_gc_set_clip_region(gc_clip, in_region);
+			gdk_draw_rectangle (widget->window,
+				gc_clip,
+				//widget->style->bg_gc[GTK_WIDGET_STATE(widget)],
+				TRUE, 
+				tmp_rect.x,tmp_rect.y,tmp_rect.width,tmp_rect.height);
 
 			if ( current_cell >= n_cells)
 			{
@@ -781,15 +793,17 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 				{
 					state = GTK_STATE_ACTIVE;
 				}
-				gdk_draw_rectangle (widget->window, widget->style->bg_gc[state],TRUE,x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				gdk_gc_copy(gc_clip,widget->style->bg_gc[state]);
+				gdk_gc_set_clip_region(gc_clip, in_region);
+				gdk_draw_rectangle (widget->window, gc_clip,TRUE,x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
 			}
 			else if (current_cell == iconview->priv->prelight_cell)
 			{
 				//state = GTK_STATE_PRELIGHT;
-				//gdk_draw_rectangle (widget->window, widget->style->bg_gc[state],TRUE,x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				//gdk_gc_copy(gc_clip,widget->style->bg_gc[state]);
+				//gdk_gc_set_clip_region(gc_clip, in_region);
+				//gdk_draw_rectangle (widget->window, gc_clip,TRUE,x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
 			}
-
-		
 
 			gboolean stock = FALSE;
 
@@ -842,72 +856,48 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 							pixbuf_width,pixbuf_height);
 
 					pixbuf_brighten (pixbuf, pixbuf2, 25);
-
-					gdk_draw_pixbuf	(widget->window,
-							 widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
-							 pixbuf2,0,0,x_cell_offset + x_icon_offset,y_cell_offset+y_icon_offset,-1,-1,
-							 GDK_RGB_DITHER_NONE,0,0);
-					g_object_unref(pixbuf2);
+					
+					g_object_unref(pixbuf);
+					pixbuf = pixbuf2;
 				}
-				else
-				{
-					/*
-					if (!GTK_WIDGET_HAS_FOCUS(widget))
-					{
-						GdkPixbuf *pixbuf_gray = gdk_pixbuf_copy(pixbuf);
-						pixbuf_set_grayscale(pixbuf_gray);
-						g_object_unref(pixbuf);
-						pixbuf = pixbuf_gray;
-
-					}
-					*/
-
-					gdk_draw_pixbuf	(widget->window,
-							 widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
-							 pixbuf,0,0,x_cell_offset + x_icon_offset,y_cell_offset+y_icon_offset,-1,-1,
-							 GDK_RGB_DITHER_NONE,0,0);
-				}
+				
+				gdk_gc_copy(gc_clip,widget->style->fg_gc[GTK_WIDGET_STATE (widget)]);
+				gdk_gc_set_clip_region(gc_clip, in_region);
+				gdk_draw_pixbuf	(widget->window,
+						 gc_clip,
+						 pixbuf,0,0,x_cell_offset + x_icon_offset,y_cell_offset+y_icon_offset,-1,-1,
+						 GDK_RGB_DITHER_NONE,0,0);
 
 				g_object_unref(pixbuf);
 
 				if (!stock)
 				{
-					/*
-					if (40 <= iconview->priv->icon_width)
-					{
-					*/
 					guint border = iconview->priv->icon_border_size;
-					quiver_icon_view_draw_drop_shadow(iconview,widget->window,	state, 
+#ifdef HAVE_CAIRO
+					gdk_gc_copy(gc_clip,widget->style->bg_gc[GTK_WIDGET_STATE (widget)]);
+					gdk_gc_set_clip_region(gc_clip, in_region);
+					quiver_icon_view_draw_drop_shadow(iconview,widget->window, gc_clip,	state, 
 							x_cell_offset + x_icon_offset - border, 
 							y_cell_offset + y_icon_offset - border, 
 							pixbuf_width + border*2, 
 							pixbuf_height + border *2);
-						/*
-					}
-					*/
+#endif
 					// draw a border around the thumbnail
 					if (0 < border)
 					{
 						gint border_offset = ceill(border/2.);
 						//printf("border offset: %d\n",border_offset);
-						gdk_draw_rectangle (widget->window, border_gc,FALSE,
+						gdk_gc_copy(gc_clip, border_gc);
+						gdk_gc_set_clip_region(gc_clip, in_region);						
+						gdk_draw_rectangle (widget->window, gc_clip,FALSE,
 							x_cell_offset + x_icon_offset - border_offset,
 							y_cell_offset + y_icon_offset - border_offset,
 							pixbuf_width + border,
 							pixbuf_height + border);
 					}
-					/*
-							x_cell_offset + x_icon_offset - (ceill(border/2.)),
-							y_cell_offset + y_icon_offset - (ceill(border/2.)),
-							pixbuf_width + border,
-							pixbuf_height + border);
-							*/
-					//gdk_draw_rectangle (widget->window, widget->style->white_gc,FALSE,x_cell_offset + x_icon_offset -1, y_cell_offset + y_icon_offset -1, pixbuf_width+1, pixbuf_height+1);
 				}
 
 			}
-			// draw a border around the cell
-			// gdk_draw_rectangle (widget->window, dotted_line_gc,FALSE, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width-1, bound_height-1);
 			
 			/* draw the overlay icons */
 			guint k;
@@ -930,9 +920,11 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 							g_object_unref(overlay);
 							overlay = overlay2;
 						}
-
+						gdk_gc_copy(gc_clip, widget->style->fg_gc[GTK_WIDGET_STATE (widget)]);
+						gdk_gc_set_clip_region(gc_clip, in_region);	
+						
 						gdk_draw_pixbuf	(widget->window,
-								 widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
+								 gc_clip,
 								 overlay,0,0,x_cell_offset + padding/2 + 2 + 16*k ,y_cell_offset + padding/2 +2,-1,-1,
 								 GDK_RGB_DITHER_NONE,0,0);
 						g_object_unref(overlay);
@@ -978,8 +970,8 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 			}
 		}
 	}
-	g_object_unref(dotted_line_gc);
 	g_object_unref(border_gc);
+	g_object_unref(gc_clip);
 	
 	
 	if (iconview->priv->drag_mode_enabled && 
@@ -994,6 +986,7 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 		gdk_region_intersect(rubber_region,in_region);
 		
 		GdkGC *color_gc = gdk_gc_new(widget->window);
+		gdk_gc_set_clip_region(color_gc, in_region);
 #ifdef HAVE_CAIRO
 		cairo_t *cr = gdk_cairo_create(widget->window);
 
@@ -1050,8 +1043,8 @@ draw_pixmap (GtkWidget *widget, GdkRegion *in_region)
 				FALSE,
 				rub_rect.x,
 				rub_rect.y,
-				rub_rect.width,
-				rub_rect.height
+				rub_rect.width-1,
+				rub_rect.height-1
 				);
 		g_object_unref(color_gc);
 		
@@ -1068,7 +1061,7 @@ quiver_icon_view_expose_event (GtkWidget *widget, GdkEventExpose *event)
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
 
-	draw_pixmap (widget,event->region);
+	quiver_icon_view_draw_icons (widget,event->region);
 
 	return TRUE;
 }
@@ -2282,13 +2275,6 @@ quiver_icon_view_update_rubber_band(QuiverIconView *iconview)
 	
 	quiver_icon_view_update_rubber_band_selection(iconview);
 	
-	// the way that gdk draws rectangles means we need to subtract
-	// one from the width and height
-	iconview->priv->rubberband_rect.width -= 1;
-	iconview->priv->rubberband_rect.height -= 1;
-	//rubberband_rect_old.width -= 1;
-	//rubberband_rect_old.height -= 1;
-	
 	//redraw_needed = TRUE;
 	gdk_region_offset(invalid_region,-hadjust,-vadjust);
 	gdk_window_invalidate_region(widget->window,invalid_region,FALSE);
@@ -2477,23 +2463,21 @@ static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulo
 }
 
 
-static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawable *drawable,GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h)
+static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, GdkDrawable *drawable, GdkGC* gc, GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h)
 {
-
-	GtkWidget *widget = GTK_WIDGET(iconview);
+	GtkWidget* widget = GTK_WIDGET(iconview);
 	int shadow_width = QUIVER_ICON_VIEW_ICON_SHADOW_SIZE - 1; // one pixel blank
 	int tl_offset = 1;
 	//rect_w+=1;
 	//rect_h+=1;
-	GdkGC *gc = widget->style->bg_gc[state];
-
+	GdkGC *src_gc = widget->style->bg_gc[state];
 
 	if (NULL == iconview->priv->drop_shadow[state][0])
 	{
 		GdkPixmap *drop_shadow_src = gdk_pixmap_new(drawable,shadow_width*3,shadow_width*3,-1);
 
 		gdk_draw_rectangle (drop_shadow_src,
-			gc,
+			src_gc,
 			TRUE,
 			0, 0,
 			shadow_width*3,
@@ -2530,21 +2514,21 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview,GdkDrawab
 		iconview->priv->drop_shadow[state][7] = gdk_pixmap_new(drawable,shadow_width,shadow_width,-1);
 
 		// tl
-		gdk_draw_drawable (iconview->priv->drop_shadow[state][0],gc,drop_shadow_src, left - shadow_width, top - shadow_width, 0, 0, shadow_width-tl_offset, shadow_width-tl_offset);
+		gdk_draw_drawable (iconview->priv->drop_shadow[state][0],src_gc,drop_shadow_src, left - shadow_width, top - shadow_width, 0, 0, shadow_width-tl_offset, shadow_width-tl_offset);
 		// t
-		gdk_draw_drawable(iconview->priv->drop_shadow[state][1],gc,drop_shadow_src, left, top - shadow_width, 0, 0, 1, shadow_width-tl_offset);
+		gdk_draw_drawable(iconview->priv->drop_shadow[state][1],src_gc,drop_shadow_src, left, top - shadow_width, 0, 0, 1, shadow_width-tl_offset);
 		// tr
-		gdk_draw_drawable(iconview->priv->drop_shadow[state][2],gc,drop_shadow_src, left + width, top - shadow_width, 0, 0, shadow_width, shadow_width-tl_offset);
+		gdk_draw_drawable(iconview->priv->drop_shadow[state][2],src_gc,drop_shadow_src, left + width, top - shadow_width, 0, 0, shadow_width, shadow_width-tl_offset);
 		// l
-		gdk_draw_drawable(iconview->priv->drop_shadow[state][3],gc,drop_shadow_src, left-shadow_width, top, 0, 0, shadow_width-tl_offset,1);
+		gdk_draw_drawable(iconview->priv->drop_shadow[state][3],src_gc,drop_shadow_src, left-shadow_width, top, 0, 0, shadow_width-tl_offset,1);
 		// r
-		gdk_draw_drawable(iconview->priv->drop_shadow[state][4],gc,drop_shadow_src, left+width, top, 0, 0, shadow_width,1);
+		gdk_draw_drawable(iconview->priv->drop_shadow[state][4],src_gc,drop_shadow_src, left+width, top, 0, 0, shadow_width,1);
 		// bl
-		gdk_draw_drawable (iconview->priv->drop_shadow[state][5],gc,drop_shadow_src, left - shadow_width, top + height, 0, 0, shadow_width-tl_offset, shadow_width);
+		gdk_draw_drawable (iconview->priv->drop_shadow[state][5],src_gc,drop_shadow_src, left - shadow_width, top + height, 0, 0, shadow_width-tl_offset, shadow_width);
 		// b
-		gdk_draw_drawable(iconview->priv->drop_shadow[state][6],gc,drop_shadow_src, left, top + height, 0, 0, 1, shadow_width);
+		gdk_draw_drawable(iconview->priv->drop_shadow[state][6],src_gc,drop_shadow_src, left, top + height, 0, 0, 1, shadow_width);
 		// br
-		gdk_draw_drawable(iconview->priv->drop_shadow[state][7],gc,drop_shadow_src, left + width, top + height, 0, 0, shadow_width, shadow_width);
+		gdk_draw_drawable(iconview->priv->drop_shadow[state][7],src_gc,drop_shadow_src, left + width, top + height, 0, 0, shadow_width, shadow_width);
 		g_object_unref(drop_shadow_src);
 	}
 

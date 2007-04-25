@@ -1473,6 +1473,8 @@ mime_open_handler (gpointer raw_data, int argc, char **argv)
 #endif
 static gboolean CreateQuiver (gpointer data)
 {
+	QuiverStockIcons::Load();
+	
 	list<string> *pFiles = (list<string>*)data;
 	Quiver *pQuiver = new Quiver(*pFiles);
 	gtk_quit_add (0,DestroyQuiver, pQuiver);
@@ -1590,7 +1592,6 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	// (loading image list, setting first image)
 
 	// set up the stock icons
-	QuiverStockIcons::Load();
 
 	SetImageList(m_QuiverImplPtr->m_listImages);
 

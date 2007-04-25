@@ -30,8 +30,8 @@ typedef struct
 icon icons[] = 
 {
 	{QUIVER_STOCK_APP,quiver_icon_app,sizeof(quiver_icon_app)},
-	{QUIVER_STOCK_SLIDESHOW, quiver_icon_slideshow,sizeof(quiver_icon_slideshow)},
 	{QUIVER_STOCK_BROWSER, quiver_icon_browser,sizeof(quiver_icon_browser)},
+	{QUIVER_STOCK_SLIDESHOW, quiver_icon_slideshow,sizeof(quiver_icon_slideshow)},
 	{QUIVER_STOCK_ROTATE_CW, quiver_icon_rotate_cw,sizeof(quiver_icon_rotate_cw)},
 	{QUIVER_STOCK_ROTATE_CCW, quiver_icon_rotate_ccw,sizeof(quiver_icon_rotate_ccw)},
 };
@@ -173,13 +173,11 @@ void QuiverStockIcons::Load()
 
 	for (unsigned int i=0;i< G_N_ELEMENTS(icons); ++i)
 	{
-		//pixbuf = gdk_pixbuf_new_from_inline (-1, icons[i].icon,FALSE,NULL);
-
 		GdkPixdata pixdata;
+		error = NULL;
 		gdk_pixdata_deserialize (&pixdata,icons[i].size,icons[i].data,&error);
+		error = NULL;
 		pixbuf = gdk_pixbuf_from_pixdata(&pixdata,FALSE,&error);
-/*		pixbuf = gdk_pixbuf_new_from_xpm_data    ((const char**)icons[i].xpm);
- */
 		
 		icon_set = gtk_icon_set_new_from_pixbuf (pixbuf);
 		gtk_icon_factory_add(factory,icons[i].id,icon_set);
