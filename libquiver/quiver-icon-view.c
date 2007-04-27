@@ -19,6 +19,8 @@
 #define QUIVER_ICON_VIEW_ICON_SHADOW_SIZE        5
 #define QUIVER_ICON_VIEW_ICON_BORDER_SIZE        1
 
+#define SMOOTH_SCROLL_TIMEOUT                    35 // 35 ms ~= 28fps
+
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
 G_DEFINE_TYPE(QuiverIconView,quiver_icon_view,GTK_TYPE_WIDGET);
@@ -72,6 +74,7 @@ struct _QuiverIconViewPrivate
 	GdkPixmap *drop_shadow[5][8];
 
 	gint start_x, start_y;
+	gint last_x, last_y;
 	gint rubberband_x1, rubberband_y1;
 	gint rubberband_x2, rubberband_y2;
 
@@ -87,6 +90,10 @@ struct _QuiverIconViewPrivate
 
 	guint timeout_id_rubberband_scroll;
 
+	struct timeval last_motion_time;
+	gint hvelocity;
+	gint vvelocity;
+	 
 	gulong cursor_cell;
 	gulong prelight_cell;
 	gulong cursor_cell_first;
@@ -100,6 +107,7 @@ struct _QuiverIconViewPrivate
 	QuiverIconViewDragBehavior drag_behavior;
 	
 	guint timeout_id_smooth_scroll;
+	guint timeout_id_smooth_scroll_slowdown;
 
 	guint n_columns;
 	guint n_rows;
@@ -173,6 +181,7 @@ static void      quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjus
 static void      quiver_icon_view_scroll_to_cell_smooth(QuiverIconView *iconview, gulong cell);
 
 static gboolean  quiver_icon_view_timeout_smooth_scroll(gpointer data);
+static gboolean  quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data);
 
 static void      quiver_icon_view_style_set(GtkWidget *widget, GtkStyle *prev_style, gpointer data);
 
@@ -400,6 +409,8 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->rubberband_y2 = 0;
 	iconview->priv->start_x        = 0;
 	iconview->priv->start_y        = 0;
+	iconview->priv->last_x        = 0;
+	iconview->priv->last_y        = 0;
 	iconview->priv->drag_mode_start = FALSE;
 	iconview->priv->drag_mode_enabled = FALSE;
 	
@@ -407,8 +418,14 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	
 	iconview->priv->mouse_button_is_down = FALSE;
 
+	iconview->priv->hvelocity = 0.;
+	iconview->priv->vvelocity = 0.;
+
 	iconview->priv->cursor_cell = G_MAXULONG;
 	iconview->priv->prelight_cell = G_MAXULONG;
+
+	iconview->priv->timeout_id_smooth_scroll          = 0;
+	iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
 
 	/* setting these to 0 lets the widget decide how many
 	 * columns and rows to have
@@ -719,20 +736,6 @@ quiver_icon_view_draw_icons (GtkWidget *widget, GdkRegion *in_region)
 	gdk_gc_set_rgb_fg_color(border_gc,&color);
 	gdk_gc_set_line_attributes(border_gc,iconview->priv->icon_border_size,GDK_LINE_SOLID,GDK_CAP_BUTT,GDK_JOIN_MITER);//GDK_CAP_BUTT,GDK_JOIN_MITER);
 
-
-	// invalidate the free space region to the right of the item
-	gdk_gc_copy(gc_clip,widget->style->bg_gc[GTK_WIDGET_STATE(widget)]);
-	gdk_gc_set_clip_region(gc_clip, in_region);
-
-	gdk_draw_rectangle (widget->window, 
-		//gc_clip,
-		widget->style->bg_gc[GTK_WIDGET_STATE(widget)],
-		TRUE,
-		num_cols*cell_width,
-		r.y,
-		widget->allocation.width - num_cols*cell_width,
-		r.height);
-
 	GtkStateType state;
 	guint bound_width = cell_width - padding;
 	guint bound_height = cell_height - padding;
@@ -761,24 +764,10 @@ quiver_icon_view_draw_icons (GtkWidget *widget, GdkRegion *in_region)
 				//printf("we do not need to redraw %d\n",current_cell);
 				continue;
 			}
-			else
-			{
-				//printf("we need to redraw %d\n",current_cell);
-			}
-
-			// clear the cell
-			gdk_gc_copy(gc_clip,widget->style->bg_gc[GTK_WIDGET_STATE(widget)]);
-			gdk_gc_set_clip_region(gc_clip, in_region);
-			gdk_draw_rectangle (widget->window,
-				gc_clip,
-				//widget->style->bg_gc[GTK_WIDGET_STATE(widget)],
-				TRUE, 
-				tmp_rect.x,tmp_rect.y,tmp_rect.width,tmp_rect.height);
 
 			if ( current_cell >= n_cells)
 			{
-				// we are passed the last cell
-				// so we can skip drawing the cells and just draw white
+				// passed the last cell
 				continue;
 			}
 
@@ -1080,6 +1069,14 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 	iconview->priv->start_x = x;
 	iconview->priv->start_y = y;
 
+	iconview->priv->last_x = x;
+	iconview->priv->last_y = y;
+	
+	iconview->priv->hvelocity = 0;
+	iconview->priv->vvelocity = 0;
+	
+	gettimeofday(&iconview->priv->last_motion_time,NULL);
+
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 
@@ -1175,6 +1172,25 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 					iconview->priv->timeout_id_rubberband_scroll = 0;
 				}
 			}
+			else if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
+			{
+				struct timeval new_motion_time = {0};
+				gettimeofday(&new_motion_time,NULL);
+
+				gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
+				gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+				
+				if (0.1 > new_time - old_time)
+				{
+					// continue scrolling
+					if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
+					{
+						g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
+					}
+					iconview->priv->timeout_id_smooth_scroll_slowdown = 
+						g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll_slowdown,iconview);
+				}
+			}
 		}
 		else if (G_MAXULONG != cell && iconview->priv->mouse_button_is_down)
 		{
@@ -1197,7 +1213,6 @@ rubberband_scroll_timeout (gpointer data)
 	gdouble xvalue,yvalue;
 	
 	gdk_threads_enter ();
-	  
 	iconview = data;
 	
 	xvalue = MIN (iconview->priv->hadjustment->value +
@@ -1325,6 +1340,20 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 	else if (iconview->priv->drag_mode_enabled && 
 		QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
 	{
+		
+		struct timeval new_motion_time = {0};
+		gettimeofday(&new_motion_time,NULL);
+		gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
+		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+		
+		// velocity pixels per second
+		iconview->priv->hvelocity = (gint)((x - iconview->priv->last_x) / (new_time - old_time));
+		iconview->priv->vvelocity =  (gint)((y - iconview->priv->last_y) / (new_time - old_time));
+		
+		iconview->priv->last_motion_time = new_motion_time;
+		iconview->priv->last_x = x;
+		iconview->priv->last_y = y;
+		
 		gdouble hadjust = gtk_adjustment_get_value(iconview->priv->hadjustment);
 		gdouble vadjust = gtk_adjustment_get_value(iconview->priv->vadjustment);
 		
@@ -1638,7 +1667,7 @@ static void quiver_icon_view_scroll_to_cell_smooth(QuiverIconView *iconview, gul
 
 	iconview->priv->smooth_scroll_cell = cell;
 
-	iconview->priv->timeout_id_smooth_scroll = g_timeout_add(30,quiver_icon_view_timeout_smooth_scroll,iconview);
+	iconview->priv->timeout_id_smooth_scroll = g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll,iconview);
 }
 
 static gboolean 
@@ -1721,6 +1750,82 @@ quiver_icon_view_timeout_smooth_scroll(gpointer data)
 	gdk_threads_leave();
 	
 	return TRUE;
+}
+
+static gboolean
+quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
+{
+	QuiverIconView *iconview = (QuiverIconView*)data;
+
+	gdouble divider = 1.2; 	
+	gdouble timeout_secs = SMOOTH_SCROLL_TIMEOUT / 1000.;
+
+	gboolean hdone = FALSE;
+	gboolean vdone = FALSE;
+
+	gdk_threads_enter();	
+	
+	gint hdistance = (gint)(timeout_secs * iconview->priv->hvelocity);
+	
+	iconview->priv->hvelocity /= divider;
+	if (0 == hdistance || 0 == iconview->priv->hvelocity)
+	{
+		iconview->priv->hvelocity = 0;
+		hdone = TRUE;
+	}
+	else
+	{
+	
+		gint old_hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
+		gint hadjust = old_hadjust;
+		hadjust = MAX (0,hadjust - hdistance);
+		hadjust = MIN (hadjust,iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size);
+		if (old_hadjust == hadjust)
+		{
+			iconview->priv->hvelocity = 0;
+			hdone = TRUE;
+		}
+		else
+		{
+			gtk_adjustment_set_value(iconview->priv->hadjustment,hadjust);
+		}
+	}
+	
+	gint vdistance = (gint)(timeout_secs * iconview->priv->vvelocity);
+	
+	iconview->priv->vvelocity /= divider;
+	if (0 == vdistance || 0 == iconview->priv->vvelocity)
+	{
+		iconview->priv->vvelocity = 0;
+		vdone = TRUE;
+	}
+	else
+	{
+	
+		gint old_vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
+		gint vadjust = old_vadjust;
+		vadjust = MAX (0,vadjust - vdistance);
+		vadjust = MIN (vadjust,iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size);
+		if (old_vadjust == vadjust)
+		{
+			iconview->priv->vvelocity = 0;
+			vdone = TRUE;
+		}
+		else
+		{
+			gtk_adjustment_set_value(iconview->priv->vadjustment,vadjust);
+		}
+	}
+	
+	
+	if (hdone && vdone)
+	{
+		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
+	
+	gdk_threads_leave();
+	
+	return !(hdone && vdone);
 }
 
 static void
