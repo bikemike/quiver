@@ -679,7 +679,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
     g_signal_connect (G_OBJECT (m_pImageView), "reload",
     			G_CALLBACK (browser_imageview_reload), this);
 
-quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 #ifdef QUIVER_MAEMO
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 #endif
