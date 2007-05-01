@@ -405,7 +405,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_OPEN_FOLDER                            "FileOpenFolder"
 #define ACTION_QUIVER_SAVE                                   "Save"
 #define ACTION_QUIVER_SAVE_AS                                "SaveAs"
-#define ACTION_QUIVER_QUIT                                   "Quit"
+#define ACTION_QUIVER_CLOSE                                  "Close"
 #define ACTION_QUIVER_PREFERENCES                            "Preferences"
 #define ACTION_QUIVER_VIEW_MENUBAR                           "ViewMenubar"
 #define ACTION_QUIVER_VIEW_TOOLBAR_MAIN                      "ViewToolbarMain"
@@ -423,9 +423,9 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
 #define ACTION_QUIVER_ESCAPE                                 "QuiverEscape"
-#define ACTION_QUIVER_QUIT_2                                 ACTION_QUIVER_QUIT"_2"
-#define ACTION_QUIVER_QUIT_3                                 ACTION_QUIVER_QUIT"_3"
-#define ACTION_QUIVER_QUIT_4                                 ACTION_QUIVER_QUIT"_4"
+#define ACTION_QUIVER_CLOSE_2                                ACTION_QUIVER_CLOSE"_2"
+#define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
+#define ACTION_QUIVER_CLOSE_4                                ACTION_QUIVER_CLOSE"_4"
 
 #ifdef QUIVER_MAEMO
 #define ACTION_QUIVER_UI_MODE_SWITCH_MAEMO                   "UIModeSwitch_MAEMO"
@@ -441,18 +441,24 @@ char * quiver_ui_main =
 "	<menubar name='MenubarMain'>"
 #endif
 "		<menu action='MenuFile'>"
+#ifdef FIXME_DISABLED
 "			<menuitem action='"ACTION_QUIVER_OPEN"'/>"
 "			<menuitem action='"ACTION_QUIVER_OPEN_FOLDER"'/>"
+#endif
 "			<placeholder action='FileOpenItems' />"
 "			<separator/>"
+#ifndef QUIVER_MAEMO // FIXME - fix saving for maemo
 "			<menuitem action='"ACTION_QUIVER_SAVE"'/>"
+#endif
 #ifdef FIXME_DISABLED
 "			<menuitem action='"ACTION_QUIVER_SAVE_AS"'/>"
 #endif
 "			<separator/>"
 "			<placeholder action='FileMenuAdditions' />"
 "			<separator/>"
-"			<menuitem action='"ACTION_QUIVER_QUIT"'/>"
+#ifndef QUIVER_MAEMO
+"			<menuitem action='"ACTION_QUIVER_CLOSE"'/>"
+#endif
 "		</menu>"
 "		<menu action='MenuEdit'>"
 "			<placeholder name='UndoRedo'/>"
@@ -467,7 +473,9 @@ char * quiver_ui_main =
 "		</menu>"
 "		<menu action='MenuView'>"
 "			<placeholder name='UIModeItems'/>"
+#ifndef QUIVER_MAEMO
 "			<menuitem action='"ACTION_QUIVER_VIEW_MENUBAR"'/>"
+#endif
 "			<menuitem action='"ACTION_QUIVER_VIEW_TOOLBAR_MAIN"'/>"
 "			<menuitem action='"ACTION_QUIVER_VIEW_PROPERTIES"'/>"
 "		 	<menuitem action='"ACTION_QUIVER_VIEW_STATUSBAR"'/>"
@@ -493,7 +501,7 @@ char * quiver_ui_main =
 "			<placeholder name='FolderNavigation'/>"
 "			<separator/>"
 "		</menu>"
-#ifdef UNDEFINED
+#ifdef FIXME_DISABLED
 // disable bookmarks menu until implemented
 "		<menu action='MenuBookmarks'>"
 "			<menuitem action='"ACTION_QUIVER_BOOKMARKS_ADD"'/>"
@@ -501,7 +509,9 @@ char * quiver_ui_main =
 "		</menu>"
 #endif
 "		<menu action='MenuTools'>"
+#ifdef FIXME_DISABLED
 "			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
+#endif
 "			<separator/>"
 "			<placeholder name='ToolsExternal'/>"
 "		</menu>"
@@ -511,6 +521,7 @@ char * quiver_ui_main =
 "			<menuitem action='"ACTION_QUIVER_ABOUT"'/>"
 "		</menu>"
 #ifdef QUIVER_MAEMO
+"		<menuitem action='"ACTION_QUIVER_CLOSE"'/>"
 "	</popup>"
 #else
 "	</menubar>"
@@ -532,9 +543,9 @@ char * quiver_ui_main =
 "	</toolbar>"
 "	<popup name='ContextMenu'>"
 "	</popup>"
-"	<accelerator action='"ACTION_QUIVER_QUIT_2"'/>"
-"	<accelerator action='"ACTION_QUIVER_QUIT_3"'/>"
-"	<accelerator action='"ACTION_QUIVER_QUIT_4"'/>"
+"	<accelerator action='"ACTION_QUIVER_CLOSE_2"'/>"
+"	<accelerator action='"ACTION_QUIVER_CLOSE_3"'/>"
+"	<accelerator action='"ACTION_QUIVER_CLOSE_4"'/>"
 "	<accelerator action='"ACTION_QUIVER_ESCAPE"'/>"
 #ifdef QUIVER_MAEMO
 "	<accelerator action='"ACTION_QUIVER_FULLSCREEN_MAEMO"'/>"
@@ -665,10 +676,10 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ ACTION_QUIVER_SAVE, GTK_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_SAVE_AS, GTK_STOCK_SAVE, "Save _As", "", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
 	
-	{ ACTION_QUIVER_QUIT, GTK_STOCK_QUIT, "_Quit", "<Alt>F4", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_QUIT_2, GTK_STOCK_QUIT, "_Quit", "q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_QUIT_3, GTK_STOCK_QUIT, "_Quit", "<Control>q", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
-	{ ACTION_QUIVER_QUIT_4, GTK_STOCK_QUIT, "_Quit", "<Control>w", "Quit quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_CLOSE, GTK_STOCK_QUIT, "_Close", "<Alt>F4", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_CLOSE_2, GTK_STOCK_QUIT, "_Close", "q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_CLOSE_3, GTK_STOCK_QUIT, "_Close", "<Control>q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_CLOSE_4, GTK_STOCK_QUIT, "_Close", "<Control>w", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
 	{ ACTION_QUIVER_ESCAPE, NULL, NULL, "Escape", NULL, G_CALLBACK( quiver_action_handler_cb )},	
 
 	{ ACTION_QUIVER_PREFERENCES, GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
@@ -888,6 +899,8 @@ void Quiver::ImageChanged()
 static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+
 	gboolean bFullscreen = FALSE;
 	//cout << "window state event" << endl;
 	pQuiverImpl->m_WindowState = event->new_window_state;
@@ -908,14 +921,26 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 	{
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 		// show widgets
-		gtk_widget_show(pQuiverImpl->m_pToolbar);
-		gtk_widget_show(pQuiverImpl->m_pMenubar);
-#ifndef QUIVER_MAEMO		
-		//FIXME: must have preferences for statusbar show/hide
-		gtk_widget_show(pQuiverImpl->m_StatusbarPtr->GetWidget());
+		bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW);
+		if (bShow)
+		{
+			gtk_widget_show(pQuiverImpl->m_pToolbar);
+		}
+		
+		bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW);
+		if (bShow)
+		{
+			gtk_widget_show(pQuiverImpl->m_pMenubar);
+		}
+		
+		bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW);
+		if (bShow)
+		{
+			gtk_widget_show(pQuiverImpl->m_StatusbarPtr->GetWidget());
+		}
+#ifdef QUIVER_MAEMO
 		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
 #endif
-		//m_Viewer.ShowBorder();
 	}
 	
 	GtkAction * action = QuiverUtils::GetAction(pQuiverImpl->m_pUIManager,ACTION_QUIVER_FULLSCREEN);
@@ -1209,16 +1234,12 @@ void Quiver::Init()
 	
 	bool prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 
-	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
-
+	GtkAction *action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
 	if (prefs_show)
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_pNBProperties);
 	}
-
-	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(actionViewProperties), prefs_show ? TRUE : FALSE);
-
-
+	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
 
 	
 	//FIXME: temp notebook stuff
@@ -1230,10 +1251,51 @@ void Quiver::Init()
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties));
 	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),TRUE);
 	
+	// statusbar
 	statusbar =  m_QuiverImplPtr->m_StatusbarPtr->GetWidget();
+	gtk_widget_show_all(statusbar);
+	gtk_widget_hide(statusbar);
+	gtk_widget_set_no_show_all(statusbar,TRUE);
+	
+
+#ifdef QUIVER_MAEMO 
+	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW, false);
+#else
+	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW, true);
+#endif
+	if (prefs_show)
+	{
+		gtk_widget_show(statusbar);
+	}
+	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_STATUSBAR);
+	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
+
+	// menubar
 	m_QuiverImplPtr->m_pMenubar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/MenubarMain");
+	gtk_widget_set_no_show_all(m_QuiverImplPtr->m_pMenubar,TRUE);
+
+	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW, true);
+	if (prefs_show)
+	{
+		gtk_widget_show(m_QuiverImplPtr->m_pMenubar);
+	}
+	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_MENUBAR);
+	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
+	
+	// toolbar
 	m_QuiverImplPtr->m_pToolbar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain");
-	GtkWidget *context_menu = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ContextMenu");
+	gtk_widget_set_no_show_all(m_QuiverImplPtr->m_pToolbar,TRUE);
+
+	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW, true);
+	if (prefs_show)
+	{
+		gtk_widget_show(m_QuiverImplPtr->m_pToolbar);
+	}
+	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
+	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
+
+	// FIXME: context menu
+	// GtkWidget *context_menu = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ContextMenu");
 	
 	gtk_widget_set_name(m_QuiverImplPtr->m_pToolbar  ,"Quiver m_QuiverImplPtr->m_pToolbar");
 	
@@ -1316,11 +1378,6 @@ void Quiver::Init()
 	
 	gtk_widget_show_all (GTK_WIDGET(m_QuiverImplPtr->m_pQuiverWindow));
 
-	
-#ifdef QUIVER_MAEMO
-	gtk_widget_hide(statusbar);
-#endif
-	
 	//test adding a custom item to the menu
 	m_QuiverImplPtr->LoadExternalToolMenuItems();
 
@@ -1375,9 +1432,6 @@ void Quiver::SaveSettings()
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP,m_QuiverImplPtr->m_iAppY);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH,m_QuiverImplPtr->m_iAppWidth);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT,m_QuiverImplPtr->m_iAppHeight);
-
-	GtkAction *actionViewProperties = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
-
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS,gtk_paned_get_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea)));
 }
 
@@ -2020,6 +2074,9 @@ void Quiver::OnSlideShow(bool bStart)
 
 void Quiver::OnShowToolbar(bool bShow)
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW, bShow);
+	
 	if (bShow)
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_pToolbar);
@@ -2032,6 +2089,9 @@ void Quiver::OnShowToolbar(bool bShow)
 
 void Quiver::OnShowStatusbar(bool bShow)
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW, bShow);
+	
 	if (bShow)
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_StatusbarPtr->GetWidget());
@@ -2044,6 +2104,8 @@ void Quiver::OnShowStatusbar(bool bShow)
 
 void Quiver::OnShowMenubar(bool bShow)
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW, bShow);
 	if (bShow)
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_pMenubar);
@@ -2071,10 +2133,10 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 
 	//printf("quiver_action_handler_cb: %s\n",szAction);
 
-	if (0 == strcmp(szAction,ACTION_QUIVER_QUIT) 
-	    || 0 == strcmp(szAction,ACTION_QUIVER_QUIT_2) 
-	    || 0 == strcmp(szAction,ACTION_QUIVER_QUIT_3) 
-	    || 0 == strcmp(szAction,ACTION_QUIVER_QUIT_4))
+	if (0 == strcmp(szAction,ACTION_QUIVER_CLOSE) 
+	    || 0 == strcmp(szAction,ACTION_QUIVER_CLOSE_2) 
+	    || 0 == strcmp(szAction,ACTION_QUIVER_CLOSE_3) 
+	    || 0 == strcmp(szAction,ACTION_QUIVER_CLOSE_4))
 	{
 		pQuiver->OnQuit();
 	}

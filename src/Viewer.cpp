@@ -130,7 +130,9 @@ static char *ui_viewer =
 #endif
 "		<menu action='MenuEdit'>"
 "			<placeholder name='CopyPaste'>"
+#ifdef FIXME_DISABLED
 "				<menuitem action='"ACTION_VIEWER_CUT"'/>"
+#endif
 "				<menuitem action='"ACTION_VIEWER_COPY"'/>"
 "			</placeholder>"
 "			<placeholder name='Trash'>"
@@ -316,12 +318,16 @@ public:
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
+		gdk_threads_enter();
 		quiver_image_view_set_pixbuf(m_pImageView,pixbuf);
+		gdk_threads_leave();
 	};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
+		gdk_threads_enter();
 		gboolean bReset = FALSE;
 		if (bResetViewMode) bReset = TRUE;
 		quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
+		gdk_threads_leave();
 	};
 	
 	virtual void SignalBytesRead(long bytes_read,long total){};
@@ -1331,7 +1337,11 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_ThumbnailCache(100),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
+#ifdef QUIVER_MAEMO
+	m_ThumbnailLoader(this,1)
+#else
 	m_ThumbnailLoader(this,2)
+#endif
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -1749,7 +1759,7 @@ static gboolean timeout_advance_slideshow (gpointer data)
 void Viewer::SlideShowStart()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,true);
+	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,false);
 	bool bHideFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, false);
 	
 	if (bTransition)
@@ -2077,7 +2087,8 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 	guint width, height;
 	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),&width,&height);
 
-	if (ulIndex < m_pViewerImpl->m_ImageList.GetSize())
+	if (GTK_WIDGET_MAPPED(m_pViewerImpl->m_pIconView) &&
+		ulIndex < m_pViewerImpl->m_ImageList.GetSize())
 	{
 		QuiverFile f = m_pViewerImpl->m_ImageList[ulIndex];
 	

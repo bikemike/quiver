@@ -344,6 +344,7 @@ bool QuiverFile::QuiverFileImpl::HasThumbnail(int iSize)
 
 GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 {
+	//Timer t("QuiverFileImpl::GetThumbnail");
 	GnomeVFSFileInfo* vfsFileInfo = GetFileInfo();
 	
 	gboolean save_thumbnail_to_cache = TRUE;
@@ -373,7 +374,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	
 	// try to load the thumb from thumb_path
 	GError *tmp_error;
-	gchar buffer[8192];
+	gchar buffer[65536];
 	GnomeVFSHandle   *handle;
 	GnomeVFSResult    result;
 	GnomeVFSFileSize  bytes_read;

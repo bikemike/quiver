@@ -98,12 +98,13 @@ public:
 	std::list<std::string> GetSelectedFolders() const;
 
 // member variables
-	GtkWidget*      m_pWidget;
-	FolderTree*     m_pFolderTree;
-	GHashTable*     m_pHashRootNodeOrder;
-	GtkTreeIter*    m_pTreeIterScrollTo;
-	std::set<guint> m_setFolderThreads;
-	guint           m_iTimeoutScrollToCell;
+	GtkWidget*       m_pWidget;
+	GtkCellRenderer* m_pCellRendererPixbuf;
+	FolderTree*      m_pFolderTree;
+	GHashTable*      m_pHashRootNodeOrder;
+	GtkTreeIter*     m_pTreeIterScrollTo;
+	std::set<guint>  m_setFolderThreads;
+	guint            m_iTimeoutScrollToCell;
 };
 
 
@@ -438,7 +439,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 #endif
 	//gtk_tree_view_set_enable_tree_lines(GTK_TREE_VIEW(m_pWidget),TRUE);
 	//gtk_tree_view_set_grid_lines(GTK_TREE_VIEW(m_pWidget),GTK_TREE_VIEW_GRID_LINES_BOTH);
-	gtk_widget_show(m_pWidget);
+	//gtk_widget_show(m_pWidget);
 	
 	
 	GdkColor highlight_color;
@@ -469,17 +470,17 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	column = gtk_tree_view_column_new();
 	gtk_tree_view_column_set_title(column,"Folder");
 
-	renderer = gtk_cell_renderer_pixbuf_new ();
-	g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-	g_object_set (G_OBJECT (renderer),  "cell-background-gdk", &highlight_color,  NULL);    
+	m_pCellRendererPixbuf = gtk_cell_renderer_pixbuf_new ();
+	g_object_set (G_OBJECT (m_pCellRendererPixbuf),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
+	g_object_set (G_OBJECT (m_pCellRendererPixbuf),  "cell-background-gdk", &highlight_color,  NULL);    
 
-	gtk_tree_view_column_pack_start (column,renderer,FALSE);
+	gtk_tree_view_column_pack_start (column,m_pCellRendererPixbuf,FALSE);
 	gtk_tree_view_column_set_attributes(column,
-	  renderer,
+	  m_pCellRendererPixbuf,
 	  "icon_name", FILE_TREE_COLUMN_ICON,
   	  "cell-background-set",FILE_TREE_COLUMN_CHECKBOX,
 	NULL);
-	g_object_set (G_OBJECT (renderer),  "stock-size", 3,  NULL);
+	g_object_set (G_OBJECT (m_pCellRendererPixbuf),  "stock-size", 3,  NULL);
 
 	renderer = gtk_cell_renderer_text_new ();
 	g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
@@ -848,7 +849,6 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 	{
 		GtkTreePath *path;
 		GtkTreeViewColumn *column;
-
 		if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(treeview),
 	                         (gint) event->x, 
 	                         (gint) event->y,
@@ -856,7 +856,10 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 		{
 			const gchar *column_name;
 			column_name = gtk_tree_view_column_get_title(column);
-
+#ifdef QUIVER_MAEMO
+			gint start_pos = 0;
+			gint width = 0;
+#endif
 			if (0 == strcmp(QUIVER_TREE_COLUMN_TOGGLE,column_name))
 			{
 				if (event->type != GDK_2BUTTON_PRESS && event->type != GDK_3BUTTON_PRESS)
@@ -870,6 +873,38 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 					return TRUE;
 				}
 			}
+#ifdef QUIVER_MAEMO
+			else if ( gtk_tree_view_column_cell_get_position(column,
+				pFolderTreeImpl->m_pCellRendererPixbuf,&start_pos, &width) )
+			{
+				GdkRectangle rect = {0};
+				gtk_tree_view_get_cell_area         (GTK_TREE_VIEW(treeview),
+                                                         path,
+                                                         column,
+                                                         &rect);
+				gint cell_x = (gint)(event->x - rect.x);
+				if (cell_x >= start_pos && cell_x <= start_pos + width)
+				{
+					// if expandable , expand or collapse it
+					GtkTreeIter iter = {0};
+					if ( gtk_tree_model_get_iter (model, &iter, path) )
+					{
+						if (0 < gtk_tree_model_iter_n_children  (model, &iter) )
+						{
+							if ( gtk_tree_view_row_expanded(GTK_TREE_VIEW(treeview),path) )
+							{
+								gtk_tree_view_collapse_row(GTK_TREE_VIEW(treeview),path);
+							}
+							else
+							{
+								gtk_tree_view_expand_row(GTK_TREE_VIEW(treeview),path,FALSE);
+							}
+							return TRUE;
+						}
+					}
+				} 
+			}
+#endif
 		}
 	}
 

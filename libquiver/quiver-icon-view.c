@@ -4,9 +4,10 @@
 #include "quiver-icon-view.h"
 #include "quiver-marshallers.h"
 #include <math.h>
+#include <stdlib.h>
 #include <sys/time.h>
 #include "quiver-pixbuf-utils.h"
-
+#include <glib.h>
 //#include "gtkintl.h"
 
 
@@ -57,6 +58,12 @@ enum {
 */
 };
 
+typedef struct _VelocityTimeStruct 
+{
+	gint hvelocity;
+	gint vvelocity;
+	gdouble time;
+} VelocityTimeStruct;
 
 struct _QuiverIconViewPrivate
 {
@@ -91,8 +98,7 @@ struct _QuiverIconViewPrivate
 	guint timeout_id_rubberband_scroll;
 
 	struct timeval last_motion_time;
-	gint hvelocity;
-	gint vvelocity;
+	GList* velocity_time_list;
 	 
 	gulong cursor_cell;
 	gulong prelight_cell;
@@ -418,8 +424,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	
 	iconview->priv->mouse_button_is_down = FALSE;
 
-	iconview->priv->hvelocity = 0.;
-	iconview->priv->vvelocity = 0.;
+	iconview->priv->velocity_time_list = NULL;
 
 	iconview->priv->cursor_cell = G_MAXULONG;
 	iconview->priv->prelight_cell = G_MAXULONG;
@@ -477,6 +482,12 @@ quiver_icon_view_finalize(GObject *object)
 		iconview->priv->timeout_id_rubberband_scroll = 0;
 	}
 
+	if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
+	{
+		g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
+		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
+
 	gint i,j;
 	for (i = 0;i<5;i++)
 	{
@@ -489,7 +500,11 @@ quiver_icon_view_finalize(GObject *object)
 			}
 		}
 	}
-
+	
+	g_list_foreach(iconview->priv->velocity_time_list, (GFunc)g_free, NULL);
+	g_list_free(iconview->priv->velocity_time_list);
+	iconview->priv->velocity_time_list = NULL;
+	
 	parent = g_type_class_peek_parent(klass);
 	if (parent)
 	{
@@ -1072,10 +1087,11 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 	iconview->priv->last_x = x;
 	iconview->priv->last_y = y;
 	
-	iconview->priv->hvelocity = 0;
-	iconview->priv->vvelocity = 0;
-	
 	gettimeofday(&iconview->priv->last_motion_time,NULL);
+	
+	g_list_foreach(iconview->priv->velocity_time_list, (GFunc)g_free, NULL);
+	g_list_free(iconview->priv->velocity_time_list);
+	iconview->priv->velocity_time_list = NULL;
 
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
@@ -1104,6 +1120,12 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 		else if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
 		{
 			iconview->priv->drag_mode_start = TRUE;
+			if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
+			{
+				g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
+				iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+			}
+			gettimeofday(&iconview->priv->last_motion_time, NULL);
 		}
 		else if (cell == G_MAXULONG &&
 		    QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
@@ -1180,13 +1202,9 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 				gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
 				gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
 				
-				if (0.1 > new_time - old_time)
+				if ( 3 == g_list_length(iconview->priv->velocity_time_list) &&
+					(0.1 > new_time - old_time) )
 				{
-					// continue scrolling
-					if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
-					{
-						g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
-					}
 					iconview->priv->timeout_id_smooth_scroll_slowdown = 
 						g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll_slowdown,iconview);
 				}
@@ -1347,12 +1365,30 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
 		
 		// velocity pixels per second
-		iconview->priv->hvelocity = (gint)((x - iconview->priv->last_x) / (new_time - old_time));
-		iconview->priv->vvelocity =  (gint)((y - iconview->priv->last_y) / (new_time - old_time));
+		// max velocity should be around +/-12000 pps
+#define MAX_VELOCITY 12000
+		VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
+		
+		vt->time = new_time - old_time;
+		vt->hvelocity = (gint)((x - iconview->priv->last_x) / vt->time);
+		vt->hvelocity = MIN(MAX_VELOCITY,vt->hvelocity);
+		vt->hvelocity = MAX(-MAX_VELOCITY,vt->hvelocity);
+		
+		vt->vvelocity =  (gint)((y - iconview->priv->last_y) / vt->time);
+		vt->vvelocity = MIN(MAX_VELOCITY,vt->vvelocity);
+		vt->vvelocity = MAX(-MAX_VELOCITY,vt->vvelocity);		
+
+		if ( 3 == g_list_length(iconview->priv->velocity_time_list) )
+		{
+			GList* last = g_list_last(iconview->priv->velocity_time_list);
+			iconview->priv->velocity_time_list = 
+				g_list_remove_link(iconview->priv->velocity_time_list,last);	
+		}
+		iconview->priv->velocity_time_list = 
+			g_list_prepend(iconview->priv->velocity_time_list, vt);
+		
 		
 		iconview->priv->last_motion_time = new_motion_time;
-		iconview->priv->last_x = x;
-		iconview->priv->last_y = y;
 		
 		gdouble hadjust = gtk_adjustment_get_value(iconview->priv->hadjustment);
 		gdouble vadjust = gtk_adjustment_get_value(iconview->priv->vadjustment);
@@ -1370,6 +1406,10 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 		iconview->priv->rubberband_x1 = x + hadjust;
 		iconview->priv->rubberband_y1 = y + vadjust;
 	}
+	
+	iconview->priv->last_x = x;
+	iconview->priv->last_y = y;
+		
 	return FALSE;
 
 }
@@ -1763,14 +1803,52 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 	gboolean hdone = FALSE;
 	gboolean vdone = FALSE;
 
-	gdk_threads_enter();	
+	gdk_threads_enter();
 	
-	gint hdistance = (gint)(timeout_secs * iconview->priv->hvelocity);
-	
-	iconview->priv->hvelocity /= divider;
-	if (0 == hdistance || 0 == iconview->priv->hvelocity)
+	GList* list_itr = g_list_first(iconview->priv->velocity_time_list);
+	gint hvelocity_avg = 0;
+	gint vvelocity_avg = 0;
+	gdouble total_time = 0; 
+	if (NULL != list_itr)
 	{
-		iconview->priv->hvelocity = 0;
+		do
+		{
+			VelocityTimeStruct* vt = list_itr->data;
+			hvelocity_avg += (gint)(vt->hvelocity * vt->time);
+			vvelocity_avg += (gint)(vt->vvelocity * vt->time);
+			total_time += vt->time;
+			list_itr = g_list_next(list_itr);
+		} while (NULL !=list_itr);
+	}
+	
+	hvelocity_avg = (gint)(hvelocity_avg/total_time);
+	vvelocity_avg = (gint)(vvelocity_avg/total_time);
+
+
+	if (1 != g_list_length(iconview->priv->velocity_time_list) )
+	{
+		g_list_foreach(iconview->priv->velocity_time_list, (GFunc)g_free, NULL);
+		g_list_free(iconview->priv->velocity_time_list);
+		iconview->priv->velocity_time_list = NULL;
+		
+		VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
+		vt->hvelocity = hvelocity_avg;
+		vt->vvelocity = vvelocity_avg;
+		vt->time = total_time;
+		
+		iconview->priv->velocity_time_list = 
+			g_list_append(iconview->priv->velocity_time_list,vt);
+	}
+	GList* first = g_list_first(iconview->priv->velocity_time_list);
+	
+	VelocityTimeStruct* vt = (VelocityTimeStruct*)first->data;
+	vt->hvelocity = (gint)(hvelocity_avg/divider);
+	vt->vvelocity = (gint)(vvelocity_avg/divider);
+	
+	gint hdistance = (gint)(timeout_secs * hvelocity_avg);
+	
+	if (0 == hdistance || 0 == hvelocity_avg)
+	{
 		hdone = TRUE;
 	}
 	else
@@ -1782,7 +1860,6 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 		hadjust = MIN (hadjust,iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size);
 		if (old_hadjust == hadjust)
 		{
-			iconview->priv->hvelocity = 0;
 			hdone = TRUE;
 		}
 		else
@@ -1791,12 +1868,10 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 		}
 	}
 	
-	gint vdistance = (gint)(timeout_secs * iconview->priv->vvelocity);
-	
-	iconview->priv->vvelocity /= divider;
-	if (0 == vdistance || 0 == iconview->priv->vvelocity)
+	gint vdistance = (gint)(timeout_secs * vvelocity_avg);
+
+	if (0 == vdistance || 0 == vvelocity_avg)
 	{
-		iconview->priv->vvelocity = 0;
 		vdone = TRUE;
 	}
 	else
@@ -1808,7 +1883,6 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 		vadjust = MIN (vadjust,iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size);
 		if (old_vadjust == vadjust)
 		{
-			iconview->priv->vvelocity = 0;
 			vdone = TRUE;
 		}
 		else

@@ -37,6 +37,15 @@ using namespace std;
 #endif
 
 
+#if (GLIB_MAJOR_VERSION < 2) || (GLIB_MAJOR_VERSION == 2 && GLIB_MINOR_VERSION < 10)
+#define g_object_ref_sink(o) G_STMT_START{	\
+	  g_object_ref (o);				\
+	  gtk_object_sink ((GtkObject*)o);		\
+}G_STMT_END
+#endif
+
+
+
 // ============================================================================
 // Browser::BrowserImpl: private implementation (hidden from header file)
 // ============================================================================
@@ -58,12 +67,16 @@ public:
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
+			gdk_threads_enter();
 			quiver_image_view_set_pixbuf(m_pImageView,pixbuf);
+			gdk_threads_leave();
 		};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
+		gdk_threads_enter();
 		gboolean bReset = FALSE;
 		if (bResetViewMode) bReset = TRUE;
 		quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
+		gdk_threads_leave();
 	};
 	virtual void SignalBytesRead(long bytes_read,long total){};
 private:
@@ -102,7 +115,9 @@ public:
 	
 	//GtkWidget *hpaned;
 	GtkWidget *vpaned;
-	GtkWidget *notebook;
+	GtkWidget *m_pNotebook;
+	GtkWidget *m_pSWFolderTree;
+	
 	GtkWidget *m_pImageView;
 
 	GtkWidget *m_pLocationEntry;
@@ -208,6 +223,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data);
 #define ACTION_BROWSER_TRASH                              "BrowserTrash"
 #define ACTION_BROWSER_RELOAD                             "BrowserReload"
 #define ACTION_BROWSER_VIEW_PREVIEW                       "BrowserViewPreview"
+#define ACTION_BROWSER_VIEW_FOLDERTREE                    "BrowserViewFolderTree"
 #define ACTION_BROWSER_ZOOM_IN                            "BrowserZoomIn"
 #define ACTION_BROWSER_ZOOM_OUT                           "BrowserZoomOut"
 
@@ -230,10 +246,11 @@ static char *ui_browser =
 "		</menu>"
 "		<menu action='MenuEdit'>"
 "			<placeholder name='CopyPaste'>"
+#ifdef FIXME_DISABLED
 "				<menuitem action='"ACTION_BROWSER_CUT"'/>"
+#endif
 "				<menuitem action='"ACTION_BROWSER_COPY"'/>"
-#ifdef UNDEFINED
-// disable until implemented
+#ifdef FIXME_DISABLED
 "				<menuitem action='"ACTION_BROWSER_PASTE"'/>"
 #endif
 "			</placeholder>"
@@ -246,6 +263,7 @@ static char *ui_browser =
 "		</menu>"
 "		<menu action='MenuView'>"
 "			<placeholder name='UIItems'>"
+"				<menuitem action='"ACTION_BROWSER_VIEW_FOLDERTREE"'/>"
 "				<menuitem action='"ACTION_BROWSER_VIEW_PREVIEW"'/>"
 "			</placeholder>"
 "			<menuitem action='"ACTION_BROWSER_RELOAD"'/>"
@@ -272,6 +290,7 @@ static char *ui_browser =
 "</ui>";
 
 static  GtkToggleActionEntry action_entries_toggle[] = {
+	{ ACTION_BROWSER_VIEW_FOLDERTREE, NULL, "Folder Tree", "<Control><Shift>F", "Show/Hide Folder Tree", G_CALLBACK(browser_action_handler_cb),TRUE},
 	{ ACTION_BROWSER_VIEW_PREVIEW, GTK_STOCK_PROPERTIES, "Preview", "<Control><Shift>p", "Show/Hide Image Preview", G_CALLBACK(browser_action_handler_cb),TRUE},
 };
 
@@ -436,13 +455,67 @@ static void pane_size_allocate (GtkWidget* widget, GtkAllocation *allocation, gp
 	} 
 }
 
+/*
+	bool visible = false;
+	GList* vchildren = gtk_container_get_children(GTK_CONTAINER(pBrowserImpl->vpaned));
+	GList* vchild = vchildren;
+	while (NULL != vchild)
+	{
+		if (GTK_WIDGET_VISIBLE(GTK_WIDGET(vchild->data)))
+		{
+			visible = true;
+			break;
+		}
+		vchild  = g_list_next(vchild);
+	}
+	if (NULL != vchildren)
+	{
+		g_list_free(vchildren);
+	}
+	if (!visible)
+	{
+		gtk_widget_hide(pBrowserImpl->vpaned);Initialize
+	}
+*/
+
+void notebook_page_added  (GtkNotebook *notebook, 
+	GtkWidget *child, guint page_num, gpointer user_data)
+{
+	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
+
+	gtk_notebook_set_show_tabs(notebook, 1 > gtk_notebook_get_n_pages(notebook));
+	gtk_widget_show(GTK_WIDGET(notebook));
+
+	gtk_widget_show(pBrowserImpl->vpaned);
+}
+
+void notebook_page_removed  (GtkNotebook *notebook, 
+	GtkWidget *child, guint page_num, gpointer     user_data)
+{
+	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
+	
+	gtk_notebook_set_show_tabs(notebook, 1 <= gtk_notebook_get_n_pages(notebook));
+	if (0 == gtk_notebook_get_n_pages(notebook))
+	{
+		gtk_widget_hide(GTK_WIDGET(notebook));
+		if (!GTK_WIDGET_VISIBLE(pBrowserImpl->m_pImageView))
+		{
+			gtk_widget_hide(pBrowserImpl->vpaned);
+		}
+	}
+}
+
 
 Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
                                        m_IconCache(100),
                                        m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
                                        m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
                                        m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
+#ifdef QUIVER_MAEMO
+                                       m_ThumbnailLoader(this,2)
+#else
                                        m_ThumbnailLoader(this,4)
+#endif
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -468,7 +541,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	 *       -> icon view
 	 */
 	GtkWidget *hpaned;
-	GtkWidget *scrolled_window, *sw_folders;
+	GtkWidget *scrolled_window;
 	GtkWidget *hbox,*vbox;
 	
 
@@ -503,7 +576,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	
 	hpaned = gtk_hpaned_new();
 	vpaned = gtk_vpaned_new();
-	notebook = gtk_notebook_new();
+	m_pNotebook = gtk_notebook_new();
+	
+	gtk_signal_connect (GTK_OBJECT (m_pNotebook), "page-added",
+	      GTK_SIGNAL_FUNC (notebook_page_added), this);
+	gtk_signal_connect (GTK_OBJECT (m_pNotebook), "page-removed",
+	      GTK_SIGNAL_FUNC (notebook_page_removed), this);
 	
 	m_pIconView = quiver_icon_view_new();
 	m_pImageView = quiver_image_view_new();
@@ -511,9 +589,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_widget_set_no_show_all(m_pImageView, TRUE);
 
 #ifdef QUIVER_MAEMO
-	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,false);
+	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
 #else
-	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,true);
+	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
 #endif
 	if (bShowPreview)
 	{
@@ -535,7 +613,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 #endif
 	gtk_box_pack_start (GTK_BOX (vbox), scrolled_window, TRUE, TRUE, 0);
 	
-	gtk_paned_pack1(GTK_PANED(vpaned),notebook,TRUE,TRUE);
+	gtk_paned_pack1(GTK_PANED(vpaned),m_pNotebook,TRUE,TRUE);
 	gtk_paned_pack2(GTK_PANED(vpaned),m_pImageView,FALSE,FALSE);
 	
 	gtk_paned_pack1(GTK_PANED(hpaned),vpaned,FALSE,FALSE);
@@ -562,13 +640,31 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	
 	m_pBrowserWidget = hpaned;
 	
-	sw_folders = gtk_scrolled_window_new(NULL,NULL);
-	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_folders),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
-	gtk_container_add(GTK_CONTAINER(sw_folders),m_FolderTree.GetWidget());
-	gtk_notebook_append_page(GTK_NOTEBOOK(notebook), sw_folders,gtk_label_new("Folders"));
+	m_pSWFolderTree = gtk_scrolled_window_new(NULL,NULL);
+	g_object_ref_sink(m_pSWFolderTree);
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pSWFolderTree),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
+	GtkWidget *pFolderTree = m_FolderTree.GetWidget();
+	
+	//gtk_widget_set_no_show_all(pFolderTree, TRUE);
+	gtk_container_add(GTK_CONTAINER(m_pSWFolderTree),pFolderTree);
+	gtk_widget_show_all(m_pSWFolderTree);
+		
+	gtk_widget_show_all(m_pNotebook);
+	gtk_widget_set_no_show_all(m_pNotebook, TRUE);
 
-	gtk_notebook_popup_enable(GTK_NOTEBOOK(notebook));
-	gtk_notebook_set_scrollable (GTK_NOTEBOOK(notebook),TRUE);
+	if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
+	{	
+		gtk_notebook_append_page(GTK_NOTEBOOK(m_pNotebook), m_pSWFolderTree,gtk_label_new("Folders"));	
+	}
+	
+	if (0 == gtk_notebook_get_n_pages(GTK_NOTEBOOK(m_pNotebook)))
+	{
+		gtk_widget_hide(GTK_WIDGET(m_pNotebook));
+	}
+	
+
+	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_pNotebook));
+	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_pNotebook),TRUE);
 
 	
 /*	
@@ -583,7 +679,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
     g_signal_connect (G_OBJECT (m_pImageView), "reload",
     			G_CALLBACK (browser_imageview_reload), this);
 
-
+quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 #ifdef QUIVER_MAEMO
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 #endif
@@ -685,10 +781,12 @@ Browser::BrowserImpl::~BrowserImpl()
 	{
 		g_object_unref(m_pUIManager);
 	}
+	g_object_unref(m_pSWFolderTree);
 }
 
 void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 {
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	GError *tmp_error;
 	tmp_error = NULL;
 	
@@ -716,9 +814,15 @@ void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 	GtkAction* action = QuiverUtils::GetAction(m_pUIManager,ACTION_BROWSER_VIEW_PREVIEW);
 	if (NULL != action)
 	{
-		PreferencesPtr prefsPtr = Preferences::GetInstance();
-		bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE);
+		bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW);
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShowPreview ? TRUE : FALSE);
+	}
+
+	action = QuiverUtils::GetAction(m_pUIManager,ACTION_BROWSER_VIEW_FOLDERTREE);
+	if (NULL != action)
+	{
+		bool bShowFolderTree = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW);
+		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShowFolderTree ? TRUE : FALSE);
 	}
 
 }
@@ -782,9 +886,7 @@ void Browser::BrowserImpl::Show()
 	{
 		SetImageIndex(m_ImageList.GetCurrentIndex(), true);
 	}
-	
 	m_ImageList.UnblockHandler(m_ImageListEventHandlerPtr);
-
 }
 
 void Browser::BrowserImpl::Hide()
@@ -858,7 +960,6 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 			f = m_ImageList.GetCurrent();
 			m_ImageLoader.LoadImageAtSize(f,width,height);
 			
-
 			if (bDirectionForward)
 			{
 				// cache the next image if there is one
@@ -1123,17 +1224,37 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
 		
 	}
+	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_FOLDERTREE))
+	{
+		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
+		{
+			gtk_notebook_prepend_page(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook), pBrowserImpl->m_pSWFolderTree,gtk_label_new("Folders"));
+			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true);
+		}
+		else
+		{
+			gint page_num =  
+				gtk_notebook_page_num(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),pBrowserImpl->m_pSWFolderTree);
+			gtk_notebook_remove_page(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),page_num);
+			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,false);
+		}
+	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_PREVIEW))
 	{
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
 			gtk_widget_show(pBrowserImpl->m_pImageView);	
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,true);
+			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
+			gtk_widget_show(pBrowserImpl->vpaned);
 		}
 		else
 		{
 			gtk_widget_hide(pBrowserImpl->m_pImageView);	
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_HIDE,false);
+			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
+			if (!GTK_WIDGET_VISIBLE(pBrowserImpl->m_pNotebook))
+			{
+				gtk_widget_hide(pBrowserImpl->vpaned);
+			}
 		}
 	}
 #ifdef QUIVER_MAEMO
@@ -1427,7 +1548,8 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(gulong ulIndex, guint uiWidth, guint uiHeight)
 {
 
-	if (ulIndex < m_pBrowserImpl->m_ImageList.GetSize())
+	if (GTK_WIDGET_MAPPED(m_pBrowserImpl->m_pIconView) && 
+		ulIndex < m_pBrowserImpl->m_ImageList.GetSize())
 	{
 		QuiverFile f = m_pBrowserImpl->m_ImageList[ulIndex];
 	

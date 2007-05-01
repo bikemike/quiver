@@ -3,9 +3,9 @@
 // global preferences
 #define QUIVER_PREFS_APP                       "application"
 #define QUIVER_PREFS_APP_PROPS_SHOW            "properties_show"
-#define QUIVER_PREFS_APP_STATUSBAR_HIDE        "hide_statusbar"
-#define QUIVER_PREFS_APP_MENUBAR_HIDE          "hide_menubar"
-#define QUIVER_PREFS_APP_TOOLBAR_HIDE          "hide_toolbar"
+#define QUIVER_PREFS_APP_STATUSBAR_SHOW        "statusbar_show"
+#define QUIVER_PREFS_APP_MENUBAR_SHOW          "menubar_show"
+#define QUIVER_PREFS_APP_TOOLBAR_SHOW          "toolbar_show"
 #define QUIVER_PREFS_APP_PHOTO_LIBRARY         "photo_library"
 
 
@@ -26,8 +26,8 @@
 #define QUIVER_PREFS_BROWSER_THUMB_SIZE        "thumb_size"
 #define QUIVER_PREFS_BROWSER_FOLDER_HPANE      "folder_hpane"
 #define QUIVER_PREFS_BROWSER_FOLDER_VPANE      "folder_vpane"
-#define QUIVER_PREFS_BROWSER_PREVIEW_HIDE      "hide_preview"
-#define QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE   "hide_foldertree"
+#define QUIVER_PREFS_BROWSER_PREVIEW_SHOW      "preview_show"
+#define QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW   "foldertree_show"
 
 
 // viewer preferences

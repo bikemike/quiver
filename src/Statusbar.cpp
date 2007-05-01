@@ -331,14 +331,17 @@ void Statusbar::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint w
 
 void Statusbar::SignalBytesRead(long bytes_read,long total)
 {
+	gdk_threads_enter();
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),bytes_read / (double)total);
+	gdk_threads_leave();
 }
 void Statusbar::SignalClosed(GdkPixbufLoader *loader)
 {
-	
+	gdk_threads_enter();
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),1);
 	SetText();
 	SetLoadTime();
+	gdk_threads_leave();
 }
 void Statusbar::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
@@ -347,15 +350,18 @@ void Statusbar::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint heig
 }
 void Statusbar::SetPixbuf(GdkPixbuf * pixbuf)
 {
+	gdk_threads_enter();
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),1.);
-	
 	SetLoadTime();
+	gdk_threads_leave();
 }
 
 void Statusbar::SetPixbufAtSize(GdkPixbuf * pixbuf,gint width, gint height, bool bResetViewMode/* = true*/)
 {
+	gdk_threads_enter();
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),1.);
 	SetLoadTime();
+	gdk_threads_leave();
 }
 
 void Statusbar::SetQuiverFile(QuiverFile quiverFile)

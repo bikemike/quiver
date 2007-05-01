@@ -49,7 +49,7 @@ ImageLoader::~ImageLoader()
 	// this call to gdk_threads_leave is made to make sure we dont get into
 	// a deadlock between this thread(gui) and the imageloader thread which calls
 	// gdk_threads_enter 
-	gdk_threads_leave();
+	//gdk_threads_lgdk_threads_entereave();
 	pthread_join(m_pthread_id,NULL);
 	
 	pthread_cond_destroy(&m_Condition);
@@ -295,9 +295,7 @@ bool ImageLoader::LoadQuickPreview()
 			list<IPixbufLoaderObserver*>::iterator itr;
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
-				gdk_threads_enter();
 				(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
-				gdk_threads_leave();
 			}
 			g_object_unref(thumb_pixbuf);
 			
@@ -433,7 +431,6 @@ void ImageLoader::Load()
 						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 						{
 
-							gdk_threads_enter();
 							gint width,height;
 							width = m_Command.quiverFile.GetWidth();
 							height = m_Command.quiverFile.GetHeight();
@@ -452,8 +449,6 @@ void ImageLoader::Load()
 								bool bResetViewMode = !bLoadedQuickPreview;
 								(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 							}
-							gdk_flush();
-							gdk_threads_leave();
 						}
 
 						gint *pOrientation = g_new(int,1);
@@ -500,7 +495,6 @@ void ImageLoader::Load()
 			list<IPixbufLoaderObserver*>::iterator itr;
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
-				gdk_threads_enter();
 				gint width,height;
 				width = m_Command.quiverFile.GetWidth();
 				height = m_Command.quiverFile.GetHeight();
@@ -510,7 +504,6 @@ void ImageLoader::Load()
 				}
 				bool bResetViewMode = !m_Command.params.loaded_quick_preview;
 				(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
-				gdk_threads_leave();
 			}
 			g_object_unref(pixbuf);
 		}
@@ -566,7 +559,6 @@ void ImageLoader::Load()
 							list<IPixbufLoaderObserver*>::iterator itr;
 							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 							{
-								gdk_threads_enter();
 								gint width,height;
 								width = m_Command.quiverFile.GetWidth();
 								height = m_Command.quiverFile.GetHeight();
@@ -577,8 +569,6 @@ void ImageLoader::Load()
 								bool bResetViewMode = !m_Command.params.loaded_quick_preview;
 								(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 
-								gdk_flush();
-								gdk_threads_leave();
 							}
 							m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
 							//cout << "cache loaded image" << endl;
@@ -615,16 +605,17 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	
 	if (CommandsPending())
 	{	
-		gdk_threads_enter();
 		gdk_pixbuf_loader_close(loader,NULL);	
-		gdk_threads_leave();
 		return retval;
 	}
 	Timer loadTimer; // true for quite mode
 	
-	int size = 8192;
+	//int size = 8192;
 	//int size = 16384;
 	//int size = 32768;
+	int size = 65536;
+	//int size = 131070;
+	
 	long bytes_read_inc=0, bytes_total=0;
 
 	guchar buffer[size];
@@ -641,9 +632,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	{
 		if (CommandsPending())
 		{
-			gdk_threads_enter();
 			gdk_pixbuf_loader_close(loader,NULL);
-			gdk_threads_leave();
 			gnome_vfs_close(handle);
 			return retval;
 		}
@@ -652,7 +641,6 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		
 		bytes_read_inc += bytes_read;
 		// notify others of bytes read
-		gdk_threads_enter();
 		
 		for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 		{
@@ -665,26 +653,19 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		tmp_error = NULL;
 
 		gdk_pixbuf_loader_write (loader, buffer, bytes_read, &tmp_error);
-		gdk_flush();
-		gdk_threads_leave();
 
 		if (NULL != tmp_error)
 		{
 			//printf("Error loading image: %s\n",tmp_error->message);
 			break;
 		}
-
-		pthread_yield();
 	}
 
 	m_Command.quiverFile.SetLoadTimeInSeconds( loadTimer.GetRunningTimeInSeconds() );
 	
 	tmp_error = NULL;
 	
-	gdk_threads_enter();
 	gdk_pixbuf_loader_close(loader,&tmp_error);
-	gdk_flush();
-	gdk_threads_leave();
 
 	if (GNOME_VFS_ERROR_EOF == result)
 		retval = true;
