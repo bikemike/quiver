@@ -241,7 +241,9 @@ static char *ui_browser =
 #endif
 "		<menu action='MenuFile'>"
 "			<placeholder action='FileOpenItems'>"
+#ifndef QUIVER_MAEMO
 "				<menuitem action='"ACTION_BROWSER_OPEN_LOCATION"'/>"
+#endif
 "			</placeholder>"
 "		</menu>"
 "		<menu action='MenuEdit'>"
@@ -255,7 +257,9 @@ static char *ui_browser =
 #endif
 "			</placeholder>"
 "			<placeholder name='Selection'>"
+#ifdef FIXME_DISABLED
 "				<menuitem action='"ACTION_BROWSER_SELECT_ALL"'/>"
+#endif
 "			</placeholder>"
 "			<placeholder name='Trash'>"
 "				<menuitem action='"ACTION_BROWSER_TRASH"'/>"
@@ -578,10 +582,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	vpaned = gtk_vpaned_new();
 	m_pNotebook = gtk_notebook_new();
 	
+#if (GTK_MAJOR_VERSION > 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION >= 10)
 	gtk_signal_connect (GTK_OBJECT (m_pNotebook), "page-added",
 	      GTK_SIGNAL_FUNC (notebook_page_added), this);
 	gtk_signal_connect (GTK_OBJECT (m_pNotebook), "page-removed",
 	      GTK_SIGNAL_FUNC (notebook_page_removed), this);
+#endif
 	
 	m_pIconView = quiver_icon_view_new();
 	m_pImageView = quiver_image_view_new();
@@ -620,18 +626,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_paned_pack2(GTK_PANED(hpaned),vbox,TRUE,TRUE);
 	
 	// set the size of the hpane and vpane
-	int hpaned_pos = 200;
-	if ( prefsPtr->HasKey(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDER_HPANE) )
-	{
-		hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_HPANE);
-	}
+	int hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_HPANE,200);
 	gtk_paned_set_position(GTK_PANED(hpaned),hpaned_pos);
 
-	if ( prefsPtr->HasKey(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE) )
-	{
-		int vpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE);
-		gtk_paned_set_position(GTK_PANED(vpaned),vpaned_pos);
-	}
+	int vpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE,300);
+	gtk_paned_set_position(GTK_PANED(vpaned),vpaned_pos);
+	
 	
 	gtk_signal_connect (GTK_OBJECT (hpaned), "size_allocate",
 	      GTK_SIGNAL_FUNC (pane_size_allocate), this);
@@ -1227,7 +1227,14 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 	{
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
+
+#if (GTK_MAJOR_VERSION < 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 10)
+			gint page_num = 
+#endif
 			gtk_notebook_prepend_page(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook), pBrowserImpl->m_pSWFolderTree,gtk_label_new("Folders"));
+#if (GTK_MAJOR_VERSION < 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 10)
+			notebook_page_added(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),pBrowserImpl->m_pSWFolderTree, page_num, pBrowserImpl);
+#endif
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true);
 		}
 		else
@@ -1235,6 +1242,9 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 			gint page_num =  
 				gtk_notebook_page_num(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),pBrowserImpl->m_pSWFolderTree);
 			gtk_notebook_remove_page(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),page_num);
+#if (GTK_MAJOR_VERSION < 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 10)
+			notebook_page_removed(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),pBrowserImpl->m_pSWFolderTree, page_num, pBrowserImpl);
+#endif
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,false);
 		}
 	}

@@ -749,6 +749,10 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 	if (NULL == pixbuf)
 		return;
 
+	if (1 == widget->allocation.width || 1 == widget->allocation.height)
+		return;
+
+
 	actual_width = gdk_pixbuf_get_width(pixbuf);
 	actual_height = gdk_pixbuf_get_height(pixbuf);
 
@@ -2065,6 +2069,7 @@ void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf 
 
 void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode)
 {
+	GtkWidget* widget = GTK_WIDGET(imageview);
 	gdouble old_mag;
 	old_mag = quiver_image_view_get_magnification(imageview);
 	
@@ -2138,6 +2143,9 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 		// emit a magnification changed signal
 		g_signal_emit(imageview,imageview_signals[SIGNAL_MAGNIFICATION_CHANGED],0);
 	}
+
+	if (1 == widget->allocation.width || 1 == widget->allocation.height)
+		return;
 
 	if (imageview->priv->transitions_enabled && reset_view_mode)
 	{

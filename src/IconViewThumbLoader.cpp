@@ -236,7 +236,7 @@ void IconViewThumbLoader::Run(int iThreadID)
 				break;
 			}
 
-			pthread_yield();
+			usleep(100);
 		}
 
 		if (m_bStopThreads)

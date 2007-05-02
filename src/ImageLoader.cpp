@@ -46,10 +46,6 @@ ImageLoader::~ImageLoader()
 	pthread_cond_signal(&m_Condition);
 	pthread_mutex_unlock (&m_ConditionMutex);
 
-	// this call to gdk_threads_leave is made to make sure we dont get into
-	// a deadlock between this thread(gui) and the imageloader thread which calls
-	// gdk_threads_enter 
-	//gdk_threads_lgdk_threads_entereave();
 	pthread_join(m_pthread_id,NULL);
 	
 	pthread_cond_destroy(&m_Condition);
@@ -659,6 +655,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 			//printf("Error loading image: %s\n",tmp_error->message);
 			break;
 		}
+		usleep(50);
 	}
 
 	m_Command.quiverFile.SetLoadTimeInSeconds( loadTimer.GetRunningTimeInSeconds() );
