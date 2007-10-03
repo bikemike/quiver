@@ -48,7 +48,9 @@
 #define QUIVER_PREFS_SLIDESHOW_TRANSITION      "transition"
 #define QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE  "hide_film_strip"
 
-
+// cbir preferences
+#define QUIVER_PREFS_CBIR                      "cbir"
+#define QUIVER_PREFS_CBIR_INDEX_ON_STARTUP     "index_on_startup"
 
 
 

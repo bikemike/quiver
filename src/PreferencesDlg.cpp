@@ -36,6 +36,7 @@ public:
 	GtkToggleButton*	   m_pToggleSlideShowFS;
 	GtkToggleButton*	   m_pToggleQuickPreview;
 	GtkToggleButton*	   m_pToggleViewerHideScrollbars;
+	GtkToggleButton*	   m_pToggleIndexOnStartup;
 
 	GtkToggleButton*       m_pToggleGIFAnimation;
 	GtkToggleButton*       m_pToggleSlideShowTransition;
@@ -49,6 +50,8 @@ public:
 	
 	GtkLabel*              m_pLblBrowserColor;
 	GtkLabel*              m_pLblViewerColor;
+	
+	GtkButton*             m_pBtnIndexNow;
 	
 // nested classes
 	class PreferencesEventHandler : public IPreferencesEventHandler
@@ -94,6 +97,8 @@ static void  on_value_changed(GtkRange *range, gpointer user_data);
 
 static void  on_color_set(GtkWidget* widget, gpointer user_data);
 
+static void on_index_now(GtkWidget* widget, gpointer user_data);
+
 PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
         m_pPreferencesDlg(parent),
         m_PreferencesEventHandler( new PreferencesEventHandler(this) )
@@ -134,6 +139,8 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 	m_pToggleSlideShowTransition     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_transition") );
 	m_pToggleSlideShowHideFilmStrip  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_hide_filmstrip") );
 	
+	m_pToggleIndexOnStartup = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_cbir_index_on_startup") );
+	
 	m_pToggleGIFAnimation    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_enable_gif_anim") );
 	
 	
@@ -145,6 +152,8 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 
 	m_pLblBrowserColor       = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_browser") );
 	m_pLblViewerColor        = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_viewer") );
+	
+	m_pBtnIndexNow        = GTK_BUTTON ( glade_xml_get_widget(m_pGladeXML, "btn_cbir_index_now") );
 }
 
 void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
@@ -208,7 +217,8 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 	value = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
 	gtk_range_set_value(m_pRangeFilmstripSize,value);
 	
-
+	bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_ON_STARTUP, false);
+	gtk_toggle_button_set_active(m_pToggleIndexOnStartup, bValue);
 }
 
 void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
@@ -241,7 +251,14 @@ void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
 	
 	g_signal_handlers_unblock_by_func(chooser, (gpointer)on_folder_change, user_data);
 }
-	
+
+void on_index_now (GtkWidget *btn, gpointer user_data)
+{
+	g_signal_handlers_block_by_func(btn, (gpointer)on_index_now, user_data);
+
+
+	g_signal_handlers_unblock_by_func(btn, (gpointer)on_index_now, user_data);
+}
 
 
 void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
@@ -284,6 +301,12 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 
 	g_signal_connect(m_pClrBtnViewer,
 		"color-set",(GCallback)on_color_set,this);
+
+	g_signal_connect(m_pToggleIndexOnStartup,
+		"toggled",(GCallback)on_toggled,this);
+
+	g_signal_connect(m_pBtnIndexNow,
+		"clicked",(GCallback)on_index_now,this);
 }
 
 
@@ -327,6 +350,11 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	{
 		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
 		prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE, bool(bBool));
+	}
+	else if (priv->m_pToggleIndexOnStartup == togglebutton)
+	{
+		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_ON_STARTUP, bool(bBool));
 	}
 }
 
