@@ -1321,6 +1321,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		gint rval = GTK_RESPONSE_YES;
 		GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
 								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected images to the trash?"));
+		gtk_dialog_set_default_response (GTK_DIALOG(dialog), GTK_RESPONSE_YES);
 		rval = gtk_dialog_run(GTK_DIALOG(dialog));
 		gtk_widget_destroy(dialog);
 

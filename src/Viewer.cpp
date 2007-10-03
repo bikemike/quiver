@@ -934,6 +934,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 
 		GtkWidget* dialog = gtk_message_dialog_new (NULL,GTK_DIALOG_MODAL,
 								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected image to the trash?"));
+		gtk_dialog_set_default_response (GTK_DIALOG(dialog), GTK_RESPONSE_YES);
 
 		char *for_display = gnome_vfs_format_uri_for_display(f.GetURI());
 		gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
