@@ -107,6 +107,8 @@ public:
 	Viewer m_Viewer;
 	ExifView m_ExifView;
 	
+	Database m_Database;
+	
 	StatusbarPtr m_StatusbarPtr;
 
 	GtkWidget *m_pQuiverWindow;
@@ -1651,6 +1653,20 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 
 	m_QuiverImplPtr->m_Browser.SetImageList(m_QuiverImplPtr->m_ImageList);
 	m_QuiverImplPtr->m_Viewer.SetImageList(m_QuiverImplPtr->m_ImageList);
+
+	// Open the image database and have a look-see if new images have
+	// been added...
+	m_QuiverImplPtr->m_Database.Open("test.s3db");
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	bool bIndexOnStartup = prefsPtr->GetBoolean(QUIVER_PREFS_CBIR,QUIVER_PREFS_CBIR_INDEX_ON_STARTUP,true);
+	
+	if(true == bIndexOnStartup)
+	{
+		const gchar* dir = g_get_home_dir();
+		// Lauch this from a thread, perhaps using the status bar or a new dialog for progress...
+		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
+		m_QuiverImplPtr->m_Database.IndexFolder(photo_library, true);
+	}
 
 	// call this a second time to make sure the list is updated
 	if (0 == m_QuiverImplPtr->m_iMergedBrowserUI)

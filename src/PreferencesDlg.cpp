@@ -37,6 +37,7 @@ public:
 	GtkToggleButton*	   m_pToggleQuickPreview;
 	GtkToggleButton*	   m_pToggleViewerHideScrollbars;
 	GtkToggleButton*	   m_pToggleIndexOnStartup;
+	GtkToggleButton*	   m_pToggleIndexRecursively;
 
 	GtkToggleButton*       m_pToggleGIFAnimation;
 	GtkToggleButton*       m_pToggleSlideShowTransition;
@@ -97,7 +98,7 @@ static void  on_value_changed(GtkRange *range, gpointer user_data);
 
 static void  on_color_set(GtkWidget* widget, gpointer user_data);
 
-static void on_index_now(GtkWidget* widget, gpointer user_data);
+static void  on_index_now(GtkWidget* widget, gpointer user_data);
 
 PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
         m_pPreferencesDlg(parent),
@@ -140,6 +141,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 	m_pToggleSlideShowHideFilmStrip  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_hide_filmstrip") );
 	
 	m_pToggleIndexOnStartup = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_cbir_index_on_startup") );
+	m_pToggleIndexRecursively = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_cbir_index_recursively") );
 	
 	m_pToggleGIFAnimation    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_enable_gif_anim") );
 	
@@ -219,6 +221,9 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 	
 	bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_ON_STARTUP, false);
 	gtk_toggle_button_set_active(m_pToggleIndexOnStartup, bValue);
+	
+	bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_RECURSIVELY, false);
+	gtk_toggle_button_set_active(m_pToggleIndexRecursively, bValue);
 }
 
 void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
@@ -256,6 +261,7 @@ void on_index_now (GtkWidget *btn, gpointer user_data)
 {
 	g_signal_handlers_block_by_func(btn, (gpointer)on_index_now, user_data);
 
+	// here we need to display a new dialog and somehow call the Database::IndexFolder(Recursive)
 
 	g_signal_handlers_unblock_by_func(btn, (gpointer)on_index_now, user_data);
 }
@@ -303,6 +309,9 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 		"color-set",(GCallback)on_color_set,this);
 
 	g_signal_connect(m_pToggleIndexOnStartup,
+		"toggled",(GCallback)on_toggled,this);
+
+	g_signal_connect(m_pToggleIndexRecursively,
 		"toggled",(GCallback)on_toggled,this);
 
 	g_signal_connect(m_pBtnIndexNow,
@@ -355,6 +364,11 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	{
 		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
 		prefs->SetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_ON_STARTUP, bool(bBool));
+	}
+else if (priv->m_pToggleIndexRecursively == togglebutton)
+	{
+		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_RECURSIVELY, bool(bBool));
 	}
 }
 

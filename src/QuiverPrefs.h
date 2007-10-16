@@ -51,7 +51,7 @@
 // cbir preferences
 #define QUIVER_PREFS_CBIR                      "cbir"
 #define QUIVER_PREFS_CBIR_INDEX_ON_STARTUP     "index_on_startup"
-
+#define QUIVER_PREFS_CBIR_INDEX_RECURSIVELY    "index_recursively"
 
 
 enum {

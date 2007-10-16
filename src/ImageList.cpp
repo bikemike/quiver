@@ -75,6 +75,8 @@ public:
 	void SetImageList(std::list<std::string> *file_list);
 	bool UpdateImageList(std::list<std::string> *file_list);
 	
+	bool IsSupportedFileType(const gchar* uri, GnomeVFSFileInfo *info);
+	
 	bool AddDirectory(const gchar* uri);
 	bool AddFile(const gchar*  uri);
 	bool AddFile(const gchar* uri,GnomeVFSFileInfo *info);
@@ -1049,6 +1051,22 @@ bool ImageListImpl::AddFile(const gchar* uri, GnomeVFSFileInfo *info)
 	return bAdded;
 }
 
+bool ImageListImpl::IsSupportedFileType(const gchar* uri, GnomeVFSFileInfo *info)
+{
+	bool bSupported = false;
+	if (GNOME_VFS_FILE_INFO_FIELDS_MIME_TYPE & info->valid_fields)
+	{
+		if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find( info->mime_type ) )
+		{
+			bSupported = true;
+		}
+		else
+		{
+			//printf("Unsupported mime_type: %s\n",info->mime_type);
+		}
+	}
+	return bSupported;
+}
 
 bool ImageListImpl::RemoveMonitor(string path)
 {

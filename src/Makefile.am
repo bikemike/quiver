@@ -84,7 +84,9 @@ quiver_SOURCES = \
 	ViewerEvent.h \
 	ViewerEventSource.h \
 	ViewerEventSource.cpp \
-	IViewerEventHandler.h 
+	IViewerEventHandler.h \
+	Database.h \
+	Database.cpp
 
 
 quiver_LDFLAGS = 
@@ -96,7 +98,8 @@ quiver_LDADD = \
 	$(LIBGCRYPT_LIBS) \
 	$(LIBEXIF_LIBS) \
 	-ljpeg \
-	../libquiver/libquiver.la
+	../libquiver/libquiver.la \
+	-lsqlite3
 
 
 

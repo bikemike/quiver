@@ -17,6 +17,7 @@
 #include "Statusbar.h"
 #include "Browser.h"
 #include "ExifView.h"
+#include "Database.h"
 
 class QuiverImpl;
 typedef boost::shared_ptr<QuiverImpl> QuiverImplPtr;
