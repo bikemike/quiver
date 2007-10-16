@@ -1,6 +1,8 @@
 #ifndef DATABASE_H_
 #define DATABASE_H_
 
+#include "ImageList.h"
+
 #include <string>
 
 using namespace std;
@@ -21,9 +23,12 @@ public:
 	int GetImage(string img_path);
 	time_t GetLastModified(string img_path);
 	
-	int IndexFolder(string folder, bool bRecursive);	
+	int IndexFolder(string folder, bool bRecursive);
+	
+	void SetImageList(ImageList* pImageList);
 private:
 	struct sqlite3 *m_pDB;
+	ImageList *m_pImageList;
 };
 
 #endif /*DATABASE_H_*/

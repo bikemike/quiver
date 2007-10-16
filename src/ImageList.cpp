@@ -342,6 +342,11 @@ void ImageList::UpdateImageList(list<string> *file_list)
 	}	
 }
 
+bool ImageList::IsSupportedFileType(const gchar* uri, GnomeVFSFileInfo *info)
+{
+	return m_ImageListImplPtr->IsSupportedFileType(uri, info);
+}
+
 std::list<std::string> ImageList::GetFolderList()
 {
 	list<string> listFolders;

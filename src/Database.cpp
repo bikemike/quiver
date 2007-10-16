@@ -227,7 +227,10 @@ int Database::IndexFolder(string folder, bool bRecursive)
 					
 					gnome_vfs_uri_unref(vfs_uri_file);
 					
-					AddImage(str_uri_file, "", info->mtime);
+					if (m_pImageList->IsSupportedFileType(str_uri_file, info))
+					{
+						AddImage(str_uri_file, "", info->mtime);
+					}
 					
 					free (str_uri_file);
 				}
@@ -257,4 +260,9 @@ int Database::IndexFolder(string folder, bool bRecursive)
 	}
 	
 	return true;
+}
+
+void Database::SetImageList(ImageList *pImageList)
+{
+	m_pImageList = pImageList;
 }

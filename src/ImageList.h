@@ -28,6 +28,8 @@ public:
 	void Add(std::list<std::string> *file_list);
 	void UpdateImageList(std::list<std::string> *file_list);
 
+	bool IsSupportedFileType(const gchar* uri, GnomeVFSFileInfo *info);
+
 	std::list<std::string> GetFolderList();
 	std::list<std::string> GetFileList();
 

@@ -1657,6 +1657,7 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	// Open the image database and have a look-see if new images have
 	// been added...
 	m_QuiverImplPtr->m_Database.Open("test.s3db");
+	m_QuiverImplPtr->m_Database.SetImageList(&m_QuiverImplPtr->m_ImageList);
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	bool bIndexOnStartup = prefsPtr->GetBoolean(QUIVER_PREFS_CBIR,QUIVER_PREFS_CBIR_INDEX_ON_STARTUP,true);
 	
