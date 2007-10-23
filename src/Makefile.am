@@ -86,7 +86,10 @@ quiver_SOURCES = \
 	ViewerEventSource.cpp \
 	IViewerEventHandler.h \
 	Database.h \
-	Database.cpp
+	Database.cpp \
+	ImageDescriptor.h \
+	GlobalColourDescriptor.h \
+	GlobalColourDescriptor.cpp
 
 
 quiver_LDFLAGS = 

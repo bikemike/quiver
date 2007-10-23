@@ -4,9 +4,13 @@
 #include <iostream>
 #include <fstream>
 
+#include <list>
+
 #include <libgnomevfs/gnome-vfs.h>
 
 #include "Database.h"
+#include "QuiverFile.h"
+#include "GlobalColourDescriptor.h"
 
 enum
 {
@@ -99,13 +103,51 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 			sqlite3_free(errmsg);
 		}
 	}
-	
-	if(last_mtime != mtime)
+	else if(last_mtime != mtime)
 	{
 		cout << "Image changed, updating features: " << img_path.c_str() << endl;
 		
 		// Extract some features somewhere around here...
 		
+		QuiverFile *file = new QuiverFile(img_path.c_str());
+		GlobalColourDescriptor *desc = new GlobalColourDescriptor(file);
+		desc->Calculate(64, 128);
+		double dist = desc-desc;
+		cout << "Euclidean distance to itself: " << dist << endl;
+		int nBins=0;
+		int **p = desc->GetHistogram(nBins);
+		
+		cout << nBins << " colour bins per channel" << endl;
+		
+//		cout << "RED" << endl;	
+//		for(int i=0; i<nBins; i++)
+//		{
+//			cout << p[0][i] << " ";
+//		}
+//		cout << endl;
+//		
+//		cout << "GREEN" << endl;
+//		for(int i=0; i<nBins; i++)
+//		{
+//			cout << p[1][i] << " ";
+//		}
+//		cout << endl;
+//		
+//		cout << "BLUE" << endl;	
+//		for(int i=0; i<nBins; i++)
+//		{
+//			cout << p[2][i] << " ";
+//		}
+//		cout << endl;
+		
+		delete p;
+		delete desc;
+		delete file;
+		
+//		std::list<string> img;
+//		img.push_back(img_path);
+//		m_pImageList->Add(&img);
+
 		char *query = sqlite3_mprintf("UPDATE Images SET mtime=%ld WHERE Pathname='%q';", mtime, img_path.c_str());
 		res = sqlite3_exec(m_pDB, query, NULL, NULL, &errmsg);
 		sqlite3_free(query);
@@ -124,12 +166,10 @@ int Database::RemoveImage(int imageId)
 {
 	// remove an image from the database (don't touch the file itself)
 	char *errmsg;
-	string query1 = "DELETE FROM Images WHERE ID=";
-	string query2;
-	query2 = imageId;
-	query1 += query2;
-	// Until I find a better way, just create the table if it doesn't exist
-	int res = sqlite3_exec(m_pDB, query1.c_str(), query_callback, NULL, &errmsg);
+	char *query = sqlite3_mprintf("DELETE FROM Images WHERE ID=%ld", imageId);
+	
+	int res = sqlite3_exec(m_pDB, query, NULL, NULL, &errmsg);
+	sqlite3_free(query);
 
 	if(SQLITE_OK != res)
 	{
@@ -196,7 +236,7 @@ time_t Database::GetLastModified(string img_path)
 int Database::IndexFolder(string folder, bool bRecursive)
 {
 	// called to verify the contents of a folder have not changed
-	cout << "--- Looking for new images in " << folder.c_str() << endl;
+//	cout << "--- Looking for new images in " << folder.c_str() << endl;
 	
 	GnomeVFSResult result;
 	GnomeVFSDirectoryHandle *dir_handle;
@@ -213,6 +253,9 @@ int Database::IndexFolder(string folder, bool bRecursive)
 	{
 		GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(folder.c_str());
 
+		// BEGIN TRANSACTION
+		int res = sqlite3_exec(m_pDB, "BEGIN TRANSACTION;", 0, 0, 0);
+			
 		while ( GNOME_VFS_OK == result )
 		{
 			GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();
@@ -229,12 +272,13 @@ int Database::IndexFolder(string folder, bool bRecursive)
 					
 					if (m_pImageList->IsSupportedFileType(str_uri_file, info))
 					{
+						// TODO: enclose these sequences of updates in explicit transactions.
 						AddImage(str_uri_file, "", info->mtime);
 					}
 					
 					free (str_uri_file);
 				}
-				else if ( info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
+				else if (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
 				{
 					if (strcmp(info->name, "..") == 0 || strcmp(info->name, ".") == 0)
 					{
@@ -257,6 +301,9 @@ int Database::IndexFolder(string folder, bool bRecursive)
 		}
 		gnome_vfs_uri_unref(vfs_uri_dir);
 		gnome_vfs_directory_close (dir_handle);
+		
+		// END TRANSACTION
+		res = sqlite3_exec(m_pDB, "COMMIT TRANSACTION;", 0, 0, 0);
 	}
 	
 	return true;

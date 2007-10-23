@@ -226,6 +226,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data);
 #define ACTION_BROWSER_VIEW_FOLDERTREE                    "BrowserViewFolderTree"
 #define ACTION_BROWSER_ZOOM_IN                            "BrowserZoomIn"
 #define ACTION_BROWSER_ZOOM_OUT                           "BrowserZoomOut"
+#define ACTION_BROWSER_CBIR_QUERY                         "BrowserQuery"
 
 #ifdef QUIVER_MAEMO
 #define ACTION_BROWSER_ZOOM_IN_MAEMO                      ACTION_BROWSER_ZOOM_IN"_MAEMO"
@@ -272,6 +273,11 @@ static char *ui_browser =
 "			</placeholder>"
 "			<menuitem action='"ACTION_BROWSER_RELOAD"'/>"
 "		</menu>"
+"		<menu action='MenuQuery'>"
+"			<placeholder name ='Query'>"
+"				<menuitem action='"ACTION_BROWSER_CBIR_QUERY"'/>"
+"			</placeholder>"
+"		</menu>"
 #ifdef QUIVER_MAEMO
 "	</popup>"
 #else
@@ -306,6 +312,7 @@ static GtkActionEntry action_entries[] = {
 	{ ACTION_BROWSER_SELECT_ALL, NULL, "_Select All", "<Control>A", "Select all", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_TRASH, GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_RELOAD, GTK_STOCK_REFRESH, "_Reload", "<Control>R", "Refresh the Current View", G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_CBIR_QUERY, NULL, "_Query for similar images", "", "Query for similar images", G_CALLBACK(browser_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_BROWSER_ZOOM_IN_MAEMO, NULL, NULL, "F7", NULL, G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_ZOOM_OUT_MAEMO, NULL, NULL, "F8", NULL, G_CALLBACK(browser_action_handler_cb)},
@@ -1383,6 +1390,20 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		}
 	
 
+	}
+	else if(0 == strcmp(szAction, ACTION_BROWSER_CBIR_QUERY))
+	{
+		list<unsigned int> selection = pBrowserImpl->m_BrowserParent->GetSelection();
+		if(1 != selection.size())
+		{
+			printf("can only use one image as a query for now...\n");
+			return;
+		}
+		
+		list<unsigned int>::iterator itr = selection.begin();
+		string file = pBrowserImpl->m_ImageList[*itr].GetFilePath();
+		
+		printf("find image similar to %s\n", file.c_str());
 	}
 }
 
