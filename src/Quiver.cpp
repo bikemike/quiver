@@ -425,7 +425,6 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
 #define ACTION_QUIVER_ESCAPE                                 "QuiverEscape"
-#define ACTION_QUIVER_CBIR_QUERY                             "CBIRQuery"
 #define ACTION_QUIVER_CLOSE_2                                ACTION_QUIVER_CLOSE"_2"
 #define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
 #define ACTION_QUIVER_CLOSE_4                                ACTION_QUIVER_CLOSE"_4"
@@ -504,9 +503,6 @@ char * quiver_ui_main =
 "			<placeholder name='FolderNavigation'/>"
 "			<separator/>"
 "		</menu>"
-"		<menu action='MenuQuery'>"
-"			<placeholder name='Find similar images'/>"
-"		</menu>"
 #ifdef FIXME_DISABLED
 // disable bookmarks menu until implemented
 "		<menu action='MenuBookmarks'>"
@@ -574,9 +570,6 @@ char *quiver_ui_browser =
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
-"		<menu action='MenuQuery'>"
-"			<placeholder name='Find similar images2'/>"
-"		</menu>"
 #ifdef QUIVER_MAEMO
 "	</popup>"
 #else
@@ -611,9 +604,6 @@ char *quiver_ui_viewer =
 "				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
 "				<separator/>"
 "			</placeholder>"
-"		</menu>"
-"		<menu action='MenuQuery'>"
-"			<placeholder name='Find similar images3'/>"
 "		</menu>"
 #ifdef QUIVER_MAEMO
 "	</popup>"
@@ -670,7 +660,6 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuTransform", NULL, N_("Transform")},
 	{ "MenuEdit", NULL, N_("_Edit") },
 	{ "MenuView", NULL, N_("_View") },
-	{ "MenuQuery", NULL, N_("_Query") },
 	{ "MenuSort", NULL, N_("_Arrange Items") },
 	{ "MenuImage", NULL, N_("_Image") },
 	{ "MenuGo", NULL, N_("_Go") },
@@ -696,8 +685,6 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ ACTION_QUIVER_ESCAPE, NULL, NULL, "Escape", NULL, G_CALLBACK( quiver_action_handler_cb )},	
 
 	{ ACTION_QUIVER_PREFERENCES, GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
-	
-	{ ACTION_QUIVER_CBIR_QUERY, NULL, "_Query", "", "Search for simliar images", G_CALLBACK(quiver_action_handler_cb)},
 
 
 
@@ -1679,7 +1666,6 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 		const gchar* dir = g_get_home_dir();
 		// Lauch this from a thread, perhaps using the status bar or a new dialog for progress...
 		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
-//		m_QuiverImplPtr->m_ImageList.Clear();
 		m_QuiverImplPtr->m_Database.IndexFolder(photo_library, true);
 	}
 
@@ -2423,20 +2409,6 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		printf("external...\n");
 		//ExternalToolsDlg externalToolsDlg;
 		//externalToolsDlg.Run();
-	}
-	else if(0 == strcmp(szAction, ACTION_QUIVER_CBIR_QUERY))
-	{
-		list<unsigned int> selection = pQuiverImpl->m_Browser.GetSelection();
-		if(selection.size() != 1)
-		{
-			printf("can only use one image as a query for now...\n");
-			return;
-		}
-		
-		list<unsigned int>::iterator itr = selection.begin();
-		string file = pQuiverImpl->m_ImageList[*itr].GetFilePath();
-		
-		printf("find image similar to %s", file.c_str());
 	}
 }
 
