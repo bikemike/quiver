@@ -56,7 +56,7 @@ int Database::Open(std::string db_path)
 	
 	char *errmsg;
 	// Until I find a better way, just create the table if it doesn't exist
-	res = sqlite3_exec(m_pDB, "CREATE TABLE Images(ID INTEGER PRIMARY KEY, Filename TEXT, Pathname TEXT, ThumbPath TEXT, mtime BIGINT, FeaturesXML BLOB)", NULL, NULL, &errmsg);
+	res = sqlite3_exec(m_pDB, "CREATE TABLE Images(ID INTEGER PRIMARY KEY, Filename TEXT, Pathname TEXT, ThumbPath TEXT, mtime BIGINT, Features BLOB)", NULL, NULL, &errmsg);
 
 	if(SQLITE_OK != res)
 	{
@@ -87,12 +87,84 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 		return false;
 	}
 	
+	if(last_mtime == mtime)
+	{
+		return true;
+	}
+
 	if(last_mtime == 0)
 	{
 		cout << "New image: " << img_path.c_str() << endl;
-
-		// Extract some features somewhere around here...
+	}
+	else if(last_mtime != mtime)
+	{
+		cout << "Image changed, updating features: " << img_path.c_str() << endl;
+	}
 	
+	// Extract some features somewhere around here...
+	// Create a blob to stick in the database
+	int nBins=0;
+	QuiverFile *file = new QuiverFile(img_path.c_str());
+	GlobalColourDescriptor *desc = new GlobalColourDescriptor(file);
+	res = desc->Calculate(64, 128);
+	if(res == -1)
+	{
+		cerr << "Could not load thumbnail for processing: " << img_path.c_str() << endl;
+		return false;
+	}
+	int *blob;
+	int count = desc->GetPackedHistogram(&blob, &nBins);
+	delete desc;
+	delete file;
+
+	cout << nBins << " colour bins per channel" << endl;
+	cout << count*sizeof(int) << " bytes written to blob for " << img_path.c_str() << endl;	
+
+	sqlite3_stmt *pStmt;
+		
+	if(last_mtime == 0)
+	{		
+		res = sqlite3_prepare_v2(m_pDB, "INSERT INTO Images(ID, Filename, Pathname, ThumbPath, mtime, Features) VALUES(NULL, '', ?, '', ?, ?);", -1, &pStmt, 0);
+	
+		if(res != SQLITE_OK)
+		{
+			cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
+		}
+		
+		sqlite3_bind_text(pStmt, 1, img_path.c_str(), -1, SQLITE_STATIC);
+		sqlite3_bind_int64(pStmt, 2, mtime);
+		sqlite3_bind_blob(pStmt, 3, blob, count*sizeof(int), SQLITE_STATIC);
+
+	}
+	else if(last_mtime != mtime)
+	{
+		// Finally, update the mtime so we know the last time
+		// we updated this image
+		res = sqlite3_prepare_v2(m_pDB, "UPDATE Images SET mtime=?,Features=? WHERE Pathname=?", -1, &pStmt, 0);
+		
+		if(res != SQLITE_OK)
+		{
+			cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
+		}
+		
+		sqlite3_bind_int64(pStmt, 1, mtime);
+		sqlite3_bind_blob(pStmt, 2, blob, count*sizeof(int), SQLITE_STATIC);
+		sqlite3_bind_text(pStmt, 3, img_path.c_str(), -1, SQLITE_STATIC);
+	}
+
+	delete [] blob;
+
+	res = sqlite3_step(pStmt);
+	if(res != SQLITE_DONE)
+	{
+		cerr << "Error calling sqlite3_step: " << sqlite3_errmsg(m_pDB) << endl;
+		sqlite3_finalize(pStmt);
+		return false;
+	}
+	
+	sqlite3_finalize(pStmt);
+
+	/*
 		char *query = sqlite3_mprintf("INSERT INTO Images(ID, Filename, Pathname, ThumbPath, mtime) VALUES(NULL, '', '%q', '', %ld);", img_path.c_str(), mtime);
 		res = sqlite3_exec(m_pDB, query, NULL, NULL, &errmsg);
 		sqlite3_free(query);
@@ -101,63 +173,47 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 		{
 			cerr << errmsg << endl;
 			sqlite3_free(errmsg);
-		}
-	}
-	else if(last_mtime != mtime)
-	{
-		cout << "Image changed, updating features: " << img_path.c_str() << endl;
-		
+		}*/
+
 		// Extract some features somewhere around here...
-		
+		// Create a blob to stick in the database
+	/*	int nBins=0;
 		QuiverFile *file = new QuiverFile(img_path.c_str());
 		GlobalColourDescriptor *desc = new GlobalColourDescriptor(file);
 		desc->Calculate(64, 128);
-		double dist = desc-desc;
-		cout << "Euclidean distance to itself: " << dist << endl;
-		int nBins=0;
-		int **p = desc->GetHistogram(nBins);
-		
-		cout << nBins << " colour bins per channel" << endl;
-		
-//		cout << "RED" << endl;	
-//		for(int i=0; i<nBins; i++)
-//		{
-//			cout << p[0][i] << " ";
-//		}
-//		cout << endl;
-//		
-//		cout << "GREEN" << endl;
-//		for(int i=0; i<nBins; i++)
-//		{
-//			cout << p[1][i] << " ";
-//		}
-//		cout << endl;
-//		
-//		cout << "BLUE" << endl;	
-//		for(int i=0; i<nBins; i++)
-//		{
-//			cout << p[2][i] << " ";
-//		}
-//		cout << endl;
-		
-		delete p;
+		int *blob;
+		int count = desc->GetPackedHistogram(&blob, &nBins);
 		delete desc;
 		delete file;
-		
-//		std::list<string> img;
-//		img.push_back(img_path);
-//		m_pImageList->Add(&img);
 
-		char *query = sqlite3_mprintf("UPDATE Images SET mtime=%ld WHERE Pathname='%q';", mtime, img_path.c_str());
-		res = sqlite3_exec(m_pDB, query, NULL, NULL, &errmsg);
-		sqlite3_free(query);
+		cout << nBins << " colour bins per channel" << endl;
+		cout << count*sizeof(int) << " bytes written to blob for " << img_path.c_str() << endl;
 		
-		if(SQLITE_OK != res)
+		// Finally, update the mtime so we know the last time
+		// we updated this image
+		sqlite3_stmt *pStmt;
+		res = sqlite3_prepare_v2(m_pDB, "UPDATE Images SET mtime=?,Features=? WHERE Pathname=?", -1, &pStmt, 0);
+		
+		if(res != SQLITE_OK)
 		{
-			cerr << errmsg << endl;
-			sqlite3_free(errmsg);
+			cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
 		}
-	}
+		
+		sqlite3_bind_int64(pStmt, 1, mtime);
+		sqlite3_bind_blob(pStmt, 2, blob, count*sizeof(int), SQLITE_STATIC);
+		sqlite3_bind_text(pStmt, 3, img_path.c_str(), -1, SQLITE_STATIC);
+
+		delete [] blob;
+		
+		res = sqlite3_step(pStmt);
+		if(res != SQLITE_DONE)
+		{
+			cerr << "Error calling sqlite3_step: " << sqlite3_errmsg(m_pDB) << endl;
+			return false;
+		}
+		
+		sqlite3_finalize(pStmt);
+	}*/
 	
 	return true;
 }
@@ -272,7 +328,6 @@ int Database::IndexFolder(string folder, bool bRecursive)
 					
 					if (m_pImageList->IsSupportedFileType(str_uri_file, info))
 					{
-						// TODO: enclose these sequences of updates in explicit transactions.
 						AddImage(str_uri_file, "", info->mtime);
 					}
 					

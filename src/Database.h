@@ -26,6 +26,9 @@ public:
 	int IndexFolder(string folder, bool bRecursive);
 	
 	void SetImageList(ImageList* pImageList);
+	
+	// Query functions...
+	int GetClosestMatch(string img_path);
 private:
 	struct sqlite3 *m_pDB;
 	ImageList *m_pImageList;
