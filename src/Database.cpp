@@ -99,6 +99,7 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 	else if(last_mtime != mtime)
 	{
 		cout << "Image changed, updating features: " << img_path.c_str() << endl;
+		string match = GetClosestMatch(img_path);
 	}
 	
 	// Extract some features somewhere around here...
@@ -114,11 +115,31 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 	}
 	int *blob;
 	int count = desc->GetPackedHistogram(&blob, &nBins);
+	
+//	for(int i=0; i<count*4; i++)
+//	{
+//		if(i%16==0) printf("\n");
+//		printf("%02x ", ((unsigned char*)blob)[i]);
+//	}
+//	printf("\n");
+	desc->LoadPackedHistogram(blob);
+	
+//	delete [] blob;
+	
+	count = desc->GetPackedHistogram(&blob, &nBins);
+	
+//	for(int i=0; i<count; i++)
+//	{
+//		if(i%16==0) printf("\n");
+//		printf("%d ", blob[i]);
+//	}
+//	printf("\n");
+
 	delete desc;
 	delete file;
 
-	cout << nBins << " colour bins per channel" << endl;
-	cout << count*sizeof(int) << " bytes written to blob for " << img_path.c_str() << endl;	
+//	cout << nBins << " colour bins per channel" << endl;
+//	cout << count*sizeof(int) << " bytes written to blob for " << img_path.c_str() << endl;	
 
 	sqlite3_stmt *pStmt;
 		
@@ -129,11 +150,13 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 		if(res != SQLITE_OK)
 		{
 			cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
+			delete [] blob;
+			return false;
 		}
 		
-		sqlite3_bind_text(pStmt, 1, img_path.c_str(), -1, SQLITE_STATIC);
+		sqlite3_bind_text(pStmt, 1, img_path.c_str(), -1, SQLITE_TRANSIENT);
 		sqlite3_bind_int64(pStmt, 2, mtime);
-		sqlite3_bind_blob(pStmt, 3, blob, count*sizeof(int), SQLITE_STATIC);
+		sqlite3_bind_blob(pStmt, 3, blob, count*sizeof(int), SQLITE_TRANSIENT);
 
 	}
 	else if(last_mtime != mtime)
@@ -145,11 +168,13 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 		if(res != SQLITE_OK)
 		{
 			cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
+			delete [] blob;
+			return false;
 		}
 		
 		sqlite3_bind_int64(pStmt, 1, mtime);
-		sqlite3_bind_blob(pStmt, 2, blob, count*sizeof(int), SQLITE_STATIC);
-		sqlite3_bind_text(pStmt, 3, img_path.c_str(), -1, SQLITE_STATIC);
+		sqlite3_bind_blob(pStmt, 2, blob, count*sizeof(int), SQLITE_TRANSIENT);
+		sqlite3_bind_text(pStmt, 3, img_path.c_str(), -1, SQLITE_TRANSIENT);
 	}
 
 	delete [] blob;
@@ -164,57 +189,6 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 	
 	sqlite3_finalize(pStmt);
 
-	/*
-		char *query = sqlite3_mprintf("INSERT INTO Images(ID, Filename, Pathname, ThumbPath, mtime) VALUES(NULL, '', '%q', '', %ld);", img_path.c_str(), mtime);
-		res = sqlite3_exec(m_pDB, query, NULL, NULL, &errmsg);
-		sqlite3_free(query);
-		
-		if(SQLITE_OK != res)
-		{
-			cerr << errmsg << endl;
-			sqlite3_free(errmsg);
-		}*/
-
-		// Extract some features somewhere around here...
-		// Create a blob to stick in the database
-	/*	int nBins=0;
-		QuiverFile *file = new QuiverFile(img_path.c_str());
-		GlobalColourDescriptor *desc = new GlobalColourDescriptor(file);
-		desc->Calculate(64, 128);
-		int *blob;
-		int count = desc->GetPackedHistogram(&blob, &nBins);
-		delete desc;
-		delete file;
-
-		cout << nBins << " colour bins per channel" << endl;
-		cout << count*sizeof(int) << " bytes written to blob for " << img_path.c_str() << endl;
-		
-		// Finally, update the mtime so we know the last time
-		// we updated this image
-		sqlite3_stmt *pStmt;
-		res = sqlite3_prepare_v2(m_pDB, "UPDATE Images SET mtime=?,Features=? WHERE Pathname=?", -1, &pStmt, 0);
-		
-		if(res != SQLITE_OK)
-		{
-			cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
-		}
-		
-		sqlite3_bind_int64(pStmt, 1, mtime);
-		sqlite3_bind_blob(pStmt, 2, blob, count*sizeof(int), SQLITE_STATIC);
-		sqlite3_bind_text(pStmt, 3, img_path.c_str(), -1, SQLITE_STATIC);
-
-		delete [] blob;
-		
-		res = sqlite3_step(pStmt);
-		if(res != SQLITE_DONE)
-		{
-			cerr << "Error calling sqlite3_step: " << sqlite3_errmsg(m_pDB) << endl;
-			return false;
-		}
-		
-		sqlite3_finalize(pStmt);
-	}*/
-	
 	return true;
 }
 
@@ -367,4 +341,84 @@ int Database::IndexFolder(string folder, bool bRecursive)
 void Database::SetImageList(ImageList *pImageList)
 {
 	m_pImageList = pImageList;
+}
+
+string Database::GetClosestMatch(string img_path)
+{
+	// Cycle through the entire database, comparing blobs
+	sqlite3_stmt *pStmt;
+	
+	QuiverFile *file = new QuiverFile(img_path.c_str());
+	GlobalColourDescriptor *query = new GlobalColourDescriptor(file);
+	query->Calculate(64, 128);
+	
+	int res = sqlite3_prepare_v2(m_pDB, "SELECT Pathname,Features FROM Images", -1, &pStmt, 0);
+	
+	if(res != SQLITE_OK)
+	{
+		cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
+		return false;
+	}
+	
+	unsigned int mindist=0xffffffff;
+	string best;
+	while(SQLITE_ROW == (res = sqlite3_step(pStmt)))
+	{
+		const unsigned char *path = sqlite3_column_text(pStmt, 0);
+		const void *blob = sqlite3_column_blob(pStmt, 1);
+		int size = sqlite3_column_bytes(pStmt, 1);
+		
+		if(strcmp((char*)path, img_path.c_str()) == 0)
+		{
+			// Don't compare this image to itself
+			continue;
+		}
+		
+//		printf("comparing %s\n", path);
+		
+//		for(int i=0; i<size; i++)
+//		{
+//			if(i%16==0) printf("\n");
+//			printf("%02x ", ((unsigned char*)blob)[i]);
+//		}
+//		printf("\n");
+//		
+//		printf("is it %d\n", ((int*)blob)[0]);
+		
+//		cout << size/sizeof(int)-1 << " " << ((int*)blob)[0]*3 << endl;
+		g_assert(size/sizeof(int)-1 == ((int*)blob)[0]*3);
+		
+		GlobalColourDescriptor *desc = new GlobalColourDescriptor();
+		desc->LoadPackedHistogram((int*)blob);
+//		desc->Calculate(64,128);
+
+		int dist = *query - *desc;
+		
+		//cout << "Dist for " << path << " is " << dist << endl;
+		
+		if(dist < mindist && dist >= 0)
+		{
+			mindist = dist;
+			best = (char *)path;
+			cout << path << " has shortest distance! " << dist << endl;
+			
+//			for(int i=0; i<size; i++)
+//			{
+//				if(i%16==0) printf("\n");
+//				printf("%02x ", ((unsigned char*)blob)[i]);
+//			}
+//			printf("\n");
+		}
+		delete desc;
+	}
+
+	cout << "closest match to " << img_path << " is " << best << " with a distance of " << mindist << endl;
+	delete query;
+	
+	m_pImageList->Clear();
+	list<string> files;
+	files.push_back(best);
+	m_pImageList->Add(&files);
+	
+	return best;
 }

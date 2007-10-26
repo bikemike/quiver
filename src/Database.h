@@ -28,7 +28,7 @@ public:
 	void SetImageList(ImageList* pImageList);
 	
 	// Query functions...
-	int GetClosestMatch(string img_path);
+	string GetClosestMatch(string img_path);
 private:
 	struct sqlite3 *m_pDB;
 	ImageList *m_pImageList;

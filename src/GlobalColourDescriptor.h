@@ -20,6 +20,7 @@ public:
 	int **GetHistogram(int *nBins);
 	int GetPackedHistogram(int **blob, int *nBins);
 	int LoadHistogram(int **data, int nBins);
+	int LoadPackedHistogram(int *data);
 	
 	double operator- (GlobalColourDescriptor &other) const;
 protected:

@@ -8,6 +8,14 @@
 
 using namespace std;
 
+GlobalColourDescriptor::GlobalColourDescriptor()
+{
+	m_pImage = NULL;
+	m_pR = NULL;
+	m_pG = NULL;
+	m_pB = NULL;
+}
+
 GlobalColourDescriptor::GlobalColourDescriptor(QuiverFile *pImage)
 {
 	m_pImage = pImage;
@@ -18,6 +26,12 @@ GlobalColourDescriptor::GlobalColourDescriptor(QuiverFile *pImage)
 
 GlobalColourDescriptor::~GlobalColourDescriptor()
 {
+	if(m_pR)
+		delete [] m_pR;
+	if(m_pG)
+		delete [] m_pG;
+	if(m_pB)
+		delete [] m_pB;
 }
 
 void GlobalColourDescriptor::SetImage(QuiverFile *m_pImage)
@@ -35,11 +49,11 @@ int GlobalColourDescriptor::Calculate(int nBins, int nSize)
 	m_nBins = nBins;
 	
 	if(m_pR)
-		delete m_pR;
+		delete [] m_pR;
 	if(m_pG)
-		delete m_pG;
+		delete [] m_pG;
 	if(m_pB)
-		delete m_pB;
+		delete [] m_pB;
 		
 	m_pR = new int[nBins];
 	m_pG = new int[nBins];
@@ -60,7 +74,7 @@ int GlobalColourDescriptor::Calculate(int nBins, int nSize)
 	int h = gdk_pixbuf_get_height(buf);
 	int rs = gdk_pixbuf_get_rowstride(buf);
 
-	cout << n_channels << " channels" << endl;
+//	cout << n_channels << " channels" << endl;
 	
 	g_assert(n_channels >= 3); // or else?
 	
@@ -114,19 +128,21 @@ int GlobalColourDescriptor::GetPackedHistogram(int **blob, int *nBins)
 {
 	*nBins = m_nBins;
 	
-	int pos = 0;
-	*blob = new int[m_nBins*3 + 1];
+//	printf("m_nBins=%d %d\n", m_nBins, *nBins);
 	
-	(*blob)[pos] = m_nBins;
-	pos ++;
-	for(int i=0; i<m_nBins; i++)
+	int pos = 0;
+	*blob = new int[*nBins*3 + 1];
+	g_assert(*blob != NULL);
+	
+	(*blob)[pos++] = *nBins;
+//	printf("(*blob)[pos]=%d\n", (*blob)[pos-1]);
+	for(int i=0; i<*nBins; i++)
 	{
-		(*blob)[pos] = m_pR[i];
-		pos ++;
-		(*blob)[pos] = m_pG[i];
-		pos ++;
-		(*blob)[pos] = m_pB[i];
-		pos ++;
+		(*blob)[pos++] = m_pR[i];
+		(*blob)[pos++] = m_pG[i];
+		(*blob)[pos++] = m_pB[i];
+		
+		//printf("pos=%d\n", pos);
 	}
 	return pos;
 }
@@ -147,6 +163,33 @@ int GlobalColourDescriptor::LoadHistogram(int **data, int nBins)
 	return 0;
 }
 
+int GlobalColourDescriptor::LoadPackedHistogram(int *data)
+{
+	if(m_pR)
+		delete [] m_pR;
+	if(m_pG)
+		delete [] m_pG;
+	if(m_pB)
+		delete [] m_pB;
+	
+	m_nBins = data[0];
+	
+//	printf("m_nBins=%d\n", m_nBins);
+	
+	m_pR = new int[m_nBins];
+	m_pG = new int[m_nBins];
+	m_pB = new int[m_nBins];
+	
+	int pos = 1;
+	
+	for(int i=0; i<m_nBins; i++)
+	{
+		m_pR[i] = data[pos++];
+		m_pG[i] = data[pos++];
+		m_pB[i] = data[pos++];
+	}
+}
+
 double GlobalColourDescriptor::operator- (GlobalColourDescriptor &other) const
 {
 	// Calculate the Euclidean distance between two histograms
@@ -159,7 +202,7 @@ double GlobalColourDescriptor::operator- (GlobalColourDescriptor &other) const
 		return -1;
 	}
 	
-	int sum=0;
+	double sum=0;
 	for(int i=0; i<m_nBins; i++)
 	{
 		sum += (m_pR[i] - p[0][i])*(m_pR[i] - p[0][i]);
@@ -168,6 +211,9 @@ double GlobalColourDescriptor::operator- (GlobalColourDescriptor &other) const
 	}
 	
 	delete p;
+	
+	//cout << "should not be negative!" << endl;
+	//g_assert(sum > -1);
 
 	return sqrt(sum);
 }
