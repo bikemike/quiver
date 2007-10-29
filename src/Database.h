@@ -7,9 +7,14 @@
 
 using namespace std;
 
+class Database;
+typedef boost::shared_ptr<Database> DatabasePtr;
+
 class Database
 {
 public:
+	static DatabasePtr GetInstance();
+
 	//constructor
 	Database();
 	~Database();
@@ -32,6 +37,7 @@ public:
 private:
 	struct sqlite3 *m_pDB;
 	ImageList *m_pImageList;
+	static DatabasePtr c_pDatabasePtr;
 };
 
 #endif /*DATABASE_H_*/

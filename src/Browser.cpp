@@ -23,6 +23,7 @@ using namespace std;
 #include "QuiverUtils.h"
 #include "QuiverPrefs.h"
 #include "QuiverFileOps.h"
+#include "Database.h"
 
 #include "Statusbar.h"
 
@@ -1401,9 +1402,14 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		}
 		
 		list<unsigned int>::iterator itr = selection.begin();
-		string file = pBrowserImpl->m_ImageList[*itr].GetFilePath();
+		string file = pBrowserImpl->m_ImageList[*itr].GetURI();
 		
-		printf("find image similar to %s\n", file.c_str());
+		string result = Database::GetInstance()->GetClosestMatch(file);
+			
+		pBrowserImpl->m_ImageList.Clear();
+		list<string> files;
+		files.push_back(result);
+		pBrowserImpl->m_ImageList.Add(&files);
 	}
 }
 

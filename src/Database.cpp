@@ -12,6 +12,8 @@
 #include "QuiverFile.h"
 #include "GlobalColourDescriptor.h"
 
+DatabasePtr Database::c_pDatabasePtr;
+
 enum
 {
 	QUIVER_DB_COLUMN_ID = 0,
@@ -41,6 +43,16 @@ Database::~Database()
 {
 	// destructor
 	Close();
+}
+
+DatabasePtr Database::GetInstance()
+{
+	if (NULL == c_pDatabasePtr.get())
+	{
+		DatabasePtr prefsPtr(new Database());
+		c_pDatabasePtr = prefsPtr;
+	}
+	return c_pDatabasePtr;
 }
 
 int Database::Open(std::string db_path)
@@ -348,6 +360,8 @@ string Database::GetClosestMatch(string img_path)
 	// Cycle through the entire database, comparing blobs
 	sqlite3_stmt *pStmt;
 	
+	cout << "searching match for " << img_path << endl;
+	
 	QuiverFile *file = new QuiverFile(img_path.c_str());
 	GlobalColourDescriptor *query = new GlobalColourDescriptor(file);
 	query->Calculate(64, 128);
@@ -357,6 +371,8 @@ string Database::GetClosestMatch(string img_path)
 	if(res != SQLITE_OK)
 	{
 		cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
+		delete file;
+		delete query;
 		return false;
 	}
 	
@@ -400,7 +416,7 @@ string Database::GetClosestMatch(string img_path)
 		{
 			mindist = dist;
 			best = (char *)path;
-			cout << path << " has shortest distance! " << dist << endl;
+//			cout << path << " has shortest distance! " << dist << endl;
 			
 //			for(int i=0; i<size; i++)
 //			{
@@ -414,11 +430,7 @@ string Database::GetClosestMatch(string img_path)
 
 	cout << "closest match to " << img_path << " is " << best << " with a distance of " << mindist << endl;
 	delete query;
-	
-	m_pImageList->Clear();
-	list<string> files;
-	files.push_back(best);
-	m_pImageList->Add(&files);
+	delete file;
 	
 	return best;
 }

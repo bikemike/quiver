@@ -107,7 +107,7 @@ public:
 	Viewer m_Viewer;
 	ExifView m_ExifView;
 	
-	Database m_Database;
+//	Database m_Database;
 	
 	StatusbarPtr m_StatusbarPtr;
 
@@ -660,6 +660,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuTransform", NULL, N_("Transform")},
 	{ "MenuEdit", NULL, N_("_Edit") },
 	{ "MenuView", NULL, N_("_View") },
+	{ "MenuQuery", NULL, N_("_Query") },
 	{ "MenuSort", NULL, N_("_Arrange Items") },
 	{ "MenuImage", NULL, N_("_Image") },
 	{ "MenuGo", NULL, N_("_Go") },
@@ -1656,8 +1657,8 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 
 	// Open the image database and have a look-see if new images have
 	// been added...
-	m_QuiverImplPtr->m_Database.Open("test.s3db");
-	m_QuiverImplPtr->m_Database.SetImageList(&m_QuiverImplPtr->m_ImageList);
+	Database::GetInstance()->Open("test.s3db");
+	Database::GetInstance()->SetImageList(&m_QuiverImplPtr->m_ImageList);
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	bool bIndexOnStartup = prefsPtr->GetBoolean(QUIVER_PREFS_CBIR,QUIVER_PREFS_CBIR_INDEX_ON_STARTUP,true);
 	
@@ -1666,7 +1667,7 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 		const gchar* dir = g_get_home_dir();
 		// Lauch this from a thread, perhaps using the status bar or a new dialog for progress...
 		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
-		m_QuiverImplPtr->m_Database.IndexFolder(photo_library, true);
+		Database::GetInstance()->IndexFolder(photo_library, true);
 	}
 
 	// call this a second time to make sure the list is updated
