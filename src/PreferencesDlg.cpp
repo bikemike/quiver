@@ -2,7 +2,9 @@
 
 #include "PreferencesDlg.h"
 
+#ifdef HAVE_LIBGLADE
 #include <glade/glade.h>
+#endif
 
 #include "QuiverPrefs.h"
 #include "IPreferencesEventHandler.h"
@@ -22,7 +24,9 @@ public:
 
 // variables
 	PreferencesDlg*     m_pPreferencesDlg;
+#ifdef HAVE_LIBGLADE
 	GladeXML*           m_pGladeXML;
+#endif
 	
 	// dlg widgets
 	GtkFileChooserButton*  m_pFCBtnPhotoLibrary;
@@ -78,9 +82,11 @@ GtkWidget* PreferencesDlg::GetWidget()
 
 void PreferencesDlg::Run()
 {
+#ifdef HAVE_LIBGLADE
 	 GtkWidget *prefDlg = glade_xml_get_widget (m_PrivPtr->m_pGladeXML, "QuiverPreferencesDialog");
 	 gtk_dialog_run(GTK_DIALOG(prefDlg));
 	 gtk_widget_destroy(prefDlg);
+#endif
 }
 
 // private stuff
@@ -98,26 +104,31 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
         m_pPreferencesDlg(parent),
         m_PreferencesEventHandler( new PreferencesEventHandler(this) )
 {
+#ifdef HAVE_LIBGLADE
 	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "QuiverPreferencesDialog", NULL);
 
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
+#endif
 }
 
 PreferencesDlg::PreferencesDlgPriv::~PreferencesDlgPriv()
 {
+#ifdef HAVE_LIBGLADE
 	if (NULL != m_pGladeXML)
 	{
 		g_object_unref(m_pGladeXML);
 		m_pGladeXML = NULL;
 	}
+#endif
 }
 
 
 void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 {
 
+#ifdef HAVE_LIBGLADE
 	m_pFCBtnPhotoLibrary     = GTK_FILE_CHOOSER_BUTTON(     glade_xml_get_widget (m_pGladeXML, "fcb_general_photo_library") );
 			
 	m_pComboFilmstripPos     = GTK_COMBO_BOX(     glade_xml_get_widget (m_pGladeXML, "cbox_viewer_filmstrip_position") );
@@ -145,6 +156,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 
 	m_pLblBrowserColor       = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_browser") );
 	m_pLblViewerColor        = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_viewer") );
+#endif
 }
 
 void PreferencesDlg::PreferencesDlgPriv::UpdateUI()

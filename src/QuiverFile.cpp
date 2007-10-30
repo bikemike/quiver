@@ -4,19 +4,22 @@
 #ifndef QUIVER_MAEMO
 #include <libgnomeui/gnome-icon-lookup.h>
 #else
+#ifdef HAVE_HILDON_MIME
+#include <hildon-mime.h>
+#else
 #include <osso-mime.h>
+#endif
 #endif
 
 #include <libexif/exif-utils.h>
 #include <glib/gstdio.h>
-
-#include <gcrypt.h>
 
 #include <string>
 
 #include "QuiverFile.h"
 #include "Timer.h"
 #include "QuiverUtils.h"
+#include "MD5.h"
 
 #include <map>
 
@@ -1268,7 +1271,11 @@ gchar* QuiverFile::GetIconName()
 		return NULL;
 	
 #ifdef QUIVER_MAEMO
+#ifdef HAVE_HILDON_MIME
+	gchar** icon_names = hildon_mime_get_icon_names(file_info->mime_type, file_info);
+#else
 	gchar** icon_names = osso_mime_get_icon_names(file_info->mime_type, file_info);
+#endif
 	
 	gint i = 0;
 	for (i = 0; NULL != icon_names[i]; i++)
@@ -1409,9 +1416,9 @@ void QuiverFile::RemoveCachedThumbnail(int iSize /* = 0*/)
 
 gchar* quiver_thumbnail_path_for_uri(const char* uri, const char* szSize)
 {
-	
-	unsigned char digest[16];
-	gcry_md_hash_buffer (GCRY_MD_MD5, digest, uri, strlen(uri));
+	unsigned char* digest = NULL;
+	MD5 md5((unsigned char*)uri);	
+	digest = md5.raw_digest();
 	
 	char szMD5Hash[37];
 	g_snprintf(szMD5Hash,37,"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x.png",
@@ -1419,7 +1426,7 @@ gchar* quiver_thumbnail_path_for_uri(const char* uri, const char* szSize)
 	           digest[5], digest[6], digest[7], digest[8], digest[9],
     	       digest[10], digest[11], digest[12], digest[13],
         	   digest[14], digest[15]);
-	
+	free(digest);
 
 	return g_build_filename( g_get_home_dir(), ".thumbnails", szSize, szMD5Hash, NULL);
 }

@@ -11,7 +11,11 @@
 #ifndef QUIVER_MAEMO
 #include <libgnomeui/gnome-icon-lookup.h>
 #else
+#ifdef HAVE_HILDON_FM_2
+#include <hildon/hildon-file-system-info.h>
+#else
 #include <hildon-widgets/hildon-file-system-info.h>
+#endif
 #endif
 
 #include <set>
@@ -22,6 +26,21 @@
 #include "QuiverStockIcons.h"
 
 /*GtkTreeStore *store;*/
+
+#ifdef QUIVER_MAEMO
+class FolderTree::FolderTreeImpl;
+typedef struct _HildonFSAsyncStruct
+{
+	FolderTree::FolderTreeImpl* pFolderTreeImpl; 
+	GMainLoop*                  pAsyncLoop;
+	char*                       szDisplayName;
+} HildonFSAsyncStruct;
+
+static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
+                                             HildonFileSystemInfo *info,
+                                             const GError *error,
+                                             gpointer data);
+#endif
 
 enum
 {
@@ -999,11 +1018,25 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 	gchar* uri_child = gnome_vfs_uri_to_string (vfs_uri_child, GNOME_VFS_URI_HIDE_NONE);
 	
 #ifdef QUIVER_MAEMO
-	GError* error = NULL;
-	HildonFileSystemInfo *fs_info = hildon_file_system_info_new(uri_child, &error);
-	if (NULL != fs_info)
+	HildonFSAsyncStruct asyncStruct = {0};
+	asyncStruct.pFolderTreeImpl = NULL;
+	asyncStruct.pAsyncLoop = g_main_loop_new (NULL, FALSE);
+
+	HildonFileSystemInfoHandle* fs_info_handle = hildon_file_system_info_async_new(uri_child, hildon_fs_info_callback ,&asyncStruct);
+
+	if (NULL != fs_info_handle)
 	{
-		display_name = hildon_file_system_info_get_display_name(fs_info);
+		gdk_threads_leave();
+		g_main_loop_run(asyncStruct.pAsyncLoop);
+		gdk_threads_enter();
+
+		g_main_loop_unref(asyncStruct.pAsyncLoop);
+		asyncStruct.pAsyncLoop = NULL;
+	}
+
+	if (NULL != asyncStruct.szDisplayName)
+	{
+		display_name = asyncStruct.szDisplayName;
 	}
 	else
 	{
@@ -1055,8 +1088,10 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 	}
 
 #ifdef QUIVER_MAEMO
-	if (NULL != fs_info)
-		hildon_file_system_info_free(fs_info);
+	if (NULL != asyncStruct.szDisplayName)
+	{
+		g_free(asyncStruct.szDisplayName);
+	}
 #endif
 	
 	g_free(uri_child);
@@ -1606,6 +1641,34 @@ gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id)
 
 #endif
 
+#ifdef QUIVER_MAEMO
+static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
+                                             HildonFileSystemInfo *info,
+                                             const GError *error,
+                                             gpointer data)
+{
+	HildonFSAsyncStruct* asyncStruct = (HildonFSAsyncStruct*)data;
+
+	//gdk_threads_enter();
+	if (NULL != asyncStruct)
+	{
+		if (NULL != info)
+		{
+			const char* display_name = hildon_file_system_info_get_display_name(info);
+			asyncStruct->szDisplayName = g_strdup(display_name);
+		}
+
+	   	if (NULL != asyncStruct->pAsyncLoop)
+		{
+			g_main_loop_quit(asyncStruct->pAsyncLoop);
+		}
+	}
+	//gdk_threads_leave();
+
+}
+
+
+#endif
 void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 {
 	int iNodeOrder = 0;
@@ -1654,23 +1717,30 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 #ifdef QUIVER_MAEMO
 	for (int i = 0; i < FOLDER_ID_COUNT; i++)
 	{
-		GError *error = NULL;
 		gchar* folder_uri = folder_tree_get_folder_uri_from_id((FolderID)i);
 
 		if (NULL != folder_uri)
 		{
-		
 			icon_name  = folder_tree_get_icon_name(folder_uri,FALSE);
 
-			HildonFileSystemInfo *fs_info = hildon_file_system_info_new(folder_uri, &error);
-			if (NULL == fs_info)
-			{
-				printf("hildon_file_system_info is null for: %s\n",icon_name);
-			}
-			else
-			{
-				const gchar *display_name = hildon_file_system_info_get_display_name(fs_info);
+			HildonFSAsyncStruct asyncStruct = {0};
+			asyncStruct.pFolderTreeImpl = this;
+			asyncStruct.pAsyncLoop = g_main_loop_new (NULL, FALSE);
 
+			HildonFileSystemInfoHandle* fs_info_handle = hildon_file_system_info_async_new(folder_uri, hildon_fs_info_callback ,&asyncStruct);
+
+			if (NULL != fs_info_handle)
+			{
+				gdk_threads_leave();
+				g_main_loop_run (asyncStruct.pAsyncLoop);
+				gdk_threads_enter();
+				
+				g_main_loop_unref(asyncStruct.pAsyncLoop);
+				asyncStruct.pAsyncLoop = NULL;
+			}
+
+			if (NULL != asyncStruct.szDisplayName)
+			{
 				GtkTreeIter* parent = &iter1;
 				GtkTreeIter* child  = &iter2;
 				if (0 == i)
@@ -1683,16 +1753,16 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 				gtk_tree_store_set (store, child,
 					FILE_TREE_COLUMN_CHECKBOX, FALSE,
 					FILE_TREE_COLUMN_ICON, icon_name,
-						FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
+						FILE_TREE_COLUMN_DISPLAY_NAME, asyncStruct.szDisplayName,
 						FILE_TREE_COLUMN_SEPARATOR,FALSE,
 						FILE_TREE_COLUMN_URI,folder_uri,
 						FILE_TREE_COLUMN_PERMANENT,TRUE,
 						FILE_TREE_COLUMN_USE_DEFAULT_ORDER,TRUE,
 						-1);
 
-				g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(display_name),(gpointer)iNodeOrder++);
+				g_hash_table_insert(m_pHashRootNodeOrder,g_strdup(asyncStruct.szDisplayName),(gpointer)iNodeOrder++);
 
-				hildon_file_system_info_free(fs_info);
+				g_free(asyncStruct.szDisplayName);
 			}
 			g_free(icon_name);
 			g_free(folder_uri);

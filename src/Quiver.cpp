@@ -5,7 +5,11 @@
 #include "Quiver.h"
 
 #ifdef QUIVER_MAEMO
+#ifdef HAVE_HILDON_1
+#include <hildon/hildon-program.h>
+#else
 #include <hildon-widgets/hildon-program.h>
+#endif
 #include <libosso.h>
 #endif
 
@@ -19,23 +23,6 @@
 #include <boost/algorithm/string.hpp>
 
 #include <errno.h>
-#include <gcrypt.h>
-
-#ifndef QUIVER_MAEMO
-extern "C" 
-{
-	// needed for initialization of gcrypt library
-	GCRY_THREAD_OPTION_PTHREAD_IMPL;
-}
-#else
-#include "gcrypt_macro.h"
-extern "C" 
-{
-	// needed for initialization of gcrypt library
-	QUIVER_GCRY_THREAD_OPTION_PTHREAD_IMPL;
-}
-#endif
-
 
 #include "QuiverStockIcons.h"
 
@@ -1389,7 +1376,10 @@ Quiver::~Quiver()
 {
 	//destructor
 #ifdef QUIVER_MAEMO
-	osso_deinitialize(osso_context);
+	if (NULL != osso_context)
+	{
+		osso_deinitialize(osso_context);
+	}
 #endif
 }
 
@@ -1546,10 +1536,6 @@ int main (int argc, char **argv)
 	gdk_threads_init ();
 	gdk_threads_enter ();
 
-
-	// initialize the libgcrypt library (used for generating md5 hash)
-	gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
-	gcry_check_version (NULL);
 	
 	/* Initialize the widget set */
 	gtk_init (&argc, &argv);
@@ -2006,8 +1992,8 @@ void Quiver::OnQuit()
 
 void Quiver::OnOpenFile()
 {
-	GtkWidget *dialog;
 #ifndef QUIVER_MAEMO
+	GtkWidget *dialog;
 	
 	dialog = gtk_file_chooser_dialog_new ("Open File",
 					      GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
@@ -2034,9 +2020,9 @@ void Quiver::OnOpenFile()
 
 void Quiver::OnOpenFolder()
 {
-	GtkWidget *dialog;
 	
 #ifndef QUIVER_MAEMO
+	GtkWidget *dialog;
 	dialog = gtk_file_chooser_dialog_new ("Open Folder",
 					      GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
 					      GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
@@ -2398,11 +2384,11 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data )
 {
-	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	// don't do anything for MAEMO because of weirdness in HildonControlbar
 #ifndef QUIVER_MAEMO
 	if (2 == event->button)
 	{
+		QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 		pQuiverImpl->m_pQuiver->OnFullScreen();
 		return TRUE;
 	}

@@ -8,16 +8,24 @@ AM_CPPFLAGS = \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
 	-DQUIVER_GLADEDIR=\""$(gladedir)"\" \
 	$(PACKAGE_CFLAGS) \
+	$(HILDON_LIBS_CFLAGS) \
+	$(HILDON_1_CFLAGS) \
+	$(HILDON_FM_CFLAGS) \
+	$(HILDON_FM_2_CFLAGS) \
+	$(OSSO_MIME_CFLAGS) \
+	$(HILDON_MIME_CFLAGS) \
 	$(BOOST_CPPFLAGS) \
-	$(LIBGCRYPT_CFLAGS) \
 	$(LIBEXIF_CFLAGS) \
+	$(LIBGLADE_CFLAGS) \
+	$(CAIRO_CFLAGS) \
 	-Wall 
 
-bin_PROGRAMS = quiver
+bin_PROGRAMS = quiver 
 
 quiver_SOURCES = \
 	quiver-i18n.h \
-	gcrypt_macro.h \
+	MD5.h \
+	MD5.cpp \
 	QuiverUI.h \
 	ExifView.h \
 	ExifView.cpp \
@@ -91,14 +99,19 @@ quiver_LDFLAGS =
 
 quiver_LDADD = \
 	$(PACKAGE_LIBS) \
+	$(HILDON_LIBS_LIBS) \
+	$(HILDON_1_LIBS) \
+	$(HILDON_FM_LIBS) \
+	$(HILDON_FM_2_LIBS) \
+	$(OSSO_MIME_LIBS) \
+	$(HILDON_MIME_LIBS) \
 	$(BOOST_LDFLAGS) \
 	$(BOOST_SIGNALS_LIB) \
-	$(LIBGCRYPT_LIBS) \
 	$(LIBEXIF_LIBS) \
+	$(LIBGLADE_LIBS) \
+	$(CAIRO_LIBS) \
 	-ljpeg \
 	../libquiver/libquiver.la
-
-
 
 TESTS = test_image_list test_quiver_file test_icon_view
 check_PROGRAMS = test_image_list test_quiver_file test_icon_view

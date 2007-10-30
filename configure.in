@@ -34,8 +34,6 @@ AC_PATH_PROG([GLIB_GENMARSHAL], [glib-genmarshal])
 
 AC_PATH_PROG([GDK_PIXBUF_CSOURCE], [gdk-pixbuf-csource])
 
-AM_PATH_LIBGCRYPT
-
 dnl Set gettext package name
 GETTEXT_PACKAGE=quiver
 AC_SUBST([GETTEXT_PACKAGE])
@@ -47,73 +45,72 @@ AM_GLIB_GNU_GETTEXT
 
 AC_PROG_INTLTOOL([0.21])
 
-QUIVER_MODULES="gtk+-2.0  gnome-vfs-2.0 libglade-2.0"
+QUIVER_MODULES="gtk+-2.0  gnome-vfs-2.0"
+
+PKG_CHECK_MODULES([LIBGLADE], 
+	[libglade-2.0],
+	[AC_DEFINE([HAVE_LIBGLADE],[1],[libglade-2.0 is available])],
+	[have_libglade=no])
 
 PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 
 PKG_CHECK_MODULES([CAIRO], [cairo],
-	[
-	 AC_DEFINE([HAVE_CAIRO],[1],[cairo is available])
-	 have_cairo=yes
-	],
-	[
-	 have_cairo=no
-	])
+	[AC_DEFINE([HAVE_CAIRO],[1],[cairo is available])],
+	[have_cairo=no])
 
-dnl libglade-2.0
 AC_ARG_WITH(
-	      [build_config], 
-	      [AS_HELP_STRING(
-	       	[--with-build-config=CFG],
-		[where CFG is one of the following build configurations: maemo-x86, maemo-armel])
-	      ],
-	      [build_config=$withval],
-	      [])
+	[build_config], 
+	[AS_HELP_STRING(
+		[--with-build-config=CFG],
+		[where CFG is one of the following alternate build configurations: maemo])
+	],
+	[build_config=$withval],
+	[])
 
-third_party_dir=`pwd`/${srcdir}/3rdparty
+AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo]) 
+if test x$build_config = xmaemo; then
+	third_party_dir=`pwd`/${srcdir}/3rdparty
+# Hildon-libs -> libhildon1 (pkg-config name hildon-1)
+	PKG_CHECK_MODULES([HILDON_1], [hildon-1],
+		[ AC_DEFINE([HAVE_HILDON_1],[1],[hildon-1 is available]) ],
+		[have_hildon1=no]
+		[ PKG_CHECK_MODULES([HILDON_LIBS], [hildon-libs],
+			[ AC_DEFINE([HAVE_HILDON_LIBS],[1],[hildon-libs is available]) ],
+			[have_holdon_libs=no])])
 
-AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo-armel || test x$build_config = xmaemo-x86]) 
+# Hildon-fm -> libhildonfm2 (pkg-config name hildon-fm-2)
+	PKG_CHECK_MODULES([HILDON_FM_2], [hildon-fm-2],
+		[ AC_DEFINE([HAVE_HILDON_FM_2],[1],[hildonfm2 is available]) ],
+		[have_hildon_fm_2=no]
+		[PKG_CHECK_MODULES([HILDON_FM], [hildon-fm],
+			[ AC_DEFINE([HAVE_HILDON_FM],[1],[hildon-fm is available]) ],
+			[have_hildon_fm=no])])
 
-if test x$build_config = xmaemo-armel; then
-	AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
-	QUIVER_MODULES="$QUIVER_MODULES libosso libossomime hildon-libs hildon-fm"
-	BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/armel/mt/release/libboost_signals-gcc-mt-1_33_1.a 
+# Libossomime0 -> libhildonmime0
+	PKG_CHECK_MODULES([HILDON_MIME], [libhildonmime],
+		[ AC_DEFINE([HAVE_HILDON_MIME],[1],[libhildonmime is available]) ],
+		[have_hildon_mime=no]
+		[PKG_CHECK_MODULES([OSSO_MIME], [libossomime],
+			[ AC_DEFINE([HAVE_OSSO_MIME],[1],[libossomime is available]) ],
+			[have_osso_mime=no])])
 
-	dnl boost static libs
-	dnl cd ${third_party_dir}/boost/lib
-	dnl ln -fs armel/signals/build/libboost_signals.a/gcc/release/threading-multi/libboost_signals-gcc-mt-1_33_1.a 
-	dnl ln -fs libboost_signals-gcc-mt-1_33_1.a libboost_signals.a
-
-	dnl boost shared libs
-	dnl ln -fs armel/signals/build/libboost_signals.so/gcc/release/shared-linkable-true/libboost_signals-gcc-1_33_1.so.1.33.1
-	dnl ln -fs libboost_signals-gcc-1_33_1.so.1.33.1 libboost_signals-gcc-1_33_1.so
-	dnl ln -fs libboost_signals-gcc-1_33_1.so libboost_signals.so
-	dnl cd -
-	ac_boost_path=${third_party_dir}/boost
-	boost_signals_static=yes
-	LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
-	LIBEXIF_LIBS=${third_party_dir}/libexif/lib/armel/libexif.a
-
-elif test x$build_config = xmaemo-x86; then
-	AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
-	QUIVER_MODULES="$QUIVER_MODULES libosso libossomime hildon-libs hildon-fm"
-	BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/x86/mt/release/libboost_signals-gcc-mt-1_33_1.a 
-	dnl boost static libs
-	dnl cd ${third_party_dir}/boost/lib
-	dnl ln -fs x86/signals/build/libboost_signals.a/gcc/release/threading-multi/libboost_signals-gcc-mt-1_33_1.a 
-	dnl ln -fs libboost_signals-gcc-mt-1_33_1.a libboost_signals.a
-
-	dnl boost shared libs
-	dnl ln -fs x86/signals/build/libboost_signals.so/gcc/release/shared-linkable-true/libboost_signals-gcc-1_33_1.so.1.33.1
-	dnl ln -fs libboost_signals-gcc-1_33_1.so.1.33.1 libboost_signals-gcc-1_33_1.so
-	dnl ln -fs libboost_signals-gcc-1_33_1.so libboost_signals.so
-	dnl cd -
-	ac_boost_path=${third_party_dir}/boost
-	boost_signals_static=yes
-	LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
-	LIBEXIF_LIBS=${third_party_dir}/libexif/lib/x86/libexif.a
+	if test x$build_cpu = xarm; then
+		AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
+		ac_boost_path=${third_party_dir}/boost
+		boost_signals_static=yes
+		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
+		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/armel/libexif.a
+		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/armel/mt/release/libboost_signals-gcc-mt-1_33_1.a 
+	else
+		AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
+		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/x86/mt/release/libboost_signals-gcc-mt-1_33_1.a 
+		ac_boost_path=${third_party_dir}/boost
+		boost_signals_static=yes
+		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
+		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/x86/libexif.a
+	fi
 else
-        QUIVER_MODULES="$QUIVER_MODULES libgnomeui-2.0"
+	QUIVER_MODULES="$QUIVER_MODULES libgnomeui-2.0"
 fi
 
 AC_SUBST([PACKAGE_CFLAGS])

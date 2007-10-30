@@ -1797,7 +1797,7 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 {
 	QuiverIconView *iconview = (QuiverIconView*)data;
 
-	gdouble divider = 1.2; 	
+	gdouble divider = 1.02; 	
 	gdouble timeout_secs = SMOOTH_SCROLL_TIMEOUT / 1000.;
 
 	gboolean hdone = FALSE;

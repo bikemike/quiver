@@ -32,7 +32,11 @@ using namespace std;
 #include "IconViewThumbLoader.h"
 
 #ifdef QUIVER_MAEMO
+#ifdef HAVE_HILDON_1
+#include <hildon/hildon-controlbar.h>
+#else
 #include <hildon-widgets/hildon-controlbar.h>
+#endif
 #include <math.h>
 #endif
 
