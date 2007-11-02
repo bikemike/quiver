@@ -4,6 +4,7 @@
 
 #define QUIVER_STOCK_APP         "quiver-icon-app"
 #define QUIVER_STOCK_BROWSER     "quiver-icon-browser"
+#define QUIVER_STOCK_QUERY       "quiver-icon-query"
 #define QUIVER_STOCK_ROTATE_CW   "quiver-icon-rotate-cw"
 #define QUIVER_STOCK_ROTATE_CCW  "quiver-icon-rotate-ccw"
 #define QUIVER_STOCK_SLIDESHOW   "quiver-icon-slideshow"

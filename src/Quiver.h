@@ -16,6 +16,7 @@
 #include "ImageLoader.h"
 #include "Statusbar.h"
 #include "Browser.h"
+#include "Query.h"
 #include "ExifView.h"
 #include "Database.h"
 
@@ -49,6 +50,7 @@ public:
 	
 	void ShowBrowser();
 	void ShowViewer();
+	void ShowQuery();
 
 	void SetWindowTitle(std::string s);
 

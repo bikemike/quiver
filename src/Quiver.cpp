@@ -41,6 +41,7 @@ extern "C"
 
 #include "IBrowserEventHandler.h"
 #include "IViewerEventHandler.h"
+#include "IQueryEventHandler.h"
 #include "IPreferencesEventHandler.h"
 #include "IImageListEventHandler.h"
 
@@ -105,6 +106,7 @@ public:
 
 	Browser m_Browser;
 	Viewer m_Viewer;
+	Query m_Query;
 	ExifView m_ExifView;
 	
 //	Database m_Database;
@@ -120,6 +122,7 @@ public:
 	
 	guint m_iMergedViewerUI;
 	guint m_iMergedBrowserUI;
+	guint m_iMergedQueryUI;
 	
 	guint m_iMergedExternalTools;
 	
@@ -188,6 +191,18 @@ public:
 		QuiverImpl *parent;
 	};
 	
+	//class QueryEventHandler;
+	class QueryEventHandler : public IQueryEventHandler
+	{
+	public:
+		QueryEventHandler(QuiverImpl *parent){this->parent = parent;};
+		virtual void HandleSelectionChanged(QueryEventPtr event_ptr);
+		virtual void HandleItemActivated(QueryEventPtr event_ptr);
+		virtual void HandleCursorChanged(QueryEventPtr event_ptr);
+	private:
+		QuiverImpl *parent;
+	};
+	
 	class ImageListEventHandler : public IImageListEventHandler
 	{
 	public:
@@ -213,6 +228,7 @@ public:
 	
 	IBrowserEventHandlerPtr m_BrowserEventHandler;
 	IViewerEventHandlerPtr m_ViewerEventHandler;
+	IQueryEventHandlerPtr m_QueryEventHandler;
 	IPreferencesEventHandlerPtr m_PreferencesEventHandler;
 	IImageListEventHandlerPtr m_ImageListEventHandler;
 	
@@ -224,6 +240,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
           m_StatusbarPtr(new Statusbar()),
 		  m_BrowserEventHandler(new BrowserEventHandler(this)),
 		  m_ViewerEventHandler(new ViewerEventHandler(this)),
+		  m_QueryEventHandler(new QueryEventHandler(this)),
 		  m_PreferencesEventHandler( new PreferencesEventHandler(this) ),
 		  m_ImageListEventHandler ( new ImageListEventHandler(this) )
 {
@@ -424,6 +441,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_ABOUT                                  "About"
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
+#define ACTION_QUIVER_UI_MODE_QUERY                          "UIModeQuery"
 #define ACTION_QUIVER_ESCAPE                                 "QuiverEscape"
 #define ACTION_QUIVER_CLOSE_2                                ACTION_QUIVER_CLOSE"_2"
 #define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
@@ -590,6 +608,39 @@ char *quiver_ui_browser =
 "	</popup>"
 "</ui>";
 
+char *quiver_ui_query =
+"<ui>"
+#ifdef QUIVER_MAEMO
+"	<popup name='MenubarMain'>"
+#else
+"	<menubar name='MenubarMain'>"
+#endif
+"		<menu action='MenuQuery'>"
+"			<placeholder name='UIModeItems'>"
+"				<separator/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
+"				<separator/>"
+"			</placeholder>"
+"		</menu>"
+#ifdef QUIVER_MAEMO
+"	</popup>"
+#else
+"	</menubar>"
+#endif
+"	<toolbar name='ToolbarMain'>"
+"		<placeholder name='UIModeItems'>"
+"			<separator/>"
+"			<toolitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
+"			<separator/>"
+"		</placeholder>"
+"		<placeholder name='NavToolItems'>"
+"			<separator/>"
+"		</placeholder>"
+"	</toolbar>"
+"	<popup name='ContextMenu'>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
+"	</popup>"
+"</ui>";
 
 char *quiver_ui_viewer =
 "<ui>"
@@ -669,6 +720,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuHelp", NULL, N_("_Help") },
 
 	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "<Control>b", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_QUERY,QUIVER_STOCK_QUERY , "_Query", "<Control>d", "Search Images", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, NULL , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
@@ -979,6 +1031,7 @@ void Quiver::Close()
 	// force reference count to 0 for the quiverimplptr
 	m_QuiverImplPtr->m_Browser.RemoveEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
 	m_QuiverImplPtr->m_Viewer.RemoveEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
+	m_QuiverImplPtr->m_Query.RemoveEventHandler(m_QuiverImplPtr->m_QueryEventHandler);
 	
 	PreferencesPtr prefs = Preferences::GetInstance();
 	prefs->RemoveEventHandler(m_QuiverImplPtr->m_PreferencesEventHandler);
@@ -1092,6 +1145,7 @@ void Quiver::Init()
 	
 	m_QuiverImplPtr->m_Browser.AddEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
 	m_QuiverImplPtr->m_Viewer.AddEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
+	m_QuiverImplPtr->m_Query.AddEventHandler(m_QuiverImplPtr->m_QueryEventHandler);
 
 	/* Create the main window */
 #ifdef QUIVER_MAEMO
@@ -1177,9 +1231,11 @@ void Quiver::Init()
 
 	m_QuiverImplPtr->m_Browser.SetUIManager(m_QuiverImplPtr->m_pUIManager);
 	m_QuiverImplPtr->m_Viewer.SetUIManager(m_QuiverImplPtr->m_pUIManager);
+	m_QuiverImplPtr->m_Query.SetUIManager(m_QuiverImplPtr->m_pUIManager);
 	
 	m_QuiverImplPtr->m_Browser.SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
 	m_QuiverImplPtr->m_Viewer.SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
+	m_QuiverImplPtr->m_Query.SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
 	
 	m_QuiverImplPtr->m_ExifView.SetUIManager(m_QuiverImplPtr->m_pUIManager);
 	//GTK_WIDGET_UNSET_FLAGS(toolbar,GTK_CAN_FOCUS);
@@ -1306,6 +1362,7 @@ void Quiver::Init()
 	// pack the browser and viewer area
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Browser.GetWidget(), TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Viewer.GetWidget(), TRUE, TRUE, 0);
+	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_Query.GetWidget(), TRUE, TRUE, 0);
 
 	// pack the hpaned (main gui area)
 	gtk_paned_pack1(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),hbox_browser_viewer_container,TRUE,TRUE);
@@ -1654,6 +1711,8 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 
 	m_QuiverImplPtr->m_Browser.SetImageList(m_QuiverImplPtr->m_ImageList);
 	m_QuiverImplPtr->m_Viewer.SetImageList(m_QuiverImplPtr->m_ImageList);
+//TODO image list for query is different
+//	m_QuiverImplPtr->m_Query.SetImageList(m_QuiverImplPtr->m_ImageList);
 
 	// Open the image database and have a look-see if new images have
 	// been added...
@@ -1802,11 +1861,18 @@ void Quiver::ShowViewer()
 	tmp_error = NULL;
 
 	m_QuiverImplPtr->m_Browser.Hide();
-
+	m_QuiverImplPtr->m_Query.Hide();
 	if (0 != m_QuiverImplPtr->m_iMergedBrowserUI)
 	{
 		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedBrowserUI);
 		m_QuiverImplPtr->m_iMergedBrowserUI = 0;
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+	}
+	
+	if (0 != m_QuiverImplPtr->m_iMergedQueryUI)
+	{
+		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedQueryUI);
+		m_QuiverImplPtr->m_iMergedQueryUI = 0;
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 
@@ -1828,12 +1894,20 @@ void Quiver::ShowBrowser()
 	tmp_error = NULL;
 
 	m_QuiverImplPtr->m_Viewer.Hide();
+	m_QuiverImplPtr->m_Query.Hide();
 	gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 
 	if (0 != m_QuiverImplPtr->m_iMergedViewerUI)
 	{
 		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedViewerUI);
 		m_QuiverImplPtr->m_iMergedViewerUI = 0;
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+	}
+	
+	if (0 != m_QuiverImplPtr->m_iMergedQueryUI)
+	{
+		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedQueryUI);
+		m_QuiverImplPtr->m_iMergedQueryUI = 0;
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 
@@ -1846,6 +1920,40 @@ void Quiver::ShowBrowser()
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 	m_QuiverImplPtr->m_Browser.Show();
+}
+
+void Quiver::ShowQuery()
+{
+	GError *tmp_error;
+	tmp_error = NULL;
+
+	m_QuiverImplPtr->m_Viewer.Hide();
+	m_QuiverImplPtr->m_Browser.Hide();
+	gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+
+	if (0 != m_QuiverImplPtr->m_iMergedViewerUI)
+	{
+		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedViewerUI);
+		m_QuiverImplPtr->m_iMergedViewerUI = 0;
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+	}
+
+	if (0 != m_QuiverImplPtr->m_iMergedBrowserUI)
+	{
+		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedBrowserUI);
+		m_QuiverImplPtr->m_iMergedBrowserUI = 0;
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+	}
+
+	if (0 == m_QuiverImplPtr->m_iMergedQueryUI)
+	{
+		m_QuiverImplPtr->m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
+			quiver_ui_query,
+			strlen(quiver_ui_query),
+			&tmp_error);
+		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
+	}
+	m_QuiverImplPtr->m_Query.Show();
 }
 
 
@@ -1884,7 +1992,7 @@ void Quiver::OnFullScreen()
 
 void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr event_ptr)
 {
-	list<unsigned int> selection = parent->m_Browser.GetSelection();
+	list<unsigned int> selection = parent->m_Query.GetSelection();
 	list<unsigned int>::iterator itr;
 	
 	unsigned long long total_size = 0;
@@ -1992,7 +2100,60 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 		parent->m_iTimeoutKeepScreenOn = 0;
 	}
 }
+//
+//void QuiverImpl::QueryEventHandler::HandleItemActivated(ViewerEventPtr event_ptr)
+//{
+//	parent->m_pQuiver->ShowQuery();
+//}
+//
+//void QuiverImpl::QueryEventHandler::HandleCursorChanged(ViewerEventPtr event_ptr)
+//{
+//	parent->m_pQuiver->ImageChanged();
+//}
 
+void QuiverImpl::QueryEventHandler::HandleSelectionChanged(QueryEventPtr event_ptr)
+{
+	list<unsigned int> selection = parent->m_Query.GetSelection();
+	list<unsigned int>::iterator itr;
+	
+	unsigned long long total_size = 0;
+	
+	// n items selected (xx kb)
+	for (itr = selection.begin(); selection.end() != itr; ++itr)
+	{
+		if (*itr < parent->m_ImageList.GetSize())
+		{
+			QuiverFile f = parent->m_ImageList[*itr];
+			total_size += f.GetFileSize();
+		}
+	}
+	
+	char status_text[256];
+	g_snprintf(status_text, 256, "%d items selected (%qd bytes)",selection.size(), total_size);
+
+	//parent->m_StatusbarPtr->SetText(status_text);
+}
+
+void QuiverImpl::QueryEventHandler::HandleItemActivated(QueryEventPtr event_ptr)
+{
+	parent->m_pQuiver->ShowViewer();
+}
+
+void QuiverImpl::QueryEventHandler::HandleCursorChanged(QueryEventPtr event_ptr)
+{
+	parent->m_pQuiver->ImageChanged();
+}
+
+//static gboolean timeout_keep_screen_on (gpointer data)
+//{
+//#ifdef QUIVER_MAEMO 
+//	if (NULL != osso_context)
+//	{
+//		osso_display_blanking_pause(osso_context);
+//	}
+//#endif
+//	return TRUE;
+//}
 
 void QuiverImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
 {
@@ -2249,10 +2410,14 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_BROWSER))
 	{
 		pQuiver->ShowBrowser();
-	}		
+	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_VIEWER))
 	{
 		pQuiver->ShowViewer();
+	}
+	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_QUERY))
+	{
+		pQuiver->ShowQuery();
 	}
 #ifdef QUIVER_MAEMO
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_SWITCH_MAEMO))

@@ -11,6 +11,7 @@ AM_CPPFLAGS = \
 	$(BOOST_CPPFLAGS) \
 	$(LIBGCRYPT_CFLAGS) \
 	$(LIBEXIF_CFLAGS) \
+	$(libxmlpp_CFLAGS) \
 	-Wall 
 
 bin_PROGRAMS = quiver
@@ -89,7 +90,15 @@ quiver_SOURCES = \
 	Database.cpp \
 	ImageDescriptor.h \
 	GlobalColourDescriptor.h \
-	GlobalColourDescriptor.cpp
+	GlobalColourDescriptor.cpp \
+	LocalColourDescriptor.h \
+	LocalColourDescriptor.cpp \
+	Query.h \
+	Query.cpp \
+	QueryEvent.h \
+	IQueryEventSource.h \
+	QueryEventSource.h \
+	QueryEventSource.cpp
 
 
 quiver_LDFLAGS = 
@@ -100,6 +109,7 @@ quiver_LDADD = \
 	$(BOOST_SIGNALS_LIB) \
 	$(LIBGCRYPT_LIBS) \
 	$(LIBEXIF_LIBS) \
+	$(libxmlpp_LIBS) \
 	-ljpeg \
 	../libquiver/libquiver.la \
 	-lsqlite3

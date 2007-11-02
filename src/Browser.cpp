@@ -1405,7 +1405,8 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		string file = pBrowserImpl->m_ImageList[*itr].GetURI();
 		
 		string result = Database::GetInstance()->GetClosestMatch(file);
-			
+		
+		// display the result
 		pBrowserImpl->m_ImageList.Clear();
 		list<string> files;
 		files.push_back(result);

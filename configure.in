@@ -52,6 +52,8 @@ QUIVER_MODULES="gtk+-2.0  gnome-vfs-2.0 libglade-2.0"
 
 PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 
+PKG_CHECK_MODULES(libxmlpp, libxml++-2.6 >= 2.10.0)
+
 PKG_CHECK_MODULES([CAIRO], [cairo],
 	[
 	 AC_DEFINE([HAVE_CAIRO],[1],[cairo is available])
@@ -132,6 +134,9 @@ AC_SUBST([PACKAGE_LIBS])
 
 AC_SUBST([LIBEXIF_CFLAGS])
 AC_SUBST([LIBEXIF_LIBS])
+
+AC_SUBST(libxmlpp_CFLAGS)
+AC_SUBST(libxmlpp_LIBS)
 
 AC_ARG_WITH(
 	[glade-dir], 

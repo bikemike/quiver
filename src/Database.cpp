@@ -7,6 +7,7 @@
 #include <list>
 
 #include <libgnomevfs/gnome-vfs.h>
+#include <libxml++/libxml++.h>
 
 #include "Database.h"
 #include "QuiverFile.h"
@@ -111,7 +112,6 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 	else if(last_mtime != mtime)
 	{
 		cout << "Image changed, updating features: " << img_path.c_str() << endl;
-		string match = GetClosestMatch(img_path);
 	}
 	
 	// Extract some features somewhere around here...
