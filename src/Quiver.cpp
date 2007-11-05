@@ -720,7 +720,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuHelp", NULL, N_("_Help") },
 
 	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "<Control>b", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_UI_MODE_QUERY,QUIVER_STOCK_QUERY , "_Query", "<Control>d", "Search Images", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_QUERY,/*QUIVER_STOCK_QUERY*/QUIVER_STOCK_APP , "_Query", "<Control>d", "Search Images", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, NULL , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
