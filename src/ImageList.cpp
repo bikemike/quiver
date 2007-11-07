@@ -121,6 +121,7 @@ public:
 
 	ImageList::SortBy m_SortBy;
 	bool m_bSortAscend;
+	bool m_bEnableDirectoryLookups;
 
 };
 
@@ -340,6 +341,11 @@ void ImageList::UpdateImageList(list<string> *file_list)
 	{ 
 		EmitContentsChangedEvent();
 	}	
+}
+
+void ImageList::EnableDirectoryLookups(bool bEnable)
+{
+	m_ImageListImplPtr->m_bEnableDirectoryLookups = bEnable;
 }
 
 bool ImageList::IsSupportedFileType(const gchar* uri, GnomeVFSFileInfo *info)
@@ -609,6 +615,7 @@ ImageListImpl::ImageListImpl(ImageList *pImageList)
 
 	m_bSortAscend = true;
 	m_iCurrentIndex = 0;
+	m_bEnableDirectoryLookups = true;
 }
 
 ImageListImpl::~ImageListImpl()
@@ -750,7 +757,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 					}
 					else if (info->type == GNOME_VFS_FILE_TYPE_REGULAR)
 					{
-						if (bNewList && 1 == file_list->size())
+						if (bNewList && 1 == file_list->size() && m_bEnableDirectoryLookups)
 						{
 							// special case to load the whole directory if only
 							// one file is specified

@@ -24,6 +24,7 @@ using namespace std;
 #include "QuiverPrefs.h"
 #include "QuiverFileOps.h"
 #include "Database.h"
+#include "Query.h"
 
 #include "Statusbar.h"
 
@@ -103,6 +104,7 @@ public:
 	ImageList GetImageList();
 	
 	void SetImageList(ImageList list);
+	void SetQuery(Query *pQuery) { m_pQuery = pQuery; }
 	
 	void SetImageIndex(int index, bool bDirectionForward, bool bFromIconView = false);
 
@@ -139,6 +141,7 @@ public:
 	guint m_iTimeoutUpdateListID;
 
 	Browser *m_BrowserParent;
+	Query *m_pQuery;
 
 	ImageLoader m_ImageLoader;
 	IPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
@@ -404,6 +407,10 @@ Browser::GetWidget()
 	return m_BrowserImplPtr->GetWidget();
 };
 
+void Browser::SetQuery(Query *pQuery)
+{
+	m_BrowserImplPtr->SetQuery(pQuery);
+}
 
 //=============================================================================
 //=============================================================================
@@ -1404,13 +1411,11 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		list<unsigned int>::iterator itr = selection.begin();
 		string file = pBrowserImpl->m_ImageList[*itr].GetURI();
 		
-		string result = Database::GetInstance()->GetClosestMatch(file);
+		list <string> result = Database::GetInstance()->GetClosestMatch(file);
 		
 		// display the result
-		pBrowserImpl->m_ImageList.Clear();
-		list<string> files;
-		files.push_back(result);
-		pBrowserImpl->m_ImageList.Add(&files);
+
+		pBrowserImpl->m_pQuery->SetImageList(&result);
 	}
 }
 

@@ -98,7 +98,13 @@ quiver_SOURCES = \
 	QueryEvent.h \
 	IQueryEventSource.h \
 	QueryEventSource.h \
-	QueryEventSource.cpp
+	QueryEventSource.cpp \
+	QueryOpts.h \
+	QueryOpts.cpp \
+	IQueryEventHander.h \
+	QueryOptsEvent.h \
+	QueryOptsEventSource.h \
+	QueryOptsEventSource.cpp
 
 
 quiver_LDFLAGS = 

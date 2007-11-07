@@ -10,6 +10,7 @@ class Statusbar;
 typedef boost::shared_ptr<Statusbar> StatusbarPtr;
 
 class ImageList;
+class Query;
 
 class Browser : public virtual BrowserEventSource
 {
@@ -22,6 +23,7 @@ public:
 	ImageList GetImageList();
 	
 	void SetImageList(ImageList list);
+	void SetQuery(Query *pQuery);
 	
 	void SetUIManager(GtkUIManager *ui_manager);
 	void SetStatusbar(StatusbarPtr statusbarPtr);

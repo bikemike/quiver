@@ -90,7 +90,6 @@ int Database::AddImage(string img_path, string thmb_path, time_t mtime)
 {
 	// add an image
 	int res;
-	char *errmsg;
 
 	time_t last_mtime = GetLastModified(img_path);
 	
@@ -355,10 +354,11 @@ void Database::SetImageList(ImageList *pImageList)
 	m_pImageList = pImageList;
 }
 
-string Database::GetClosestMatch(string img_path)
+list <string> Database::GetClosestMatch(string img_path)
 {
 	// Cycle through the entire database, comparing blobs
 	sqlite3_stmt *pStmt;
+	list <string> results;
 	
 	cout << "searching match for " << img_path << endl;
 	
@@ -373,7 +373,7 @@ string Database::GetClosestMatch(string img_path)
 		cerr << "Error calling sqlite3_prepare_v2: " << sqlite3_errmsg(m_pDB) << endl;
 		delete file;
 		delete query;
-		return false;
+		return results;
 	}
 	
 	unsigned int mindist=0xffffffff;
@@ -424,6 +424,7 @@ string Database::GetClosestMatch(string img_path)
 //				printf("%02x ", ((unsigned char*)blob)[i]);
 //			}
 //			printf("\n");
+			results.push_back(best);
 		}
 		delete desc;
 	}
@@ -432,5 +433,5 @@ string Database::GetClosestMatch(string img_path)
 	delete query;
 	delete file;
 	
-	return best;
+	return results;
 }

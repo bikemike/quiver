@@ -49,9 +49,14 @@
 #define QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE  "hide_film_strip"
 
 // cbir preferences
-#define QUIVER_PREFS_CBIR                      "cbir"
-#define QUIVER_PREFS_CBIR_INDEX_ON_STARTUP     "index_on_startup"
-#define QUIVER_PREFS_CBIR_INDEX_RECURSIVELY    "index_recursively"
+#define QUIVER_PREFS_QUERY                     "query"
+#define QUIVER_PREFS_QUERY_INDEX_ON_STARTUP    "index_on_startup"
+#define QUIVER_PREFS_QUERY_INDEX_RECURSIVELY   "index_recursively"
+#define QUIVER_PREFS_QUERY_THUMB_SIZE          "thumb_size" // for now keep same setting as browser
+#define QUIVER_PREFS_QUERY_FOLDER_HPANE        "folder_hpane"
+#define QUIVER_PREFS_QUERY_FOLDER_VPANE        "folder_vpane"
+#define QUIVER_PREFS_QUERY_PREVIEW_SHOW        "preview_show"
+#define QUIVER_PREFS_QUERY_QUERYOPTS_SHOW      "foldertree_show"
 
 
 enum {

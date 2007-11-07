@@ -11,7 +11,8 @@
 
 #include "QuiverUtils.h"
 #include "ImageLoader.h"
-#include "ImageList.h"`
+#include "ImageList.h"
+#include "Query.h"
 
 #include "QuiverFile.h"
 
@@ -355,6 +356,7 @@ public:
 
 // methods
 	void SetImageList(ImageList imgList);
+	void SetQuery(Query *pQuery) { m_pQuery = pQuery; }
 	void UpdateUI();
 	
 	void SetImageIndex(int index, bool bDirectionForward);
@@ -401,6 +403,7 @@ public:
 	ImageList m_ImageList;
 
 	Viewer *m_pViewer;
+	Query *m_pQuery;
 	
 	guint m_iTimeoutScrollbars;
 	guint m_iTimeoutUpdateListID;

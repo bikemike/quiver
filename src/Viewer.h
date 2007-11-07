@@ -6,8 +6,10 @@
 #include <boost/shared_ptr.hpp>
 
 #include "ViewerEventSource.h"
+#include "Query.h"
 
 class ImageList;
+class Query;
 
 class Statusbar;
 typedef boost::shared_ptr<Statusbar> StatusbarPtr;
@@ -24,6 +26,7 @@ public:
 
 	void SetImageList(ImageList imgList);
 	int GetCurrentOrientation();
+	void SetQuery(Query *pQuery);
 
 	void SlideShowStart();
 	void SlideShowStop();

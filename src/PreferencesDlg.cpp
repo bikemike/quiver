@@ -140,8 +140,8 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 	m_pToggleSlideShowTransition     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_transition") );
 	m_pToggleSlideShowHideFilmStrip  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_hide_filmstrip") );
 	
-	m_pToggleIndexOnStartup = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_cbir_index_on_startup") );
-	m_pToggleIndexRecursively = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_cbir_index_recursively") );
+	m_pToggleIndexOnStartup = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_query_index_on_startup") );
+	m_pToggleIndexRecursively = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_query_index_recursively") );
 	
 	m_pToggleGIFAnimation    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_enable_gif_anim") );
 	
@@ -155,7 +155,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 	m_pLblBrowserColor       = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_browser") );
 	m_pLblViewerColor        = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_viewer") );
 	
-	m_pBtnIndexNow        = GTK_BUTTON ( glade_xml_get_widget(m_pGladeXML, "btn_cbir_index_now") );
+	m_pBtnIndexNow        = GTK_BUTTON ( glade_xml_get_widget(m_pGladeXML, "btn_query_index_now") );
 }
 
 void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
@@ -219,10 +219,10 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 	value = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
 	gtk_range_set_value(m_pRangeFilmstripSize,value);
 	
-	bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_ON_STARTUP, false);
+	bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_QUERY, QUIVER_PREFS_QUERY_INDEX_ON_STARTUP, false);
 	gtk_toggle_button_set_active(m_pToggleIndexOnStartup, bValue);
 	
-	bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_RECURSIVELY, false);
+	bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_QUERY, QUIVER_PREFS_QUERY_INDEX_RECURSIVELY, false);
 	gtk_toggle_button_set_active(m_pToggleIndexRecursively, bValue);
 }
 
@@ -363,12 +363,12 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	else if (priv->m_pToggleIndexOnStartup == togglebutton)
 	{
 		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_ON_STARTUP, bool(bBool));
+		prefs->SetBoolean(QUIVER_PREFS_QUERY, QUIVER_PREFS_QUERY_INDEX_ON_STARTUP, bool(bBool));
 	}
 else if (priv->m_pToggleIndexRecursively == togglebutton)
 	{
 		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_CBIR, QUIVER_PREFS_CBIR_INDEX_RECURSIVELY, bool(bBool));
+		prefs->SetBoolean(QUIVER_PREFS_QUERY, QUIVER_PREFS_QUERY_INDEX_RECURSIVELY, bool(bBool));
 	}
 }
 

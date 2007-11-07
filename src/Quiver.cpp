@@ -129,6 +129,7 @@ public:
 	bool m_bSlideShowRestoreFromFS;
 			
 	ImageList m_ImageList;
+	ImageList m_ResultList;
 	
 	int m_iAppX;
 	int m_iAppY;
@@ -585,6 +586,7 @@ char *quiver_ui_browser =
 "			<placeholder name='UIModeItems'>"
 "				<separator/>"
 "				<menuitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
@@ -597,6 +599,7 @@ char *quiver_ui_browser =
 "		<placeholder name='UIModeItems'>"
 "			<separator/>"
 "			<toolitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
+"			<toolitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
 "			<separator/>"
 "		</placeholder>"
 "		<placeholder name='NavToolItems'>"
@@ -605,6 +608,7 @@ char *quiver_ui_browser =
 "	</toolbar>"
 "	<popup name='ContextMenu'>"
 "				<menuitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
 "	</popup>"
 "</ui>";
 
@@ -615,10 +619,11 @@ char *quiver_ui_query =
 #else
 "	<menubar name='MenubarMain'>"
 #endif
-"		<menu action='MenuQuery'>"
+"		<menu action='MenuView'>"
 "			<placeholder name='UIModeItems'>"
 "				<separator/>"
-"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
@@ -630,7 +635,8 @@ char *quiver_ui_query =
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'>"
 "			<separator/>"
-"			<toolitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
+"			<toolitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
+"			<toolitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
 "			<separator/>"
 "		</placeholder>"
 "		<placeholder name='NavToolItems'>"
@@ -638,7 +644,8 @@ char *quiver_ui_query =
 "		</placeholder>"
 "	</toolbar>"
 "	<popup name='ContextMenu'>"
-"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
 "	</popup>"
 "</ui>";
 
@@ -653,6 +660,7 @@ char *quiver_ui_viewer =
 "			<placeholder name='UIModeItems'>"
 "				<separator/>"
 "				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
 "				<separator/>"
 "			</placeholder>"
 "		</menu>"
@@ -665,11 +673,13 @@ char *quiver_ui_viewer =
 "		<placeholder name='UIModeItems'>"
 "			<separator/>"
 "			<toolitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
+"			<toolitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
 "			<separator/>"
 "		</placeholder>"
 "	</toolbar>"
 "	<popup name='ContextMenu'>"
 "				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
+"				<menuitem action='"ACTION_QUIVER_UI_MODE_QUERY"'/>"
 "	</popup>"
 "</ui>";
 
@@ -1711,15 +1721,16 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 
 	m_QuiverImplPtr->m_Browser.SetImageList(m_QuiverImplPtr->m_ImageList);
 	m_QuiverImplPtr->m_Viewer.SetImageList(m_QuiverImplPtr->m_ImageList);
-//TODO image list for query is different
-//	m_QuiverImplPtr->m_Query.SetImageList(m_QuiverImplPtr->m_ImageList);
+
+	// Pass the browser an instance of the Query view so we can search...
+	m_QuiverImplPtr->m_Browser.SetQuery(&m_QuiverImplPtr->m_Query);
 
 	// Open the image database and have a look-see if new images have
 	// been added...
 	Database::GetInstance()->Open("test.s3db");
 	Database::GetInstance()->SetImageList(&m_QuiverImplPtr->m_ImageList);
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	bool bIndexOnStartup = prefsPtr->GetBoolean(QUIVER_PREFS_CBIR,QUIVER_PREFS_CBIR_INDEX_ON_STARTUP,true);
+	bool bIndexOnStartup = prefsPtr->GetBoolean(QUIVER_PREFS_QUERY,QUIVER_PREFS_QUERY_INDEX_ON_STARTUP,true);
 	
 	if(true == bIndexOnStartup)
 	{

@@ -27,6 +27,8 @@ public:
 	void SetImageList(std::list<std::string> *file_list);
 	void Add(std::list<std::string> *file_list);
 	void UpdateImageList(std::list<std::string> *file_list);
+	
+	void EnableDirectoryLookups(bool bEnable);
 
 	bool IsSupportedFileType(const gchar* uri, GnomeVFSFileInfo *info);
 
