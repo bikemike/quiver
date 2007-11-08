@@ -2147,6 +2147,7 @@ void QuiverImpl::QueryEventHandler::HandleSelectionChanged(QueryEventPtr event_p
 
 void QuiverImpl::QueryEventHandler::HandleItemActivated(QueryEventPtr event_ptr)
 {
+	m_ImageList.SetImageList(selection);
 	parent->m_pQuiver->ShowViewer();
 }
 
