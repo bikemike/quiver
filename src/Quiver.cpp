@@ -30,6 +30,7 @@
 #include "IViewerEventHandler.h"
 #include "IPreferencesEventHandler.h"
 #include "IImageListEventHandler.h"
+#include "IBookmarksEventHandler.h"
 
 
 #include "QuiverUtils.h"
@@ -38,6 +39,9 @@
 #include "PreferencesDlg.h"
 
 #include "ImageSaveManager.h"
+
+#include "Bookmarks.h"
+#include "BookmarksDlg.h"
 
 // globals needed for preferences
 
@@ -81,6 +85,7 @@ public:
 	~QuiverImpl();
 
 	void LoadExternalToolMenuItems();
+	void LoadBookmarks();
 	
 	void Save();
 	void SaveAs();
@@ -96,6 +101,8 @@ public:
 	
 	StatusbarPtr m_StatusbarPtr;
 
+	BookmarksPtr m_BookmarksPtr;
+
 	GtkWidget *m_pQuiverWindow;
 
 	GtkWidget *m_pMenubar;
@@ -106,7 +113,8 @@ public:
 	guint m_iMergedViewerUI;
 	guint m_iMergedBrowserUI;
 	
-	guint m_iMergedExternalTools;
+	guint m_iMergedExternalToolsUI;
+	guint m_iMergedBookmarksUI;
 	
 	bool m_bSlideShowRestoreFromFS;
 			
@@ -195,11 +203,20 @@ public:
 		QuiverImpl* parent;
 	};
 
+	class BookmarksEventHandler : public IBookmarksEventHandler
+	{
+	public:
+		BookmarksEventHandler(QuiverImpl* parent) {this->parent = parent;};
+		virtual void HandleBookmarkChanged(BookmarksEventPtr event);
+	private:
+		QuiverImpl* parent;
+	};
 	
 	IBrowserEventHandlerPtr m_BrowserEventHandler;
 	IViewerEventHandlerPtr m_ViewerEventHandler;
 	IPreferencesEventHandlerPtr m_PreferencesEventHandler;
 	IImageListEventHandlerPtr m_ImageListEventHandler;
+	IBookmarksEventHandlerPtr m_BookmarksEventHandler;
 	
 	
 };
@@ -210,16 +227,107 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 		  m_BrowserEventHandler(new BrowserEventHandler(this)),
 		  m_ViewerEventHandler(new ViewerEventHandler(this)),
 		  m_PreferencesEventHandler( new PreferencesEventHandler(this) ),
-		  m_ImageListEventHandler ( new ImageListEventHandler(this) )
+		  m_ImageListEventHandler ( new ImageListEventHandler(this) ),
+		  m_BookmarksEventHandler ( new BookmarksEventHandler(this) )
 {
 	m_pQuiver = parent;
 	
+	m_BookmarksPtr = Bookmarks::GetInstance();
+	m_BookmarksPtr->AddEventHandler(m_BookmarksEventHandler);
+
 	m_ImageList.AddEventHandler(m_ImageListEventHandler);	
-	m_iMergedExternalTools = 0;
+	m_iMergedExternalToolsUI = 0;
+	m_iMergedBookmarksUI = 0;
 }
 
 QuiverImpl::~QuiverImpl()
 {
+	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
+	m_ImageList.RemoveEventHandler(m_ImageListEventHandler);	
+}
+
+void QuiverImpl::LoadBookmarks()
+{
+	if (m_pUIManager)
+	{
+		vector<Bookmark> bookmarks = m_BookmarksPtr->GetBookmarks();
+
+		if (0 != m_iMergedBookmarksUI)
+		{
+			gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedBookmarksUI);
+			gtk_ui_manager_ensure_update(m_pUIManager);
+		}
+		
+		if (0 < bookmarks.size())
+		{
+			GtkActionGroup* actions2 = gtk_action_group_new ("ExternalToolActions");		
+
+			list<string>::iterator itr;
+			list<string> ui_commands;
+			
+			for (unsigned int i = 0; i < bookmarks.size(); ++i)
+			{
+				GtkActionEntry action_entry = {0};
+				action_entry.stock_id = bookmarks[i].GetIcon().c_str();
+				// this should be unique, something like Bookmark_category_name
+				stringstream ss;
+				ss << "Bookmark_" << bookmarks[i].GetID();
+				string name = ss.str();
+				action_entry.name = name.c_str();
+				action_entry.label = bookmarks[i].GetName().c_str();
+				action_entry.accelerator = "";
+				action_entry.tooltip = bookmarks[i].GetDescription().c_str();
+				action_entry.callback = G_CALLBACK(quiver_action_handler_cb);
+							
+
+				gtk_action_group_add_actions    (actions2, &action_entry, 1, this);
+				// this should be unique, something like Bookmark_category_name
+				ui_commands.push_back(name.c_str());
+			}
+	
+			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
+			
+			string str_ui =
+				"<ui>"
+#ifdef QUIVER_MAEMO
+				"	<popup name='MenubarMain'>"
+#else
+				"	<menubar name='MenubarMain'>"
+#endif
+				"		<menu action='MenuBookmarks'>"
+				"			<placeholder name='BookmarkItems'>";
+			for (itr = ui_commands.begin(); ui_commands.end() != itr; ++itr)
+			{
+				str_ui += "<menuitem action='" + (*itr) + "'/>";
+
+			}
+			
+			str_ui +=
+				"			</placeholder>"
+				"		</menu>"
+#ifdef QUIVER_MAEMO
+				"	</popup>"
+#else
+				"	</menubar>"
+#endif
+				"</ui>";
+
+
+			GError *error = NULL;
+			m_iMergedBookmarksUI = gtk_ui_manager_add_ui_from_string
+                (m_pUIManager,
+                 str_ui.c_str(),
+                 str_ui.length(),
+                 &error);
+
+			gtk_ui_manager_ensure_update(m_pUIManager);
+
+			if (NULL != error)
+			{
+				printf("error: %s\n",error->message);
+			}
+		}
+	}
 }
 
 void QuiverImpl::LoadExternalToolMenuItems()
@@ -300,13 +408,14 @@ void QuiverImpl::LoadExternalToolMenuItems()
 #endif
 				"</ui>";
 
-			if (0 != m_iMergedExternalTools)
+			if (0 != m_iMergedExternalToolsUI)
 			{
-				gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedExternalTools);
+				gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedExternalToolsUI);
+				gtk_ui_manager_ensure_update(m_pUIManager);
 			}
 
 			GError *error = NULL;
-			m_iMergedExternalTools = gtk_ui_manager_add_ui_from_string
+			m_iMergedExternalToolsUI = gtk_ui_manager_add_ui_from_string
                 (m_pUIManager,
                  str_ui.c_str(),
                  str_ui.length(),
@@ -488,17 +597,16 @@ char * quiver_ui_main =
 "			<placeholder name='FolderNavigation'/>"
 "			<separator/>"
 "		</menu>"
-#ifdef FIXME_DISABLED
-// disable bookmarks menu until implemented
 "		<menu action='MenuBookmarks'>"
 "			<menuitem action='"ACTION_QUIVER_BOOKMARKS_ADD"'/>"
 "			<menuitem action='"ACTION_QUIVER_BOOKMARKS_EDIT"'/>"
+"			<separator/>"
+"			<placeholder name='BookmarkItems'/>"
 "		</menu>"
-#endif
 "		<menu action='MenuTools'>"
-#ifdef FIXME_DISABLED
+//#ifdef FIXME_DISABLED
 "			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
-#endif
+//#endif
 "			<separator/>"
 "			<placeholder name='ToolsExternal'/>"
 "		</menu>"
@@ -652,7 +760,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuWindow", NULL, N_("_Window") },
 	{ "MenuHelp", NULL, N_("_Help") },
 
-	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "<Control>b", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, NULL , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
@@ -674,8 +782,8 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 
 
 	{ "MenuBookmarks", NULL, "_Bookmarks" },
-	{ ACTION_QUIVER_BOOKMARKS_ADD, GTK_STOCK_ADD, "_Add Bookmark", "", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_BOOKMARKS_EDIT, GTK_STOCK_EDIT, "_Edit Bookmarks...", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_ADD, GTK_STOCK_ADD, "_Add Bookmark", "<Control>d", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_EDIT, GTK_STOCK_EDIT, "_Edit Bookmarks...", "<Control>b", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
 
 	{ ACTION_QUIVER_EXTERNAL_TOOLS, GTK_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
 
@@ -1368,6 +1476,8 @@ void Quiver::Init()
 	//test adding a custom item to the menu
 	m_QuiverImplPtr->LoadExternalToolMenuItems();
 
+	m_QuiverImplPtr->LoadBookmarks();
+
 
 }
 
@@ -1967,6 +2077,11 @@ void QuiverImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEve
 
 }
 
+void QuiverImpl::BookmarksEventHandler::HandleBookmarkChanged(BookmarksEventPtr event)
+{
+	parent->LoadBookmarks();
+}
+
 void Quiver::OnShowProperties(bool bShow /* = true */)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -2285,6 +2400,22 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		// should just reverse the list
 		pQuiverImpl->m_ImageList.Reverse();
 	}
+	else if (g_str_has_prefix(szAction,"Bookmark_"))
+	{
+		const gchar* strid = szAction + strlen("Bookmark_");
+		int id;
+
+		stringstream ss;
+		ss << strid;
+		ss >> id;
+		BookmarksPtr bookmarksPtr = pQuiverImpl->m_BookmarksPtr;
+		const Bookmark* b = bookmarksPtr->GetBookmark(id);
+		if (NULL != b)
+		{
+			list<string> uris = b->GetURIs();
+			pQuiverImpl->m_ImageList.SetImageList(&uris);
+		}
+	}
 	else if (g_str_has_prefix(szAction,"ExternalTool_"))
 	{
 		// run external tool
@@ -2375,9 +2506,38 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_EXTERNAL_TOOLS))
 	{
-		printf("external...\n");
 		//ExternalToolsDlg externalToolsDlg;
 		//externalToolsDlg.Run();
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_BOOKMARKS_ADD))
+	{
+		list<string> folders, files;
+		folders = pQuiverImpl->m_ImageList.GetFolderList();
+		files = pQuiverImpl->m_ImageList.GetFileList();
+		folders.insert(folders.end(), files.begin(), files.end());
+		if (0 == folders.size())
+		{
+			// no bookmark to add
+		}	
+		else if (1 == folders.size())
+		{
+			stringstream ss;
+			ss << "(" << folders.size() << " folders)";
+			Bookmark b(ss.str(), "","",folders,false);
+			pQuiverImpl->m_BookmarksPtr->AddBookmark(b);
+		}
+		else
+		{
+			stringstream ss;
+			ss << "(" << folders.size() << " folders)";
+			Bookmark b(ss.str(), "","",folders,false);
+			pQuiverImpl->m_BookmarksPtr->AddBookmark(b);
+		}
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_BOOKMARKS_EDIT))
+	{
+		BookmarksDlg bookmarkDlg;
+		bookmarkDlg.Run();
 	}
 }
 

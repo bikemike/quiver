@@ -92,7 +92,15 @@ quiver_SOURCES = \
 	ViewerEvent.h \
 	ViewerEventSource.h \
 	ViewerEventSource.cpp \
-	IViewerEventHandler.h 
+	IViewerEventHandler.h \
+	IBookmarksEventHandler.h \
+	Bookmarks.h \
+	BookmarksEvent.h \
+	BookmarksEventSource.h \
+	BookmarksEventSource.cpp \
+	BookmarksDlg.h \
+	BookmarksDlg.cpp \
+	Bookmarks.cpp 
 
 
 quiver_LDFLAGS = 

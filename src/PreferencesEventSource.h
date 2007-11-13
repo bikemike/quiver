@@ -3,7 +3,6 @@
 
 #include "AbstractEventSource.h"
 #include "EventBase.h"
-#include "BrowserEvent.h"
 
 #include "PreferencesEvent.h"
 

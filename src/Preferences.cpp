@@ -190,7 +190,22 @@ int Preferences::GetInteger(std::string section, std::string key, int default_va
 
 std::list<std::string> Preferences::GetStringList(std::string section, std::string key)
 {
+	GError *error = NULL;
+	gsize nstrings = 0;
+	gchar **value;
 	list<string> string_list;
+
+	value = g_key_file_get_string_list(m_KeyFile,section.c_str(),key.c_str(), &nstrings, &error);
+
+	if (NULL != value)
+	{
+		for (unsigned int i = 0; i < nstrings ; ++i)
+		{
+			string_list.push_back(value[i]);
+		}
+		g_strfreev(value);
+	}
+
 	return string_list;
 }
 
@@ -202,13 +217,43 @@ std::list<std::string> Preferences::GetLocaleStringList(std::string section, std
 
 std::list<bool> Preferences::GetBooleanList(std::string section, std::string key)
 {
+	GError *error = NULL;
+	gsize nvals = 0;
+	gboolean* value;
 	list<bool> bool_list;
+
+	value = g_key_file_get_boolean_list(m_KeyFile,section.c_str(),key.c_str(), &nvals, &error);
+
+	if (NULL != value)
+	{
+		for (unsigned int i = 0; i < nvals ; ++i)
+		{
+			bool_list.push_back(TRUE == value[i]);
+		}
+		g_free(value);
+	}
+
 	return bool_list;
 }
 
 std::list<int> Preferences::GetIntegerList(std::string section, std::string key)
 {
+	GError *error = NULL;
+	gsize nvals = 0;
+	int* value;
 	list<int> int_list;
+
+	value = g_key_file_get_integer_list(m_KeyFile,section.c_str(),key.c_str(), &nvals, &error);
+
+	if (NULL != value)
+	{
+		for (unsigned int i = 0; i < nvals ; ++i)
+		{
+			int_list.push_back(value[i]);
+		}
+		g_free(value);
+	}
+
 	return int_list;
 }
 
@@ -300,7 +345,44 @@ void Preferences::SetInteger(std::string section, std::string key, int value)
 
 void Preferences::SetStringList(std::string section, std::string key, std::list<std::string> value_list)
 {
-	//m_bModified = true;
+	bool bHasKey = HasKey(section,key);
+	std::list<std::string> old_list = GetStringList(section, key);
+	if (!bHasKey || old_list != value_list)
+	{
+		gsize nstrings = value_list.size();
+		char** strings = NULL;
+
+		if (0 != nstrings)
+		{
+			strings = new char*[nstrings];
+			std::list<std::string>::iterator itr;
+			int i = 0;
+			for (itr = value_list.begin(); value_list.end() != itr; ++itr)
+			{
+				strings[i] = (char*)itr->c_str();
+				++i;
+			}
+		}
+		
+		if (NULL != strings)
+		{
+			g_key_file_set_string_list (m_KeyFile, section.c_str(), key.c_str(), strings, nstrings);
+			free(strings);
+		}
+
+		m_bModified = true;
+		PreferencesEvent::PreferencesEventType type;
+		if (!bHasKey)
+		{
+			type = PreferencesEvent::PREFERENCE_ADDED;
+		}
+		else
+		{
+			type = PreferencesEvent::PREFERENCE_CHANGED;
+		}
+		// FIXME -this needs to send the old/new list?
+		EmitPreferenceChanged(type,section,key, 0, 0);
+	}
 }
 
 void Preferences::SetStringLocaleList(std::string section, std::string key, std::string locale, std::list<std::string> value_list)
@@ -310,12 +392,86 @@ void Preferences::SetStringLocaleList(std::string section, std::string key, std:
 
 void Preferences::SetBooleanList(std::string section, std::string key, std::list<bool> value_list)
 {
-	//m_bModified = true;
+	bool bHasKey = HasKey(section,key);
+	std::list<bool> old_list = GetBooleanList(section, key);
+	if (!bHasKey || old_list != value_list)
+	{
+		gsize nvals = value_list.size();
+		gboolean* values = NULL;
+
+		if (0 != nvals)
+		{
+			values = new gboolean[nvals];
+			std::list<bool>::iterator itr;
+			int i = 0;
+			for (itr = value_list.begin(); value_list.end() != itr; ++itr)
+			{
+				values[i] = (*itr) ? TRUE : FALSE;
+				++i;
+			}
+		}
+		
+		if (NULL != values)
+		{
+			g_key_file_set_boolean_list (m_KeyFile, section.c_str(), key.c_str(), values, nvals);
+			free(values);
+		}
+
+		m_bModified = true;
+		PreferencesEvent::PreferencesEventType type;
+		if (!bHasKey)
+		{
+			type = PreferencesEvent::PREFERENCE_ADDED;
+		}
+		else
+		{
+			type = PreferencesEvent::PREFERENCE_CHANGED;
+		}
+		// FIXME -this needs to send the old/new list?
+		EmitPreferenceChanged(type,section,key, 0, 0);
+	}
 }
 
 void Preferences::SetIntegerList(std::string section, std::string key, std::list<int> value_list)
 {
-	//m_bModified = true;
+	bool bHasKey = HasKey(section,key);
+	std::list<int> old_list = GetIntegerList(section, key);
+	if (!bHasKey || old_list != value_list)
+	{
+		gsize nvals = value_list.size();
+		int* values = NULL;
+
+		if (0 != nvals)
+		{
+			values = new int[nvals];
+			std::list<int>::iterator itr;
+			int i = 0;
+			for (itr = value_list.begin(); value_list.end() != itr; ++itr)
+			{
+				values[i] = *itr;
+				++i;
+			}
+		}
+		
+		if (NULL != values)
+		{
+			g_key_file_set_integer_list (m_KeyFile, section.c_str(), key.c_str(), values, nvals);
+			free(values);
+		}
+
+		m_bModified = true;
+		PreferencesEvent::PreferencesEventType type;
+		if (!bHasKey)
+		{
+			type = PreferencesEvent::PREFERENCE_ADDED;
+		}
+		else
+		{
+			type = PreferencesEvent::PREFERENCE_CHANGED;
+		}
+		// FIXME -this needs to send the old/new list?
+		EmitPreferenceChanged(type,section,key, 0, 0);
+	}
 }
 
 void Preferences::RemoveSection(std::string section)

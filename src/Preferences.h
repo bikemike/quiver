@@ -4,15 +4,14 @@
 #include <boost/shared_ptr.hpp>
 #include <list>
 #include <string>
+#include <glib.h>
 #include "PreferencesEventSource.h"
 
-class Preferences;
-class INIFile;
 
 extern gchar g_szConfigFilePath[];
 
+class Preferences;
 typedef boost::shared_ptr<Preferences> PreferencesPtr;
-typedef boost::shared_ptr<INIFile> INIFilePtr;
 
 class Preferences : public virtual PreferencesEventSource
 {
