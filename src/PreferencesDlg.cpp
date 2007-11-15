@@ -181,7 +181,7 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 	gboolean bQuickPreview = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, true);
 	gtk_toggle_button_set_active(m_pToggleQuickPreview, bQuickPreview);
 
-	gboolean bTransition = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, true);
+	gboolean bTransition = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, false);
 	gtk_toggle_button_set_active(m_pToggleSlideShowTransition, bTransition);
 
 	gboolean bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, false);

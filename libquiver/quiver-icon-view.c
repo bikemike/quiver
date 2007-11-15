@@ -878,6 +878,7 @@ quiver_icon_view_draw_icons (GtkWidget *widget, GdkRegion *in_region)
 				{
 					guint border = iconview->priv->icon_border_size;
 #ifdef HAVE_CAIRO
+#ifndef QUIVER_MAEMO // FIXME: drop shadow algorithm is too slow for maemo
 					gdk_gc_copy(gc_clip,widget->style->bg_gc[GTK_WIDGET_STATE (widget)]);
 					gdk_gc_set_clip_region(gc_clip, in_region);
 					quiver_icon_view_draw_drop_shadow(iconview,widget->window, gc_clip,	state, 
@@ -885,6 +886,7 @@ quiver_icon_view_draw_icons (GtkWidget *widget, GdkRegion *in_region)
 							y_cell_offset + y_icon_offset - border, 
 							pixbuf_width + border*2, 
 							pixbuf_height + border *2);
+#endif
 #endif
 					// draw a border around the thumbnail
 					if (0 < border)

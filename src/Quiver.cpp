@@ -67,6 +67,9 @@ static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,Gtk
 static void signal_item_select (GtkItem *proxy,gpointer data);
 static void signal_item_deselect (GtkItem *proxy,gpointer data);
 
+#ifdef QUIVER_MAEMO
+static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1, gpointer user_data);
+#endif
 static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data );
 static gboolean timeout_event_motion_notify (gpointer data);
 static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
@@ -989,7 +992,17 @@ void Quiver::ImageChanged()
 	}
 }
 
-
+#ifdef QUIVER_MAEMO
+static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1, gpointer user_data)
+{
+	gboolean value = FALSE;
+	g_object_get(gobject, arg1->name, &value,NULL);
+	if (FALSE == value)
+	{
+		g_object_set(gobject, arg1->name,TRUE,NULL);
+	}
+}
+#endif
 
 static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
 {
@@ -1194,6 +1207,15 @@ void Quiver::Init()
 
 	m_QuiverImplPtr->m_pQuiverWindow = hildon_window_new();
 	hildon_program_add_window(program, HILDON_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
+	
+	// add a callback here
+	// the following is to work around a bug in maemo gtk 
+	// which causes accelerators not to work
+	// https://bugs.maemo.org/show_bug.cgi?id=2278
+	GtkSettings* settings = gtk_settings_get_default();
+	g_object_set(settings, "gtk-enable-accels",TRUE,NULL);
+	g_signal_connect (G_OBJECT(settings), "notify::gtk-enable-accels",
+		G_CALLBACK (notify_gtk_enable_accels_changed), NULL);
 #else
 	m_QuiverImplPtr->m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");
