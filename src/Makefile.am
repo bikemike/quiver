@@ -100,6 +100,8 @@ quiver_SOURCES = \
 	BookmarksEventSource.cpp \
 	BookmarksDlg.h \
 	BookmarksDlg.cpp \
+	BookmarkAddEditDlg.h \
+	BookmarkAddEditDlg.cpp \
 	Bookmarks.cpp 
 
 

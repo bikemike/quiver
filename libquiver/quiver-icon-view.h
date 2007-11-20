@@ -39,6 +39,17 @@ enum _QuiverIconViewDragBehavior
 	QUIVER_ICON_VIEW_DRAG_BEHAVIOR_COUNT,
 	
 };
+
+enum _QuiverIconViewScrollType
+{
+	QUIVER_ICON_VIEW_SCROLL_NORMAL,
+	QUIVER_ICON_VIEW_SCROLL_SMOOTH,
+	QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER,
+};
+
+typedef enum _QuiverIconViewScrollType QuiverIconViewScrollType;
+
+
 typedef enum _QuiverIconViewDragBehavior QuiverIconViewDragBehavior;
 
 typedef gulong (*QuiverIconViewGetNItemsFunc) (QuiverIconView *iconview,gpointer user_data);
@@ -63,6 +74,7 @@ struct _QuiverIconViewClass
 					 GtkAdjustment  *hadjustment,
 					 GtkAdjustment  *vadjustment);
 
+	void (*cell_clicked) (QuiverIconView *iconview,gulong cell);
 	void (*cell_activated) (QuiverIconView *iconview,gulong cell);
 	void (*cursor_changed) (QuiverIconView *iconview,gulong cell);
 	void (*selection_changed) (QuiverIconView *iconview);
@@ -83,7 +95,7 @@ GtkWidget *quiver_icon_view_new ();
 
 void quiver_icon_view_set_n_columns(QuiverIconView *iconview,guint n_columns);
 void quiver_icon_view_set_n_rows(QuiverIconView *iconview,guint n_rows);
-void quiver_icon_view_set_smooth_scroll(QuiverIconView *iconview,gboolean smooth_scroll);
+void quiver_icon_view_set_scroll_type(QuiverIconView *iconview, QuiverIconViewScrollType scroll_type);
 
 void quiver_icon_view_set_drag_behavior(QuiverIconView *iconview,QuiverIconViewDragBehavior behavior);
 

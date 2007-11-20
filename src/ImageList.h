@@ -24,8 +24,8 @@ public:
 
 	ImageList();
 
-	void SetImageList(std::list<std::string> *file_list);
-	void Add(std::list<std::string> *file_list);
+	void SetImageList(std::list<std::string> *file_list, bool bRecursive = false);
+	void Add(std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(std::list<std::string> *file_list);
 
 	std::list<std::string> GetFolderList();

@@ -71,11 +71,11 @@ public:
 	
 	static void LoadMimeTypes();
 	
-	void Add(std::list<std::string> *file_list);
-	void SetImageList(std::list<std::string> *file_list);
+	void Add(std::list<std::string> *file_list, bool bRecursive = false);
+	void SetImageList(std::list<std::string> *file_list, bool bRecursive = false);
 	bool UpdateImageList(std::list<std::string> *file_list);
 	
-	bool AddDirectory(const gchar* uri);
+	bool AddDirectory(const gchar* uri, bool bRecursive = false);
 	bool AddFile(const gchar*  uri);
 	bool AddFile(const gchar* uri,GnomeVFSFileInfo *info);
 	
@@ -290,13 +290,13 @@ ImageList::operator[](unsigned int n) const
 	return m_ImageListImplPtr->m_QuiverFileList[n];
 }
 
-void ImageList::Add(std::list<std::string> *file_list)
+void ImageList::Add(std::list<std::string> *file_list, bool bRecursive/* = false*/)
 {
 	int iOldSize, iNewSize;
 	
 	iOldSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
 	
-	m_ImageListImplPtr->Add(file_list);
+	m_ImageListImplPtr->Add(file_list, bRecursive);
 	
 	iNewSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
 	
@@ -307,13 +307,12 @@ void ImageList::Add(std::list<std::string> *file_list)
 }
 
 
-void ImageList::SetImageList(list<string> *file_list)
+void ImageList::SetImageList(std::list<std::string> *file_list, bool bRecursive /* = false */)
 {
 	int iOldSize, iNewSize;
 	
 	iOldSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
-	
-	m_ImageListImplPtr->SetImageList(file_list);
+	m_ImageListImplPtr->SetImageList(file_list, bRecursive);
 	
 	iNewSize = m_ImageListImplPtr->m_mapDirs.size() + m_ImageListImplPtr->m_mapFiles.size();
 	
@@ -689,7 +688,7 @@ string PathToURI(const string &path)
 }
 
 
-void ImageListImpl::Add(std::list<std::string> *file_list)
+void ImageListImpl::Add(std::list<std::string> *file_list, bool bRecursive/* = false*/)
 {
 	if (0 == file_list->size())
 	{
@@ -739,7 +738,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 				{
 					if (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY)
 					{
-						AddDirectory(strURI.c_str());
+						AddDirectory(strURI.c_str(), bRecursive);
 					}
 					else if (info->type == GNOME_VFS_FILE_TYPE_REGULAR)
 					{
@@ -837,7 +836,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list)
 
 }
 
-void ImageListImpl::SetImageList(list<string> *file_list)
+void ImageListImpl::SetImageList(std::list<std::string> *file_list, bool bRecursive /* = false */)
 {
 
 	
@@ -849,7 +848,7 @@ void ImageListImpl::SetImageList(list<string> *file_list)
 	
 	Clear();
 	
-	Add(file_list);
+	Add(file_list, bRecursive);
 
 	//printf("done setting the image list\n");
 }
@@ -922,7 +921,7 @@ bool ImageListImpl::UpdateImageList(list<string> *file_list)
 }
 
 
-bool ImageListImpl::AddDirectory(const gchar* uri)
+bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */)
 {
 	bool bAdded = false;
 	pair<PathMonitorMap::iterator,bool> p;
@@ -986,17 +985,25 @@ bool ImageListImpl::AddDirectory(const gchar* uri)
 				
 				if (GNOME_VFS_OK == result )
 				{
+					GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,info->name);
+					gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
+
 					if (info->type == GNOME_VFS_FILE_TYPE_REGULAR)
 					{
-						GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,info->name);
-						gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
 						
 						gnome_vfs_uri_unref(vfs_uri_file);
 	
 						AddFile(str_uri_file,info);
 	
-						free (str_uri_file);
 					}
+					else if (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY && bRecursive)
+					{
+						if (0 != strcmp(".", info->name) && 0 != strcmp("..", info->name))
+						{
+							AddDirectory(str_uri_file, bRecursive);
+						}
+					}
+					free (str_uri_file);
 				}
 				gnome_vfs_file_info_unref (info);
 			}

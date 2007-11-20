@@ -687,7 +687,8 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 	h = MAX(old_h,new_h);
 	
 	// FIXME: fill the pixbuf with the background color of the window
-	gdk_pixbuf_fill(imageview->priv->pixbuf_scaled,(guint32)0x00000000);
+	GdkColor c = GTK_WIDGET(imageview)->style->bg[GTK_STATE_NORMAL];
+	gdk_pixbuf_fill(imageview->priv->pixbuf_scaled,(c.pixel << 8));
 	
 	// composite the old image
 	if (NULL != imageview->priv->transition_pixbuf_old)
@@ -1989,8 +1990,6 @@ static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,G
 	GdkRectangle pixbuf_rect;
 	GdkRectangle sub_rect_tmp;
 	gint width,height;
-
-	GdkPixbuf *pixbuf;
 
 	widget = GTK_WIDGET(imageview);
 

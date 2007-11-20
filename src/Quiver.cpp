@@ -42,6 +42,7 @@
 
 #include "Bookmarks.h"
 #include "BookmarksDlg.h"
+#include "BookmarkAddEditDlg.h"
 
 // globals needed for preferences
 
@@ -155,6 +156,7 @@ public:
 	
 	GtkUIManager* m_pUIManager;
 	
+	bool m_bListImagesRecursive;
 	std::list<std::string> m_listImages;
 
 // nested classes
@@ -965,8 +967,6 @@ void Quiver::SetWindowTitle(string s)
 
 void Quiver::ImageChanged()
 {
-	stringstream ss;
-	
 	if ( m_QuiverImplPtr->m_ImageList.GetSize() )
 	{
 		QuiverFile f = m_QuiverImplPtr->m_ImageList.GetCurrent();
@@ -974,8 +974,6 @@ void Quiver::ImageChanged()
 		m_QuiverImplPtr->Save();
 		
 		m_QuiverImplPtr->m_CurrentQuiverFile = f;
-		
-		ss << " (" << m_QuiverImplPtr->m_ImageList.GetCurrentIndex()+1 << " of " << m_QuiverImplPtr->m_ImageList.GetSize() << ")";
 		
 		SetWindowTitle( f.GetFilePath() );
 		
@@ -1153,8 +1151,10 @@ gboolean Quiver::quiver_event_callback( GtkWidget *widget, GdkEvent *event, gpoi
  * constructor
  * 
  */
-Quiver::Quiver(list<string> &images) : 	m_QuiverImplPtr(new QuiverImpl(this) )
+Quiver::Quiver(std::list<std::string> &images, bool bRecursive/* = false*/)
+	: 	m_QuiverImplPtr(new QuiverImpl(this) )
 {
+	m_QuiverImplPtr->m_bListImagesRecursive = bRecursive;
 	m_QuiverImplPtr->m_listImages = images;
 	Init();
 
@@ -1558,7 +1558,7 @@ void Quiver::SaveSettings()
 }
 
 
-void Quiver::SetImageList(list<string> &files)
+void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
 {
 	bool bShowViewer = false;
 	if (1 == files.size())
@@ -1593,7 +1593,7 @@ void Quiver::SetImageList(list<string> &files)
 		m_QuiverImplPtr->m_Browser.GrabFocus();
 	}
 
-	m_QuiverImplPtr->m_ImageList.SetImageList(&files);
+	m_QuiverImplPtr->m_ImageList.SetImageList(&files, bRecursive);
 }
 
 
@@ -1647,12 +1647,18 @@ mime_open_handler (gpointer raw_data, int argc, char **argv)
 
 
 #endif
+typedef struct _CreateQuiverData
+{
+	list<string> *pFiles;
+	bool bRecursive;
+} CreateQuiverData;
+
 static gboolean CreateQuiver (gpointer data)
 {
+	CreateQuiverData* cqd = (CreateQuiverData*)data;
 	QuiverStockIcons::Load();
 	
-	list<string> *pFiles = (list<string>*)data;
-	Quiver *pQuiver = new Quiver(*pFiles);
+	Quiver *pQuiver = new Quiver(*(cqd->pFiles), cqd->bRecursive);
 	gtk_quit_add (0,DestroyQuiver, pQuiver);
 	return TRUE;
 }
@@ -1703,6 +1709,9 @@ int main (int argc, char **argv)
 			files.push_back(argv[i]);
 		}
 	}
+
+	CreateQuiverData cqd = {0};
+	cqd.bRecursive = false;
 	
 	if (argc == 1)
 	{	
@@ -1711,12 +1720,13 @@ int main (int argc, char **argv)
 		// specified in preferences
 		PreferencesPtr prefsPtr = Preferences::GetInstance();
 #ifdef QUIVER_MAEMO
-				dir = "~/MyDocs/.images";
+		dir = "~/MyDocs/.images";
 #else
-				dir = g_get_home_dir();
+		dir = g_get_home_dir();
 #endif
 		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
 		files.push_back(photo_library);
+		cqd.bRecursive = true;
 	}
 	//init gnome-vfs
 	if (!gnome_vfs_init ()) 
@@ -1726,7 +1736,8 @@ int main (int argc, char **argv)
 	}
 	//pthread_setconcurrency(4);
 
-	gtk_init_add (CreateQuiver,&files);
+	cqd.pFiles = &files;
+	gtk_init_add (CreateQuiver,&cqd);
 	
 	// FIX FOR BUG: http://bugzilla.gnome.org/show_bug.cgi?id=65041
 	// race condition when registering types
@@ -1765,7 +1776,7 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 
 	// set up the stock icons
 
-	SetImageList(m_QuiverImplPtr->m_listImages);
+	SetImageList(m_QuiverImplPtr->m_listImages, m_QuiverImplPtr->m_bListImagesRecursive);
 
 	m_QuiverImplPtr->m_Browser.SetImageList(m_QuiverImplPtr->m_ImageList);
 	m_QuiverImplPtr->m_Viewer.SetImageList(m_QuiverImplPtr->m_ImageList);
@@ -2435,7 +2446,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		if (NULL != b)
 		{
 			list<string> uris = b->GetURIs();
-			pQuiverImpl->m_ImageList.SetImageList(&uris);
+			pQuiverImpl->m_ImageList.SetImageList(&uris, b->GetRecursive());
 		}
 	}
 	else if (g_str_has_prefix(szAction,"ExternalTool_"))
@@ -2537,24 +2548,63 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		folders = pQuiverImpl->m_ImageList.GetFolderList();
 		files = pQuiverImpl->m_ImageList.GetFileList();
 		folders.insert(folders.end(), files.begin(), files.end());
+
+		string strBaseName;
+		gchar * bookmark_name = NULL;
+
 		if (0 == folders.size())
 		{
 			// no bookmark to add
 		}	
-		else if (1 == folders.size())
-		{
-			stringstream ss;
-			ss << "(" << folders.size() << " folders)";
-			Bookmark b(ss.str(), "","",folders,false);
-			pQuiverImpl->m_BookmarksPtr->AddBookmark(b);
-		}
 		else
 		{
-			stringstream ss;
-			ss << "(" << folders.size() << " folders)";
-			Bookmark b(ss.str(), "","",folders,false);
-			pQuiverImpl->m_BookmarksPtr->AddBookmark(b);
+			gchar* filename = g_filename_from_uri(folders.front().c_str(),NULL,NULL);
+
+			if (NULL != filename)
+			{
+				gchar* basename = g_path_get_basename(filename);
+				if (NULL != basename)
+				{
+					strBaseName = basename;
+					g_free(basename);
+				}
+				g_free(filename);
+			}
+
+			if ( 1 == folders.size() )
+			{
+				bookmark_name = g_strdup(strBaseName.c_str());
+			}
+			else
+			{
+				if ( 2 < folders.size() )
+				{
+					bookmark_name = g_strdup_printf("%s (and %d other folders)", strBaseName.c_str(), folders.size()-1);
+				}
+				else
+				{
+					bookmark_name = g_strdup_printf("%s (and 1 other folder)", strBaseName.c_str());
+				}
+			}
 		}
+
+		if (NULL != bookmark_name)
+		{
+			Bookmark b(bookmark_name, "","",folders,false);
+			BookmarkAddEditDlg dlg(b);
+
+			dlg.Run();
+			if (!dlg.Cancelled())
+			{
+				Bookmark newbm = dlg.GetBookmark();
+				if (!newbm.GetName().empty())
+				{
+					pQuiverImpl->m_BookmarksPtr->AddBookmark(newbm);
+				}
+			}
+			g_free(bookmark_name);
+		}
+
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_BOOKMARKS_EDIT))
 	{

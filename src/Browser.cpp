@@ -687,7 +687,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 #endif
 
-//	quiver_icon_view_set_smooth_scroll(QUIVER_ICON_VIEW(m_pIconView), TRUE);
+	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH);
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetIconPixbufFunc)icon_pixbuf_callback,this,NULL);
@@ -695,6 +695,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_signal_connect (GTK_OBJECT (hscale), "value_changed",
 	      GTK_SIGNAL_FUNC (icon_size_value_changed), this);
 
+#ifdef QUIVER_MAEMO
+	// a single click on a selected thumbnail will trigger this signal
+	g_signal_connect(G_OBJECT(m_pIconView),"cell_clicked",G_CALLBACK(iconview_cell_activated_cb),this);
+#endif
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(iconview_cell_activated_cb),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(iconview_cursor_changed_cb),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);	

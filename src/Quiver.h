@@ -26,7 +26,7 @@ class Quiver
 public:
 
 	// constructors
-	Quiver(std::list<std::string> &images);
+	Quiver(std::list<std::string> &images, bool bRecursive = false);
 	~Quiver();
 
 	// member functions
@@ -53,7 +53,7 @@ public:
 
 	void ImageChanged();
 	
-	void SetImageList(std::list<std::string> &list);
+	void SetImageList(std::list<std::string> &list, bool bRecursive = false);
 
 
 	void OnAbout();

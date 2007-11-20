@@ -1387,7 +1387,16 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 		g_free(icon_name_full);
 	}
 #else
-	gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name, -1);
+	gchar* icon = NULL;
+	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_ICON, &icon, -1);
+	if (NULL == icon)
+	{
+		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name, -1);
+	}
+	else
+	{
+		g_free(icon);
+	}
 #endif
 
 	g_free(icon_name);
@@ -1913,6 +1922,8 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 					skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
 					g_free(mmc2_uri);
 				}
+				
+				skip |= gnome_vfs_uris_match(uri,"file:///");
 #endif
 				if (!skip)
 				{	

@@ -42,6 +42,7 @@ struct _CellItem
 
 /* signals */
 enum {
+	SIGNAL_CELL_CLICKED,
 	SIGNAL_CELL_ACTIVATED,
 	SIGNAL_CURSOR_CHANGED,
 	SIGNAL_SELECTION_CHANGED,
@@ -107,7 +108,7 @@ struct _QuiverIconViewPrivate
 	gboolean mouse_button_is_down;
 
 	gboolean idle_load_running;
-	gboolean smooth_scroll;
+	QuiverIconViewScrollType scroll_type;
 	gulong smooth_scroll_cell;
 	
 	QuiverIconViewDragBehavior drag_behavior;
@@ -227,6 +228,7 @@ static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview
 static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulong cell);
 
 static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, GdkDrawable *drawable, GdkGC* gc, GtkStateType state, int rect_x,int rect_y, int rect_w, int rect_h);
+static void quiver_icon_view_click_cell(QuiverIconView *iconview,gulong cell);
 /* end utility function prototypes*/
 
 /* end private function prototypes */
@@ -280,6 +282,14 @@ quiver_icon_view_class_init (QuiverIconViewClass *klass)
 
 	g_type_class_add_private (obj_class, sizeof (QuiverIconViewPrivate));
 
+	iconview_signals[SIGNAL_CELL_CLICKED] = g_signal_new (/*FIXME I_*/("cell_clicked"),
+		G_TYPE_FROM_CLASS (obj_class),
+		G_SIGNAL_RUN_LAST,
+		G_STRUCT_OFFSET (QuiverIconViewClass, cell_clicked),
+		NULL, NULL,
+		g_cclosure_marshal_VOID__UINT,
+		G_TYPE_NONE, 1,
+		G_TYPE_UINT);
 
 	iconview_signals[SIGNAL_CELL_ACTIVATED] = g_signal_new (/*FIXME I_*/("cell_activated"),
 		G_TYPE_FROM_CLASS (obj_class),
@@ -404,7 +414,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->cell_padding = QUIVER_ICON_VIEW_CELL_PADDING;
 
 	iconview->priv->scroll_draw   = TRUE;
-	iconview->priv->smooth_scroll = FALSE;
+	iconview->priv->scroll_type = QUIVER_ICON_VIEW_SCROLL_NORMAL;
 	iconview->priv->smooth_scroll_cell = G_MAXULONG;
 	
 	iconview->priv->drag_behavior = QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND;
@@ -1163,6 +1173,8 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 	{
 		gulong cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
 	
+		// drag mode enabled means mouse has
+		// moved while button is down
 		if (iconview->priv->drag_mode_enabled)
 		{
 			if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
@@ -1214,6 +1226,10 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 		}
 		else if (G_MAXULONG != cell && iconview->priv->mouse_button_is_down)
 		{
+			if (cell == iconview->priv->cursor_cell)
+			{
+				quiver_icon_view_click_cell(iconview, cell);
+			}
 			quiver_icon_view_set_cursor_cell_full(iconview,cell,(GdkModifierType)event->state,TRUE);
 		}
 		iconview->priv->mouse_button_is_down = FALSE;
@@ -1742,13 +1758,51 @@ quiver_icon_view_timeout_smooth_scroll(gpointer data)
 	gulong cell_x = (cell % cols) * cell_width;
 	gulong cell_y = (cell / cols) * cell_height;
 
-	gint new_hadjust = cell_x - iconview->priv->hadjustment->page_size/2 + cell_width/2;
-	new_hadjust = MAX (0,new_hadjust);
-	new_hadjust = MIN (new_hadjust,iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size);
-	
+	gint new_hadjust = hadjust;
+	gint new_vadjust = vadjust;
+
+	if (QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER == iconview->priv->scroll_type)
+	{
+		new_hadjust = cell_x - iconview->priv->hadjustment->page_size/2 + cell_width/2;
+		new_hadjust = MAX (0,new_hadjust);
+		new_hadjust = MIN (new_hadjust,iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size);
+		
+
+		new_vadjust = cell_y - iconview->priv->vadjustment->page_size/2 + cell_height/2;
+		new_vadjust = MAX (0,new_vadjust);
+		new_vadjust = MIN (new_vadjust,iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size);
+
+	}
+	else if (QUIVER_ICON_VIEW_SCROLL_SMOOTH == iconview->priv->scroll_type)
+	{
+		/* horizontal adjustment */
+		if (cell_x < hadjust)
+		{
+			new_hadjust = cell_x;
+		}
+		else if (cell_x > hadjust + iconview->priv->hadjustment->page_size - cell_width)
+		{
+			new_hadjust = cell_x + cell_width - iconview->priv->hadjustment->page_size;
+		}
+
+		new_hadjust = MAX (0,new_hadjust);
+		new_hadjust = MIN (new_hadjust,iconview->priv->hadjustment->upper - iconview->priv->hadjustment->page_size);
+
+		/* vertical adjustment */
+		if (cell_y < vadjust)
+		{
+			new_vadjust = cell_y;
+		}
+		else if (cell_y > vadjust + iconview->priv->vadjustment->page_size - cell_height)
+		{
+			new_vadjust = cell_y + cell_height - iconview->priv->vadjustment->page_size;
+		}
+
+		new_vadjust = MAX (0,new_vadjust);
+		new_vadjust = MIN (new_vadjust,iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size);
+	}
+
 	gint mid_hadjust = (new_hadjust + hadjust) / 2;
-
-
 	if (mid_hadjust != new_hadjust)
 	{
 		if (1 == ABS(new_hadjust - mid_hadjust))
@@ -1763,12 +1817,7 @@ quiver_icon_view_timeout_smooth_scroll(gpointer data)
 		hdone = TRUE;
 	}
 
-	gint new_vadjust = cell_y - iconview->priv->vadjustment->page_size/2 + cell_height/2;
-	new_vadjust = MAX (0,new_vadjust);
-	new_vadjust = MIN (new_vadjust,iconview->priv->vadjustment->upper - iconview->priv->vadjustment->page_size);
-
 	gint mid_vadjust = (new_vadjust + vadjust) / 2;
-
 	if (vadjust != new_vadjust)
 	{
 		if (1 == ABS(new_vadjust - vadjust))
@@ -2268,7 +2317,7 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 	}
 	*/
 	
-	if (iconview->priv->smooth_scroll && !force_top)
+	if (QUIVER_ICON_VIEW_SCROLL_NORMAL != iconview->priv->scroll_type && !force_top)
 	{
 		quiver_icon_view_scroll_to_cell_smooth(iconview,cell);
 
@@ -2277,7 +2326,7 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 
 	/* horizontal adjustment */
 	gint new_hadjust;
-	if (iconview->priv->smooth_scroll)
+	if (QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER == iconview->priv->scroll_type)
 	{
 		new_hadjust = cell_x - iconview->priv->hadjustment->page_size/2 + cell_width/2;
 	}
@@ -2304,7 +2353,7 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 
 	/* vertical adjustment */
 	gint new_vadjust;
-	if (iconview->priv->smooth_scroll)
+	if (QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER == iconview->priv->scroll_type)
 	{
 		new_vadjust = cell_y - iconview->priv->vadjustment->page_size/2 + cell_height/2;
 	}
@@ -2768,9 +2817,9 @@ void quiver_icon_view_set_n_rows(QuiverIconView *iconview,guint n_rows)
 	iconview->priv->n_columns = 0;
 }
 
-void quiver_icon_view_set_smooth_scroll(QuiverIconView *iconview,gboolean smooth_scroll)
+void quiver_icon_view_set_scroll_type(QuiverIconView *iconview, QuiverIconViewScrollType scroll_type)
 {
-	iconview->priv->smooth_scroll = smooth_scroll;
+	iconview->priv->scroll_type = scroll_type;
 }
 
 void 
@@ -2828,6 +2877,14 @@ void quiver_icon_view_activate_cell(QuiverIconView *iconview,gulong cell)
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
 	
 	g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_ACTIVATED],0,cell);
+}
+
+static
+void quiver_icon_view_click_cell(QuiverIconView *iconview,gulong cell)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+	
+	g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_CLICKED],0,cell);
 }
 
 gulong quiver_icon_view_get_cursor_cell(QuiverIconView *iconview)

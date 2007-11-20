@@ -6,10 +6,12 @@
 #include <glade/glade.h>
 #endif
 
-#include "Bookmarks.h"
-#include "IBookmarksEventHandler.h"
 #include <list>
 #include <vector>
+
+#include "Bookmarks.h"
+#include "IBookmarksEventHandler.h"
+#include "BookmarkAddEditDlg.h"
 
 using namespace std;
 
@@ -142,23 +144,27 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "BookmarksDialog");
 		m_pTreeViewBookmarks     = GTK_TREE_VIEW(     glade_xml_get_widget (m_pGladeXML, "treeview_bookmarks") );
 
+		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_CLOSE) );
+		/*
 		m_pButtonAdd             = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_ADD) );
 		m_pButtonEdit            = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_EDIT) );
 		m_pButtonRemove          = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_REMOVE) );
-		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_CLOSE) );
 
 
-		//gtk_widget_show(GTK_WIDGET(m_pButtonAdd));
-		//gtk_widget_show(GTK_WIDGET(m_pButtonEdit));
+		gtk_widget_show(GTK_WIDGET(m_pButtonAdd));
+		gtk_widget_show(GTK_WIDGET(m_pButtonEdit));
 		gtk_widget_show(GTK_WIDGET(m_pButtonRemove));
+		*/
 		gtk_widget_show(GTK_WIDGET(m_pButtonClose));
 
 		if (m_pWidget)
 		{
+			/*
 			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonAdd),FALSE,TRUE,5);
 			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonEdit),FALSE,TRUE,5);
-			gtk_box_pack_end(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonRemove),FALSE,TRUE,5);
-			gtk_box_pack_end(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonClose),FALSE,TRUE,5);
+			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonRemove),FALSE,TRUE,5);
+			*/
+			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonClose),FALSE,TRUE,5);
 		}
 		if (m_pTreeViewBookmarks)
 		{
@@ -199,9 +205,9 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 
 		m_pButtonMoveUp          = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_move_up") );
 		m_pButtonMoveDown        = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_move_down") );
-		//m_pButtonAdd             = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_add") );
-		//m_pButtonEdit            = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_edit") );
-		//m_pButtonRemove          = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_remove") );
+		m_pButtonAdd             = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_add") );
+		m_pButtonEdit            = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_edit") );
+		m_pButtonRemove          = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_remove") );
 		//m_pButtonClose           = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_close") );
 
 		m_bLoadedDlg = (
@@ -451,9 +457,38 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonAdd)
 	{
+		BookmarkAddEditDlg dlg;
+		dlg.Run();
+		if (!dlg.Cancelled())
+		{
+			Bookmark newbm = dlg.GetBookmark();
+			if (!newbm.GetName().empty())
+			{
+				priv->m_BookmarksPtr->AddBookmark(newbm);
+			}
+		}
+
 	}
 	else if (button == priv->m_pButtonEdit)
 	{
+
+		for (list<int>::iterator itr = values.begin(); values.end() != itr; ++itr)
+		{
+			const Bookmark* b = priv->m_BookmarksPtr->GetBookmark(*itr);
+			if (NULL != b)
+			{
+				BookmarkAddEditDlg dlg(*b);
+				dlg.Run();
+				if (!dlg.Cancelled())
+				{
+					Bookmark newbm = dlg.GetBookmark();
+					if (!newbm.GetName().empty())
+					{
+						priv->m_BookmarksPtr->UpdateBookmark(newbm);
+					}
+				}
+			}
+		}
 	}
 	else if (button == priv->m_pButtonRemove)
 	{
