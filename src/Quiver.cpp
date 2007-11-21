@@ -609,9 +609,9 @@ char * quiver_ui_main =
 "			<placeholder name='BookmarkItems'/>"
 "		</menu>"
 "		<menu action='MenuTools'>"
-//#ifdef FIXME_DISABLED
+#ifdef FIXME_DISABLED
 "			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
-//#endif
+#endif
 "			<separator/>"
 "			<placeholder name='ToolsExternal'/>"
 "		</menu>"
@@ -1713,6 +1713,13 @@ int main (int argc, char **argv)
 	CreateQuiverData cqd = {0};
 	cqd.bRecursive = false;
 	
+	//init gnome-vfs
+	if (!gnome_vfs_init ()) 
+	{
+		printf ("Could not initialize GnomeVFS\n");
+		return 1;
+	}
+
 	if (argc == 1)
 	{	
 		const gchar* dir;
@@ -1726,13 +1733,12 @@ int main (int argc, char **argv)
 #endif
 		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
 		files.push_back(photo_library);
-		cqd.bRecursive = true;
-	}
-	//init gnome-vfs
-	if (!gnome_vfs_init ()) 
-	{
-		printf ("Could not initialize GnomeVFS\n");
-		return 1;
+		if (!gnome_vfs_uris_match("file:///",photo_library.c_str()))
+		{
+			// just in case the users sets the root
+			// as the photo library
+			cqd.bRecursive = true;
+		}
 	}
 	//pthread_setconcurrency(4);
 

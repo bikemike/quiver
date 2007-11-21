@@ -26,7 +26,7 @@
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
-                      <widget class="GtkHBox" id="hbox9">
+                      <widget class="GtkHBox" id="hbox_photo_library">
                         <property name="visible">True</property>
                         <child>
                           <widget class="GtkLabel" id="label6">
@@ -36,17 +36,6 @@
                           <packing>
                             <property name="expand">False</property>
                             <property name="fill">False</property>
-                          </packing>
-                        </child>
-                        <child>
-                          <widget class="GtkFileChooserButton" id="fcb_general_photo_library">
-                            <property name="visible">True</property>
-                            <property name="action">GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER</property>
-                            <property name="title" translatable="yes">Select A Folder</property>
-                          </widget>
-                          <packing>
-                            <property name="padding">10</property>
-                            <property name="position">1</property>
                           </packing>
                         </child>
                       </widget>
@@ -60,7 +49,6 @@
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Use a checkboard background for images with an alpha channel</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="draw_indicator">True</property>
                       </widget>
                       <packing>
@@ -74,7 +62,6 @@
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Automatically reorientate images containing an exif orientation tag</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -89,7 +76,6 @@
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Automatically save rotated/flipped images</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -104,7 +90,6 @@
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Ask before deleting images</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -123,7 +108,6 @@
                             <property name="can_focus">True</property>
                             <property name="label" translatable="yes">Use theme colors</property>
                             <property name="use_underline">True</property>
-                            <property name="response_id">0</property>
                             <property name="active">True</property>
                             <property name="draw_indicator">True</property>
                           </widget>
@@ -143,13 +127,29 @@
                                 <property name="column_spacing">20</property>
                                 <property name="row_spacing">2</property>
                                 <child>
-                                  <widget class="GtkLabel" id="label_general_bg_browser">
+                                  <widget class="GtkLabel" id="label_general_bg_viewer">
                                     <property name="visible">True</property>
                                     <property name="sensitive">False</property>
                                     <property name="xalign">0</property>
-                                    <property name="label" translatable="yes">Browser background color:</property>
+                                    <property name="label" translatable="yes">Viewer background color:</property>
                                   </widget>
                                   <packing>
+                                    <property name="top_attach">1</property>
+                                    <property name="bottom_attach">2</property>
+                                    <property name="x_options"></property>
+                                    <property name="y_options"></property>
+                                  </packing>
+                                </child>
+                                <child>
+                                  <widget class="GtkColorButton" id="clrbtn_general_bg_browser">
+                                    <property name="visible">True</property>
+                                    <property name="sensitive">False</property>
+                                    <property name="can_focus">True</property>
+                                    <property name="title" translatable="yes">Pick a Color for the Browser</property>
+                                  </widget>
+                                  <packing>
+                                    <property name="left_attach">1</property>
+                                    <property name="right_attach">2</property>
                                     <property name="x_options"></property>
                                     <property name="y_options"></property>
                                   </packing>
@@ -159,7 +159,6 @@
                                     <property name="visible">True</property>
                                     <property name="sensitive">False</property>
                                     <property name="can_focus">True</property>
-                                    <property name="response_id">0</property>
                                     <property name="title" translatable="yes">Pick a Color for the Viewer</property>
                                   </widget>
                                   <packing>
@@ -172,30 +171,13 @@
                                   </packing>
                                 </child>
                                 <child>
-                                  <widget class="GtkColorButton" id="clrbtn_general_bg_browser">
-                                    <property name="visible">True</property>
-                                    <property name="sensitive">False</property>
-                                    <property name="can_focus">True</property>
-                                    <property name="response_id">0</property>
-                                    <property name="title" translatable="yes">Pick a Color for the Browser</property>
-                                  </widget>
-                                  <packing>
-                                    <property name="left_attach">1</property>
-                                    <property name="right_attach">2</property>
-                                    <property name="x_options"></property>
-                                    <property name="y_options"></property>
-                                  </packing>
-                                </child>
-                                <child>
-                                  <widget class="GtkLabel" id="label_general_bg_viewer">
+                                  <widget class="GtkLabel" id="label_general_bg_browser">
                                     <property name="visible">True</property>
                                     <property name="sensitive">False</property>
                                     <property name="xalign">0</property>
-                                    <property name="label" translatable="yes">Viewer background color:</property>
+                                    <property name="label" translatable="yes">Browser background color:</property>
                                   </widget>
                                   <packing>
-                                    <property name="top_attach">1</property>
-                                    <property name="bottom_attach">2</property>
                                     <property name="x_options"></property>
                                     <property name="y_options"></property>
                                   </packing>
@@ -221,6 +203,9 @@
                   </widget>
                 </child>
               </widget>
+              <packing>
+                <property name="tab_expand">False</property>
+              </packing>
             </child>
             <child>
               <widget class="GtkHBox" id="hbox2">
@@ -243,6 +228,7 @@
               </widget>
               <packing>
                 <property name="type">tab</property>
+                <property name="tab_expand">False</property>
                 <property name="tab_fill">False</property>
               </packing>
             </child>
@@ -365,7 +351,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Enable quick preview</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -380,7 +365,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Enable GIF animations</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -396,7 +380,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Hide scrollbars</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -411,6 +394,7 @@ Right</property>
               </widget>
               <packing>
                 <property name="position">1</property>
+                <property name="tab_expand">False</property>
               </packing>
             </child>
             <child>
@@ -435,6 +419,7 @@ Right</property>
               <packing>
                 <property name="type">tab</property>
                 <property name="position">1</property>
+                <property name="tab_expand">False</property>
                 <property name="tab_fill">False</property>
               </packing>
             </child>
@@ -486,7 +471,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Fullscreen</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -502,7 +486,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Loop</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="draw_indicator">True</property>
                       </widget>
                       <packing>
@@ -517,7 +500,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Enable transition between images</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="draw_indicator">True</property>
                       </widget>
                       <packing>
@@ -532,7 +514,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">Hide film strip during slide show</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="draw_indicator">True</property>
                       </widget>
                       <packing>
@@ -546,6 +527,7 @@ Right</property>
               </widget>
               <packing>
                 <property name="position">2</property>
+                <property name="tab_expand">False</property>
               </packing>
             </child>
             <child>
@@ -571,6 +553,7 @@ Right</property>
               <packing>
                 <property name="type">tab</property>
                 <property name="position">2</property>
+                <property name="tab_expand">False</property>
                 <property name="tab_fill">False</property>
               </packing>
             </child>
@@ -648,7 +631,6 @@ Right</property>
                 <property name="can_default">True</property>
                 <property name="label">gtk-edit</property>
                 <property name="use_stock">True</property>
-                <property name="response_id">0</property>
               </widget>
               <packing>
                 <property name="position">1</property>
@@ -661,7 +643,6 @@ Right</property>
                 <property name="can_default">True</property>
                 <property name="label">gtk-remove</property>
                 <property name="use_stock">True</property>
-                <property name="response_id">0</property>
               </widget>
               <packing>
                 <property name="position">2</property>
@@ -772,7 +753,6 @@ Right</property>
                 <property name="can_focus">True</property>
                 <property name="label" translatable="yes">command supports multiple files</property>
                 <property name="use_underline">True</property>
-                <property name="response_id">0</property>
                 <property name="active">True</property>
                 <property name="draw_indicator">True</property>
               </widget>
@@ -791,7 +771,6 @@ Right</property>
                     <property name="can_focus">True</property>
                     <property name="label" translatable="yes">show command output (stdout/stderr)</property>
                     <property name="use_underline">True</property>
-                    <property name="response_id">0</property>
                     <property name="active">True</property>
                     <property name="draw_indicator">True</property>
                   </widget>
@@ -810,7 +789,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label" translatable="yes">only if errors occur</property>
                         <property name="use_underline">True</property>
-                        <property name="response_id">0</property>
                         <property name="active">True</property>
                         <property name="draw_indicator">True</property>
                       </widget>
@@ -913,7 +891,6 @@ Right</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                         <property name="label" translatable="yes">gtk-add</property>
                         <property name="use_stock">True</property>
-                        <property name="response_id">0</property>
                       </widget>
                     </child>
                     <child>
@@ -924,7 +901,6 @@ Right</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                         <property name="label" translatable="yes">gtk-edit</property>
                         <property name="use_stock">True</property>
-                        <property name="response_id">0</property>
                       </widget>
                       <packing>
                         <property name="position">1</property>
@@ -938,7 +914,6 @@ Right</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                         <property name="label" translatable="yes">gtk-remove</property>
                         <property name="use_stock">True</property>
-                        <property name="response_id">0</property>
                       </widget>
                       <packing>
                         <property name="position">2</property>
@@ -950,7 +925,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label">gtk-go-up</property>
                         <property name="use_stock">True</property>
-                        <property name="response_id">0</property>
                       </widget>
                       <packing>
                         <property name="expand">False</property>
@@ -963,7 +937,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label">gtk-go-down</property>
                         <property name="use_stock">True</property>
-                        <property name="response_id">0</property>
                       </widget>
                       <packing>
                         <property name="expand">False</property>
@@ -1191,7 +1164,6 @@ Right</property>
                     <property name="can_focus">True</property>
                     <property name="label" translatable="yes">include subfolders</property>
                     <property name="use_underline">True</property>
-                    <property name="response_id">0</property>
                     <property name="draw_indicator">True</property>
                   </widget>
                   <packing>
@@ -1210,7 +1182,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label">gtk-add</property>
                         <property name="use_stock">True</property>
-                        <property name="response_id">0</property>
                       </widget>
                       <packing>
                         <property name="expand">False</property>
@@ -1222,7 +1193,6 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="label">gtk-remove</property>
                         <property name="use_stock">True</property>
-                        <property name="response_id">0</property>
                       </widget>
                       <packing>
                         <property name="expand">False</property>

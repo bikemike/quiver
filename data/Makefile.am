@@ -27,7 +27,12 @@ desktop_DATA = quiver.desktop
 
 glade_DATA = quiver.glade
 
-EXTRA_DIST = ${desktop_DATA} ${glade_DATA} ${service_DATA} ${icons_26x26_DATA}
+EXTRA_DIST = \
+	${desktop_DATA} \
+	${glade_DATA} \
+	${service_DATA} \
+	${icons_26x26_DATA} \
+	${icons_48x48_DATA}
 
 
 # gtk_update_icon_cache = gtk-update-icon-cache -f -t $(datadir)/icons/hicolor

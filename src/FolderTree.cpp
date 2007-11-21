@@ -1868,10 +1868,12 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 #endif
 
+
+	GnomeVFSVolumeMonitor* monitor = gnome_vfs_get_volume_monitor();
+#ifndef QUIVER_MAEMO
+	GnomeVFSVolume* volume = gnome_vfs_volume_monitor_get_volume_for_path(monitor,filesystem_path);
 	char* filesystem_path = "/";
 	char* filesystem_uri = gnome_vfs_get_uri_from_local_path (filesystem_path);
-	GnomeVFSVolumeMonitor* monitor = gnome_vfs_get_volume_monitor();
-	GnomeVFSVolume* volume = gnome_vfs_volume_monitor_get_volume_for_path(monitor,filesystem_path);
 	if (NULL != volume)
 	{
 #ifdef QUIVER_MAEMO
@@ -1892,8 +1894,9 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 		free(icon2);
 
 		g_hash_table_insert(m_pHashRootNodeOrder,g_strdup("Filesystem"),(gpointer)iNodeOrder++);
-		gnome_vfs_volume_unref(volume);
 	}
+	gnome_vfs_volume_unref(volume);
+#endif
 
 	GList *volumes = gnome_vfs_volume_monitor_get_mounted_volumes(monitor);
 	GList *volume_itr = volumes;
@@ -1922,8 +1925,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 					skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
 					g_free(mmc2_uri);
 				}
-				
-				skip |= gnome_vfs_uris_match(uri,"file:///");
 #endif
 				if (!skip)
 				{	
