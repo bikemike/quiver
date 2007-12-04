@@ -673,6 +673,24 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	return retval;
 }
 
+#if (GTK_MAJOR_VERSION < 2) \
+	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 12) \
+	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION == 12 && GTK_MICRO_VERSION < 3) 
+// the following is a temporary work around for bug:
+// http://bugzilla.gnome.org/show_bug.cgi?id=494515
+static gint hack_calculate_size(gdouble ratio, gint size, gint new_size)
+{
+	int nw = new_size;
+	int size_calc = (int)(size * ratio);
+	while ( size_calc < nw)
+	{
+		ratio = (gdouble)new_size/size;
+		size_calc = (int)(size * ratio);
+		++new_size;
+	}
+	return new_size;
+}
+#endif
 
 void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
@@ -708,7 +726,34 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 			if (4 < m_Command.params.orientation)
 			{
 				swap(new_width,new_height);
+				swap(width,height);
 			}
+#if (GTK_MAJOR_VERSION < 2) \
+	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 12) \
+	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION == 12 && GTK_MICRO_VERSION < 3)
+// the following is a temporary work around for bug:
+// http://bugzilla.gnome.org/show_bug.cgi?id=494515
+			int scale_factor = 2;
+			
+			if (m_Command.quiverFile.GetMimeType() && 0 == strncmp("image/jpeg",m_Command.quiverFile.GetMimeType() , 11) )
+			{
+				for (scale_factor=2; scale_factor <=8; scale_factor*=2)
+				{
+					if (width/scale_factor < (gint)new_width || height/scale_factor < (gint)new_height)
+					{
+						scale_factor /= 2;
+						break;
+					}
+				}
+				width = width/scale_factor;
+				height = height/scale_factor;
+			}
+
+			gdouble xscale = (gdouble)new_width/width;
+			new_width = hack_calculate_size(xscale, width, new_width);
+			gdouble yscale = (gdouble)new_height/height;
+			new_height = hack_calculate_size(yscale, height, new_height);
+#endif	
 			gdk_pixbuf_loader_set_size(loader,new_width,new_height);
 		}
 	}

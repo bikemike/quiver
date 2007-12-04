@@ -1582,7 +1582,6 @@ void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
 	if (bShowViewer)
 	{
 		ShowViewer();
-		m_QuiverImplPtr->m_Viewer.GrabFocus();
 	}
 	else
 	{
@@ -1937,6 +1936,7 @@ void Quiver::ShowViewer()
 	}
 
 	m_QuiverImplPtr->m_Viewer.Show();
+	m_QuiverImplPtr->m_Viewer.GrabFocus();
 }
 
 void Quiver::ShowBrowser()
@@ -1963,6 +1963,7 @@ void Quiver::ShowBrowser()
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 	m_QuiverImplPtr->m_Browser.Show();
+	m_QuiverImplPtr->m_Browser.GrabFocus();
 }
 
 

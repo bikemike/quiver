@@ -1219,6 +1219,8 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 				if ( 3 == g_list_length(iconview->priv->velocity_time_list) &&
 					(0.1 > new_time - old_time) )
 				{
+					remove_timeout_smooth_scroll(iconview);
+
 					iconview->priv->timeout_id_smooth_scroll_slowdown = 
 						g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll_slowdown,iconview);
 				}
@@ -1721,11 +1723,19 @@ static void remove_timeout_smooth_scroll(QuiverIconView *iconview)
 		
 static void quiver_icon_view_scroll_to_cell_smooth(QuiverIconView *iconview, gulong cell)
 {
-	remove_timeout_smooth_scroll(iconview);
+	if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
+	{
+		g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
+		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
+
 
 	iconview->priv->smooth_scroll_cell = cell;
 
-	iconview->priv->timeout_id_smooth_scroll = g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll,iconview);
+	if (0 == iconview->priv->timeout_id_smooth_scroll)
+	{
+		iconview->priv->timeout_id_smooth_scroll = g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll,iconview);
+	}
 }
 
 static gboolean 
@@ -1835,6 +1845,7 @@ quiver_icon_view_timeout_smooth_scroll(gpointer data)
 	if (hdone && vdone)
 	{
 		gdk_threads_leave();
+		iconview->priv->timeout_id_smooth_scroll = 0;
 		return FALSE;
 	}
 	

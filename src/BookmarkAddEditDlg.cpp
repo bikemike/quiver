@@ -9,6 +9,15 @@
 #include <list>
 #include <vector>
 
+#ifdef QUIVER_MAEMO
+#ifdef HAVE_HILDON_FM_2
+#include <hildon/hildon-file-chooser-dialog.h>
+#else
+#include <hildon-widgets/hildon-file-chooser-dialog.h>
+#endif
+#endif
+
+
 using namespace std;
 
 enum 
@@ -390,20 +399,28 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	// removing modifiees the model
 	if (button == priv->m_pButtonAdd)
 	{
+#ifdef QUIVER_MAEMO
+		GtkWidget* widget = hildon_file_chooser_dialog_new(NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
+
+#else
 		GtkWidget* widget = gtk_file_chooser_dialog_new ("Select Folder",
 			NULL,
 			GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
 			GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
 			GTK_STOCK_OK, GTK_RESPONSE_OK, 
 		   	NULL);
+#endif
 
 		gint rval  = gtk_dialog_run(GTK_DIALOG(widget));
 		if (GTK_RESPONSE_OK == rval)
 		{
 			char* uri = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(widget));
-			priv->m_vectURIs.push_back(uri);
-			g_free(uri);
-			priv->UpdateUI();
+			if (NULL != uri)
+			{
+				priv->m_vectURIs.push_back(uri);
+				g_free(uri);
+				priv->UpdateUI();
+			}
 		}
 		gtk_widget_destroy(widget);
 	}

@@ -4,7 +4,6 @@ Version=1.0
 Type=Application
 Name=Quiver Image Viewer
 Comment=View and manage your photos and images
-#Exec=quiver %U %d %D %n %N
 Exec=quiver
 Icon=quiver-icon-app
 Categories=Application;Graphics;Photography;Viewer;GNOME;GTK;

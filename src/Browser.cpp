@@ -8,6 +8,8 @@
 #include <map>
 #include <set>
 
+#include <gdk/gdkkeysyms.h>
+
 using namespace std;
 
 #include <libquiver/quiver-icon-view.h>
@@ -245,9 +247,7 @@ static char *ui_browser =
 #endif
 "		<menu action='MenuFile'>"
 "			<placeholder action='FileOpenItems'>"
-#ifndef QUIVER_MAEMO
 "				<menuitem action='"ACTION_BROWSER_OPEN_LOCATION"'/>"
-#endif
 "			</placeholder>"
 "		</menu>"
 "		<menu action='MenuEdit'>"
@@ -421,6 +421,7 @@ static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpo
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
 
 static void entry_activate(GtkEntry *entry, gpointer user_data);
+static gboolean entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data);
 
 static void browser_imageview_magnification_changed(QuiverImageView *imageview,gpointer data);
 static void browser_imageview_reload(QuiverImageView *imageview,gpointer data);
@@ -434,6 +435,7 @@ static gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpoint
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
+	gtk_widget_show(widget);
 	QuiverUtils::DisconnectUnmodifiedAccelerators(pBrowserImpl->m_pUIManager);
 		
 	//printf("focus in! %s\n", );
@@ -446,6 +448,8 @@ static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpoin
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
 	QuiverUtils::ConnectUnmodifiedAccelerators(pBrowserImpl->m_pUIManager);
+
+	gtk_widget_hide(widget);
 	
 	return FALSE;
 }
@@ -581,6 +585,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	g_object_ref(m_pToolItemThumbSizer);
 	
 	m_pLocationEntry = gtk_entry_new();
+	gtk_widget_set_no_show_all(m_pLocationEntry, TRUE);
 	
 	hpaned = gtk_hpaned_new();
 	vpaned = gtk_vpaned_new();
@@ -616,11 +621,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	hbox = gtk_hbox_new(FALSE,0);
 	vbox = gtk_vbox_new(FALSE,0);
 	
-#ifndef QUIVER_MAEMO
 	gtk_box_pack_start (GTK_BOX (hbox), m_pLocationEntry, TRUE, TRUE, 0);
 	//gtk_box_pack_start (GTK_BOX (hbox), hscale, FALSE, FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
-#endif
 	gtk_box_pack_start (GTK_BOX (vbox), scrolled_window, TRUE, TRUE, 0);
 	
 	gtk_paned_pack1(GTK_PANED(vpaned),m_pNotebook,TRUE,TRUE);
@@ -704,6 +707,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);	
 	
 	g_signal_connect(G_OBJECT(m_pLocationEntry),"activate",G_CALLBACK(entry_activate),this);
+	g_signal_connect(G_OBJECT(m_pLocationEntry),"key-press-event",G_CALLBACK(entry_key_press),this);
 
 
     g_signal_connect (G_OBJECT (m_pLocationEntry), "focus-in-event",
@@ -1173,6 +1177,17 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 }
 
 
+static gboolean
+entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data)
+{
+	switch(event->keyval)
+	{
+		case GDK_Escape:
+			gtk_widget_hide(widget);
+			break;
+	}
+	return FALSE;
+}
 
 static void entry_activate(GtkEntry *entry, gpointer user_data)
 {

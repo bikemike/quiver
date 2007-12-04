@@ -1871,9 +1871,9 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 	GnomeVFSVolumeMonitor* monitor = gnome_vfs_get_volume_monitor();
 #ifndef QUIVER_MAEMO
-	GnomeVFSVolume* volume = gnome_vfs_volume_monitor_get_volume_for_path(monitor,filesystem_path);
 	char* filesystem_path = "/";
 	char* filesystem_uri = gnome_vfs_get_uri_from_local_path (filesystem_path);
+	GnomeVFSVolume* volume = gnome_vfs_volume_monitor_get_volume_for_path(monitor,filesystem_path);
 	if (NULL != volume)
 	{
 #ifdef QUIVER_MAEMO
