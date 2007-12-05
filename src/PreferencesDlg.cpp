@@ -308,7 +308,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 		
 		if (GTK_RESPONSE_OK == response)
 		{
-			gchar* dir = gtk_file_chooser_get_current_folder (
+			gchar* dir = gtk_file_chooser_get_uri (
 				GTK_FILE_CHOOSER (dlg));
 			if (NULL == dir)
 			{
@@ -338,7 +338,7 @@ void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
 	
 	if (GTK_FILE_CHOOSER(priv->m_pFCBtnPhotoLibrary) == chooser)
 	{
-		gchar* dir = gtk_file_chooser_get_current_folder (
+		gchar* dir = gtk_file_chooser_get_uri (
 			GTK_FILE_CHOOSER (priv->m_pFCBtnPhotoLibrary));
 		if (NULL == dir)
 		{
