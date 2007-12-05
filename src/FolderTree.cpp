@@ -54,9 +54,9 @@ enum
 	FILE_TREE_COLUMN_COUNT,
 };
 
+#ifdef QUIVER_MAEMO
 typedef enum _FolderID
 {
-#ifdef QUIVER_MAEMO
 	MAEMO_FOLDER_DEVICE,
 	MAEMO_FOLDER_AUDIO,
 	MAEMO_FOLDER_DOCUMENTS,
@@ -65,26 +65,12 @@ typedef enum _FolderID
 	MAEMO_FOLDER_VIDEOS,
 	MAEMO_FOLDER_MMC1,
 	MAEMO_FOLDER_MMC2,
-#endif
 	FOLDER_ID_COUNT,
 } FolderID;
 
 gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id);
 
-// this array is a lookup for the icon name basedo n the folderID
-/*
-gchar* FolderIDIcon[] = 
-{
-	ICON_MAEMO_DEVICE,
-	ICON_MAEMO_AUDIO,
-	ICON_MAEMO_DOCUMENTS,
-	ICON_MAEMO_GAMES,
-	ICON_MAEMO_IMAGES,
-	ICON_MAEMO_VIDEOS,
-	ICON_MAEMO_MMC,
-	ICON_MAEMO_MMC
-};
-*/
+#endif
 
 static gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer user_data);
 static gboolean folder_tree_is_separator (GtkTreeModel *model,GtkTreeIter *iter,gpointer data);
@@ -303,7 +289,6 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 {
 	GtkTreeModel *model;
 	
-	GtkTreeIter* iter_parent = NULL;
 	GtkTreeIter iter_child = {0};
 	GtkTreeIter iter_match = {0};
 
@@ -322,7 +307,7 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 		
 		gint longest_match = -1;
 		
-		while ( gtk_tree_model_iter_nth_child (model,&iter_child, iter_parent, i) )
+		while ( gtk_tree_model_iter_nth_child (model,&iter_child, NULL, i) )
 		{
 			i++;
 			gchar* uri;
@@ -1752,7 +1737,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 			{
 				GtkTreeIter* parent = &iter1;
 				GtkTreeIter* child  = &iter2;
-				if (0 == i)
+				if (0 == i || MAEMO_FOLDER_MMC1 == i || MAEMO_FOLDER_MMC2 == i)
 				{
 					parent = NULL;
 					child = &iter1;

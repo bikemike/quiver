@@ -142,6 +142,7 @@ public:
 	ImageCache m_IconCache;
 	
 	guint m_iTimeoutUpdateListID;
+	guint m_iTimeoutHideLocationID;
 
 	Browser *m_BrowserParent;
 
@@ -435,11 +436,21 @@ static gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpoint
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
-	gtk_widget_show(widget);
 	QuiverUtils::DisconnectUnmodifiedAccelerators(pBrowserImpl->m_pUIManager);
-		
-	//printf("focus in! %s\n", );
+	gtk_widget_show(pBrowserImpl->m_pLocationEntry);
+	if (0 != pBrowserImpl->m_iTimeoutHideLocationID)
+	{
+		g_source_remove(pBrowserImpl->m_iTimeoutHideLocationID);
+		pBrowserImpl->m_iTimeoutHideLocationID = 0;
+	}
 
+	return FALSE;
+}
+
+static gboolean timeout_hide_location (gpointer data)
+{
+	GtkWidget *widget = (GtkWidget*)data;
+	gtk_widget_hide(widget);
 	return FALSE;
 }
 
@@ -449,7 +460,10 @@ static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpoin
 
 	QuiverUtils::ConnectUnmodifiedAccelerators(pBrowserImpl->m_pUIManager);
 
-	gtk_widget_hide(widget);
+	if (0 == pBrowserImpl->m_iTimeoutHideLocationID)
+	{
+		pBrowserImpl->m_iTimeoutHideLocationID = g_timeout_add(10,timeout_hide_location,widget);
+	}
 	
 	return FALSE;
 }
@@ -538,6 +552,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	m_bFolderTreeEvent = false;
 
 	m_iTimeoutUpdateListID = 0;
+	m_iTimeoutHideLocationID = 0;
 	m_iMergedBrowserUI = 0;
 	/*
 	 * layout for the browser gui:
@@ -1080,7 +1095,7 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 	return pixbuf;
 }
 
-static gboolean thumbnail_loader_udpate_list (gpointer data)
+static gboolean thumbnail_loader_update_list (gpointer data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)data;
 	gdk_threads_enter();
@@ -1134,7 +1149,7 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 		{
 			g_source_remove (b->m_iTimeoutUpdateListID);
 		}
-		b->m_iTimeoutUpdateListID = g_timeout_add(20,thumbnail_loader_udpate_list,b);
+		b->m_iTimeoutUpdateListID = g_timeout_add(20,thumbnail_loader_update_list,b);
 	}
 	
 	return pixbuf;
