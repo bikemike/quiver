@@ -147,6 +147,4 @@ libquiver/Makefile
 src/Makefile
 src/icons/Makefile
 data/Makefile
-data/quiver.desktop.in
-data/quiver.maemo.desktop.in
 ])
