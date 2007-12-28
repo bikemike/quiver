@@ -36,6 +36,7 @@ using namespace std;
 #define ORIENTATION_FLIP_H    	2
 #define ORIENTATION_FLIP_V    	3
 
+#define SLIDESHOW_WAIT_DURATION 100 // milliseconds
 
 static int orientation_matrix[4][9] = 
 { 
@@ -357,7 +358,8 @@ public:
 	void SetImageList(ImageList imgList);
 	void UpdateUI();
 	
-	void SetImageIndex(int index, bool bDirectionForward);
+	void CacheNext(bool bDirectionForward);
+	void SetImageIndex(int index, bool bDirectionForward, bool bCacheNext = true);
 	int  GetCurrentOrientation();
 	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
 	void AddFilmstrip();
@@ -402,10 +404,18 @@ public:
 
 	Viewer *m_pViewer;
 	
+	typedef enum _SlideShowState
+	{
+		SLIDESHOW_STATE_ADVANCE,
+		SLIDESHOW_STATE_CACHE
+	} SlideShowState;
+
+	SlideShowState m_SlideShowState;
 	guint m_iTimeoutScrollbars;
 	guint m_iTimeoutUpdateListID;
 	guint m_iTimeoutSlideshowID;
 	int   m_iSlideShowDuration;
+	int   m_iSlideShowWaitCount;
 	bool  m_bSlideShowLoop;
 
 	ImageCache m_ThumbnailCache;
@@ -663,7 +673,45 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 	
 }
 
-void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward)
+void Viewer::ViewerImpl::CacheNext(bool bDirectionForward)
+{
+	gint width=0, height=0;
+
+	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
+	
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(m_pImageView))
+	{
+
+		width = m_pImageView->allocation.width;
+		height = m_pImageView->allocation.height;
+	}
+
+	if (bDirectionForward)
+	{
+		// cache the next image if there is one
+		if (m_ImageList.HasNext())
+		{
+			QuiverFile f = m_ImageList.GetNext();
+			m_ImageLoader.CacheImageAtSize(f,width,height);
+		}
+		else if (0 != m_iTimeoutSlideshowID && m_bSlideShowLoop)
+		{
+			QuiverFile f = m_ImageList[0];
+			m_ImageLoader.CacheImageAtSize(f,width,height);
+		}
+	}
+	else
+	{
+		// cache the next image if there is one
+		if (m_ImageList.HasPrevious())
+		{
+			QuiverFile f = m_ImageList.GetPrevious();
+			m_ImageLoader.CacheImageAtSize(f, width, height);
+		}
+	}
+}
+
+void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bCacheNext)
 {
 	gint width=0, height=0;
 
@@ -705,31 +753,11 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward)
 		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
 		      m_ImageList.GetCurrentIndex() );	
 
-		if (bDirectionForward)
+		if (bCacheNext)
 		{
-			// cache the next image if there is one
-			if (m_ImageList.HasNext())
-			{
-				f = m_ImageList.GetNext();
-				m_ImageLoader.CacheImageAtSize(f,width,height);
-			}
-			else if (0 != m_iTimeoutSlideshowID && m_bSlideShowLoop)
-			{
-				f = m_ImageList[0];
-				m_ImageLoader.CacheImageAtSize(f,width,height);
-			}
+			CacheNext(bDirectionForward);
 		}
-		else
-		{
-			// cache the next image if there is one
-			if (m_ImageList.HasPrevious())
-			{
-				f = m_ImageList.GetPrevious();
-				m_ImageLoader.CacheImageAtSize(f, width, height);
-			}
 			
-		}
-		
 		g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
 	}
 	
@@ -1356,9 +1384,11 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pUIManager = NULL;
 	m_iMergedViewerUI = 0;
 	
+	m_SlideShowState = SLIDESHOW_STATE_ADVANCE;
 	m_iTimeoutScrollbars = 0;
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutSlideshowID = 0;
+	m_iSlideShowWaitCount = 0;
 
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
 	m_pAdjustmentV = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
@@ -1724,34 +1754,78 @@ static gboolean timeout_advance_slideshow (gpointer data)
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	int iNextIndex = pViewerImpl->m_ImageList.GetCurrentIndex()+1;
-	if (pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) )
-	{
-		// wait until the imageloader has finished working
-		// before advancing the slideshow
-		pViewerImpl->m_iTimeoutSlideshowID = g_timeout_add(100,timeout_advance_slideshow, pViewerImpl);
-	}
-	else
-	{
-		if (!pViewerImpl->m_ImageList.HasNext() && pViewerImpl->m_bSlideShowLoop)
-		{
-			iNextIndex = 0;
-		}
-		
-		gdk_threads_enter();
-		pViewerImpl->SetImageIndex(iNextIndex,true);
-		gdk_threads_leave();
 
-		if ( (!pViewerImpl->m_ImageList.HasNext() && !pViewerImpl->m_bSlideShowLoop)
-			|| pViewerImpl->m_ImageList.GetSize() < 2)
-		{
-			pViewerImpl->m_pViewer->SlideShowStop();
-		}
-		else
-		{
-			pViewerImpl->m_iTimeoutSlideshowID = g_timeout_add(pViewerImpl->m_iSlideShowDuration,timeout_advance_slideshow, pViewerImpl);
-		}
-	}
+	switch (pViewerImpl->m_SlideShowState)
+	{
+		case Viewer::ViewerImpl::SLIDESHOW_STATE_ADVANCE:
+			{
+				if (pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) )
+				{
+					// wait until the imageloader has finished working
+					// before advancing the slideshow
+					++pViewerImpl->m_iSlideShowWaitCount;
+					pViewerImpl->m_iTimeoutSlideshowID 
+						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
+				}
+				else
+				{
+					if (!pViewerImpl->m_ImageList.HasNext() && pViewerImpl->m_bSlideShowLoop)
+					{
+						iNextIndex = 0;
+					}
+					
+					gdk_threads_enter();
+					pViewerImpl->SetImageIndex(iNextIndex,true,false);
+
+					if ( (!pViewerImpl->m_ImageList.HasNext() && !pViewerImpl->m_bSlideShowLoop)
+						|| pViewerImpl->m_ImageList.GetSize() < 2)
+					{
+						pViewerImpl->m_pViewer->SlideShowStop();
+					}
+					else
+					{
+						++pViewerImpl->m_iSlideShowWaitCount;
+						pViewerImpl->m_iTimeoutSlideshowID 
+							= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
+					}
+					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_CACHE;
+					gdk_threads_leave();
+
+				}
 	
+			}
+			break;
+		case Viewer::ViewerImpl::SLIDESHOW_STATE_CACHE:
+			{
+				gdk_threads_enter();
+				if (pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) )
+				{
+					++pViewerImpl->m_iSlideShowWaitCount;
+					pViewerImpl->m_iTimeoutSlideshowID 
+						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
+				}
+				else
+				{
+					// wait time is the slideshow duration minus any amount of time
+					// spent waiting for a transition or the loader to complete
+					// : minimum value of 10ms
+					int iWaitTime = pViewerImpl->m_iSlideShowWaitCount * SLIDESHOW_WAIT_DURATION;
+					iWaitTime = pViewerImpl->m_iSlideShowDuration - iWaitTime;
+					iWaitTime = MAX(10, iWaitTime);
+
+					pViewerImpl->CacheNext(true);
+					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_ADVANCE;
+					pViewerImpl->m_iSlideShowWaitCount = 0;
+					
+
+
+					pViewerImpl->m_iTimeoutSlideshowID 
+						= g_timeout_add(iWaitTime,timeout_advance_slideshow, pViewerImpl);
+				}
+				gdk_threads_leave();
+			}
+			break;
+	}
 	return FALSE;
 }
 
@@ -1762,6 +1836,9 @@ void Viewer::SlideShowStart()
 	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,false);
 	bool bHideFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, false);
 	
+	m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_ADVANCE;
+	m_ViewerImplPtr->m_iSlideShowWaitCount = 0;
+
 	if (bTransition)
 	{
 		quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),TRUE);
@@ -2087,10 +2164,25 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 	guint width, height;
 	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),&width,&height);
 
+	if (m_pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(m_pViewerImpl->m_pImageView)) )
+	{
+		// put some delay in this thread if it is churning away
+		// loading an image or doing a transition
+		// 100000 = 100milliseconds
+		usleep(100000);
+	}
+
+	gdk_threads_enter();
+
 	if (GTK_WIDGET_MAPPED(m_pViewerImpl->m_pIconView) &&
 		ulIndex < m_pViewerImpl->m_ImageList.GetSize())
 	{
-		QuiverFile f = m_pViewerImpl->m_ImageList[ulIndex];
+		// don't copy the quiver file, instead make a new one
+		// based on the uri. this is to get around an issue with
+		// concurrent writes to shared pointers from different threads
+		QuiverFile f(m_pViewerImpl->m_ImageList[ulIndex].GetURI());
+
+		gdk_threads_leave();
 	
 		GdkPixbuf *pixbuf = NULL;
 		pixbuf = m_pViewerImpl->m_ThumbnailCache.GetPixbuf(f.GetURI());				
@@ -2164,6 +2256,10 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 
 			pthread_yield();
 		}
+	}
+	else
+	{
+		gdk_threads_leave();
 	}
 
 }
