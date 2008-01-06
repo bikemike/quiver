@@ -10,8 +10,6 @@
 
 #include <gdk/gdkkeysyms.h>
 
-using namespace std;
-
 #include <libquiver/quiver-icon-view.h>
 #include <libquiver/quiver-image-view.h>
 #include <libquiver/quiver-pixbuf-utils.h>
@@ -25,6 +23,7 @@ using namespace std;
 #include "QuiverUtils.h"
 #include "QuiverPrefs.h"
 #include "QuiverFileOps.h"
+#include "BrowserHistory.h"
 
 #include "Statusbar.h"
 
@@ -42,6 +41,9 @@ using namespace std;
 #include <math.h>
 #endif
 
+#include "QuiverStockIcons.h"
+
+using namespace std;
 
 #if (GLIB_MAJOR_VERSION < 2) || (GLIB_MAJOR_VERSION == 2 && GLIB_MINOR_VERSION < 10)
 #define g_object_ref_sink(o) G_STMT_START{	\
@@ -100,6 +102,7 @@ public:
 /* member functions */
 
 	void SetUIManager(GtkUIManager *ui_manager);
+	void UpdateUI(); // enable/disable toolbar/menu items
 	void Show();
 	void Hide();
 
@@ -111,10 +114,15 @@ public:
 	
 	void SetImageIndex(int index, bool bDirectionForward, bool bFromIconView = false);
 
+	void QueueIconViewUpdate(int timeout = 100 /* ms */);
+
 /* member variables */
 	FolderTree m_FolderTree;
 	bool m_bFolderTreeEvent;
-	
+	bool m_bBrowserHistoryEvent;
+
+	BrowserHistory m_BrowserHistory;
+		
 	GtkWidget *m_pIconView;
 
 	GtkWidget *m_pBrowserWidget;
@@ -196,10 +204,11 @@ public:
 		
 	protected:
 		
-		virtual void LoadThumbnail(gulong ulIndex, guint uiWidth, guint uiHeight);
+		virtual void LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight);
 		virtual void GetVisibleRange(gulong* pulStart, gulong* pulEnd);
 		virtual void GetIconSize(guint* puiWidth, guint* puiHeight);
 		virtual gulong GetNumItems();
+		virtual QuiverFile GetQuiverFile(gulong index);
 		virtual void SetIsRunning(bool bIsRunning);
 		virtual void SetCacheSize(guint uiCacheSize);
 	
@@ -223,6 +232,8 @@ public:
 static void browser_action_handler_cb(GtkAction *action, gpointer data);
 
 #define ACTION_BROWSER_OPEN_LOCATION                      "BrowserOpenLocation"
+#define ACTION_BROWSER_HISTORY_BACK                       "BrowserHistoryBack"
+#define ACTION_BROWSER_HISTORY_FORWARD                    "BrowserHistoryForward"
 #define ACTION_BROWSER_CUT                                "BrowserCut"
 #define ACTION_BROWSER_COPY                               "BrowserCopy"
 #define ACTION_BROWSER_PASTE                              "BrowserPaste"
@@ -230,7 +241,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data);
 #define ACTION_BROWSER_TRASH                              "BrowserTrash"
 #define ACTION_BROWSER_RELOAD                             "BrowserReload"
 #define ACTION_BROWSER_VIEW_PREVIEW                       "BrowserViewPreview"
-#define ACTION_BROWSER_VIEW_FOLDERTREE                    "BrowserViewFolderTree"
+#define ACTION_BROWSER_VIEW_SIDEBAR                       "BrowserViewSidebar"
 #define ACTION_BROWSER_ZOOM_IN                            "BrowserZoomIn"
 #define ACTION_BROWSER_ZOOM_OUT                           "BrowserZoomOut"
 
@@ -272,7 +283,7 @@ static char *ui_browser =
 "		</menu>"
 "		<menu action='MenuView'>"
 "			<placeholder name='UIItems'>"
-"				<menuitem action='"ACTION_BROWSER_VIEW_FOLDERTREE"'/>"
+"				<menuitem action='"ACTION_BROWSER_VIEW_SIDEBAR"'/>"
 "				<menuitem action='"ACTION_BROWSER_VIEW_PREVIEW"'/>"
 "			</placeholder>"
 "			<menuitem action='"ACTION_BROWSER_RELOAD"'/>"
@@ -284,14 +295,22 @@ static char *ui_browser =
 #endif
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='NavToolItems'>"
+"			<toolitem action='"ACTION_BROWSER_HISTORY_BACK"'/>"
+"			<toolitem action='"ACTION_BROWSER_HISTORY_FORWARD"'/>"
+"			<separator/>"
 //"			<separator/>"
 //"			<toolitem action='"ACTION_BROWSER_RELOAD"'/>"
 //"			<separator/>"
+"		</placeholder>"
+"		<placeholder name='UIItems'>"
+"			<toolitem action='"ACTION_BROWSER_VIEW_SIDEBAR"'/>"
 "		</placeholder>"
 "		<placeholder name='Trash'>"
 "			<toolitem action='"ACTION_BROWSER_TRASH"'/>"
 "		</placeholder>"
 "	</toolbar>"
+"	<popup name='ContextMenuMain'>"
+"	</popup>"
 #ifdef QUIVER_MAEMO
 "	<accelerator action='"ACTION_BROWSER_ZOOM_IN_MAEMO"'/>"
 "	<accelerator action='"ACTION_BROWSER_ZOOM_OUT_MAEMO"'/>"
@@ -299,18 +318,21 @@ static char *ui_browser =
 "</ui>";
 
 static  GtkToggleActionEntry action_entries_toggle[] = {
-	{ ACTION_BROWSER_VIEW_FOLDERTREE, NULL, "Folder Tree", "<Control><Shift>F", "Show/Hide Folder Tree", G_CALLBACK(browser_action_handler_cb),TRUE},
-	{ ACTION_BROWSER_VIEW_PREVIEW, GTK_STOCK_PROPERTIES, "Preview", "<Control><Shift>p", "Show/Hide Image Preview", G_CALLBACK(browser_action_handler_cb),TRUE},
+	{ ACTION_BROWSER_VIEW_SIDEBAR, QUIVER_STOCK_DIRECTORY, "Sidebar", "<Control><Shift>F", "Show/Hide Sidebar (Folder Tree, Preview Window, etc)", G_CALLBACK(browser_action_handler_cb),TRUE},
+	{ ACTION_BROWSER_VIEW_PREVIEW, QUIVER_STOCK_PROPERTIES, "Preview", "<Control><Shift>p", "Show/Hide Image Preview", G_CALLBACK(browser_action_handler_cb),TRUE},
 };
 
 static GtkActionEntry action_entries[] = {
 	{ ACTION_BROWSER_OPEN_LOCATION, NULL, "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( browser_action_handler_cb )},
-	{ ACTION_BROWSER_CUT, GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(browser_action_handler_cb)},
-	{ ACTION_BROWSER_COPY, GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(browser_action_handler_cb)},
-	{ ACTION_BROWSER_PASTE, GTK_STOCK_PASTE, "Paste", "<Control>V", "Paste image", G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_HISTORY_BACK, QUIVER_STOCK_GO_BACK, "Go Back", "", "Go Back", G_CALLBACK( browser_action_handler_cb )},
+	{ ACTION_BROWSER_HISTORY_FORWARD, QUIVER_STOCK_GO_FORWARD, "Go Forward", "", "Go Forward", G_CALLBACK( browser_action_handler_cb )},
+	
+	{ ACTION_BROWSER_CUT, QUIVER_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_PASTE, QUIVER_STOCK_PASTE, "Paste", "<Control>V", "Paste image", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_SELECT_ALL, NULL, "_Select All", "<Control>A", "Select all", G_CALLBACK(browser_action_handler_cb)},
-	{ ACTION_BROWSER_TRASH, GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(browser_action_handler_cb)},
-	{ ACTION_BROWSER_RELOAD, GTK_STOCK_REFRESH, "_Reload", "<Control>R", "Refresh the Current View", G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_TRASH, QUIVER_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_RELOAD, QUIVER_STOCK_REFRESH, "_Reload", "<Control>R", "Refresh the Current View", G_CALLBACK(browser_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_BROWSER_ZOOM_IN_MAEMO, NULL, NULL, "F7", NULL, G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_ZOOM_OUT_MAEMO, NULL, NULL, "F8", NULL, G_CALLBACK(browser_action_handler_cb)},
@@ -420,6 +442,9 @@ static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
+static gboolean browser_popup_menu_cb (GtkWidget *treeview, gpointer userdata);
+static gboolean browser_button_press_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
+static void browser_show_context_menu(GdkEventButton *event, gpointer userdata);
 
 static void entry_activate(GtkEntry *entry, gpointer user_data);
 static gboolean entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data);
@@ -550,6 +575,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	m_BrowserParent = parent;
 	m_pUIManager = NULL;
 	m_bFolderTreeEvent = false;
+	m_bBrowserHistoryEvent = false;
 
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutHideLocationID = 0;
@@ -607,10 +633,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	m_pNotebook = gtk_notebook_new();
 	
 #if (GTK_MAJOR_VERSION > 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION >= 10)
-	gtk_signal_connect (GTK_OBJECT (m_pNotebook), "page-added",
-	      GTK_SIGNAL_FUNC (notebook_page_added), this);
-	gtk_signal_connect (GTK_OBJECT (m_pNotebook), "page-removed",
-	      GTK_SIGNAL_FUNC (notebook_page_removed), this);
+	g_signal_connect (G_OBJECT (m_pNotebook), "page-added",
+	      G_CALLBACK (notebook_page_added), this);
+	g_signal_connect (G_OBJECT (m_pNotebook), "page-removed",
+	      G_CALLBACK (notebook_page_removed), this);
 #endif
 	
 	m_pIconView = quiver_icon_view_new();
@@ -655,10 +681,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_paned_set_position(GTK_PANED(vpaned),vpaned_pos);
 	
 	
-	gtk_signal_connect (GTK_OBJECT (hpaned), "size_allocate",
-	      GTK_SIGNAL_FUNC (pane_size_allocate), this);
-	gtk_signal_connect (GTK_OBJECT (vpaned), "size_allocate",
-	      GTK_SIGNAL_FUNC (pane_size_allocate), this);
+	g_signal_connect (G_OBJECT (hpaned), "size_allocate",
+	      G_CALLBACK (pane_size_allocate), this);
+	g_signal_connect (G_OBJECT (vpaned), "size_allocate",
+	      G_CALLBACK (pane_size_allocate), this);
 	
 	m_pBrowserWidget = hpaned;
 	
@@ -667,23 +693,15 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pSWFolderTree),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	GtkWidget *pFolderTree = m_FolderTree.GetWidget();
 	
-	//gtk_widget_set_no_show_all(pFolderTree, TRUE);
 	gtk_container_add(GTK_CONTAINER(m_pSWFolderTree),pFolderTree);
 	gtk_widget_show_all(m_pSWFolderTree);
-		
+	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNotebook), m_pSWFolderTree,gtk_label_new("Folders"));	
 	gtk_widget_show_all(m_pNotebook);
-	gtk_widget_set_no_show_all(m_pNotebook, TRUE);
 
-	if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
+	if (!prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
 	{	
-		gtk_notebook_append_page(GTK_NOTEBOOK(m_pNotebook), m_pSWFolderTree,gtk_label_new("Folders"));	
+		gtk_widget_hide(vpaned);
 	}
-	
-	if (0 == gtk_notebook_get_n_pages(GTK_NOTEBOOK(m_pNotebook)))
-	{
-		gtk_widget_hide(GTK_WIDGET(m_pNotebook));
-	}
-	
 
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_pNotebook));
 	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_pNotebook),TRUE);
@@ -701,6 +719,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
     g_signal_connect (G_OBJECT (m_pImageView), "reload",
     			G_CALLBACK (browser_imageview_reload), this);
 
+	g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
+	g_signal_connect(G_OBJECT(m_pImageView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);    			
+
 #ifdef QUIVER_MAEMO
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 #endif
@@ -710,8 +731,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetIconPixbufFunc)icon_pixbuf_callback,this,NULL);
 
-	gtk_signal_connect (GTK_OBJECT (hscale), "value_changed",
-	      GTK_SIGNAL_FUNC (icon_size_value_changed), this);
+	g_signal_connect (G_OBJECT (hscale), "value_changed",
+	      G_CALLBACK (icon_size_value_changed), this);
 
 #ifdef QUIVER_MAEMO
 	// a single click on a selected thumbnail will trigger this signal
@@ -719,7 +740,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) : m_ThumbnailCache(100),
 #endif
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(iconview_cell_activated_cb),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(iconview_cursor_changed_cb),this);
-	g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);	
+	g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);
+	g_signal_connect(G_OBJECT(m_pIconView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
+	g_signal_connect(G_OBJECT(m_pIconView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);	
 	
 	g_signal_connect(G_OBJECT(m_pLocationEntry),"activate",G_CALLBACK(entry_activate),this);
 	g_signal_connect(G_OBJECT(m_pLocationEntry),"key-press-event",G_CALLBACK(entry_key_press),this);
@@ -844,13 +867,62 @@ void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShowPreview ? TRUE : FALSE);
 	}
 
-	action = QuiverUtils::GetAction(m_pUIManager,ACTION_BROWSER_VIEW_FOLDERTREE);
+	action = QuiverUtils::GetAction(m_pUIManager,ACTION_BROWSER_VIEW_SIDEBAR);
 	if (NULL != action)
 	{
 		bool bShowFolderTree = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW);
 		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShowFolderTree ? TRUE : FALSE);
 	}
 
+}
+
+void Browser::BrowserImpl::UpdateUI()
+{	
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	GtkAction* action;
+	action = QuiverUtils::GetAction(m_pUIManager, ACTION_BROWSER_HISTORY_FORWARD);
+	if (NULL != action)
+	{
+		gtk_action_set_sensitive(action,m_BrowserHistory.CanGoForward() ? TRUE : FALSE);
+	}
+	action = QuiverUtils::GetAction(m_pUIManager, ACTION_BROWSER_HISTORY_BACK);
+	if (NULL != action)
+	{
+		gtk_action_set_sensitive(action,m_BrowserHistory.CanGoBack() ? TRUE : FALSE);
+	}
+
+	action = QuiverUtils::GetAction(m_pUIManager, ACTION_BROWSER_HISTORY_BACK);
+	if (NULL != action)
+	{
+		gtk_action_set_sensitive(action,m_BrowserHistory.CanGoBack() ? TRUE : FALSE);
+	}
+
+	action = QuiverUtils::GetAction(m_pUIManager, ACTION_BROWSER_VIEW_SIDEBAR);
+	if (NULL != action)
+	{
+		bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
+		if (bFullscreen)
+		{
+			if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
+			{	
+				if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS,true))
+				{
+					gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),false);
+				}
+			}
+
+		}
+		else
+		{
+			if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
+			{	
+				if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS,true))
+				{
+					gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), true);
+				}
+			}
+		}
+	}
 }
 
 void Browser::BrowserImpl::Show()
@@ -949,6 +1021,13 @@ void Browser::BrowserImpl::SetImageList(ImageList imglist)
 
 	list<string> dirs = m_ImageList.GetFolderList();
 	m_FolderTree.SetSelectedFolders(dirs);
+	
+	list<string> files = m_ImageList.GetFileList();
+	dirs.insert(dirs.end(), files.begin(), files.end());
+	
+	m_BrowserHistory.Add(dirs);
+	
+	UpdateUI();
 }
 
 
@@ -1006,6 +1085,10 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 				
 			}
 		}	
+	}
+	else
+	{
+		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView), NULL);
 	}
 	
 	m_ImageList.UnblockHandler(m_ImageListEventHandlerPtr);
@@ -1100,9 +1183,19 @@ static gboolean thumbnail_loader_update_list (gpointer data)
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)data;
 	gdk_threads_enter();
 	b->m_ThumbnailLoader.UpdateList();
+	b->m_iTimeoutUpdateListID = 0;
 	gdk_threads_leave();
 	return FALSE;
 }
+
+void Browser::BrowserImpl::QueueIconViewUpdate(int timeout)
+{
+	if (!m_iTimeoutUpdateListID)
+	{
+		m_iTimeoutUpdateListID = g_timeout_add(timeout,thumbnail_loader_update_list,this);
+	}
+}
+
 
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data)
 {
@@ -1145,11 +1238,7 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	if (need_new_thumb)
 	{
 		// add a timeout
-		if (b->m_iTimeoutUpdateListID)
-		{
-			g_source_remove (b->m_iTimeoutUpdateListID);
-		}
-		b->m_iTimeoutUpdateListID = g_timeout_add(20,thumbnail_loader_update_list,b);
+		b->QueueIconViewUpdate();
 	}
 	
 	return pixbuf;
@@ -1203,6 +1292,41 @@ entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data)
 	}
 	return FALSE;
 }
+static gboolean browser_popup_menu_cb (GtkWidget *widget, gpointer userdata)
+{
+	browser_show_context_menu(NULL, userdata);
+	return TRUE; 
+}
+
+static gboolean 
+browser_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+	if (GDK_BUTTON_PRESS == event->type && 3 == event->button)
+	{
+		browser_show_context_menu(event, user_data);
+		return TRUE;
+	}
+	return FALSE;
+} 
+
+static void browser_show_context_menu(GdkEventButton *event, gpointer userdata)
+{
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)userdata;
+	GtkWidget *menu;
+	
+	if (NULL != b->m_pUIManager)
+	{
+/* FIXME - disabled until more actions are implemented
+		menu = gtk_ui_manager_get_widget (b->m_pUIManager,"/ui/ContextMenuMain");
+	
+		gtk_menu_popup(GTK_MENU(menu), NULL, NULL, NULL, NULL,
+	                  (event != NULL) ? event->button : 0,
+	                  gdk_event_get_time((GdkEvent*)event));
+*/
+	}
+}
+
+
 
 static void entry_activate(GtkEntry *entry, gpointer user_data)
 {
@@ -1261,29 +1385,25 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
 		
 	}
-	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_FOLDERTREE))
+	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_SIDEBAR))
 	{
 		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
 		{
-
-#if (GTK_MAJOR_VERSION < 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 10)
-			gint page_num = 
-#endif
-			gtk_notebook_prepend_page(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook), pBrowserImpl->m_pSWFolderTree,gtk_label_new("Folders"));
-#if (GTK_MAJOR_VERSION < 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 10)
-			notebook_page_added(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),pBrowserImpl->m_pSWFolderTree, page_num, pBrowserImpl);
-#endif
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true);
+			gtk_widget_show(pBrowserImpl->vpaned);
+			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
+			if (!bFullscreen)
+			{
+				prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true);
+			}
 		}
 		else
 		{
-			gint page_num =  
-				gtk_notebook_page_num(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),pBrowserImpl->m_pSWFolderTree);
-			gtk_notebook_remove_page(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),page_num);
-#if (GTK_MAJOR_VERSION < 2) || (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 10)
-			notebook_page_removed(GTK_NOTEBOOK(pBrowserImpl->m_pNotebook),pBrowserImpl->m_pSWFolderTree, page_num, pBrowserImpl);
-#endif
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,false);
+			gtk_widget_hide(pBrowserImpl->vpaned);
+			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
+			if (!bFullscreen)
+			{
+				prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,false);
+			}
 		}
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_PREVIEW))
@@ -1292,16 +1412,11 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		{
 			gtk_widget_show(pBrowserImpl->m_pImageView);	
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
-			gtk_widget_show(pBrowserImpl->vpaned);
 		}
 		else
 		{
 			gtk_widget_hide(pBrowserImpl->m_pImageView);	
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
-			if (!GTK_WIDGET_VISIBLE(pBrowserImpl->m_pNotebook))
-			{
-				gtk_widget_hide(pBrowserImpl->vpaned);
-			}
 		}
 	}
 #ifdef QUIVER_MAEMO
@@ -1318,6 +1433,28 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 	{
 		gtk_widget_grab_focus(pBrowserImpl->m_pLocationEntry);
 	}
+	else if (0 == strcmp(szAction,ACTION_BROWSER_HISTORY_BACK))
+	{
+		if (pBrowserImpl->m_BrowserHistory.GoBack())
+		{
+			pBrowserImpl->m_bBrowserHistoryEvent = true;
+			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrent();
+			pBrowserImpl->m_ImageList.SetImageList(&files);
+			pBrowserImpl->m_bBrowserHistoryEvent = false;
+		}
+	}
+	else if (0 == strcmp(szAction,ACTION_BROWSER_HISTORY_FORWARD))
+	{
+		pBrowserImpl->m_bBrowserHistoryEvent = true;
+		if (pBrowserImpl->m_BrowserHistory.GoForward())
+		{
+			pBrowserImpl->m_bBrowserHistoryEvent = true;
+			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrent();
+			pBrowserImpl->m_ImageList.SetImageList(&files);
+			pBrowserImpl->m_bBrowserHistoryEvent = false;
+		}
+		pBrowserImpl->m_bBrowserHistoryEvent = false;
+	}	
 	else if (0 == strcmp(szAction,ACTION_BROWSER_COPY))
 	{
 		GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
@@ -1356,59 +1493,83 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction, ACTION_BROWSER_TRASH))
 	{
-		gint rval = GTK_RESPONSE_YES;
-		GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
-								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected images to the trash?"));
-		rval = gtk_dialog_run(GTK_DIALOG(dialog));
-		gtk_widget_destroy(dialog);
+		gint rval = GTK_RESPONSE_NO;
+		GList *selection;
+		selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+		set<int> items;
+		if (NULL == selection)
+		{
+			// nothing to delete!
+		}
+		else
+		{
+			// delete the items!
+			GList *sel_itr = selection;
+			
+			while (NULL != sel_itr)
+			{
+				items.insert((int)sel_itr->data);
+				sel_itr = g_list_next(sel_itr);
+			}
+			g_list_free(selection);
+		}
+
+		if (0 != items.size())
+		{
+			string strDlgText;
+			if (1 == items.size())
+			{
+#ifdef QUIVER_MAEMO
+				strDlgText = "Delete the selected image?";
+#else
+				strDlgText = "Move the selected image to the trash?";
+#endif
+			}
+			else
+			{
+#ifdef QUIVER_MAEMO
+				strDlgText = "Delete the selected images?";
+#else
+				strDlgText = "Move the selected images to the trash?";
+#endif
+			}
+			GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
+									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,strDlgText.c_str());
+			rval = gtk_dialog_run(GTK_DIALOG(dialog));
+			gtk_widget_destroy(dialog);
+		}
 
 		switch (rval)
 		{
 			case GTK_RESPONSE_YES:
 			{
-				GList *selection;
-				selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
-				if (NULL == selection)
+				set<int>::reverse_iterator ritr;
+				
+				pBrowserImpl->m_ImageList.BlockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
+				
+				for (ritr = items.rbegin() ; items.rend() != ritr ; ++ritr)
 				{
-					// nothing to delete!
-				}
-				else
-				{
-					// delete the items!
-					GList *sel_itr = selection;
-					set<int> items;
+					//printf("delete: %d\n",*ritr);
+					QuiverFile f = pBrowserImpl->m_ImageList[*ritr];
 					
-					while (NULL != sel_itr)
+					
+					
+#ifdef QUIVER_MAEMO
+					if (QuiverFileOps::Delete(f))
+#else
+					if (QuiverFileOps::MoveToTrash(f))
+#endif
 					{
-						items.insert((int)sel_itr->data);
-						sel_itr = g_list_next(sel_itr);
+						pBrowserImpl->m_ImageList.Remove(*ritr);
 					}
-					g_list_free(selection);
 
-					set<int>::reverse_iterator ritr;
-					
-					pBrowserImpl->m_ImageList.BlockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
-					
-					for (ritr = items.rbegin() ; items.rend() != ritr ; ++ritr)
-					{
-						//printf("delete: %d\n",*ritr);
-						QuiverFile f = pBrowserImpl->m_ImageList[*ritr];
-						
-						
-						
-						if (QuiverFileOps::MoveToTrash(f))
-						{
-							pBrowserImpl->m_ImageList.Remove(*ritr);
-						}
-
-					}
-					
-					pBrowserImpl->m_ImageList.UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);	
-					
-					quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView),pBrowserImpl->m_ImageList.GetCurrentIndex());					
-					
-					pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
 				}
+				
+				pBrowserImpl->m_ImageList.UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);	
+				
+				quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView),pBrowserImpl->m_ImageList.GetCurrentIndex());					
+				
+				pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
 				break;
 			}
 			case GTK_RESPONSE_NO:
@@ -1483,8 +1644,15 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	{
 		parent->m_FolderTree.SetSelectedFolders(dirs);
 	}
-
+	
+	if (!parent->m_bBrowserHistoryEvent)
+	{
+		dirs.insert(dirs.end(), files.begin(), files.end());
+		parent->m_BrowserHistory.Add(dirs);
+	}
+	parent->UpdateUI();
 }
+
 void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
 {
 	gint width=0, height=0;
@@ -1500,17 +1668,20 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(Imag
 	
 	parent->m_BrowserParent->EmitCursorChangedEvent();
 }
+
 void Browser::BrowserImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
 {
 	// refresh the list
 	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true);
-	parent->m_ThumbnailLoader.UpdateList(true);	
+	parent->m_ThumbnailLoader.UpdateList(true);
 }
+
 void Browser::BrowserImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
 {
 	parent->SetImageIndex(parent->m_ImageList.GetCurrentIndex(),true);
 	parent->m_ThumbnailLoader.UpdateList(true);
 }
+
 void Browser::BrowserImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
 {
 	QuiverFile f = parent->m_ImageList.Get(event->GetIndex());
@@ -1576,6 +1747,10 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
 			}
 		}
+		else if (QUIVER_PREFS_APP_WINDOW_FULLSCREEN == event->GetKey() )
+		{
+			parent->UpdateUI();
+		}
 	}
 }
 
@@ -1592,14 +1767,14 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 
 
 
-void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(gulong ulIndex, guint uiWidth, guint uiHeight)
+void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
 
 	if (GTK_WIDGET_MAPPED(m_pBrowserImpl->m_pIconView) && 
-		ulIndex < m_pBrowserImpl->m_ImageList.GetSize())
+		item.m_ulIndex < m_pBrowserImpl->m_ImageList.GetSize())
 	{
-		QuiverFile f = m_pBrowserImpl->m_ImageList[ulIndex];
-	
+		QuiverFile f(item.m_QuiverFile);
+
 		GdkPixbuf *pixbuf = NULL;
 		pixbuf = m_pBrowserImpl->m_ThumbnailCache.GetPixbuf(f.GetURI());				
 	
@@ -1665,11 +1840,9 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(gulong ulIndex, gui
 
 			gdk_threads_enter();
 			
-			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pBrowserImpl->m_pIconView),ulIndex);
+			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pBrowserImpl->m_pIconView),item.m_ulIndex);
 			
 			gdk_threads_leave();
-
-			pthread_yield();
 		}
 	}
 }
@@ -1688,6 +1861,15 @@ void Browser::BrowserImpl::BrowserThumbLoader::GetIconSize(guint* puiWidth, guin
 gulong Browser::BrowserImpl::BrowserThumbLoader::GetNumItems()
 {
 	return m_pBrowserImpl->m_ImageList.GetSize();
+}
+
+QuiverFile Browser::BrowserImpl::BrowserThumbLoader::GetQuiverFile(gulong index)
+{
+	if (index < m_pBrowserImpl->m_ImageList.GetSize())
+	{
+		return m_pBrowserImpl->m_ImageList[index];
+	}
+	return QuiverFile();
 }
 
 void Browser::BrowserImpl::BrowserThumbLoader::SetIsRunning(bool bIsRunning)

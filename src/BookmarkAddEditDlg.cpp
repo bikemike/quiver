@@ -1,6 +1,7 @@
 #include <config.h>
 
 #include "BookmarkAddEditDlg.h"
+#include "QuiverStockIcons.h"
 
 #ifdef HAVE_LIBGLADE
 #include <glade/glade.h>
@@ -165,8 +166,8 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "BookmarkAddEditDialog");
 		m_pTreeViewLocations     = GTK_TREE_VIEW(     glade_xml_get_widget (m_pGladeXML, "treeview_locations") );
 
-		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_CANCEL) );
-		m_pButtonOk              = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_OK) );
+		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CANCEL) );
+		m_pButtonOk              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_OK) );
 
 
 		gtk_widget_show(GTK_WIDGET(m_pButtonCancel));
@@ -406,8 +407,8 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 		GtkWidget* widget = gtk_file_chooser_dialog_new ("Select Folder",
 			NULL,
 			GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-			GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-			GTK_STOCK_OK, GTK_RESPONSE_OK, 
+			QUIVER_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+			QUIVER_STOCK_OK, GTK_RESPONSE_OK, 
 		   	NULL);
 #endif
 

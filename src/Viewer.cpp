@@ -62,8 +62,8 @@ static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gp
 static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpointer data);
 static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventKey *event, gpointer userdata);
 
-static void viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data);
-static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data);
+static void viewer_iconview_cell_activated(QuiverIconView *iconview,gulong cell,gpointer data);
+static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,gpointer data);
 
 static gboolean viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata);
 gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data );
@@ -202,6 +202,8 @@ static char *ui_viewer =
 "			<toolitem action='"ACTION_VIEWER_TRASH"'/>"
 "		</placeholder>"
 "	</toolbar>"
+"	<popup name='ContextMenuMain'>"
+"	</popup>"
 "	<accelerator action='"ACTION_VIEWER_ROTATE_CW_2"'/>"
 "	<accelerator action='"ACTION_VIEWER_ROTATE_CCW_2"'/>"
 "	<accelerator action='"ACTION_VIEWER_FLIP_H_2"'/>"
@@ -266,23 +268,23 @@ static gchar* pszActionsPrev[] =
 static GtkActionEntry action_entries[] = {
 	
 /*	{ "MenuFile", NULL, N_("_File") }, */
-	{ ACTION_VIEWER_CUT, GTK_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_COPY, GTK_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_TRASH, GTK_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_CUT, QUIVER_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_TRASH, QUIVER_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
 	
-	{ ACTION_VIEWER_PREVIOUS, GTK_STOCK_GO_BACK, "_Previous Image", "BackSpace", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_PREVIOUS_2, GTK_STOCK_GO_BACK, "_Previous Image", "<Shift>space", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_NEXT, GTK_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_NEXT_2, GTK_STOCK_GO_FORWARD, "_Next Image", "<Shift>BackSpace", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_PREVIOUS, QUIVER_STOCK_GO_BACK, "_Previous Image", "BackSpace", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_PREVIOUS_2, QUIVER_STOCK_GO_BACK, "_Previous Image", "<Shift>space", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_NEXT, QUIVER_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_NEXT_2, QUIVER_STOCK_GO_FORWARD, "_Next Image", "<Shift>BackSpace", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
 #ifdef QUIVER_MAEMO
-	{ ACTION_VIEWER_ZOOM_IN_MAEMO, GTK_STOCK_ZOOM_IN,"Zoom _In", "F7", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_ZOOM_OUT_MAEMO, GTK_STOCK_ZOOM_OUT,"Zoom _Out", "F8", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_ZOOM_IN_MAEMO, QUIVER_STOCK_ZOOM_IN,"Zoom _In", "F7", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_ZOOM_OUT_MAEMO, QUIVER_STOCK_ZOOM_OUT,"Zoom _Out", "F8", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
 #endif
-	{ ACTION_VIEWER_FIRST, GTK_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_LAST, GTK_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_FIRST, QUIVER_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_LAST, QUIVER_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
 
-	{ ACTION_VIEWER_ZOOM_IN, GTK_STOCK_ZOOM_IN,"Zoom _In", "equal", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_ZOOM_OUT, GTK_STOCK_ZOOM_OUT,"Zoom _Out", "minus", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_ZOOM_IN, QUIVER_STOCK_ZOOM_IN,"Zoom _In", "equal", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
+	{ ACTION_VIEWER_ZOOM_OUT, QUIVER_STOCK_ZOOM_OUT,"Zoom _Out", "minus", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
 	
 	{ ACTION_VIEWER_ROTATE_CW, QUIVER_STOCK_ROTATE_CW, "_Rotate Clockwise", "r", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_ROTATE_CW_2, QUIVER_STOCK_ROTATE_CW, "_Rotate Clockwise", "<Shift>l", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
@@ -296,9 +298,9 @@ static GtkActionEntry action_entries[] = {
 
 
 static GtkRadioActionEntry zoom_radio_action_entries[] = {
-	{ ACTION_VIEWER_ZOOM_FIT, GTK_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>1", "Fit to Window",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW},
-	{ ACTION_VIEWER_ZOOM_FIT_STRETCH, GTK_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Window Stretch",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH},
-	{ ACTION_VIEWER_ZOOM_100, GTK_STOCK_ZOOM_100, "_Actual Size", "<Control>0", "Actual Size",QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE},
+	{ ACTION_VIEWER_ZOOM_FIT, QUIVER_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>1", "Fit to Window",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW},
+	{ ACTION_VIEWER_ZOOM_FIT_STRETCH, QUIVER_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Window Stretch",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH},
+	{ ACTION_VIEWER_ZOOM_100, QUIVER_STOCK_ZOOM_100, "_Actual Size", "<Control>0", "Actual Size",QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE},
 	{ ACTION_VIEWER_ZOOM_FILL_SCREEN, NULL, "Fill Screen", NULL, "Fill the screen with the image",QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN},
 	{ ACTION_VIEWER_ZOOM, NULL, NULL, NULL, NULL, QUIVER_IMAGE_VIEW_MODE_ZOOM},
 };
@@ -365,6 +367,8 @@ public:
 	void AddFilmstrip();
 	
 	void UpdateScrollbars();
+
+	void QueueIconViewUpdate(int timeout = 100 /* ms */);
 
 // member variables
 
@@ -456,7 +460,8 @@ public:
 		
 	protected:
 		
-		virtual void LoadThumbnail(gulong ulIndex, guint uiWidth, guint uiHeight);
+		virtual void LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight);
+		virtual QuiverFile GetQuiverFile(gulong index);
 		virtual void GetVisibleRange(gulong* pulStart, gulong* pulEnd);
 		virtual void GetIconSize(guint* puiWidth, guint* puiHeight);
 		virtual gulong GetNumItems();
@@ -960,13 +965,14 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 
 		QuiverFile f = pViewerImpl->m_ImageList.GetCurrent();
 
+		string strDlgText;
+#ifdef QUIVER_MAEMO
+		strDlgText = "Delete the selected image?";
+#else
+		strDlgText = "Move the selected image to the trash?";
+#endif
 		GtkWidget* dialog = gtk_message_dialog_new (NULL,GTK_DIALOG_MODAL,
-								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,("Move the selected image to the trash?"));
-
-		char *for_display = gnome_vfs_format_uri_for_display(f.GetURI());
-		gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG(dialog), for_display);
-		g_free(for_display);
-		
+								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,strDlgText.c_str());
 		rval = gtk_dialog_run(GTK_DIALOG(dialog));
 
 		gtk_widget_destroy(dialog);
@@ -976,7 +982,11 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 			case GTK_RESPONSE_YES:
 			{
 				// delete the items!
+#ifdef QUIVER_MAEMO
+				if (QuiverFileOps::Delete(f))
+#else
 				if (QuiverFileOps::MoveToTrash(f))
+#endif
 				{
 					pViewerImpl->m_ImageList.Remove(pViewerImpl->m_ImageList.GetCurrentIndex());
 					pViewerImpl->SetImageIndex(pViewerImpl->m_ImageList.GetCurrentIndex(),true);
@@ -1089,7 +1099,8 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
 			action = QuiverUtils::GetAction(pViewerImpl->m_pUIManager, ACTION_VIEWER_ZOOM_FILL_SCREEN);
-
+		case QUIVER_IMAGE_VIEW_MODE_COUNT:
+		default:
 			break;
 	}
 
@@ -1183,7 +1194,7 @@ static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventK
 	return rval;
 }
 
-static void viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gpointer data)
+static void viewer_iconview_cell_activated(QuiverIconView *iconview,gulong cell,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
@@ -1191,7 +1202,7 @@ static void viewer_iconview_cell_activated(QuiverIconView *iconview,gint cell,gp
 	//pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 }
 
-static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gint cell,gpointer data)
+static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
@@ -1833,8 +1844,8 @@ static gboolean timeout_advance_slideshow (gpointer data)
 void Viewer::SlideShowStart()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,false);
-	bool bHideFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, false);
+	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,true);
+	bool bHideFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, true);
 	
 	m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_ADVANCE;
 	m_ViewerImplPtr->m_iSlideShowWaitCount = 0;
@@ -1913,11 +1924,12 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 }
 
 
-static gboolean thumbnail_loader_udpate_list (gpointer data)
+static gboolean thumbnail_loader_update_list (gpointer data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)data;	
 	gdk_threads_enter();
 	pViewerImpl->m_ThumbnailLoader.UpdateList();
+	pViewerImpl->m_iTimeoutUpdateListID = 0;
 	gdk_threads_leave();
 	return FALSE;
 }
@@ -1964,15 +1976,18 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	if (need_new_thumb)
 	{
 		// add a timeout
-		if (pViewerImpl->m_iTimeoutUpdateListID)
-		{
-			g_source_remove (pViewerImpl->m_iTimeoutUpdateListID);
-		}
-		pViewerImpl->m_iTimeoutUpdateListID = g_timeout_add(20,thumbnail_loader_udpate_list,pViewerImpl);
-
+		pViewerImpl->QueueIconViewUpdate();
 	}
 	
 	return pixbuf;
+}
+
+void Viewer::ViewerImpl::QueueIconViewUpdate(int timeout)
+{
+	if (!m_iTimeoutUpdateListID)
+	{
+		m_iTimeoutUpdateListID = g_timeout_add(timeout,thumbnail_loader_update_list,this);
+	}
 }
 
 static gboolean timeout_update_scrollbars(gpointer user_data)
@@ -2158,8 +2173,16 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 	}
 }
 
+QuiverFile Viewer::ViewerImpl::ViewerThumbLoader::GetQuiverFile(gulong index)
+{
+	if (index < m_pViewerImpl->m_ImageList.GetSize())
+	{
+		return m_pViewerImpl->m_ImageList[index];
+	}
+	return QuiverFile();
+}
 
-void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint uiWidth, guint uiHeight)
+void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
 	guint width, height;
 	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),&width,&height);
@@ -2172,18 +2195,14 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 		usleep(100000);
 	}
 
-	gdk_threads_enter();
-
 	if (GTK_WIDGET_MAPPED(m_pViewerImpl->m_pIconView) &&
-		ulIndex < m_pViewerImpl->m_ImageList.GetSize())
+		item.m_ulIndex < m_pViewerImpl->m_ImageList.GetSize())
 	{
 		// don't copy the quiver file, instead make a new one
 		// based on the uri. this is to get around an issue with
 		// concurrent writes to shared pointers from different threads
-		QuiverFile f(m_pViewerImpl->m_ImageList[ulIndex].GetURI());
+		QuiverFile f(item.m_QuiverFile);
 
-		gdk_threads_leave();
-	
 		GdkPixbuf *pixbuf = NULL;
 		pixbuf = m_pViewerImpl->m_ThumbnailCache.GetPixbuf(f.GetURI());				
 	
@@ -2250,18 +2269,11 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(gulong ulIndex, guint 
 
 			gdk_threads_enter();
 			
-			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),ulIndex);
+			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView),item.m_ulIndex);
 			
 			gdk_threads_leave();
-
-			pthread_yield();
 		}
 	}
-	else
-	{
-		gdk_threads_leave();
-	}
-
 }
 
 void Viewer::ViewerImpl::ViewerThumbLoader::GetVisibleRange(gulong* pulStart, gulong* pulEnd)

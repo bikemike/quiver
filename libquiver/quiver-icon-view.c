@@ -1150,7 +1150,8 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 		}
 	
 	}
-	return FALSE;	
+
+	return FALSE;
 }
 
 static gboolean 
@@ -1498,7 +1499,6 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 
 	gulong n_cells  = quiver_icon_view_get_n_items(iconview);
 
-	//printf("key pressed\n");
 	guint cols,rows;
 	quiver_icon_view_get_col_row_count(iconview,&cols,&rows);
 	gboolean rval = TRUE;
@@ -1617,7 +1617,12 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 		new_cursor_cell = iconview->priv->cursor_cell;
 		quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)event->state,FALSE);
 	}
+	
 	//iconview->priv->redraw_needed = TRUE;
+	
+  	if (!rval)
+  		rval = GTK_WIDGET_CLASS (quiver_icon_view_parent_class)->key_press_event (widget, event);
+	
 	return rval;
 }
 

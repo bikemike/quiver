@@ -12,6 +12,9 @@
 
 
 #include "QuiverUtils.h"
+
+#include "QuiverStockIcons.h"
+
 //#define QUIVER_PREFS_EXIF                  "exif"
 //#define QUIVER_PREFS_EXIF_EXPANDED_IFDS    "expanded_ifds"
 
@@ -965,7 +968,7 @@ static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, Gt
 						if (!show_menu)
 						{
 							show_menu = TRUE;
-							image = gtk_image_new_from_stock (GTK_STOCK_ADD,GTK_ICON_SIZE_MENU);
+							image = gtk_image_new_from_stock (QUIVER_STOCK_ADD,GTK_ICON_SIZE_MENU);
 	
 							menuitem = gtk_image_menu_item_new_with_label("Add Tag");
 							gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);
@@ -991,7 +994,7 @@ static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, Gt
 			if (has_parent)
 			{
 				show_menu = TRUE;
-				image = gtk_image_new_from_stock (GTK_STOCK_REMOVE,GTK_ICON_SIZE_MENU);
+				image = gtk_image_new_from_stock (QUIVER_STOCK_REMOVE,GTK_ICON_SIZE_MENU);
 				menuitem = gtk_image_menu_item_new_with_label("Remove Tag");
 	
 				gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);

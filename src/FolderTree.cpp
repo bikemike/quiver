@@ -86,6 +86,7 @@ static void signal_folder_tree_row_collapsed(GtkTreeView *treeview, GtkTreeIter 
 
 static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *iter_parent, const gchar* name, gboolean duplicate_check);
 static void folder_tree_clear_all_checkboxes(GtkTreeModel *model);
+static void thread_check_for_subdirs(gpointer data, gpointer user_data);
 
 class FolderTree::FolderTreeImpl
 {
@@ -110,6 +111,7 @@ public:
 	GtkTreeIter*     m_pTreeIterScrollTo;
 	std::set<guint>  m_setFolderThreads;
 	guint            m_iTimeoutScrollToCell;
+	GThreadPool*     m_pGThreadPool;
 };
 
 
@@ -148,12 +150,15 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 	m_pFolderTree = parent;
 	
 	m_pTreeIterScrollTo = NULL;
+	m_pGThreadPool = g_thread_pool_new(thread_check_for_subdirs, this, 4, FALSE, NULL);
 	
 	CreateWidget();
 }
 
 FolderTree::FolderTreeImpl::~FolderTreeImpl()
 {
+	g_thread_pool_free(m_pGThreadPool, TRUE, TRUE);
+
 	if (NULL != m_pHashRootNodeOrder)
 	{
 		g_hash_table_destroy(m_pHashRootNodeOrder);
@@ -251,8 +256,10 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 	gboolean rval = FALSE;
 	
 	gdk_threads_enter();
-	// wait untill all the idle functions have finished
-	if (pFolderTreeImpl->m_setFolderThreads.size() || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
+	// wait untill all the thread subdir check functions have finished
+	// FIXME
+	int n_running = g_thread_pool_get_num_threads(pFolderTreeImpl->m_pGThreadPool);
+	if (0 == n_running || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
 	{
 		rval = TRUE;
 	}
@@ -1106,9 +1113,9 @@ static void hash_foreach_sync_add(gpointer key, gpointer value, gpointer user_da
 	}
 }
 
-static void* thread_check_for_subdirs(void* user_data)
+static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 {
-	MyDataStruct* data = (MyDataStruct*)user_data;
+	MyDataStruct* data = (MyDataStruct*)thread_data;
 	GtkTreeModel *model = data->model;
 	GtkTreeIter* iter_parent = NULL;
 
@@ -1313,13 +1320,14 @@ static void* thread_check_for_subdirs(void* user_data)
 			default:
 				break;
 		}
-		pthread_yield();
+		g_thread_yield();
 	}
 
 	if (NULL != data->pFolderTreeImpl)
 	{
-		pthread_t thread_id = pthread_self();
-		data->pFolderTreeImpl->m_setFolderThreads.erase(thread_id);
+		//FIXME
+		//pthread_t thread_id = pthread_self();
+		//data->pFolderTreeImpl->m_setFolderThreads.erase(thread_id);
 	}
 	
 	if (NULL != data->iter_parent)
@@ -1343,9 +1351,6 @@ static void* thread_check_for_subdirs(void* user_data)
 		g_hash_table_destroy( data->hash_table );
 	}
 	g_free(data);
-	
-	return NULL;
-
 }
 
 static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
@@ -1411,9 +1416,10 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 	folder_tree_iter_set_icon(treeview,iter);
 
 	mydata->iter_parent = gtk_tree_iter_copy(iter);
-	pthread_t thread_id;
-	pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
-	pFolderTreeImpl->m_setFolderThreads.insert(thread_id);
+	//pthread_t thread_id;
+	//pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
+	g_thread_pool_push(pFolderTreeImpl->m_pGThreadPool, mydata, NULL);
+	//pFolderTreeImpl->m_setFolderThreads.insert(thread_id);
 }
 
 
@@ -1668,7 +1674,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	int iNodeOrder = 0;
 
 	GtkTreeIter iter1 = {0};  /* Parent iter */
-	GtkTreeIter iter2 = {0};  /* Child iter  */
 	const char* homedir = g_get_home_dir();
 
 	char* desktop_path = g_build_filename (homedir, "Desktop", NULL);
@@ -1709,6 +1714,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
                                              FALSE,
                                              0);
 #ifdef QUIVER_MAEMO
+	GtkTreeIter iter2 = {0};  /* Child iter  */
 	for (int i = 0; i < FOLDER_ID_COUNT; i++)
 	{
 		gchar* folder_uri = folder_tree_get_folder_uri_from_id((FolderID)i);
@@ -1967,9 +1973,10 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	mydata->model = GTK_TREE_MODEL(store);
 	mydata->iter_parent = NULL; // special case
 	mydata->pFolderTreeImpl = this;
-	pthread_t thread_id;
-	pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
-	m_setFolderThreads.insert(thread_id);
+	//pthread_t thread_id;
+	//pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
+	g_thread_pool_push(m_pGThreadPool, mydata, NULL);
+	//m_setFolderThreads.insert(thread_id);
 
 	free(home_uri);
 	free(desktop_uri);

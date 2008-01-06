@@ -28,6 +28,7 @@
 // =================================================================================================
 // Implementation
 // =================================================================================================
+static void thread_save_thumbnail(gpointer data, gpointer user_data);
 
 typedef struct _ThumbnailSize
 {
@@ -107,6 +108,7 @@ public:
 	
 	bool HasThumbnail(int iSize) ;
 	GdkPixbuf* GetThumbnail(int iSize /* = 0 */);
+	void SaveThumbnail(GdkPixbuf* pixbuf, const char* uri, const char* path, time_t mtime, int width, int height, int orientation);
 	
 	bool Modified() const;
 	
@@ -138,7 +140,42 @@ public:
 	
 	static ThumbnailCache c_ThumbnailCache;
 	std::map<int,bool> m_mapThumbnailExists;
+
+	static boost::shared_ptr<GThreadPool> c_ThreadPoolPtr;
 };
+
+class ThreadPoolDestructor
+{
+public:
+	void operator()(GThreadPool *thread_pool)
+	{
+		g_thread_pool_free(thread_pool, FALSE, TRUE);
+	}
+};
+
+class ThumbnailSaveThreadData
+{
+public:
+	ThumbnailSaveThreadData(GdkPixbuf* pixbuf, const char* uri, const char* path, time_t mtime, int width, int height, int orientation)
+	{
+		m_pPixbuf = gdk_pixbuf_copy(pixbuf);
+		m_strURI = uri;
+		m_strPath = path;
+		m_mtime = mtime;
+		m_iWidth = width;
+		m_iHeight = height;
+		m_iOrientation = orientation;
+	}
+	GdkPixbuf* m_pPixbuf;
+	std::string m_strURI;
+	std::string m_strPath;
+	time_t m_mtime;
+   	int m_iWidth;
+   	int m_iHeight;
+   	int m_iOrientation;
+};
+
+boost::shared_ptr<GThreadPool> QuiverFile::QuiverFileImpl::c_ThreadPoolPtr;
 
 static void GetImageDimensions(const gchar *uri, gint *width, gint *height);
 static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
@@ -611,54 +648,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	// save the thumbnail to the cache directory (~/.thumbnails)
 	if (NULL != thumb_pixbuf && save_thumbnail_to_cache && vfsFileInfo)
 	{
-		// make the directory if it does not already exist:
-		gchar *thumb_dir = g_path_get_dirname(thumb_path);
-		g_mkdir_with_parents(thumb_dir,S_IRUSR|S_IWUSR|S_IXUSR);
-		g_free(thumb_dir);
-		
-		gchar *temp_file_name = g_strconcat (thumb_path, ".XXXXXX", NULL);
-		gint fhandle = g_mkstemp (temp_file_name);
-		
-		if (-1 != fhandle )
-		{
-			close (fhandle);
-			gchar str_mtime[32];
-			gchar str_width[32];
-			gchar str_height[32];
-			gchar str_orientation[2];
-			//printf("temp_file_name = %s -> %s\n",temp_file_name,m_szURI);
-			g_snprintf (str_mtime, 30, "%lu",  vfsFileInfo->mtime);
-
-			g_snprintf (str_width, 32, "%d",  GetWidth());
-			g_snprintf (str_height, 32, "%d",  GetHeight());
-			
-			g_snprintf (str_orientation, 2, "%d",  GetOrientation());
-
-
-			//printf("orientation to save: %s\n",str_orientation);
-			
-			gboolean saved = gdk_pixbuf_save (thumb_pixbuf,
-					   temp_file_name,
-					   "png", NULL, 
-					   "tEXt::Thumb::URI", m_szURI,
-					   "tEXt::Thumb::MTime", str_mtime,
-					   "tEXt::Thumb::Image::Orientation", str_orientation,
-					   "tEXt::Thumb::Image::Width", str_width,
-					   "tEXt::Thumb::Image::Height", str_height,
-					   "tEXt::Software", PACKAGE_STRING,
-					   NULL);
-			if (saved)
-			{
-				//printf("move: %s => %s \n",temp_file_name,thumb_path);
-				g_chmod (temp_file_name, 0600);
-				g_rename(temp_file_name, thumb_path);
-			}
-			else
-			{
-				g_remove(temp_file_name);
-			}
-		}
-		g_free(temp_file_name);
+		SaveThumbnail(thumb_pixbuf, m_szURI, thumb_path, vfsFileInfo->mtime, GetWidth(), GetHeight(), GetOrientation());
 	}
 	
 	g_free (thumb_path);
@@ -687,6 +677,25 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	return thumb_pixbuf;
 }
 
+void QuiverFile::QuiverFileImpl::SaveThumbnail(GdkPixbuf* pixbuf, const char* uri, const char* path, time_t mtime, int width, int height, int orientation)
+{
+	static GStaticMutex mutex = G_STATIC_MUTEX_INIT;
+	g_static_mutex_lock (&mutex);
+	if (NULL == c_ThreadPoolPtr.get())
+	{
+
+		printf("creating a new threadpool!\n");
+		c_ThreadPoolPtr = boost::shared_ptr<GThreadPool> (
+				g_thread_pool_new(thread_save_thumbnail, NULL, 1, FALSE, NULL),
+				ThreadPoolDestructor()
+				);
+	}
+
+	ThumbnailSaveThreadData *thread_data = new ThumbnailSaveThreadData(pixbuf, uri, path, mtime, width, height, orientation);
+
+	g_thread_pool_push(c_ThreadPoolPtr.get(), thread_data, NULL);
+	g_static_mutex_unlock (&mutex);
+}
 
 void QuiverFile::QuiverFileImpl::Reload()
 {
@@ -730,7 +739,6 @@ void QuiverFile::QuiverFileImpl::Reload()
 
 void QuiverFile::QuiverFileImpl::LoadExifData()
 {
-	//Timer t("QuiverFile::LoadExifData()");
 	if (NULL != m_szURI && !( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
 	{
 		ExifLoader *loader;
@@ -1431,4 +1439,60 @@ gchar* quiver_thumbnail_path_for_uri(const char* uri, const char* szSize)
 	return g_build_filename( g_get_home_dir(), ".thumbnails", szSize, szMD5Hash, NULL);
 }
 
+
+static void thread_save_thumbnail(gpointer data, gpointer user_data)
+{
+	ThumbnailSaveThreadData* thumb_data = (ThumbnailSaveThreadData*)data;
+	// make the directory if it does not already exist:
+	gchar *thumb_dir = g_path_get_dirname(thumb_data->m_strPath.c_str());
+	g_mkdir_with_parents(thumb_dir,S_IRUSR|S_IWUSR|S_IXUSR);
+	g_free(thumb_dir);
+	
+	gchar *temp_file_name = g_strconcat (thumb_data->m_strPath.c_str(), ".XXXXXX", NULL);
+	gint fhandle = g_mkstemp (temp_file_name);
+	
+	if (-1 != fhandle )
+	{
+		close (fhandle);
+		gchar str_mtime[32];
+		gchar str_width[32];
+		gchar str_height[32];
+		gchar str_orientation[2];
+		//printf("temp_file_name = %s -> %s\n",temp_file_name,m_szURI);
+		g_snprintf (str_mtime, 30, "%lu",  thumb_data->m_mtime);
+
+		g_snprintf (str_width, 32, "%d",  thumb_data->m_iWidth);
+		g_snprintf (str_height, 32, "%d",  thumb_data->m_iHeight);
+		
+		g_snprintf (str_orientation, 2, "%d",  thumb_data->m_iOrientation);
+
+
+		//printf("orientation to save: %s\n",str_orientation);
+		
+		gboolean saved = gdk_pixbuf_save (thumb_data->m_pPixbuf,
+				   temp_file_name,
+				   "png", NULL, 
+				   "tEXt::Thumb::URI", thumb_data->m_strURI.c_str(),
+				   "tEXt::Thumb::MTime", str_mtime,
+				   "tEXt::Thumb::Image::Orientation", str_orientation,
+				   "tEXt::Thumb::Image::Width", str_width,
+				   "tEXt::Thumb::Image::Height", str_height,
+				   "tEXt::Software", PACKAGE_STRING,
+				   NULL);
+		if (saved)
+		{
+			//printf("move: %s => %s \n",temp_file_name,thumb_data->m_strPath.c_str());
+			g_chmod (temp_file_name, 0600);
+			g_rename(temp_file_name, thumb_data->m_strPath.c_str());
+		}
+		else
+		{
+			g_remove(temp_file_name);
+		}
+	}
+	g_free(temp_file_name);
+	g_object_unref(thumb_data->m_pPixbuf);
+	delete thumb_data;
+	
+}
 

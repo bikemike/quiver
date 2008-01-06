@@ -7,6 +7,20 @@ using namespace std;
 namespace QuiverFileOps
 {
 
+	bool Delete(QuiverFile quiverFile)
+	{
+		bool bResult = false;
+		GnomeVFSResult result = gnome_vfs_unlink (quiverFile.GetURI());
+		if (GNOME_VFS_OK == result)
+		{
+			// delete the thumbnails now
+			quiverFile.RemoveCachedThumbnail(false);
+			quiverFile.RemoveCachedThumbnail(true);
+			bResult = true;
+		}
+		return bResult;
+	}
+
 	bool MoveToTrash(QuiverFile quiverFile)
 	{
 		bool bResult = false;

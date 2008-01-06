@@ -5,8 +5,9 @@
 
 namespace QuiverFileOps
 {
+	bool Delete(QuiverFile quiverFile);
 	bool MoveToTrash(QuiverFile quiverFile);
-	
+	/* FIXME: implement move, copy */
 }
 
 #endif

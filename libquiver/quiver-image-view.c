@@ -673,7 +673,9 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 {
 	gint old_w,old_h;
 	gint new_w,new_h;
-	
+	GtkWidget *widget;
+	widget = GTK_WIDGET(imageview);
+
 	old_w = 0;
 	old_h = 0;
 	new_w = 0;
@@ -711,6 +713,18 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 	gint w,h;
 	w = MAX(old_w,new_w);
 	h = MAX(old_h,new_h);
+
+	gint old_offset_w = (gint)((widget->allocation.width - old_w)/2.);
+	gint old_offset_h = (gint)((widget->allocation.height - old_h)/2.);
+	gint new_offset_w = (gint)((widget->allocation.width - new_w)/2.);
+	gint new_offset_h = (gint)((widget->allocation.height - new_h)/2.);
+	gint combined_offset_w = (gint)((widget->allocation.width - w)/2.);
+	gint combined_offset_h = (gint)((widget->allocation.height - h)/2.);
+
+	old_offset_w = MAX(0, old_offset_w - combined_offset_w);
+	old_offset_h = MAX(0, old_offset_h - combined_offset_h);
+	new_offset_w = MAX(0, new_offset_w - combined_offset_w);
+	new_offset_h = MAX(0, new_offset_h - combined_offset_h);
 	
 	// FIXME: fill the pixbuf with the background color of the window
 	GdkColor c = GTK_WIDGET(imageview)->style->bg[GTK_STATE_NORMAL];
@@ -722,12 +736,12 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 		gdk_pixbuf_composite
 			(imageview->priv->transition_pixbuf_old,
 			 pixbuf,
-			 (gint)((w - old_w)/2. + .5),
-			 (gint)((h - old_h)/2. + .5),
+			 old_offset_w,
+			 old_offset_h,
 			 old_w,
 			 old_h,
-			 (w - old_w)/2.,
-			 (h - old_h)/2.,
+			 old_offset_w,
+			 old_offset_h,
 			 1.,
 			 1.,
 			 GDK_INTERP_NEAREST,
@@ -739,12 +753,12 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 		gdk_pixbuf_composite
 			(imageview->priv->transition_pixbuf_new,
 			 pixbuf,
-			 (gint)((w - new_w)/2. + .5),
-			 (gint)((h - new_h)/2. + .5),
+			 new_offset_w,
+			 new_offset_h,
 			 new_w,
 			 new_h,
-			 (w - new_w)/2.,
-			 (h - new_h)/2.,
+			 new_offset_w,
+			 new_offset_h,
 			 1.,
 			 1.,
 			 GDK_INTERP_NEAREST,
@@ -957,18 +971,15 @@ static void draw_pixbuf(QuiverImageView *imageview,GdkRegion *region)
 
 
 	GdkRectangle pixbuf_rect;
-	pixbuf_rect.x = MAX(0,((widget->allocation.width - width)/2));
-	pixbuf_rect.y = MAX(0,((widget->allocation.height - height)/2));
+	pixbuf_rect.x = MAX(0,(gint)((widget->allocation.width - width)/2. ));
+	pixbuf_rect.y = MAX(0,(gint)((widget->allocation.height - height)/2.));
 	pixbuf_rect.width = MIN(width,widget->allocation.width);
 	pixbuf_rect.height = MIN(height,widget->allocation.height);
-
-
-	
 
 	int i;
 	int n_rectangles =0;
 	GdkRectangle *rects = NULL;
-
+	
 	gdk_region_get_rectangles(region,&rects,&n_rectangles);
 
 	for (i = 0; i < n_rectangles; i++)
@@ -2052,13 +2063,13 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 	}
 	quiver_image_view_get_pixbuf_display_size_for_mode_alt(imageview, mode, new_width, new_height, &new_width, &new_height);
 
-	old_rect.x = MAX(0,(widget->allocation.width - old_width)/2.);
-	old_rect.y = MAX(0,(widget->allocation.height - old_height)/2.);
+	old_rect.x = MAX(0,(gint)((widget->allocation.width - old_width)/2.));
+	old_rect.y = MAX(0,(gint)((widget->allocation.height - old_height)/2.));
 	old_rect.width = MIN(old_width,widget->allocation.width);
 	old_rect.height = MIN(old_height,widget->allocation.height);
 
-	new_rect.x = MAX(0,(widget->allocation.width - new_width)/2.);
-	new_rect.y = MAX(0,(widget->allocation.height - new_height)/2.);
+	new_rect.x = MAX(0,(gint)((widget->allocation.width - new_width)/2.));
+	new_rect.y = MAX(0,(gint)((widget->allocation.height - new_height)/2.));
 	new_rect.width = MIN(new_width,widget->allocation.width);
 	new_rect.height = MIN(new_height,widget->allocation.height);
 	//printf(" %d %d %d %d\n",old_rect.x,old_rect.y,old_rect.width,old_rect.height);
@@ -2096,8 +2107,8 @@ static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,G
 	
 	quiver_image_view_get_pixbuf_display_size(imageview,&width,&height);
 
-	pixbuf_rect.x = MAX(0,((widget->allocation.width - width)/2));
-	pixbuf_rect.y = MAX(0,((widget->allocation.height - height)/2));
+	pixbuf_rect.x = MAX(0,(gint)((widget->allocation.width - width)/2.));
+	pixbuf_rect.y = MAX(0,(gint)((widget->allocation.height - height)/2.));
 	pixbuf_rect.width = MIN(width,widget->allocation.width);
 	pixbuf_rect.height = MIN(height,widget->allocation.height);
 

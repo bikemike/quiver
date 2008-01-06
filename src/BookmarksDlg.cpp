@@ -13,6 +13,8 @@
 #include "IBookmarksEventHandler.h"
 #include "BookmarkAddEditDlg.h"
 
+#include "QuiverStockIcons.h"
+
 using namespace std;
 
 enum 
@@ -144,11 +146,11 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "BookmarksDialog");
 		m_pTreeViewBookmarks     = GTK_TREE_VIEW(     glade_xml_get_widget (m_pGladeXML, "treeview_bookmarks") );
 
-		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_CLOSE) );
+		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
 		/*
-		m_pButtonAdd             = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_ADD) );
-		m_pButtonEdit            = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_EDIT) );
-		m_pButtonRemove          = GTK_BUTTON( gtk_button_new_from_stock(GTK_STOCK_REMOVE) );
+		m_pButtonAdd             = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_ADD) );
+		m_pButtonEdit            = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_EDIT) );
+		m_pButtonRemove          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_REMOVE) );
 
 
 		gtk_widget_show(GTK_WIDGET(m_pButtonAdd));

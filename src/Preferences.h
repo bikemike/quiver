@@ -1,5 +1,6 @@
 #ifndef FILE_PREFERENCES_H
 #define FILE_PREFERENCES_H
+#include <glib.h>
 
 #include <boost/shared_ptr.hpp>
 #include <list>

@@ -86,7 +86,7 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 		m_ulRangeStart = iNewStart;
 		m_ulRangeEnd   = iNewEnd;
 		
-		m_listThumbIndexes.clear();
+		m_listThumbItems.clear();
 		
 		guint uiNumItems   = GetNumItems();
 		guint uiNumVisible = m_ulRangeEnd - m_ulRangeStart;
@@ -99,15 +99,17 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 		guint i;
 		for (i = m_ulRangeStart;i <= m_ulRangeEnd;i++)
 		{
-			m_listThumbIndexes.push_back(i);
+			m_listThumbItems.push_back(
+				ThumbLoaderItem(i, GetQuiverFile(i)) );
 		}
 		
 		bool bBreakFromLoop = false;
-		for (i = 1 ; m_listThumbIndexes.size() < cache_size && !bBreakFromLoop; i++)
+		for (i = 1 ; m_listThumbItems.size() < cache_size && !bBreakFromLoop; i++)
 		{
 			if (m_ulRangeStart >= i)
 			{
-				m_listThumbIndexes.push_back(m_ulRangeStart - i);
+				m_listThumbItems.push_back(
+					ThumbLoaderItem(m_ulRangeStart - i, GetQuiverFile(m_ulRangeStart - i)) );
 				bBreakFromLoop = false;
 			}
 			else
@@ -117,7 +119,8 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 			
 			if (uiNumItems > m_ulRangeEnd + i)
 			{
-				m_listThumbIndexes.push_back(m_ulRangeEnd + i);
+				m_listThumbItems.push_back(
+					ThumbLoaderItem(m_ulRangeStart + i, GetQuiverFile(m_ulRangeStart + i)) );
 				bBreakFromLoop = false;
 			}
 			
@@ -125,10 +128,10 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 
 		// now add the list to itself in reverse order so the cache
 		// times of the items nearest the current page are newest
-		std::list<guint> listFilesReversed;
-		listFilesReversed = m_listThumbIndexes;
-		listFilesReversed.reverse();
-		m_listThumbIndexes.insert(m_listThumbIndexes.end(), listFilesReversed.begin() , listFilesReversed.end());
+		std::list<ThumbLoaderItem> listThumbItesReversed;
+		listThumbItesReversed = m_listThumbItems;
+		listThumbItesReversed.reverse();
+		m_listThumbItems.insert(m_listThumbItems.end(), listThumbItesReversed.begin() , listThumbItesReversed.end());
 		
 		int k;
 		for (k = 0; k < m_iThreads; k++)
@@ -144,7 +147,7 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 }
 
 
-void IconViewThumbLoader::LoadThumbnail(gulong ulIndex, guint uiWidth, guint uiHeigh)
+void IconViewThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeigh)
 {
 	// load the thumbnail
 }
@@ -167,6 +170,11 @@ gulong IconViewThumbLoader::GetNumItems()
 	return 0l;
 }
 
+QuiverFile IconViewThumbLoader::GetQuiverFile(gulong index) 
+{
+	return QuiverFile();
+}
+
 void IconViewThumbLoader::SetIsRunning(bool bIsRunning)
 {
 
@@ -184,7 +192,7 @@ void IconViewThumbLoader::Run(int iThreadID)
 
 		pthread_mutex_lock (&m_ListMutex);
 
-		if (0 == m_listThumbIndexes.size() && !m_bStopThreads)
+		if (0 == m_listThumbItems.size() && !m_bStopThreads)
 		{
 			// unlock mutex
 			pthread_mutex_unlock (&m_ListMutex);
@@ -217,26 +225,26 @@ void IconViewThumbLoader::Run(int iThreadID)
 
 			pthread_mutex_lock (&m_ListMutex);
 
-			if (0 == m_listThumbIndexes.size())
+			if (0 == m_listThumbItems.size())
 			{
 				pthread_mutex_unlock (&m_ListMutex);
 				break;
 			}
 			
-			guint n = m_listThumbIndexes.front();
-			m_listThumbIndexes.pop_front();
+			ThumbLoaderItem item = m_listThumbItems.front();
+			m_listThumbItems.pop_front();
 			pthread_mutex_unlock (&m_ListMutex);
 			
 			guint width, height;
 			GetIconSize(&width, &height);
-			LoadThumbnail(n, width, height);
+			LoadThumbnail(item, width, height);
 			
 			if (m_bStopThreads)
 			{
 				break;
 			}
 
-			usleep(100);
+			pthread_yield();
 		}
 
 		if (m_bStopThreads)

@@ -358,3 +358,4 @@ int jpeg_transform_files(char *infile, char *outfile,
 	
 	return rc;
 }
+

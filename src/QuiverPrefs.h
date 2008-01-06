@@ -2,11 +2,13 @@
 
 // global preferences
 #define QUIVER_PREFS_APP                       "application"
+#define QUIVER_PREFS_APP_START_FULLSCREEN      "start_fullscreen"
 #define QUIVER_PREFS_APP_PROPS_SHOW            "properties_show"
 #define QUIVER_PREFS_APP_STATUSBAR_SHOW        "statusbar_show"
 #define QUIVER_PREFS_APP_MENUBAR_SHOW          "menubar_show"
 #define QUIVER_PREFS_APP_TOOLBAR_SHOW          "toolbar_show"
 #define QUIVER_PREFS_APP_PHOTO_LIBRARY         "photo_library"
+#define QUIVER_PREFS_APP_WINDOW_FULLSCREEN     "window_fullscreen"
 
 
 
@@ -28,6 +30,7 @@
 #define QUIVER_PREFS_BROWSER_FOLDER_VPANE      "folder_vpane"
 #define QUIVER_PREFS_BROWSER_PREVIEW_SHOW      "preview_show"
 #define QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW   "foldertree_show"
+#define QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS "foldertree_hide_fs"
 
 
 // viewer preferences

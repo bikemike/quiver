@@ -71,9 +71,9 @@ public:
 	
 	static void LoadMimeTypes();
 	
-	void Add(std::list<std::string> *file_list, bool bRecursive = false);
-	void SetImageList(std::list<std::string> *file_list, bool bRecursive = false);
-	bool UpdateImageList(std::list<std::string> *file_list);
+	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
+	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
+	bool UpdateImageList(const std::list<std::string> *file_list);
 	
 	bool AddDirectory(const gchar* uri, bool bRecursive = false);
 	bool AddFile(const gchar*  uri);
@@ -290,7 +290,7 @@ ImageList::operator[](unsigned int n) const
 	return m_ImageListImplPtr->m_QuiverFileList[n];
 }
 
-void ImageList::Add(std::list<std::string> *file_list, bool bRecursive/* = false*/)
+void ImageList::Add(const std::list<std::string> *file_list, bool bRecursive/* = false*/)
 {
 	int iOldSize, iNewSize;
 	
@@ -307,7 +307,7 @@ void ImageList::Add(std::list<std::string> *file_list, bool bRecursive/* = false
 }
 
 
-void ImageList::SetImageList(std::list<std::string> *file_list, bool bRecursive /* = false */)
+void ImageList::SetImageList(const std::list<std::string> *file_list, bool bRecursive /* = false */)
 {
 	int iOldSize, iNewSize;
 	
@@ -322,7 +322,7 @@ void ImageList::SetImageList(std::list<std::string> *file_list, bool bRecursive 
 	}	
 }
 
-void ImageList::UpdateImageList(list<string> *file_list)
+void ImageList::UpdateImageList(const list<string> *file_list)
 {
 	int iOldSize, iNewSize;
 	bool bUpdated = false;
@@ -688,7 +688,7 @@ string PathToURI(const string &path)
 }
 
 
-void ImageListImpl::Add(std::list<std::string> *file_list, bool bRecursive/* = false*/)
+void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive/* = false*/)
 {
 	if (0 == file_list->size())
 	{
@@ -708,7 +708,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list, bool bRecursive/* = f
 		m_iCurrentIndex = 0;
 	}
 	
-	list<string>::iterator list_itr;
+	list<string>::const_iterator list_itr;
 	for (list_itr = file_list->begin(); file_list->end() != list_itr ; ++list_itr)
 	{
 		bool bAdded = false;
@@ -836,7 +836,7 @@ void ImageListImpl::Add(std::list<std::string> *file_list, bool bRecursive/* = f
 
 }
 
-void ImageListImpl::SetImageList(std::list<std::string> *file_list, bool bRecursive /* = false */)
+void ImageListImpl::SetImageList(const std::list<std::string> *file_list, bool bRecursive /* = false */)
 {
 
 	
@@ -854,7 +854,7 @@ void ImageListImpl::SetImageList(std::list<std::string> *file_list, bool bRecurs
 }
 
 
-bool ImageListImpl::UpdateImageList(list<string> *file_list)
+bool ImageListImpl::UpdateImageList(const list<string> *file_list)
 {
 	// create a set to find the differences
 	// remove the ones not in the file_list but in
@@ -873,7 +873,7 @@ bool ImageListImpl::UpdateImageList(list<string> *file_list)
 	{
 		strCurrentURI = m_QuiverFileList[m_iCurrentIndex].GetURI();
 	}
-	
+
 	PathMonitorMap::iterator itr;
 	for (itr = m_mapDirs.begin(); m_mapDirs.end() != itr; ++itr)
 	{
@@ -883,25 +883,44 @@ bool ImageListImpl::UpdateImageList(list<string> *file_list)
 	{
 		setOldFiles.insert(itr->first);
 	}
-	
-	list<string>::iterator listItr;
+
+	list<string>::const_iterator listItr;
 	for (listItr = file_list->begin(); file_list->end() != listItr; ++listItr)
 	{
 		setNewFiles.insert ( PathToURI(*listItr) );
 	}
 	
-	StringSet setOnlyInOld;
-	set_difference(setOldFiles.begin(), setOldFiles.end(), setNewFiles.begin(), setNewFiles.end(), inserter(setOnlyInOld,setOnlyInOld.begin()));
-	
-	StringSet::iterator setItr;
-	for (setItr = setOnlyInOld.begin(); setOnlyInOld.end() != setItr; ++setItr)
+	StringSet setInBoth;
+	set_intersection(setOldFiles.begin(), setOldFiles.end(), setNewFiles.begin(), setNewFiles.end(), inserter(setInBoth,setInBoth.begin()));
+
+	if (0 == setInBoth.size())
 	{
-		bUpdated = true;
-		RemoveMonitor((*setItr));
+		// sets are mutually exclusive
+		// so clear the old list
+		Clear();
+
+		if (setOldFiles.size())
+		{
+			bUpdated = true;
+		}
+	}
+	else
+	{
+
+		StringSet setOnlyInOld;
+		set_difference(setOldFiles.begin(), setOldFiles.end(), setNewFiles.begin(), setNewFiles.end(), inserter(setOnlyInOld,setOnlyInOld.begin()));
+		
+
+		StringSet::iterator setItr;
+		for (setItr = setOnlyInOld.begin(); setOnlyInOld.end() != setItr; ++setItr)
+		{
+			bUpdated = true;
+			RemoveMonitor((*setItr));
+		}
 	}
 	
 	StringSet setOnlyInNew;
-	set_difference(setNewFiles.begin(), setNewFiles.end(), setOldFiles.begin(), setOldFiles.end(), inserter(setOnlyInNew,setOnlyInOld.begin()));
+	set_difference(setNewFiles.begin(), setNewFiles.end(), setOldFiles.begin(), setOldFiles.end(), inserter(setOnlyInNew,setOnlyInNew.begin()));
 	
 	list<string> listNew;
 	listNew.insert(listNew.begin(),setOnlyInNew.begin(), setOnlyInNew.end());

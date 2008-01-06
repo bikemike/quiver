@@ -50,8 +50,10 @@ public:
 	GtkToggleButton*       m_pToggleUseThemeColor;
 	GtkToggleButton*	   m_pToggleSlideShowLoop;
 	GtkToggleButton*	   m_pToggleSlideShowFS;
+	GtkToggleButton*	   m_pToggleStartFS;
 	GtkToggleButton*	   m_pToggleQuickPreview;
 	GtkToggleButton*	   m_pToggleViewerHideScrollbars;
+	GtkToggleButton*	   m_pToggleBrowserHideFolderTreeFS;
 
 	GtkToggleButton*       m_pToggleGIFAnimation;
 	GtkToggleButton*       m_pToggleSlideShowTransition;
@@ -170,9 +172,12 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		
 		
 		m_pToggleAskBeforeDelete = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_general_ask_before_delete") );
+		m_pToggleStartFS     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_general_start_fullscreen") );
 		m_pToggleUseThemeColor   = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_general_theme_color") );
 		m_pToggleQuickPreview    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_quickpreview") );
 		m_pToggleViewerHideScrollbars    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_hide_scrollbars") );
+
+		m_pToggleBrowserHideFolderTreeFS    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_browser_hide_foldertree_fullscreen") );
 
 		m_pToggleSlideShowLoop   = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_loop") );
 		m_pToggleSlideShowFS     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_fullscreen") );
@@ -200,9 +205,11 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 			NULL != m_pComboFilmstripPos && 
 			NULL != m_pComboDefaultViewMode && 
 			NULL != m_pToggleAskBeforeDelete && 
+			NULL != m_pToggleStartFS && 
 			NULL != m_pToggleUseThemeColor && 
 			NULL != m_pToggleQuickPreview && 
 			NULL != m_pToggleViewerHideScrollbars && 
+			NULL != m_pToggleBrowserHideFolderTreeFS && 
 			NULL != m_pToggleSlideShowLoop && 
 			NULL != m_pToggleSlideShowFS && 
 			NULL != m_pToggleSlideShowTransition && 
@@ -243,17 +250,23 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 		gboolean bQuickPreview = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, true);
 		gtk_toggle_button_set_active(m_pToggleQuickPreview, bQuickPreview);
 
-		gboolean bTransition = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, false);
+		gboolean bTransition = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, true);
 		gtk_toggle_button_set_active(m_pToggleSlideShowTransition, bTransition);
 
-		gboolean bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, false);
+		gboolean bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, true);
 		gtk_toggle_button_set_active(m_pToggleSlideShowFS, bValue);
 
-		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, false);
+		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_START_FULLSCREEN, false);
+		gtk_toggle_button_set_active(m_pToggleStartFS, bValue);
+
+		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, true);
 		gtk_toggle_button_set_active(m_pToggleSlideShowHideFilmStrip, bValue);	
 
 		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE, false);
 		gtk_toggle_button_set_active(m_pToggleViewerHideScrollbars, bValue);
+
+		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, true);
+		gtk_toggle_button_set_active(m_pToggleBrowserHideFolderTreeFS, bValue);
 
 		std::string strClrViewer = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW,"#000000");
 		std::string strClrBrowser = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW,"#444444");
@@ -264,7 +277,7 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 #ifdef QUIVER_MAEMO
 			gtk_button_set_label(m_pBtnPhotoLibrary, strPhotoLibrary.c_str());
 #else
-			gtk_file_chooser_set_current_folder (
+			gtk_file_chooser_set_current_folder_uri (
 				GTK_FILE_CHOOSER (m_pFCBtnPhotoLibrary),
 				strPhotoLibrary.c_str());
 #endif
@@ -300,7 +313,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 		GtkWidget* dlg = hildon_file_chooser_dialog_new(NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
 
 		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
-		gtk_file_chooser_set_current_folder (
+		gtk_file_chooser_set_current_folder_uri (
 			GTK_FILE_CHOOSER (dlg),
 			strPhotoLibrary.c_str());
 
@@ -388,10 +401,16 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 		g_signal_connect(m_pToggleSlideShowFS,
 			"toggled",(GCallback)on_toggled,this);
 
+		g_signal_connect(m_pToggleStartFS,
+			"toggled",(GCallback)on_toggled,this);
+
 		g_signal_connect(m_pToggleSlideShowHideFilmStrip,
 			"toggled",(GCallback)on_toggled,this);
 
 		g_signal_connect(m_pToggleViewerHideScrollbars,
+			"toggled",(GCallback)on_toggled,this);
+
+		g_signal_connect(m_pToggleBrowserHideFolderTreeFS,
 			"toggled",(GCallback)on_toggled,this);
 
 		g_signal_connect(m_pToggleSlideShowLoop,
@@ -451,6 +470,16 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	{
 		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
 		prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE, bool(bBool));
+	}
+	else if (priv->m_pToggleBrowserHideFolderTreeFS == togglebutton)
+	{
+		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, bool(bBool));
+	}
+	else if (priv->m_pToggleStartFS == togglebutton)
+	{
+		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_START_FULLSCREEN, bool(bBool));
 	}
 }
 

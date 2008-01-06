@@ -19,7 +19,6 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <libgnomevfs/gnome-vfs.h>
-
 #include <boost/algorithm/string.hpp>
 
 #include <errno.h>
@@ -39,10 +38,13 @@
 #include "PreferencesDlg.h"
 
 #include "ImageSaveManager.h"
+#include "AdjustDateDlg.h"
 
 #include "Bookmarks.h"
 #include "BookmarksDlg.h"
 #include "BookmarkAddEditDlg.h"
+
+#include "DonateDlg.h"
 
 // globals needed for preferences
 
@@ -363,7 +365,7 @@ void QuiverImpl::LoadExternalToolMenuItems()
 					
 					if (icon.empty())
 					{
-						icon = GTK_STOCK_EXECUTE;
+						icon = QUIVER_STOCK_EXECUTE;
 					}
 					
 					
@@ -520,6 +522,9 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_BOOKMARKS_ADD                          "BookmarksAdd"
 #define ACTION_QUIVER_BOOKMARKS_EDIT                         "BookmarksEdit"
 #define ACTION_QUIVER_EXTERNAL_TOOLS                         "ExternalTools"
+#define ACTION_QUIVER_ADJUST_DATE                            "AdjustDate"
+#define ACTION_QUIVER_ORGANIZE                               "Organize"
+#define ACTION_QUIVER_DONATE                                 "Donate"
 #define ACTION_QUIVER_ABOUT                                  "About"
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
@@ -610,6 +615,8 @@ char * quiver_ui_main =
 "		</menu>"
 "		<menu action='MenuTools'>"
 #ifdef FIXME_DISABLED
+"			<menuitem action='"ACTION_QUIVER_ADJUST_DATE"'/>"
+"			<menuitem action='"ACTION_QUIVER_ORGANIZE"'/>"
 "			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
 #endif
 "			<separator/>"
@@ -618,6 +625,8 @@ char * quiver_ui_main =
 "		<menu action='MenuWindow'>"
 "		</menu>"
 "		<menu action='MenuHelp'>"
+"			<menuitem action='"ACTION_QUIVER_DONATE"'/>"
+"			<separator/>"
 "			<menuitem action='"ACTION_QUIVER_ABOUT"'/>"
 "		</menu>"
 #ifdef QUIVER_MAEMO
@@ -628,7 +637,10 @@ char * quiver_ui_main =
 #endif
 "	<toolbar name='ToolbarMain'>"
 "		<placeholder name='UIModeItems'/>"
+"		<separator/>"
 "		<placeholder name='NavToolItems'/>"
+"		<separator/>"
+"		<placeholder name='UIItems'/>"
 "		<separator/>"
 "		<toolitem action='"ACTION_QUIVER_FULLSCREEN"'/>"
 "		<separator/>"
@@ -641,7 +653,8 @@ char * quiver_ui_main =
 "		<placeholder name='Trash'/>"
 "		<separator/>"
 "	</toolbar>"
-"	<popup name='ContextMenu'>"
+"	<popup name='ContextMenuMain'>"
+"			<menuitem action='"ACTION_QUIVER_FULLSCREEN"'/>"
 "	</popup>"
 "	<accelerator action='"ACTION_QUIVER_CLOSE_2"'/>"
 "	<accelerator action='"ACTION_QUIVER_CLOSE_3"'/>"
@@ -721,23 +734,17 @@ char *quiver_ui_viewer =
 "</ui>";
 
 GtkToggleActionEntry QuiverImpl::action_entries_toggle[] = {
-	{ ACTION_QUIVER_FULLSCREEN, 
-#if GTK_MAJOR_VERSION > 2 || GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION >= 8
-	GTK_STOCK_FULLSCREEN
-#else
-	GTK_STOCK_GOTO_TOP
-#endif
-		, N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_FULLSCREEN, QUIVER_STOCK_FULLSCREEN , N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
 
 #ifdef QUIVER_MAEMO
 	{ ACTION_QUIVER_FULLSCREEN_MAEMO, NULL, N_("_Full Screen"), "F6", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
 #endif
 	{ ACTION_QUIVER_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(quiver_action_handler_cb),FALSE},	
-	{ ACTION_QUIVER_VIEW_MENUBAR, GTK_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ ACTION_QUIVER_VIEW_TOOLBAR_MAIN, GTK_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ ACTION_QUIVER_VIEW_STATUSBAR, GTK_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ ACTION_QUIVER_VIEW_PROPERTIES, GTK_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(quiver_action_handler_cb),FALSE},
-	{ ACTION_QUIVER_SORT_DESCENDING, GTK_STOCK_SORT_DESCENDING, "In Descending Order", "", "Arrange the items in descending order", G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_VIEW_MENUBAR, QUIVER_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(quiver_action_handler_cb),TRUE},
+	{ ACTION_QUIVER_VIEW_TOOLBAR_MAIN, QUIVER_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
+	{ ACTION_QUIVER_VIEW_STATUSBAR, QUIVER_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
+	{ ACTION_QUIVER_VIEW_PROPERTIES, QUIVER_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_SORT_DESCENDING, QUIVER_STOCK_SORT_DESCENDING, "In Descending Order", "", "Arrange the items in descending order", G_CALLBACK(quiver_action_handler_cb),FALSE},
 };
 
 typedef enum
@@ -771,28 +778,31 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, NULL , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
 #endif
 
-	{ ACTION_QUIVER_OPEN, GTK_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_OPEN_FOLDER, GTK_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_SAVE, GTK_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_SAVE_AS, GTK_STOCK_SAVE, "Save _As", "", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_OPEN, QUIVER_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_OPEN_FOLDER, QUIVER_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_SAVE, QUIVER_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_SAVE_AS, QUIVER_STOCK_SAVE, "Save _As", "", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
 	
-	{ ACTION_QUIVER_CLOSE, GTK_STOCK_QUIT, "_Close", "<Alt>F4", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_CLOSE_2, GTK_STOCK_QUIT, "_Close", "q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_CLOSE_3, GTK_STOCK_QUIT, "_Close", "<Control>q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
-	{ ACTION_QUIVER_CLOSE_4, GTK_STOCK_QUIT, "_Close", "<Control>w", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_CLOSE, QUIVER_STOCK_QUIT, "_Close", "<Alt>F4", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_CLOSE_2, QUIVER_STOCK_QUIT, "_Close", "q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_CLOSE_3, QUIVER_STOCK_QUIT, "_Close", "<Control>q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_CLOSE_4, QUIVER_STOCK_QUIT, "_Close", "<Control>w", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
 	{ ACTION_QUIVER_ESCAPE, NULL, NULL, "Escape", NULL, G_CALLBACK( quiver_action_handler_cb )},	
 
-	{ ACTION_QUIVER_PREFERENCES, GTK_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_PREFERENCES, QUIVER_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
 
 
 
 	{ "MenuBookmarks", NULL, "_Bookmarks" },
-	{ ACTION_QUIVER_BOOKMARKS_ADD, GTK_STOCK_ADD, "_Add Bookmark", "<Control>d", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_BOOKMARKS_EDIT, GTK_STOCK_EDIT, "_Edit Bookmarks...", "<Control>b", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_ADD, QUIVER_STOCK_ADD, "_Add Bookmark", "<Control>d", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_EDIT, QUIVER_STOCK_EDIT, "_Edit Bookmarks...", "<Control>b", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ ACTION_QUIVER_EXTERNAL_TOOLS, GTK_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_ORGANIZE, QUIVER_STOCK_EDIT, "Organize...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_ADJUST_DATE, QUIVER_STOCK_EDIT, "Adjust Date...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_EXTERNAL_TOOLS, QUIVER_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ ACTION_QUIVER_ABOUT, GTK_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_DONATE, NULL, "_Donate...", "", "Help support quiver by donating...", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_ABOUT, QUIVER_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( quiver_action_handler_cb )},
 
 };
 
@@ -1017,6 +1027,8 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		gtk_widget_hide(pQuiverImpl->m_pMenubar);
 		gtk_widget_hide(pQuiverImpl->m_StatusbarPtr->GetWidget());
 		
+		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);						
+
 		//m_Viewer.HideBorder();
 		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
 		g_timeout_add(1500, timeout_event_motion_notify,pQuiverImpl);
@@ -1025,6 +1037,7 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 	}
 	else
 	{
+		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 		// show widgets
 		bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW);
@@ -1190,6 +1203,8 @@ void Quiver::Init()
 	
 	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
 	m_QuiverImplPtr->m_iTimeoutKeepScreenOn = 0;
+
+	m_QuiverImplPtr->m_WindowState = GDK_WINDOW_STATE_WITHDRAWN;
 
 	//initialize
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -1425,7 +1440,7 @@ void Quiver::Init()
 	gtk_paned_pack1(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),hbox_browser_viewer_container,TRUE,TRUE);
 	gtk_paned_pack2(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),m_QuiverImplPtr->m_pNBProperties,FALSE,FALSE);
 
-	int hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS);
+	int hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS, m_QuiverImplPtr->m_iAppWidth/2);
 	gtk_paned_set_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),hpaned_pos);
 
 	// pack the main gui ara with the rest of the gui compoents
@@ -1500,6 +1515,14 @@ void Quiver::Init()
 
 	m_QuiverImplPtr->LoadBookmarks();
 
+	bool bStartFS =
+	   prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_START_FULLSCREEN, false);
+
+	if (bStartFS)
+	{
+		OnFullScreen();
+	}
+
 
 }
 
@@ -1526,10 +1549,11 @@ bool Quiver::LoadSettings()
 	gtk_accel_map_load(strAccelMap.c_str());
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	m_QuiverImplPtr->m_iAppX      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_LEFT);
-	m_QuiverImplPtr->m_iAppY      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP);
-	m_QuiverImplPtr->m_iAppWidth  = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH);
-	m_QuiverImplPtr->m_iAppHeight = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT);
+
+	m_QuiverImplPtr->m_iAppX      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_LEFT, gdk_screen_width()/4);
+	m_QuiverImplPtr->m_iAppY      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP, gdk_screen_height()/4);
+	m_QuiverImplPtr->m_iAppWidth  = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH, gdk_screen_width()/2);
+	m_QuiverImplPtr->m_iAppHeight = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT, gdk_screen_height()/2);
 	
 	return (m_QuiverImplPtr->m_iAppWidth && m_QuiverImplPtr->m_iAppHeight);
 }
@@ -1732,7 +1756,8 @@ int main (int argc, char **argv)
 #endif
 		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
 		files.push_back(photo_library);
-		if (!gnome_vfs_uris_match("file:///",photo_library.c_str()))
+		if (!gnome_vfs_uris_match("file:///",photo_library.c_str())
+			 && !gnome_vfs_uris_match(dir, photo_library.c_str()))
 		{
 			// just in case the users sets the root
 			// as the photo library
@@ -1975,7 +2000,7 @@ void Quiver::OnAbout()
 	gtk_show_about_dialog(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
 		"name",GETTEXT_PACKAGE,
 		"version",PACKAGE_VERSION,
-		"copyright","copyright (c) 2007\nmike morrison",
+		"copyright","copyright (c) 2008\nmike morrison",
 		"comments","a gtk image viewer",
 		"authors",authors,
 		"artists",artists,
@@ -2060,7 +2085,7 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event
 	
 	gtk_widget_hide(parent->m_pNBProperties);
 	
-	bool bFS = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, false);
+	bool bFS = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, TRUE);
 	if (bFS)
 	{
 		if ( !(GDK_WINDOW_STATE_FULLSCREEN & parent->m_WindowState) )
@@ -2153,8 +2178,8 @@ void Quiver::OnOpenFile()
 	dialog = gtk_file_chooser_dialog_new ("Open File",
 					      GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
 					      GTK_FILE_CHOOSER_ACTION_OPEN,
-					      GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-					      GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT,
+					      QUIVER_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+					      QUIVER_STOCK_OPEN, GTK_RESPONSE_ACCEPT,
 					      NULL);
 	
 	if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT)
@@ -2181,8 +2206,8 @@ void Quiver::OnOpenFolder()
 	dialog = gtk_file_chooser_dialog_new ("Open Folder",
 					      GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
 					      GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-					      GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-					      GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT,
+					      QUIVER_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+					      QUIVER_STOCK_OPEN, GTK_RESPONSE_ACCEPT,
 					      NULL);
 	
 	if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT)
@@ -2393,6 +2418,11 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		}
 	}
 #endif
+	else if (0 == strcmp(szAction, ACTION_QUIVER_DONATE))
+	{
+		DonateDlg dlg;
+		dlg.Run();
+	}
 	else if (0 == strcmp(szAction, ACTION_QUIVER_ABOUT))
 	{
 		pQuiver->OnAbout();
@@ -2439,6 +2469,70 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	{
 		// should just reverse the list
 		pQuiverImpl->m_ImageList.Reverse();
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_ORGANIZE))
+	{
+		// organize pictures dialog
+		printf("organize pics\n");
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_ADJUST_DATE))
+	{
+		AdjustDateDlg dlg;
+		if (dlg.Run())
+		{
+			if (dlg.IsAdjustDate())
+			{
+				// adjust exif date
+				std::list<unsigned int> items = pQuiverImpl->m_Browser.GetSelection();
+				std::list<unsigned int>::iterator itr;
+				for (itr = items.begin(); items.end() != itr; ++itr)
+				{
+					QuiverFile f = pQuiverImpl->m_ImageList[*itr];
+					ExifData *pExifData = f.GetExifData();
+				
+					time_t date = 0;
+					if (NULL != pExifData)
+					{
+						// use date_time_original
+						ExifEntry* pEntry;
+						pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME_ORIGINAL);
+						if (NULL != pEntry)
+						{
+							char szDate[20];
+							exif_entry_get_value(pEntry,szDate,20);
+				
+							tm tm_exif_time;
+							int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
+								&tm_exif_time.tm_year,
+								&tm_exif_time.tm_mon,
+								&tm_exif_time.tm_mday,
+								&tm_exif_time.tm_hour,
+								&tm_exif_time.tm_min,
+								&tm_exif_time.tm_sec);
+							tm_exif_time.tm_year -= 1900;
+							tm_exif_time.tm_mon -= 1;
+							if (6 == num_substs)
+							{
+								tm_exif_time.tm_year += dlg.GetAdjustmentYears();
+								tm_exif_time.tm_mday += dlg.GetAdjustmentDays();
+								tm_exif_time.tm_hour += dlg.GetAdjustmentHours();
+								tm_exif_time.tm_min +=  dlg.GetAdjustmentMinutes();
+								tm_exif_time.tm_sec +=  dlg.GetAdjustmentSeconds();
+								// successfully parsed date
+								date = mktime(&tm_exif_time);
+								printf("ymd: %d-%d-%d\n",tm_exif_time.tm_year+1900,tm_exif_time.tm_mon+1,tm_exif_time.tm_mday);
+								
+							}
+							
+						}
+					}
+					exif_data_unref(pExifData);
+				}				
+			}
+			else if (dlg.IsSetDate())
+			{
+			}
+		}
 	}
 	else if (g_str_has_prefix(szAction,"Bookmark_"))
 	{

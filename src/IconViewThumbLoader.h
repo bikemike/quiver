@@ -4,6 +4,18 @@
 #include <pthread.h>
 #include <list>
 #include <gtk/gtk.h>
+#include <string>
+
+#include "QuiverFile.h"
+
+class ThumbLoaderItem
+{
+public:
+	ThumbLoaderItem() : m_ulIndex(0) {};
+	ThumbLoaderItem(gulong index, QuiverFile f) : m_ulIndex(index), m_QuiverFile(f) {};
+	gulong m_ulIndex;
+	QuiverFile m_QuiverFile;
+};
 
 class IconViewThumbLoader
 {
@@ -22,12 +34,13 @@ public:
 	} ThreadData;
 
 protected:
-	virtual void LoadThumbnail(gulong ulIndex, guint uiWidth, guint uiHeight);
+	virtual void LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight);
 	virtual void GetVisibleRange(gulong* ulStart, gulong* ulEnd);
 	virtual void GetIconSize(guint* uiWidth, guint* uiHeight);
 	virtual gulong GetNumItems();
 	virtual void SetIsRunning(bool bIsRunning);
 	virtual void SetCacheSize(guint uiSize);
+	virtual QuiverFile GetQuiverFile(gulong ulIndex);
 	
 private:
 	static void* run(void *data);
@@ -43,7 +56,7 @@ private:
 	pthread_mutex_t*    m_pConditionMutexes;
 	pthread_mutex_t     m_ListMutex;
 	
-	std::list<guint>    m_listThumbIndexes;
+	std::list<ThumbLoaderItem>    m_listThumbItems;
 
 
 	gulong              m_ulRangeStart, 
