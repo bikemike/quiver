@@ -32,8 +32,8 @@
 #define QUIVER_STOCK_EXECUTE         GTK_STOCK_EXECUTE
 
 #ifdef QUIVER_MAEMO
-#define QUIVER_STOCK_GO_BACK         "qgn_toolb_gene_forward"
-#define QUIVER_STOCK_GO_FORWARD      "qgn_toolb_gene_back"
+#define QUIVER_STOCK_GO_BACK         "qgn_toolb_gene_back"
+#define QUIVER_STOCK_GO_FORWARD      "qgn_toolb_gene_forward"
 #define QUIVER_STOCK_ZOOM_IN         "qgn_toolb_gene_zoomin"
 #define QUIVER_STOCK_ZOOM_OUT        "qgn_toolb_gene_zoomout"
 #define QUIVER_STOCK_DELETE          "qgn_toolb_gene_deletebutton"

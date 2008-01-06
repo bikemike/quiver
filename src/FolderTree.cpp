@@ -1401,6 +1401,15 @@ static void signal_folder_tree_row_collapsed(GtkTreeView *treeview,
 {
 	folder_tree_iter_set_icon(treeview,iter);
 }
+
+static void folder_tree_thread_pool_add(GThreadPool* pool, MyDataStruct* mydata)
+{
+    static GStaticMutex mutex = G_STATIC_MUTEX_INIT;
+	g_static_mutex_lock (&mutex);
+	g_thread_pool_push(pool, mydata, NULL);
+	g_static_mutex_unlock (&mutex);
+}
+
 static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 						GtkTreeIter *iter,
 						GtkTreePath *treepath,
@@ -1418,7 +1427,7 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 	mydata->iter_parent = gtk_tree_iter_copy(iter);
 	//pthread_t thread_id;
 	//pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
-	g_thread_pool_push(pFolderTreeImpl->m_pGThreadPool, mydata, NULL);
+	folder_tree_thread_pool_add(pFolderTreeImpl->m_pGThreadPool, mydata);
 	//pFolderTreeImpl->m_setFolderThreads.insert(thread_id);
 }
 
@@ -1649,7 +1658,6 @@ static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
 {
 	HildonFSAsyncStruct* asyncStruct = (HildonFSAsyncStruct*)data;
 
-	//gdk_threads_enter();
 	if (NULL != asyncStruct)
 	{
 		if (NULL != info)
@@ -1660,11 +1668,13 @@ static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
 
 	   	if (NULL != asyncStruct->pAsyncLoop)
 		{
+			while (!g_main_loop_is_running(asyncStruct->pAsyncLoop))
+			{
+				usleep(100);
+			}
 			g_main_loop_quit(asyncStruct->pAsyncLoop);
 		}
 	}
-	//gdk_threads_leave();
-
 }
 
 
@@ -1975,7 +1985,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	mydata->pFolderTreeImpl = this;
 	//pthread_t thread_id;
 	//pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
-	g_thread_pool_push(m_pGThreadPool, mydata, NULL);
+	folder_tree_thread_pool_add(m_pGThreadPool, mydata);
 	//m_setFolderThreads.insert(thread_id);
 
 	free(home_uri);
