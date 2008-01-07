@@ -331,7 +331,11 @@ static GtkActionEntry action_entries[] = {
 	{ ACTION_BROWSER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_PASTE, QUIVER_STOCK_PASTE, "Paste", "<Control>V", "Paste image", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_SELECT_ALL, NULL, "_Select All", "<Control>A", "Select all", G_CALLBACK(browser_action_handler_cb)},
-	{ ACTION_BROWSER_TRASH, QUIVER_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(browser_action_handler_cb)},
+#ifdef QUIVER_MAEMO
+	{ ACTION_BROWSER_TRASH, QUIVER_STOCK_DELETE, "_Delete", "Delete", "Delete selected image(s)", G_CALLBACK(browser_action_handler_cb)},
+#else
+	{ ACTION_BROWSER_TRASH, QUIVER_STOCK_DELETE, "_Move To Trash", "Delete", "Move selected image(s) to the Trash", G_CALLBACK(browser_action_handler_cb)},
+#endif
 	{ ACTION_BROWSER_RELOAD, QUIVER_STOCK_REFRESH, "_Reload", "<Control>R", "Refresh the Current View", G_CALLBACK(browser_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_BROWSER_ZOOM_IN_MAEMO, NULL, NULL, "F7", NULL, G_CALLBACK(browser_action_handler_cb)},

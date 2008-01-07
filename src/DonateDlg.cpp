@@ -3,9 +3,19 @@
 #include "DonateDlg.h"
 #include "QuiverStockIcons.h"
 
+#ifdef QUIVER_MAEMO
+#include <libosso.h>
+#ifdef HAVE_HILDON_MIME
+#include <hildon-mime.h>
+#else
+#include <osso-mime.h>
+#endif
+extern osso_context_t* osso_context;
+#else
 #include <libgnomevfs/gnome-vfs.h>
 #include <libgnomevfs/gnome-vfs-mime.h>
 #include <libgnomevfs/gnome-vfs-mime-handlers.h>
+#endif
 
 #ifdef HAVE_LIBGLADE
 #include <glade/glade.h>
@@ -56,7 +66,7 @@ void DonateDlg::Run()
 #ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
+		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
 
 		gtk_widget_destroy(m_PrivPtr->m_pWidget);
 	}
@@ -160,6 +170,18 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonDonate)
 	{
+#ifdef QUIVER_MAEMO
+		DBusConnection *con = (DBusConnection*)osso_get_dbus_connection(osso_context);
+#ifdef HAVE_HILDON_MIME
+		hildon_mime_open_file_with_mime_type (con,
+			DONATION_URL,
+			DONATION_URL_MIME);
+#else
+		osso_mime_open_file_with_mime_type (con,
+			DONATION_URL,
+			DONATION_URL_MIME);
+#endif
+#else
 		GnomeVFSMimeApplication* app = 
 			gnome_vfs_mime_get_default_application(DONATION_URL_MIME);
 		if (NULL != app)
@@ -174,6 +196,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 
 			gnome_vfs_mime_application_free(app);
 		}
+#endif
 	}
 }
 

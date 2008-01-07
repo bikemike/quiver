@@ -270,7 +270,11 @@ static GtkActionEntry action_entries[] = {
 /*	{ "MenuFile", NULL, N_("_File") }, */
 	{ ACTION_VIEWER_CUT, QUIVER_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
+#ifdef QUIVER_MAEMO
+	{ ACTION_VIEWER_TRASH, QUIVER_STOCK_DELETE, "_Delete", "Delete", "Delete image", G_CALLBACK(viewer_action_handler_cb)},
+#else
 	{ ACTION_VIEWER_TRASH, QUIVER_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
+#endif
 	
 	{ ACTION_VIEWER_PREVIOUS, QUIVER_STOCK_GO_BACK, "_Previous Image", "BackSpace", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_PREVIOUS_2, QUIVER_STOCK_GO_BACK, "_Previous Image", "<Shift>space", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
@@ -1129,7 +1133,7 @@ static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventK
 	}
 	
 	GtkAdjustment *adjustment = NULL;
-	gdouble increment;
+	gdouble increment = 0.;
 
 	if (GDK_Left == event->keyval || GDK_Up == event->keyval)
 	{
