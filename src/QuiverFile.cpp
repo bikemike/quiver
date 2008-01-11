@@ -683,8 +683,6 @@ void QuiverFile::QuiverFileImpl::SaveThumbnail(GdkPixbuf* pixbuf, const char* ur
 	g_static_mutex_lock (&mutex);
 	if (NULL == c_ThreadPoolPtr.get())
 	{
-
-		printf("creating a new threadpool!\n");
 		c_ThreadPoolPtr = boost::shared_ptr<GThreadPool> (
 				g_thread_pool_new(thread_save_thumbnail, NULL, 1, FALSE, NULL),
 				ThreadPoolDestructor()

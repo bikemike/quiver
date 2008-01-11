@@ -14,7 +14,6 @@
 #define QUIVER_STOCK_OK              GTK_STOCK_OK
 #define QUIVER_STOCK_CANCEL          GTK_STOCK_CANCEL
 
-#define QUIVER_STOCK_DIRECTORY       GTK_STOCK_DIRECTORY
 
 #define QUIVER_STOCK_OPEN            GTK_STOCK_OPEN
 #define QUIVER_STOCK_SAVE            GTK_STOCK_SAVE
@@ -34,10 +33,17 @@
 #ifdef QUIVER_MAEMO
 #define QUIVER_STOCK_GO_BACK         "qgn_toolb_gene_back"
 #define QUIVER_STOCK_GO_FORWARD      "qgn_toolb_gene_forward"
-#define QUIVER_STOCK_ZOOM_IN         "qgn_toolb_gene_zoomin"
-#define QUIVER_STOCK_ZOOM_OUT        "qgn_toolb_gene_zoomout"
 #define QUIVER_STOCK_DELETE          "qgn_toolb_gene_deletebutton"
 #define QUIVER_STOCK_FULLSCREEN      "qgn_list_hw_button_view_toggle"
+#define QUIVER_STOCK_DIRECTORY       "qgn_list_filesys_common_fldr"
+
+#ifdef HAVE_HILDON_1 // hack for OS2008 detection
+#define QUIVER_STOCK_ZOOM_IN         "qgn_toolb_gene_zoomin"
+#define QUIVER_STOCK_ZOOM_OUT        "qgn_toolb_gene_zoomout"
+#else
+#define QUIVER_STOCK_ZOOM_IN         GTK_STOCK_ZOOM_IN
+#define QUIVER_STOCK_ZOOM_OUT        GTK_STOCK_ZOOM_OUT
+#endif
 /*
 "qgn_toolb_gene_bookmark_add"
 "qgn_toolb_gene_bookmark"
@@ -56,6 +62,7 @@
 #else
 #define QUIVER_STOCK_FULLSCREEN      QUIVER_STOCK_GOTO_TOP
 #endif
+#define QUIVER_STOCK_DIRECTORY       GTK_STOCK_DIRECTORY
 #define QUIVER_STOCK_CUT             GTK_STOCK_CUT
 #define QUIVER_STOCK_COPY            GTK_STOCK_COPY
 #define QUIVER_STOCK_PASTE           GTK_STOCK_PASTE
