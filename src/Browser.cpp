@@ -323,14 +323,14 @@ static  GtkToggleActionEntry action_entries_toggle[] = {
 };
 
 static GtkActionEntry action_entries[] = {
-	{ ACTION_BROWSER_OPEN_LOCATION, NULL, "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( browser_action_handler_cb )},
+	{ ACTION_BROWSER_OPEN_LOCATION, "", "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( browser_action_handler_cb )},
 	{ ACTION_BROWSER_HISTORY_BACK, QUIVER_STOCK_GO_BACK, "Go Back", "", "Go Back", G_CALLBACK( browser_action_handler_cb )},
 	{ ACTION_BROWSER_HISTORY_FORWARD, QUIVER_STOCK_GO_FORWARD, "Go Forward", "", "Go Forward", G_CALLBACK( browser_action_handler_cb )},
 	
 	{ ACTION_BROWSER_CUT, QUIVER_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_PASTE, QUIVER_STOCK_PASTE, "Paste", "<Control>V", "Paste image", G_CALLBACK(browser_action_handler_cb)},
-	{ ACTION_BROWSER_SELECT_ALL, NULL, "_Select All", "<Control>A", "Select all", G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_SELECT_ALL, "", "_Select All", "<Control>A", "Select all", G_CALLBACK(browser_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_BROWSER_TRASH, QUIVER_STOCK_DELETE, "_Delete", "Delete", "Delete selected image(s)", G_CALLBACK(browser_action_handler_cb)},
 #else
@@ -338,8 +338,8 @@ static GtkActionEntry action_entries[] = {
 #endif
 	{ ACTION_BROWSER_RELOAD, QUIVER_STOCK_REFRESH, "_Reload", "<Control>R", "Refresh the Current View", G_CALLBACK(browser_action_handler_cb)},
 #ifdef QUIVER_MAEMO
-	{ ACTION_BROWSER_ZOOM_IN_MAEMO, NULL, NULL, "F7", NULL, G_CALLBACK(browser_action_handler_cb)},
-	{ ACTION_BROWSER_ZOOM_OUT_MAEMO, NULL, NULL, "F8", NULL, G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_ZOOM_IN_MAEMO, "", NULL, "F7", NULL, G_CALLBACK(browser_action_handler_cb)},
+	{ ACTION_BROWSER_ZOOM_OUT_MAEMO, "", NULL, "F8", NULL, G_CALLBACK(browser_action_handler_cb)},
 #endif
 };
 
@@ -1316,11 +1316,11 @@ browser_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_
 static void browser_show_context_menu(GdkEventButton *event, gpointer userdata)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)userdata;
-	GtkWidget *menu;
 	
 	if (NULL != b->m_pUIManager)
 	{
 /* FIXME - disabled until more actions are implemented
+		GtkWidget *menu;
 		menu = gtk_ui_manager_get_widget (b->m_pUIManager,"/ui/ContextMenuMain");
 	
 		gtk_menu_popup(GTK_MENU(menu), NULL, NULL, NULL, NULL,

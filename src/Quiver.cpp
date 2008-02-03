@@ -737,7 +737,7 @@ GtkToggleActionEntry QuiverImpl::action_entries_toggle[] = {
 	{ ACTION_QUIVER_FULLSCREEN, QUIVER_STOCK_FULLSCREEN , N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
 
 #ifdef QUIVER_MAEMO
-	{ ACTION_QUIVER_FULLSCREEN_MAEMO, NULL, N_("_Full Screen"), "F6", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
+	{ ACTION_QUIVER_FULLSCREEN_MAEMO, "", N_("_Full Screen"), "F6", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
 #endif
 	{ ACTION_QUIVER_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(quiver_action_handler_cb),FALSE},	
 	{ ACTION_QUIVER_VIEW_MENUBAR, QUIVER_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(quiver_action_handler_cb),TRUE},
@@ -754,8 +754,8 @@ typedef enum
 } SortBy; 
 
 GtkRadioActionEntry QuiverImpl::sort_radio_action_entries[] = {
-	{ ACTION_QUIVER_SORT_BY_NAME, NULL,"By Name", "", "Sort by file name", SORT_BY_NAME},
-	{ ACTION_QUIVER_SORT_BY_DATE, NULL,"By Date", "", "Sort by date", SORT_BY_DATE},
+	{ ACTION_QUIVER_SORT_BY_NAME, "","By Name", "", "Sort by file name", SORT_BY_NAME},
+	{ ACTION_QUIVER_SORT_BY_DATE, "","By Date", "", "Sort by date", SORT_BY_DATE},
 };
 
 GtkActionEntry QuiverImpl::action_entries[] = {
@@ -775,7 +775,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 #ifdef QUIVER_MAEMO
-	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, NULL , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, "" , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
 #endif
 
 	{ ACTION_QUIVER_OPEN, QUIVER_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
@@ -787,7 +787,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ ACTION_QUIVER_CLOSE_2, QUIVER_STOCK_QUIT, "_Close", "q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
 	{ ACTION_QUIVER_CLOSE_3, QUIVER_STOCK_QUIT, "_Close", "<Control>q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
 	{ ACTION_QUIVER_CLOSE_4, QUIVER_STOCK_QUIT, "_Close", "<Control>w", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
-	{ ACTION_QUIVER_ESCAPE, NULL, NULL, "Escape", NULL, G_CALLBACK( quiver_action_handler_cb )},	
+	{ ACTION_QUIVER_ESCAPE, "", NULL, "Escape", NULL, G_CALLBACK( quiver_action_handler_cb )},	
 
 	{ ACTION_QUIVER_PREFERENCES, QUIVER_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
 
@@ -801,7 +801,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ ACTION_QUIVER_ADJUST_DATE, QUIVER_STOCK_EDIT, "Adjust Date...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_EXTERNAL_TOOLS, QUIVER_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ ACTION_QUIVER_DONATE, NULL, "_Donate...", "", "Help support quiver by donating...", G_CALLBACK( quiver_action_handler_cb )},
+	{ ACTION_QUIVER_DONATE, "", "_Donate...", "", "Help support quiver by donating...", G_CALLBACK( quiver_action_handler_cb )},
 	{ ACTION_QUIVER_ABOUT, QUIVER_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( quiver_action_handler_cb )},
 
 };
@@ -1223,14 +1223,18 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_pQuiverWindow = hildon_window_new();
 	hildon_program_add_window(program, HILDON_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
 	
+#ifdef HAVE_HILDON_1
 	// add a callback here
 	// the following is to work around a bug in maemo gtk 
 	// which causes accelerators not to work
 	// https://bugs.maemo.org/show_bug.cgi?id=2278
+	// (only in OS2008)
+
 	GtkSettings* settings = gtk_settings_get_default();
 	g_object_set(settings, "gtk-enable-accels",TRUE,NULL);
 	g_signal_connect (G_OBJECT(settings), "notify::gtk-enable-accels",
 		G_CALLBACK (notify_gtk_enable_accels_changed), NULL);
+#endif // HAVE_HILDON_1
 #else
 	m_QuiverImplPtr->m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");

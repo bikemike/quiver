@@ -3,37 +3,24 @@
 #include <gtk/gtk.h>
 
 #include <gdk-pixbuf/gdk-pixdata.h>
-/*
-  GTK_ICON_SIZE_INVALID,
-  GTK_ICON_SIZE_MENU,
-  GTK_ICON_SIZE_SMALL_TOOLBAR,
-  GTK_ICON_SIZE_LARGE_TOOLBAR,
-  GTK_ICON_SIZE_BUTTON,
-  GTK_ICON_SIZE_DND,
-  GTK_ICON_SIZE_DIALOG
-*/
 
-
-//#include "icons/quiver_icon_app.pixdata"
-//#include "icons/quiver_icon_slideshow.pixdata"
-//#include "icons/quiver_icon_browser.pixdata"
-//#include "icons/quiver_icon_rotate_cw.pixdata"
-//#include "icons/quiver_icon_rotate_ccw.pixdata"
-
-typedef struct
+static char* icons[] = 
 {
-	const char * id;
-	const guint8* data;
-	const guint size;
-} icon;
-
-icon icons[] = 
-{
-	//{QUIVER_STOCK_APP,quiver_icon_app,sizeof(quiver_icon_app)},
-	//{QUIVER_STOCK_BROWSER, quiver_icon_browser,sizeof(quiver_icon_browser)},
-	//{QUIVER_STOCK_SLIDESHOW, quiver_icon_slideshow,sizeof(quiver_icon_slideshow)},
-	//{QUIVER_STOCK_ROTATE_CW, quiver_icon_rotate_cw,sizeof(quiver_icon_rotate_cw)},
-	//{QUIVER_STOCK_ROTATE_CCW, quiver_icon_rotate_ccw,sizeof(quiver_icon_rotate_ccw)},
+	QUIVER_STOCK_APP,
+	QUIVER_STOCK_BROWSER,
+	QUIVER_STOCK_ROTATE_CW,
+	QUIVER_STOCK_ROTATE_CCW,
+	QUIVER_STOCK_SLIDESHOW,
+#ifdef QUIVER_MAEMO
+	QUIVER_STOCK_GO_BACK,
+	QUIVER_STOCK_GO_FORWARD,
+	QUIVER_STOCK_DELETE,
+	QUIVER_STOCK_FULLSCREEN,
+	QUIVER_STOCK_DIRECTORY,
+	QUIVER_STOCK_CUT,
+	QUIVER_STOCK_COPY,
+	QUIVER_STOCK_PASTE,
+#endif
 };
 
 
@@ -160,31 +147,24 @@ static void create_maemo_icons()
 
 void QuiverStockIcons::Load()
 {
-	//FIXME: we should load icons of different sizes
 	GtkIconFactory* factory = gtk_icon_factory_new();	
-	GdkPixbuf * pixbuf;
-	GtkIconSet* icon_set;
-	GError *error;
-	error = NULL;
 	
 #ifdef QUIVER_MAEMO
 	create_maemo_icons();
 #endif
-
-	for (unsigned int i=0;i< G_N_ELEMENTS(icons); ++i)
+	for (unsigned int i=0;i < G_N_ELEMENTS(icons); ++i)
 	{
-		GdkPixdata pixdata;
-		error = NULL;
-		gdk_pixdata_deserialize (&pixdata,icons[i].size,icons[i].data,&error);
-		error = NULL;
-		pixbuf = gdk_pixbuf_from_pixdata(&pixdata,FALSE,&error);
+		GtkIconSource* source = gtk_icon_source_new();
+		gtk_icon_source_set_icon_name(source, icons[i]);
 		
-		icon_set = gtk_icon_set_new_from_pixbuf (pixbuf);
-		gtk_icon_factory_add(factory,icons[i].id,icon_set);
-		
+		GtkIconSet* icon_set;
+		icon_set = gtk_icon_set_new ();
+		gtk_icon_set_add_source(icon_set, source);
+
+		gtk_icon_factory_add(factory,icons[i],icon_set);
 		
 		gtk_icon_set_unref(icon_set);
-		g_object_unref(pixbuf);
+		gtk_icon_source_free(source);
 	}
 	gtk_icon_factory_add_default (factory);
 	g_object_unref(factory);
