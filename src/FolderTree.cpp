@@ -145,7 +145,8 @@ void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
 
 
 
-FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
+FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent) :
+	m_iTimeoutScrollToCell(0)
 {
 	m_pFolderTree = parent;
 	
@@ -257,7 +258,6 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 	
 	gdk_threads_enter();
 	// wait untill all the thread subdir check functions have finished
-	// FIXME
 	int n_running = g_thread_pool_get_num_threads(pFolderTreeImpl->m_pGThreadPool);
 	if (0 == n_running || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
 	{
@@ -1434,7 +1434,7 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 
 static char* folder_tree_get_icon_name(const char* uri, gboolean expanded)
 {
-	char* preferred_icon_name = NULL;
+	const char* preferred_icon_name = NULL;
 #ifndef QUIVER_MAEMO
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
@@ -1872,7 +1872,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 	GnomeVFSVolumeMonitor* monitor = gnome_vfs_get_volume_monitor();
 #ifndef QUIVER_MAEMO
-	char* filesystem_path = "/";
+	const char* filesystem_path = "/";
 	char* filesystem_uri = gnome_vfs_get_uri_from_local_path (filesystem_path);
 	GnomeVFSVolume* volume = gnome_vfs_volume_monitor_get_volume_for_path(monitor,filesystem_path);
 	if (NULL != volume)
@@ -1930,7 +1930,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 				if (!skip)
 				{	
 					char* name = gnome_vfs_volume_get_display_name(volume);
-					char* display_name = name;
+					const char* display_name = name;
 					char* path = gnome_vfs_volume_get_device_path(volume);
 					char* type = gnome_vfs_volume_get_filesystem_type(volume);
 

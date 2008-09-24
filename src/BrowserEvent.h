@@ -6,7 +6,7 @@
 class BrowserEvent : public EventBase
 {
 public:
-	BrowserEvent(IEventSource* src) : EventBase(src){};
+	BrowserEvent(IEventSourcePtr src) : EventBase(src){};
 private:
 };
 

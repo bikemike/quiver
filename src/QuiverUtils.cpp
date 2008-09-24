@@ -26,7 +26,7 @@ namespace QuiverUtils
 	}
 	
 	
-	void SetActionsSensitive(GtkUIManager *pUIManager, gchar** actions, gint n_actions, gboolean bSensitive)
+	void SetActionsSensitive(GtkUIManager *pUIManager, const gchar** actions, gint n_actions, gboolean bSensitive)
 	{
 		gint i;
 		for ( i = 0; i < n_actions; i++)

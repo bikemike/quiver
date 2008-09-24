@@ -15,7 +15,7 @@ public:
 		CONTENTS_CHANGED
 	} ImageListEventType;
 
-	ImageListEvent(IEventSource* src, ImageListEventType eventType, unsigned int iIndex) : EventBase(src), m_iIndex(iIndex), m_ImageListEventType(eventType)
+	ImageListEvent(IEventSourcePtr src, ImageListEventType eventType, unsigned int iIndex) : EventBase(src), m_iIndex(iIndex), m_ImageListEventType(eventType)
 	{
 		
 	};

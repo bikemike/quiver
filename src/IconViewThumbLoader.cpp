@@ -17,7 +17,7 @@ IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 	
 	
 	int i;
-	for (i = 0 ; i < m_iThreads; i++)
+	for (i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_cond_init(&m_pConditions[i],NULL);
 		pthread_mutex_init(&m_pConditionMutexes[i], NULL);
@@ -27,7 +27,7 @@ IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 	}
 	pthread_mutex_init(&m_ListMutex, NULL);
 	
-	for (i = 0 ; i < m_iThreads; i++)
+	for (i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_create(&m_pThreadIDs[i], NULL, run, &m_pThreadData[i]);
 	}
@@ -37,7 +37,7 @@ IconViewThumbLoader::~IconViewThumbLoader()
 	m_bStopThreads = true;
 	
 	int i;
-	for (i = 0 ; i < m_iThreads; i++)
+	for (i = 0 ; i < m_iThreads; ++i)
 	{
 		// this call to gdk_threads_leave is made to make sure we dont get into
 		// a deadlock between this thread(gui) and the IconViewThumbLoader thread which calls
@@ -51,7 +51,7 @@ IconViewThumbLoader::~IconViewThumbLoader()
 		pthread_join(m_pThreadIDs[i], NULL);
 	}
 	
-	for (i = 0 ; i < m_iThreads; i++)
+	for (i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_cond_destroy(&m_pConditions[i]);
 		pthread_mutex_destroy(&m_pConditionMutexes[i]);
@@ -94,17 +94,18 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 		guint cache_size;
 		cache_size = uiNumVisible * (m_uiNumCachePages + 1); 
 
+
 		SetCacheSize(cache_size);
 
 		guint i;
-		for (i = m_ulRangeStart;i <= m_ulRangeEnd;i++)
+		for (i = m_ulRangeStart;i <= m_ulRangeEnd;++i)
 		{
 			m_listThumbItems.push_back(
 				ThumbLoaderItem(i, GetQuiverFile(i)) );
 		}
 		
 		bool bBreakFromLoop = false;
-		for (i = 1 ; m_listThumbItems.size() < cache_size && !bBreakFromLoop; i++)
+		for (i = 1 ; m_listThumbItems.size() < cache_size && !bBreakFromLoop; ++i)
 		{
 			if (m_ulRangeStart >= i)
 			{
@@ -120,7 +121,7 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 			if (uiNumItems > m_ulRangeEnd + i)
 			{
 				m_listThumbItems.push_back(
-					ThumbLoaderItem(m_ulRangeStart + i, GetQuiverFile(m_ulRangeStart + i)) );
+					ThumbLoaderItem(m_ulRangeEnd + i, GetQuiverFile(m_ulRangeEnd + i)) );
 				bBreakFromLoop = false;
 			}
 			

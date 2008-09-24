@@ -23,6 +23,8 @@
 #define TRANSITION_MIN_TIMEOUT   5.
 #define TRANSITION_TIME          .5   //seconds
 
+#define SMOOTH_SCROLL_TIMEOUT                    35 // 35 ms ~= 28fps
+
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
 G_DEFINE_TYPE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET);
@@ -60,6 +62,16 @@ enum {
    PROP_TEXT
 */
 };
+
+typedef struct _VelocityTimeStruct 
+{
+	gdouble velocity;
+	gdouble angle;
+	gdouble time;
+
+} VelocityTimeStruct;
+
+
 
 
 struct _QuiverImageViewPrivate
@@ -123,7 +135,10 @@ struct _QuiverImageViewPrivate
 	GdkRectangle rubberband_rect_old;
 
 	gboolean smooth_scroll;
-	gint smooth_scroll_cell;
+	
+	guint timeout_id_smooth_scroll_slowdown;
+	struct timeval last_motion_time;
+	GList* velocity_time_list;
 	
 	gboolean reload_event_sent;
 
@@ -390,7 +405,6 @@ quiver_image_view_init(QuiverImageView *imageview)
 
 	imageview->priv->scroll_draw   = TRUE;
 	imageview->priv->smooth_scroll = FALSE;
-	imageview->priv->smooth_scroll_cell = -1;
 	
 	imageview->priv->reload_event_sent = FALSE;
 	
@@ -404,6 +418,9 @@ quiver_image_view_init(QuiverImageView *imageview)
 
 	imageview->priv->rubberband_mode_start = FALSE;
 	imageview->priv->rubberband_mode = FALSE;
+
+	imageview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	imageview->priv->velocity_time_list = NULL;
 
 	GTK_WIDGET_SET_FLAGS(imageview,GTK_CAN_FOCUS);
 	//GTK_WIDGET_UNSET_FLAGS(imageview,GTK_DOUBLE_BUFFERED);
@@ -726,7 +743,6 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 	new_offset_w = MAX(0, new_offset_w - combined_offset_w);
 	new_offset_h = MAX(0, new_offset_h - combined_offset_h);
 	
-	// FIXME: fill the pixbuf with the background color of the window
 	GdkColor c = GTK_WIDGET(imageview)->style->bg[GTK_STATE_NORMAL];
 	gdk_pixbuf_fill(pixbuf,(c.pixel << 8));
 	
@@ -1024,7 +1040,7 @@ quiver_image_view_expose_event (GtkWidget *widget, GdkEventExpose *event)
 		draw_pixbuf(imageview,event->region);
 	}
 
-	return TRUE;
+	return FALSE;
 }
 
 
@@ -1043,6 +1059,16 @@ quiver_image_view_button_press_event (GtkWidget *widget,
 	imageview->priv->mouse_x1 = imageview->priv->mouse_x2 = x;
 	imageview->priv->mouse_y1 = imageview->priv->mouse_y2 = y;
 
+
+	if ( 0 != imageview->priv->timeout_id_smooth_scroll_slowdown)
+	{
+		g_source_remove(imageview->priv->timeout_id_smooth_scroll_slowdown);
+		imageview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
+
+	g_list_foreach(imageview->priv->velocity_time_list, (GFunc)g_free, NULL);
+	g_list_free(imageview->priv->velocity_time_list);
+	imageview->priv->velocity_time_list = NULL;
 
 	if (!GTK_WIDGET_HAS_FOCUS (widget))
 	{
@@ -1070,6 +1096,134 @@ quiver_image_view_button_press_event (GtkWidget *widget,
 	return FALSE;
 	
 }
+
+static gboolean
+quiver_image_view_timeout_smooth_scroll_slowdown(gpointer data)
+{
+	QuiverImageView *imageview = (QuiverImageView*)data;
+
+	gdouble divider = 1.04; 	
+	gdouble timeout_secs = SMOOTH_SCROLL_TIMEOUT / 1000.;
+
+	gboolean hdone = FALSE;
+	gboolean vdone = FALSE;
+
+	gdk_threads_enter();
+	
+	GList* list_itr = g_list_first(imageview->priv->velocity_time_list);
+	gdouble hvelocity_avg = 0;
+	gdouble vvelocity_avg = 0;
+	gdouble total_time = 0; 
+	if (NULL != list_itr)
+	{
+		do
+		{
+			VelocityTimeStruct* vt = list_itr->data;
+			// hvel and vvel will be distance after this
+			hvelocity_avg += vt->velocity * cos(vt->angle) * vt->time;
+			vvelocity_avg += vt->velocity * sin(vt->angle) * vt->time;
+			total_time += vt->time;
+			list_itr = g_list_next(list_itr);
+		} while (NULL !=list_itr);
+	}
+	
+
+	// convert back to velocity now
+	hvelocity_avg = hvelocity_avg/total_time;
+	vvelocity_avg = vvelocity_avg/total_time;
+
+	if (1 != g_list_length(imageview->priv->velocity_time_list) )
+	{
+		g_list_foreach(imageview->priv->velocity_time_list, (GFunc)g_free, NULL);
+		g_list_free(imageview->priv->velocity_time_list);
+		imageview->priv->velocity_time_list = NULL;
+		
+		VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
+		vt->time     = total_time;
+		vt->angle    = atan2(vvelocity_avg, hvelocity_avg);
+		vt->velocity =  sqrt ( (double)( vvelocity_avg*vvelocity_avg + hvelocity_avg*hvelocity_avg)) ;
+		
+		imageview->priv->velocity_time_list = 
+			g_list_append(imageview->priv->velocity_time_list,vt);
+	}
+	GList* first = g_list_first(imageview->priv->velocity_time_list);
+	
+	VelocityTimeStruct* vt = (VelocityTimeStruct*)first->data;
+	vt->velocity = vt->velocity/divider;
+	
+	gint hdistance = (gint)(timeout_secs * hvelocity_avg);
+	
+	if (0 == hdistance || 0 == hvelocity_avg)
+	{
+		hdone = TRUE;
+	}
+	else
+	{
+	
+		gint old_hadjust = (guint)gtk_adjustment_get_value(imageview->priv->hadjustment);
+		gint hadjust = old_hadjust;
+
+		if (0 > hadjust - hdistance || hadjust - hdistance > imageview->priv->hadjustment->upper - imageview->priv->hadjustment->page_size)
+		{
+			hdone = TRUE;
+			vdone = TRUE;
+		}
+
+		hadjust = MAX (0,hadjust - hdistance);
+		hadjust = MIN (hadjust,imageview->priv->hadjustment->upper - imageview->priv->hadjustment->page_size);
+
+		if (old_hadjust == hadjust)
+		{
+			hdone = TRUE;
+		}
+		else
+		{
+			gtk_adjustment_set_value(imageview->priv->hadjustment,hadjust);
+		}
+	}
+	
+	gint vdistance = (gint)(timeout_secs * vvelocity_avg);
+
+	if (0 == vdistance || 0 == vvelocity_avg)
+	{
+		vdone = TRUE;
+	}
+	else
+	{
+	
+		gint old_vadjust = (guint)gtk_adjustment_get_value(imageview->priv->vadjustment);
+		gint vadjust = old_vadjust;
+
+		if (0 > vadjust - vdistance || vadjust - vdistance > imageview->priv->vadjustment->upper - imageview->priv->vadjustment->page_size)
+		{
+			hdone = TRUE;
+			vdone = TRUE;
+		}
+
+		vadjust = MAX (0,vadjust - vdistance);
+		vadjust = MIN (vadjust,imageview->priv->vadjustment->upper - imageview->priv->vadjustment->page_size);
+		if (old_vadjust == vadjust)
+		{
+			vdone = TRUE;
+		}
+		else
+		{
+			gtk_adjustment_set_value(imageview->priv->vadjustment,vadjust);
+		}
+	}
+	
+	
+	if (hdone && vdone)
+	{
+		imageview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
+	
+	gdk_threads_leave();
+	
+	return !(hdone && vdone);
+}
+
+
 
 static gboolean 
 quiver_image_view_button_release_event (GtkWidget *widget, 
@@ -1111,6 +1265,23 @@ quiver_image_view_button_release_event (GtkWidget *widget,
 		gdk_region_destroy(tmp_region);
 	}
 
+	if (QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG == imageview->priv->mouse_move_mode)
+	{
+		struct timeval new_motion_time = {0};
+		gettimeofday(&new_motion_time,NULL);
+
+		gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
+		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+		
+		if ( 3 == g_list_length(imageview->priv->velocity_time_list) &&
+			(0.1 > new_time - old_time) )
+		{
+			imageview->priv->timeout_id_smooth_scroll_slowdown = 
+				g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_image_view_timeout_smooth_scroll_slowdown,imageview);
+		}
+		
+	}
+
 	imageview->priv->rubberband_mode_start = FALSE;
 	imageview->priv->rubberband_mode = FALSE;
 	return TRUE;
@@ -1142,6 +1313,40 @@ quiver_image_view_motion_notify_event (GtkWidget *widget,
 		if (QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG == imageview->priv->mouse_move_mode)
 		{
 			//printf("motion\n");
+			struct timeval new_motion_time = {0};
+			gettimeofday(&new_motion_time,NULL);
+			gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
+			gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+			
+			// velocity pixels per second
+			// max velocity should be around +/-12000 pps
+#define MAX_VELOCITY 12000
+			VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
+			//d = vt
+			//v = d/t
+			// tan(angle) = o / a
+			
+			gint xdist = x - imageview->priv->mouse_x1;
+			gint ydist = y - imageview->priv->mouse_y1;
+
+			vt->time     = new_time - old_time;
+			vt->angle    = atan2(ydist, xdist);
+			gdouble dist = sqrt ( (double)( ydist*ydist + xdist*xdist));
+			vt->velocity =  dist / vt->time ;
+			vt->velocity = MIN (MAX_VELOCITY, vt->velocity);
+
+			if ( 3 == g_list_length(imageview->priv->velocity_time_list) )
+			{
+				GList* last = g_list_last(imageview->priv->velocity_time_list);
+				imageview->priv->velocity_time_list = 
+					g_list_remove_link(imageview->priv->velocity_time_list,last);	
+			}
+			imageview->priv->velocity_time_list = 
+				g_list_prepend(imageview->priv->velocity_time_list, vt);
+			
+			
+			imageview->priv->last_motion_time = new_motion_time;
+				
 			
 			gdouble hadjust = gtk_adjustment_get_value(imageview->priv->hadjustment);
 			gdouble vadjust = gtk_adjustment_get_value(imageview->priv->vadjustment);
@@ -1432,16 +1637,17 @@ quiver_image_view_timeout_scroll(gpointer data)
 
 	gdk_threads_leave();
 
+	imageview->priv->scroll_timeout_id = 0;
+
 	return FALSE;
 }
 
 static void quiver_image_view_add_scroll_timeout(QuiverImageView *imageview)
 {
-	if (0 != imageview->priv->scroll_timeout_id)
+	if (0 == imageview->priv->scroll_timeout_id)
 	{
-		g_source_remove(imageview->priv->scroll_timeout_id);
+		imageview->priv->scroll_timeout_id = g_timeout_add(2,quiver_image_view_timeout_scroll,imageview);
 	}
-	imageview->priv->scroll_timeout_id = g_timeout_add(2,quiver_image_view_timeout_scroll,imageview);
 
 }
 

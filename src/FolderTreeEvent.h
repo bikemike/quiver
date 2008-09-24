@@ -6,7 +6,7 @@
 class FolderTreeEvent : public EventBase
 {
 public:
-	FolderTreeEvent(IEventSource* src) : EventBase(src){};
+	FolderTreeEvent(IEventSourcePtr src) : EventBase(src){};
 private:
 };
 

@@ -12,7 +12,7 @@ void FolderTreeEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 void FolderTreeEventSource::EmitSelectionChangedEvent()
 {
-	FolderTreeEventPtr n( new FolderTreeEvent(this) );
+	FolderTreeEventPtr n( new FolderTreeEvent(shared_from_this()) );
 	m_sigSelectionChanged(n);
 }
 

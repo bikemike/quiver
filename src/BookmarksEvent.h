@@ -14,7 +14,7 @@ public:
 		BOOKMARK_CHANGED,
 	} BookmarksEventType;
 
-	BookmarksEvent(IEventSource* src, BookmarksEventType eventType) : EventBase(src), m_BookmarksEventType(eventType) { };
+	BookmarksEvent(IEventSourcePtr src, BookmarksEventType eventType) : EventBase(src), m_BookmarksEventType(eventType) { };
 
 	
 	BookmarksEventType GetEventType(){return m_BookmarksEventType;};

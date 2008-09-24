@@ -6,7 +6,7 @@
 namespace QuiverUtils
 {
 	GtkAction* GetAction(GtkUIManager* ui,const char * action_name);
-	void SetActionsSensitive(GtkUIManager *pUIManager, gchar** actions, gint n_actions, gboolean bSensitive);
+	void SetActionsSensitive(GtkUIManager *pUIManager, const gchar** actions, gint n_actions, gboolean bSensitive);
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation);
 	
 	void DisconnectUnmodifiedAccelerators(GtkUIManager *pUIManager);

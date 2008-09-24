@@ -13,6 +13,7 @@ public:
 
 	void AddEventHandler(IEventHandlerPtr handler);
 
+	void EmitItemClickedEvent();
 	void EmitItemActivatedEvent();
 	void EmitCursorChangedEvent();
 	void EmitSlideShowStartedEvent();
@@ -20,6 +21,7 @@ public:
 
 private:
 	ViewerSignal m_sigCursorChanged;
+	ViewerSignal m_sigItemClicked;
 	ViewerSignal m_sigItemActivated;
 	ViewerSignal m_sigSlideShowStarted;
 	ViewerSignal m_sigSlideShowStopped;

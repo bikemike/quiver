@@ -280,7 +280,8 @@ void Statusbar::SetDateTime()
 {
 	if (m_StatusbarImplPtr->m_CurrentQuiverFile.GetURI())
 	{
-		SetDateTime( m_StatusbarImplPtr->m_CurrentQuiverFile.GetTimeT() );
+		time_t time = m_StatusbarImplPtr->m_CurrentQuiverFile.GetTimeT();
+		SetDateTime( time );
 	}	
 }
 
@@ -291,7 +292,7 @@ void Statusbar::SetDateTime(time_t time)
 	tm_time = *localtime(&time);
 
     // Format and print the time, "ddd yyyy-mm-dd hh:mm:ss"
-    strftime(sz_time, sizeof(sz_time), "%Y/%m/%d %H:%M:%S", &tm_time);
+    strftime(sz_time, sizeof(sz_time), "%Y-%m-%d %H:%M:%S", &tm_time);
     
 
 	gtk_label_set_text(GTK_LABEL(m_StatusbarImplPtr->m_pLabelDateTime),sz_time);

@@ -16,3 +16,4 @@ public:
 typedef boost::shared_ptr<IBrowserEventHandler> IBrowserEventHandlerPtr;
 
 #endif
+

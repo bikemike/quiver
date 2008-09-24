@@ -54,8 +54,6 @@ public:
 	bool m_bLoadedDlg;
 	
 	// dlg widgets
-	GtkFileChooserButton*  m_pFCBtnPhotoLibrary;
-	
 	GtkWidget*             m_pWidget;
 	GtkTreeView*           m_pTreeViewLocations;
 	GtkEntry*              m_pEntryName;

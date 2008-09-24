@@ -95,6 +95,8 @@ quiver_SOURCES = \
 	IViewerEventHandler.h \
 	AdjustDateDlg.h \
 	AdjustDateDlg.cpp \
+	AdjustDateTask.h \
+	AdjustDateTask.cpp \
 	IViewerEventHandler.h \
 	IBookmarksEventHandler.h \
 	Bookmarks.h \
@@ -109,7 +111,43 @@ quiver_SOURCES = \
 	BrowserHistory.h \
 	BrowserHistory.cpp \
 	DonateDlg.h \
-	DonateDlg.cpp
+	DonateDlg.cpp \
+	TaskManager.h \
+	TaskEventSource.cpp \
+	TaskEvent.h \
+	TaskManagerEvent.h \
+	TaskManagerDlg.h \
+	TaskManagerDlg.cpp \
+	TaskManager.cpp \
+	TaskManagerEventSource.cpp \
+	ITaskEventHandler.h \
+	ITaskManagerEventHandler.h \
+	AbstractTask.h \
+	AbstractTask.cpp \
+	TaskManagerEventSource.h \
+	TaskEventSource.h \
+	OrganizeTask.h \
+	OrganizeTask.cpp \
+	ThreadUtil.h \
+	ThreadUtil.cpp \
+	MessageBox.h \
+	MessageBox.cpp \
+	OrganizeDlg.h \
+	OrganizeDlg.cpp \
+	strnatcmp.h \
+	strnatcmp.c \
+	ExternalTools.cpp \
+	ExternalToolsDlg.cpp \
+	ExternalToolsDlg.h \
+	ExternalToolAddEditDlg.cpp \
+	ExternalToolAddEditDlg.h \
+	ExternalToolsEvent.h \
+	ExternalToolsEventSource.cpp \
+	ExternalToolsEventSource.h \
+	ExternalTools.h \
+	IExternalToolsEventHandler.h \
+	SaveImageTask.h \
+	SaveImageTask.cpp 
 
 
 quiver_LDFLAGS = 

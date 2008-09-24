@@ -7,6 +7,10 @@
 
 using namespace std;
 
+// this matrix calculates the orientation needed
+// to get from [source] orientation to a [dest]
+// orientation. for instance, to get from a 6 to
+// an 8, a 180 is needed (which is a 3)
 static int reorientation_matrix[9][9] =
 {
 	{1,1,2,3,4,5,6,7,8},
@@ -20,6 +24,21 @@ static int reorientation_matrix[9][9] =
 	{6,6,5,8,7,4,3,2,1},
 	
 };
+
+static int combine_matrix[9][9] =
+{
+	{1,1,2,3,4,5,6,7,8,},
+	{1,1,2,3,4,5,6,7,8,},
+	{2,2,1,4,3,8,7,6,5,},
+	{3,3,4,1,2,7,8,5,6,},
+	{4,4,3,2,1,6,5,8,7,},
+	{5,5,6,7,8,1,2,3,4,},
+	{6,6,5,8,7,4,3,2,1,},
+	{7,7,8,5,6,3,4,1,2,},
+	{8,8,7,6,5,2,1,4,3,},
+};
+
+static int inverse_matrix[9] = {1,1,2,3,4,7,8,5,6};
 
 ImageLoader::ImageLoader() : m_ImageCache(4)
 {
@@ -287,6 +306,21 @@ bool ImageLoader::LoadQuickPreview()
 			{
 				swap(width,height);
 			}
+
+			if (m_iLoadOrientation != m_Command.quiverFile.GetOrientation())
+			{
+				// thumbnail has already been rotated by the exif orientaiton
+				// so we must revert that and calculate the new rotation 
+				int orientation = inverse_matrix[m_Command.quiverFile.GetOrientation()];
+				int new_orientation = combine_matrix[m_iLoadOrientation][orientation];
+
+				GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(thumb_pixbuf, new_orientation);
+				if (NULL != pixbuf_rotated)
+				{
+					g_object_unref(thumb_pixbuf);
+					thumb_pixbuf = pixbuf_rotated;
+				}
+			}
 			
 			list<IPixbufLoaderObserver*>::iterator itr;
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
@@ -310,6 +344,7 @@ void ImageLoader::Load()
 		m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
 	}
 
+	// check to see if the image should be removed from the cache
 	if (0 < m_Command.params.max_width && 0 < m_Command.params.max_height)
 	{
 		GdkPixbuf * pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
@@ -324,8 +359,7 @@ void ImageLoader::Load()
 			real_width = m_Command.quiverFile.GetWidth();
 			real_height = m_Command.quiverFile.GetHeight();
 			
-			// we do not need to free the data returned from this - it is not a copy
-			gint* pOrientation = (gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
+			const gint* pOrientation = (const gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
 			if (NULL != pOrientation)
 			{
 				if(m_iLoadOrientation != *pOrientation)
@@ -347,7 +381,7 @@ void ImageLoader::Load()
 				// ratio for width/height than the requested orientation
 				swap(real_width,real_height);
 			}
-			
+
 			if ( width < m_Command.params.max_width && height < m_Command.params.max_height && width < real_width && height < real_height)
 			{
 				m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
@@ -415,7 +449,7 @@ void ImageLoader::Load()
 						if (1 < orientation)
 						{
 							GdkPixbuf* pixbuf_rotated;
-							pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_iLoadOrientation);
+							pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,orientation);
 							if (NULL != pixbuf_rotated)
 							{
 								g_object_unref(pixbuf);

@@ -16,8 +16,16 @@ public:
 	virtual ~ImageSaverJPEG(){};
 
 	virtual std::string GetMimeType();
-	virtual bool SaveImage(QuiverFile quiverFile, GdkPixbuf *pixbuf = NULL);
-	virtual bool SaveImageAs(QuiverFile quiverFile, std::string strFileName, GdkPixbuf *pixbuf = NULL);
+
+	virtual bool SaveImage(QuiverFile quiverFile,
+			GdkPixbuf *pixbuf = NULL,
+			ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL);
+
+	virtual bool SaveImageAs(QuiverFile quiverFile, std::string strFileName,
+			GdkPixbuf *pixbuf = NULL,
+			ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL);
 };
 
 
@@ -26,16 +34,24 @@ std::string ImageSaverJPEG::GetMimeType()
 	return "image/jpeg";
 }
 
-static int save_jpeg_file(std::string filename,ExifData *exifData);
+static int save_jpeg_file(std::string filename,ExifData *exifData, 
+		IImageSaver::ImageSaveProgressCallback callback, void* user_data);
 
-bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile, GdkPixbuf *pixbuf/* = NULL*/)
+bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
+			GdkPixbuf *pixbuf /* = NULL */,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
 {
 	printf("save JPEG image! %s\n", quiverFile.GetURI());
-	int rval = save_jpeg_file(quiverFile.GetFilePath(),quiverFile.GetExifData());
+	int rval = save_jpeg_file(quiverFile.GetFilePath(),quiverFile.GetExifData(), cb, user_data);
+	quiverFile.Reload();
 	return (0 == rval);
 }
 
-bool ImageSaverJPEG::SaveImageAs(QuiverFile quiverFile, std::string strFileName, GdkPixbuf *pixbuf/* = NULL*/)
+bool ImageSaverJPEG::SaveImageAs(QuiverFile quiverFile, std::string strFileName, 
+			GdkPixbuf *pixbuf /* = NULL */,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
 {
 	printf("save JPEG image as! %s\n", quiverFile.GetURI());
 	return true;
@@ -70,7 +86,10 @@ bool ImageSaveManager::IsFormatSupported(std::string strMimeType)
 	return (m_mapImageSavers.end() != itr);
 }
 
-bool ImageSaveManager::SaveImage(QuiverFile quiverFile, GdkPixbuf *pixbuf/* = NULL*/)
+bool ImageSaveManager::SaveImage(QuiverFile quiverFile, 
+			GdkPixbuf *pixbuf /* = NULL */,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
 {
 	bool bRetVal = false;
 	ImageSaverMap::iterator itr;
@@ -83,7 +102,10 @@ bool ImageSaveManager::SaveImage(QuiverFile quiverFile, GdkPixbuf *pixbuf/* = NU
 	return bRetVal;
 }
 
-bool ImageSaveManager::SaveImageAs(QuiverFile quiverFile, std::string strFileName, GdkPixbuf *pixbuf/* = NULL*/)
+bool ImageSaveManager::SaveImageAs(QuiverFile quiverFile, std::string strFileName,
+			GdkPixbuf *pixbuf /* = NULL */,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
 {
 	bool bRetVal = false;
 	ImageSaverMap::iterator itr;
@@ -189,9 +211,46 @@ jcopy_markers_setup (j_decompress_ptr srcinfo, JCOPY_OPTION option)
   }
 #endif /* SAVE_MARKERS_SUPPORTED */
 }
+/*
 
+struct jpeg_progress
+{
+	struct jpeg_progress_mgr progress_mgr;
+	struct jpeg_progress_mgr* progress_mgr_other;
+	IImageSaver::ImageSaveProgressCallback callback;
+	void * user_data;
+};
 
-static int save_jpeg_file(std::string filename,ExifData *exifData)
+static void jpeg_progress_cb(j_common_ptr cinfo)
+{
+	jpeg_progress* prog = (jpeg_progress*) cinfo->progress;
+
+	printf("items: comp %ld, pass count %ld, pass lim %ld, total %ld\n",
+		prog->progress_mgr.completed_passes,
+		prog->progress_mgr.pass_counter,prog->progress_mgr.pass_limit,
+		prog->progress_mgr.total_passes);
+
+	double dProgress = 
+		(prog->progress_mgr.completed_passes
+		+ (prog->progress_mgr.pass_counter/prog->progress_mgr.pass_limit))
+		 / (prog->progress_mgr.total_passes)
+		+
+		(prog->progress_mgr_other->completed_passes
+		+ (prog->progress_mgr_other->pass_counter/prog->progress_mgr_other->pass_limit))
+		 / (prog->progress_mgr_other->total_passes);
+
+	dProgress /= 2;
+
+	if (NULL != prog->callback)
+	{
+		prog->callback(dProgress, prog->user_data);
+	}
+	printf("progress : %f\n", dProgress);
+}
+*/
+
+static int save_jpeg_file(std::string filename,ExifData *exifData,
+		IImageSaver::ImageSaveProgressCallback callback, void* user_data)
 {
 /*
 int jpeg_transform_files(char *infile, char *outfile,
@@ -207,7 +266,24 @@ int jpeg_transform_files(char *infile, char *outfile,
 	
 	gchar* name_used;
 	GError* error = NULL;
-	
+
+	/*
+	struct jpeg_progress comp_progress;
+	struct jpeg_progress dcomp_progress;
+
+	comp_progress.progress_mgr_other = &dcomp_progress.progress_mgr;
+	dcomp_progress.progress_mgr_other = &comp_progress.progress_mgr;
+
+	comp_progress.callback = callback;
+	dcomp_progress.callback = callback;
+
+	comp_progress.user_data = user_data;
+	dcomp_progress.user_data = user_data;
+
+    comp_progress.progress_mgr.progress_monitor = jpeg_progress_cb;
+    dcomp_progress.progress_mgr.progress_monitor = jpeg_progress_cb;
+	*/
+
 	gint fhandle = g_file_open_tmp("quiver_jpeg.XXXXXX", &name_used,&error);
 	
 	if (-1 == fhandle || NULL != error)
@@ -262,13 +338,16 @@ int jpeg_transform_files(char *infile, char *outfile,
 
 
 	jpeg_create_decompress(&src);
+    //src.progress = &dcomp_progress.progress_mgr;
+
 	jpeg_stdio_src(&src, in);
-
-
 
 	/* setup dst */
 	dst.err = jpeg_std_error(&jdsterr);
 	jpeg_create_compress(&dst);
+
+    //dst.progress = &comp_progress.progress_mgr;
+
 	jpeg_stdio_dest(&dst, out);
 
 	/* transform image */

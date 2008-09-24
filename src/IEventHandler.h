@@ -6,6 +6,7 @@
 class IEventHandler
 {
 public:
+	virtual ~IEventHandler() {}
 	//virtual void HandleEvent(IEventPtr event) = 0;
 };
 

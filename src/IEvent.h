@@ -3,11 +3,13 @@
 
 #include <boost/shared_ptr.hpp>
 
+#include "IEventSource.h"
+
 class IEvent
 {
 public:
 	virtual ~IEvent(){};
-	virtual IEventSource * GetSource() = 0;
+	virtual IEventSourcePtr GetSource() const = 0;
 };
 
 

@@ -17,12 +17,15 @@ public:
 	typedef enum 
 	{
 		SORT_BY_FILENAME,
+		SORT_BY_FILENAME_NATURAL,
 		SORT_BY_FILE_TYPE,
 		SORT_BY_DATE,
+		SORT_BY_RANDOM,
 	} SortBy;
 
 
 	ImageList();
+	ImageList(bool bEnableMonitor);
 
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
@@ -30,6 +33,8 @@ public:
 
 	std::list<std::string> GetFolderList();
 	std::list<std::string> GetFileList();
+
+	std::vector<QuiverFile> GetQuiverFiles();
 
 	void Remove(unsigned int iIndex);
 	void RemoveRange(unsigned int iStart, unsigned int iEnd);
@@ -70,4 +75,7 @@ private:
 	ImageListImplPtr m_ImageListImplPtr;
 	
 };
+
+typedef boost::shared_ptr<ImageList> ImageListPtr;
+
 #endif

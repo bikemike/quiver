@@ -24,33 +24,33 @@ void ImageListEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 void ImageListEventSource::EmitContentsChangedEvent()
 {
-	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::CONTENTS_CHANGED,0) );
+	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::CONTENTS_CHANGED,0) );
 	(*m_sigContentsChangedPtr)(event);
 	
 }
 
 void ImageListEventSource::EmitCurrentIndexChangedEvent(unsigned int iIndex)
 {
-	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::CURRENT_INDEX_CHANGED,iIndex) );
+	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::CURRENT_INDEX_CHANGED,iIndex) );
 	(*m_sigCurrentIndexChangedPtr)(event);
 	
 }
 
 void ImageListEventSource::EmitItemAddedEvent(unsigned int iIndex)
 {
-	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::ITEM_ADDED,iIndex) );
+	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::ITEM_ADDED,iIndex) );
 	(*m_sigItemAddedPtr)(event);
 }
 
 void ImageListEventSource::EmitItemRemovedEvent(unsigned int iIndex)
 {
-	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::ITEM_REMOVED,iIndex) );
+	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::ITEM_REMOVED,iIndex) );
 	(*m_sigItemRemovedPtr)(event);
 }
 
 void ImageListEventSource::EmitItemChangedEvent(unsigned int iIndex)
 {
-	ImageListEventPtr event( new ImageListEvent(this,ImageListEvent::ITEM_CHANGED,iIndex) );
+	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::ITEM_CHANGED,iIndex) );
 	(*m_sigItemChangedPtr)(event);
 }
 

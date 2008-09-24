@@ -7,12 +7,12 @@
 class EventBase : public IEvent
 {
 public:
-	EventBase(IEventSource* src) { source = src;};
-	virtual ~EventBase(){};
-	virtual IEventSource* GetSource(){return source;};
+	EventBase(IEventSourcePtr src) : m_IEventSourcePtr(src) { }
+	virtual ~EventBase(){}
+	virtual IEventSourcePtr GetSource() const {return m_IEventSourcePtr;}
 
 private:
-	IEventSource* source;
+	IEventSourcePtr m_IEventSourcePtr;
 
 };
 

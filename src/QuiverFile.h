@@ -58,6 +58,7 @@ public:
 	
 	void Reload();
 	
+	std::string GetFileName() const;
 	std::string GetFilePath() const;
 	int GetWidth();
 	int GetHeight();

@@ -18,20 +18,20 @@ void BrowserEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 void BrowserEventSource::EmitItemActivatedEvent()
 {
-	BrowserEventPtr n( new BrowserEvent(this) );
+	BrowserEventPtr n( new BrowserEvent(shared_from_this()) );
 	m_sigItemActivated(n);
 	
 }
 
 void BrowserEventSource::EmitSelectionChangedEvent()
 {
-	BrowserEventPtr n( new BrowserEvent(this) );
+	BrowserEventPtr n( new BrowserEvent(shared_from_this()) );
 	m_sigSelectionChanged(n);
 }
 
 void BrowserEventSource::EmitCursorChangedEvent()
 {
-	BrowserEventPtr n( new BrowserEvent(this) );
+	BrowserEventPtr n( new BrowserEvent(shared_from_this()) );
 	m_sigCursorChanged(n);
 }
 

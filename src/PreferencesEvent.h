@@ -22,24 +22,24 @@ public:
 		PREFERENCE_CHANGED,
 	} PreferencesEventType;
 
-	PreferencesEvent(IEventSource* src, PreferencesEventType eventType, std::string s, std::string k, std::string o, std::string n) : EventBase(src), m_strSection(s), m_strKey(k), m_strOldString(o), m_strNewString(n), m_PreferencesEventType(eventType)
+	PreferencesEvent(IEventSourcePtr src, PreferencesEventType eventType, std::string s, std::string k, std::string o, std::string n) : EventBase(src), m_strSection(s), m_strKey(k), m_strOldString(o), m_strNewString(n), m_PreferencesEventType(eventType)
 	{
 		m_PrefType = PREFERENCE_STRING;
 		
 	};
 
-	PreferencesEvent(IEventSource* src, PreferencesEventType eventType, std::string s, std::string k, std::string l, std::string o, std::string n) : EventBase(src), m_strSection(s), m_strKey(k), m_strLocale(l), m_strOldString(o), m_strNewString(n), m_PreferencesEventType(eventType)
+	PreferencesEvent(IEventSourcePtr src, PreferencesEventType eventType, std::string s, std::string k, std::string l, std::string o, std::string n) : EventBase(src), m_strSection(s), m_strKey(k), m_strLocale(l), m_strOldString(o), m_strNewString(n), m_PreferencesEventType(eventType)
 	{
 		m_PrefType = PREFERENCE_LOCALE_STRING;
 	};
 	
-	PreferencesEvent(IEventSource* src, PreferencesEventType eventType, std::string s, std::string k, bool o, bool n) : EventBase(src), m_strSection(s), m_strKey(k), m_bOldBool(o), m_bNewBool(n), m_PreferencesEventType(eventType)
+	PreferencesEvent(IEventSourcePtr src, PreferencesEventType eventType, std::string s, std::string k, bool o, bool n) : EventBase(src), m_strSection(s), m_strKey(k), m_bOldBool(o), m_bNewBool(n), m_PreferencesEventType(eventType)
 	{
 		m_PrefType = PREFERENCE_BOOL;
 		
 	};
 
-	PreferencesEvent(IEventSource* src, PreferencesEventType eventType, std::string s, std::string k, int o, int n) : EventBase(src), m_strSection(s), m_strKey(k), m_iOldInt(o), m_iNewInt(n), m_PreferencesEventType(eventType)
+	PreferencesEvent(IEventSourcePtr src, PreferencesEventType eventType, std::string s, std::string k, int o, int n) : EventBase(src), m_strSection(s), m_strKey(k), m_iOldInt(o), m_iNewInt(n), m_PreferencesEventType(eventType)
 	{
 		m_PrefType = PREFERENCE_INT;
 		

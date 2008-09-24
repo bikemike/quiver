@@ -32,6 +32,7 @@ private:
 	FolderTreeImplPtr m_FolderTreeImplPtr;
 };
 
+typedef boost::shared_ptr<FolderTree> FolderTreePtr;
 
 #endif
 

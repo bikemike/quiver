@@ -6,7 +6,7 @@
 class ViewerEvent : public EventBase
 {
 public:
-	ViewerEvent(IEventSource* src) : EventBase(src){};
+	ViewerEvent(IEventSourcePtr src) : EventBase(src){};
 private:
 };
 

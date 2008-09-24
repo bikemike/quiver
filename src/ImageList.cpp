@@ -8,6 +8,11 @@
 #include <stdlib.h>
 #include <set>
 
+extern "C"
+{
+#include "strnatcmp.h"
+}
+
 // comment this define out if __gnu_cxx is not available
 #define USE_EXT
 
@@ -73,6 +78,8 @@ public:
 	
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
+	// like set, but keep the current image
+	// selected if it's in the new list 
 	bool UpdateImageList(const std::list<std::string> *file_list);
 	
 	bool AddDirectory(const gchar* uri, bool bRecursive = false);
@@ -119,11 +126,13 @@ public:
 
 	ImageList::SortBy m_SortBy;
 	bool m_bSortAscend;
+	bool m_bEnableMonitor;
 
 };
 
 // sort functions
 class SortByFilename;
+class SortByFilenameNatural;
 class SortByFileExtension;
 class SortByDate;
 
@@ -135,6 +144,11 @@ StringSet ImageListImpl::c_setSupportedMimeTypes;
 
 ImageList::ImageList() : m_ImageListImplPtr( new ImageListImpl(this) )
 {
+	m_ImageListImplPtr->m_bEnableMonitor = false;
+}
+ImageList::ImageList(bool bEnableMonitor) : m_ImageListImplPtr( new ImageListImpl(this) )
+{
+	m_ImageListImplPtr->m_bEnableMonitor = bEnableMonitor;
 }
 
 unsigned int
@@ -358,6 +372,11 @@ std::list<std::string> ImageList::GetFileList()
 		listFiles.push_back(itr->first);
 	}
 	return listFiles;
+}
+
+std::vector<QuiverFile> ImageList::GetQuiverFiles()
+{
+	return m_ImageListImplPtr->m_QuiverFileList;
 }
 
 
@@ -597,7 +616,7 @@ ImageListImpl::ImageListImpl(ImageList *pImageList)
 	m_pImageList = pImageList;
 	
 	LoadMimeTypes();
-	m_SortBy = ImageList::SORT_BY_FILENAME;
+	m_SortBy = ImageList::SORT_BY_FILENAME_NATURAL;
 
 	m_bSortAscend = true;
 	m_iCurrentIndex = 0;
@@ -799,11 +818,12 @@ void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive
 								{
 									
 									pair<PathMonitorMap::iterator,bool> p;
+									p.first->second = NULL;
 									p.second = false;
 	
 									p = m_mapFiles.insert(PathMonitorPair(strURI.c_str(),NULL)); 
 									bAdded = p.second;
-									if (bAdded)
+									if (bAdded && m_bEnableMonitor)
 									{
 										gnome_vfs_monitor_add(&p.first->second,strURI.c_str(),GNOME_VFS_MONITOR_FILE,vfs_monitor_callback,this);
 									}
@@ -838,19 +858,8 @@ void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive
 
 void ImageListImpl::SetImageList(const std::list<std::string> *file_list, bool bRecursive /* = false */)
 {
-
-	
-	//printf("Setting the image list\n");
-	if (0 == file_list->size())
-	{
-		return;
-	}
-	
 	Clear();
-	
 	Add(file_list, bRecursive);
-
-	//printf("done setting the image list\n");
 }
 
 
@@ -860,19 +869,13 @@ bool ImageListImpl::UpdateImageList(const list<string> *file_list)
 	// remove the ones not in the file_list but in
 	// the monitor list, then add the difference of 
 	// the other way around
-	bool bUpdated = false;
+	bool bUpdate = false;
 	
 	// can't use hash_set here because we need sorted
 	// sets for set_difference and hash_sets are not 
 	// sorted in the proper fashion
 	std::set<string> setNewFiles;
 	std::set<string> setOldFiles;
-	
-	string strCurrentURI;
-	if (0 < m_QuiverFileList.size())
-	{
-		strCurrentURI = m_QuiverFileList[m_iCurrentIndex].GetURI();
-	}
 
 	PathMonitorMap::iterator itr;
 	for (itr = m_mapDirs.begin(); m_mapDirs.end() != itr; ++itr)
@@ -895,48 +898,48 @@ bool ImageListImpl::UpdateImageList(const list<string> *file_list)
 
 	if (0 == setInBoth.size())
 	{
-		// sets are mutually exclusive
-		// so clear the old list
-		Clear();
-
-		if (setOldFiles.size())
+		if (0 < setOldFiles.size())
 		{
-			bUpdated = true;
+			bUpdate = true;
 		}
 	}
 	else
 	{
-
 		StringSet setOnlyInOld;
 		set_difference(setOldFiles.begin(), setOldFiles.end(), setNewFiles.begin(), setNewFiles.end(), inserter(setOnlyInOld,setOnlyInOld.begin()));
-		
 
 		StringSet::iterator setItr;
-		for (setItr = setOnlyInOld.begin(); setOnlyInOld.end() != setItr; ++setItr)
+		if (0 < setOnlyInOld.size())
 		{
-			bUpdated = true;
-			RemoveMonitor((*setItr));
+			bUpdate = true;
 		}
 	}
-	
+
 	StringSet setOnlyInNew;
 	set_difference(setNewFiles.begin(), setNewFiles.end(), setOldFiles.begin(), setOldFiles.end(), inserter(setOnlyInNew,setOnlyInNew.begin()));
 	
 	list<string> listNew;
 	listNew.insert(listNew.begin(),setOnlyInNew.begin(), setOnlyInNew.end());
 
-	if (bUpdated && !strCurrentURI.empty())
+	if (0 < listNew.size())
 	{
-		SetCurrentImage(strCurrentURI);
+		bUpdate = true;
 	}
 
-	if (0 != listNew.size())
+	string strCurrentURI;
+	if (0 < m_QuiverFileList.size())
 	{
-		bUpdated = true;
-		Add(&listNew);
+		strCurrentURI = m_QuiverFileList[m_iCurrentIndex].GetURI();
 	}
 
-	return bUpdated;
+	SetImageList(file_list);
+
+	if (!strCurrentURI.empty())
+	{
+			SetCurrentImage(strCurrentURI);
+	}
+
+	return bUpdate;
 }
 
 
@@ -950,33 +953,36 @@ bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */
 
 	if (bAdded)
 	{
+		p.first->second = NULL;
 		// add directory monitor
-		gnome_vfs_monitor_add(&p.first->second,uri,GNOME_VFS_MONITOR_DIRECTORY,vfs_monitor_callback,this);
-		
-		// remove any file monitor entries that are in this directory
-		PathMonitorMap::iterator itr;
-		itr = m_mapFiles.begin();
-		while (m_mapFiles.end() != itr)
+		if (m_bEnableMonitor)
 		{
-			gchar * dirname = g_path_get_dirname(itr->first.c_str());
-			if (gnome_vfs_uris_match (uri,dirname))
+			gnome_vfs_monitor_add(&p.first->second,uri,GNOME_VFS_MONITOR_DIRECTORY,vfs_monitor_callback,this);
+			// remove any file monitor entries that are in this directory
+			PathMonitorMap::iterator itr;
+			itr = m_mapFiles.begin();
+			while (m_mapFiles.end() != itr)
 			{
-				QuiverFile qfile(itr->first.c_str());
-				QuiverFileList::iterator qitr = m_QuiverFileList.end();
-				qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
-				m_QuiverFileList.erase(qitr);
-				
-				if (NULL != itr->second)
+				gchar * dirname = g_path_get_dirname(itr->first.c_str());
+				if (gnome_vfs_uris_match (uri,dirname))
 				{
-					gnome_vfs_monitor_cancel(itr->second);
+					QuiverFile qfile(itr->first.c_str());
+					QuiverFileList::iterator qitr = m_QuiverFileList.end();
+					qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
+					m_QuiverFileList.erase(qitr);
+					
+					if (NULL != itr->second)
+					{
+						gnome_vfs_monitor_cancel(itr->second);
+					}
+					m_mapFiles.erase(itr++);
 				}
-				m_mapFiles.erase(itr++);
+				else
+				{
+					++itr;
+				}
+				g_free(dirname);
 			}
-			else
-			{
-				++itr;
-			}
-			g_free(dirname);
 		}
 
 		// 
@@ -1083,6 +1089,8 @@ bool ImageListImpl::RemoveMonitor(string path)
 
 	string strURI = PathToURI(path);
 	
+	// find the path in the dirs map.
+	// if it exists, remove all files in that directory
 	itr = m_mapDirs.find(strURI);
 	if (m_mapDirs.end() != itr)
 	{
@@ -1263,7 +1271,47 @@ class SortByFilename : public std::binary_function<QuiverFile,QuiverFile,bool>
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
 	{
-		return (0 > strcmp(a.GetURI(),b.GetURI()) );
+		return (0 > strcasecmp(a.GetURI(),b.GetURI()) );
+	}
+};
+
+class SortByFilenameNatural : public std::binary_function<QuiverFile,QuiverFile,bool>
+{
+public:
+	bool operator()(const QuiverFile &a, const QuiverFile &b) const
+	{
+		int rval = 0;
+		string file1 = a.GetURI();
+		string file2 = b.GetURI();
+
+		string::size_type sep1 = file1.find_last_of(G_DIR_SEPARATOR);
+		string::size_type sep2 = file2.find_last_of(G_DIR_SEPARATOR);
+		if (string::npos != sep1 && string::npos != sep2)
+		{
+			string::size_type ext1 = file1.find_first_of(".",sep1);
+			string::size_type ext2 = file2.find_first_of(".",sep2);
+
+			if (0 == rval &&  string::npos != ext1 && string::npos != ext2)
+			{
+				rval = strnatcasecmp( file1.substr(0,ext1).c_str(), file2.substr(0, ext2).c_str());
+
+				if (0 == rval)
+				{
+					rval = strnatcasecmp( file1.substr(ext1,file1.size() - ext1).c_str(), file2.substr(ext2, file2.size() - ext2).c_str());
+				}
+
+			}
+			else
+			{
+				rval = strnatcasecmp(a.GetURI(),b.GetURI());
+			}
+		}
+		else
+		{
+			rval =  strnatcasecmp(a.GetURI(),b.GetURI());
+		}
+
+		return (0 > rval);
 	}
 };
 
@@ -1278,7 +1326,7 @@ public:
 		time_t tb = b.GetTimeT();
 		if (ta == tb)
 		{
-			SortByFilename byFile;
+			SortByFilenameNatural byFile;
 			return byFile(a,b);
 		}
 		return ( ta < tb );
@@ -1304,6 +1352,12 @@ void ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurre
 			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
 			break;
 		}
+		case ImageList::SORT_BY_FILENAME_NATURAL:
+		{
+			SortByFilenameNatural sortby;
+			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
+			break;
+		}
 		case ImageList::SORT_BY_FILE_TYPE:
 			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
 			break;
@@ -1312,6 +1366,11 @@ void ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurre
 			SortByDate sortby;
 			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
 			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
+			break;
+		}
+		case ImageList::SORT_BY_RANDOM:
+		{
+			std::random_shuffle(m_QuiverFileList.begin(), m_QuiverFileList.end());
 			break;
 		}
 		default:

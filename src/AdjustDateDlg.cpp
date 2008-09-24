@@ -1,8 +1,6 @@
 #include <config.h>
 #include "AdjustDateDlg.h"
 #include <glade/glade.h>
-#include "QuiverPrefs.h"
-#include "IPreferencesEventHandler.h"
 
 #include "QuiverStockIcons.h"
 
@@ -53,17 +51,6 @@ public:
 	int                    m_iHours;
 	int                    m_iMinutes;
 	int                    m_iSeconds;
-	
-// nested classes
-	class PreferencesEventHandler : public IPreferencesEventHandler
-	{
-	public:
-		PreferencesEventHandler(AdjustDateDlgPriv* parent) {this->parent = parent;};
-		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
-	private:
-		AdjustDateDlgPriv* parent;
-	};
-	IPreferencesEventHandlerPtr m_PreferencesEventHandler;
 	
 };
 
@@ -151,8 +138,7 @@ static void  on_clicked (GtkButton *button, gpointer   user_data);
 static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
 
 AdjustDateDlg::AdjustDateDlgPriv::AdjustDateDlgPriv(AdjustDateDlg *parent) :
-        m_pAdjustDateDlg(parent),
-        m_PreferencesEventHandler( new PreferencesEventHandler(this) )
+        m_pAdjustDateDlg(parent)
 {
 	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "AdjustDateDialog", NULL);
 
@@ -301,14 +287,5 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	
 	priv->UpdateUI();
 }
-
-
-// nested class
-
-void AdjustDateDlg::AdjustDateDlgPriv::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
-{
-	parent->UpdateUI();
-}
-
 
 

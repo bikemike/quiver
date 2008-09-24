@@ -13,24 +13,24 @@ void PreferencesEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 void PreferencesEventSource::EmitPreferenceChanged(PreferencesEvent::PreferencesEventType type, std::string strSection, std::string strKey, std::string strOldVal, std::string strNewVal)
 {
-	PreferencesEventPtr event( new PreferencesEvent(this,type,strSection,strKey,strOldVal,strNewVal) );
+	PreferencesEventPtr event( new PreferencesEvent(shared_from_this(),type,strSection,strKey,strOldVal,strNewVal) );
 	(*m_sigPreferenceChangedPtr)(event);
 }
 
 void PreferencesEventSource::EmitPreferenceChanged(PreferencesEvent::PreferencesEventType type, std::string strSection, std::string strKey, std::string strLocale, std::string strOldVal, std::string strNewVal)
 {
-	PreferencesEventPtr event( new PreferencesEvent(this,type,strSection,strKey,strLocale, strOldVal,strNewVal) );
+	PreferencesEventPtr event( new PreferencesEvent(shared_from_this(),type,strSection,strKey,strLocale, strOldVal,strNewVal) );
 	(*m_sigPreferenceChangedPtr)(event);
 }
 
 void PreferencesEventSource::EmitPreferenceChanged(PreferencesEvent::PreferencesEventType type, std::string strSection, std::string strKey, bool bOldVal, bool bNewVal)
 {
-	PreferencesEventPtr event( new PreferencesEvent(this,type,strSection,strKey,bOldVal,bNewVal) );
+	PreferencesEventPtr event( new PreferencesEvent(shared_from_this(),type,strSection,strKey,bOldVal,bNewVal) );
 	(*m_sigPreferenceChangedPtr)(event);
 }
 
 void PreferencesEventSource::EmitPreferenceChanged(PreferencesEvent::PreferencesEventType type, std::string strSection, std::string strKey, int iOldVal, int iNewVal)
 {
-	PreferencesEventPtr event( new PreferencesEvent(this,type,strSection,strKey,iOldVal,iNewVal) );
+	PreferencesEventPtr event( new PreferencesEvent(shared_from_this(),type,strSection,strKey,iOldVal,iNewVal) );
 	(*m_sigPreferenceChangedPtr)(event);
 }

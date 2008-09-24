@@ -3,13 +3,12 @@
 
 #include <boost/shared_ptr.hpp>
 
+#include "ImageList.h"
 #include "QuiverFile.h"
 #include "BrowserEventSource.h"
 
 class Statusbar;
 typedef boost::shared_ptr<Statusbar> StatusbarPtr;
-
-class ImageList;
 
 class Browser : public virtual BrowserEventSource
 {
@@ -19,9 +18,9 @@ public:
 	
 	GtkWidget* GetWidget();
 	
-	ImageList GetImageList();
+	ImageListPtr GetImageList();
 	
-	void SetImageList(ImageList list);
+	void SetImageList(ImageListPtr list);
 	
 	void SetUIManager(GtkUIManager *ui_manager);
 	void SetStatusbar(StatusbarPtr statusbarPtr);
@@ -37,5 +36,6 @@ private:
 	boost::shared_ptr<BrowserImpl> m_BrowserImplPtr;
 };
 
+typedef boost::shared_ptr<Browser> BrowserPtr;
 
 #endif

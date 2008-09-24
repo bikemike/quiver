@@ -13,7 +13,7 @@ void BookmarksEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 void BookmarksEventSource::EmitBookmarkChangedEvent(BookmarksEvent::BookmarksEventType type)
 {
-	BookmarksEventPtr event( new BookmarksEvent(this,type) );
+	BookmarksEventPtr event( new BookmarksEvent(shared_from_this(),type) );
 	(*m_sigBookmarkChangedPtr)(event);
 }
 

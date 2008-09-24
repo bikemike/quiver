@@ -22,6 +22,7 @@
 #include "MD5.h"
 
 #include <map>
+#include <cmath>
 
 #include <libquiver/quiver-pixbuf-utils.h>
 
@@ -33,7 +34,7 @@ static void thread_save_thumbnail(gpointer data, gpointer user_data);
 typedef struct _ThumbnailSize
 {
 	int size;
-	char* name;
+	const char* name;
 } ThumbnailSize;
 
 ThumbnailSize ThumbnailSizes[] =
@@ -483,34 +484,54 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 					save_thumbnail_to_cache = FALSE;
 				}
 			}
-			
-			// if we didn't get the width and height we should resave thumbnail
-			// with this information 
-			if (NULL == str_thumb_width || NULL == str_thumb_height)
+
+			if (NULL != thumb_pixbuf)
 			{
-				save_thumbnail_to_cache = TRUE;
-			}
-			else 
-			{
-				int new_width  = atol(str_thumb_width);
-				int new_height = atol(str_thumb_height);
-				
-				if (NULL != str_thumb_software && 0 == strcmp("GNOME::ThumbnailFactory",str_thumb_software))
+				// if we didn't get the width and height we should resave thumbnail
+				// with this information 
+				if (NULL == str_thumb_width || NULL == str_thumb_height)
 				{
-					// this is to work around a bug with the gnome thumbnail factory
-					// not saving the correct width/height to the thumbnails
 					save_thumbnail_to_cache = TRUE;
 				}
-				else if (-1 == m_iWidth || -1 == m_iHeight)
+				else 
 				{
-					if (0 < new_width && 0 < new_height)
+					int img_width  = atol(str_thumb_width);
+					int img_height = atol(str_thumb_height);
+
+					guint thumb_width  = gdk_pixbuf_get_width(thumb_pixbuf);
+					guint thumb_height = gdk_pixbuf_get_height(thumb_pixbuf);
+					// resize it to the proper size
+					// check the ratio of the exif thumbnail
+					double thumb_ratio = thumb_width / (double)thumb_height;
+					double actual_ratio = img_width / (double)img_height;
+
+					if (0.01 <  std::abs(actual_ratio - thumb_ratio))
 					{
-						m_iWidth =  new_width;
-						m_iHeight = new_height;
+						// looks like the thumbnail is not in 
+						// the correct orientation so regenerate it
+						g_object_unref(thumb_pixbuf);
+						thumb_pixbuf = NULL;
 					}
 					else
 					{
-						save_thumbnail_to_cache = TRUE;	
+						if (NULL != str_thumb_software && 0 == strcmp("GNOME::ThumbnailFactory",str_thumb_software))
+						{
+							// this is to work around a bug with the gnome thumbnail factory
+							// not saving the correct width/height to the thumbnails
+							save_thumbnail_to_cache = TRUE;
+						}
+						else if (-1 == m_iWidth || -1 == m_iHeight)
+						{
+							if (0 < img_width && 0 < img_height)
+							{
+								m_iWidth =  img_width;
+								m_iHeight = img_height;
+							}
+							else
+							{
+								save_thumbnail_to_cache = TRUE;	
+							}
+						}
 					}
 				}
 			}
@@ -644,7 +665,6 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 
 	g_free(base_thumb_dir);
 		
-	// FIXME: maybe this should be in a low priority thread?
 	// save the thumbnail to the cache directory (~/.thumbnails)
 	if (NULL != thumb_pixbuf && save_thumbnail_to_cache && vfsFileInfo)
 	{
@@ -835,7 +855,8 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT()
 			char szDate[20];
 			exif_entry_get_value(pEntry,szDate,20);
 
-			tm tm_exif_time;
+			struct tm tm_exif_time = {0};
+
 			int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
 				&tm_exif_time.tm_year,
 				&tm_exif_time.tm_mon,
@@ -843,12 +864,15 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT()
 				&tm_exif_time.tm_hour,
 				&tm_exif_time.tm_min,
 				&tm_exif_time.tm_sec);
+
 			tm_exif_time.tm_year -= 1900;
 			tm_exif_time.tm_mon -= 1;
+			tm_exif_time.tm_isdst = -1;
+
 			if (6 == num_substs)
 			{
 				// successfully parsed date
-				date = timelocal(&tm_exif_time);
+				date = mktime(&tm_exif_time);
 			}
 			
 		}
@@ -1101,6 +1125,16 @@ unsigned long long QuiverFile::GetFileSize()
 		gnome_vfs_file_info_unref(info);
 	}
 	return size;
+}
+
+std::string QuiverFile::GetFileName() const
+{
+	std::string s;
+	GnomeVFSURI* vfsuri = gnome_vfs_uri_new(m_QuiverFilePtr->m_szURI);
+	gchar* shortname = gnome_vfs_uri_extract_short_name(vfsuri);
+	s = shortname;
+	g_free(shortname);
+	return s;
 }
 
 std::string QuiverFile::GetFilePath() const

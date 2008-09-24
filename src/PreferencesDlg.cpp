@@ -58,6 +58,8 @@ public:
 	GtkToggleButton*       m_pToggleGIFAnimation;
 	GtkToggleButton*       m_pToggleSlideShowTransition;
 	GtkToggleButton*       m_pToggleSlideShowHideFilmStrip;
+	GtkToggleButton*       m_pToggleSlideShowRotateToMaximize;
+	GtkToggleButton*       m_pToggleSlideShowRandomOrder;
 	
 	GtkRange*              m_pRangeSlideDuration;
 	GtkRange*              m_pRangeFilmstripSize;
@@ -184,7 +186,11 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		m_pToggleSlideShowTransition     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_transition") );
 		m_pToggleSlideShowHideFilmStrip  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_hide_filmstrip") );
 		
-		m_pToggleGIFAnimation    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_enable_gif_anim") );
+		m_pToggleGIFAnimation      = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_enable_gif_anim") );
+
+		m_pToggleSlideShowRotateToMaximize  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_rotate_to_maximize") );
+
+		m_pToggleSlideShowRandomOrder  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_random_order") );
 		
 		
 		m_pRangeSlideDuration    = GTK_RANGE        ( glade_xml_get_widget (m_pGladeXML, "hscale_slideshow_duration") );
@@ -215,6 +221,8 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 			NULL != m_pToggleSlideShowTransition && 
 			NULL != m_pToggleSlideShowHideFilmStrip && 
 			NULL != m_pToggleGIFAnimation && 
+			NULL != m_pToggleSlideShowRotateToMaximize && 
+			NULL != m_pToggleSlideShowRandomOrder && 
 			NULL != m_pRangeSlideDuration && 
 			NULL != m_pRangeFilmstripSize && 
 			NULL != m_pClrBtnBrowser && 
@@ -261,6 +269,12 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 
 		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, true);
 		gtk_toggle_button_set_active(m_pToggleSlideShowHideFilmStrip, bValue);	
+
+		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_ROTATE_FOR_BEST_FIT, false);
+		gtk_toggle_button_set_active(m_pToggleSlideShowRotateToMaximize, bValue);
+
+		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_RANDOM_ORDER, false);
+		gtk_toggle_button_set_active(m_pToggleSlideShowRandomOrder, bValue);
 
 		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE, false);
 		gtk_toggle_button_set_active(m_pToggleViewerHideScrollbars, bValue);
@@ -415,6 +429,12 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 
 		g_signal_connect(m_pToggleSlideShowLoop,
 			"toggled",(GCallback)on_toggled,this);	
+
+		g_signal_connect(m_pToggleSlideShowRotateToMaximize,
+			"toggled",(GCallback)on_toggled,this);	
+
+		g_signal_connect(m_pToggleSlideShowRandomOrder,
+			"toggled",(GCallback)on_toggled,this);	
 		
 		g_signal_connect(m_pRangeSlideDuration,
 			"value-changed",(GCallback)on_value_changed,this);
@@ -480,6 +500,16 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	{
 		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
 		prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_START_FULLSCREEN, bool(bBool));
+	}
+	else if (priv->m_pToggleSlideShowRotateToMaximize == togglebutton)
+	{
+		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_ROTATE_FOR_BEST_FIT, bool(bBool));
+	}
+	else if (priv->m_pToggleSlideShowRandomOrder == togglebutton)
+	{
+		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_RANDOM_ORDER, bool(bBool));
 	}
 }
 

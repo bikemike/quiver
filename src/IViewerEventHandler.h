@@ -7,6 +7,7 @@
 class IViewerEventHandler : public IEventHandler
 {
 public:
+	virtual void HandleItemClicked(ViewerEventPtr event) = 0;
 	virtual void HandleItemActivated(ViewerEventPtr event) = 0;
 	virtual void HandleCursorChanged(ViewerEventPtr event) = 0;
 	virtual void HandleSlideShowStarted(ViewerEventPtr event) = 0;
