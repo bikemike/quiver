@@ -15,6 +15,7 @@
 #include <glib/gstdio.h>
 
 #include <string>
+#include <string.h>
 
 #include "QuiverFile.h"
 #include "Timer.h"

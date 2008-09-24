@@ -2,6 +2,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <string.h>
 
 ImageSaveManagerPtr ImageSaveManager::c_pImageSaveManagerPtr;
 

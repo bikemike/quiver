@@ -4,6 +4,7 @@
 #include "QuiverUtils.h"
 #include <libgnomevfs/gnome-vfs.h>
 #include <libquiver/quiver-pixbuf-utils.h>
+#include <string.h>
 
 using namespace std;
 

@@ -48,6 +48,7 @@ documentation and/or software.
 #include "MD5.h"
 
 #include <assert.h>
+#include <string.h>
 #include <strings.h>
 #include <iostream>
 
