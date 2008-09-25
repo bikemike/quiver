@@ -9,7 +9,13 @@
 
 #include <libgnomevfs/gnome-vfs.h>
 
-
+#ifdef QUIVER_MAEMO
+#ifdef HAVE_HILDON_FM_2
+#include <hildon/hildon-file-chooser-dialog.h>
+#else
+#include <hildon-widgets/hildon-file-chooser-dialog.h>
+#endif
+#endif
 
 class OrganizeDlg::OrganizeDlgPriv
 {
