@@ -315,7 +315,6 @@ static const char *ui_browser =
 "	</popup>"
 #ifdef QUIVER_MAEMO
 "	<accelerator action='"ACTION_BROWSER_ZOOM_IN_MAEMO"'/>"
-"	<separator/>"
 "	<accelerator action='"ACTION_BROWSER_ZOOM_OUT_MAEMO"'/>"
 #endif
 "</ui>";
@@ -733,7 +732,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	g_signal_connect(G_OBJECT(m_pImageView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);
 	g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
 #ifdef QUIVER_MAEMO
-	g_signal_connect (G_OBJECT (m_pImageView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), NULL);
+	g_signal_connect (G_OBJECT (m_pImageView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), this);
 	gtk_widget_tap_and_hold_setup (m_pImageView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
 #endif
 
@@ -761,7 +760,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	g_signal_connect(G_OBJECT(m_pIconView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
 	g_signal_connect(G_OBJECT(m_pIconView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);	
 #ifdef QUIVER_MAEMO
-	g_signal_connect (G_OBJECT (m_pIconView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), NULL);
+	g_signal_connect (G_OBJECT (m_pIconView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), this);
 	gtk_widget_tap_and_hold_setup (m_pIconView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
 #endif
 	
