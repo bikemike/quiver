@@ -818,8 +818,6 @@ void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive
 								{
 									
 									pair<PathMonitorMap::iterator,bool> p;
-									p.first->second = NULL;
-									p.second = false;
 	
 									p = m_mapFiles.insert(PathMonitorPair(strURI.c_str(),NULL)); 
 									bAdded = p.second;
@@ -947,7 +945,6 @@ bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */
 {
 	bool bAdded = false;
 	pair<PathMonitorMap::iterator,bool> p;
-	p.second = false;
 	p = m_mapDirs.insert(PathMonitorPair(uri,NULL));
 	bAdded = p.second;
 

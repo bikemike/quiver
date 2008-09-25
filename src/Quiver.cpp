@@ -2749,91 +2749,99 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (g_str_has_prefix(szAction,"ExternalTool_"))
 	{
+		const gchar* strid = szAction + strlen("ExternalTool_");
+		int id;
+
+		stringstream ss;
+		ss << strid;
+		ss >> id;
+
 		// run external tool
-		PreferencesPtr prefs = Preferences::GetInstance();
-		
-		string command = prefs->GetString(szAction,"command");
-		
-		bool run_multiple_commands = prefs->GetBoolean(szAction,"run_multiple_commands");
-		bool supports_multiple_files = prefs->GetBoolean(szAction,"supports_multiple_files");
-		bool bInViewer = (0 != pQuiverImpl->m_iMergedViewerUI);
-				
-		list<unsigned int> selection = pQuiverImpl->m_BrowserPtr->GetSelection();
-		
-		list<string> files;
-		
-		if (bInViewer || 1 == selection.size())
+		const ExternalTool* extTool = pQuiverImpl->m_ExternalToolsPtr->GetExternalTool( id );
+
+		if (NULL != extTool)
 		{
-			QuiverFile f;
-			if (bInViewer)
-				f = pQuiverImpl->m_ImageListPtr->GetCurrent();
+
+			list<unsigned int> selection = pQuiverImpl->m_BrowserPtr->GetSelection();
+			list<string> files;
+
+			bool bInViewer = (0 != pQuiverImpl->m_iMergedViewerUI);
+			if (bInViewer || 1 == selection.size())
+			{
+				QuiverFile f;
+				if (bInViewer)
+					f = pQuiverImpl->m_ImageListPtr->GetCurrent();
+				else
+					f = (*pQuiverImpl->m_ImageListPtr)[selection.front()];
+				
+				string file, directory;
+
+				file = f.GetFilePath();
+				files.push_back(file);
+			}
+			else if (1 < selection.size())
+			{
+				list<unsigned int>::iterator itr;
+				for (itr = selection.begin(); selection.end() != itr; ++itr)
+				{
+					files.push_back((*pQuiverImpl->m_ImageListPtr)[*itr].GetFilePath());
+				}
+			}
+			
+			list<string> commands;
+
+			if (extTool->GetSupportsMultiple())
+			{
+				string str_files;
+				string str_dirs;
+
+				list<string>::iterator itr;
+				for (itr = files.begin(); files.end() != itr; ++itr)
+				{
+					str_files += "\"" + *itr + "\" "; 
+				}
+
+				for (itr = files.begin(); files.end() != itr; ++itr)
+				{
+					gchar *szDir = g_path_get_dirname ((*itr).c_str());
+					str_dirs += "\"" + string(szDir) + "\" "; 
+					g_free(szDir);
+				}
+				string cmd = extTool->GetCmd();
+				boost::replace_all(cmd,"%f", str_files);
+				boost::replace_all(cmd,"%d", str_dirs);
+
+				commands.push_back(cmd);
+			}
 			else
-				f = (*pQuiverImpl->m_ImageListPtr)[selection.front()];
-			
-			string file, directory;
-
-			file = f.GetFilePath();
-			files.push_back(file);
-		}
-		else if (1 < selection.size())
-		{
-			list<unsigned int>::iterator itr;
-			for (itr = selection.begin(); selection.end() != itr; ++itr)
 			{
-				files.push_back((*pQuiverImpl->m_ImageListPtr)[*itr].GetFilePath());
+				list<string>::iterator itr;
+				for (itr = files.begin(); files.end() != itr; ++itr)
+				{
+					string file, directory, cmd;
+					file = *itr;
+					cmd = extTool->GetCmd();
+					
+					gchar *szDir = g_path_get_dirname (file.c_str());
+					directory = szDir;
+					g_free(szDir);
+					
+					boost::replace_all(cmd,"%f", "\"" + file + "\"");
+					boost::replace_all(cmd,"%d", "\"" + directory + "\"");
+					
+					commands.push_back(cmd);			
+				}
 			}
-			printf("run for many files\n");
-		}
-		
-		list<string> commands;
 
-		if ((supports_multiple_files && run_multiple_commands) || 1 == files.size())
-		{
 			list<string>::iterator itr;
-			for (itr = files.begin(); files.end() != itr; ++itr)
+			for (itr = commands.begin(); commands.end() != itr; ++itr)
 			{
-				string file, directory, cmd;
-				file = *itr;
-				cmd = command;
-				
-				gchar *szDir = g_path_get_dirname (file.c_str());
-				directory = szDir;
-				g_free(szDir);
-				
-				boost::replace_all(cmd,"%f", "\"" + file + "\"");
-				boost::replace_all(cmd,"%d", "\"" + directory + "\"");
-				
-				commands.push_back(cmd);			
+				string cmd = *itr; 
+				printf("Running external command: %s\n", cmd.c_str());
+				GError *error = NULL;
+				g_spawn_command_line_async (cmd.c_str(), &error);
 			}
-			
 		}
-		else if (supports_multiple_files)
-		{
-			string str_files;
-			list<string>::iterator itr;
-			for (itr = files.begin(); files.end() != itr; ++itr)
-			{
-				str_files += "\"" + *itr + "\" "; 
-			}
-			string cmd = command;
-			boost::replace_all(cmd,"%f", str_files);
-
-			commands.push_back(cmd);
-		}
-		else
-		{
-			printf("command does not support %d files\n", files.size());
-		}
-
-		list<string>::iterator itr;
-		for (itr = commands.begin(); commands.end() != itr; ++itr)
-		{
-			string cmd = *itr; 
-			printf("Running external command: %s\n", cmd.c_str());
-			GError *error = NULL;
-			g_spawn_command_line_async (cmd.c_str(), &error);
-		}
-
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_EXTERNAL_TOOLS))
 	{
