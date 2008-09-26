@@ -19,6 +19,7 @@ class TaskManagerDlg::TaskManagerDlgPriv
 public:
 	TaskManagerDlg* m_pParent;
 	GtkWidget* m_pWidget;
+	TaskManagerPtr m_TaskMgrPtr;
 
 	class TaskProgressGUI
 	{
@@ -326,7 +327,7 @@ public:
 
 public:
 	TaskManagerDlgPriv(TaskManagerDlg* parent, GtkWindow* parent_window) :
-		m_pParent(parent)
+		m_pParent(parent), m_TaskMgrPtr(TaskManager::GetInstance())
 	{
 		m_pWidget = gtk_dialog_new();
 		gtk_dialog_set_has_separator(GTK_DIALOG(m_pWidget),FALSE);
@@ -422,14 +423,12 @@ public:
 TaskManagerDlg::TaskManagerDlg(GtkWindow* parent)
 	: m_PrivPtr(new TaskManagerDlg::TaskManagerDlgPriv(this, parent))
 {
-	TaskManagerPtr mgrPtr = TaskManager::GetInstance();
-	mgrPtr->AddEventHandler(m_PrivPtr);
+	m_PrivPtr->m_TaskMgrPtr->AddEventHandler(m_PrivPtr);
 }
 
 TaskManagerDlg::~TaskManagerDlg()
 {
-	TaskManagerPtr mgrPtr = TaskManager::GetInstance();
-	mgrPtr->RemoveEventHandler(m_PrivPtr);
+	m_PrivPtr->m_TaskMgrPtr->RemoveEventHandler(m_PrivPtr);
 }
 
 void TaskManagerDlg::Create(GtkWindow* parent)
