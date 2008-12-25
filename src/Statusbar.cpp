@@ -289,7 +289,7 @@ void Statusbar::SetDateTime(time_t time)
 {
 	char sz_time[64];
 	struct tm tm_time;
-	tm_time = *localtime(&time);
+	localtime_r(&time, &tm_time);
 
     // Format and print the time, "ddd yyyy-mm-dd hh:mm:ss"
     strftime(sz_time, sizeof(sz_time), "%Y-%m-%d %H:%M:%S", &tm_time);

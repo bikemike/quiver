@@ -44,6 +44,9 @@
 #include "OrganizeDlg.h"
 #include "OrganizeTask.h"
 
+#include "RenameDlg.h"
+#include "RenameTask.h"
+
 #include "Bookmarks.h"
 #include "BookmarksDlg.h"
 #include "BookmarkAddEditDlg.h"
@@ -540,6 +543,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_EXTERNAL_TOOLS                         "ExternalTools"
 #define ACTION_QUIVER_ADJUST_DATE                            "AdjustDate"
 #define ACTION_QUIVER_ORGANIZE                               "Organize"
+#define ACTION_QUIVER_RENAME                                 "Rename"
 #define ACTION_QUIVER_DONATE                                 "Donate"
 #define ACTION_QUIVER_ABOUT                                  "About"
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
@@ -633,6 +637,7 @@ static const char * quiver_ui_main =
 "		</menu>"
 "		<menu action='MenuTools'>"
 "			<menuitem action='"ACTION_QUIVER_ADJUST_DATE"'/>"
+"			<menuitem action='"ACTION_QUIVER_RENAME"'/>"
 "			<menuitem action='"ACTION_QUIVER_ORGANIZE"'/>"
 "			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
 "			<separator/>"
@@ -806,8 +811,9 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ ACTION_QUIVER_BOOKMARKS_ADD, QUIVER_STOCK_ADD, "_Add Bookmark", "<Control>d", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_BOOKMARKS_EDIT, QUIVER_STOCK_EDIT, "_Edit Bookmarks...", "<Control>b", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
 
-	{ ACTION_QUIVER_ORGANIZE, QUIVER_STOCK_EDIT, "Organize...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_ADJUST_DATE, QUIVER_STOCK_EDIT, "Adjust Date...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_RENAME, QUIVER_STOCK_EDIT, "Rename...", "", "Rename image(s)", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_ORGANIZE, QUIVER_STOCK_EDIT, "Organize...", "", "Organize photos", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_ADJUST_DATE, QUIVER_STOCK_EDIT, "Adjust Date...", "", "Adjust Exif Dates", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_EXTERNAL_TOOLS, QUIVER_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
 
 	{ ACTION_QUIVER_DONATE, "", "_Donate...", "", "Help support quiver by donating...", G_CALLBACK( quiver_action_handler_cb )},
@@ -1027,7 +1033,7 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
 	gboolean bFullscreen = FALSE;
-	//cout << "window state event" << endl;
+	cout << "window state event" << endl;
 	pQuiverImpl->m_WindowState = event->new_window_state;
 	//cout << event->new_window_state << " FS: " << GDK_WINDOW_STATE_FULLSCREEN <<endl;
 	//
@@ -2662,6 +2668,32 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		bool bDec = ( TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_REVERSED,bDec);
 	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
+	{
+		RenameDlg dlg;
+		if (dlg.Run())
+		{
+			// organize pictures dialog
+			RenameTaskPtr renameTaskPtr(new RenameTask());
+			renameTaskPtr->SetInputFolder( dlg.GetInputFolder() );
+			renameTaskPtr->SetOutputFolder( dlg.GetOutputFolder() );
+			renameTaskPtr->SetTemplate( dlg.GetTemplate() );
+			renameTaskPtr->SetIncludeSubfolders( dlg.GetIncludeSubfolders() );
+
+			/*
+			std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
+			std::list<unsigned int>::iterator itr;
+			for (itr = items.begin(); items.end() != itr; ++itr)
+			{
+				QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[*itr];
+				renameTaskPtr->AddFile(f);	
+			}				
+			*/
+
+			TaskManager::GetInstance()->AddTask(renameTaskPtr);
+		}
+
+	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_ORGANIZE))
 	{
 		OrganizeDlg dlg;
@@ -2676,6 +2708,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			organizeTaskPtr->SetDayExtension( dlg.GetDayExtention() );
 			organizeTaskPtr->SetIncludeSubfolders( dlg.GetIncludeSubfolders() );
 
+			/*
 			std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
 			std::list<unsigned int>::iterator itr;
 			for (itr = items.begin(); items.end() != itr; ++itr)
@@ -2683,6 +2716,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 				QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[*itr];
 				organizeTaskPtr->AddFile(f);	
 			}				
+			*/
 
 			TaskManager::GetInstance()->AddTask(organizeTaskPtr);
 		}
