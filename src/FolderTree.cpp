@@ -1751,7 +1751,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 				FILE_TREE_COLUMN_URI,uri,
 				-1);
 				
-		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(iter1),(gpointer)iNodeOrder++);
+		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 
 		free(icon_name);
 		g_free(uri);
@@ -1786,7 +1786,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
             FILE_TREE_COLUMN_URI,home_uri,
             -1);
 
-	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(iter1),(gpointer)iNodeOrder++);
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 	free(icon_name);
 
 
@@ -1802,7 +1802,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
             FILE_TREE_COLUMN_URI,documents_uri,
             -1);
             
-	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(iter1),(gpointer)iNodeOrder++);
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 
 	free(icon_name);
 
@@ -1820,7 +1820,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 	free(icon_name);
 
-	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(iter1),(gpointer)iNodeOrder++);
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 
 #endif
 
@@ -1849,7 +1849,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 				
 		free(icon2);
 
-		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(iter1),(gpointer)iNodeOrder++);
+		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 	}
 	gnome_vfs_volume_unref(volume);
 #endif

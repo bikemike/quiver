@@ -268,6 +268,7 @@ void AdjustDateTask::Run()
 						&tm_exif_time.tm_sec);
 					tm_exif_time.tm_year -= 1900;
 					tm_exif_time.tm_mon -= 1;
+					tm_exif_time.tm_isdst = -1;
 					if (6 == num_substs)
 					{
 						tm_exif_time.tm_year += m_iAdjYears;
