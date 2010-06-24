@@ -1,6 +1,24 @@
 ##test
 SUBDIRS = icons
 
+AM_CFLAGS = \
+	-I$(top_srcdir) \
+	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
+	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
+	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
+	-DQUIVER_GLADEDIR=\""$(gladedir)"\" \
+	$(PACKAGE_CFLAGS) \
+	$(HILDON_LIBS_CFLAGS) \
+	$(HILDON_1_CFLAGS) \
+	$(HILDON_FM_CFLAGS) \
+	$(HILDON_FM_2_CFLAGS) \
+	$(OSSO_MIME_CFLAGS) \
+	$(HILDON_MIME_CFLAGS) \
+	$(LIBEXIF_CFLAGS) \
+	$(LIBGLADE_CFLAGS) \
+	$(CAIRO_CFLAGS) \
+	-Wall 
+
 AM_CPPFLAGS = \
 	-I$(top_srcdir) \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \

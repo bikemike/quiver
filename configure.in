@@ -4,23 +4,29 @@ dnl Created by Anjuta application wizard.
 AC_INIT([quiver], [0.2.0], [http://mike.yi.org/quiver])
 AC_CONFIG_SRCDIR([src/Quiver.cpp])
 
-AM_INIT_AUTOMAKE
+AM_INIT_AUTOMAKE([subdir-objects]) 
+
+AC_LANG_PUSH([C++])
+AC_CHECK_HEADER([ext/hash_map],[AC_DEFINE([HAVE_EXT],[],["have ext"])],[]) 
+AC_CHECK_HEADER([tr1/unordered_map],[AC_DEFINE([HAVE_TR1],[],["have tr1"])],[]) 
+AC_CHECK_HEADER([unordered_map],[AC_DEFINE([HAVE_CXX0X],[],["have cxx0x"])],[]) 
+AC_LANG_POP([C++])
 
 AM_CONFIG_HEADER([config.h])
 AC_PROG_LIBTOOL
 dnl AM_MAINTAINER_MODE
 
+
 AC_ISC_POSIX
 AC_PROG_CC
-AM_PROG_CC_STDC
 AC_HEADER_STDC
-
 
 AC_CHECK_FUNCS([gettimeofday])
 AC_CHECK_HEADERS([sys/time.h])
 
 AC_CHECK_HEADER([jpeglib.h],, [AC_MSG_ERROR([Could not find jpeglib.h])])
 AC_CHECK_HEADER([pthread.h],, [AC_MSG_ERROR([Could not find pthread.h])])
+
 
 AC_C_CONST
 AC_HEADER_STDBOOL

@@ -14,10 +14,19 @@ extern "C"
 }
 
 // comment this define out if __gnu_cxx is not available
-#define USE_EXT
-
-#ifdef USE_EXT
-
+#ifdef HAVE_CXX0X
+#include <unordered_map>
+#include <unordered_set>
+typedef std::unordered_map<std::string,GnomeVFSMonitorHandle*> PathMonitorMap;
+typedef std::unordered_set<std::string> StringSet;
+typedef std::unordered_map<std::string,GnomeVFSMonitorEventType> PathChangedMap; 
+#elif defined(HAVE_TR1)
+#include <tr1/unordered_map>
+#include <tr1/unordered_set>
+typedef std::tr1::unordered_map<std::string,GnomeVFSMonitorHandle*> PathMonitorMap;
+typedef std::tr1::unordered_set<std::string> StringSet;
+typedef std::tr1::unordered_map<std::string,GnomeVFSMonitorEventType> PathChangedMap; 
+#elif defined(HAVE_EXT)
 #include <ext/hash_map>
 #include <ext/hash_set>
 
@@ -32,17 +41,17 @@ namespace __gnu_cxx {
 	};
 }
 #endif
-
 typedef __gnu_cxx::hash_map<std::string,GnomeVFSMonitorHandle*> PathMonitorMap;
 typedef __gnu_cxx::hash_set<std::string> StringSet;
 typedef __gnu_cxx::hash_map<std::string,GnomeVFSMonitorEventType> PathChangedMap; 
-
 #else
 
 #include <map>
+#include <set>
 
 typedef std::map<std::string,GnomeVFSMonitorHandle*> PathMonitorMap;
 typedef std::set<std::string> StringSet;
+typedef std::map<std::string,GnomeVFSMonitorEventType> PathChangedMap; 
 
 #endif
 
@@ -428,7 +437,7 @@ void ImageList::Clear()
 	
 	bIsEmpty = (0 == m_ImageListImplPtr->m_mapDirs.size() && 0 == m_ImageListImplPtr->m_mapFiles.size());
 	
-	if (bWasEmpty && !bIsEmpty || !bWasEmpty && bIsEmpty)
+	if ( bWasEmpty != bIsEmpty )
 	{ 
 		EmitContentsChangedEvent();
 	}

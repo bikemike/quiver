@@ -1147,7 +1147,7 @@ static void
 exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o)
 {
 	unsigned int i;
-	char *value_p;
+	const char *value_p;
 
 	/*
 	 * ASCII strings are handled separately,
@@ -1172,7 +1172,7 @@ exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o)
 		return;
 	}
 
-	value_p = (char*) set_value;
+	value_p = set_value;
 	for (i = 0; i < e->components; i++) 
 	{
 		const char *begin, *end;

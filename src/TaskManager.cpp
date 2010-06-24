@@ -1,5 +1,7 @@
 #include "TaskManager.h"
 
+#include <stdio.h>
+
 TaskManagerPtr TaskManager::c_pTaskManagerPtr;
 
 TaskManager::TaskManager()

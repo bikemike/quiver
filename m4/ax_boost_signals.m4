@@ -66,7 +66,7 @@ AC_DEFUN([AX_BOOST_SIGNALS],
 		])
 		if test "x$ax_cv_boost_signals" = "xyes"; then
 			AC_DEFINE(HAVE_BOOST_SIGNALS,,[define if the Boost::Signals library is available])
-			BN=boost_signals
+			BN=boost_signals-mt
             if test "x$ax_boost_user_signals_lib" = "x"; then
 				for ax_lib in $BN $BN-$CC $BN-$CC-mt $BN-$CC-mt-s $BN-$CC-s \
                               lib$BN lib$BN-$CC lib$BN-$CC-mt lib$BN-$CC-mt-s lib$BN-$CC-s \

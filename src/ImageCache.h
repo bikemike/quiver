@@ -16,8 +16,13 @@ typedef struct _CacheItem
 } CacheItem;
 
 // comment this define out if __gnu_cxx is not available
-#define USE_EXT
-#ifdef USE_EXT
+#ifdef HAVE_CXX0X
+#include <unordered_map>
+typedef std::unordered_map<std::string,CacheItem>  ImageCacheMap;
+#elif defined(HAVE_TR1)
+#include <tr1/unordered_map>
+typedef std::tr1::unordered_map<std::string,CacheItem>  ImageCacheMap;
+#elif defined(HAVE_EXT)
 #include <ext/hash_map>
 #ifndef QUIVER_STRING_HASH
 #define QUIVER_STRING_HASH
