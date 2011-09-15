@@ -24,7 +24,7 @@ Preferences::~Preferences()
 	if (m_bModified)
 	{
 		GError *error = NULL;
-		guint clength;
+		gsize clength;
 		gchar *contents = g_key_file_to_data (m_KeyFile, &clength, &error);
 	
 		error = NULL;

@@ -367,7 +367,7 @@ list<unsigned int> Browser::GetSelection()
 	GList *item = selection;
 	while (NULL != item)
 	{
-		selection_list.push_back((int)item->data);
+		selection_list.push_back(*(int*)item->data);
 		item = g_list_next(item);
 	}
 	g_list_free(selection);
@@ -1491,7 +1491,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 
 			while (NULL != sel_itr)
 			{
-				int item = (int)sel_itr->data;
+				int item = *(int*)sel_itr->data;
 				QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
 				if (!strClipText.empty())
 				{
@@ -1528,7 +1528,7 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 			
 			while (NULL != sel_itr)
 			{
-				items.insert((int)sel_itr->data);
+				items.insert(*(int*)sel_itr->data);
 				sel_itr = g_list_next(sel_itr);
 			}
 			g_list_free(selection);

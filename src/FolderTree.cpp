@@ -1985,8 +1985,8 @@ static gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpoin
 
 	if (!gtk_tree_model_iter_parent(model,&parent,a) || use_default_order)
 	{
-		int a_int = (int)g_hash_table_lookup(pFolderTreeImpl->m_pHashRootNodeOrder, a);
-		int b_int = (int)g_hash_table_lookup(pFolderTreeImpl->m_pHashRootNodeOrder, b);
+		int a_int = *(int*)g_hash_table_lookup(pFolderTreeImpl->m_pHashRootNodeOrder, a);
+		int b_int = *(int*)g_hash_table_lookup(pFolderTreeImpl->m_pHashRootNodeOrder, b);
 
 		rval = a_int - b_int;
 	}
