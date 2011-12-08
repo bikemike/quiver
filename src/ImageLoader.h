@@ -52,6 +52,8 @@ public:
 	void CacheImageAtSize(QuiverFile, int width, int height);
 	
 	void ReCacheImage(QuiverFile);
+
+	GdkPixbuf* GetCachedPixbuf(QuiverFile f);
 	
 	// thread functions
 	static void* run(void *data);
@@ -77,6 +79,8 @@ private:
 	pthread_cond_t m_Condition;
 	pthread_mutex_t m_ConditionMutex;
 	pthread_mutex_t m_CommandMutex;
+
+	GMutex* m_csObservers;
 		
 	std::list<IPixbufLoaderObserver*> m_observers;
 

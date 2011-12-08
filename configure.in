@@ -51,18 +51,16 @@ AM_GLIB_GNU_GETTEXT
 
 AC_PROG_INTLTOOL([0.21])
 
-QUIVER_MODULES="gtk+-2.0  gnome-vfs-2.0"
-
-PKG_CHECK_MODULES([LIBGLADE], 
-	[libglade-2.0],
-	[AC_DEFINE([HAVE_LIBGLADE],[1],[libglade-2.0 is available])],
-	[have_libglade=no])
+QUIVER_MODULES="gtk+-2.0 gio-2.0"
 
 PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 
 PKG_CHECK_MODULES([CAIRO], [cairo],
 	[AC_DEFINE([HAVE_CAIRO],[1],[cairo is available])],
 	[have_cairo=no])
+
+PKG_CHECK_MODULES([GSTREAMER], [gstreamer-0.10 gstreamer-plugins-base-0.10 gstreamer-video-0.10 gstreamer-app-0.10 gstreamer-interfaces-0.10])
+
 
 AC_ARG_WITH(
 	[build_config], 
@@ -116,7 +114,7 @@ if test x$build_config = xmaemo; then
 		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/x86/libexif.a
 	fi
 else
-	QUIVER_MODULES="$QUIVER_MODULES libgnomeui-2.0"
+	QUIVER_MODULES="$QUIVER_MODULES"
 fi
 
 AC_SUBST([PACKAGE_CFLAGS])
@@ -135,16 +133,19 @@ AC_SUBST([PACKAGE_LIBS])
 AC_SUBST([LIBEXIF_CFLAGS])
 AC_SUBST([LIBEXIF_LIBS])
 
-AC_ARG_WITH(
-	[glade-dir], 
-	[AS_HELP_STRING(
-		[--with-glade-dir=GLADE_DIR],
-		[where GLADE_DIR is the directory that quiver.glade lives])
-	],
-	[gladedir=$withval],
-	[gladedir=${datadir}/quiver/glade])
+AC_SUBST([GSTREAMER_CFLAGS])
+AC_SUBST([GSTREAMER_LIBS])
 
-AC_SUBST([gladedir])
+AC_ARG_WITH(
+	[data-dir], 
+	[AS_HELP_STRING(
+		[--with-data-dir=DATA_DIR],
+		[where DATA_DIR is the directory that quiver.ui lives])
+	],
+	[quiver_datadir=$withval],
+	[quiver_datadir=${datadir}/quiver/data])
+
+AC_SUBST([quiver_datadir])
 
 AC_OUTPUT([
 Makefile

@@ -23,6 +23,8 @@ quiver.desktop.in: quiver.desktop.in-desktop
 	cp ${srcdir}/quiver.desktop.in-desktop quiver.desktop.in
 endif
 
+uidir=${datadir}/quiver/data
+
 desktop_in_files = quiver.desktop.in
 desktop_DATA = $(desktop_in_files:.desktop.in=.desktop)
 @INTLTOOL_DESKTOP_RULE@
@@ -64,11 +66,11 @@ icons_64x64_DATA = \
 icons_128x128_DATA = \
 	icons/128x128/quiver-icon-app.png
 
-glade_DATA = quiver.glade
+ui_DATA = quiver.ui
 
 EXTRA_DIST = \
 	${desktop_DATA} \
-	${glade_DATA} \
+	${ui_DATA} \
 	${service_DATA} \
 	${icons_22x22_DATA} \
 	${icons_24x24_DATA} \

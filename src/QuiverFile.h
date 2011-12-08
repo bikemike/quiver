@@ -3,7 +3,9 @@
 
 
 #include <string>
-#include <libgnomevfs/gnome-vfs.h>
+
+#include <gio/gio.h>
+
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
 #include <libexif/exif-data.h>
@@ -31,7 +33,7 @@ public:
 	
 	QuiverFile();
 	QuiverFile(const gchar*  uri);
-	QuiverFile(const gchar* , GnomeVFSFileInfo *info);
+	QuiverFile(const gchar* , GFileInfo *info);
 	~QuiverFile();
 
 	const gchar* GetURI() const;
@@ -39,6 +41,8 @@ public:
 	bool HasThumbnail(int iSize = 0);
 
 	bool Modified() const;
+
+	bool IsVideo();
 
 	GdkPixbuf *GetExifThumbnail();
 	GdkPixbuf *GetThumbnail(int iSize = 0);
@@ -49,23 +53,27 @@ public:
 	bool SetExifData(ExifData* pExifData);
 	
 	const char* GetMimeType();
-	GnomeVFSFileInfo * GetFileInfo();
+	GFileInfo* GetFileInfo();
 
 	unsigned long long GetFileSize();
 	
-	GdkPixbuf *GetIcon(int width_desired,int height_desired);
-	gchar *GetIconName();
+	GdkPixbuf* GetIcon(int width_desired,int height_desired);
+	gchar* GetIconName();
 	
 	void Reload();
 	
 	std::string GetFileName() const;
 	std::string GetFilePath() const;
+
+	bool IsWidthHeightSet() const;
+
 	int GetWidth();
 	int GetHeight();
+
 	
 	int GetOrientation() ;
 	
-	time_t GetTimeT() const;
+	time_t GetTimeT(bool fromExif = true) const;
 	
 	double GetLoadTimeInSeconds() const;
 	

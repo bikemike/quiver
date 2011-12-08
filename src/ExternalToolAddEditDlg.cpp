@@ -3,10 +3,6 @@
 #include "ExternalToolAddEditDlg.h"
 #include "QuiverStockIcons.h"
 
-#ifdef HAVE_LIBGLADE
-#include <glade/glade.h>
-#endif
-
 #include <list>
 #include <vector>
 
@@ -35,9 +31,7 @@ public:
 
 // variables
 	ExternalToolAddEditDlg*     m_pExternalToolAddEditDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*         m_pGladeXML;
-#endif
+	GtkBuilder*         m_pGtkBuilder;
 	ExternalTool m_ExternalTool;
 	bool m_bCancelled;
 
@@ -76,7 +70,6 @@ GtkWidget* ExternalToolAddEditDlg::GetWidget() const
 
 void ExternalToolAddEditDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
@@ -97,7 +90,6 @@ void ExternalToolAddEditDlg::Run()
 		}
 		gtk_widget_destroy(m_PrivPtr->m_pWidget);
 	}
-#endif
 }
 
 bool ExternalToolAddEditDlg::Cancelled() const
@@ -120,36 +112,32 @@ ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ExternalToolAddEditDlgPriv(E
 	m_bCancelled = true;
 
 
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "ExternalToolAddEditDialog", NULL);
-	if (NULL != m_pGladeXML)
-	{
-		LoadWidgets();
-		UpdateUI();
-		ConnectSignals();
-	}
-#endif
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"ExternalToolAddEditDialog",
+		NULL};
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	LoadWidgets();
+	UpdateUI();
+	ConnectSignals();
 }
 
 ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::~ExternalToolAddEditDlgPriv()
 {
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
-#endif
 }
 
 
 void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 {
 
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "ExternalToolAddEditDialog");
+		m_pWidget                = GTK_WIDGET( gtk_builder_get_object (m_pGtkBuilder, "ExternalToolAddEditDialog"));
 
 		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CANCEL) );
 		m_pButtonOk              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_OK) );
@@ -164,11 +152,11 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonOk),FALSE,TRUE,5);
 		}
 
-		m_pToggleMultiple       = GTK_TOGGLE_BUTTON( glade_xml_get_widget(m_pGladeXML, "external_tools_edit_multiple"));
-		m_pEntryName             = GTK_ENTRY        ( glade_xml_get_widget(m_pGladeXML, "external_tools_edit_name"));
-		m_pEntryCmd             = GTK_ENTRY        ( glade_xml_get_widget(m_pGladeXML, "external_tools_edit_cmd"));
-		m_pEntryTooltip          = GTK_ENTRY        ( glade_xml_get_widget(m_pGladeXML, "external_tools_edit_tooltip"));
-		m_pEntryIcon             = GTK_ENTRY        ( glade_xml_get_widget(m_pGladeXML, "external_tools_edit_icon"));
+		m_pToggleMultiple       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_multiple"));
+		m_pEntryName             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_name"));
+		m_pEntryCmd             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_cmd"));
+		m_pEntryTooltip          = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_tooltip"));
+		m_pEntryIcon             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_icon"));
 
 		m_bLoadedDlg = (
 				NULL != m_pWidget && 
@@ -190,7 +178,6 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 		gtk_toggle_button_set_active(m_pToggleMultiple, m_ExternalTool.GetSupportsMultiple() ? TRUE : FALSE );
 
 	}
-#endif
 }
 
 void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::UpdateUI()

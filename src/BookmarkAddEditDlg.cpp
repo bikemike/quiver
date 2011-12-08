@@ -3,10 +3,6 @@
 #include "BookmarkAddEditDlg.h"
 #include "QuiverStockIcons.h"
 
-#ifdef HAVE_LIBGLADE
-#include <glade/glade.h>
-#endif
-
 #include <list>
 #include <vector>
 
@@ -44,9 +40,7 @@ public:
 
 // variables
 	BookmarkAddEditDlg*     m_pBookmarkAddEditDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*         m_pGladeXML;
-#endif
+	GtkBuilder*         m_pGtkBuilder;
 	Bookmark m_Bookmark;
 	vector<string> m_vectURIs;
 	bool m_bCancelled;
@@ -88,7 +82,6 @@ GtkWidget* BookmarkAddEditDlg::GetWidget() const
 
 void BookmarkAddEditDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
@@ -105,7 +98,6 @@ void BookmarkAddEditDlg::Run()
 		}
 		gtk_widget_destroy(m_PrivPtr->m_pWidget);
 	}
-#endif
 }
 
 bool BookmarkAddEditDlg::Cancelled() const
@@ -132,37 +124,35 @@ BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(Bookmark b, B
 
 	list<string> uris = m_Bookmark.GetURIs();
 	m_vectURIs = vector<string>(uris.begin(), uris.end());
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "BookmarkAddEditDialog", NULL);
-	if (NULL != m_pGladeXML)
-	{
-		LoadWidgets();
-		UpdateUI();
-		ConnectSignals();
-	}
-#endif
+
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"BookmarkAddEditDialog", 
+		NULL};
+	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+
+	LoadWidgets();
+	UpdateUI();
+	ConnectSignals();
 }
 
 BookmarkAddEditDlg::BookmarkAddEditDlgPriv::~BookmarkAddEditDlgPriv()
 {
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
-#endif
 }
 
 
 void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 {
 
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "BookmarkAddEditDialog");
-		m_pTreeViewLocations     = GTK_TREE_VIEW(     glade_xml_get_widget (m_pGladeXML, "bookmark_treeview_locations") );
+		m_pWidget                = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "BookmarkAddEditDialog"));
+		m_pTreeViewLocations     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "bookmark_treeview_locations") );
 
 		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CANCEL) );
 		m_pButtonOk              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_OK) );
@@ -203,12 +193,12 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 			gtk_tree_selection_set_mode(selection,GTK_SELECTION_MULTIPLE);
 		}
 
-		m_pButtonAdd             = GTK_BUTTON       ( glade_xml_get_widget (m_pGladeXML, "bookmark_button_add") );
-		m_pButtonRemove          = GTK_BUTTON       ( glade_xml_get_widget (m_pGladeXML, "bookmark_button_remove") );
-		m_pToggleRecursive       = GTK_TOGGLE_BUTTON( glade_xml_get_widget(m_pGladeXML, "bookmark_checkbutton_recursive"));
-		m_pEntryName             = GTK_ENTRY        ( glade_xml_get_widget(m_pGladeXML, "bookmark_entry_name"));
-		m_pEntryDescription      = GTK_ENTRY        ( glade_xml_get_widget(m_pGladeXML, "bookmark_entry_description"));
-		m_pEntryIcon             = GTK_ENTRY        ( glade_xml_get_widget(m_pGladeXML, "bookmark_entry_icon"));
+		m_pButtonAdd             = GTK_BUTTON       ( gtk_builder_get_object (m_pGtkBuilder, "bookmark_button_add") );
+		m_pButtonRemove          = GTK_BUTTON       ( gtk_builder_get_object (m_pGtkBuilder, "bookmark_button_remove") );
+		m_pToggleRecursive       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "bookmark_checkbutton_recursive"));
+		m_pEntryName             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "bookmark_entry_name"));
+		m_pEntryDescription      = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "bookmark_entry_description"));
+		m_pEntryIcon             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "bookmark_entry_icon"));
 
 		m_bLoadedDlg = (
 				NULL != m_pWidget && 
@@ -230,7 +220,6 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 		gtk_toggle_button_set_active(m_pToggleRecursive, m_Bookmark.GetRecursive() ? TRUE : FALSE );
 
 	}
-#endif
 }
 
 void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::SelectionChanged()

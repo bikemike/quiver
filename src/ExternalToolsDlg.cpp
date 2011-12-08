@@ -2,10 +2,6 @@
 
 #include "ExternalToolsDlg.h"
 
-#ifdef HAVE_LIBGLADE
-#include <glade/glade.h>
-#endif
-
 #include <list>
 #include <vector>
 
@@ -40,9 +36,7 @@ public:
 
 // variables
 	ExternalToolsDlg*     m_pExternalToolsDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*         m_pGladeXML;
-#endif
+	GtkBuilder*         m_pGtkBuilder;
 	ExternalToolsPtr      m_ExternalToolsPtr;
 
 	bool m_bLoadedDlg;
@@ -85,13 +79,11 @@ GtkWidget* ExternalToolsDlg::GetWidget()
 
 void ExternalToolsDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
 		gtk_widget_destroy(m_PrivPtr->m_pWidget);
 	}
-#endif
 }
 
 // private stuff
@@ -111,38 +103,34 @@ ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *p
 	m_ExternalToolsPtr->AddEventHandler(m_ExternalToolsEventHandler);
 	m_bLoadedDlg = false;
 
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "ExternalToolsDialog", NULL);
-	if (NULL != m_pGladeXML)
-	{
-		LoadWidgets();
-		UpdateUI();
-		ConnectSignals();
-	}
-#endif
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"ExternalToolsDialog",
+		NULL};
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	LoadWidgets();
+	UpdateUI();
+	ConnectSignals();
 }
 
 ExternalToolsDlg::ExternalToolsDlgPriv::~ExternalToolsDlgPriv()
 {
 	m_ExternalToolsPtr->RemoveEventHandler(m_ExternalToolsEventHandler);
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
-#endif
 }
 
 
 void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 {
 
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "ExternalToolsDialog");
-		m_pTreeViewExternalTools     = GTK_TREE_VIEW(     glade_xml_get_widget (m_pGladeXML, "externaltools_treeview") );
+		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "ExternalToolsDialog"));
+		m_pTreeViewExternalTools     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
 
 		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
 		/*
@@ -203,12 +191,12 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 			gtk_tree_selection_set_mode(selection,GTK_SELECTION_MULTIPLE);
 		}
 
-		m_pButtonMoveUp          = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "externaltools_button_move_up") );
-		m_pButtonMoveDown        = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "externaltools_button_move_down") );
-		m_pButtonAdd             = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "externaltools_button_add") );
-		m_pButtonEdit            = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "externaltools_button_edit") );
-		m_pButtonRemove          = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "externaltools_button_remove") );
-		//m_pButtonClose           = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_close") );
+		m_pButtonMoveUp          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_move_up") );
+		m_pButtonMoveDown        = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_move_down") );
+		m_pButtonAdd             = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_add") );
+		m_pButtonEdit            = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_edit") );
+		m_pButtonRemove          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_remove") );
+		//m_pButtonClose           = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_close") );
 
 		m_bLoadedDlg = (
 				NULL != m_pWidget && 
@@ -220,7 +208,6 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 				NULL != m_pButtonEdit && 
 				NULL != m_pButtonAdd); 
 	}
-#endif
 }
 
 void ExternalToolsDlg::ExternalToolsDlgPriv::SelectionChanged()

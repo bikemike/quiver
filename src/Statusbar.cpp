@@ -36,12 +36,14 @@ public:
 	guint m_iTimeoutPulse;
 	guint m_iPulseCount;
 
+	guint m_uiIdleSourceID;
+
 };
 
 
 gboolean progress_bar_pulse (gpointer data);
 
-Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar)
+Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceID(0)
 {
 	m_pParent = pStatusbar;
 	
@@ -149,7 +151,10 @@ void Statusbar::SetImageSize()
 {
 	if (m_StatusbarImplPtr->m_CurrentQuiverFile.GetURI())
 	{
-		SetImageSize(m_StatusbarImplPtr->m_CurrentQuiverFile.GetWidth(),m_StatusbarImplPtr->m_CurrentQuiverFile.GetHeight());
+		if (m_StatusbarImplPtr->m_CurrentQuiverFile.IsWidthHeightSet())
+			SetImageSize(m_StatusbarImplPtr->m_CurrentQuiverFile.GetWidth(),m_StatusbarImplPtr->m_CurrentQuiverFile.GetHeight());
+		else
+			SetImageSize(-1, -1);
 	}
 }
 
@@ -217,11 +222,11 @@ void Statusbar::PopText()
 
 void Statusbar::SetText()
 {
-	GnomeVFSFileInfo * info = m_StatusbarImplPtr->m_CurrentQuiverFile.GetFileInfo();
+	GFileInfo* info = m_StatusbarImplPtr->m_CurrentQuiverFile.GetFileInfo();
 
 	if (NULL != info)
 	{
-		double bytes = (double)info->size;
+		double bytes = g_file_info_get_size(info);
 		
 		double abytes;
 		char unit = 'B';
@@ -252,18 +257,19 @@ void Statusbar::SetText()
 			bytes /= 1024 * 1024 * 1024 * 1024ULL;
 		}
 	
+		const char* display_name = g_file_info_get_display_name(info);
 	
 		char status_text[1024];
 		if (bytes > 10)
 		{
-			g_snprintf(status_text,1024,"%s (%.0f%c)",info->name, bytes, unit);
+			g_snprintf(status_text,1024,"%s (%.0f%c)",display_name, bytes, unit);
 		}
 		else
 		{
-			g_snprintf(status_text,1024,"%s (%.1f%c)",info->name, bytes, unit);
+			g_snprintf(status_text,1024,"%s (%.1f%c)",display_name, bytes, unit);
 		}	
 
-		gnome_vfs_file_info_unref(info);		
+		g_object_unref(info);		
 		
 		gtk_statusbar_pop(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext);
 		gtk_statusbar_push(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext,status_text);
@@ -330,19 +336,59 @@ void Statusbar::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint w
 
 }
 
-void Statusbar::SignalBytesRead(long bytes_read,long total)
+class IdleBytesReadData
+{
+public:
+	IdleBytesReadData() : pStatusBarImpl(NULL), progress(0.), setLoadTime(false), clearText(false)
+	{
+	}
+	Statusbar::StatusbarImpl* pStatusBarImpl;
+	double progress;
+	bool setLoadTime;
+	bool clearText;
+};
+
+static gboolean idle_update_progress(gpointer data)
 {
 	gdk_threads_enter();
-	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),bytes_read / (double)total);
+	IdleBytesReadData* pData = static_cast<IdleBytesReadData*>(data);
+	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(pData->pStatusBarImpl->m_pProgressbar), pData->progress);
+	pData->pStatusBarImpl->m_uiIdleSourceID = 0;
 	gdk_threads_leave();
+	return FALSE;
+}
+
+void idle_deleter(gpointer data)
+{
+	IdleBytesReadData* pData = static_cast<IdleBytesReadData*>(data);
+	delete pData;
+}
+
+void Statusbar::SignalBytesRead(long bytes_read,long total)
+{
+	//gdk_threads_enter();
+	IdleBytesReadData* data = new IdleBytesReadData();
+	data->pStatusBarImpl = m_StatusbarImplPtr.get();
+	data->progress =  (bytes_read / (double) total);
+	if (0 != m_StatusbarImplPtr->m_uiIdleSourceID)
+	{
+		g_source_remove(m_StatusbarImplPtr->m_uiIdleSourceID);
+	}
+	m_StatusbarImplPtr->m_uiIdleSourceID = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_update_progress, data, idle_deleter);
+	//gdk_threads_leave();
 }
 void Statusbar::SignalClosed(GdkPixbufLoader *loader)
 {
-	gdk_threads_enter();
-	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),1);
-	SetText();
-	SetLoadTime();
-	gdk_threads_leave();
+	IdleBytesReadData* data = new IdleBytesReadData();
+	data->pStatusBarImpl = m_StatusbarImplPtr.get();
+	data->progress =  1.;
+	data->clearText = true;
+	data->setLoadTime = true;
+	if (0 != m_StatusbarImplPtr->m_uiIdleSourceID)
+	{
+		g_source_remove(m_StatusbarImplPtr->m_uiIdleSourceID);
+	}
+	m_StatusbarImplPtr->m_uiIdleSourceID = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_update_progress, data, idle_deleter);
 }
 void Statusbar::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
@@ -351,18 +397,28 @@ void Statusbar::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint heig
 }
 void Statusbar::SetPixbuf(GdkPixbuf * pixbuf)
 {
-	gdk_threads_enter();
-	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),1.);
-	SetLoadTime();
-	gdk_threads_leave();
+	IdleBytesReadData* data = new IdleBytesReadData();
+	data->pStatusBarImpl = m_StatusbarImplPtr.get();
+	data->progress =  1.;
+	data->setLoadTime = true;
+	if (0 != m_StatusbarImplPtr->m_uiIdleSourceID)
+	{
+		g_source_remove(m_StatusbarImplPtr->m_uiIdleSourceID);
+	}
+	m_StatusbarImplPtr->m_uiIdleSourceID = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_update_progress, data, idle_deleter);
 }
 
 void Statusbar::SetPixbufAtSize(GdkPixbuf * pixbuf,gint width, gint height, bool bResetViewMode/* = true*/)
 {
-	gdk_threads_enter();
-	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),1.);
-	SetLoadTime();
-	gdk_threads_leave();
+	IdleBytesReadData* data = new IdleBytesReadData();
+	data->pStatusBarImpl = m_StatusbarImplPtr.get();
+	data->progress =  1.;
+	data->setLoadTime = true;
+	if (0 != m_StatusbarImplPtr->m_uiIdleSourceID)
+	{
+		g_source_remove(m_StatusbarImplPtr->m_uiIdleSourceID);
+	}
+	m_StatusbarImplPtr->m_uiIdleSourceID = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_update_progress, data, idle_deleter);
 }
 
 void Statusbar::SetQuiverFile(QuiverFile quiverFile)

@@ -5,11 +5,17 @@
 #include <libquiver/quiver-pixbuf-utils.h>
 #include <libquiver/quiver-navigation-control.h>
 
+#include <gst/gst.h>
+#include <gdk/gdkx.h>  // for GDK_WINDOW_XID
+#include <gst/interfaces/xoverlay.h>
+
+
 #include "Viewer.h"
 #include "Timer.h"
 #include "icons/nav_button.xpm"
 
 #include "QuiverUtils.h"
+#include "QuiverVideoOps.h"
 #include "ImageLoader.h"
 #include "ImageList.h"
 
@@ -405,6 +411,7 @@ public:
 
 	void CacheImageAtSize(QuiverFile f, int w, int h);
 	void LoadImageAtSize(QuiverFile f, int w, int h);
+	void LoadImage(QuiverFile f);
 
 	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
 	void AddFilmstrip();
@@ -414,6 +421,10 @@ public:
 	void QueueIconViewUpdate(int timeout = 100 /* ms */);
 
 	void SlideShowStop(bool bEmitStopEvent = true);
+
+	// methods for playing videos
+	void PlayPauseVideo();
+	void StopVideo(bool reloadImage = true);
 
 // member variables
 
@@ -474,6 +485,11 @@ public:
 	bool m_bMaximizeViewabe;
 
 	ImageCache m_ThumbnailCache;
+
+	// gstreamer elements for playing videos
+	GstElement* m_pPipeline;
+	GstElement* m_pXVImageSink;
+
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -790,6 +806,40 @@ void Viewer::ViewerImpl::CacheImageAtSize(QuiverFile f, int w, int h)
 	}
 }
 
+void Viewer::ViewerImpl::LoadImage(QuiverFile f)
+{
+	gint width=0, height=0;
+
+	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
+	
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(m_pImageView))
+	{
+		width = m_pImageView->allocation.width;
+		height = m_pImageView->allocation.height;
+	}
+
+	if (mode == QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN)
+	{
+		int in_width = f.GetWidth();
+		int in_height = f.GetHeight();
+
+		if (4 < GetMaximizedOrientation(f,true) )
+		{
+			swap(in_width,in_height);
+		}
+
+		quiver_image_view_get_pixbuf_display_size_for_mode_alt(
+				QUIVER_IMAGE_VIEW(m_pImageView), 
+				QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN, 
+				in_width, in_height, 
+				&width, &height);
+	}
+
+	SetCurrentOrientation(f.GetOrientation(), false);
+
+	LoadImageAtSize(f, width, height);
+}
+
 void Viewer::ViewerImpl::LoadImageAtSize(QuiverFile f, int w, int h)
 {
 	if (m_bMaximizeViewableArea)
@@ -888,48 +938,22 @@ void Viewer::ViewerImpl::CacheNext(bool bDirectionForward)
 
 void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bCacheNext)
 {
-	gint width=0, height=0;
-
-	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
-	
-	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(m_pImageView))
-	{
-		width = m_pImageView->allocation.width;
-		height = m_pImageView->allocation.height;
-	}
 
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
 	
 	if (m_ImageListPtr->SetCurrentIndex(index))
 	{
+		StopVideo(false);
+
 		m_pViewer->EmitCursorChangedEvent();
 
 		g_signal_handlers_block_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
 		
 		QuiverFile f;
-
 		f = m_ImageListPtr->GetCurrent();
-
-		if (mode == QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN)
-		{
-			int in_width = f.GetWidth();
-			int in_height = f.GetHeight();
-
-			if (4 < GetMaximizedOrientation(f,true) )
-			{
-				swap(in_width,in_height);
-			}
-
-			quiver_image_view_get_pixbuf_display_size_for_mode_alt(
-					QUIVER_IMAGE_VIEW(m_pImageView), 
-					QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN, 
-					in_width, in_height, 
-					&width, &height);
-		}
 
 		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
 		GdkPixbuf *pixbuf = f.GetThumbnail(128);
-
 		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),pixbuf);
 		
 		if (NULL != pixbuf)
@@ -937,9 +961,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			g_object_unref(pixbuf);
 		}
 		
-		SetCurrentOrientation(f.GetOrientation(), false);
-
-		LoadImageAtSize(f, width, height);
+		LoadImage(f);
 		
 		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
 		      m_ImageListPtr->GetCurrentIndex() );	
@@ -1210,6 +1232,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 
 		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
 
+/*
 		string strDlgText;
 #ifdef QUIVER_MAEMO
 		strDlgText = "Delete the selected image?";
@@ -1222,6 +1245,7 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 
 		gtk_widget_destroy(dialog);
 	
+*/
 		switch (rval)
 		{
 			case GTK_RESPONSE_YES:
@@ -1667,18 +1691,125 @@ static gboolean viewer_popup_menu_cb (GtkWidget *widget, gpointer userdata)
 	return TRUE; 
 }
 
+static gboolean 
+gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	switch (GST_MESSAGE_TYPE (msg)) {
+
+		case GST_MESSAGE_EOS:
+			{
+				// reset state to ready
+				gst_element_set_state(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_STATE_READY);
+				gtk_widget_set_double_buffered (pViewerImpl->m_pImageView, TRUE);
+				if (0 != pViewerImpl->m_ImageListPtr->GetSize())
+					pViewerImpl->LoadImage(pViewerImpl->m_ImageListPtr->GetCurrent());
+			}
+			break;
+		case GST_MESSAGE_ERROR: 
+			{
+				gchar  *debug;
+				GError *error;
+
+				gst_message_parse_error (msg, &error, &debug);
+				g_free (debug);
+
+				g_printerr ("error: %s\n", error->message);
+				g_error_free (error);
+
+				break;
+			}
+		default:
+			break;
+	}
+
+	return TRUE;
+}
+
+static GstBusSyncReply
+gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+
+	// ignore anything but 'prepare-xwindow-id' element messages
+	if (GST_MESSAGE_TYPE (message) != GST_MESSAGE_ELEMENT)
+		return GST_BUS_PASS;
+	if (!gst_structure_has_name (message->structure, "prepare-xwindow-id"))
+		return GST_BUS_PASS;
+
+	GstXOverlay *xoverlay;
+	// GST_MESSAGE_SRC (message) will be the video sink element
+	xoverlay = GST_X_OVERLAY (GST_MESSAGE_SRC (message));
+
+	gulong video_area_xid = 0;
+
+	gdk_threads_enter();
+	video_area_xid = GDK_WINDOW_XID (gtk_widget_get_window(pViewerImpl->m_pImageView));
+	gdk_threads_leave();
+
+	gst_x_overlay_set_window_handle (xoverlay, video_area_xid);
+
+	gst_message_unref (message);
+	return GST_BUS_DROP;
+}
+
+void Viewer::ViewerImpl::PlayPauseVideo()
+{
+
+	gchar* uri = NULL;
+	g_object_get(G_OBJECT(m_pPipeline), "uri", &uri, NULL);
+	if (0 == g_strcmp0(uri, m_ImageListPtr->GetCurrent().GetURI()))
+	{
+		gtk_widget_set_double_buffered (m_pImageView, FALSE);
+		GstState current;
+		// has the right video
+		GstStateChangeReturn rval = gst_element_get_state(GST_ELEMENT(m_pPipeline), &current, NULL, GST_SECOND);
+		if (GST_STATE_CHANGE_SUCCESS == rval)
+		{
+			if (GST_STATE_PLAYING == current)
+			{
+				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PAUSED);
+			}
+			else
+			{
+				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
+			}
+		}
+	}
+	else
+	{
+		StopVideo(false);
+		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView), NULL);
+		gtk_widget_set_double_buffered (m_pImageView, FALSE);
+		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
+		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
+	}
+}
+
+void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
+{
+	gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_NULL);
+	gtk_widget_set_double_buffered (m_pImageView, TRUE);
+	gst_x_overlay_set_window_handle (GST_X_OVERLAY(m_pXVImageSink), 0);
+
+	if (reloadImage && 0 != m_ImageListPtr->GetSize())
+		LoadImage(m_ImageListPtr->GetCurrent());
+}
+
+#ifdef QUIVER_MAEMO
 static gboolean timeout_click (gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
-
-	printf("should fullscreen!\n");
 
 	pViewerImpl->m_pViewer->EmitItemClickedEvent();
 
 	pViewerImpl->m_iTimeoutClickID  = 0;
 	return FALSE;
 }
+#endif
 
 static gboolean 
 viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
@@ -1717,6 +1848,12 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 		viewer_show_context_menu(event, user_data);
 		return TRUE;
 	}
+	else if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
+	{
+		// play video
+		if (pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
+			pViewerImpl->PlayPauseVideo();
+	}
 	return FALSE;
 } 
 
@@ -1741,6 +1878,10 @@ static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata)
 
 Viewer::ViewerImpl::~ViewerImpl()
 {
+	StopVideo(false);
+
+	gst_object_unref(GST_OBJECT(m_pPipeline));
+
 	if (0 != m_iIdleSetIndex)
 	{
 		g_source_remove(m_iIdleSetIndex);
@@ -1978,10 +2119,29 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	{
 		gtk_widget_hide(m_pIconView);
 	}
-	
 	gboolean bQuickPreview = (gboolean)prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, true);
 	m_ImageLoader.EnableQuickPreview(bQuickPreview);
 	
+
+	// set up the gstreamer pipeline
+	m_pPipeline = gst_element_factory_make("playbin2", "player");
+	m_pXVImageSink = gst_element_factory_make("xvimagesink", NULL);
+
+	g_object_set(G_OBJECT(m_pXVImageSink), "force-aspect-ratio", true, NULL);
+
+	GstPlayFlags flags = (GstPlayFlags)0;
+	g_object_get(G_OBJECT(m_pPipeline), "flags", &flags, NULL);
+	flags = (GstPlayFlags) (GST_PLAY_FLAG_DEINTERLACE|flags);
+
+	g_object_set(G_OBJECT(m_pPipeline), 
+		"video-sink", m_pXVImageSink,
+		"flags", flags, 
+		NULL);
+
+	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline));
+	gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this);
+	gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
+	gst_object_unref (bus);
 }
 
 
@@ -2088,6 +2248,7 @@ void Viewer::Show()
 
 void Viewer::Hide()
 {
+	m_ViewerImplPtr->StopVideo(true);
 	SlideShowStop();
 	
 	gtk_widget_hide(m_ViewerImplPtr->m_pHBox);

@@ -2,10 +2,6 @@
 
 #include "BookmarksDlg.h"
 
-#ifdef HAVE_LIBGLADE
-#include <glade/glade.h>
-#endif
-
 #include <list>
 #include <vector>
 
@@ -40,9 +36,7 @@ public:
 
 // variables
 	BookmarksDlg*     m_pBookmarksDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*         m_pGladeXML;
-#endif
+	GtkBuilder*         m_pGtkBuilder;
 	BookmarksPtr      m_BookmarksPtr;
 
 	bool m_bLoadedDlg;
@@ -85,13 +79,11 @@ GtkWidget* BookmarksDlg::GetWidget()
 
 void BookmarksDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
 		gtk_widget_destroy(m_PrivPtr->m_pWidget);
 	}
-#endif
 }
 
 // private stuff
@@ -111,38 +103,33 @@ BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
 	m_BookmarksPtr->AddEventHandler(m_BookmarksEventHandler);
 	m_bLoadedDlg = false;
 
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "BookmarksDialog", NULL);
-	if (NULL != m_pGladeXML)
-	{
-		LoadWidgets();
-		UpdateUI();
-		ConnectSignals();
-	}
-#endif
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"BookmarksDialog", NULL};
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	LoadWidgets();
+	UpdateUI();
+	ConnectSignals();
 }
 
 BookmarksDlg::BookmarksDlgPriv::~BookmarksDlgPriv()
 {
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
-#endif
 }
 
 
 void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 {
 
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "BookmarksDialog");
-		m_pTreeViewBookmarks     = GTK_TREE_VIEW(     glade_xml_get_widget (m_pGladeXML, "treeview_bookmarks") );
+		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "BookmarksDialog"));
+		m_pTreeViewBookmarks     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "treeview_bookmarks") );
 
 		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
 		/*
@@ -203,12 +190,12 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 			gtk_tree_selection_set_mode(selection,GTK_SELECTION_MULTIPLE);
 		}
 
-		m_pButtonMoveUp          = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_move_up") );
-		m_pButtonMoveDown        = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_move_down") );
-		m_pButtonAdd             = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_add") );
-		m_pButtonEdit            = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_edit") );
-		m_pButtonRemove          = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_remove") );
-		//m_pButtonClose           = GTK_BUTTON(     glade_xml_get_widget (m_pGladeXML, "button_close") );
+		m_pButtonMoveUp          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_move_up") );
+		m_pButtonMoveDown        = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_move_down") );
+		m_pButtonAdd             = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_add") );
+		m_pButtonEdit            = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_edit") );
+		m_pButtonRemove          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_remove") );
+		//m_pButtonClose           = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_close") );
 
 		m_bLoadedDlg = (
 				NULL != m_pWidget && 
@@ -220,7 +207,6 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 				NULL != m_pButtonEdit && 
 				NULL != m_pButtonAdd); 
 	}
-#endif
 }
 
 void BookmarksDlg::BookmarksDlgPriv::SelectionChanged()

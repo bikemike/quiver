@@ -10,6 +10,8 @@
 
 #include <gdk/gdkkeysyms.h>
 
+#include <gio/gio.h>
+
 #include <libquiver/quiver-icon-view.h>
 #include <libquiver/quiver-image-view.h>
 #include <libquiver/quiver-pixbuf-utils.h>
@@ -1619,19 +1621,18 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	list<string> files = parent->m_ImageListPtr->GetFileList();
 	if (1 == dirs.size() && 0 == files.size())
 	{
-		
-		GnomeVFSURI* vfs_uri = gnome_vfs_uri_new(dirs.front().c_str());
-		if (gnome_vfs_uri_is_local(vfs_uri))
+		GFile* file = g_file_new_for_uri(dirs.front().c_str()); 
+		char* local_path = g_file_get_path(file);
+		if (NULL != local_path)
 		{
-			char* uri = gnome_vfs_get_local_path_from_uri (dirs.front().c_str());
-			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),uri);
-			g_free(uri);
+			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),local_path);
+			g_free(local_path);
 		}
 		else
 		{
 			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),dirs.front().c_str());
 		}
-		gnome_vfs_uri_unref(vfs_uri);
+		g_object_unref(file);
 	}
 	else if (0 == dirs.size() && 1 == files.size())
 	{

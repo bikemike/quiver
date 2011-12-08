@@ -8,6 +8,12 @@
 #include <boost/algorithm/string.hpp>
 #include <sstream>
 
+#ifdef FIXME 
+#include <libgnomevfs/gnome-vfs.h>
+#endif
+
+#include <gio/gio.h>
+
 class OrganizeTask::PrivateImpl
 {
 public:
@@ -185,7 +191,7 @@ std::string OrganizeTask::DoVariableSubstitution(QuiverFile f, std::string strTe
 	return strTemplate;
 }
 
-
+#ifdef FIXME
 static gint gnome_vfs_xfer_callback (GnomeVFSXferProgressInfo *info, gpointer user_data)
 {
 	OrganizeTask::PrivateImpl* pImpl = static_cast<OrganizeTask::PrivateImpl*>(user_data);
@@ -298,6 +304,8 @@ static gint gnome_vfs_xfer_callback (GnomeVFSXferProgressInfo *info, gpointer us
 	return GNOME_VFS_XFER_ERROR_ACTION_ABORT;
 }
 
+#endif
+
 void OrganizeTask::Run()
 {
 	char szText[256];
@@ -331,6 +339,7 @@ void OrganizeTask::Run()
 		*/
 
 
+#ifdef FIXME
 		gnome_vfs_make_directory(strOutput.c_str(),0700);
 		strOutput += "/" + f.GetFileName();
 
@@ -359,6 +368,7 @@ void OrganizeTask::Run()
 
 		gnome_vfs_uri_unref(src);
 		gnome_vfs_uri_unref(dst);
+#endif
 
 
 		++m_iCurrentFile;

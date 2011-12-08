@@ -515,6 +515,8 @@ quiver_icon_view_finalize(GObject *object)
 	g_list_free(iconview->priv->velocity_time_list);
 	iconview->priv->velocity_time_list = NULL;
 	
+	g_free (iconview->priv->cell_items);
+
 	parent = g_type_class_peek_parent(klass);
 	if (parent)
 	{

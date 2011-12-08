@@ -1,13 +1,12 @@
 #include <config.h>
 #include "RenameDlg.h"
-#include <glade/glade.h>
 
 #include "QuiverPrefs.h"
 #include "Preferences.h"
 
 #include "QuiverStockIcons.h"
 
-#include <libgnomevfs/gnome-vfs.h>
+#include <gio/gio.h>
 
 #ifdef QUIVER_MAEMO
 #ifdef HAVE_HILDON_FM_2
@@ -33,9 +32,7 @@ public:
 
 // variables
 	RenameDlg*         m_pRenameDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*            m_pGladeXML;
-#endif
+	GtkBuilder*            m_pGtkBuilder;
 	bool m_bLoadedDlg;
 	
 
@@ -73,13 +70,11 @@ GtkWidget* RenameDlg::GetWidget() const
 
 bool RenameDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pDialogRename));
 		return (GTK_RESPONSE_OK == result);
 	}
-#endif
 	return false;
 }
 
@@ -151,21 +146,23 @@ RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent) :
         m_pRenameDlg(parent)
 {
 	m_pDialogRename = NULL;
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "RenameDialog", NULL);
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"RenameDialog",
+		NULL};
+	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
-#endif
 }
 
 RenameDlg::RenameDlgPriv::~RenameDlgPriv()
 {
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
 
 	if (NULL != m_pDialogRename)
@@ -178,16 +175,16 @@ RenameDlg::RenameDlgPriv::~RenameDlgPriv()
 
 void RenameDlg::RenameDlgPriv::LoadWidgets()
 {
-	m_pDialogRename         = GTK_DIALOG(glade_xml_get_widget (m_pGladeXML, "RenameDialog"));
+	m_pDialogRename         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "RenameDialog"));
 
 	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
 	gtk_widget_show(m_pBtnOK);
 	gtk_container_add(GTK_CONTAINER(m_pDialogRename->action_area),m_pBtnOK);
 
-	m_pTglBtnSubfolders       = GTK_TOGGLE_BUTTON( glade_xml_get_widget(m_pGladeXML, "rename_cb_subfolders") );
+	m_pTglBtnSubfolders       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "rename_cb_subfolders") );
 
-	GtkContainer* src_cont = GTK_CONTAINER( glade_xml_get_widget(m_pGladeXML, "rename_align_source_folder") );
-	GtkContainer* dst_cont = GTK_CONTAINER( glade_xml_get_widget(m_pGladeXML, "rename_align_dest_folder") );
+	GtkContainer* src_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "rename_align_source_folder") );
+	GtkContainer* dst_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "rename_align_dest_folder") );
 #ifdef QUIVER_MAEMO
 		m_pBtnSourceFolder = GTK_BUTTON( gtk_button_new() );
 		m_pBtnDestFolder = GTK_BUTTON( gtk_button_new() );
@@ -204,9 +201,9 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 		gtk_container_add(src_cont, GTK_WIDGET(m_pFCBtnSourceFolder));
 		gtk_container_add(dst_cont, GTK_WIDGET(m_pFCBtnDestFolder));
 #endif
-	m_pEntryTemplate        = GTK_ENTRY( glade_xml_get_widget(m_pGladeXML, "rename_entry_template") );
+	m_pEntryTemplate        = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "rename_entry_template") );
 
-	m_pLabelExample           = GTK_LABEL( glade_xml_get_widget(m_pGladeXML, "rename_label_example") );
+	m_pLabelExample           = GTK_LABEL( gtk_builder_get_object(m_pGtkBuilder, "rename_label_example") );
 
 	m_bLoadedDlg = (
 		NULL != m_pDialogRename        &&
@@ -350,20 +347,20 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 
 	if (NULL != src_uri && NULL != dst_uri)
 	{
-		GnomeVFSURI* vuri_src = gnome_vfs_uri_new(src_uri);
-		GnomeVFSURI* vuri_dst = gnome_vfs_uri_new(dst_uri);
+		GFile* file_src = g_file_new_for_uri(src_uri);
+		GFile* file_dst = g_file_new_for_uri(dst_uri);
 
 		gboolean source_is_parent = 
-			gnome_vfs_uri_is_parent (vuri_src, vuri_dst, TRUE);
+			g_file_has_parent(file_dst, file_src);
 
 		gboolean source_is_child = 
-			gnome_vfs_uri_is_parent (vuri_dst, vuri_src, TRUE);
+			g_file_has_parent (file_src, file_dst);
 
 		gboolean source_is_dst = 
-			gnome_vfs_uris_match(src_uri, dst_uri);
+			g_file_equal(file_src, file_dst);
 
-		gnome_vfs_uri_unref(vuri_src);
-		gnome_vfs_uri_unref(vuri_dst);
+		g_object_unref(file_src);
+		g_object_unref(file_dst);
 		
 		if ( (source_is_parent && m_pRenameDlg->GetIncludeSubfolders()) || source_is_child || source_is_dst)
 		{

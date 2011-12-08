@@ -11,14 +11,6 @@
 #include <osso-mime.h>
 #endif
 extern osso_context_t* osso_context;
-#else
-#include <libgnomevfs/gnome-vfs.h>
-#include <libgnomevfs/gnome-vfs-mime.h>
-#include <libgnomevfs/gnome-vfs-mime-handlers.h>
-#endif
-
-#ifdef HAVE_LIBGLADE
-#include <glade/glade.h>
 #endif
 
 #define DONATION_URL_MIME "text/html"
@@ -40,9 +32,7 @@ public:
 
 // variables
 	DonateDlg*     m_pDonateDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*         m_pGladeXML;
-#endif
+	GtkBuilder*         m_pGtkBuilder;
 	bool m_bLoadedDlg;
 	GtkWidget*             m_pWidget;
 	GtkButton*             m_pButtonClose;
@@ -63,14 +53,12 @@ GtkWidget* DonateDlg::GetWidget() const
 
 void DonateDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
 
 		gtk_widget_destroy(m_PrivPtr->m_pWidget);
 	}
-#endif
 }
 
 // private stuff
@@ -85,36 +73,32 @@ DonateDlg::DonateDlgPriv::DonateDlgPriv(DonateDlg *parent) :
 {
 	m_bLoadedDlg = false;
 
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "DonateDialog", NULL);
-	if (NULL != m_pGladeXML)
-	{
-		LoadWidgets();
-		UpdateUI();
-		ConnectSignals();
-	}
-#endif
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"DonateDialog",
+		NULL};
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	LoadWidgets();
+	UpdateUI();
+	ConnectSignals();
 }
 
 DonateDlg::DonateDlgPriv::~DonateDlgPriv()
 {
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
-#endif
 }
 
 
 void DonateDlg::DonateDlgPriv::LoadWidgets()
 {
 
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		m_pWidget                = glade_xml_get_widget (m_pGladeXML, "DonateDialog");
+		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "DonateDialog"));
 
 		m_pButtonDonate          = GTK_BUTTON( gtk_button_new_with_label("Donate to Quiver"));
 		m_pButtonClose              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
@@ -136,7 +120,6 @@ void DonateDlg::DonateDlgPriv::LoadWidgets()
 				NULL != m_pButtonDonate 
 				); 
 	}
-#endif
 }
 
 void DonateDlg::DonateDlgPriv::UpdateUI()
@@ -182,20 +165,11 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 			DONATION_URL_MIME);
 #endif
 #else
-		GnomeVFSMimeApplication* app = 
-			gnome_vfs_mime_get_default_application(DONATION_URL_MIME);
-		if (NULL != app)
-		{
-			GList* url_list = NULL;
-			url_list = g_list_append(url_list, (void*)DONATION_URL);
-			
-			gnome_vfs_mime_application_launch(app, url_list);
-			sleep(1);
+	gchar* contentType =
+			g_content_type_from_mime_type("text/html");
+	gboolean launched = g_app_info_launch_default_for_uri(DONATION_URL, NULL, NULL);
+	g_free(contentType);
 
-			g_list_free(url_list);
-
-			gnome_vfs_mime_application_free(app);
-		}
 #endif
 	}
 }

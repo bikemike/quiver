@@ -2,6 +2,8 @@
 
 #include "quiver-i18n.h"
 
+#include <gst/gst.h>
+
 #include "Quiver.h"
 
 #ifdef QUIVER_MAEMO
@@ -18,7 +20,6 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
-#include <libgnomevfs/gnome-vfs.h>
 #include <boost/algorithm/string.hpp>
 
 #include <errno.h>
@@ -263,7 +264,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
           m_BrowserPtr(new Browser()),
           m_ViewerPtr(new Viewer()),
           m_StatusbarPtr(new Statusbar()),
-          m_ImageListPtr(new ImageList()),
+          m_ImageListPtr(new ImageList(true)),
 		  m_BrowserEventHandler(new BrowserEventHandler(this)),
 		  m_ViewerEventHandler(new ViewerEventHandler(this)),
 		  m_PreferencesEventHandler( new PreferencesEventHandler(this) ),
@@ -534,6 +535,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_SORT_BY_NAME                           "SortByName"
 #define ACTION_QUIVER_SORT_BY_NAME_NATURAL                   "SortByNameNatural"
 #define ACTION_QUIVER_SORT_BY_DATE                           "SortByDate"
+#define ACTION_QUIVER_SORT_BY_DATE_MODIFIED                  "SortByDateModified"
 #define ACTION_QUIVER_SORT_BY_RANDOM                         "SortByRandom"
 #define ACTION_QUIVER_SORT_DESCENDING                        "SortDescending"
 #define ACTION_QUIVER_FULLSCREEN                             "FullScreen"
@@ -611,6 +613,7 @@ static const char * quiver_ui_main =
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_NAME"'/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_NAME_NATURAL"'/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_DATE"'/>"
+"				<menuitem action='"ACTION_QUIVER_SORT_BY_DATE_MODIFIED"'/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_RANDOM"'/>"
 "				<separator/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_DESCENDING"'/>"
@@ -769,6 +772,7 @@ GtkRadioActionEntry QuiverImpl::sort_radio_action_entries[] = {
 	{ ACTION_QUIVER_SORT_BY_NAME, "","By Name", "", "Sort by file name", ImageList::SORT_BY_FILENAME},
 	{ ACTION_QUIVER_SORT_BY_NAME_NATURAL, "","By Name (natural order)", "", "Sort by file name (natural order)", ImageList::SORT_BY_FILENAME_NATURAL},
 	{ ACTION_QUIVER_SORT_BY_DATE, "","By Date", "", "Sort by date", ImageList::SORT_BY_DATE},
+	{ ACTION_QUIVER_SORT_BY_DATE_MODIFIED, "","By Date Modified", "", "Sort by date modified", ImageList::SORT_BY_DATE_MODIFIED},
 	{ ACTION_QUIVER_SORT_BY_RANDOM, "","Randomize", "", "Randomize", ImageList::SORT_BY_RANDOM},
 };
 
@@ -1715,6 +1719,8 @@ int main (int argc, char **argv)
 	/* Initialize the widget set */
 	gtk_init (&argc, &argv);
 
+	gst_init(&argc, &argv);
+
 	ThreadUtil::Init();
 
 
@@ -1752,13 +1758,6 @@ int main (int argc, char **argv)
 	CreateQuiverData cqd = {0};
 	cqd.bRecursive = false;
 	
-	//init gnome-vfs
-	if (!gnome_vfs_init ()) 
-	{
-		printf ("Could not initialize GnomeVFS\n");
-		return 1;
-	}
-
 	if (argc == 1)
 	{	
 		const gchar* dir;
@@ -1772,8 +1771,11 @@ int main (int argc, char **argv)
 #endif
 		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
 		files.push_back(photo_library);
-		if (!gnome_vfs_uris_match("file:///",photo_library.c_str())
-			 && !gnome_vfs_uris_match(dir, photo_library.c_str()))
+
+		GFile* file = g_file_new_for_path("/");
+		GFile* photoLib = g_file_new_for_path(photo_library.c_str());
+
+		if (!g_file_equal(file, photoLib))
 		{
 			// just in case the users sets the root
 			// as the photo library

@@ -361,12 +361,15 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 
 	gtk_tree_view_column_pack_end (column,renderer,FALSE);
 
+	GtkTreeModel* numbers_model = create_numbers_model();
 	g_object_set (renderer,
-                "model", create_numbers_model(),
+                "model", numbers_model,
                 "text-column", ORIENTATION_COLUMN_TEXT_VALUE,
                 "has-entry", FALSE,
 	  			"editable",TRUE,
                 NULL);
+	g_object_unref(numbers_model);
+	
 
 	gtk_tree_view_column_add_attribute(column,renderer,"text",EXIF_TREE_COLUMN_VALUE_ORIENTATION);
 	gtk_tree_view_column_add_attribute(column,renderer,"visible",EXIF_TREE_COLUMN_IS_VISIBLE_ORIENTATION);

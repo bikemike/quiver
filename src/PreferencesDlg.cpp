@@ -2,10 +2,6 @@
 
 #include "PreferencesDlg.h"
 
-#ifdef HAVE_LIBGLADE
-#include <glade/glade.h>
-#endif
-
 #include "QuiverPrefs.h"
 #include "IPreferencesEventHandler.h"
 
@@ -31,9 +27,7 @@ public:
 
 // variables
 	PreferencesDlg*     m_pPreferencesDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*           m_pGladeXML;
-#endif
+	GtkBuilder*           m_pGtkBuilder;
 	bool m_bLoadedDlg;
 	
 	// dlg widgets
@@ -98,14 +92,12 @@ GtkWidget* PreferencesDlg::GetWidget()
 
 void PreferencesDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		GtkWidget *prefDlg = glade_xml_get_widget (m_PrivPtr->m_pGladeXML, "QuiverPreferencesDialog");
+		GtkWidget *prefDlg = GTK_WIDGET(gtk_builder_get_object (m_PrivPtr->m_pGtkBuilder, "QuiverPreferencesDialog"));
 		gtk_dialog_run(GTK_DIALOG(prefDlg));
 		gtk_widget_destroy(prefDlg);
 	}
-#endif
 }
 
 // private stuff
@@ -126,34 +118,38 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
         m_PreferencesEventHandler( new PreferencesEventHandler(this) )
 {
 	m_bLoadedDlg = false;
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "QuiverPreferencesDialog", NULL);
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"QuiverPreferencesDialog",
+		"adjustment1",
+		"adjustment2",
+		"liststore1",
+		"liststore2",
+		NULL
+	};
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
-#endif
 }
 
 PreferencesDlg::PreferencesDlgPriv::~PreferencesDlgPriv()
 {
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
-#endif
 }
 
 
 void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 {
 
-#ifdef HAVE_LIBGLADE
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		GtkBox* hbox_photo_library = GTK_BOX( glade_xml_get_widget (m_pGladeXML, "hbox_photo_library") );
+		GtkBox* hbox_photo_library = GTK_BOX( gtk_builder_get_object (m_pGtkBuilder, "hbox_photo_library") );
 #ifdef QUIVER_MAEMO
 		m_pBtnPhotoLibrary = GTK_BUTTON( gtk_button_new() );
 		gtk_widget_show(GTK_WIDGET(m_pBtnPhotoLibrary));
@@ -167,40 +163,40 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 #endif
 
 
-		//m_pFCBtnPhotoLibrary     = GTK_FILE_CHOOSER_BUTTON(     glade_xml_get_widget (m_pGladeXML, "fcb_general_photo_library") );
+		//m_pFCBtnPhotoLibrary     = GTK_FILE_CHOOSER_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "fcb_general_photo_library") );
 				
-		m_pComboFilmstripPos     = GTK_COMBO_BOX(     glade_xml_get_widget (m_pGladeXML, "cbox_viewer_filmstrip_position") );
-		m_pComboDefaultViewMode  = GTK_COMBO_BOX(     glade_xml_get_widget (m_pGladeXML, "cbox_viewer_default_viewmode") );
+		m_pComboFilmstripPos     = GTK_COMBO_BOX(     gtk_builder_get_object (m_pGtkBuilder, "cbox_viewer_filmstrip_position") );
+		m_pComboDefaultViewMode  = GTK_COMBO_BOX(     gtk_builder_get_object (m_pGtkBuilder, "cbox_viewer_default_viewmode") );
 		
 		
-		m_pToggleAskBeforeDelete = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_general_ask_before_delete") );
-		m_pToggleStartFS     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_general_start_fullscreen") );
-		m_pToggleUseThemeColor   = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_general_theme_color") );
-		m_pToggleQuickPreview    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_quickpreview") );
-		m_pToggleViewerHideScrollbars    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_hide_scrollbars") );
+		m_pToggleAskBeforeDelete = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_ask_before_delete") );
+		m_pToggleStartFS     = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_start_fullscreen") );
+		m_pToggleUseThemeColor   = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_theme_color") );
+		m_pToggleQuickPreview    = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_quickpreview") );
+		m_pToggleViewerHideScrollbars    = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_hide_scrollbars") );
 
-		m_pToggleBrowserHideFolderTreeFS    = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_browser_hide_foldertree_fullscreen") );
+		m_pToggleBrowserHideFolderTreeFS    = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_browser_hide_foldertree_fullscreen") );
 
-		m_pToggleSlideShowLoop   = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_loop") );
-		m_pToggleSlideShowFS     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_fullscreen") );
-		m_pToggleSlideShowTransition     = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_transition") );
-		m_pToggleSlideShowHideFilmStrip  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_hide_filmstrip") );
+		m_pToggleSlideShowLoop   = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_loop") );
+		m_pToggleSlideShowFS     = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_fullscreen") );
+		m_pToggleSlideShowTransition     = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_transition") );
+		m_pToggleSlideShowHideFilmStrip  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_hide_filmstrip") );
 		
-		m_pToggleGIFAnimation      = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_viewer_enable_gif_anim") );
+		m_pToggleGIFAnimation      = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_enable_gif_anim") );
 
-		m_pToggleSlideShowRotateToMaximize  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_rotate_to_maximize") );
+		m_pToggleSlideShowRotateToMaximize  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_rotate_to_maximize") );
 
-		m_pToggleSlideShowRandomOrder  = GTK_TOGGLE_BUTTON( glade_xml_get_widget (m_pGladeXML, "chkbtn_slideshow_random_order") );
+		m_pToggleSlideShowRandomOrder  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_random_order") );
 		
 		
-		m_pRangeSlideDuration    = GTK_RANGE        ( glade_xml_get_widget (m_pGladeXML, "hscale_slideshow_duration") );
-		m_pRangeFilmstripSize    = GTK_RANGE        ( glade_xml_get_widget (m_pGladeXML, "hscale_viewer_filmstrip_size") );
+		m_pRangeSlideDuration    = GTK_RANGE        ( gtk_builder_get_object (m_pGtkBuilder, "hscale_slideshow_duration") );
+		m_pRangeFilmstripSize    = GTK_RANGE        ( gtk_builder_get_object (m_pGtkBuilder, "hscale_viewer_filmstrip_size") );
 		
-		m_pClrBtnBrowser         = GTK_COLOR_BUTTON ( glade_xml_get_widget (m_pGladeXML, "clrbtn_general_bg_browser") );
-		m_pClrBtnViewer          = GTK_COLOR_BUTTON ( glade_xml_get_widget (m_pGladeXML, "clrbtn_general_bg_viewer") );
+		m_pClrBtnBrowser         = GTK_COLOR_BUTTON ( gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_browser") );
+		m_pClrBtnViewer          = GTK_COLOR_BUTTON ( gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_viewer") );
 
-		m_pLblBrowserColor       = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_browser") );
-		m_pLblViewerColor        = GTK_LABEL ( glade_xml_get_widget(m_pGladeXML,"label_general_bg_viewer") );
+		m_pLblBrowserColor       = GTK_LABEL ( gtk_builder_get_object(m_pGtkBuilder,"label_general_bg_browser") );
+		m_pLblViewerColor        = GTK_LABEL ( gtk_builder_get_object(m_pGtkBuilder,"label_general_bg_viewer") );
 
 		m_bLoadedDlg = (
 #ifdef QUIVER_MAEMO
@@ -231,7 +227,6 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 			NULL != m_pLblViewerColor
 			); 
 	}
-#endif
 }
 
 void PreferencesDlg::PreferencesDlgPriv::UpdateUI()

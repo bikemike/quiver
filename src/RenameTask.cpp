@@ -8,6 +8,12 @@
 #include <boost/algorithm/string.hpp>
 #include <sstream>
 
+#include <gio/gio.h>
+
+#ifdef FIXME
+#include <libgnomevfs/gnome-vfs.h>
+#endif
+
 class RenameTask::PrivateImpl
 {
 public:
@@ -129,7 +135,7 @@ std::string RenameTask::DoVariableSubstitution(QuiverFile f, std::string strTemp
 	return std::string();
 }
 
-
+#ifdef FIXME
 static gint gnome_vfs_xfer_callback (GnomeVFSXferProgressInfo *info, gpointer user_data)
 {
 	RenameTask::PrivateImpl* pImpl = static_cast<RenameTask::PrivateImpl*>(user_data);
@@ -241,6 +247,20 @@ static gint gnome_vfs_xfer_callback (GnomeVFSXferProgressInfo *info, gpointer us
 
 	return GNOME_VFS_XFER_ERROR_ACTION_ABORT;
 }
+#endif
+
+static std::string
+get_display_name(GFile* file)
+{
+	std::string strDisplayName;
+	GFileInfo* info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+	if (NULL != info)
+	{
+		strDisplayName = g_file_info_get_display_name(info);
+		g_object_unref(info);
+	}
+	return strDisplayName;
+}
 
 void RenameTask::Run()
 {
@@ -275,7 +295,8 @@ void RenameTask::Run()
         g_snprintf(szNewFilename, 256, "%s%04d%s", m_strTemplate.c_str(), iNumber++, strExt.c_str());
 	
 		std::string strOutput = m_strDestDirURI;
-
+		
+#ifdef FIXME
 		gnome_vfs_make_directory(strOutput.c_str(),0700);
 		strOutput += "/" + std::string(szNewFilename);
 
@@ -291,6 +312,19 @@ void RenameTask::Run()
 		g_free(dirname);
 		g_free(shortname);
 
+/* new
+		GFile* dir_output = g_file_new_for_uri(strOutput.c_str());
+		g_file_make_directory(dir_output, NULL, NULL);
+
+		GFile* file_output = g_file_get_child(dir_output, szNewFilename);
+		GFile* file_input  = g_file_new_for_uri(f.GetURI());
+
+		std::string shortname = gnome_vfs_uri_extract_short_name(file_input);
+		std::string dirname = gnome_vfs_uri_extract_dirname (dir_output);
+
+		g_snprintf(szText, 256, "Copying %s to %s", shortname.c_str(), dirname.c_str());
+*/
+
 		GnomeVFSResult res = gnome_vfs_xfer_uri (
 			src,
 			dst,
@@ -304,6 +338,7 @@ void RenameTask::Run()
 
 		gnome_vfs_uri_unref(src);
 		gnome_vfs_uri_unref(dst);
+#endif
 
 		++m_iCurrentFile;
 		EmitTaskProgressUpdatedEvent();

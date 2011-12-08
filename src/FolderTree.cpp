@@ -6,11 +6,8 @@
 
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
-#include <libgnomevfs/gnome-vfs.h>
 
-#ifndef QUIVER_MAEMO
-#include <libgnomeui/gnome-icon-lookup.h>
-#else
+#ifdef QUIVER_MAEMO
 #ifdef HAVE_HILDON_FM_2
 #include <hildon/hildon-file-system-info.h>
 #else
@@ -44,7 +41,7 @@ static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
 enum
 {
 	FILE_TREE_COLUMN_CHECKBOX,
-	FILE_TREE_COLUMN_ICON,
+	FILE_TREE_COLUMN_GICON,
 	FILE_TREE_COLUMN_DISPLAY_NAME,
 	FILE_TREE_COLUMN_URI,
 	FILE_TREE_COLUMN_SEPARATOR,
@@ -190,9 +187,9 @@ GtkTreeIter* add_uri_to_tree(GtkTreeView *treeview, GtkTreeIter* iter, const gch
 		gchar* base_uri;
 		gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &base_uri, -1);
 		
-		GnomeVFSURI* vfs_tmp;
-		GnomeVFSURI* vfs_uri = gnome_vfs_uri_new(uri);
-		GnomeVFSURI* vfs_base = gnome_vfs_uri_new(base_uri);
+		GFile* file_tmp = NULL;
+		GFile* file_uri = g_file_new_for_uri(uri);
+		GFile* file_base = g_file_new_for_uri(base_uri);
 		
 		bool bValid = false;
 		
@@ -200,28 +197,27 @@ GtkTreeIter* add_uri_to_tree(GtkTreeView *treeview, GtkTreeIter* iter, const gch
 		
 		do
 		{
-			if (gnome_vfs_uri_equal (vfs_uri, vfs_base))
+			if (g_file_equal (file_uri, file_base))
 			{
-				gnome_vfs_uri_unref(vfs_uri);
+				g_object_unref(file_uri);
 				bValid = true;
 				break;
 			}
 
-			gchar* path_name_escaped = gnome_vfs_uri_extract_short_path_name (vfs_uri);
-			gchar* path_name = gnome_vfs_unescape_string(path_name_escaped,NULL);
+			gchar* path_name = g_file_get_basename (file_uri);
 							
 			strDirsToAdd.push_front(path_name);	
 			
 			g_free(path_name);
-			g_free(path_name_escaped);
 			
-			vfs_tmp = gnome_vfs_uri_get_parent(vfs_uri);
-			gnome_vfs_uri_unref(vfs_uri);
-			vfs_uri = vfs_tmp;
+			file_tmp = g_file_get_parent(file_uri);
+
+			g_object_unref(file_uri);
+			file_uri = file_tmp;
 		
-		} while (NULL != vfs_uri);
+		} while (NULL != file_uri);
 		
-		gnome_vfs_uri_unref(vfs_base);
+		g_object_unref(file_base);
 		
 		if (bValid)
 		{
@@ -306,7 +302,6 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 	for (itr = uris.begin(); uris.end() != itr; ++itr)
 	{
 		// here we go
-		//printf("selecting folder: %s\n", itr->c_str());
 		gint i = 0;
 		std::string strLongestURI;
 		bool found_match = false;
@@ -322,31 +317,29 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 			
 			if (NULL != uri)
 			{
-				std::string strURI = uri;
-
-				if (std::string::npos != itr->find(strURI))
+				GFile* file_prefix = g_file_new_for_uri(uri);
+				GFile* file   = g_file_new_for_uri(itr->c_str());
+				if (g_file_has_prefix(file, file_prefix))
 				{
-					GnomeVFSURI* vfs_uri, *vfs_parent;
-					vfs_uri = gnome_vfs_uri_new (uri);
+					GFile* file_parent = NULL;
 					
 					gint n_parents = 0;
-					while (NULL != (vfs_parent = gnome_vfs_uri_get_parent(vfs_uri)))
+					while (NULL != (file_parent = g_file_get_parent(file_prefix)))
 					{
-						gnome_vfs_uri_unref(vfs_uri);
-						vfs_uri = vfs_parent;
+						g_object_unref(file_prefix);
+						file_prefix = file_parent;
 						n_parents++;	
 					}
 					if (longest_match < n_parents)
 					{
-						strLongestURI = strURI;
+						strLongestURI = uri;
 						longest_match = n_parents;
 						iter_match = iter_child;
 						found_match = true;
 					}
-					
-					gnome_vfs_uri_unref(vfs_uri);
-					
 				}
+				g_object_unref(file);
+				g_object_unref(file_prefix);
 				g_free(uri);
 			}
 			
@@ -408,7 +401,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	* could use any other GtkTreeModel */
 	store = gtk_tree_store_new (FILE_TREE_COLUMN_COUNT,
 	 G_TYPE_BOOLEAN,
-	 G_TYPE_STRING,
+	 G_TYPE_ICON,
 	 G_TYPE_STRING,
  	 G_TYPE_STRING,
 	 G_TYPE_BOOLEAN,
@@ -487,7 +480,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	gtk_tree_view_column_pack_start (column,m_pCellRendererPixbuf,FALSE);
 	gtk_tree_view_column_set_attributes(column,
 	  m_pCellRendererPixbuf,
-	  "icon_name", FILE_TREE_COLUMN_ICON,
+	  "gicon", FILE_TREE_COLUMN_GICON,
   	  "cell-background-set",FILE_TREE_COLUMN_CHECKBOX,
 	NULL);
 	g_object_set (G_OBJECT (m_pCellRendererPixbuf),  "stock-size", 3,  NULL);
@@ -527,7 +520,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 }
 
 
-static char* folder_tree_get_icon_name(const char* uri, gboolean expanded);
+GIcon* folder_tree_get_gicon(GFile* file, gboolean expanded);
 
 static gboolean from_mouse = FALSE;
 
@@ -980,7 +973,8 @@ typedef struct _MyDataStruct
 	GtkTreeModel* model;
 	GtkTreeIter* iter_parent;
 	GtkTreeIter* iter_child;
-	GnomeVFSDirectoryHandle* dir_handle;
+	//FIXME: convert to GFileEnumerator
+	GFileEnumerator* dir_enumerator;
 	GHashTable* hash_table;
 	MyIdleState state;
 	gboolean has_subdirs;
@@ -1003,11 +997,9 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 
 	gtk_tree_model_get(model,iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
 	
-	GnomeVFSURI * vfs_uri_parent = gnome_vfs_uri_new(uri);
-	GnomeVFSURI * vfs_uri_child = gnome_vfs_uri_append_path(vfs_uri_parent, name);
-	
-	gchar* uri_child = gnome_vfs_uri_to_string (vfs_uri_child, GNOME_VFS_URI_HIDE_NONE);
-	
+	GFile* file_parent = g_file_new_for_uri(uri);
+	GFile* file_child  = g_file_get_child(file_parent, name);
+
 	display_name = name;
 
 	if (duplicate_check)
@@ -1020,14 +1012,16 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 		{
 			if ( gtk_tree_model_iter_nth_child(model, &iter_child, iter_parent, i) )
 			{
-				gchar* uri = NULL;
-				gtk_tree_model_get(model, &iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
+				char* uri2 = NULL;
+				gtk_tree_model_get(model, &iter_child, FILE_TREE_COLUMN_URI, &uri2, -1);
 
-				if (NULL != uri)
+				if (NULL != uri2)
 				{
-					found_duplicate = gnome_vfs_uris_match(uri_child, uri);
+					GFile* file2 = g_file_new_for_uri(uri2);
+					found_duplicate = g_file_equal(file_child, file2);
+					g_object_unref(file2);
 				}
-				g_free(uri);
+				g_free(uri2);
 			}
 		}
 	}
@@ -1038,16 +1032,19 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 		gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);  
 	
 		
-		char* icon_name = folder_tree_get_icon_name(uri_child,FALSE);
+		GIcon* gicon = folder_tree_get_gicon(file_child,FALSE);
+		char* uri_child = g_file_get_uri(file_child);
 	
 		gtk_tree_store_set (GTK_TREE_STORE(model), &iter_child,
 				FILE_TREE_COLUMN_CHECKBOX, FALSE,
-				FILE_TREE_COLUMN_ICON, icon_name,
+				FILE_TREE_COLUMN_GICON, gicon,
 				FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
 				FILE_TREE_COLUMN_SEPARATOR,FALSE,
 				FILE_TREE_COLUMN_URI,uri_child,
 				-1);
-		free(icon_name);
+
+		g_free(uri_child);
+		g_object_unref(gicon);
 
 #ifdef QUIVER_MAEMO
 		// fetch the maemo name
@@ -1057,11 +1054,9 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 		hildon_file_system_info_async_new(uri_child, hildon_fs_info_callback ,pAsyncStruct);
 #endif
 	}
-
-	g_free(uri_child);
 	
-	gnome_vfs_uri_unref(vfs_uri_child);
-	gnome_vfs_uri_unref(vfs_uri_parent);
+	g_object_unref(file_parent);
+	g_object_unref(file_child);
 	
 	g_free(uri);
 
@@ -1097,7 +1092,6 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 	{
 		iter_parent = data->iter_parent;
 		char* uri = NULL;
-		GnomeVFSResult result;
 	
 		switch (data->state)
 		{
@@ -1129,12 +1123,12 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 						{
 							if ( gtk_tree_model_iter_nth_child(model, &iter, data->iter_child, i) )
 							{
-								gchar* uri = NULL;
+								gchar* uri2 = NULL;
 								gboolean permanent = FALSE;
-								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_URI, &uri, -1);
+								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_URI, &uri2, -1);
 								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_PERMANENT, &permanent, -1);
 	
-								gchar* local_filename = g_filename_from_uri(uri,NULL, NULL);
+								gchar* local_filename = g_filename_from_uri(uri2,NULL, NULL);
 								gchar* dir_name = g_path_get_basename(local_filename);
 	
 	
@@ -1155,7 +1149,7 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 								}
 								g_free(dir_name);
 								g_free(local_filename);
-								g_free(uri);
+								g_free(uri2);
 							}
 						}
 						// add new items
@@ -1184,44 +1178,35 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 					gdk_threads_enter();
 					
 					gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
-					GnomeVFSURI * vfs_uri_dir = gnome_vfs_uri_new(uri);
-					GnomeVFSFileInfo *info = gnome_vfs_file_info_new ();;
+					GFile* gfile = g_file_new_for_uri(uri);
+
 					gdk_threads_leave();
 					
-					result = gnome_vfs_directory_read_next(data->dir_handle,info);
+					GFileInfo* info = g_file_enumerator_next_file(data->dir_enumerator, NULL, NULL);
 						
-					if (GNOME_VFS_OK == result )
+					if (NULL != info)
 					{
-						GnomeVFSURI * vfs_uri_file = gnome_vfs_uri_append_path(vfs_uri_dir,info->name);
-						gchar *str_uri_file = gnome_vfs_uri_to_string (vfs_uri_file,GNOME_VFS_URI_HIDE_NONE);
+
+						GFile* child = g_file_get_child(gfile, g_file_info_get_name(info));
 						
-						if ( ( 0 == strstr(uri,str_uri_file)) &&
-							(GNOME_VFS_FILE_INFO_FIELDS_TYPE  & info->valid_fields) &&
-							 (info->type == GNOME_VFS_FILE_TYPE_DIRECTORY) )
+						if ( !g_file_equal(gfile, child)  &&
+							G_FILE_TYPE_DIRECTORY == g_file_info_get_file_type(info) )
 						{
-							/*
-							if ('.' == info->name[0])
-							{
-								// FIXME: show hidden?
-							}
-							else
-							*/
-							{
-								g_hash_table_insert(data->hash_table,g_strdup(info->name),NULL);
-							}
+							g_hash_table_insert(data->hash_table,g_strdup(g_file_info_get_name(info)),NULL);
 						}
-						g_free (str_uri_file);
-						gnome_vfs_uri_unref(vfs_uri_file);
+						g_object_unref(child);
+
+						g_object_unref(info);
 					}
 					else
 					{
-						gnome_vfs_directory_close (data->dir_handle);
+						g_object_unref (data->dir_enumerator);
+						data->dir_enumerator = NULL;
 						data->state = SYNC_TREE;
 	
 					}
 	
-					gnome_vfs_file_info_unref (info);
-					gnome_vfs_uri_unref(vfs_uri_dir);
+					g_object_unref(gfile);
 	
 					if (NULL != uri)
 					{
@@ -1235,16 +1220,19 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 					gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
 					gdk_threads_leave();
 					
-					GnomeVFSResult result;
-					GnomeVFSDirectoryHandle *dir_handle;
-					result = gnome_vfs_directory_open (&dir_handle,uri,
-							(GnomeVFSFileInfoOptions)(GNOME_VFS_FILE_INFO_DEFAULT|
-								GNOME_VFS_FILE_INFO_FORCE_FAST_MIME_TYPE|
-								GNOME_VFS_FILE_INFO_GET_MIME_TYPE|
-								GNOME_VFS_FILE_INFO_FOLLOW_LINKS));
-					if ( GNOME_VFS_OK == result )
+					GFile* file = g_file_new_for_uri(uri);
+					GFileEnumerator* enumerator = g_file_enumerate_children(
+							file,
+							G_FILE_ATTRIBUTE_STANDARD_NAME ","
+							G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+							G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME,
+							G_FILE_QUERY_INFO_NONE,
+							NULL,
+							NULL);
+
+					if ( NULL != enumerator )
 					{
-						data->dir_handle  = dir_handle;
+						data->dir_enumerator  = enumerator;
 						data->state       = TRAVERSE_DIR;
 						data->has_subdirs = FALSE;
 						data->hash_table  = g_hash_table_new(g_str_hash, g_str_equal);
@@ -1253,13 +1241,6 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 					{
 						data->state = TRAVERSE_TREE;
 	
-						if (GNOME_VFS_ERROR_NOT_FOUND == result)
-						{
-							gdk_threads_enter();
-							gtk_tree_store_remove (GTK_TREE_STORE(model),data->iter_child);
-							gdk_threads_leave();		
-							data->i--;
-						}
 						gdk_threads_enter();
 						gtk_tree_iter_free(data->iter_child);
 						data->iter_child = NULL;
@@ -1334,13 +1315,13 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 	gboolean expanded = gtk_tree_view_row_expanded(treeview,path);
 
 	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &uri, -1);
-	gchar* icon_name = folder_tree_get_icon_name(uri,expanded);	
+
 
 #ifdef QUIVER_MAEMO
 	gint n_nodes = gtk_tree_model_iter_n_children  (model, iter);
 	if (0 == n_nodes)
 	{
-		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name, -1);
+		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_GICON, icon_name, -1);
 	}
 	else
 	{
@@ -1349,19 +1330,22 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 		g_free(icon_name_full);
 	}
 #else
-	gchar* icon = NULL;
-	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_ICON, &icon, -1);
+	GIcon* icon = NULL;
+	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_GICON, &icon, -1);
 	if (NULL == icon)
 	{
-		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name, -1);
+		GFile* gfile = g_file_new_for_uri(uri);
+		GIcon* gicon = folder_tree_get_gicon(gfile, expanded);
+		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_GICON, gicon, -1);
+		g_object_unref(gicon);
+		g_object_unref(gfile);
 	}
 	else
 	{
-		g_free(icon);
+		g_object_unref(icon);
 	}
 #endif
 
-	g_free(icon_name);
 	g_free(uri);
 	gtk_tree_path_free(path);
 }
@@ -1404,35 +1388,21 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 }
 
 
-static char* folder_tree_get_icon_name(const char* uri, gboolean expanded)
+GIcon* folder_tree_get_gicon(GFile* gfile, gboolean expanded)
 {
 	const char* preferred_icon_name = NULL;
 #ifndef QUIVER_MAEMO
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
-	const char* homedir = g_get_home_dir();
-	char* desktop_path = g_build_filename (homedir, "Desktop", NULL);
+	GFileInfo* info = g_file_query_info(
+		gfile,
+		G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
+		G_FILE_ATTRIBUTE_STANDARD_ICON,
+		G_FILE_QUERY_INFO_NONE,
+		NULL,
+		NULL);
+	return g_file_info_get_icon(info);
 
-	char* home_uri = gnome_vfs_get_uri_from_local_path (homedir);
-	char* desktop_uri = gnome_vfs_get_uri_from_local_path (desktop_path);
-
-	if (gnome_vfs_uris_match (home_uri,uri))
-	{
-		preferred_icon_name = "gnome-fs-home";
-	}
-	else if (gnome_vfs_uris_match (desktop_uri,uri))
-	{
-		preferred_icon_name = "gnome-fs-desktop";
-	}
-	/*
-	else if (gnome_vfs_uris_match ("trash://",uri))
-	{
-		preferred_icon_name = GNOME_STOCK_TRASH;
-	}
-	*/
-	free(desktop_path);
-	free(desktop_uri);
-	free(home_uri);
 #else
 	if (expanded)
 	{
@@ -1514,21 +1484,6 @@ static char* folder_tree_get_icon_name(const char* uri, gboolean expanded)
 	}
 
 #endif
-
-
-	char* icon_name;
-#ifndef QUIVER_MAEMO
-	GnomeIconLookupResultFlags lookup_result;
-	icon_name = gnome_icon_lookup_sync (icon_theme,
-										 NULL,
-										 uri,
-										 preferred_icon_name,
-										 GNOME_ICON_LOOKUP_FLAGS_NONE,
-										 &lookup_result);
-#else
-	icon_name = g_strdup(preferred_icon_name);
-#endif
-	return icon_name;
 
 }
 
@@ -1654,22 +1609,12 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	int iNodeOrder = 0;
 
 	GtkTreeIter iter1 = {0};  /* Parent iter */
-	const char* homedir = g_get_home_dir();
 
-	char* desktop_path = g_build_filename (homedir, "Desktop", NULL);
-	char* pictures_path = g_build_filename (homedir, "Pictures", NULL);
-	char* documents_path = g_build_filename (homedir, "Documents", NULL);
-
-	char* home_uri = g_filename_to_uri (homedir,NULL,NULL);
-	char* desktop_uri = g_filename_to_uri (desktop_path,NULL,NULL);
-	char* pictures_uri = g_filename_to_uri (pictures_path,NULL,NULL);
-	char* documents_uri = g_filename_to_uri (documents_path,NULL,NULL);
-	char* root_uri = g_filename_to_uri ("/",NULL,NULL);
-
-
-	free(desktop_path);
-	free(pictures_path);
-	free(documents_path);
+	GFile* file_home = g_file_new_for_path(g_get_home_dir());
+	GFile* file_desktop = g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP));
+	GFile* file_pictures = g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_PICTURES));
+	GFile* file_docs = g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS));
+	GFile* file_root = g_file_new_for_uri("file:///");
 
 	/*
 	 * Desktop
@@ -1681,18 +1626,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	 * usb...
 	 * trash
 	 */
-
-	char* icon_name = NULL;
-
-
-	GnomeVFSURI *vfsURI;
-	GnomeVFSResult result;
-	result = gnome_vfs_find_directory     (NULL,/*GnomeVFSURI *near_uri,*/
-                                             GNOME_VFS_DIRECTORY_KIND_DESKTOP,
-                                             &vfsURI,
-                                             FALSE,
-                                             FALSE,
-                                             0);
 #ifdef QUIVER_MAEMO
 	GtkTreeIter iter2 = {0};  /* Child iter  */
 	for (int i = 0; i < FOLDER_ID_COUNT; i++)
@@ -1737,30 +1670,8 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	
 #else
 
-	if (GNOME_VFS_OK == result)
-	{
-		gchar* uri = gnome_vfs_uri_to_string(vfsURI,(GnomeVFSURIHideOptions)0);
-		icon_name = folder_tree_get_icon_name(uri,FALSE);
-
-		gtk_tree_store_append (store, &iter1, NULL);  
-		gtk_tree_store_set (store, &iter1,
-				FILE_TREE_COLUMN_CHECKBOX, FALSE,
-			FILE_TREE_COLUMN_ICON, icon_name,
-				FILE_TREE_COLUMN_DISPLAY_NAME, "Desktop",
-				FILE_TREE_COLUMN_SEPARATOR,FALSE,
-				FILE_TREE_COLUMN_URI,uri,
-				-1);
-				
-		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
-
-		free(icon_name);
-		g_free(uri);
-
-	}
-	gnome_vfs_uri_unref(vfsURI);
-
+	// home folder
 	const char* name = g_get_real_name();
-
 	gchar home_name[256];
 	if (0 == strcmp(name,"Unknown"))
 	{
@@ -1773,164 +1684,174 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 		g_snprintf(home_name,256,"%s's Home",tokens[0]);
 		g_strfreev(tokens);
 	}
-	
 
-	icon_name = folder_tree_get_icon_name(home_uri,FALSE);
+	GIcon* gicon = folder_tree_get_gicon(file_home,FALSE);
+	char* uri = g_file_get_uri(file_home);
 
 	gtk_tree_store_append (store, &iter1, NULL);  
 	gtk_tree_store_set (store, &iter1,
             FILE_TREE_COLUMN_CHECKBOX, FALSE,
-			FILE_TREE_COLUMN_ICON, icon_name,
+			FILE_TREE_COLUMN_GICON, gicon,
             FILE_TREE_COLUMN_DISPLAY_NAME, home_name,
             FILE_TREE_COLUMN_SEPARATOR,FALSE,
-            FILE_TREE_COLUMN_URI,home_uri,
+            FILE_TREE_COLUMN_URI,uri,
             -1);
 
+	g_object_unref(gicon);
+	gicon = NULL;
+	g_free(uri);
+	uri = NULL;
+
 	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
-	free(icon_name);
+
+	// desktop
+	gicon = folder_tree_get_gicon(file_desktop,FALSE);
+	uri = g_file_get_uri(file_desktop);
+
+	gtk_tree_store_append (store, &iter1, NULL);
+	gtk_tree_store_set (store, &iter1,
+			FILE_TREE_COLUMN_CHECKBOX, FALSE,
+			FILE_TREE_COLUMN_GICON, gicon,
+			FILE_TREE_COLUMN_DISPLAY_NAME, "Desktop",
+			FILE_TREE_COLUMN_SEPARATOR,FALSE,
+			FILE_TREE_COLUMN_URI,uri,
+			-1);
+	g_object_unref(gicon);
+	gicon = NULL;
+	g_free(uri);
+	uri = NULL;
 
 
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 
-	icon_name = folder_tree_get_icon_name(documents_uri,FALSE);
+
+	// documents
+	gicon = folder_tree_get_gicon(file_docs,FALSE);
+	uri = g_file_get_uri(file_docs);
 
 	gtk_tree_store_append (store, &iter1, NULL);  
 	gtk_tree_store_set (store, &iter1,
             FILE_TREE_COLUMN_CHECKBOX, FALSE,
-			FILE_TREE_COLUMN_ICON, icon_name,
+			FILE_TREE_COLUMN_GICON, gicon,
             FILE_TREE_COLUMN_DISPLAY_NAME, "Documents",
             FILE_TREE_COLUMN_SEPARATOR,FALSE,
-            FILE_TREE_COLUMN_URI,documents_uri,
+            FILE_TREE_COLUMN_URI,uri,
             -1);
             
 	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 
-	free(icon_name);
+	g_object_unref(gicon);
+	gicon = NULL;
+	g_free(uri);
+	uri = NULL;
 
-	icon_name = folder_tree_get_icon_name(pictures_uri,FALSE);
+	// pictures
+	gicon = folder_tree_get_gicon(file_pictures,FALSE);
+	uri = g_file_get_uri(file_pictures);
 
 	gtk_tree_store_append (store, &iter1, NULL);  
 	gtk_tree_store_set (store, &iter1,
             FILE_TREE_COLUMN_CHECKBOX, FALSE,
-        FILE_TREE_COLUMN_ICON, icon_name,
+            FILE_TREE_COLUMN_GICON, gicon,
             FILE_TREE_COLUMN_DISPLAY_NAME, "Pictures",
             FILE_TREE_COLUMN_SEPARATOR,FALSE,
-            FILE_TREE_COLUMN_URI, pictures_uri,
+            FILE_TREE_COLUMN_URI, uri,
             -1);
             
 
-	free(icon_name);
+	g_object_unref(gicon);
+	gicon = NULL;
+	g_free(uri);
+	uri = NULL;
 
 	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
 
 #endif
 
-
-	GnomeVFSVolumeMonitor* monitor = gnome_vfs_get_volume_monitor();
-#ifndef QUIVER_MAEMO
-	const char* filesystem_path = "/";
-	char* filesystem_uri = gnome_vfs_get_uri_from_local_path (filesystem_path);
-	GnomeVFSVolume* volume = gnome_vfs_volume_monitor_get_volume_for_path(monitor,filesystem_path);
-	if (NULL != volume)
+	// other mounts
+	GMount* root_mount = g_file_find_enclosing_mount(file_root, NULL, NULL);
+	if (NULL != root_mount)
 	{
-#ifdef QUIVER_MAEMO
-		char* icon2 = g_strdup(ICON_MAEMO_FOLDER_CLOSED);
-#else
-		char* icon2 = gnome_vfs_volume_get_icon(volume);
-#endif
+		GIcon* root_icon = g_mount_get_icon(root_mount);
+		char* root_uri = g_file_get_uri(file_root);
 
 		gtk_tree_store_append (store, &iter1, NULL);  
 		gtk_tree_store_set (store, &iter1,
 				FILE_TREE_COLUMN_CHECKBOX, FALSE,
-			FILE_TREE_COLUMN_ICON, icon2,
+				FILE_TREE_COLUMN_GICON, root_icon,
 				FILE_TREE_COLUMN_DISPLAY_NAME, "Filesystem",
 				FILE_TREE_COLUMN_SEPARATOR,FALSE,
-				FILE_TREE_COLUMN_URI, filesystem_uri,
+				FILE_TREE_COLUMN_URI, root_uri,
 				-1);
 				
-		free(icon2);
+		g_free(root_uri);
+		g_object_unref(root_icon);
 
 		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+		g_object_unref(root_mount);
 	}
-	gnome_vfs_volume_unref(volume);
-#endif
 
-	GList *volumes = gnome_vfs_volume_monitor_get_mounted_volumes(monitor);
-	GList *volume_itr = volumes;
-	while (NULL != volume_itr)
+
+
+	GVolumeMonitor* monitor = g_volume_monitor_get();
+	GList *mounts = g_volume_monitor_get_mounts(monitor);
+	GList *mount_itr = mounts;
+	while (NULL != mount_itr)
 	{
-		GnomeVFSVolume *volume = GNOME_VFS_VOLUME(volume_itr->data);
-		if (NULL != volume && gnome_vfs_volume_is_user_visible(volume)  )
+		GMount *mount = G_MOUNT(mount_itr->data);
+		if (NULL != mount)
 		{
 
-			char* uri  = gnome_vfs_volume_get_activation_uri(volume);
-
+			GFile* mount_root = g_mount_get_root(mount);
 			
-			if (NULL != uri)
+			gboolean skip = FALSE;
+#ifdef QUIVER_MAEMO
+			gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
+			gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
+			if (NULL != mmc1_uri)
 			{
-				gboolean skip = FALSE;
-#ifdef QUIVER_MAEMO
-				gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
-				gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
-				if (NULL != mmc1_uri)
-				{
-					skip = gnome_vfs_uris_match (mmc1_uri,uri);
-					g_free(mmc1_uri);
-				}
-				if (NULL != mmc2_uri)
-				{
-					skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
-					g_free(mmc2_uri);
-				}
+				skip = gnome_vfs_uris_match (mmc1_uri,uri);
+				g_free(mmc1_uri);
+			}
+			if (NULL != mmc2_uri)
+			{
+				skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
+				g_free(mmc2_uri);
+			}
 #endif
-				if (!skip)
-				{	
-					char* name = gnome_vfs_volume_get_display_name(volume);
-					const char* display_name = name;
-					char* path = gnome_vfs_volume_get_device_path(volume);
-					char* type = gnome_vfs_volume_get_filesystem_type(volume);
+			if (!skip)
+			{
+				char* name = g_mount_get_name(mount);
 
-					if (0 == strcmp(uri,"file:///"))
-					{
-						display_name = QUIVER_FOLDER_TREE_ROOT_NAME;
-					}
-#ifdef QUIVER_MAEMO
-					char* icon2 = folder_tree_get_icon_name(uri,false);
-#else
-					char* icon2 = gnome_vfs_volume_get_icon(volume);
-#endif
-					/*
-					 * FIXME: show type: GNOME_VFS_DEVICE_TYPE_HARDDRIVE first,
-					 * then others sorted on uri
-					 */
-					gtk_tree_store_append (store, &iter1, NULL);  
-					gtk_tree_store_set (store, &iter1,
-							FILE_TREE_COLUMN_CHECKBOX, FALSE,
-						FILE_TREE_COLUMN_ICON, icon2,
-							FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
-							FILE_TREE_COLUMN_SEPARATOR,FALSE,
-							FILE_TREE_COLUMN_URI,uri,
-							-1);
+				GIcon* icon2 = g_mount_get_icon(mount);
+				char* uri = g_file_get_uri(mount_root);
 
-					g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+				gtk_tree_store_append (store, &iter1, NULL);
+				gtk_tree_store_set (store, &iter1,
+						FILE_TREE_COLUMN_CHECKBOX, FALSE,
+						FILE_TREE_COLUMN_GICON, icon2,
+						FILE_TREE_COLUMN_DISPLAY_NAME, name,
+						FILE_TREE_COLUMN_SEPARATOR,FALSE,
+						FILE_TREE_COLUMN_URI,uri,
+						-1);
 
-					free(icon2);
+				g_free(uri);
 
-					if (NULL != name)
-						free(name);
-					if (NULL != path)
-						free(path);
-					if (NULL != type)
-						free(type);
-				}
-				free(uri);
+				g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+
+				g_object_unref(icon2);
+
+				if (NULL != name)
+					g_free(name);
+
 			}
 				
-			gnome_vfs_volume_unref(volume);
+			g_object_unref(mount);
 		}
 		
-		volume_itr = g_list_next(volume_itr);
+		mount_itr = g_list_next(mount_itr);
 	}
-	g_list_free(volumes);
+	g_list_free(mounts);
 
 	MyDataStruct* mydata;
 	mydata = (MyDataStruct*)g_malloc0(sizeof(MyDataStruct));
@@ -1942,11 +1863,11 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	folder_tree_thread_pool_add(m_pGThreadPool, mydata);
 	//m_setFolderThreads.insert(thread_id);
 
-	free(home_uri);
-	free(desktop_uri);
-	free(pictures_uri);
-	free(documents_uri);
-	free(root_uri);
+	g_object_unref(file_home);
+	g_object_unref(file_desktop);
+	g_object_unref(file_pictures);
+	g_object_unref(file_docs);
+	g_object_unref(file_root);
 }
 
 
