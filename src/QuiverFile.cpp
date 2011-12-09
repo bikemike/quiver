@@ -649,9 +649,9 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
 
 				if (n > d)
-					pixbuf_height = (pixbuf_height * n) / d;
+					pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
 				else
-					pixbuf_width = (pixbuf_width * d) / n;
+					pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
 
 				m_iWidth = pixbuf_width;
 				m_iHeight = pixbuf_height;
@@ -667,6 +667,82 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 
 					g_object_unref(video_pixbuf);
 
+					// add filmstrip to sides of thumbnail
+					GdkPixbuf* left = NULL;
+					GdkPixbuf* right = NULL;
+					if (size < 256)
+					{
+						// FIXME: shouldn't load this every time
+						left = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes.png", NULL);
+						right = gdk_pixbuf_flip(left, TRUE);
+					}
+					else
+					{
+						// FIXME: shouldn't load this every time
+						left = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes-big.png", NULL);
+						right = gdk_pixbuf_flip(left, TRUE);
+					}
+
+					if (NULL != left)
+					{
+						int w = gdk_pixbuf_get_width(left);
+						int h = gdk_pixbuf_get_height(left);
+
+						int dest_y = 0;
+
+						//left
+						while (dest_y < pixbuf_height)
+						{
+							if (dest_y + h > pixbuf_height)
+								h = pixbuf_height - dest_y;
+
+							gdk_pixbuf_composite(
+								left,
+								thumb_pixbuf,
+								0, // dest x
+								dest_y, // dest y
+								w, // dest w
+								h, // dest h
+								0., // offset x
+								dest_y, // offset y
+								1., // scale x
+								1., // scale y
+								GDK_INTERP_NEAREST,
+								192);//alpha
+							dest_y += h;
+						}
+
+						g_object_unref(left);
+					}
+					if (NULL != right)
+					{
+						//right
+						int w = gdk_pixbuf_get_width(right);
+						int h = gdk_pixbuf_get_height(right);
+						int dest_y = 0;
+						while (dest_y < pixbuf_height)
+						{
+							if (dest_y + h > pixbuf_height)
+								h = pixbuf_height - dest_y;
+
+							gdk_pixbuf_composite(
+								right,
+								thumb_pixbuf,
+								pixbuf_width - w, // dest x
+								dest_y, // dest y
+								w, // dest w
+								h, // dest h
+								pixbuf_width - w, // offset x
+								dest_y, // offset y
+								1., // scale x
+								1., // scale y
+								GDK_INTERP_NEAREST,
+								192);//alpha
+							dest_y += h;
+						}
+
+						g_object_unref(right);
+					}
 				}
 				else
 				{
@@ -1341,9 +1417,9 @@ void QuiverFile::QuiverFileImpl::GetVideoDimensions(gint *width, gint *height)
 			*height = gdk_pixbuf_get_height(pixbuf);
 
 			if (n > d)
-				*height = (*height * n) / d;
+				*width = (guint)((*width * n) / float(d) + .5);
 			else
-				*width = (*width * d) / n;
+				*height = (guint)((*height * d) / float(n) + .5);
 		}
 
 		g_object_unref(pixbuf);

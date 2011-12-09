@@ -428,10 +428,11 @@ void ImageLoader::Load()
 					GdkPixbuf* video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
 					guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
 					guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
+
 					if (n > d)
-						pixbuf_height = (pixbuf_height * n) / d;
+						pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
 					else
-						pixbuf_width = (pixbuf_width * d) / n;
+						pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
 
 					if (!m_Command.quiverFile.IsWidthHeightSet())
 					{
