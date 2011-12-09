@@ -66,7 +66,10 @@ icons_64x64_DATA = \
 icons_128x128_DATA = \
 	icons/128x128/quiver-icon-app.png
 
-ui_DATA = quiver.ui
+ui_DATA = \
+	quiver.ui \
+	play.png \
+	pause.png
 
 EXTRA_DIST = \
 	${desktop_DATA} \

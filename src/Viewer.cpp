@@ -422,6 +422,21 @@ public:
 
 	void SlideShowStop(bool bEmitStopEvent = true);
 
+	bool IsPlaying() const
+	{
+		return m_bIsPlaying;
+	}
+
+	void SetIsPlaying(bool isPlaying)
+	{
+		m_bIsPlaying = isPlaying;
+
+		if (IsPlaying())
+			gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPause);
+		else
+			gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPlay);
+	}
+
 	// methods for playing videos
 	void PlayPauseVideo();
 	void StopVideo(bool reloadImage = true);
@@ -448,7 +463,15 @@ public:
 	
 	GtkWidget *m_pNavigationWindow;
 	GtkWidget *m_pNavigationControl;
-	
+
+	GtkWidget* m_pMediaControls;
+	GtkWidget* m_pPlayImage;
+
+	GdkPixbuf* m_pPixbufPlayHighlight;
+	GdkPixbuf* m_pPixbufPlay;
+	GdkPixbuf* m_pPixbufPauseHighlight;
+	GdkPixbuf* m_pPixbufPause;
+
 	QuiverFile m_QuiverFileCurrent;
 
 	int m_iCurrentOrientation;
@@ -476,6 +499,7 @@ public:
 	guint m_iTimeoutUpdateListID;
 	guint m_iTimeoutSlideshowID;
 	guint m_iTimeoutClickID;
+	guint m_iTimeoutMouseMotionNotify;
 
 	int   m_iSlideShowDuration;
 	int   m_iSlideShowWaitCount;
@@ -483,6 +507,8 @@ public:
 
 	bool m_bMaximizeViewableArea;
 	bool m_bMaximizeViewabe;
+
+	bool m_bIsPlaying;
 
 	ImageCache m_ThumbnailCache;
 
@@ -951,6 +977,16 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		
 		QuiverFile f;
 		f = m_ImageListPtr->GetCurrent();
+		if (f.IsVideo())
+		{
+			// show media controls
+			gtk_widget_show(m_pMediaControls);
+		}
+		else
+		{
+			// hide them
+			gtk_widget_hide(m_pMediaControls);
+		}
 
 		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
 		GdkPixbuf *pixbuf = f.GetThumbnail(128);
@@ -1118,6 +1154,70 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		}
 	}
 
+}
+
+static gboolean 
+timeout_event_motion_notify (gpointer user_data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	gdk_threads_enter();
+	// hide the controls
+	// FIXME: should only hide if playing
+	if (pViewerImpl->IsPlaying())
+		gtk_widget_hide(pViewerImpl->m_pMediaControls);
+	gdk_threads_leave();
+	pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
+	return FALSE;
+}
+
+
+static gboolean
+viewer_motion_notify(GtkWidget* widget, GdkEvent* event, gpointer user_data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	if (0 != pViewerImpl->m_iTimeoutMouseMotionNotify)
+	{
+		g_source_remove(pViewerImpl->m_iTimeoutMouseMotionNotify);
+		pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
+	}
+
+	if (0 != pViewerImpl->m_ImageListPtr->GetSize() && 
+			pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
+		gtk_widget_show(pViewerImpl->m_pMediaControls);
+
+	if (pViewerImpl->IsPlaying())
+		pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
+	
+	return FALSE;
+}
+
+static gboolean
+viewer_play_button_mouse_in(GtkWidget* widget, GdkEvent* event, gpointer user_data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+
+	if (pViewerImpl->IsPlaying())
+		gtk_image_set_from_pixbuf(GTK_IMAGE(pViewerImpl->m_pPlayImage), pViewerImpl->m_pPixbufPauseHighlight);
+	else
+		gtk_image_set_from_pixbuf(GTK_IMAGE(pViewerImpl->m_pPlayImage), pViewerImpl->m_pPixbufPlayHighlight);
+	return FALSE;
+}
+
+static gboolean
+viewer_play_button_mouse_out(GtkWidget* widget, GdkEvent* event, gpointer user_data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+
+	if (pViewerImpl->IsPlaying())
+		gtk_image_set_from_pixbuf(GTK_IMAGE(pViewerImpl->m_pPlayImage), pViewerImpl->m_pPixbufPause);
+	else
+		gtk_image_set_from_pixbuf(GTK_IMAGE(pViewerImpl->m_pPlayImage), pViewerImpl->m_pPixbufPlay);
+	
+	return FALSE;
 }
 
 static void viewer_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data)
@@ -1702,9 +1802,7 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 			{
 				// reset state to ready
 				gst_element_set_state(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_STATE_READY);
-				gtk_widget_set_double_buffered (pViewerImpl->m_pImageView, TRUE);
-				if (0 != pViewerImpl->m_ImageListPtr->GetSize())
-					pViewerImpl->LoadImage(pViewerImpl->m_ImageListPtr->GetCurrent());
+				pViewerImpl->StopVideo(true);
 			}
 			break;
 		case GST_MESSAGE_ERROR: 
@@ -1771,10 +1869,21 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 			if (GST_STATE_PLAYING == current)
 			{
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PAUSED);
+				gtk_widget_show(m_pMediaControls);
+				SetIsPlaying(false);
 			}
 			else
 			{
+				SetIsPlaying(true);
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
+
+				if (0 != m_iTimeoutMouseMotionNotify)
+				{
+					g_source_remove(m_iTimeoutMouseMotionNotify);
+					m_iTimeoutMouseMotionNotify = 0;
+				}
+
+				m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 			}
 		}
 	}
@@ -1785,14 +1894,37 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		gtk_widget_set_double_buffered (m_pImageView, FALSE);
 		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
+
+		SetIsPlaying(true);
+
+		if (0 != m_iTimeoutMouseMotionNotify)
+		{
+			g_source_remove(m_iTimeoutMouseMotionNotify);
+			m_iTimeoutMouseMotionNotify = 0;
+		}
+
+		m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 	}
 }
 
 void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 {
+	SetIsPlaying(false);
+	if (0 != m_iTimeoutMouseMotionNotify)
+	{
+		g_source_remove(m_iTimeoutMouseMotionNotify);
+		m_iTimeoutMouseMotionNotify = 0;
+	}
+
 	gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_NULL);
 	gtk_widget_set_double_buffered (m_pImageView, TRUE);
 	gst_x_overlay_set_window_handle (GST_X_OVERLAY(m_pXVImageSink), 0);
+
+	if (0 != m_ImageListPtr->GetSize() && 
+			m_ImageListPtr->GetCurrent().IsVideo())
+	{
+		gtk_widget_show(m_pMediaControls);
+	}
 
 	if (reloadImage && 0 != m_ImageListPtr->GetSize())
 		LoadImage(m_ImageListPtr->GetCurrent());
@@ -1842,17 +1974,22 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 	}
 	*/
 #endif
-
-	if (GDK_BUTTON_PRESS == event->type && 3 == event->button)
+	if (widget == pViewerImpl->m_pImageView) 
 	{
-		viewer_show_context_menu(event, user_data);
-		return TRUE;
+		if (GDK_BUTTON_PRESS == event->type && 3 == event->button)
+		{
+			viewer_show_context_menu(event, user_data);
+			return TRUE;
+		}
 	}
-	else if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
+	else
 	{
-		// play video
-		if (pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
-			pViewerImpl->PlayPauseVideo();
+		if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
+		{
+			// play video
+			if (pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
+				pViewerImpl->PlayPauseVideo();
+		}
 	}
 	return FALSE;
 } 
@@ -1879,6 +2016,11 @@ static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata)
 Viewer::ViewerImpl::~ViewerImpl()
 {
 	StopVideo(false);
+
+	g_object_unref(m_pPixbufPause);
+	g_object_unref(m_pPixbufPauseHighlight);
+	g_object_unref(m_pPixbufPlay);
+	g_object_unref(m_pPixbufPlayHighlight);
 
 	gst_object_unref(GST_OBJECT(m_pPipeline));
 
@@ -1913,6 +2055,54 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pIconView = quiver_icon_view_new();
 	m_pImageView = quiver_image_view_new();
 
+	gtk_widget_set_size_request(m_pImageView, 100, 100);
+
+
+	m_pPixbufPlay = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/play.png", NULL);
+	m_pPixbufPlayHighlight = gdk_pixbuf_copy(m_pPixbufPlay);
+	pixbuf_brighten(m_pPixbufPlayHighlight, m_pPixbufPlayHighlight, 50); 
+
+	m_pPixbufPause = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/pause.png", NULL);
+	m_pPixbufPauseHighlight = gdk_pixbuf_copy(m_pPixbufPause);
+	pixbuf_brighten(m_pPixbufPauseHighlight, m_pPixbufPauseHighlight, 50); 
+
+	int w, h;
+	w = gdk_pixbuf_get_width(m_pPixbufPlay);
+	h = gdk_pixbuf_get_height(m_pPixbufPlay);
+	GdkPixmap* bitmap = gdk_pixmap_new(NULL, w, h, 1);
+	gdk_pixbuf_render_threshold_alpha(m_pPixbufPlay, bitmap, 0,0,0,0,w,h, 0x80);
+
+	GtkWidget* alignment = gtk_alignment_new(0., 1., 0., 0.);
+	gtk_widget_set_no_show_all(alignment,TRUE);
+	m_pMediaControls = alignment;
+	gtk_alignment_set_padding(GTK_ALIGNMENT(alignment), 0, 20, 20,0);
+
+	GtkWidget* eventbox = gtk_event_box_new();
+
+	g_signal_connect(
+		G_OBJECT(eventbox), 
+		"enter-notify-event",
+		G_CALLBACK(viewer_play_button_mouse_in),
+		this);
+	g_signal_connect(
+		G_OBJECT(eventbox), 
+		"leave-notify-event",
+		G_CALLBACK(viewer_play_button_mouse_out),
+		this);
+	g_signal_connect(G_OBJECT(eventbox), "button-press-event", G_CALLBACK(viewer_button_press_cb), this);
+
+	gtk_widget_shape_combine_mask(eventbox, bitmap, 0,0);
+
+	m_pPlayImage = gtk_image_new_from_pixbuf(m_pPixbufPlay);
+	gtk_container_add(GTK_CONTAINER(eventbox), m_pPlayImage);
+
+	gtk_widget_set_size_request(m_pPlayImage, w, h);
+
+	gtk_widget_set_size_request(eventbox, w, h);
+
+	gtk_container_add(GTK_CONTAINER(alignment), eventbox);
+	gtk_widget_show_all(eventbox);
+
 	m_iCurrentOrientation = 1;
 	
 	m_pUIManager = NULL;
@@ -1924,6 +2114,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutSlideshowID = 0;
 	m_iTimeoutClickID = 0;
+	m_iTimeoutMouseMotionNotify = 0;
 	m_iSlideShowWaitCount = 0;
 
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
@@ -1954,10 +2145,13 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	m_pTable = gtk_table_new (2, 2, FALSE);
 	
-	gtk_table_attach (GTK_TABLE (m_pTable), m_pImageView, 0, 1, 0, 1,
+	gtk_table_attach (GTK_TABLE (m_pTable), alignment, 0, 1, 0, 1,
 			  (GtkAttachOptions) (GTK_EXPAND | GTK_FILL),
 			  (GtkAttachOptions) (GTK_EXPAND | GTK_FILL), 0, 0);
 
+	gtk_table_attach (GTK_TABLE (m_pTable), m_pImageView, 0, 1, 0, 1,
+			  (GtkAttachOptions) (GTK_EXPAND | GTK_FILL),
+			  (GtkAttachOptions) (GTK_EXPAND | GTK_FILL), 0, 0);
 
 	gtk_table_attach (GTK_TABLE (m_pTable), m_pScrollbarV, 1, 2, 0, 1,
 			  (GtkAttachOptions) (GTK_FILL),
@@ -2009,6 +2203,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	m_bMaximizeViewableArea = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, false);
 	
+	m_bIsPlaying = false;
+
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 	
 	//QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
@@ -2042,6 +2238,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	g_signal_connect (G_OBJECT (m_pImageView), "drag_motion",
 				G_CALLBACK (signal_drag_motion), this);
+
+	g_signal_connect (G_OBJECT (m_pImageView), "motion-notify-event",
+				G_CALLBACK (viewer_motion_notify), this);
 
 
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
