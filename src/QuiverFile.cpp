@@ -513,7 +513,6 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 
 			const gchar* str_thumb_width = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Width");
 			const gchar* str_thumb_height = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Height");
-			const gchar *str_thumb_software = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Software");
 			
 			if (NULL != str_orientation)
 			{
@@ -547,8 +546,16 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 			{
 				// if we didn't get the width and height we should resave thumbnail
 				// with this information 
-				if (NULL == str_thumb_width || NULL == str_thumb_height)
+				if ((NULL == str_thumb_width || '\0' == str_thumb_width) || 
+					( NULL == str_thumb_height || '\0' == str_thumb_height))
 				{
+					if (IsVideo())
+					{
+						// video thumbnail doens't have width/height
+						// so create a new thumbnail
+						g_object_unref(thumb_pixbuf);
+						thumb_pixbuf = NULL;
+					}
 					save_thumbnail_to_cache = TRUE;
 				}
 				else 
@@ -573,13 +580,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 					}
 					else
 					{
-						if (NULL != str_thumb_software && 0 == strcmp("GNOME::ThumbnailFactory",str_thumb_software))
-						{
-							// this is to work around a bug with the gnome thumbnail factory
-							// not saving the correct width/height to the thumbnails
-							save_thumbnail_to_cache = TRUE;
-						}
-						else if (-1 == m_iWidth || -1 == m_iHeight)
+						if (-1 == m_iWidth || -1 == m_iHeight)
 						{
 							if (0 < img_width && 0 < img_height)
 							{
@@ -588,6 +589,14 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 							}
 							else
 							{
+								// thumb has an invalid size. resave it
+								if (IsVideo())
+								{
+									// video thumbnail has wrong dimensions
+									// so create a new thumbnail
+									g_object_unref(thumb_pixbuf);
+									thumb_pixbuf = NULL;
+								}
 								save_thumbnail_to_cache = TRUE;	
 							}
 						}
@@ -668,25 +677,22 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 					g_object_unref(video_pixbuf);
 
 					// add filmstrip to sides of thumbnail
-					GdkPixbuf* left = NULL;
-					GdkPixbuf* right = NULL;
+					GdkPixbuf* filmholes = NULL;
 					if (size < 256)
 					{
 						// FIXME: shouldn't load this every time
-						left = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes.png", NULL);
-						right = gdk_pixbuf_flip(left, TRUE);
+						filmholes = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes.png", NULL);
 					}
 					else
 					{
 						// FIXME: shouldn't load this every time
-						left = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes-big.png", NULL);
-						right = gdk_pixbuf_flip(left, TRUE);
+						filmholes = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes-big.png", NULL);
 					}
 
-					if (NULL != left)
+					if (NULL != filmholes)
 					{
-						int w = gdk_pixbuf_get_width(left);
-						int h = gdk_pixbuf_get_height(left);
+						int w = gdk_pixbuf_get_width(filmholes);
+						int h = gdk_pixbuf_get_height(filmholes);
 
 						int dest_y = 0;
 
@@ -697,7 +703,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 								h = pixbuf_height - dest_y;
 
 							gdk_pixbuf_composite(
-								left,
+								filmholes,
 								thumb_pixbuf,
 								0, // dest x
 								dest_y, // dest y
@@ -712,21 +718,16 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 							dest_y += h;
 						}
 
-						g_object_unref(left);
-					}
-					if (NULL != right)
-					{
 						//right
-						int w = gdk_pixbuf_get_width(right);
-						int h = gdk_pixbuf_get_height(right);
-						int dest_y = 0;
+						dest_y = 0;
+						h = gdk_pixbuf_get_height(filmholes);
 						while (dest_y < pixbuf_height)
 						{
 							if (dest_y + h > pixbuf_height)
 								h = pixbuf_height - dest_y;
 
 							gdk_pixbuf_composite(
-								right,
+								filmholes,
 								thumb_pixbuf,
 								pixbuf_width - w, // dest x
 								dest_y, // dest y
@@ -741,7 +742,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 							dest_y += h;
 						}
 
-						g_object_unref(right);
+						g_object_unref(filmholes);
 					}
 				}
 				else
@@ -849,9 +850,9 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 		GTimeVal tv;
 		g_file_info_get_modification_time(gFileInfo, &tv);
 		gchar text_buff[20];
-		g_sprintf(text_buff, "%d", m_iWidth);
+		g_sprintf(text_buff, "%d", GetWidth());
 		gdk_pixbuf_set_option (thumb_pixbuf, "tEXt::Thumb::Image::Width", text_buff);
-		g_sprintf(text_buff, "%d", m_iHeight);
+		g_sprintf(text_buff, "%d", GetHeight());
 		gdk_pixbuf_set_option (thumb_pixbuf, "tEXt::Thumb::Image::Height", text_buff);
 		SaveThumbnail(thumb_pixbuf, m_szURI, thumb_path, tv.tv_sec, GetWidth(), GetHeight(), GetOrientation());
 	}
