@@ -69,7 +69,9 @@ icons_128x128_DATA = \
 ui_DATA = \
 	quiver.ui \
 	play.png \
-	pause.png
+	pause.png \
+	filmholes.png \
+	filmholes-big.png
 
 EXTRA_DIST = \
 	${desktop_DATA} \
