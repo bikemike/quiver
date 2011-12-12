@@ -94,12 +94,15 @@ namespace QuiverVideoOps
 						gint n, d;
 						n = gst_value_get_fraction_numerator(fraction);
 						d = gst_value_get_fraction_denominator(fraction);
-						// FIXME: bug in gstreamer has n / d reversed
+#if !GST_CHECK_VERSION(0,10,36)
+						// bug in gstreamer has n / d reversed
 						// https://bugzilla.gnome.org/show_bug.cgi?id=665882
-						if (NULL != denominator)
-							*denominator = n;
+						std::swap(n,d);
+#endif
 						if (NULL != numerator)
-							*numerator = d;
+							*numerator = n;
+						if (NULL != denominator)
+							*denominator = d;
 						gotAspectRatio = true;
 					}
 				}

@@ -714,7 +714,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 								1., // scale x
 								1., // scale y
 								GDK_INTERP_NEAREST,
-								192);//alpha
+								128);//alpha
 							dest_y += h;
 						}
 
@@ -738,7 +738,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 								1., // scale x
 								1., // scale y
 								GDK_INTERP_NEAREST,
-								192);//alpha
+								128);//alpha
 							dest_y += h;
 						}
 
