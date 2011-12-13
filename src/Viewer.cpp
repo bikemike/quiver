@@ -92,6 +92,7 @@ static GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_ge
 // popup menu callbacks
 static gboolean viewer_popup_menu_cb (GtkWidget *treeview, gpointer userdata);
 static gboolean viewer_button_press_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
+static gboolean viewer_button_release_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
 static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata);
 
 
@@ -115,6 +116,9 @@ static void signal_drag_begin (GtkWidget *widget,GdkDragContext *drag_context,gp
 static void signal_drag_end(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
 static void signal_drag_motion (GtkWidget *widget, GdkDragContext *context, gint x, gint y, guint time, gpointer user_data);
 static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_context, gint x, gint y, guint time,  gpointer user_data);   
+
+
+static gboolean timeout_play_position (gpointer data);
 
 #define ACTION_VIEWER_CUT              "ViewerCut"
 #define ACTION_VIEWER_COPY             "ViewerCopy"
@@ -431,14 +435,27 @@ public:
 	{
 		m_bIsPlaying = isPlaying;
 
+		if (0 != m_iTimeoutPlayProgress)
+		{
+			g_source_remove(m_iTimeoutPlayProgress);
+			m_iTimeoutPlayProgress = 0;
+		}
+
 		if (IsPlaying())
+		{
 			gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPause);
+
+			m_iTimeoutPlayProgress = g_timeout_add(200,timeout_play_position,this);
+		}
 		else
+		{
 			gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPlay);
+		}
 	}
 
 	// methods for playing videos
 	void PlayPauseVideo();
+	void UpdateTimeline();
 	void StopVideo(bool reloadImage = true);
 
 // member variables
@@ -466,6 +483,8 @@ public:
 
 	GtkWidget* m_pMediaControls;
 	GtkWidget* m_pPlayImage;
+	GtkWidget* m_pTimeLabel;
+	GtkWidget* m_pPlayProgress;
 
 	GdkPixbuf* m_pPixbufPlayHighlight;
 	GdkPixbuf* m_pPixbufPlay;
@@ -500,6 +519,7 @@ public:
 	guint m_iTimeoutSlideshowID;
 	guint m_iTimeoutClickID;
 	guint m_iTimeoutMouseMotionNotify;
+	guint m_iTimeoutPlayProgress;
 
 	int   m_iSlideShowDuration;
 	int   m_iSlideShowWaitCount;
@@ -1162,10 +1182,17 @@ timeout_event_motion_notify (gpointer user_data)
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	gdk_threads_enter();
-	// hide the controls
-	// FIXME: should only hide if playing
-	if (pViewerImpl->IsPlaying())
-		gtk_widget_hide(pViewerImpl->m_pMediaControls);
+	gint x, y;
+	gtk_widget_get_pointer(pViewerImpl->m_pMediaControls, &x, &y);
+	GtkAllocation a = {0};
+	gtk_widget_get_allocation(pViewerImpl->m_pMediaControls, &a);
+
+	if (0 >= x || 0 >= y || x > a.width || y > a.height)
+	{
+		// hide the controls
+		if (pViewerImpl->IsPlaying())
+			gtk_widget_hide(pViewerImpl->m_pMediaControls);
+	}
 	gdk_threads_leave();
 	pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
 	return FALSE;
@@ -1173,23 +1200,44 @@ timeout_event_motion_notify (gpointer user_data)
 
 
 static gboolean
-viewer_motion_notify(GtkWidget* widget, GdkEvent* event, gpointer user_data)
+viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	if (0 != pViewerImpl->m_iTimeoutMouseMotionNotify)
+	if (widget == pViewerImpl->m_pImageView)
 	{
-		g_source_remove(pViewerImpl->m_iTimeoutMouseMotionNotify);
-		pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
+		if (0 != pViewerImpl->m_iTimeoutMouseMotionNotify)
+		{
+			g_source_remove(pViewerImpl->m_iTimeoutMouseMotionNotify);
+			pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
+		}
+
+		if (0 != pViewerImpl->m_ImageListPtr->GetSize() && 
+				pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
+			gtk_widget_show(pViewerImpl->m_pMediaControls);
+
+		if (pViewerImpl->IsPlaying())
+			pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
 	}
+	else if (widget == pViewerImpl->m_pPlayProgress)
+	{
+		if (gdk_pointer_is_grabbed())
+		{
+			GtkAllocation allocation = {0};
+			gtk_widget_get_allocation(widget, &allocation);
 
-	if (0 != pViewerImpl->m_ImageListPtr->GetSize() && 
-			pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
-		gtk_widget_show(pViewerImpl->m_pMediaControls);
+			GstFormat format = GST_FORMAT_TIME;
+			gint64 clip_duration = 0;
 
-	if (pViewerImpl->IsPlaying())
-		pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
-	
+			gboolean queried = gst_element_query_duration(GST_ELEMENT(pViewerImpl->m_pPipeline), &format, &clip_duration);
+			if (queried)
+			{
+				gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), ((clip_duration * event->x) / allocation.width));
+			}
+
+		}
+	}
+		
 	return FALSE;
 }
 
@@ -1791,6 +1839,35 @@ static gboolean viewer_popup_menu_cb (GtkWidget *widget, gpointer userdata)
 	return TRUE; 
 }
 
+static gchar*
+gst_time_format(gint64 time)
+{
+	gint64 secs  = GST_TIME_AS_SECONDS(time);
+	gint64 mins  = secs / 60;
+	gint64 hours = mins / 60;
+	mins = mins - hours*60;
+	secs = secs - mins*60;
+
+	gchar* str = NULL;
+
+	if (0 != hours)
+		str = g_strdup_printf("%lld:%02lld:%02lld", hours, mins, secs);
+	else
+		str = g_strdup_printf("%lld:%02lld", mins, secs);
+	return str;
+}
+
+static gboolean 
+timeout_play_position (gpointer data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)data;
+
+	pViewerImpl->UpdateTimeline();
+
+	return TRUE;
+}
+
 static gboolean 
 gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 {
@@ -1805,6 +1882,16 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 				pViewerImpl->StopVideo(true);
 			}
 			break;
+		case GST_MESSAGE_STATE_CHANGED:
+				break;
+		case GST_MESSAGE_ASYNC_DONE:
+				pViewerImpl->UpdateTimeline();
+				break;
+		case GST_MESSAGE_DURATION:
+				pViewerImpl->UpdateTimeline();
+				break;
+		case GST_MESSAGE_PROGRESS:
+			break;
 		case GST_MESSAGE_ERROR: 
 			{
 				gchar  *debug;
@@ -1815,6 +1902,8 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 
 				g_printerr ("error: %s\n", error->message);
 				g_error_free (error);
+
+				pViewerImpl->StopVideo(true);
 
 				break;
 			}
@@ -1851,6 +1940,41 @@ gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_da
 
 	gst_message_unref (message);
 	return GST_BUS_DROP;
+}
+
+void Viewer::ViewerImpl::UpdateTimeline()
+{
+	GstFormat fmt = GST_FORMAT_TIME;
+
+	gint64 pos = 0, len = 0;
+	bool success = gst_element_query_position(m_pPipeline, &fmt, &pos);
+	success |= gst_element_query_duration(m_pPipeline, &fmt, &len);
+
+	if (!success || len < 0 || pos < 0 )
+	{
+		pos = 0;
+		len = 0;
+	}
+
+
+	gchar* str_pos = gst_time_format(pos);
+	gchar* str_len = gst_time_format(len);
+	gchar* text = g_strdup_printf("%s / %s", str_pos, str_len);
+
+	gtk_label_set_text(GTK_LABEL(m_pTimeLabel), text);
+
+	g_free(text);
+	g_free(str_len);
+	g_free(str_pos);
+
+	if (pos > len)
+		pos = len;
+
+	gdouble progress = 0.;
+	if (0 != len)
+		progress = gdouble(pos)/len;
+
+	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pPlayProgress), progress);
 }
 
 void Viewer::ViewerImpl::PlayPauseVideo()
@@ -1920,6 +2044,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	gtk_widget_set_double_buffered (m_pImageView, TRUE);
 	gst_x_overlay_set_window_handle (GST_X_OVERLAY(m_pXVImageSink), 0);
 
+	UpdateTimeline();
+
 	if (0 != m_ImageListPtr->GetSize() && 
 			m_ImageListPtr->GetCurrent().IsVideo())
 	{
@@ -1942,6 +2068,17 @@ static gboolean timeout_click (gpointer data)
 	return FALSE;
 }
 #endif
+
+static gboolean 
+viewer_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+	Viewer::ViewerImpl *pViewerImpl;
+	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	if (widget == pViewerImpl->m_pPlayProgress)
+	{
+		gdk_pointer_ungrab (event->time);
+	}
+}
 
 static gboolean 
 viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
@@ -1981,6 +2118,33 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 			viewer_show_context_menu(event, user_data);
 			return TRUE;
 		}
+	}
+	else if (widget == pViewerImpl->m_pPlayProgress)
+	{
+		GtkAllocation allocation = {0};
+		gtk_widget_get_allocation(widget, &allocation);
+
+		GstFormat format = GST_FORMAT_TIME;
+		gint64 clip_duration = 0;
+
+		gst_element_query_duration(GST_ELEMENT(pViewerImpl->m_pPipeline), &format, &clip_duration);
+
+		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), ((clip_duration * event->x) / allocation.width));
+
+		gdk_pointer_grab (
+			pViewerImpl->m_pPlayProgress->window,  
+			TRUE, 
+			(GdkEventMask)
+				(GDK_BUTTON_RELEASE_MASK  | 
+				 GDK_POINTER_MOTION_HINT_MASK | 
+				 GDK_BUTTON_MOTION_MASK | 
+				 GDK_EXTENSION_EVENTS_ALL),
+			pViewerImpl->m_pPlayProgress->window, 
+			NULL,
+			GDK_CURRENT_TIME);
+
+		if (pViewerImpl->IsPlaying())
+			pViewerImpl->PlayPauseVideo();
 	}
 	else
 	{
@@ -2072,10 +2236,30 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	GdkPixmap* bitmap = gdk_pixmap_new(NULL, w, h, 1);
 	gdk_pixbuf_render_threshold_alpha(m_pPixbufPlay, bitmap, 0,0,0,0,w,h, 0x80);
 
-	GtkWidget* alignment = gtk_alignment_new(0., 1., 0., 0.);
+	GtkWidget* alignment = gtk_alignment_new(0., 1., 1., 0.);
 	gtk_widget_set_no_show_all(alignment,TRUE);
-	m_pMediaControls = alignment;
-	gtk_alignment_set_padding(GTK_ALIGNMENT(alignment), 0, 20, 20,0);
+	//m_pMediaControls = alignment;
+	gtk_alignment_set_padding(GTK_ALIGNMENT(alignment), 0, 10, 10,10);
+
+	GtkWidget* align2    = gtk_alignment_new(0.,1.,1., 0.);
+	GtkWidget* hbox1     = gtk_hbox_new(FALSE,0);
+	m_pMediaControls     = hbox1;
+	GtkWidget* hbox2     = gtk_hbox_new(FALSE,0);
+	m_pPlayProgress      = gtk_progress_bar_new();
+	m_pTimeLabel         = gtk_label_new("");
+	GtkWidget* eventbox2 = gtk_event_box_new();
+
+	gtk_box_pack_start (GTK_BOX (hbox2), m_pTimeLabel, FALSE, TRUE, 10);
+	gtk_box_pack_start (GTK_BOX (hbox2), m_pPlayProgress, TRUE, TRUE, 0);
+
+	GtkWidget* align3   = gtk_alignment_new(0.,0.,1., 1.);
+	gtk_alignment_set_padding(GTK_ALIGNMENT(align3), 5, 5, 5,10);
+	gtk_container_add(GTK_CONTAINER(align3), hbox2);
+	gtk_container_add(GTK_CONTAINER(eventbox2), align3);
+
+	gtk_alignment_set_padding(GTK_ALIGNMENT(align2), 0, 5, 0, 0);
+	gtk_container_add(GTK_CONTAINER(align2), eventbox2);
+
 
 	GtkWidget* eventbox = gtk_event_box_new();
 
@@ -2091,17 +2275,32 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		this);
 	g_signal_connect(G_OBJECT(eventbox), "button-press-event", G_CALLBACK(viewer_button_press_cb), this);
 
+	gtk_widget_add_events (m_pPlayProgress, GDK_BUTTON_PRESS_MASK|GDK_BUTTON_RELEASE_MASK);
+ 	gtk_widget_add_events (m_pPlayProgress, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);
+	g_signal_connect(G_OBJECT(m_pPlayProgress), "button-press-event", G_CALLBACK(viewer_button_press_cb), this);
+	g_signal_connect (G_OBJECT (m_pPlayProgress), "button_release_event",  
+				G_CALLBACK (viewer_button_release_cb), this);
+	g_signal_connect (G_OBJECT (m_pPlayProgress), "motion-notify-event",G_CALLBACK (viewer_motion_notify), this);
+
 	gtk_widget_shape_combine_mask(eventbox, bitmap, 0,0);
 
 	m_pPlayImage = gtk_image_new_from_pixbuf(m_pPixbufPlay);
 	gtk_container_add(GTK_CONTAINER(eventbox), m_pPlayImage);
 
-	gtk_widget_set_size_request(m_pPlayImage, w, h);
+	//gtk_widget_set_size_request(m_pPlayImage, w, h);
 
 	gtk_widget_set_size_request(eventbox, w, h);
 
-	gtk_container_add(GTK_CONTAINER(alignment), eventbox);
+	//gtk_container_add(GTK_CONTAINER(alignment), eventbox);
+
+	gtk_box_pack_start (GTK_BOX (hbox1), eventbox, FALSE, TRUE, 10);
+	gtk_box_pack_start (GTK_BOX (hbox1), align2, TRUE, TRUE, 0);
+
+	gtk_container_add(GTK_CONTAINER(alignment), hbox1);
 	gtk_widget_show_all(eventbox);
+	gtk_widget_show_all(hbox1);
+	gtk_widget_hide(hbox1);
+	gtk_widget_show(alignment);
 
 	m_iCurrentOrientation = 1;
 	
@@ -2115,6 +2314,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iTimeoutSlideshowID = 0;
 	m_iTimeoutClickID = 0;
 	m_iTimeoutMouseMotionNotify = 0;
+	m_iTimeoutPlayProgress = 0;
 	m_iSlideShowWaitCount = 0;
 
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
