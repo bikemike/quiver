@@ -1037,7 +1037,6 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
 	gboolean bFullscreen = FALSE;
-	cout << "window state event" << endl;
 	pQuiverImpl->m_WindowState = event->new_window_state;
 	//cout << event->new_window_state << " FS: " << GDK_WINDOW_STATE_FULLSCREEN <<endl;
 	//

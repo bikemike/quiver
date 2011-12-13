@@ -457,6 +457,9 @@ public:
 	void PlayPauseVideo();
 	void UpdateTimeline();
 	void StopVideo(bool reloadImage = true);
+	// returns true if current item is a video
+	bool IsVideo();
+
 
 // member variables
 
@@ -483,6 +486,7 @@ public:
 
 	GtkWidget* m_pMediaControls;
 	GtkWidget* m_pPlayImage;
+	GtkWidget* m_pTimeline;
 	GtkWidget* m_pTimeLabel;
 	GtkWidget* m_pPlayProgress;
 
@@ -509,7 +513,9 @@ public:
 	typedef enum _SlideShowState
 	{
 		SLIDESHOW_STATE_ADVANCE,
-		SLIDESHOW_STATE_CACHE
+		SLIDESHOW_STATE_CACHE,
+		SLIDESHOW_STATE_PLAY_VIDEO,
+		SLIDESHOW_STATE_PLAYING_VIDEO
 	} SlideShowState;
 
 	SlideShowState m_SlideShowState;
@@ -995,9 +1001,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 
 		g_signal_handlers_block_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
 		
-		QuiverFile f;
-		f = m_ImageListPtr->GetCurrent();
-		if (f.IsVideo())
+		if (IsVideo())
 		{
 			// show media controls
 			gtk_widget_show(m_pMediaControls);
@@ -1009,6 +1013,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		}
 
 		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
+		QuiverFile f = m_ImageListPtr->GetCurrent();
 		GdkPixbuf *pixbuf = f.GetThumbnail(128);
 		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),pixbuf);
 		
@@ -1956,6 +1961,14 @@ void Viewer::ViewerImpl::UpdateTimeline()
 		len = 0;
 	}
 
+	if (0 == pos && 0 == len)
+	{
+		gtk_widget_hide(m_pTimeline);
+	}
+	else
+	{
+		gtk_widget_show(m_pTimeline);
+	}
 
 	gchar* str_pos = gst_time_format(pos);
 	gchar* str_len = gst_time_format(len);
@@ -2046,14 +2059,22 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 
 	UpdateTimeline();
 
-	if (0 != m_ImageListPtr->GetSize() && 
-			m_ImageListPtr->GetCurrent().IsVideo())
+	if (IsVideo())
 	{
 		gtk_widget_show(m_pMediaControls);
 	}
 
 	if (reloadImage && 0 != m_ImageListPtr->GetSize())
+	{
+		gdk_window_invalidate_rect(m_pImageView->window, NULL, TRUE);
 		LoadImage(m_ImageListPtr->GetCurrent());
+	}
+}
+
+bool Viewer::ViewerImpl::IsVideo()
+{
+	return (0 != m_ImageListPtr->GetSize() && 
+		m_ImageListPtr->GetCurrent().IsVideo());
 }
 
 #ifdef QUIVER_MAEMO
@@ -2151,7 +2172,7 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 		if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
 		{
 			// play video
-			if (pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
+			if (pViewerImpl->IsVideo())
 				pViewerImpl->PlayPauseVideo();
 		}
 	}
@@ -2260,6 +2281,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_alignment_set_padding(GTK_ALIGNMENT(align2), 0, 5, 0, 0);
 	gtk_container_add(GTK_CONTAINER(align2), eventbox2);
 
+	m_pTimeline = eventbox2;
 
 	GtkWidget* eventbox = gtk_event_box_new();
 
@@ -2741,72 +2763,107 @@ static gboolean timeout_advance_slideshow (gpointer data)
 	
 	int iNextIndex = pViewerImpl->m_ImageListPtr->GetCurrentIndex()+1;
 
+	gdk_threads_enter();
+	if (pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) )
+	{
+		// wait until the imageloader has finished working
+		// before advancing the slideshow
+		++pViewerImpl->m_iSlideShowWaitCount;
+		pViewerImpl->m_iTimeoutSlideshowID 
+			= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
+
+		gdk_threads_leave();
+		return FALSE;
+	}
+	gdk_threads_leave();
+
 	switch (pViewerImpl->m_SlideShowState)
 	{
 		case Viewer::ViewerImpl::SLIDESHOW_STATE_ADVANCE:
 			{
-				if (pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) )
+				gdk_threads_enter();
+				bool bStop = false;
+				if (!pViewerImpl->m_ImageListPtr->HasNext()) 
 				{
-					// wait until the imageloader has finished working
-					// before advancing the slideshow
-					++pViewerImpl->m_iSlideShowWaitCount;
-					pViewerImpl->m_iTimeoutSlideshowID 
-						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
-				}
-				else
-				{
-					if (!pViewerImpl->m_ImageListPtr->HasNext() && pViewerImpl->m_bSlideShowLoop)
+					if (pViewerImpl->m_bSlideShowLoop)
 					{
 						iNextIndex = 0;
 					}
-					
-					gdk_threads_enter();
-					pViewerImpl->SetImageIndex(iNextIndex,true,false);
-
-					if ( (!pViewerImpl->m_ImageListPtr->HasNext() && !pViewerImpl->m_bSlideShowLoop)
-						|| pViewerImpl->m_ImageListPtr->GetSize() < 2)
-					{
-						pViewerImpl->m_pViewer->SlideShowStop();
-					}
 					else
 					{
-						++pViewerImpl->m_iSlideShowWaitCount;
-						pViewerImpl->m_iTimeoutSlideshowID 
-							= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
+						pViewerImpl->m_pViewer->SlideShowStop();
+						bStop = true;
 					}
-					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_CACHE;
-					gdk_threads_leave();
-
 				}
-	
+				
+				if (!bStop)
+				{
+					pViewerImpl->SetImageIndex(iNextIndex,true,false);
+
+					++pViewerImpl->m_iSlideShowWaitCount;
+					pViewerImpl->m_iTimeoutSlideshowID 
+						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
+
+					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_CACHE;
+				}
+				gdk_threads_leave();
 			}
 			break;
 		case Viewer::ViewerImpl::SLIDESHOW_STATE_CACHE:
 			{
 				gdk_threads_enter();
-				if (pViewerImpl->m_ImageLoader.IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) )
+
+				// wait time is the slideshow duration minus any amount of time
+				// spent waiting for a transition or the loader to complete
+				// : minimum value of 10ms
+				int iWaitTime = pViewerImpl->m_iSlideShowWaitCount * SLIDESHOW_WAIT_DURATION;
+				iWaitTime = pViewerImpl->m_iSlideShowDuration - iWaitTime;
+				iWaitTime = MAX(10, iWaitTime);
+
+				pViewerImpl->CacheNext(true);
+				if (pViewerImpl->IsVideo())
 				{
-					++pViewerImpl->m_iSlideShowWaitCount;
+					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO;
+					iWaitTime = SLIDESHOW_WAIT_DURATION;
+				}
+				else
+				{
+					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_ADVANCE;
+					pViewerImpl->m_iSlideShowWaitCount = 0;
+				}
+
+				pViewerImpl->m_iTimeoutSlideshowID 
+					= g_timeout_add(iWaitTime,timeout_advance_slideshow, pViewerImpl);
+
+				gdk_threads_leave();
+			}
+			break;
+		case Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO:
+			{
+				gdk_threads_enter();
+
+				pViewerImpl->PlayPauseVideo();
+				pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAYING_VIDEO;
+				pViewerImpl->m_iTimeoutSlideshowID 
+						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
+
+				gdk_threads_leave();
+			}
+		break;
+		case Viewer::ViewerImpl::SLIDESHOW_STATE_PLAYING_VIDEO:
+			{
+				gdk_threads_enter();
+				if (pViewerImpl->IsPlaying())
+				{
 					pViewerImpl->m_iTimeoutSlideshowID 
 						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
 				}
 				else
 				{
-					// wait time is the slideshow duration minus any amount of time
-					// spent waiting for a transition or the loader to complete
-					// : minimum value of 10ms
-					int iWaitTime = pViewerImpl->m_iSlideShowWaitCount * SLIDESHOW_WAIT_DURATION;
-					iWaitTime = pViewerImpl->m_iSlideShowDuration - iWaitTime;
-					iWaitTime = MAX(10, iWaitTime);
-
-					pViewerImpl->CacheNext(true);
-					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_ADVANCE;
 					pViewerImpl->m_iSlideShowWaitCount = 0;
-					
-
-
+					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_ADVANCE;
 					pViewerImpl->m_iTimeoutSlideshowID 
-						= g_timeout_add(iWaitTime,timeout_advance_slideshow, pViewerImpl);
+						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
 				}
 				gdk_threads_leave();
 			}
@@ -2829,9 +2886,17 @@ void Viewer::SlideShowStart()
 		quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),TRUE);
 	}
 
+
 	if (!m_ViewerImplPtr->m_iTimeoutSlideshowID && m_ViewerImplPtr->m_ImageListPtr->GetSize() >= 2 )
 	{
-		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(m_ViewerImplPtr->m_iSlideShowDuration,timeout_advance_slideshow, m_ViewerImplPtr.get());
+		int duration = m_ViewerImplPtr->m_iSlideShowDuration;
+		if (m_ViewerImplPtr->IsVideo())
+		{
+			m_ViewerImplPtr->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO;
+			duration = SLIDESHOW_WAIT_DURATION;
+		}
+
+		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(duration,timeout_advance_slideshow, m_ViewerImplPtr.get());
 
 		EmitSlideShowStartedEvent();
 	}
@@ -2957,11 +3022,12 @@ void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
 	{
 
 		g_source_remove (m_iTimeoutSlideshowID);
-		if (bEmitStopEvent)
-		{
-			m_pViewer->EmitSlideShowStoppedEvent();
-		}
 		m_iTimeoutSlideshowID = 0;
+	}
+
+	if (bEmitStopEvent)
+	{
+		m_pViewer->EmitSlideShowStoppedEvent();
 	}
 
 	UpdateUI();
