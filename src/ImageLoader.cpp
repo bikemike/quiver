@@ -414,7 +414,7 @@ void ImageLoader::Load()
 
 	if (LOAD == m_Command.params.state)
 	{
-		GdkPixbuf * pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
+		pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
 		
 		if ( NULL == pixbuf)
 		{
@@ -442,19 +442,7 @@ void ImageLoader::Load()
 							m_Command.quiverFile.SetHeight(pixbuf_height);
 						}
 						
-						// FIXME: fullsize parameter doesnt seem to work
-						if (20 <= m_Command.params.max_width && 20 <= m_Command.params.max_height)
-						{
-							quiver_rect_get_bound_size(m_Command.params.max_width, m_Command.params.max_height, &pixbuf_width,&pixbuf_height,FALSE);
-							pixbuf = gdk_pixbuf_scale_simple (
-								video_pixbuf,
-								pixbuf_width,
-								pixbuf_height,
-								GDK_INTERP_BILINEAR);
-
-							g_object_unref(video_pixbuf);
-						}
-						else if (n != d)
+						if (n != d)
 						{
 							pixbuf = gdk_pixbuf_scale_simple (
 								video_pixbuf,
@@ -615,82 +603,124 @@ void ImageLoader::Load()
 	}	
 	else if (CACHE == m_Command.params.state)
 	{
-
 		if (!m_ImageCache.InCache(m_Command.quiverFile.GetURI()))
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
 				//cout << "cache : " << m_Command.filename << endl;
-				GdkPixbufLoader* ldr = gdk_pixbuf_loader_new ();	
-			
-				if (!m_Command.params.fullsize)
+				if (m_Command.quiverFile.IsVideo())
 				{
-					list<IPixbufLoaderObserver*>::iterator itr;
-					g_mutex_lock(m_csObservers);
-					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+					gint n=1, d=1;
+					GdkPixbuf* video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
+					if (NULL != video_pixbuf)
 					{
-						(*itr)->ConnectSignalSizePrepared(ldr);
-					}
-					g_mutex_unlock(m_csObservers);
-				}
-								
-				bool rval = LoadPixbuf(ldr);
+						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
+						guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
 
-				if (rval)
-				{
-					GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(ldr);
+						if (n > d)
+							pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
+						else
+							pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
 
-					if (NULL != pixbuf)
-					{
-						g_object_ref(pixbuf);
-						if (1 < m_Command.params.orientation) // TODO: change to get rotate option
+						if (!m_Command.quiverFile.IsWidthHeightSet())
 						{
-							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
-							
-							if (NULL != pixbuf_rotated)
-							{
-								g_object_unref(pixbuf);
-								pixbuf = pixbuf_rotated;
-							}
+							m_Command.quiverFile.SetWidth(pixbuf_width);
+							m_Command.quiverFile.SetHeight(pixbuf_height);
 						}
 						
-						// save the orientation so we can find out later
-						// what orientation was performed 
-						gint *pOrientation = g_new(int,1);
-						*pOrientation = m_Command.params.orientation;
-
-						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
-
-						if (CACHE_LOAD == m_Command.params.state)
+						if (n != d)
 						{
-							list<IPixbufLoaderObserver*>::iterator itr;
-							g_mutex_lock(m_csObservers);
-							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-							{
-								gint width,height;
-								width = m_Command.quiverFile.GetWidth();
-								height = m_Command.quiverFile.GetHeight();
-								if (4 < m_Command.params.orientation)
-								{
-									swap(width,height);
-								}
-								bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-								(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
+							pixbuf = gdk_pixbuf_scale_simple (
+								video_pixbuf,
+								pixbuf_width,
+								pixbuf_height,
+								GDK_INTERP_BILINEAR);
 
-							}
-							g_mutex_unlock(m_csObservers);
-							m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
-							//cout << "cache loaded image" << endl;
+							g_object_unref(video_pixbuf);
 						}
 						else
 						{
-							m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf,0);
+							pixbuf = video_pixbuf;
 						}
-						g_object_unref(pixbuf);
+
 					}
 				}
+				else
+				{
+					GdkPixbufLoader* ldr = gdk_pixbuf_loader_new ();	
 				
-				g_object_unref(ldr);
+					if (!m_Command.params.fullsize)
+					{
+						list<IPixbufLoaderObserver*>::iterator itr;
+						g_mutex_lock(m_csObservers);
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							(*itr)->ConnectSignalSizePrepared(ldr);
+						}
+						g_mutex_unlock(m_csObservers);
+					}
+									
+					bool rval = LoadPixbuf(ldr);
+
+					if (rval)
+					{
+						pixbuf = gdk_pixbuf_loader_get_pixbuf(ldr);
+
+						if (NULL != pixbuf)
+						{
+							g_object_ref(pixbuf);
+							if (1 < m_Command.params.orientation) // TODO: change to get rotate option
+							{
+								GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
+								
+								if (NULL != pixbuf_rotated)
+								{
+									g_object_unref(pixbuf);
+									pixbuf = pixbuf_rotated;
+								}
+							}
+							
+							// save the orientation so we can find out later
+							// what orientation was performed 
+							gint *pOrientation = g_new(int,1);
+							*pOrientation = m_Command.params.orientation;
+
+							g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
+						}
+					}
+
+					g_object_unref(ldr);
+				}
+
+				if (NULL != pixbuf)
+				{
+					if (CACHE_LOAD == m_Command.params.state)
+					{
+						list<IPixbufLoaderObserver*>::iterator itr;
+						g_mutex_lock(m_csObservers);
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							gint width,height;
+							width = m_Command.quiverFile.GetWidth();
+							height = m_Command.quiverFile.GetHeight();
+							if (4 < m_Command.params.orientation)
+							{
+								swap(width,height);
+							}
+							bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+							(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
+
+						}
+						g_mutex_unlock(m_csObservers);
+						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
+						//cout << "cache loaded image" << endl;
+					}
+					else
+					{
+						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf,0);
+					}
+					g_object_unref(pixbuf);
+				}
 			}
 
 		}

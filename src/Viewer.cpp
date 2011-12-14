@@ -1940,9 +1940,8 @@ gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_da
 
 	gdk_threads_enter();
 	video_area_xid = GDK_WINDOW_XID (gtk_widget_get_window(pViewerImpl->m_pImageView));
-	gdk_threads_leave();
-
 	gst_x_overlay_set_window_handle (xoverlay, video_area_xid);
+	gdk_threads_leave();
 
 	gst_message_unref (message);
 	return GST_BUS_DROP;
@@ -2068,7 +2067,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	if (reloadImage && 0 != m_ImageListPtr->GetSize())
 	{
 		gdk_window_invalidate_rect(m_pImageView->window, NULL, TRUE);
-		LoadImage(m_ImageListPtr->GetCurrent());
+		if (0 == m_iTimeoutSlideshowID)
+			LoadImage(m_ImageListPtr->GetCurrent());
 	}
 }
 
@@ -2600,11 +2600,10 @@ bool Viewer::ResetViewMode()
 	bool bReset = false;
 	QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
 
-	if (QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW != mode)
-	{
-		quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView), QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
-		bReset = true;
-	}
+	quiver_image_view_reset_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView), TRUE);
+	QuiverImageViewMode mode2 = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
+	bReset = (mode != mode2);
+
 	return bReset;
 }
 
@@ -2830,7 +2829,8 @@ static gboolean timeout_advance_slideshow (gpointer data)
 				if (pViewerImpl->IsVideo())
 				{
 					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO;
-					iWaitTime = SLIDESHOW_WAIT_DURATION;
+					// show the video image for one second before playing video
+					iWaitTime = 1000; 
 				}
 				else
 				{
@@ -2898,7 +2898,10 @@ void Viewer::SlideShowStart()
 		int duration = m_ViewerImplPtr->m_iSlideShowDuration;
 		if (m_ViewerImplPtr->IsVideo())
 		{
-			m_ViewerImplPtr->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO;
+			if (m_ViewerImplPtr->IsPlaying())
+				m_ViewerImplPtr->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAYING_VIDEO;
+			else
+				m_ViewerImplPtr->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO;
 			duration = SLIDESHOW_WAIT_DURATION;
 		}
 

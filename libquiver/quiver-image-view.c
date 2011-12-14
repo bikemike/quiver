@@ -221,7 +221,6 @@ static void quiver_image_view_set_default_adjustment_values(QuiverImageView *ima
 static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imageview,gint new_width, gint new_height);
 static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,GdkRectangle *rect);
 
-static void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate);
 static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,QuiverImageViewMode mode,gboolean invalidate);
 
 static void quiver_image_view_update_size(QuiverImageView *imageview);
@@ -2482,7 +2481,7 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 	
 }
 
-static void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
+void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
 {
 	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
 	{
