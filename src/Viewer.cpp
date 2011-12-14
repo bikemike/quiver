@@ -535,6 +535,7 @@ public:
 	bool m_bMaximizeViewabe;
 
 	bool m_bIsPlaying;
+	bool m_bWasPlayingBeforeSeek;
 
 	ImageCache m_ThumbnailCache;
 
@@ -2097,6 +2098,9 @@ viewer_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (widget == pViewerImpl->m_pPlayProgress)
 	{
+		if (pViewerImpl->m_bWasPlayingBeforeSeek)
+		   pViewerImpl->PlayPauseVideo(); 
+
 		gdk_pointer_ungrab (event->time);
 	}
 }
@@ -2142,6 +2146,8 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 	}
 	else if (widget == pViewerImpl->m_pPlayProgress)
 	{
+		pViewerImpl->m_bWasPlayingBeforeSeek = pViewerImpl->IsPlaying(); 
+
 		GtkAllocation allocation = {0};
 		gtk_widget_get_allocation(widget, &allocation);
 
