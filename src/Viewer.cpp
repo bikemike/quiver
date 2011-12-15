@@ -2066,7 +2066,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 
 	if (reloadImage && 0 != m_ImageListPtr->GetSize())
 	{
-		gdk_window_invalidate_rect(m_pImageView->window, NULL, TRUE);
+		if (GTK_WIDGET_MAPPED(m_pImageView))
+			gdk_window_invalidate_rect(m_pImageView->window, NULL, TRUE);
 		if (0 == m_iTimeoutSlideshowID)
 			LoadImage(m_ImageListPtr->GetCurrent());
 	}

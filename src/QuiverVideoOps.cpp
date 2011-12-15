@@ -116,10 +116,6 @@ namespace QuiverVideoOps
 
 		g_object_get(pixbuf_sink, "last-pixbuf", &pixbuf, NULL);
 
-		if (NULL != pixbuf)
-		{
-			g_object_ref(pixbuf);
-		}
 		gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_NULL);
  
 		gst_object_unref(bus);

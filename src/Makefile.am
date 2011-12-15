@@ -194,9 +194,9 @@ quiver_LDADD = \
 	$(BOOST_SIGNALS_LIB) \
 	$(LIBEXIF_LIBS) \
 	$(GSTREAMER_LIBS) \
-	$(CAIRO_LIBS) \
 	-ljpeg \
-	../libquiver/libquiver.la
+	../libquiver/libquiver.la \
+	$(CAIRO_LIBS)
 
 #TESTS = test_image_list test_quiver_file test_icon_view
 #check_PROGRAMS = test_image_list test_quiver_file test_icon_view
