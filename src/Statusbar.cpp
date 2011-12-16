@@ -126,6 +126,7 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 
 Statusbar::StatusbarImpl::~StatusbarImpl()
 {
+	gtk_widget_destroy(m_pWidget);
 }
 
 Statusbar::Statusbar() : m_StatusbarImplPtr ( new StatusbarImpl(this) )

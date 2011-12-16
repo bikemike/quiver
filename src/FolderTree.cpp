@@ -156,6 +156,8 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 {
 	g_thread_pool_free(m_pGThreadPool, TRUE, TRUE);
 
+	gtk_widget_destroy(m_pWidget);
+
 	if (NULL != m_pHashRootNodeOrder)
 	{
 		g_hash_table_destroy(m_pHashRootNodeOrder);
@@ -417,6 +419,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	
 	/* Create a view */
 	m_pWidget = gtk_tree_view_new();
+	g_object_ref(m_pWidget);
 
 	PopulateTreeModel (store);
 
@@ -992,73 +995,76 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 
 	gboolean found_duplicate = FALSE;	
 	
-	gchar* uri;
+	gchar* uri = NULL;
 	const gchar* display_name;
 
 	gtk_tree_model_get(model,iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
-	
-	GFile* file_parent = g_file_new_for_uri(uri);
-	GFile* file_child  = g_file_get_child(file_parent, name);
 
-	display_name = name;
+	if (NULL != uri)
+	{	
+		GFile* file_parent = g_file_new_for_uri(uri);
+		GFile* file_child  = g_file_get_child(file_parent, name);
 
-	if (duplicate_check)
-	{
-		gint n_nodes = gtk_tree_model_iter_n_children  (model, iter_parent);
-		gint i;
+		display_name = name;
 
-		// check to see if the folder is already in the tree
-		for (i = 0 ; i < n_nodes && !found_duplicate; i++)
+		if (duplicate_check)
 		{
-			if ( gtk_tree_model_iter_nth_child(model, &iter_child, iter_parent, i) )
-			{
-				char* uri2 = NULL;
-				gtk_tree_model_get(model, &iter_child, FILE_TREE_COLUMN_URI, &uri2, -1);
+			gint n_nodes = gtk_tree_model_iter_n_children  (model, iter_parent);
+			gint i;
 
-				if (NULL != uri2)
+			// check to see if the folder is already in the tree
+			for (i = 0 ; i < n_nodes && !found_duplicate; i++)
+			{
+				if ( gtk_tree_model_iter_nth_child(model, &iter_child, iter_parent, i) )
 				{
-					GFile* file2 = g_file_new_for_uri(uri2);
-					found_duplicate = g_file_equal(file_child, file2);
-					g_object_unref(file2);
+					char* uri2 = NULL;
+					gtk_tree_model_get(model, &iter_child, FILE_TREE_COLUMN_URI, &uri2, -1);
+
+					if (NULL != uri2)
+					{
+						GFile* file2 = g_file_new_for_uri(uri2);
+						found_duplicate = g_file_equal(file_child, file2);
+						g_object_unref(file2);
+					}
+					g_free(uri2);
 				}
-				g_free(uri2);
 			}
 		}
-	}
-	
-	if (!found_duplicate)
-	{ 
-	
-		gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);  
-	
 		
-		GIcon* gicon = folder_tree_get_gicon(file_child,FALSE);
-		char* uri_child = g_file_get_uri(file_child);
-	
-		gtk_tree_store_set (GTK_TREE_STORE(model), &iter_child,
-				FILE_TREE_COLUMN_CHECKBOX, FALSE,
-				FILE_TREE_COLUMN_GICON, gicon,
-				FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
-				FILE_TREE_COLUMN_SEPARATOR,FALSE,
-				FILE_TREE_COLUMN_URI,uri_child,
-				-1);
+		if (!found_duplicate)
+		{ 
+		
+			gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);  
+		
+			
+			GIcon* gicon = folder_tree_get_gicon(file_child,FALSE);
+			char* uri_child = g_file_get_uri(file_child);
+		
+			gtk_tree_store_set (GTK_TREE_STORE(model), &iter_child,
+					FILE_TREE_COLUMN_CHECKBOX, FALSE,
+					FILE_TREE_COLUMN_GICON, gicon,
+					FILE_TREE_COLUMN_DISPLAY_NAME, display_name,
+					FILE_TREE_COLUMN_SEPARATOR,FALSE,
+					FILE_TREE_COLUMN_URI,uri_child,
+					-1);
 
-		g_free(uri_child);
-		g_object_unref(gicon);
+			g_free(uri_child);
+			g_object_unref(gicon);
 
 #ifdef QUIVER_MAEMO
-		// fetch the maemo name
-		HildonFSAsyncStruct* pAsyncStruct = (HildonFSAsyncStruct*)g_malloc0(sizeof(HildonFSAsyncStruct));
-		pAsyncStruct->pTreeModel = model;
-		pAsyncStruct->pIter = gtk_tree_iter_copy(&iter_child);
-		hildon_file_system_info_async_new(uri_child, hildon_fs_info_callback ,pAsyncStruct);
+			// fetch the maemo name
+			HildonFSAsyncStruct* pAsyncStruct = (HildonFSAsyncStruct*)g_malloc0(sizeof(HildonFSAsyncStruct));
+			pAsyncStruct->pTreeModel = model;
+			pAsyncStruct->pIter = gtk_tree_iter_copy(&iter_child);
+			hildon_file_system_info_async_new(uri_child, hildon_fs_info_callback ,pAsyncStruct);
 #endif
+		}
+		
+		g_object_unref(file_parent);
+		g_object_unref(file_child);
+		
+		g_free(uri);
 	}
-	
-	g_object_unref(file_parent);
-	g_object_unref(file_child);
-	
-	g_free(uri);
 
 	return gtk_tree_iter_copy(&iter_child);
 
@@ -1178,38 +1184,40 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 					gdk_threads_enter();
 					
 					gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
-					GFile* gfile = g_file_new_for_uri(uri);
 
 					gdk_threads_leave();
-					
-					GFileInfo* info = g_file_enumerator_next_file(data->dir_enumerator, NULL, NULL);
-						
-					if (NULL != info)
-					{
 
-						GFile* child = g_file_get_child(gfile, g_file_info_get_name(info));
-						
-						if ( !g_file_equal(gfile, child)  &&
-							G_FILE_TYPE_DIRECTORY == g_file_info_get_file_type(info) )
-						{
-							g_hash_table_insert(data->hash_table,g_strdup(g_file_info_get_name(info)),NULL);
-						}
-						g_object_unref(child);
-
-						g_object_unref(info);
-					}
-					else
-					{
-						g_object_unref (data->dir_enumerator);
-						data->dir_enumerator = NULL;
-						data->state = SYNC_TREE;
-	
-					}
-	
-					g_object_unref(gfile);
-	
 					if (NULL != uri)
 					{
+						GFile* gfile = g_file_new_for_uri(uri);
+
+						
+						GFileInfo* info = g_file_enumerator_next_file(data->dir_enumerator, NULL, NULL);
+							
+						if (NULL != info)
+						{
+
+							GFile* child = g_file_get_child(gfile, g_file_info_get_name(info));
+							
+							if ( !g_file_equal(gfile, child)  &&
+								G_FILE_TYPE_DIRECTORY == g_file_info_get_file_type(info) )
+							{
+								g_hash_table_insert(data->hash_table,g_strdup(g_file_info_get_name(info)),NULL);
+							}
+							g_object_unref(child);
+
+							g_object_unref(info);
+						}
+						else
+						{
+							g_object_unref (data->dir_enumerator);
+							data->dir_enumerator = NULL;
+							data->state = SYNC_TREE;
+		
+						}
+		
+						g_object_unref(gfile);
+	
 						g_free(uri);
 					}
 				}
@@ -1309,12 +1317,11 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 {
 	GtkTreeModel *model = gtk_tree_view_get_model(treeview);
-	gchar* uri;
+	gchar* uri = NULL;
 	GtkTreePath* path =  gtk_tree_model_get_path(model, iter);
 
 	gboolean expanded = gtk_tree_view_row_expanded(treeview,path);
 
-	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &uri, -1);
 
 
 #ifdef QUIVER_MAEMO
@@ -1334,11 +1341,17 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_GICON, &icon, -1);
 	if (NULL == icon)
 	{
-		GFile* gfile = g_file_new_for_uri(uri);
-		GIcon* gicon = folder_tree_get_gicon(gfile, expanded);
-		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_GICON, gicon, -1);
-		g_object_unref(gicon);
-		g_object_unref(gfile);
+		gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &uri, -1);
+		if (NULL != uri)
+		{
+			printf("uri %s\n", uri);
+			GFile* gfile = g_file_new_for_uri(uri);
+			GIcon* gicon = folder_tree_get_gicon(gfile, expanded);
+			gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_GICON, gicon, -1);
+			g_object_unref(gicon);
+			g_object_unref(gfile);
+		}
+		g_free(uri);
 	}
 	else
 	{
@@ -1346,7 +1359,6 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 	}
 #endif
 
-	g_free(uri);
 	gtk_tree_path_free(path);
 }
 
@@ -1401,8 +1413,14 @@ GIcon* folder_tree_get_gicon(GFile* gfile, gboolean expanded)
 		G_FILE_QUERY_INFO_NONE,
 		NULL,
 		NULL);
-	return g_file_info_get_icon(info);
-
+	GIcon* icon = NULL;
+	if (NULL != info)
+	{
+		icon = g_file_info_get_icon(info);
+		g_object_ref(icon);
+		g_object_unref(info);
+	}
+	return icon;
 #else
 	if (expanded)
 	{

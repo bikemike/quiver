@@ -2224,6 +2224,13 @@ Viewer::ViewerImpl::~ViewerImpl()
 
 	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
 	m_ImageLoader.RemovePixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
+
+	if (NULL != m_pUIManager)
+		g_object_unref(m_pUIManager);
+
+	// destroy the widget
+	gtk_widget_destroy(m_pHBox);
+
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 }
@@ -2724,6 +2731,8 @@ void Viewer::SetUIManager(GtkUIManager *ui_manager)
 										m_ViewerImplPtr.get());										
 
 	gtk_ui_manager_insert_action_group (m_ViewerImplPtr->m_pUIManager,actions,0);
+
+	g_object_unref(actions);
 	
 	
 	GtkAction* action = QuiverUtils::GetAction(m_ViewerImplPtr->m_pUIManager,ACTION_VIEWER_VIEW_FILM_STRIP);

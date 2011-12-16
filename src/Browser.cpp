@@ -700,7 +700,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pBrowserWidget = hpaned;
 	
 	m_pSWFolderTree = gtk_scrolled_window_new(NULL,NULL);
-	g_object_ref_sink(m_pSWFolderTree);
+	g_object_ref(m_pSWFolderTree);
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pSWFolderTree),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	GtkWidget *pFolderTree = m_FolderTreePtr->GetWidget();
 	
@@ -847,6 +847,8 @@ Browser::BrowserImpl::~BrowserImpl()
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandlerPtr);
 	
+	//gtk_widget_destroy(m_pBrowserWidget);
+	g_object_unref(m_pToolItemThumbSizer);
 
 	if (m_pUIManager)
 	{
@@ -880,6 +882,8 @@ void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 										G_N_ELEMENTS (action_entries_toggle),
 										this);
 	gtk_ui_manager_insert_action_group (m_pUIManager,actions,0);	
+
+	g_object_unref(actions);
 
 		
 	GtkAction* action = QuiverUtils::GetAction(m_pUIManager,ACTION_BROWSER_VIEW_PREVIEW);

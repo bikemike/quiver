@@ -354,6 +354,14 @@ public:
 		//spacing 10 between each item
 	}
 
+	~TaskManagerDlgPriv()
+	{
+		if (NULL != m_pWidget)
+		{
+			gtk_widget_destroy(m_pWidget);
+		}
+	}
+
 	static gboolean event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
 	{
 		//TaskManagerDlgPriv* dlgPriv = static_cast<TaskManagerDlgPriv*>(user_data);

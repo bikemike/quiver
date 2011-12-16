@@ -1040,9 +1040,9 @@ bool ImageListImpl::AddFile(const gchar*  uri)
 	if ( NULL != info )
 	{
 		bAdded = AddFile(uri,info);
+		g_object_unref(info);
 	}
 
-	g_object_unref(info);
 	g_object_unref(gFile);
 	
 	return bAdded;

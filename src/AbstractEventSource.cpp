@@ -64,6 +64,7 @@ void AbstractEventSource::RemoveEventHandler(IEventHandlerPtr handler)
 	{	
 		itr->second.disconnect();
 	}
+	m_mapConnectionsPtr->erase(p.first, p.second);
 }
 
 

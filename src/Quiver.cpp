@@ -291,6 +291,16 @@ QuiverImpl::~QuiverImpl()
 {
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandler);	
+
+	m_ImageListPtr.reset();
+	m_BrowserPtr.reset();
+	m_ViewerPtr.reset();
+	m_StatusbarPtr.reset();
+	gtk_widget_destroy(m_pMenubar);
+	gtk_widget_destroy(m_pToolbar);
+
+	if (NULL != m_pUIManager)
+		g_object_unref(m_pUIManager);
 }
 
 void QuiverImpl::LoadBookmarks()
@@ -333,6 +343,8 @@ void QuiverImpl::LoadBookmarks()
 			}
 	
 			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
+
+			g_object_unref(actions2);
 			
 			string str_ui =
 				"<ui>"
@@ -416,6 +428,8 @@ void QuiverImpl::LoadExternalTools()
 			}
 	
 			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
+
+			g_object_unref(actions2);
 			
 			string str_ui =
 				"<ui>"
@@ -1106,8 +1120,8 @@ void Quiver::Close()
 	Bookmarks::Reset();
 	ExternalTools::Reset();
 	ImageSaveManager::Reset();
-	TaskManager::Reset();
 	TaskManagerDlg::Reset();
+	TaskManager::Reset();
 	Preferences::Reset();
 	QuiverFile::ClearThumbnailCache();
 	
@@ -1297,6 +1311,8 @@ void Quiver::Init()
 										m_QuiverImplPtr.get());										
 
 	gtk_ui_manager_insert_action_group (m_QuiverImplPtr->m_pUIManager,actions,0);
+
+	g_object_unref(actions);
 
 	GtkWidget* toolbar = gtk_ui_manager_get_widget(m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain/");
 	if (NULL != toolbar)

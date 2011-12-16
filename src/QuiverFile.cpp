@@ -1577,8 +1577,11 @@ gchar* QuiverFile::GetIconName()
 #else
 	const char* content_type = g_file_info_get_attribute_string(file_info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
 	GIcon* icon = g_content_type_get_icon(content_type);
-	icon_name = g_icon_to_string(icon);
-	g_object_unref(icon);
+	if (NULL != icon)
+	{
+		icon_name = g_icon_to_string(icon);
+		g_object_unref(icon);
+	}
 #endif
 	g_object_unref(file_info);
 	return icon_name;

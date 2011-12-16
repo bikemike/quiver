@@ -499,8 +499,8 @@ void ImageLoader::Load()
 						pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 						if (NULL != pixbuf)
 							g_object_ref(pixbuf);
-						g_object_unref(loader);
 					}
+					g_object_unref(loader);
 				}
 					
 				if (NULL != pixbuf  )

@@ -214,6 +214,8 @@ ExifView::ExifViewImpl::~ExifViewImpl()
 		g_object_unref(m_pUIManager);
 		m_pUIManager =  NULL;
 	}
+
+	gtk_widget_destroy(m_pScrolledWindow);
 }
 
 static void exif_view_map(GtkWidget *widget, gpointer user_data)
