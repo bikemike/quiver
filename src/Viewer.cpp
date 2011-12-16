@@ -2228,8 +2228,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 	if (NULL != m_pUIManager)
 		g_object_unref(m_pUIManager);
 
-	// destroy the widget
-	gtk_widget_destroy(m_pHBox);
+	g_object_unref(m_pHBox);
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
@@ -2403,6 +2402,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 //	GTK_WIDGET_SET_FLAGS(m_pTable,GTK_CAN_FOCUS);
 	m_pHBox = gtk_hbox_new(FALSE,0);
+	g_object_ref(m_pHBox);
 	m_pVBox = gtk_vbox_new(FALSE,0);
 
 	gtk_box_pack_start (GTK_BOX (m_pVBox), m_pTable, TRUE, TRUE, 0);

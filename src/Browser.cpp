@@ -698,6 +698,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	      G_CALLBACK (pane_size_allocate), this);
 	
 	m_pBrowserWidget = hpaned;
+	g_object_ref(hpaned);
 	
 	m_pSWFolderTree = gtk_scrolled_window_new(NULL,NULL);
 	g_object_ref(m_pSWFolderTree);
@@ -847,7 +848,7 @@ Browser::BrowserImpl::~BrowserImpl()
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandlerPtr);
 	
-	//gtk_widget_destroy(m_pBrowserWidget);
+	g_object_unref(m_pBrowserWidget);
 	g_object_unref(m_pToolItemThumbSizer);
 
 	if (m_pUIManager)

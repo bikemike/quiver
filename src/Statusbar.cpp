@@ -121,12 +121,24 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 	//gtk_frame_set_shadow_type(GTK_FRAME(m_pWidget),GTK_SHADOW_OUT);;
 	//gtk_container_add(GTK_CONTAINER(m_pWidget), m_pStatusbar);
 	m_pWidget = m_pStatusbar;
+
+	g_object_ref(m_pWidget);
 	
 }
 
 Statusbar::StatusbarImpl::~StatusbarImpl()
 {
-	gtk_widget_destroy(m_pWidget);
+	if (0 != m_iTimeoutPulse)
+	{
+		g_source_remove(m_iTimeoutPulse);
+		m_iTimeoutPulse = 0;
+	}
+	if (0 != m_uiIdleSourceID)
+	{
+		g_source_remove(m_uiIdleSourceID);
+		m_uiIdleSourceID = 0;
+	}
+	g_object_unref(m_pWidget);
 }
 
 Statusbar::Statusbar() : m_StatusbarImplPtr ( new StatusbarImpl(this) )

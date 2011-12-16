@@ -156,7 +156,7 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 {
 	g_thread_pool_free(m_pGThreadPool, TRUE, TRUE);
 
-	gtk_widget_destroy(m_pWidget);
+	g_object_unref(m_pWidget);
 
 	if (NULL != m_pHashRootNodeOrder)
 	{

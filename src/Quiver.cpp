@@ -296,11 +296,11 @@ QuiverImpl::~QuiverImpl()
 	m_BrowserPtr.reset();
 	m_ViewerPtr.reset();
 	m_StatusbarPtr.reset();
-	gtk_widget_destroy(m_pMenubar);
-	gtk_widget_destroy(m_pToolbar);
 
 	if (NULL != m_pUIManager)
 		g_object_unref(m_pUIManager);
+
+	gtk_widget_destroy(m_pQuiverWindow);
 }
 
 void QuiverImpl::LoadBookmarks()
@@ -1093,15 +1093,6 @@ gboolean Quiver::event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   da
 	return ((Quiver*)data)->EventDelete(widget,event,data);
 }
 
-void Quiver::event_destroy( GtkWidget *widget, gpointer   data )
-{
-	((Quiver*)data)->EventDestroy(widget,data);
-}
-
-void Quiver::EventDestroy( GtkWidget *widget, gpointer   data )
-{
-	Close();
-}
 
 void Quiver::Close()
 {
@@ -1130,48 +1121,13 @@ void Quiver::Close()
 
 gboolean Quiver::EventDelete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
 {
-	    /* If you return FALSE in the "delete_event" signal handler,
-     * GTK will emit the "destroy" signal. Returning TRUE means
-     * you don't want the window to be destroyed.
-     * This is useful for popping up 'are you sure you want to quit?'
-     * type dialogs. */
-
-    /* Change TRUE to FALSE and the main window will be destroyed with
-     * a "delete_event". */
-
-	// are you sure you want to quit
-
-	gboolean return_value = FALSE;
-	
-	if (!m_QuiverImplPtr->CanClose())
+	if (m_QuiverImplPtr->CanClose())
 	{
-		return_value = TRUE;
-	}
-
-	/*
-	string s("Are you sure you want to quit?");
-	GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(widget),GTK_DIALOG_MODAL,
-							GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,s.c_str());
-	gint rval = gtk_dialog_run(GTK_DIALOG(dialog));
-
-	switch (rval)
-	{
-		case GTK_RESPONSE_YES:
-			return_value= FALSE;
-			SaveSettings();
-			break;
-		case GTK_RESPONSE_NO:
-			return_value = TRUE;
-			break;
-		default:
-			return_value = TRUE;
-		
+		Close();
 	}
 	
-	gtk_widget_destroy(dialog);
-	*/
-	
-    return return_value;
+	// don't send destroy signal
+    return TRUE;
 }
  
 
@@ -1353,8 +1309,6 @@ void Quiver::Init()
     g_signal_connect (G_OBJECT (m_pQuiverWindow), "scroll_event",
     			G_CALLBACK (Quiver::event_scroll), this);
     	*/
-	g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "destroy",
-				G_CALLBACK (Quiver::event_destroy), this);
 	g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "button_press_event",
 				G_CALLBACK (quiver_window_button_press), m_QuiverImplPtr.get());
 

@@ -215,7 +215,7 @@ ExifView::ExifViewImpl::~ExifViewImpl()
 		m_pUIManager =  NULL;
 	}
 
-	gtk_widget_destroy(m_pScrolledWindow);
+	g_object_unref(m_pScrolledWindow);
 }
 
 static void exif_view_map(GtkWidget *widget, gpointer user_data)
@@ -411,6 +411,7 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 
 	m_ExifViewImplPtr->m_pTreeView = treeview;
 	m_ExifViewImplPtr->m_pScrolledWindow = scrolled_window;	
+	g_object_ref(m_ExifViewImplPtr->m_pScrolledWindow);
 	
 	g_signal_connect(scrolled_window, "map", (GCallback) exif_view_map, m_ExifViewImplPtr.get());
 }

@@ -38,10 +38,8 @@ public:
 	gboolean IdleQuiverInit(gpointer data);
 
 	static gboolean event_delete( GtkWidget *widget, GdkEvent  *event, gpointer   data );
-	static void event_destroy( GtkWidget *widget,gpointer   data );
 
 	gboolean EventDelete( GtkWidget *widget,GdkEvent  *event,gpointer data );
-	void EventDestroy(GtkWidget *widget,gpointer data);
 	
 	bool LoadSettings();
 	void SaveSettings();
