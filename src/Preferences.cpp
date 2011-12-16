@@ -34,7 +34,6 @@ Preferences::~Preferences()
 	}
 	g_key_file_free(m_KeyFile);
 
-
 }
 
 PreferencesPtr Preferences::GetInstance()

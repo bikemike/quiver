@@ -24,6 +24,7 @@
 #include "Timer.h"
 #include "QuiverUtils.h"
 #include "QuiverVideoOps.h"
+#include "ImageCache.h"
 #include "MD5.h"
 
 #include <map>
@@ -73,6 +74,15 @@ public:
 		}
 		
 	};
+
+	void Clear()
+	{
+		std::map<int,ImageCache*>::iterator itr;
+		for (itr = m_mapThumbnailCache.begin(); itr != m_mapThumbnailCache.end(); ++itr)
+		{
+			itr->second->Clear();
+		}
+	}
 	
 	~ThumbnailCache()
 	{
@@ -81,6 +91,7 @@ public:
 		{
 			delete itr->second;
 		}
+		m_mapThumbnailCache.clear();
 	};
 	std::map<int,ImageCache*> m_mapThumbnailCache;
 };
@@ -1263,6 +1274,11 @@ QuiverFile::QuiverFile(const gchar* uri, GFileInfo *info) : m_QuiverFilePtr( new
 QuiverFile::~QuiverFile()
 {
 	
+}
+
+void QuiverFile::ClearThumbnailCache()
+{
+	QuiverFileImpl::c_ThumbnailCache.Clear();
 }
 
 bool QuiverFile::Modified() const

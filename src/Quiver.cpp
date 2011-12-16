@@ -63,6 +63,8 @@
 #include "ExternalToolsDlg.h"
 #include "IExternalToolsEventHandler.h"
 
+#include "ImageSaveManager.h"
+
 // globals needed for preferences
 
 gchar g_szConfigDir[256]      = "";
@@ -1096,9 +1098,18 @@ void Quiver::Close()
 	
 	PreferencesPtr prefs = Preferences::GetInstance();
 	prefs->RemoveEventHandler(m_QuiverImplPtr->m_PreferencesEventHandler);
+	prefs.reset();
 	
-	QuiverImplPtr quiverImplPtr;
-	m_QuiverImplPtr = quiverImplPtr;
+	m_QuiverImplPtr.reset();
+
+	// reset global smart pointers
+	Bookmarks::Reset();
+	ExternalTools::Reset();
+	ImageSaveManager::Reset();
+	TaskManager::Reset();
+	TaskManagerDlg::Reset();
+	Preferences::Reset();
+	QuiverFile::ClearThumbnailCache();
 	
 	gtk_main_quit ();	
 }
@@ -1804,6 +1815,8 @@ int main (int argc, char **argv)
 	// END BUG FIX items
                                              
 	gtk_main ();
+
+	gst_deinit();
 	
 
 	gdk_threads_leave();

@@ -12,9 +12,6 @@
 #include <libexif/exif-loader.h>
 #include <boost/shared_ptr.hpp>
 
-
-#include "ImageCache.h"
-
 class QuiverFile {
 	// Associations
 	// Attributes
@@ -35,6 +32,8 @@ public:
 	QuiverFile(const gchar*  uri);
 	QuiverFile(const gchar* , GFileInfo *info);
 	~QuiverFile();
+
+	static void ClearThumbnailCache();
 
 	const gchar* GetURI() const;
 

@@ -40,6 +40,7 @@ class ImageSaveManager : public IImageSaver
 {
 public:
 	static ImageSaveManagerPtr GetInstance();
+	static void Reset() { c_pImageSaveManagerPtr.reset(); }
 	bool IsFormatSupported(std::string strMimeType);
 	
 	virtual std::string GetMimeType(){return "";}

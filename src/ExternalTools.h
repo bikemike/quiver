@@ -71,6 +71,7 @@ public:
 
 	static ExternalToolsPtr
 	               GetInstance();
+	static void    Reset() { c_ExternalToolsPtr.reset(); }
 
 	bool           AddExternalTool(ExternalTool eternal_tool);
 	bool           AddExternalTool(ExternalTool eternal_tool, std::string category );

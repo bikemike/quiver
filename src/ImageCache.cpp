@@ -15,24 +15,13 @@ ImageCache::ImageCache(unsigned int size)
 	m_iCacheSize = size;
 	
 	pthread_mutex_init(&m_MutexImageCache, NULL);
-
 }
 
 ImageCache::~ImageCache()
 {
-	pthread_mutex_lock (&m_MutexImageCache);
-	
-	ImageCacheMap::iterator itr;
-	for (itr = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
-	{
-		g_object_unref(itr->second.pPixbuf);
-	}
-	m_mapImageCache.clear();
-	
-	pthread_mutex_unlock (&m_MutexImageCache);
+	Clear();
 
 	pthread_mutex_destroy(&m_MutexImageCache);
-
 }
 
 bool ImageCache::RemovePixbuf(std::string filename)
