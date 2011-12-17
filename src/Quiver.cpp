@@ -1749,18 +1749,27 @@ int main (int argc, char **argv)
 #else
 		dir = g_get_home_dir();
 #endif
-		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
-		files.push_back(photo_library);
+		if (prefsPtr->HasKey(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY))
+		{	
+			string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
+			files.push_back(photo_library);
+			GFile* file = g_file_new_for_path("/");
+			GFile* photoLib = g_file_new_for_path(photo_library.c_str());
 
-		GFile* file = g_file_new_for_path("/");
-		GFile* photoLib = g_file_new_for_path(photo_library.c_str());
-
-		if (!g_file_equal(file, photoLib))
-		{
-			// just in case the users sets the root
-			// as the photo library
-			cqd.bRecursive = true;
+			if (!g_file_equal(file, photoLib))
+			{
+				// just in case the users sets the root
+				// as the photo library
+				cqd.bRecursive = true;
+			}
+			g_object_unref(photoLib);
+			g_object_unref(file);
 		}
+		else
+		{
+			files.push_back(dir);
+		}
+
 	}
 	//pthread_setconcurrency(4);
 

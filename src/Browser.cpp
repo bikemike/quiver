@@ -855,7 +855,19 @@ Browser::BrowserImpl::~BrowserImpl()
 	{
 		g_object_unref(m_pUIManager);
 	}
+
 	g_object_unref(m_pSWFolderTree);
+
+	g_signal_handlers_disconnect_matched(
+		m_pNotebook,
+		G_SIGNAL_MATCH_DATA,
+		0,
+		0,
+		NULL,
+		NULL,
+		this);
+
+
 }
 
 void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
