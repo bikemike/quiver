@@ -8,10 +8,6 @@
 #include <boost/algorithm/string.hpp>
 #include <sstream>
 
-#ifdef FIXME 
-#include <libgnomevfs/gnome-vfs.h>
-#endif
-
 #include <gio/gio.h>
 
 class OrganizeTask::PrivateImpl
@@ -22,12 +18,18 @@ public:
 		m_iLastXFerRVal(-1),
 		m_iLastVFSErrorRVal(-1)
 	{
+		m_pCancellable = g_cancellable_new();
+	}
 
+	~PrivateImpl()
+	{
+		g_object_unref(m_pCancellable);
 	}
 
 	OrganizeTask* m_pParent;
 	int           m_iLastXFerRVal;
 	int           m_iLastVFSErrorRVal;
+	GCancellable* m_pCancellable;
 
 };
 
@@ -306,6 +308,29 @@ static gint gnome_vfs_xfer_callback (GnomeVFSXferProgressInfo *info, gpointer us
 
 #endif
 
+
+void OrganizeTask::Cancelled()
+{
+	g_cancellable_cancel(m_PrivateImplPtr->m_pCancellable);
+}
+
+static void
+organize_task_gfile_progress
+	(goffset current_num_bytes, goffset total_num_bytes, gpointer user_data)
+{
+	//OrganizeTask::PrivateImpl* pImpl = static_cast<OrganizeTask::PrivateImpl*>(user_data);
+}
+
+static void
+organize_task_gfile_progress_callback(
+	goffset current_num_bytes,
+	goffset total_num_bytes,
+	gpointer user_data)
+{
+	//OrganizeTask::PrivateImpl* pImpl = static_cast<OrganizeTask::PrivateImpl*>(user_data);
+
+}
+
 void OrganizeTask::Run()
 {
 	char szText[256];
@@ -315,63 +340,69 @@ void OrganizeTask::Run()
 	listFiles.push_back(m_strSrcDirURI);
 	imgListPtr->SetImageList(&listFiles, m_bIncludeSubfolders);
 
-	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();	
 	// adjust exif date
+	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();	
 	while (m_iCurrentFile < m_vectQuiverFiles.size() )
 	{
+		GError* error = NULL;
 		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
+		++m_iCurrentFile;
 		std::string strOutput = DoVariableSubstitution(f, m_strDateTemplate);
 		
-		strOutput = m_strDestDirURI + G_DIR_SEPARATOR_S + strOutput + m_strAppendedText;
+		std::string strDstDir = m_strDestDirURI + G_DIR_SEPARATOR_S + strOutput + m_strAppendedText;
 
-		/*
-		MessageBox::ResponseType responseType = 
-			MessageBox::Run(MessageBox::ICON_TYPE_INFO, MessageBox::BUTTON_TYPE_OK, "title", "message");
-		*/
-		/*
-		MessageBox box(MessageBox::ICON_TYPE_INFO, MessageBox::BUTTON_TYPE_OK, "title", "message");
-		box.AddButton(MessageBox::BUTTON_ICON_INFO, "info!", MessageBox::RESPONSE_TYPE_CUSTOM1);
-		box.AddButton(MessageBox::BUTTON_ICON_NONE, "skip", MessageBox::RESPONSE_TYPE_CUSTOM2);
-		box.AddButton("skip all", MessageBox::RESPONSE_TYPE_CUSTOM3);
-		box.SetDefaultResponseType(MessageBox::RESPONSE_TYPE_CUSTOM3);
-		MessageBox::ResponseType responseType = box.Run();
-		printf("response :%d\n", (int)responseType);
-		*/
+		GFile* dstdir = g_file_new_for_uri(strDstDir.c_str());
+		gboolean made_dir = 
+			g_file_make_directory_with_parents(
+				dstdir, m_PrivateImplPtr->m_pCancellable, &error);
 
+		g_object_unref(dstdir);
 
-#ifdef FIXME
-		gnome_vfs_make_directory(strOutput.c_str(),0700);
-		strOutput += "/" + f.GetFileName();
+		if (!made_dir && G_IO_ERROR_EXISTS != error->code)
+		{
+			printf("error creating directory %s\n", strDstDir.c_str());
+			continue;
+		}
 
-		GnomeVFSURI* src = gnome_vfs_uri_new(f.GetFilePath().c_str());
-		GnomeVFSURI* dst = gnome_vfs_uri_new(strOutput.c_str());
+		strOutput = strDstDir + G_DIR_SEPARATOR_S + f.GetFileName();
 
-		gchar* shortname = gnome_vfs_uri_extract_short_name(dst);
-		gchar* dirname = gnome_vfs_uri_extract_dirname (dst);
-		g_snprintf(szText, 256, "Copying %s to %s", shortname, dirname);
+		GFile* src = g_file_new_for_uri(f.GetURI());
+		GFile* dst = g_file_new_for_uri(strOutput.c_str());
+
+		// FIXME: should use g_file_query for display name
+		gchar* shortname = g_file_get_basename(dst);
+		g_snprintf(szText, 256, "Copying %s to %s", shortname, strDstDir.c_str());
 		//SetMessage(MSG_TYPE_INFO, szText);
 		SetProgressText(szText);
 		EmitTaskProgressUpdatedEvent();
-		g_free(dirname);
 		g_free(shortname);
 
-		GnomeVFSResult res = gnome_vfs_xfer_uri (
-			src,
-			dst,
-			GNOME_VFS_XFER_DEFAULT,
-			GNOME_VFS_XFER_ERROR_MODE_QUERY,
-			GNOME_VFS_XFER_OVERWRITE_MODE_QUERY,
-			gnome_vfs_xfer_callback,
-			m_PrivateImplPtr.get());
+		GFileCopyFlags flags = G_FILE_COPY_NONE;
+		// G_FILE_COPY_OVERWRITE
+		// FIXME: have an option to overwrite files 
+		error = NULL;
+		gboolean copied = 
+			g_file_copy(src,
+				dst,
+				flags,
+				m_PrivateImplPtr->m_pCancellable,
+				organize_task_gfile_progress_callback,
+				m_PrivateImplPtr.get(),
+				&error);
+		// if there was an error, 
+		if (!copied)
+		{
+			printf("Error copying file! %s to %s\n", f.GetURI(), strOutput.c_str()); 
+			// message box asking if they want to skip, skip all, retry, cancel
+			if (NULL != error)
+			{
+			}
+		}
 
-		//printf("vfs result: %s\n", gnome_vfs_result_to_string(res));
-
-		gnome_vfs_uri_unref(src);
-		gnome_vfs_uri_unref(dst);
-#endif
+		g_object_unref(dst);
+		g_object_unref(src);
 
 
-		++m_iCurrentFile;
 		EmitTaskProgressUpdatedEvent();
 
 

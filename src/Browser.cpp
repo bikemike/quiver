@@ -1220,7 +1220,6 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 static gboolean thumbnail_loader_update_list (gpointer data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)data;
-	// FIXME: do we need threads enter/leave
 	gdk_threads_enter();
 	b->m_ThumbnailLoader.UpdateList();
 	b->m_iTimeoutUpdateListID = 0;

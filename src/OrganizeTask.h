@@ -48,6 +48,7 @@ public:
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;
 protected:
 	virtual void        Run();
+	void                Cancelled();
 
 private:
 	PrivateImplPtr m_PrivateImplPtr;

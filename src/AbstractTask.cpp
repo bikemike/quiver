@@ -55,6 +55,7 @@ void AbstractTask::Cancel()
 		{
 			m_bShouldCancel = true;
 			m_bFinished = true;
+			Cancelled();
 			EmitTaskCancelledEvent();	
 		}
 		m_bShouldCancel = true;

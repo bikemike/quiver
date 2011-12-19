@@ -42,7 +42,7 @@ RenameTask::~RenameTask()
 
 std::string RenameTask::GetDescription() const
 {
-	return "Organizing Images";
+	return "Renaming Images";
 }
 
 // quantity type may be kb, items, images, files, 

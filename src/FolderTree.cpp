@@ -976,7 +976,6 @@ typedef struct _MyDataStruct
 	GtkTreeModel* model;
 	GtkTreeIter* iter_parent;
 	GtkTreeIter* iter_child;
-	//FIXME: convert to GFileEnumerator
 	GFileEnumerator* dir_enumerator;
 	GHashTable* hash_table;
 	MyIdleState state;

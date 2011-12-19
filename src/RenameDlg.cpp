@@ -283,7 +283,6 @@ void RenameDlg::RenameDlgPriv::UpdateUI()
 
 		if (NULL != dir)
 		{
-			// FIXME - use proper glib functions to construct the 
 			// directory name
 			std::string strLabel = dir;
 			strLabel += G_DIR_SEPARATOR_S;
