@@ -41,7 +41,6 @@ char* maemo_icons[] =
 
 static void create_maemo_icons()
 {
-	GError *error = NULL;
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
 	for (unsigned int i=0;i< G_N_ELEMENTS(maemo_icons); ++i)
@@ -62,21 +61,19 @@ static void create_maemo_icons()
 				ICON_MAEMO_EXPANDED,
 				size,
 				GTK_ICON_LOOKUP_USE_BUILTIN,
-				&error);
+				NULL);
 
-			error = NULL;
 			GdkPixbuf* collapsed = gtk_icon_theme_load_icon (icon_theme,
 				ICON_MAEMO_COLLAPSED,
 				size,
 				GTK_ICON_LOOKUP_USE_BUILTIN,
-				&error);
+				NULL);
 
-			error = NULL;
 			GdkPixbuf* pixbuf = gtk_icon_theme_load_icon (icon_theme,
 				maemo_icons[i],
 				size,
 				GTK_ICON_LOOKUP_USE_BUILTIN,
-				&error);
+				NULL);
 
 			if (NULL != expanded && NULL != pixbuf)
 			{

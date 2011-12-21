@@ -204,7 +204,13 @@ int jpeg_transform_files(char *infile, char *outfile,
 
 	gint fhandle = g_file_open_tmp("quiver_jpeg.XXXXXX", &name_used,&error);
 	
-	if (-1 == fhandle || NULL != error)
+	if (NULL != error)
+	{
+		g_error_free(error);
+		return -1;
+	}
+
+	if (-1 == fhandle)
 	{
 		return -1;
 	}

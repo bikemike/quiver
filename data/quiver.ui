@@ -1515,7 +1515,7 @@ see http://foldersize.sf.net
   <object class="GtkDialog" id="OrganizeDialog">
     <property name="can_focus">False</property>
     <property name="border_width">5</property>
-    <property name="title" translatable="yes">Organize Pictures</property>
+    <property name="title" translatable="yes">Organize</property>
     <property name="window_position">center-on-parent</property>
     <property name="type_hint">dialog</property>
     <child internal-child="vbox">
@@ -1708,6 +1708,7 @@ see http://foldersize.sf.net
                     <property name="can_focus">True</property>
                     <property name="receives_default">False</property>
                     <property name="use_action_appearance">False</property>
+                    <property name="active">True</property>
                     <property name="draw_indicator">True</property>
                   </object>
                   <packing>
@@ -2675,7 +2676,7 @@ see http://foldersize.sf.net
   <object class="GtkDialog" id="RenameDialog">
     <property name="can_focus">False</property>
     <property name="border_width">5</property>
-    <property name="title" translatable="yes">Organize Pictures</property>
+    <property name="title" translatable="yes">Rename</property>
     <property name="window_position">center-on-parent</property>
     <property name="type_hint">dialog</property>
     <child internal-child="vbox">
@@ -2715,7 +2716,7 @@ see http://foldersize.sf.net
           <object class="GtkTable" id="table4">
             <property name="visible">True</property>
             <property name="can_focus">False</property>
-            <property name="n_rows">8</property>
+            <property name="n_rows">9</property>
             <property name="n_columns">2</property>
             <property name="column_spacing">5</property>
             <property name="row_spacing">3</property>
@@ -2773,8 +2774,8 @@ see http://foldersize.sf.net
               </object>
               <packing>
                 <property name="right_attach">2</property>
-                <property name="top_attach">7</property>
-                <property name="bottom_attach">8</property>
+                <property name="top_attach">8</property>
+                <property name="bottom_attach">9</property>
                 <property name="x_padding">10</property>
               </packing>
             </child>
@@ -2787,8 +2788,8 @@ see http://foldersize.sf.net
               </object>
               <packing>
                 <property name="right_attach">2</property>
-                <property name="top_attach">6</property>
-                <property name="bottom_attach">7</property>
+                <property name="top_attach">7</property>
+                <property name="bottom_attach">8</property>
                 <property name="x_options">GTK_FILL</property>
                 <property name="y_options">GTK_FILL</property>
                 <property name="y_padding">10</property>
@@ -2841,7 +2842,7 @@ see http://foldersize.sf.net
               <object class="GtkEntry" id="rename_entry_template">
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
-                <property name="text" translatable="yes">img_</property>
+                <property name="text" translatable="yes">%Y-%m-%d %H.%M-##</property>
                 <property name="primary_icon_activatable">False</property>
                 <property name="secondary_icon_activatable">False</property>
                 <property name="primary_icon_sensitive">True</property>
@@ -2867,6 +2868,29 @@ see http://foldersize.sf.net
                 <property name="x_options">GTK_FILL</property>
                 <property name="y_options">GTK_FILL</property>
               </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="label_tempate_options">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="xalign">0</property>
+                <property name="label" translatable="yes">Template variables:
+%Y = Year, %m  = month, %d = day, 
+%H = hour, %M = minute, %S = second
+# = count (more # symbols will cause padding)</property>
+                <attributes>
+                  <attribute name="scale" value="0.75"/>
+                </attributes>
+              </object>
+              <packing>
+                <property name="left_attach">1</property>
+                <property name="right_attach">2</property>
+                <property name="top_attach">6</property>
+                <property name="bottom_attach">7</property>
+              </packing>
+            </child>
+            <child>
+              <placeholder/>
             </child>
           </object>
           <packing>
@@ -2927,6 +2951,7 @@ see http://foldersize.sf.net
   </object>
   <object class="GtkAdjustment" id="adjustment8">
     <property name="upper">8</property>
+    <property name="value">3</property>
     <property name="step_increment">1</property>
     <property name="page_increment">2</property>
   </object>
@@ -2999,6 +3024,12 @@ see http://foldersize.sf.net
       </row>
       <row>
         <col id="0" translatable="yes">YYYY/MM/DD</col>
+      </row>
+      <row>
+        <col id="0" translatable="yes">YYYY/MM</col>
+      </row>
+      <row>
+        <col id="0" translatable="yes">YYYY/YYYY-MM-DD</col>
       </row>
     </data>
   </object>

@@ -799,6 +799,8 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 			if (NULL != tmp_error)
 			{
 				retval = false;
+				g_error_free(tmp_error);
+				tmp_error = NULL;
 				break;
 			}
 			usleep(50);
@@ -823,6 +825,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	if (NULL != tmp_error)
 	{
 		retval = false;
+		g_error_free(tmp_error);
 	}
 
 	g_object_unref(gfile);

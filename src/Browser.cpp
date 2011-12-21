@@ -873,8 +873,6 @@ Browser::BrowserImpl::~BrowserImpl()
 void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	GError *tmp_error;
-	tmp_error = NULL;
 	
 	if (m_pUIManager)
 	{
@@ -986,6 +984,7 @@ void Browser::BrowserImpl::Show()
 		if (NULL != tmp_error)
 		{
 			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
+			g_error_free(tmp_error);
 		}
 	}
 
@@ -1209,7 +1208,10 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 		if (NULL == pixbuf)
 		{
 			pixbuf = f.GetIcon(width,height);
-			b->m_IconCache.AddPixbuf(cache_icon_name,pixbuf);
+			if (NULL != pixbuf)
+			{
+				b->m_IconCache.AddPixbuf(cache_icon_name,pixbuf);
+			}
 		}
 		g_free(icon_name);
 	}

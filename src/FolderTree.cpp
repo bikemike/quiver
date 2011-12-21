@@ -108,6 +108,7 @@ public:
 	std::set<guint>  m_setFolderThreads;
 	guint            m_iTimeoutScrollToCell;
 	GThreadPool*     m_pGThreadPool;
+	bool             m_bStopThreads;
 };
 
 
@@ -142,7 +143,7 @@ void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
 
 
 FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent) :
-	m_iTimeoutScrollToCell(0)
+	m_iTimeoutScrollToCell(0), m_bStopThreads(false)
 {
 	m_pFolderTree = parent;
 	
@@ -154,6 +155,8 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent) :
 
 FolderTree::FolderTreeImpl::~FolderTreeImpl()
 {
+	m_bStopThreads = true;
+
 	g_thread_pool_free(m_pGThreadPool, TRUE, TRUE);
 
 	g_object_unref(m_pWidget);
@@ -1093,7 +1096,7 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 
 	gboolean finished = FALSE;
 	
-	while (!finished)
+	while (!finished && !data->pFolderTreeImpl->m_bStopThreads)
 	{
 		iter_parent = data->iter_parent;
 		char* uri = NULL;
@@ -1133,27 +1136,38 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_URI, &uri2, -1);
 								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_PERMANENT, &permanent, -1);
 	
-								gchar* local_filename = g_filename_from_uri(uri2,NULL, NULL);
-								gchar* dir_name = g_path_get_basename(local_filename);
-	
-	
-								gpointer* orig_key = NULL;
-								gpointer* value    = NULL;
-	
-								if (g_hash_table_lookup_extended(data->hash_table, dir_name, orig_key, value))
+								GFile* gfile = g_file_new_for_uri(uri2);
+
+								GFileInfo* info = g_file_query_info(
+									gfile,
+									G_FILE_ATTRIBUTE_STANDARD_NAME,
+									G_FILE_QUERY_INFO_NONE,
+									NULL,
+									NULL);
+								if (NULL != info)
 								{
-									// if the key exists, remove it from the hash
-									g_hash_table_remove(data->hash_table, dir_name);
+									const gchar* dir_name = g_file_info_get_name(info);
+		
+		
+									gpointer* orig_key = NULL;
+									gpointer* value    = NULL;
+		
+									if (g_hash_table_lookup_extended(data->hash_table, dir_name, orig_key, value))
+									{
+										// if the key exists, remove it from the hash
+										g_hash_table_remove(data->hash_table, dir_name);
+									}
+									else if (!permanent)
+									{
+										// if the key does not exist, remove the iterator
+										gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
+										// one less item now so i much be adjusted
+										i--;
+									}
+
+									g_object_unref(info);
 								}
-								else if (!permanent)
-								{
-									// if the key does not exist, remove the iterator
-									gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
-									// one less item now so i much be adjusted
-									i--;
-								}
-								g_free(dir_name);
-								g_free(local_filename);
+								g_object_unref(gfile);
 								g_free(uri2);
 							}
 						}

@@ -1901,7 +1901,7 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		case GST_MESSAGE_ERROR: 
 			{
 				gchar  *debug;
-				GError *error;
+				GError *error = NULL;
 
 				gst_message_parse_error (msg, &error, &debug);
 				g_free (debug);
@@ -2672,6 +2672,7 @@ void Viewer::Show()
 
 		if (NULL != tmp_error)
 		{
+			g_error_free(tmp_error);
 			g_warning("Viewer::Show() Error: %s\n",tmp_error->message);
 		}
 	}
@@ -2699,9 +2700,6 @@ void Viewer::Hide()
 
 void Viewer::SetUIManager(GtkUIManager *ui_manager)
 {
-	GError *tmp_error;
-	tmp_error = NULL;
-	
 	if (m_ViewerImplPtr->m_pUIManager)
 	{
 		g_object_unref(m_ViewerImplPtr->m_pUIManager);

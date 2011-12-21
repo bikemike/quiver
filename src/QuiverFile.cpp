@@ -285,9 +285,8 @@ const char* QuiverFile::QuiverFileImpl::GetMimeType()
 		
 		if (NULL != pInfo)
 		{
-			char* pContentType = g_file_info_get_attribute_as_string(pInfo, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
+			const char* pContentType = g_file_info_get_content_type(pInfo);
 			m_szMimeType = g_content_type_get_mime_type(pContentType);
-			g_free(pContentType);
 		}
 	}
 
@@ -308,7 +307,7 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 		GFile* file = g_file_new_for_uri(m_szURI);
 		gFileInfo = g_file_query_info(file,
 			G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
-				G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE ","
+				G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_SIZE ","
 				G_FILE_ATTRIBUTE_STANDARD_ICON ","
 				G_FILE_ATTRIBUTE_ACCESS_CAN_READ ","
@@ -371,16 +370,13 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 	
 	if (m_fDataExists & QUIVER_FILE_DATA_EXIF && pExifData->data)
 	{
-		GError *tmp_error;
-		tmp_error = NULL;
-		
 		GdkPixbufLoader *pixbuf_loader;
 		
 		pixbuf_loader = NULL;
 		pixbuf_loader = gdk_pixbuf_loader_new();
 		if (NULL != pixbuf_loader)
 		{
-			gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)pExifData->data, pExifData->size, &tmp_error);
+			gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)pExifData->data, pExifData->size, NULL);
 	
 			gdk_pixbuf_loader_close(pixbuf_loader, NULL);
 			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
@@ -499,9 +495,11 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 
 			while (0 < (bytes_read = g_input_stream_read(inStream, buffer, buffsize, NULL, NULL)))
 			{
-				tmp_error = NULL;
-				if (!gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error) )
+				gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+				if (NULL != tmp_error)
 				{
+					g_error_free(tmp_error);
+					tmp_error = NULL;
 					break;
 				}
 			}
@@ -786,9 +784,11 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 					{
 						tmp_error = NULL;
 						
-						if (!gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error))
+						gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+						if (NULL != tmp_error)
 						{
 							printf("error: %s\n",tmp_error->message);
+							g_error_free(tmp_error);
 							break;
 						}
 					}
@@ -1032,7 +1032,7 @@ ExifData* QuiverFile::QuiverFileImpl::GetExifData()
 time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 {
 	time_t date = 0;
-	if (fromExif)
+	if (fromExif && !IsVideo())
 	{
 		ExifData* pExifData = GetExifData();
 		if (NULL != pExifData)
@@ -1445,8 +1445,7 @@ void QuiverFile::QuiverFileImpl::GetVideoDimensions(gint *width, gint *height)
 
 static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 {
-	GError *tmp_error;
-	tmp_error = NULL;
+	GError *tmp_error = NULL;
 
 	int buffsize = 512;
 	gchar buffer[buffsize];
@@ -1469,10 +1468,12 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 			
 			while (0 < (bytes_read = g_input_stream_read(inStream, buffer, buffsize, NULL, NULL)))
 			{
-				gboolean success;
-				success = gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
-				if (!success)
+				gboolean success
+					= gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+
+				if (NULL != tmp_error)
 				{
+					g_error_free(tmp_error);
 					break;
 				}
 				if (0 != size_info.width && 0 != size_info.height)
@@ -1575,7 +1576,7 @@ gchar* QuiverFile::GetIconName()
 	g_strfreev(icon_names);
 
 #else
-	const char* content_type = g_file_info_get_attribute_string(file_info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
+	const char* content_type = g_file_info_get_content_type(file_info);
 	GIcon* icon = g_content_type_get_icon(content_type);
 	if (NULL != icon)
 	{
@@ -1590,14 +1591,13 @@ gchar* QuiverFile::GetIconName()
 GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 {
 	GdkPixbuf* pixbuf = NULL;
-	GError *error = NULL;
 
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
 	gint size_wanted = MIN(width_desired,height_desired);
 		
 	GFileInfo* file_info = GetFileInfo();
-	const char* content_type = g_file_info_get_attribute_string(file_info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
+	const char* content_type = g_file_info_get_content_type(file_info);
 	GIcon* icon = g_content_type_get_icon(content_type);
 
 	if (NULL != icon)
@@ -1608,9 +1608,11 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 			size_wanted,
 			GTK_ICON_LOOKUP_USE_BUILTIN);
 
-		pixbuf = gtk_icon_info_load_icon(icon_info, &error);
-
-		gtk_icon_info_free(icon_info);
+		if (NULL != icon_info)
+		{
+			pixbuf = gtk_icon_info_load_icon(icon_info, NULL);
+			gtk_icon_info_free(icon_info);
+		}
 		g_object_unref(icon);
 	}
 

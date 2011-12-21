@@ -730,7 +730,7 @@ void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive
 				G_FILE_ATTRIBUTE_STANDARD_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
 				G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
-				G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE ","
+				G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_SIZE ","
 				G_FILE_ATTRIBUTE_STANDARD_ICON ","
 				G_FILE_ATTRIBUTE_ACCESS_CAN_READ ","
@@ -927,35 +927,38 @@ bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */
 		if (m_bEnableMonitor)
 		{
 			p.first->second = g_file_monitor(dir, G_FILE_MONITOR_NONE, NULL, NULL);
-			g_signal_connect(G_OBJECT(p.first->second), "changed", G_CALLBACK(monitor_callback), this);
-
-			// remove any file monitor entries that are in this directory
-			PathMonitorMap::iterator itr;
-			itr = m_mapFiles.begin();
-			while (m_mapFiles.end() != itr)
+			if (NULL != p.first->second)
 			{
-				GFile* file = g_file_new_for_uri(itr->first.c_str());
-				GFile* parent = g_file_get_parent(file);
+				g_signal_connect(G_OBJECT(p.first->second), "changed", G_CALLBACK(monitor_callback), this);
 
-				if (g_file_equal(dir, parent))
+				// remove any file monitor entries that are in this directory
+				PathMonitorMap::iterator itr;
+				itr = m_mapFiles.begin();
+				while (m_mapFiles.end() != itr)
 				{
-					QuiverFile qfile(itr->first.c_str());
-					QuiverFileList::iterator qitr = m_QuiverFileList.end();
-					qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
-					m_QuiverFileList.erase(qitr);
-					
-					if (NULL != itr->second)
+					GFile* file = g_file_new_for_uri(itr->first.c_str());
+					GFile* parent = g_file_get_parent(file);
+
+					if (g_file_equal(dir, parent))
 					{
-						g_object_unref(itr->second);
+						QuiverFile qfile(itr->first.c_str());
+						QuiverFileList::iterator qitr = m_QuiverFileList.end();
+						qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
+						m_QuiverFileList.erase(qitr);
+						
+						if (NULL != itr->second)
+						{
+							g_object_unref(itr->second);
+						}
+						m_mapFiles.erase(itr++);
 					}
-					m_mapFiles.erase(itr++);
+					else
+					{
+						++itr;
+					}
+					g_object_unref(file);
+					g_object_unref(parent);
 				}
-				else
-				{
-					++itr;
-				}
-				g_object_unref(file);
-				g_object_unref(parent);
 			}
 		}
 
@@ -966,7 +969,7 @@ bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */
 				G_FILE_ATTRIBUTE_STANDARD_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
 				G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
-				G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE ","
+				G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_SIZE ","
 				G_FILE_ATTRIBUTE_STANDARD_ICON ","
 				G_FILE_ATTRIBUTE_ACCESS_CAN_READ ","
@@ -1024,7 +1027,7 @@ bool ImageListImpl::AddFile(const gchar*  uri)
 		G_FILE_ATTRIBUTE_STANDARD_TYPE ","
 		G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
 		G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
-		G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE ","
+		G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 		G_FILE_ATTRIBUTE_STANDARD_SIZE ","
 		G_FILE_ATTRIBUTE_STANDARD_ICON ","
 		G_FILE_ATTRIBUTE_ACCESS_CAN_READ ","
@@ -1052,7 +1055,7 @@ bool ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
 {
 	bool bAdded = false;
 
-	const char* content_type = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
+	const char* content_type = g_file_info_get_content_type(info);
 	if (NULL != content_type)
 	{
 		gchar* mimetype = g_content_type_get_mime_type(content_type);

@@ -1,5 +1,6 @@
 #include <config.h>
 #include "RenameDlg.h"
+#include "RenameTask.h"
 
 #include "QuiverPrefs.h"
 #include "Preferences.h"
@@ -7,6 +8,9 @@
 #include "QuiverStockIcons.h"
 
 #include <gio/gio.h>
+
+#include <algorithm>
+#include <boost/algorithm/string/classification.hpp>
 
 #ifdef QUIVER_MAEMO
 #ifdef HAVE_HILDON_FM_2
@@ -124,6 +128,12 @@ std::string RenameDlg::GetInputFolder() const
 
 }
 
+void RenameDlg::SetInputFolder(std::string folder)
+{
+	gtk_file_chooser_set_current_folder_uri(GTK_FILE_CHOOSER(m_PrivPtr->m_pFCBtnSourceFolder), folder.c_str());
+
+}
+
 bool RenameDlg::GetIncludeSubfolders() const
 {
 	return (TRUE == gtk_toggle_button_get_active(m_PrivPtr->m_pTglBtnSubfolders));
@@ -194,7 +204,9 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 		gtk_container_add(dst_cont, GTK_WIDGET(m_pBtnDestFolder));
 #else
 		m_pFCBtnSourceFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Source Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
+		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder), FALSE);
 		m_pFCBtnDestFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Destination Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
+		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnDestFolder), FALSE);
 		gtk_widget_show(GTK_WIDGET(m_pFCBtnSourceFolder));
 		gtk_widget_show(GTK_WIDGET(m_pFCBtnDestFolder));
 		
@@ -287,8 +299,11 @@ void RenameDlg::RenameDlgPriv::UpdateUI()
 			std::string strLabel = dir;
 			strLabel += G_DIR_SEPARATOR_S;
 			// template ####
-			strLabel += gtk_entry_get_text(m_pEntryTemplate);
-			strLabel += "0001.jpg";
+			std::string strTemplate = gtk_entry_get_text(m_pEntryTemplate);
+			GDateTime* time = g_date_time_new_now_local();
+			std::string strFileName = RenameTask::DoVariableSubstitution(strTemplate, time, 1);
+			g_date_time_unref(time);
+			strLabel += strFileName + ".jpg";
 			gtk_label_set_text(m_pLabelExample, strLabel.c_str());
 			g_free(dir);
 		}
@@ -328,6 +343,7 @@ void RenameDlg::RenameDlgPriv::ConnectSignals()
 bool RenameDlg::RenameDlgPriv::ValidateInput()
 {
 	bool bIsValid = true;
+	std::string strMsg, strTitle;
 
 	// make sure source and dest directories are 
 	// in separate locations
@@ -358,22 +374,42 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 		gboolean source_is_dst = 
 			g_file_equal(file_src, file_dst);
 
+		// check if child file is valid
+		std::string strTemplate = gtk_entry_get_text(m_pEntryTemplate);
+		GDateTime* time = g_date_time_new_now_local();
+		std::string strFileName = RenameTask::DoVariableSubstitution(strTemplate, time, 1);
+		g_date_time_unref(time);
+
+		GError* error = NULL;
+		GFile* file = g_file_get_child_for_display_name(file_dst, strFileName.c_str(), &error);
+		if (NULL != file)
+		{
+			g_object_unref(file);
+		}
+
+		if (NULL != error)
+		{
+			bIsValid =false;
+			strTitle = "File Error";
+ 			strMsg = error->message;
+			g_error_free(error);
+		}
+		
+
+
 		g_object_unref(file_src);
 		g_object_unref(file_dst);
 		
 		if ( (source_is_parent && m_pRenameDlg->GetIncludeSubfolders()) || source_is_child || source_is_dst)
 		{
 			bIsValid =false;
- 
-			GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_pDialogRename),
-				GTK_DIALOG_DESTROY_WITH_PARENT,
-				GTK_MESSAGE_ERROR,
-				GTK_BUTTONS_CLOSE,
-				"Source and Destination folders overlap. Please choose a different destination folder.");
-			gtk_window_set_title(GTK_WINDOW(dialog), "Folder Conflict");
-			gtk_dialog_run (GTK_DIALOG (dialog));
-			gtk_widget_destroy (dialog);
+			strTitle = "Folder Conflict";
+ 			strMsg = "Source and Destination folders overlap. Please choose a different destination folder.";
 		}
+	}
+	else
+	{
+		bIsValid = false;
 	}
 
 #ifdef QUIVER_MAEMO
@@ -387,6 +423,18 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 		g_free(dst_uri);
 	}
 #endif
+
+	if (!bIsValid)
+	{
+		GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_pDialogRename),
+			GTK_DIALOG_DESTROY_WITH_PARENT,
+			GTK_MESSAGE_ERROR,
+			GTK_BUTTONS_CLOSE,
+			strMsg.c_str());
+		gtk_window_set_title(GTK_WINDOW(dialog), strTitle.c_str());
+		gtk_dialog_run (GTK_DIALOG (dialog));
+		gtk_widget_destroy (dialog);
+	}
 
 	return bIsValid;
 }
@@ -464,7 +512,21 @@ void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
 
 static void on_editable_changed (GtkEditable *editable, gpointer user_data)
 {
+	std::string invalid_chars = "\\/:*?\"<>|";
 	RenameDlg::RenameDlgPriv *priv = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
+
+	std::string strTemplate = gtk_entry_get_text(priv->m_pEntryTemplate);
+	std::string strNewTemplate = strTemplate;
+   
+	std::string::iterator itr = 
+		std::remove_if(strNewTemplate.begin(), strNewTemplate.end(), boost::is_any_of(invalid_chars));
+	strNewTemplate.erase(itr, strNewTemplate.end());
+
+	if (strNewTemplate != strTemplate)
+	{
+		gtk_entry_set_text(priv->m_pEntryTemplate, strNewTemplate.c_str());
+	}
+
 	priv->UpdateUI();
 }
 

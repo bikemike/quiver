@@ -20,6 +20,7 @@ public:
 
 	std::string GetOutputFolder() const;
 	std::string GetInputFolder() const;
+	void        SetInputFolder(std::string folder);
 
 	bool        GetIncludeSubfolders() const;
 

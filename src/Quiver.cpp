@@ -384,6 +384,7 @@ void QuiverImpl::LoadBookmarks()
 			if (NULL != error)
 			{
 				printf("error: %s\n",error->message);
+				g_error_free(error);
 			}
 		}
 	}
@@ -474,6 +475,7 @@ void QuiverImpl::LoadExternalTools()
 			if (NULL != error)
 			{
 				printf("error: %s\n",error->message);
+				g_error_free(error);
 			}
 		}
 	}
@@ -1230,9 +1232,6 @@ void Quiver::Init()
 #endif
 
 	}
-
-	GError *tmp_error;
-	tmp_error = NULL;
 	
 	gtk_window_set_default_icon_name (QUIVER_STOCK_APP);	
 
@@ -1244,8 +1243,7 @@ void Quiver::Init()
 	gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_main,
 			strlen(quiver_ui_main),
-			&tmp_error);
-	
+			NULL);
 
 	guint n_entries = G_N_ELEMENTS (m_QuiverImplPtr->action_entries);
 
@@ -1950,9 +1948,6 @@ static void signal_item_deselect (GtkItem *proxy,gpointer data)
 
 void Quiver::ShowViewer()
 {
-	GError *tmp_error;
-	tmp_error = NULL;
-
 	m_QuiverImplPtr->m_BrowserPtr->Hide();
 
 	if (0 != m_QuiverImplPtr->m_iMergedBrowserUI)
@@ -1967,7 +1962,7 @@ void Quiver::ShowViewer()
 		m_QuiverImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_viewer,
 			strlen(quiver_ui_viewer),
-			&tmp_error);
+			NULL);
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 
@@ -1977,9 +1972,6 @@ void Quiver::ShowViewer()
 
 void Quiver::ShowBrowser()
 {
-	GError *tmp_error;
-	tmp_error = NULL;
-
 	m_QuiverImplPtr->m_ViewerPtr->Hide();
 	gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 
@@ -1995,7 +1987,7 @@ void Quiver::ShowBrowser()
 		m_QuiverImplPtr->m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_browser,
 			strlen(quiver_ui_browser),
-			&tmp_error);
+			NULL);
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 	m_QuiverImplPtr->m_BrowserPtr->Show();
@@ -2664,6 +2656,14 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
 	{
 		RenameDlg dlg;
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+
+		if (!folders.empty())
+		{
+			dlg.SetInputFolder(folders.front());
+		}
+
 		if (dlg.Run())
 		{
 			// organize pictures dialog
@@ -2690,6 +2690,15 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	else if(0 == strcmp(szAction,ACTION_QUIVER_ORGANIZE))
 	{
 		OrganizeDlg dlg;
+
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+
+		if (!folders.empty())
+		{
+			dlg.SetInputFolder(folders.front());
+		}
+
 		if (dlg.Run())
 		{
 			// organize pictures dialog
@@ -2867,6 +2876,11 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 				printf("Running external command: %s\n", cmd.c_str());
 				GError *error = NULL;
 				g_spawn_command_line_async (cmd.c_str(), &error);
+				if (NULL != error)
+				{
+					g_warning("%s\n", error->message);
+					g_error_free(error);
+				}
 			}
 		}
 	}

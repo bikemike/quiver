@@ -135,6 +135,12 @@ std::string OrganizeDlg::GetInputFolder() const
 
 }
 
+void OrganizeDlg::SetInputFolder(std::string dir)
+{
+	gtk_file_chooser_set_current_folder_uri(GTK_FILE_CHOOSER(m_PrivPtr->m_pFCBtnSourceFolder), dir.c_str());
+}
+
+
 int OrganizeDlg::GetDayExtention() const
 {
 	return gtk_spin_button_get_value_as_int (m_PrivPtr->m_pSpinExtension);
@@ -220,7 +226,9 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		gtk_container_add(dst_cont, GTK_WIDGET(m_pBtnDestFolder));
 #else
 		m_pFCBtnSourceFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Source Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
+		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder), FALSE);
 		m_pFCBtnDestFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Destination Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
+		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnDestFolder), FALSE);
 		gtk_widget_show(GTK_WIDGET(m_pFCBtnSourceFolder));
 		gtk_widget_show(GTK_WIDGET(m_pFCBtnDestFolder));
 		

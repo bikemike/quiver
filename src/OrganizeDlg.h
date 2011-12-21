@@ -21,6 +21,7 @@ public:
 	std::string GetAppendedText() const;
 
 	std::string GetInputFolder() const;
+	void        SetInputFolder(std::string dir);
 	int         GetDayExtention() const;
 	bool        GetIncludeSubfolders() const;
 

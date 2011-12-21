@@ -46,14 +46,17 @@ public:
 
 	void                SetSortBy(ImageList::SortBy sortBy);
 
+	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int count);
+
 	class PrivateImpl;
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;
 protected:
 	virtual void        Run();
+	void                Cancelled();
+
 
 private:
 	PrivateImplPtr m_PrivateImplPtr;
-	std::string DoVariableSubstitution(QuiverFile f, std::string strTemplate);
 
 	unsigned int      m_iCurrentFile;
 	std::vector<QuiverFile> m_vectQuiverFiles;

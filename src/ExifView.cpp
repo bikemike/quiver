@@ -643,9 +643,6 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 void 
 ExifView::SetUIManager(GtkUIManager *ui_manager)
 {
-	GError *tmp_error;
-	tmp_error = NULL;
-	
 	if (NULL != m_ExifViewImplPtr->m_pUIManager)
 	{
 		g_object_unref(m_ExifViewImplPtr->m_pUIManager);

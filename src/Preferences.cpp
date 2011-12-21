@@ -14,21 +14,18 @@ PreferencesPtr Preferences::c_pPreferencesPtr;
 Preferences::Preferences()
 {
 	m_bModified = false;
-	GError *error = NULL;
 	m_KeyFile = g_key_file_new();
-	g_key_file_load_from_file(m_KeyFile,g_szConfigFilePath,(GKeyFileFlags)0/*(G_KEY_FILE_KEEP_COMMENTS|G_KEY_FILE_KEEP_TRANSLATIONS)*/, &error);
+	g_key_file_load_from_file(m_KeyFile,g_szConfigFilePath,(GKeyFileFlags)0/*(G_KEY_FILE_KEEP_COMMENTS|G_KEY_FILE_KEEP_TRANSLATIONS)*/, NULL);
 }
 
 Preferences::~Preferences()
 {
 	if (m_bModified)
 	{
-		GError *error = NULL;
 		gsize clength;
-		gchar *contents = g_key_file_to_data (m_KeyFile, &clength, &error);
+		gchar *contents = g_key_file_to_data (m_KeyFile, &clength, NULL);
 	
-		error = NULL;
-		g_file_set_contents(g_szConfigFilePath,contents,clength,&error);
+		g_file_set_contents(g_szConfigFilePath,contents,clength,NULL);
 	
 		g_free(contents);
 	}
@@ -67,9 +64,8 @@ std::list<std::string> Preferences::GetSections()
 
 std::list<std::string> Preferences::GetKeys(std::string section)
 {
-	GError *error = NULL;
 	gsize length = 0;
-	gchar** keys =  g_key_file_get_keys (m_KeyFile, section.c_str(),  &length, &error);
+	gchar** keys =  g_key_file_get_keys (m_KeyFile, section.c_str(),  &length, NULL);
 
 	list<string> key_list;
 	if (NULL != keys)
@@ -96,9 +92,8 @@ bool Preferences::HasSection(std::string section)
 
 bool Preferences::HasKey(std::string section, std::string key)
 {
-	GError *error = NULL;
 	bool rval = false;
-	if (g_key_file_has_key(m_KeyFile,section.c_str(),key.c_str(), &error))
+	if (g_key_file_has_key(m_KeyFile,section.c_str(),key.c_str(), NULL))
 	{
 		rval = true;
 	}
@@ -107,11 +102,10 @@ bool Preferences::HasKey(std::string section, std::string key)
 
 std::string Preferences::GetValue(std::string section, std::string key, std::string default_val /* = "" */)
 {
-	GError *error = NULL;
 	gchar *value;
 	string strValue = default_val;
 
-	value = g_key_file_get_value(m_KeyFile,section.c_str(),key.c_str(), &error);
+	value = g_key_file_get_value(m_KeyFile,section.c_str(),key.c_str(), NULL);
 
 	if (NULL != value)
 	{
@@ -133,11 +127,10 @@ std::string Preferences::GetString(std::string section, std::string key, std::st
 
 std::string Preferences::GetLocaleString(std::string section, std::string key, std::string locale)
 {
-	GError *error = NULL;
 	gchar *value;
 	string strValue;
 
-	value = g_key_file_get_locale_string(m_KeyFile,section.c_str(),key.c_str(), locale.c_str(), &error);
+	value = g_key_file_get_locale_string(m_KeyFile,section.c_str(),key.c_str(), locale.c_str(), NULL);
 
 	if (NULL != value)
 	{
@@ -150,7 +143,7 @@ std::string Preferences::GetLocaleString(std::string section, std::string key, s
 
 bool Preferences::GetBoolean(std::string section, std::string key, bool default_value /*= false*/)
 {
-	GError *error = NULL;
+	GError* error = NULL;
 	gboolean value;
 	bool bValue = default_value;
 
@@ -162,6 +155,7 @@ bool Preferences::GetBoolean(std::string section, std::string key, bool default_
 	}
 	else
 	{
+		g_error_free(error);
 		g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), bValue ? TRUE : FALSE);
 	}
 
@@ -170,7 +164,7 @@ bool Preferences::GetBoolean(std::string section, std::string key, bool default_
 
 int Preferences::GetInteger(std::string section, std::string key, int default_value /*= 0*/)
 {
-	GError *error = NULL;
+	GError* error = NULL;
 	gint value = default_value;
 
 	gint tmpvalue = g_key_file_get_integer(m_KeyFile,section.c_str(),key.c_str(), &error);
@@ -181,6 +175,7 @@ int Preferences::GetInteger(std::string section, std::string key, int default_va
 	}
 	else
 	{
+		g_error_free(error);
 		g_key_file_set_integer(m_KeyFile,section.c_str(),key.c_str(), value);
 	}
 
@@ -189,12 +184,11 @@ int Preferences::GetInteger(std::string section, std::string key, int default_va
 
 std::list<std::string> Preferences::GetStringList(std::string section, std::string key)
 {
-	GError *error = NULL;
 	gsize nstrings = 0;
 	gchar **value;
 	list<string> string_list;
 
-	value = g_key_file_get_string_list(m_KeyFile,section.c_str(),key.c_str(), &nstrings, &error);
+	value = g_key_file_get_string_list(m_KeyFile,section.c_str(),key.c_str(), &nstrings, NULL);
 
 	if (NULL != value)
 	{
@@ -216,12 +210,11 @@ std::list<std::string> Preferences::GetLocaleStringList(std::string section, std
 
 std::list<bool> Preferences::GetBooleanList(std::string section, std::string key)
 {
-	GError *error = NULL;
 	gsize nvals = 0;
 	gboolean* value;
 	list<bool> bool_list;
 
-	value = g_key_file_get_boolean_list(m_KeyFile,section.c_str(),key.c_str(), &nvals, &error);
+	value = g_key_file_get_boolean_list(m_KeyFile,section.c_str(),key.c_str(), &nvals, NULL);
 
 	if (NULL != value)
 	{
@@ -237,12 +230,11 @@ std::list<bool> Preferences::GetBooleanList(std::string section, std::string key
 
 std::list<int> Preferences::GetIntegerList(std::string section, std::string key)
 {
-	GError *error = NULL;
 	gsize nvals = 0;
 	int* value;
 	list<int> int_list;
 
-	value = g_key_file_get_integer_list(m_KeyFile,section.c_str(),key.c_str(), &nvals, &error);
+	value = g_key_file_get_integer_list(m_KeyFile,section.c_str(),key.c_str(), &nvals, NULL);
 
 	if (NULL != value)
 	{
@@ -477,8 +469,7 @@ void Preferences::RemoveSection(std::string section)
 {
 	if (HasSection(section))
 	{
-		GError *error = NULL;
-		g_key_file_remove_group(m_KeyFile,section.c_str(), &error);
+		g_key_file_remove_group(m_KeyFile,section.c_str(), NULL);
 		m_bModified = true;
 	}
 }
@@ -487,8 +478,7 @@ void Preferences::RemoveKey(std::string section,std::string key)
 {
 	if (HasKey(section,key))
 	{
-		GError *error = NULL;
-		g_key_file_remove_key(m_KeyFile,section.c_str(), key.c_str(), &error);
+		g_key_file_remove_key(m_KeyFile,section.c_str(), key.c_str(), NULL);
 		m_bModified = true;
 	}
 }
