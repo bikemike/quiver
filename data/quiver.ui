@@ -1560,7 +1560,7 @@ see http://foldersize.sf.net
               <object class="GtkTable" id="table3">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-                <property name="n_rows">9</property>
+                <property name="n_rows">12</property>
                 <property name="n_columns">2</property>
                 <property name="column_spacing">5</property>
                 <property name="row_spacing">3</property>
@@ -1588,7 +1588,7 @@ see http://foldersize.sf.net
                     <property name="visible">True</property>
                     <property name="can_focus">False</property>
                     <property name="xalign">0</property>
-                    <property name="label" translatable="yes">appended text</property>
+                    <property name="label" translatable="yes">Folder suffix</property>
                   </object>
                   <packing>
                     <property name="top_attach">6</property>
@@ -1661,7 +1661,7 @@ see http://foldersize.sf.net
                     <property name="visible">True</property>
                     <property name="can_focus">False</property>
                     <property name="xalign">0</property>
-                    <property name="label" translatable="yes">Date template</property>
+                    <property name="label" translatable="yes">Folder template</property>
                   </object>
                   <packing>
                     <property name="top_attach">5</property>
@@ -1679,8 +1679,8 @@ see http://foldersize.sf.net
                   </object>
                   <packing>
                     <property name="right_attach">2</property>
-                    <property name="top_attach">7</property>
-                    <property name="bottom_attach">8</property>
+                    <property name="top_attach">10</property>
+                    <property name="bottom_attach">11</property>
                     <property name="x_options">GTK_FILL</property>
                     <property name="y_options">GTK_FILL</property>
                     <property name="y_padding">10</property>
@@ -1696,8 +1696,8 @@ see http://foldersize.sf.net
                   </object>
                   <packing>
                     <property name="right_attach">2</property>
-                    <property name="top_attach">8</property>
-                    <property name="bottom_attach">9</property>
+                    <property name="top_attach">11</property>
+                    <property name="bottom_attach">12</property>
                     <property name="x_padding">10</property>
                   </packing>
                 </child>
@@ -1745,6 +1745,77 @@ see http://foldersize.sf.net
                     <property name="top_attach">4</property>
                     <property name="bottom_attach">5</property>
                   </packing>
+                </child>
+                <child>
+                  <object class="GtkCheckButton" id="organize_cb_rename_files">
+                    <property name="label" translatable="yes">Rename files</property>
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="receives_default">False</property>
+                    <property name="use_action_appearance">False</property>
+                    <property name="active">True</property>
+                    <property name="draw_indicator">True</property>
+                  </object>
+                  <packing>
+                    <property name="right_attach">2</property>
+                    <property name="top_attach">7</property>
+                    <property name="bottom_attach">8</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label_filename_template">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="xalign">0</property>
+                    <property name="label" translatable="yes">Filename template</property>
+                  </object>
+                  <packing>
+                    <property name="top_attach">8</property>
+                    <property name="bottom_attach">9</property>
+                    <property name="x_options">GTK_FILL</property>
+                    <property name="y_options">GTK_FILL</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="organize_entry_filename_template">
+                    <property name="visible">True</property>
+                    <property name="can_focus">True</property>
+                    <property name="invisible_char">•</property>
+                    <property name="text" translatable="yes">%Y-%m-%d %H.%M-##</property>
+                    <property name="primary_icon_activatable">False</property>
+                    <property name="secondary_icon_activatable">False</property>
+                    <property name="primary_icon_sensitive">True</property>
+                    <property name="secondary_icon_sensitive">True</property>
+                  </object>
+                  <packing>
+                    <property name="left_attach">1</property>
+                    <property name="right_attach">2</property>
+                    <property name="top_attach">8</property>
+                    <property name="bottom_attach">9</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label_filename_tempate_info">
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="xalign">0</property>
+                    <property name="label" translatable="yes">Template variables:
+%Y = Year, %m  = month, %d = day, 
+%H = hour, %M = minute, %S = second
+# = count (more # symbols will cause padding)</property>
+                    <attributes>
+                      <attribute name="scale" value="0.75"/>
+                    </attributes>
+                  </object>
+                  <packing>
+                    <property name="left_attach">1</property>
+                    <property name="right_attach">2</property>
+                    <property name="top_attach">9</property>
+                    <property name="bottom_attach">10</property>
+                  </packing>
+                </child>
+                <child>
+                  <placeholder/>
                 </child>
               </object>
               <packing>

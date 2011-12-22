@@ -47,6 +47,8 @@ public:
 
 	void                SetDayExtension(int extension);
 
+	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime);
+
 	class PrivateImpl;
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;
 protected:
@@ -55,7 +57,6 @@ protected:
 
 private:
 	PrivateImplPtr m_PrivateImplPtr;
-	std::string DoVariableSubstitution(std::string strTemplate, GDateTime* datetime);
 
 	int m_iCurrentFile;
 	std::vector<QuiverFile> m_vectQuiverFiles;
