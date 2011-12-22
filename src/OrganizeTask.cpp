@@ -3,9 +3,11 @@
 #include "ImageSaveManager.h"
 #include "MessageBox.h"
 #include "ImageList.h"
+#include "RenameTask.h"
 
 #include <map>
 #include <boost/algorithm/string.hpp>
+#include <boost/format.hpp>
 #include <sstream>
 
 #include <gio/gio.h>
@@ -33,11 +35,15 @@ public:
 
 };
 
-OrganizeTask::OrganizeTask()
-	: m_PrivateImplPtr(new PrivateImpl(this)), m_iCurrentFile(0), m_bIncludeSubfolders(false), m_iDayExtension(0)
+OrganizeTask::OrganizeTask() :
+	m_PrivateImplPtr(new PrivateImpl(this)),
+	m_iCurrentFile(0),
+	m_bIncludeSubfolders(false),
+	m_bRenameFiles(true),
+	m_iDayExtension(0)
 {
-	SetDateTemplate("YYYY-MM-DD");
-	//SetOutputFolder("~");
+	SetFolderTemplate("YYYY-MM-DD");
+	SetFileTemplate("%Y-%m-%d %H.%M-##");
 }
 OrganizeTask::~OrganizeTask()
 {
@@ -118,9 +124,19 @@ void OrganizeTask::SetOutputFolder(std::string strDestDirURI)
 
 // if not set, the default format is: YYYY-MM-DD
 // pulled from the exif data
-void OrganizeTask::SetDateTemplate(std::string strTemplate)
+void OrganizeTask::SetFolderTemplate(std::string strTemplate)
 {
-	m_strDateTemplate = strTemplate;
+	m_strFolderTemplate = strTemplate;
+}
+
+void OrganizeTask::SetRenameFiles(bool bRenameFiles)
+{
+	m_bRenameFiles = bRenameFiles;
+}
+
+void OrganizeTask::SetFileTemplate(std::string strTemplate)
+{
+	m_strFileTemplate = strTemplate;
 }
 
 void OrganizeTask::SetAppendedText(std::string strAppend)
@@ -133,11 +149,9 @@ void OrganizeTask::SetDayExtension(int extension)
 	m_iDayExtension = extension;
 }
 
-std::string OrganizeTask::DoVariableSubstitution(QuiverFile f, std::string strTemplate)
+std::string OrganizeTask::DoVariableSubstitution(std::string strTemplate, GDateTime* datetime)
 {
 	std::map<std::string, std::string> mapSubstFields;
-
-	GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
 
 	gchar szDate[20];
 
@@ -152,8 +166,6 @@ std::string OrganizeTask::DoVariableSubstitution(QuiverFile f, std::string strTe
 	g_snprintf(szDate, 20, "%02d",
 		g_date_time_get_day_of_month(datetime));
 	mapSubstFields.insert(std::pair<std::string, std::string>("DD", szDate));
-
-	g_date_time_unref(datetime);
 
 	std::map<std::string, std::string>::iterator itr;
 	for (itr = mapSubstFields.begin(); mapSubstFields.end() != itr; ++itr)
@@ -180,7 +192,9 @@ organize_task_gfile_progress_callback(
 
 void OrganizeTask::Run()
 {
-	char szText[256];
+	std::string strText;
+	std::map<std::string, int> mapFileCounter;
+
 	// populate list:
 	ImageListPtr imgListPtr(new ImageList(false));
 	std::list<std::string> listFiles;
@@ -192,11 +206,12 @@ void OrganizeTask::Run()
 	while (m_iCurrentFile < m_vectQuiverFiles.size() )
 	{
 		GError* error = NULL;
-		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
-		++m_iCurrentFile;
-		std::string strOutput = DoVariableSubstitution(f, m_strDateTemplate);
-		
-		std::string strDstDir = m_strDestDirURI + G_DIR_SEPARATOR_S + strOutput + m_strAppendedText;
+		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile++];
+
+		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
+
+		std::string strFolder = DoVariableSubstitution(m_strFolderTemplate, datetime);
+		std::string strDstDir = m_strDestDirURI + G_DIR_SEPARATOR_S + strFolder + m_strAppendedText;
 
 		GFile* dstdir = g_file_new_for_uri(strDstDir.c_str());
 		gboolean made_dir = 
@@ -221,10 +236,35 @@ void OrganizeTask::Run()
 
 		}
 
-		strOutput = strDstDir + G_DIR_SEPARATOR_S + f.GetFileName();
+		std::string strFilename = f.GetFileName();
+
+		if (m_bRenameFiles)
+		{
+			std::string strExtension;
+			std::string::size_type pos = strFilename.find_last_of(".");
+			if (std::string::npos != pos)
+			{
+				strExtension = strFilename.substr(pos+1);
+			}
+
+			std::string strDstNameTmp = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, 0);
+			int count = 0;
+			if (mapFileCounter.end() != mapFileCounter.find(strDstNameTmp))
+			{
+				count = mapFileCounter[strDstNameTmp];
+			}
+			strFilename = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, ++count);
+			strFilename += "." + strExtension;
+
+			mapFileCounter[strDstNameTmp] = count;
+		}
+		g_date_time_unref(datetime);
+
+
+		std::string strDstPath = strDstDir + G_DIR_SEPARATOR_S + strFilename;
 
 		GFile* src = g_file_new_for_uri(f.GetURI());
-		GFile* dst = g_file_new_for_uri(strOutput.c_str());
+		GFile* dst = g_file_new_for_uri(strDstPath.c_str());
 
 		char* dstname = g_file_get_parse_name(dst);
 
@@ -237,18 +277,17 @@ void OrganizeTask::Run()
 		if ( NULL != info)
 		{
 			const char* display_name = g_file_info_get_display_name(info);
-			g_snprintf(szText, 256, "Copying %s to %s", display_name, dstname);
+			strText = boost::str(boost::format("Copying %s to %s") % display_name % dstname);
 			g_object_unref(info);
 		}
 		else
 		{
 			gchar* shortname = g_file_get_basename(src);
-			g_snprintf(szText, 256, "Copying %s to %s", shortname, dstname);
+			strText = boost::str(boost::format("Copying %s to %s") % shortname % dstname);
 			g_free(shortname);
 		}
 		
-		//SetMessage(MSG_TYPE_INFO, szText);
-		SetProgressText(szText);
+		SetProgressText(strText);
 		EmitTaskProgressUpdatedEvent();
 		g_free(dstname);
 
@@ -289,7 +328,7 @@ void OrganizeTask::Run()
 		// if there was an error, 
 		if (NULL != error)
 		{
-			printf("Error copying file! %s to %s: %s\n", f.GetURI(), strOutput.c_str(), error->message); 
+			printf("Error copying file! %s to %s: %s\n", f.GetURI(), strDstPath.c_str(), error->message); 
 			// message box asking if they want to skip, skip all, retry, cancel
 			g_error_free(error);
 			error = NULL;
@@ -312,7 +351,6 @@ void OrganizeTask::Run()
 			break;
 		}
 	}
-	SetMessage(MSG_TYPE_INFO, "Done");
 }
 
 

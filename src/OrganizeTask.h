@@ -38,7 +38,10 @@ public:
 
 	// if not set, the default format is: YYYY-MM-DD
 	// pulled from the exif data
-	void                SetDateTemplate(std::string strTemplate);
+	void                SetFolderTemplate(std::string strTemplate);
+
+	void                SetRenameFiles(bool bRenameFiles);
+	void                SetFileTemplate(std::string strTemplate);
 
 	void                SetAppendedText(std::string strAppend);
 
@@ -52,15 +55,17 @@ protected:
 
 private:
 	PrivateImplPtr m_PrivateImplPtr;
-	std::string DoVariableSubstitution(QuiverFile f, std::string strTemplate);
+	std::string DoVariableSubstitution(std::string strTemplate, GDateTime* datetime);
 
 	int m_iCurrentFile;
 	std::vector<QuiverFile> m_vectQuiverFiles;
 
 	std::string m_strSrcDirURI;
 	bool        m_bIncludeSubfolders;
+	bool        m_bRenameFiles;
 	std::string m_strDestDirURI;
-	std::string m_strDateTemplate;
+	std::string m_strFolderTemplate;
+	std::string m_strFileTemplate;
 	std::string m_strAppendedText;
 	int         m_iDayExtension;
 };

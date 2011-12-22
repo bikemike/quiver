@@ -2705,7 +2705,10 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			OrganizeTaskPtr organizeTaskPtr(new OrganizeTask());
 			organizeTaskPtr->SetInputFolder( dlg.GetInputFolder() );
 			organizeTaskPtr->SetOutputFolder( dlg.GetOutputFolder() );
-			organizeTaskPtr->SetDateTemplate( dlg.GetDateTemplate() );
+			organizeTaskPtr->SetFolderTemplate( dlg.GetFolderTemplate() );
+			// FIXME:
+			//organizeTaskPtr->SetFileTemplate( dlg.GetFileTemplate() );
+			//organizeTaskPtr->SetRenameFiles( dlg.GetRenameFiles() );
 			organizeTaskPtr->SetAppendedText( dlg.GetAppendedText() );
 			organizeTaskPtr->SetDayExtension( dlg.GetDayExtention() );
 			organizeTaskPtr->SetIncludeSubfolders( dlg.GetIncludeSubfolders() );

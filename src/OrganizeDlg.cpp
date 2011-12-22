@@ -41,7 +41,8 @@ public:
 
 	GtkWidget*              m_pBtnOK;
 
-	GtkComboBox*            m_pComboTemplate;
+	GtkComboBox*            m_pComboTemplateFolder;
+	GtkComboBox*            m_pComboTemplateFile;
 #ifdef QUIVER_MAEMO
 	GtkButton*              m_pBtnSourceFolder;
 	GtkButton*              m_pBtnDestFolder;
@@ -50,6 +51,7 @@ public:
 	GtkFileChooserButton*   m_pFCBtnDestFolder;
 #endif
 	GtkToggleButton*        m_pTglBtnSubfolders;
+	GtkToggleButton*        m_pTglBtnRenameFiles;
 	//GtkToggleButton*        m_pTglBtnCurrentSelection;
 	//GtkToggleButton*        m_pTglBtnFolder;
 	GtkSpinButton*          m_pSpinExtension;
@@ -84,9 +86,14 @@ bool OrganizeDlg::Run()
 	return false;
 }
 
-std::string OrganizeDlg::GetDateTemplate() const
+std::string OrganizeDlg::GetFolderTemplate() const
 {
-	return gtk_combo_box_get_active_text(m_PrivPtr->m_pComboTemplate);
+	return gtk_combo_box_get_active_text(m_PrivPtr->m_pComboTemplateFolder);
+}
+
+std::string OrganizeDlg::GetFileTemplate() const
+{
+	return gtk_combo_box_get_active_text(m_PrivPtr->m_pComboTemplateFile);
 }
 
 std::string OrganizeDlg::GetOutputFolder() const
@@ -151,6 +158,12 @@ bool OrganizeDlg::GetIncludeSubfolders() const
 	return (TRUE == gtk_toggle_button_get_active(m_PrivPtr->m_pTglBtnSubfolders));
 }
 
+bool OrganizeDlg::GetRenameFiles() const
+{
+	return (TRUE == gtk_toggle_button_get_active(m_PrivPtr->m_pTglBtnRenameFiles));
+}
+
+
 
 // private stuff
 
@@ -206,7 +219,9 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 	gtk_widget_show(m_pBtnOK);
 	gtk_container_add(GTK_CONTAINER(m_pDialogOrganize->action_area),m_pBtnOK);
 
-	m_pComboTemplate          = GTK_COMBO_BOX( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
+	m_pComboTemplateFolder       = GTK_COMBO_BOX( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
+	// FIXME: change organize_combo_template to organize_combo_template_file
+	m_pComboTemplateFile       = GTK_COMBO_BOX( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
 	//m_pTglBtnCurrentSelection = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_current_selection") );
 	//m_pTglBtnFolder           = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_folder") );
 	//m_pTglBtnCopy             = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_copy") );
@@ -214,6 +229,8 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 	m_pSpinExtension            = GTK_SPIN_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_spinbutton_day_offset") );
 
 	m_pTglBtnSubfolders       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_subfolders") );
+	//FIXME: change organize_cb_subfolders to organize_tb_rename_files
+	m_pTglBtnRenameFiles      = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_subfolders") );
 
 	GtkContainer* src_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "organize_align_source_folder") );
 	GtkContainer* dst_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "organize_align_dest_folder") );
@@ -241,13 +258,15 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 
 	m_bLoadedDlg = (
 		NULL != m_pDialogOrganize        &&
-		NULL != m_pComboTemplate         &&
+		NULL != m_pComboTemplateFolder   &&
+		NULL != m_pComboTemplateFile     &&
 		//NULL != m_pTglBtnCurrentSelection&&
 		//NULL != m_pTglBtnFolder          &&
 		//NULL != m_pTglBtnCopy            &&
 		//NULL != m_pTglBtnMove            &&
 		NULL != m_pSpinExtension         &&
 		NULL != m_pTglBtnSubfolders      &&
+		NULL != m_pTglBtnRenameFiles     &&
 #ifdef QUIVER_MAEMO
 		NULL != m_pBtnSourceFolder     &&
 		NULL != m_pBtnDestFolder       &&
@@ -269,7 +288,7 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 
 		gtk_window_set_default_size(GTK_WINDOW(m_pDialogOrganize), 400,-1);
 
-		gtk_combo_box_set_active(m_pComboTemplate, 0);
+		gtk_combo_box_set_active(m_pComboTemplateFolder, 0);
 
 
 #ifdef QUIVER_MAEMO
@@ -312,7 +331,7 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 		const gchar* dir = gtk_button_get_label ( GTK_BUTTON (m_pBtnDestFolder));
 		std::string strLabel = dir;
 		strLabel += G_DIR_SEPARATOR_S;
-		strLabel += gtk_combo_box_get_active_text(m_pComboTemplate);
+		strLabel += gtk_combo_box_get_active_text(m_pComboTemplateFolder);
 		strLabel += gtk_entry_get_text(m_pEntryFolderName);
 		gtk_label_set_text(m_pLabelExample, strLabel.c_str());
 #else
@@ -321,10 +340,11 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 
 		if (NULL != dir)
 		{
+			// FIXME: Add file template to example
 			// directory name
 			std::string strLabel = dir;
 			strLabel += G_DIR_SEPARATOR_S;
-			strLabel += gtk_combo_box_get_active_text(m_pComboTemplate);
+			strLabel += gtk_combo_box_get_active_text(m_pComboTemplateFolder);
 			strLabel += gtk_entry_get_text(m_pEntryFolderName);
 			gtk_label_set_text(m_pLabelExample, strLabel.c_str());
 			g_free(dir);
@@ -366,7 +386,10 @@ void OrganizeDlg::OrganizeDlgPriv::ConnectSignals()
 		g_signal_connect(m_pEntryFolderName,
 			"changed",(GCallback)on_editable_changed,this);
 
-		g_signal_connect(m_pComboTemplate,
+		g_signal_connect(m_pComboTemplateFolder,
+			"changed",(GCallback)combo_changed,this);
+
+		g_signal_connect(m_pComboTemplateFile,
 			"changed",(GCallback)combo_changed,this);
 
 	}

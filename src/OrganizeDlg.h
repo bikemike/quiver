@@ -16,7 +16,8 @@ public:
 	GtkWidget*  GetWidget() const;
 	bool        Run();
 
-	std::string GetDateTemplate() const;
+	std::string GetFolderTemplate() const;
+	std::string GetFileTemplate() const;
 	std::string GetOutputFolder() const;
 	std::string GetAppendedText() const;
 
@@ -24,6 +25,7 @@ public:
 	void        SetInputFolder(std::string dir);
 	int         GetDayExtention() const;
 	bool        GetIncludeSubfolders() const;
+	bool        GetRenameFiles() const;
 
 
 	class       OrganizeDlgPriv;
