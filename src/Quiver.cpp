@@ -550,6 +550,8 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_VIEW_TOOLBAR_MAIN                      "ViewToolbarMain"
 #define ACTION_QUIVER_VIEW_PROPERTIES                        "ViewProperties"
 #define ACTION_QUIVER_VIEW_STATUSBAR                         "ViewStatusbar"
+#define ACTION_QUIVER_GO_FOLDER_NEXT                         "GoFolderNext"
+#define ACTION_QUIVER_GO_FOLDER_PREV                         "GoFolderPrev"
 #define ACTION_QUIVER_SORT_BY_NAME                           "SortByName"
 #define ACTION_QUIVER_SORT_BY_NAME_NATURAL                   "SortByNameNatural"
 #define ACTION_QUIVER_SORT_BY_DATE                           "SortByDate"
@@ -648,6 +650,8 @@ static const char * quiver_ui_main =
 "			<placeholder name='ImageNavigation'/>"
 "			<separator/>"
 "			<placeholder name='FolderNavigation'/>"
+"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_NEXT"'/>"
+"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_PREV"'/>"
 "			<separator/>"
 "		</menu>"
 "		<menu action='MenuBookmarks'>"
@@ -804,6 +808,8 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuSort", NULL, N_("_Arrange Items") },
 	{ "MenuImage", NULL, N_("_Image") },
 	{ "MenuGo", NULL, N_("_Go") },
+	{ ACTION_QUIVER_GO_FOLDER_NEXT, QUIVER_STOCK_GO_FORWARD, "_Next Folder", "", "Open next folder", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_GO_FOLDER_PREV, QUIVER_STOCK_GO_BACK, "_Previous Folder", "", "Open previous folder", G_CALLBACK(quiver_action_handler_cb)},
 	{ "MenuTools", NULL, N_("_Tools") },
 	{ "MenuWindow", NULL, N_("_Window") },
 	{ "MenuHelp", NULL, N_("_Help") },
@@ -2652,6 +2658,22 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 
 		bool bDec = ( TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_REVERSED,bDec);
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_NEXT))
+	{
+		// get current folder
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+		if (!folders.empty())
+		{
+			std::string lastFolder = folders.back();
+
+			GFile* dir = g_file_new_for_uri(lastFolder.c_str());
+			g_object_unref(dir);
+		}
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PREV))
+	{
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
 	{

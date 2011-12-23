@@ -412,7 +412,7 @@ bool QuiverFile::QuiverFileImpl::HasThumbnail(int iSize)
 		gchar * thumb_path ;
 		thumb_path = quiver_thumbnail_path_for_uri(m_szURI,thumbSize->name);
 		
-		struct stat s;
+		struct stat s = {0};
 		if (0 == g_stat(thumb_path,&s))
 		{
 			bExists = true;
