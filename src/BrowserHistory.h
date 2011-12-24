@@ -15,7 +15,7 @@ class BrowserHistory
 public:
 	BrowserHistory();
 
-	void Add(const std::list<std::string>& listItems);
+	void Add(const std::list<std::string>& listItems, std::string selectedItem);
 
 	bool HasIndex(unsigned int index) const;
 	bool CanGoForward() const;
@@ -24,11 +24,16 @@ public:
 	bool GoForward();
 	bool GoBack();
 	
-	const std::list<std::string>& GetCurrent() const;
-	const std::list<std::string>& GetAtIndex(unsigned int index) const;
+	const std::list<std::string>& GetCurrentFiles() const;
+	std::string                   GetCurrentSelected() const;
+	void                          SetCurrentSelected(std::string selected);
+
+	const std::list<std::string>& GetFilesAtIndex(unsigned int index) const;
+	std::string                   GetSelectedAtIndex(unsigned int index) const;
 	
 	unsigned int GetSize() const {return m_vectHistory.size();}
 	unsigned int GetCurrentIndex() const {return m_iCurrentIndex;}
+
 	
 	// back, forward
 	// history : (pretty) uri name
@@ -36,6 +41,7 @@ public:
 
 private:
 	std::vector<std::list<std::string> > m_vectHistory;
+	std::vector<std::string> m_vectHistorySelected;
 	std::list<std::string> m_listEmpty;
 	unsigned int m_iCurrentIndex;
 };

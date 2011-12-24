@@ -135,6 +135,7 @@ public:
 	
 	bool Modified() const;
 	bool IsVideo();
+	bool IsFolder();
 	
 // variables	
 	gchar* m_szURI;
@@ -449,6 +450,9 @@ static void get_thumbnail_embedded_size(GdkPixbuf* pixbuf, gint *width, gint *he
 GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 {
 	//Timer t("QuiverFileImpl::GetThumbnail");
+	if (IsFolder())
+		return NULL;
+
 	GFileInfo* gFileInfo = GetFileInfo();
 	
 	gboolean save_thumbnail_to_cache = TRUE;
@@ -1167,6 +1171,18 @@ bool QuiverFile::QuiverFileImpl::Modified() const
 	return (0 != m_fDataModified);
 }
 
+bool QuiverFile::QuiverFileImpl::IsFolder()
+{
+	bool isDir = false;
+	GFileInfo* info = GetFileInfo();
+	if (NULL != info)
+	{
+		GFileType type = g_file_info_get_file_type(info);
+		isDir = (G_FILE_TYPE_DIRECTORY == type);
+	}
+	return isDir;
+}
+
 bool QuiverFile::QuiverFileImpl::IsVideo()
 {
 	return (g_strstr_len(GetMimeType(), 5, "video") == GetMimeType());
@@ -1284,6 +1300,11 @@ void QuiverFile::ClearThumbnailCache()
 bool QuiverFile::Modified() const
 {
 	return m_QuiverFilePtr->Modified();
+}
+
+bool QuiverFile::IsFolder()
+{
+	return m_QuiverFilePtr->IsFolder();
 }
 
 bool QuiverFile::IsVideo()

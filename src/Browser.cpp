@@ -116,7 +116,7 @@ public:
 	
 	void SetImageIndex(int index, bool bDirectionForward, bool bFromIconView = false);
 
-	void QueueIconViewUpdate(int timeout = 100 /* ms */);
+	void QueueIconViewUpdate(int timeout = 50 /* ms */);
 
 /* member variables */
 	FolderTreePtr m_FolderTreePtr;
@@ -150,6 +150,7 @@ public:
 	QuiverFile m_QuiverFileCurrent;
 	ImageCache m_ThumbnailCache;
 	ImageCache m_IconCache;
+	ImageCache m_IconOverlayCache;
 	
 	guint m_iTimeoutUpdateListID;
 	guint m_iTimeoutHideLocationID;
@@ -290,6 +291,13 @@ static const char *ui_browser =
 "			</placeholder>"
 "			<menuitem action='"ACTION_BROWSER_RELOAD"'/>"
 "		</menu>"
+"		<menu action='MenuGo'>"
+"			<placeholder name='HistoryNavigation'>"
+"				<menuitem action='"ACTION_BROWSER_HISTORY_BACK"'/>"
+"				<menuitem action='"ACTION_BROWSER_HISTORY_FORWARD"'/>"
+"			</placeholder>"
+"		</menu>"
+
 #ifdef QUIVER_MAEMO
 "	</popup>"
 #else
@@ -328,8 +336,8 @@ static  GtkToggleActionEntry action_entries_toggle[] = {
 
 static GtkActionEntry action_entries[] = {
 	{ ACTION_BROWSER_OPEN_LOCATION, "", "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( browser_action_handler_cb )},
-	{ ACTION_BROWSER_HISTORY_BACK, QUIVER_STOCK_GO_BACK, "Go Back", "", "Go Back", G_CALLBACK( browser_action_handler_cb )},
-	{ ACTION_BROWSER_HISTORY_FORWARD, QUIVER_STOCK_GO_FORWARD, "Go Forward", "", "Go Forward", G_CALLBACK( browser_action_handler_cb )},
+	{ ACTION_BROWSER_HISTORY_BACK, QUIVER_STOCK_GO_BACK, "Go Back", "<Alt>Left", "Go Back", G_CALLBACK( browser_action_handler_cb )},
+	{ ACTION_BROWSER_HISTORY_FORWARD, QUIVER_STOCK_GO_FORWARD, "Go Forward", "<Alt>Right", "Go Forward", G_CALLBACK( browser_action_handler_cb )},
 	
 	{ ACTION_BROWSER_CUT, QUIVER_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(browser_action_handler_cb)},
@@ -444,6 +452,7 @@ Browser::GetWidget()
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data);
+static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, guint cell, QuiverIconOverlayType type, gpointer user_data);
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
 
@@ -570,6 +579,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ImageListPtr(new ImageList()),
 	m_ThumbnailCache(100),
 	m_IconCache(100),
+	m_IconOverlayCache(100),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
 	m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
@@ -799,9 +809,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 			gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
 		}
 	}
-/*
-	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(real_iconview),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,user_data,NULL);
-*/
+
+	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,this,NULL);
 
 	IPixbufLoaderObserverPtr tmp ( new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView)) );
 	m_ImageViewPixbufLoaderObserverPtr = tmp;
@@ -1063,7 +1072,12 @@ void Browser::BrowserImpl::SetImageList(ImageListPtr imglist)
 	list<string> files = m_ImageListPtr->GetFileList();
 	dirs.insert(dirs.end(), files.begin(), files.end());
 	
-	m_BrowserHistory.Add(dirs);
+	std::string selected;
+	if (0 != m_ImageListPtr->GetSize())
+	{
+		selected = m_ImageListPtr->GetCurrent().GetURI();
+	}
+	m_BrowserHistory.Add(dirs, selected);
 	
 	UpdateUI();
 }
@@ -1083,9 +1097,13 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 	}
 
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
-	
 	if (m_ImageListPtr->SetCurrentIndex(index))
 	{
+		QuiverFile f;
+		f = m_ImageListPtr->GetCurrent();
+
+		m_BrowserHistory.SetCurrentSelected(f.GetURI());
+
 		if (!bFromIconView)
 		{
 			g_signal_handlers_block_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
@@ -1099,8 +1117,6 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 		if (GTK_WIDGET_MAPPED(m_pImageView))
 		{
 			
-			QuiverFile f;
-			f = m_ImageListPtr->GetCurrent();
 			m_ImageLoader.LoadImageAtSize(f,width,height);
 			
 			if (bDirectionForward)
@@ -1285,6 +1301,32 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	return pixbuf;
 }
 
+static GdkPixbuf* 
+overlay_pixbuf_callback(QuiverIconView* iconview, guint cell, QuiverIconOverlayType type, gpointer user_data)
+{
+	GdkPixbuf* pixbuf = NULL;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+	if (type == QUIVER_ICON_OVERLAY_ICON )
+	{
+		gchar* icon_name = f.GetIconName();
+		if (icon_name)
+		{
+			pixbuf = b->m_IconOverlayCache.GetPixbuf(icon_name);
+			if (NULL == pixbuf)
+			{
+				pixbuf = f.GetIcon(32,32);
+				if (NULL != pixbuf)
+				{
+					b->m_IconOverlayCache.AddPixbuf(icon_name,pixbuf);
+				}
+			}
+			g_free(icon_name);
+		}
+	}
+
+	return pixbuf;
+}
 
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data)
 {
@@ -1478,8 +1520,10 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		if (pBrowserImpl->m_BrowserHistory.GoBack())
 		{
 			pBrowserImpl->m_bBrowserHistoryEvent = true;
-			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrent();
+			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrentFiles();
+			string selected = pBrowserImpl->m_BrowserHistory.GetCurrentSelected();
 			pBrowserImpl->m_ImageListPtr->SetImageList(&files);
+			pBrowserImpl->m_ImageListPtr->SetCurrentFile(selected);
 			pBrowserImpl->m_bBrowserHistoryEvent = false;
 		}
 	}
@@ -1489,8 +1533,10 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		if (pBrowserImpl->m_BrowserHistory.GoForward())
 		{
 			pBrowserImpl->m_bBrowserHistoryEvent = true;
-			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrent();
+			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrentFiles();
+			string selected = pBrowserImpl->m_BrowserHistory.GetCurrentSelected();
 			pBrowserImpl->m_ImageListPtr->SetImageList(&files);
+			pBrowserImpl->m_ImageListPtr->SetCurrentFile(selected);
 			pBrowserImpl->m_bBrowserHistoryEvent = false;
 		}
 		pBrowserImpl->m_bBrowserHistoryEvent = false;
@@ -1629,14 +1675,28 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 //=============================================================================
 void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 {
-	// refresh the list
-	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
-			
-	parent->m_ThumbnailLoader.UpdateList(true);	
-	
 	// get the list of files and folders in the image list
 	list<string> dirs  = parent->m_ImageListPtr->GetFolderList();
 	list<string> files = parent->m_ImageListPtr->GetFileList();
+
+	// add new history event
+	if (!parent->m_bBrowserHistoryEvent)
+	{
+		std::string selected;
+		if (0 != parent->m_ImageListPtr->GetSize())
+		{
+			selected = parent->m_ImageListPtr->GetCurrent().GetURI();
+		}
+		dirs.insert(dirs.end(), files.begin(), files.end());
+		parent->m_BrowserHistory.Add(dirs, selected);
+	}
+
+	// refresh the list
+	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
+			
+	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
+	parent->m_ThumbnailLoader.UpdateList(true);	
+	
 	if (1 == dirs.size() && 0 == files.size())
 	{
 		GFile* file = g_file_new_for_uri(dirs.front().c_str()); 
@@ -1684,11 +1744,6 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 		parent->m_FolderTreePtr->SetSelectedFolders(dirs);
 	}
 	
-	if (!parent->m_bBrowserHistoryEvent)
-	{
-		dirs.insert(dirs.end(), files.begin(), files.end());
-		parent->m_BrowserHistory.Add(dirs);
-	}
 	parent->UpdateUI();
 }
 

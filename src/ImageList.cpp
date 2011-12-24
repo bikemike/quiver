@@ -174,6 +174,22 @@ ImageList::GetCurrentIndex() const
 	return m_ImageListImplPtr->m_iCurrentIndex;
 }
 
+bool ImageList::SetCurrentFile(std::string file)
+{
+	bool rval = false;
+	int old_index = m_ImageListImplPtr->m_iCurrentIndex;
+
+	m_ImageListImplPtr->SetCurrentImage(file);
+
+	if (old_index != m_ImageListImplPtr->m_iCurrentIndex)
+	{
+		rval = true;
+		EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex);
+	}
+
+	return rval;
+}
+
 bool
 ImageList::SetCurrentIndex(unsigned int new_index)
 {
@@ -729,6 +745,7 @@ void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive
 				G_FILE_ATTRIBUTE_STANDARD_NAME ","
 				G_FILE_ATTRIBUTE_STANDARD_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
+				G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN ","
 				G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
 				G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_SIZE ","
@@ -968,6 +985,7 @@ bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */
 				G_FILE_ATTRIBUTE_STANDARD_NAME ","
 				G_FILE_ATTRIBUTE_STANDARD_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
+				G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN ","
 				G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
 				G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_SIZE ","
@@ -996,11 +1014,18 @@ bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */
 				{
 					AddFile(child_uri, info);
 				}
-				else if (G_FILE_TYPE_DIRECTORY == type && bRecursive)
+				else if (G_FILE_TYPE_DIRECTORY == type)
 				{
 					if (0 != strcmp(".", name) && 0 != strcmp("..", name))
 					{
-						AddDirectory(child_uri, bRecursive);
+						if (bRecursive)
+						{
+							AddDirectory(child_uri, bRecursive);
+						}
+						else
+						{
+							AddFile(child_uri, info);
+						}
 					}
 				}
 
@@ -1026,6 +1051,7 @@ bool ImageListImpl::AddFile(const gchar*  uri)
 		G_FILE_ATTRIBUTE_STANDARD_NAME ","
 		G_FILE_ATTRIBUTE_STANDARD_TYPE ","
 		G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
+		G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN ","
 		G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
 		G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 		G_FILE_ATTRIBUTE_STANDARD_SIZE ","
@@ -1055,28 +1081,42 @@ bool ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
 {
 	bool bAdded = false;
 
-	const char* content_type = g_file_info_get_content_type(info);
-	if (NULL != content_type)
+	// don't add hidden files
+	if (g_file_info_get_is_hidden(info))
+		return bAdded;
+
+	GFileType type = g_file_info_get_file_type(info);
+	if (G_FILE_TYPE_DIRECTORY == type)
 	{
-		gchar* mimetype = g_content_type_get_mime_type(content_type);
-		
-		if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype ) )
+		QuiverFile f(uri, info);
+		m_QuiverFileList.push_back(f);
+		bAdded = true;
+	}
+	else
+	{
+		const char* content_type = g_file_info_get_content_type(info);
+		if (NULL != content_type)
 		{
-			QuiverFile f(uri, info);
-			m_QuiverFileList.push_back(f);
-			bAdded = true;
+			gchar* mimetype = g_content_type_get_mime_type(content_type);
+			
+			if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype ) )
+			{
+				QuiverFile f(uri, info);
+				m_QuiverFileList.push_back(f);
+				bAdded = true;
+			}
+			else if (g_strstr_len(mimetype, 5, "video") == mimetype) // video
+			{
+				QuiverFile f(uri, info);
+				m_QuiverFileList.push_back(f);
+				bAdded = true;
+			}
+			else
+			{
+				//printf("Unsupported mime_type: %s\n",mimetype);
+			}
+			g_free(mimetype);
 		}
-		else if (g_strstr_len(mimetype, 5, "video") == mimetype) // video
-		{
-			QuiverFile f(uri, info);
-			m_QuiverFileList.push_back(f);
-			bAdded = true;
-		}
-		else
-		{
-			//printf("Unsupported mime_type: %s\n",mimetype);
-		}
-		g_free(mimetype);
 	}
 	return bAdded;
 }

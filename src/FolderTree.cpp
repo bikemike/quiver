@@ -259,7 +259,7 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 	gdk_threads_enter();
 	// wait untill all the thread subdir check functions have finished
 	int n_running = g_thread_pool_get_num_threads(pFolderTreeImpl->m_pGThreadPool);
-	if (0 == n_running || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
+	if (0 != n_running || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
 	{
 		rval = TRUE;
 	}
@@ -1357,7 +1357,6 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 		gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &uri, -1);
 		if (NULL != uri)
 		{
-			printf("uri %s\n", uri);
 			GFile* gfile = g_file_new_for_uri(uri);
 			GIcon* gicon = folder_tree_get_gicon(gfile, expanded);
 			gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_GICON, gicon, -1);

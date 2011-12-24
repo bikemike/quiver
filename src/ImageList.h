@@ -59,6 +59,7 @@ public:
 	unsigned int GetCurrentIndex() const;
 	
 	bool SetCurrentIndex(unsigned int new_index );
+	bool SetCurrentFile(std::string file);
 
 	QuiverFile GetNext() const;
 	QuiverFile GetPrevious() const;

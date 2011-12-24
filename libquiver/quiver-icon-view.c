@@ -1526,6 +1526,7 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 		case GDK_Return:
 		case GDK_KP_Enter:
 			quiver_icon_view_activate_cell(iconview,iconview->priv->cursor_cell);
+			new_cursor_cell = iconview->priv->cursor_cell;
 			break;
 		case GDK_a:
 		case GDK_A:

@@ -550,6 +550,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_VIEW_TOOLBAR_MAIN                      "ViewToolbarMain"
 #define ACTION_QUIVER_VIEW_PROPERTIES                        "ViewProperties"
 #define ACTION_QUIVER_VIEW_STATUSBAR                         "ViewStatusbar"
+#define ACTION_QUIVER_GO_FOLDER_PARENT                       "GoFolderParent"
 #define ACTION_QUIVER_GO_FOLDER_NEXT                         "GoFolderNext"
 #define ACTION_QUIVER_GO_FOLDER_PREV                         "GoFolderPrev"
 #define ACTION_QUIVER_SORT_BY_NAME                           "SortByName"
@@ -649,7 +650,10 @@ static const char * quiver_ui_main =
 "		<menu action='MenuGo'>"
 "			<placeholder name='ImageNavigation'/>"
 "			<separator/>"
+"			<placeholder name='HistoryNavigation'/>"
+"			<separator/>"
 "			<placeholder name='FolderNavigation'/>"
+"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_PARENT"'/>"
 "			<menuitem action='"ACTION_QUIVER_GO_FOLDER_NEXT"'/>"
 "			<menuitem action='"ACTION_QUIVER_GO_FOLDER_PREV"'/>"
 "			<separator/>"
@@ -808,14 +812,15 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuSort", NULL, N_("_Arrange Items") },
 	{ "MenuImage", NULL, N_("_Image") },
 	{ "MenuGo", NULL, N_("_Go") },
-	{ ACTION_QUIVER_GO_FOLDER_NEXT, QUIVER_STOCK_GO_FORWARD, "_Next Folder", "", "Open next folder", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_GO_FOLDER_PREV, QUIVER_STOCK_GO_BACK, "_Previous Folder", "", "Open previous folder", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_GO_FOLDER_PARENT, QUIVER_STOCK_GO_UP, "Open Parent", "<Alt>Up", "Open parent folder", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_GO_FOLDER_NEXT, QUIVER_STOCK_GO_FORWARD, "Open _Next Folder", "<Shift><Alt>Right", "Open next folder", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_GO_FOLDER_PREV, QUIVER_STOCK_GO_BACK, "Open _Previous Folder", "<Shift><Alt>Left", "Open previous folder", G_CALLBACK(quiver_action_handler_cb)},
 	{ "MenuTools", NULL, N_("_Tools") },
 	{ "MenuWindow", NULL, N_("_Window") },
 	{ "MenuHelp", NULL, N_("_Help") },
 
 	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, "" , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
 #endif
@@ -837,7 +842,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 
 	{ "MenuBookmarks", NULL, "_Bookmarks" },
 	{ ACTION_QUIVER_BOOKMARKS_ADD, QUIVER_STOCK_ADD, "_Add Bookmark", "<Control>d", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_BOOKMARKS_EDIT, QUIVER_STOCK_EDIT, "_Edit Bookmarks...", "<Control>b", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_EDIT, QUIVER_STOCK_EDIT, "_Edit Bookmarks...", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
 
 	{ ACTION_QUIVER_RENAME, QUIVER_STOCK_EDIT, "Rename...", "", "Rename image(s)", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_ORGANIZE, QUIVER_STOCK_EDIT, "Organize...", "", "Organize photos", G_CALLBACK(quiver_action_handler_cb)},
@@ -2146,7 +2151,16 @@ void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr eve
 
 void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_ptr)
 {
-	parent->m_pQuiver->ShowViewer();
+	if (0 != parent->m_ImageListPtr->GetSize() && parent->m_ImageListPtr->GetCurrent().IsFolder())
+	{
+	    list<string> file_list;
+	    file_list.push_back(parent->m_ImageListPtr->GetCurrent().GetURI());
+		parent->m_ImageListPtr->SetImageList(&file_list);
+	}
+	else
+	{
+		parent->m_pQuiver->ShowViewer();
+	}
 }
 
 void QuiverImpl::BrowserEventHandler::HandleCursorChanged(BrowserEventPtr event_ptr)
@@ -2659,8 +2673,32 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		bool bDec = ( TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_REVERSED,bDec);
 	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PARENT))
+	{
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+		if (!folders.empty())
+		{
+			std::string lastFolder = folders.back();
+
+			GFile* dir = g_file_new_for_uri(lastFolder.c_str());
+			GFile* parent = g_file_get_parent(dir);
+			if (NULL != parent)
+			{
+				char* uri = g_file_get_uri(parent);
+				std::list<std::string> files;
+				files.push_back(uri);
+				pQuiverImpl->m_ImageListPtr->SetImageList(&files);
+				pQuiverImpl->m_ImageListPtr->SetCurrentFile(lastFolder);
+				g_free(uri);
+				g_object_unref(parent);
+			}
+			g_object_unref(dir);
+		}
+	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_NEXT))
 	{
+		printf("folder next\n");
 		// get current folder
 		list<string> folders;
 		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
@@ -2674,6 +2712,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PREV))
 	{
+		printf("folder prev\n");
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
 	{
