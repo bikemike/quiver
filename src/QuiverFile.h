@@ -41,7 +41,7 @@ public:
 
 	bool Modified() const;
 
-	bool IsFolder();
+	bool IsFolder() const;
 	bool IsVideo();
 
 	GdkPixbuf *GetExifThumbnail();

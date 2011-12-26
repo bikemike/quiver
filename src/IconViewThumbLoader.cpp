@@ -76,9 +76,9 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 
 	GetVisibleRange(&iNewStart, &iNewEnd);
 
-	// commented out following line because it causes thumbnails not to 
-	// reload if the size changes but the range doesn't
-	//if (bForce || m_ulRangeStart != iNewStart || m_ulRangeEnd != iNewEnd )
+	// FIXME: does this check cause thumbnails not to 
+	// reload if the size changes but the range doesn't?
+	if (bForce || m_ulRangeStart != iNewStart || m_ulRangeEnd != iNewEnd )
 	{
 		pthread_mutex_lock (&m_ListMutex);
 		// view is different, we'll need to create a new list of items to cache

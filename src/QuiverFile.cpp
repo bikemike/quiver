@@ -135,12 +135,12 @@ public:
 	
 	bool Modified() const;
 	bool IsVideo();
-	bool IsFolder();
+	bool IsFolder() const;
 	
 // variables	
 	gchar* m_szURI;
 	gchar* m_szMimeType;
-	GFileInfo* m_gFileInfo;
+	GFileInfo* m_pGFileInfo;
  	
  	ExifData* m_pExifData;
  	ExifData* m_pExifDataOriginal;
@@ -245,14 +245,14 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 		m_szURI = NULL;
 	}
 
-	m_gFileInfo = info;
+	m_pGFileInfo = info;
 
 	m_fDataLoaded = QUIVER_FILE_DATA_NONE;
 	m_fDataExists = QUIVER_FILE_DATA_NONE;
 	
-	if (NULL != m_gFileInfo)
+	if (NULL != m_pGFileInfo)
 	{
-		g_object_ref(m_gFileInfo);
+		g_object_ref(m_pGFileInfo);
 		m_fDataExists = (QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_INFO);
 		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_INFO);
 	}
@@ -298,12 +298,12 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 {
 	GFileInfo* gFileInfo = NULL;
 
-	if ((m_fDataExists & QUIVER_FILE_DATA_INFO) && m_gFileInfo)
+	if ((m_fDataExists & QUIVER_FILE_DATA_INFO) && m_pGFileInfo)
 	{
-		gFileInfo = m_gFileInfo;
+		gFileInfo = m_pGFileInfo;
 	}
 	
-	if (!(m_fDataLoaded & QUIVER_FILE_DATA_INFO) && NULL != m_szURI && NULL == m_gFileInfo)
+	if (!(m_fDataLoaded & QUIVER_FILE_DATA_INFO) && NULL != m_szURI && NULL == m_pGFileInfo)
 	{
 		GFile* file = g_file_new_for_uri(m_szURI);
 		gFileInfo = g_file_query_info(file,
@@ -324,7 +324,7 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 
 		if (NULL != gFileInfo)
 		{
-			m_gFileInfo = gFileInfo;
+			m_pGFileInfo = gFileInfo;
 			
 			m_fDataExists = (QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_INFO);
 			m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_INFO);
@@ -336,9 +336,9 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 
 QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 {
-	if (m_gFileInfo != NULL)
+	if (m_pGFileInfo != NULL)
 	{
-		g_object_unref(m_gFileInfo);
+		g_object_unref(m_pGFileInfo);
 	}
 	
 	if (NULL != m_szURI)
@@ -524,8 +524,6 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 			const gchar* thumb_mtime_str = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::MTime");
 			const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
 
-			const gchar* str_thumb_width = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Width");
-			const gchar* str_thumb_height = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Height");
 			
 			if (NULL != str_orientation)
 			{
@@ -557,10 +555,12 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 
 			if (NULL != thumb_pixbuf)
 			{
+				int img_width = -1;
+				int img_height = -1;
+				get_thumbnail_embedded_size(thumb_pixbuf, &img_width, &img_height);
 				// if we didn't get the width and height we should resave thumbnail
 				// with this information 
-				if ((NULL == str_thumb_width || '\0' == str_thumb_width) || 
-					( NULL == str_thumb_height || '\0' == str_thumb_height))
+				if (-1 == img_width || -1 == img_height) 
 				{
 					if (IsVideo())
 					{
@@ -573,17 +573,16 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				}
 				else 
 				{
-					int img_width  = atol(str_thumb_width);
-					int img_height = atol(str_thumb_height);
-
 					guint thumb_width  = gdk_pixbuf_get_width(thumb_pixbuf);
 					guint thumb_height = gdk_pixbuf_get_height(thumb_pixbuf);
-					// resize it to the proper size
-					// check the ratio of the exif thumbnail
-					double thumb_ratio = thumb_width / (double)thumb_height;
-					double actual_ratio = img_width / (double)img_height;
 
-					if (0.01 <  std::abs(actual_ratio - thumb_ratio))
+					// check that it's the proper size
+					guint act_width = img_width;
+					guint act_height = img_height;
+
+					quiver_rect_get_bound_size(thumbSize->size, thumbSize->size, &act_width,&act_height,FALSE);
+
+					if (act_width != thumb_width || act_height != thumb_height)
 					{
 						//printf("wrong orientation\n");
 						// looks like the thumbnail is not in 
@@ -920,10 +919,10 @@ void QuiverFile::QuiverFileImpl::Reload()
 {
 	std::string strURI = m_szURI;
 	
-	if (NULL != m_gFileInfo)
+	if (NULL != m_pGFileInfo)
 	{
-		g_object_unref(m_gFileInfo);
-		m_gFileInfo = NULL;
+		g_object_unref(m_pGFileInfo);
+		m_pGFileInfo = NULL;
 	}
 	
 	delete [] m_szURI;
@@ -1171,13 +1170,12 @@ bool QuiverFile::QuiverFileImpl::Modified() const
 	return (0 != m_fDataModified);
 }
 
-bool QuiverFile::QuiverFileImpl::IsFolder()
+bool QuiverFile::QuiverFileImpl::IsFolder() const
 {
 	bool isDir = false;
-	GFileInfo* info = GetFileInfo();
-	if (NULL != info)
+	if (NULL != m_pGFileInfo)
 	{
-		GFileType type = g_file_info_get_file_type(info);
+		GFileType type = g_file_info_get_file_type(m_pGFileInfo);
 		isDir = (G_FILE_TYPE_DIRECTORY == type);
 	}
 	return isDir;
@@ -1302,7 +1300,7 @@ bool QuiverFile::Modified() const
 	return m_QuiverFilePtr->Modified();
 }
 
-bool QuiverFile::IsFolder()
+bool QuiverFile::IsFolder() const
 {
 	return m_QuiverFilePtr->IsFolder();
 }

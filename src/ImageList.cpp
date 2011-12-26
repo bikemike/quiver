@@ -348,6 +348,13 @@ void ImageList::Add(const std::list<std::string> *file_list, bool bRecursive/* =
 }
 
 
+void ImageList::SetImageList(std::string file, bool bRecursive /*= false*/)
+{
+	std::list<std::string> files;
+	files.push_back(file);
+	SetImageList(&files, bRecursive);
+}
+
 void ImageList::SetImageList(const std::list<std::string> *file_list, bool bRecursive /* = false */)
 {
 	int iOldSize, iNewSize;
@@ -1313,7 +1320,12 @@ class SortByFilename : public std::binary_function<QuiverFile,QuiverFile,bool>
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
 	{
-		return (0 > strcasecmp(a.GetURI(),b.GetURI()) );
+		if (a.IsFolder() && !b.IsFolder())
+			return true;
+		else if (!a.IsFolder() && b.IsFolder())
+			return false;
+		else
+			return (0 > strcasecmp(a.GetURI(),b.GetURI()) );
 	}
 };
 
@@ -1323,6 +1335,12 @@ public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
 	{
 		int rval = 0;
+
+		if (a.IsFolder() && !b.IsFolder())
+			return true;
+		else if (!a.IsFolder() && b.IsFolder())
+			return false;
+
 		string file1 = a.GetURI();
 		string file2 = b.GetURI();
 
@@ -1363,6 +1381,11 @@ public:
 
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
 	{
+		if (a.IsFolder() && !b.IsFolder())
+			return true;
+		else if (!a.IsFolder() && b.IsFolder())
+			return false;
+
 		time_t ta = a.GetTimeT(false);
 		time_t tb = b.GetTimeT(false);
 		if (ta == tb)
@@ -1380,6 +1403,11 @@ public:
 
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
 	{
+		if (a.IsFolder() && !b.IsFolder())
+			return true;
+		else if (!a.IsFolder() && b.IsFolder())
+			return false;
+
 		time_t ta = a.GetTimeT();
 		time_t tb = b.GetTimeT();
 		if (ta == tb)

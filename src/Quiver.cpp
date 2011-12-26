@@ -2154,8 +2154,10 @@ void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_
 	if (0 != parent->m_ImageListPtr->GetSize() && parent->m_ImageListPtr->GetCurrent().IsFolder())
 	{
 	    list<string> file_list;
+		string currentItem = parent->m_BrowserPtr->GetCurrentFolderChild();
 	    file_list.push_back(parent->m_ImageListPtr->GetCurrent().GetURI());
 		parent->m_ImageListPtr->SetImageList(&file_list);
+		parent->m_ImageListPtr->SetCurrentFile(currentItem);
 	}
 	else
 	{
@@ -2686,9 +2688,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			if (NULL != parent)
 			{
 				char* uri = g_file_get_uri(parent);
-				std::list<std::string> files;
-				files.push_back(uri);
-				pQuiverImpl->m_ImageListPtr->SetImageList(&files);
+				pQuiverImpl->m_ImageListPtr->SetImageList(uri);
 				pQuiverImpl->m_ImageListPtr->SetCurrentFile(lastFolder);
 				g_free(uri);
 				g_object_unref(parent);
@@ -2698,21 +2698,76 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_NEXT))
 	{
-		printf("folder next\n");
-		// get current folder
 		list<string> folders;
 		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
 		if (!folders.empty())
 		{
+			GFile* folder = g_file_new_for_uri(folders.back().c_str());
+			GFile* parent = g_file_get_parent(folder);
 			std::string lastFolder = folders.back();
+			ImageListPtr tmpListPtr(new ImageList());
+			char* uri = g_file_get_uri(parent);
+			tmpListPtr->SetImageList(uri);
+			g_free(uri);
+			g_object_unref(parent);
+			g_object_unref(folder);
 
-			GFile* dir = g_file_new_for_uri(lastFolder.c_str());
-			g_object_unref(dir);
+			bool bFoundCurrent = false;
+			bool bFoundNext  = false;
+			string newFolder;
+			for (int i = 0; i < tmpListPtr->GetSize(); ++i)
+			{
+				QuiverFile f = (*tmpListPtr)[i];
+				if (f.IsFolder())
+				{
+					newFolder = f.GetURI();
+					if (newFolder == lastFolder)
+						bFoundCurrent = true;
+					else if (bFoundCurrent)
+					{
+						bFoundNext = true;
+						break;
+					}
+
+				}
+			}
+
+			if (bFoundNext)
+				pQuiverImpl->m_ImageListPtr->SetImageList(newFolder);
 		}
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PREV))
 	{
-		printf("folder prev\n");
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+		if (!folders.empty())
+		{
+			GFile* folder = g_file_new_for_uri(folders.front().c_str());
+			GFile* parent = g_file_get_parent(folder);
+			std::string lastFolder = folders.back();
+			ImageListPtr tmpListPtr(new ImageList());
+			char* uri = g_file_get_uri(parent);
+			tmpListPtr->SetImageList(uri);
+			g_free(uri);
+			g_object_unref(parent);
+			g_object_unref(folder);
+
+			string newFolder;
+			for (int i = 0; i < tmpListPtr->GetSize(); ++i)
+			{
+				QuiverFile f = (*tmpListPtr)[i];
+				if (f.IsFolder())
+				{
+					string tmp = f.GetURI();
+					if (tmp == lastFolder)
+						break;
+					newFolder = tmp;
+				}
+			}
+
+			if (!newFolder.empty())
+				pQuiverImpl->m_ImageListPtr->SetImageList(newFolder);
+		}
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
 	{

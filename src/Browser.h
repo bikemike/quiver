@@ -31,6 +31,8 @@ public:
 
 	std::list<unsigned int> GetSelection();
 
+	std::string GetCurrentFolderChild();
+
 	class BrowserImpl;
 private:
 	boost::shared_ptr<BrowserImpl> m_BrowserImplPtr;

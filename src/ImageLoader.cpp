@@ -255,7 +255,8 @@ void ImageLoader::LoadImageAtSize(QuiverFile f, int width, int height)
 
 void ImageLoader::LoadImage(QuiverFile f,LoadParams load_params)
 {
-	pthread_mutex_lock (&m_CommandMutex);
+	if (f.IsFolder())
+		return;
 	
 	Command c;
 	
@@ -267,6 +268,7 @@ void ImageLoader::LoadImage(QuiverFile f,LoadParams load_params)
 	
 	c.params = load_params;
 	
+	pthread_mutex_lock (&m_CommandMutex);
 	m_Commands.push_back(c);
 	pthread_mutex_lock (&m_ConditionMutex);
 	pthread_cond_signal(&m_Condition);

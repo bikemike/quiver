@@ -110,6 +110,11 @@ void quiver_icon_view_activate_cell(QuiverIconView *iconview,gulong cell);
 gulong quiver_icon_view_get_cursor_cell(QuiverIconView *iconview);
 void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gulong new_cursor_cell);
 
+gulong quiver_icon_view_get_prelight_cell(QuiverIconView* iconview);
+gulong quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y);
+
+void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint cell, gint *x, gint *y);
+
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection);
 GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
 

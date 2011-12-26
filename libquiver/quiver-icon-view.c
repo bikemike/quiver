@@ -213,7 +213,6 @@ static void
 quiver_icon_view_set_adjustment_upper (GtkAdjustment *adj,
 				 gdouble        upper,
 				 gboolean       always_emit_changed);
-static gulong quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y);
 static void quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor_cell,GdkModifierType state,gboolean is_mouse);
 
 static void quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,gboolean force_top);
@@ -2132,7 +2131,7 @@ quiver_icon_view_set_adjustment_upper (GtkAdjustment *adj,
     gtk_adjustment_value_changed (adj);
 }
 
-static gulong
+gulong
 quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y)
 {
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
@@ -2176,39 +2175,6 @@ quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y)
 
 	if (n_cells < cell+1)
 		return G_MAXULONG;
-
-
-	gint aw, ah;
-	GdkPixbuf *pixbuf = quiver_icon_view_get_thumbnail_pixbuf(iconview,cell, &aw, &ah);
-	if (NULL != pixbuf)
-	{
-		guint pixbuf_width,pixbuf_height;
-		pixbuf_width = gdk_pixbuf_get_width(pixbuf);
-		pixbuf_height = gdk_pixbuf_get_height(pixbuf);
-
-		if (aw <= iconview->priv->icon_width && ah <= iconview->priv->icon_height)
-		{
-			quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&pixbuf_width,&pixbuf_height, FALSE);
-		}
-		else
-		{
-			quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&pixbuf_width,&pixbuf_height,TRUE);
-		}
-
-		GdkRectangle rect;
-		rect.x = current_col * cell_width + ((cell_width - pixbuf_width)/2);
-		rect.y = current_row * cell_width + ((cell_height - pixbuf_height)/2);
-		rect.width = pixbuf_width;
-		rect.height = pixbuf_height;
-		x += hadjust;
-		y += vadjust;
-
-		g_object_unref(pixbuf);
-
-		if (x < rect.x || x > rect.x + rect.width || y < rect.y || y > rect.y + rect.height)
-			return G_MAXULONG;
-		
-	}
 
 	return cell;
 }
@@ -2543,7 +2509,7 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
-	//guint padding = QUIVER_ICON_VIEW_CELL_PADDING;
+	guint padding = iconview->priv->cell_padding;
 
 	gulong i = 0;
 	gulong j = 0;
@@ -2568,10 +2534,10 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 			if (current_cell >= n_cells)
 				break;
 
-			tmp_rect.x = i * cell_width;
-			tmp_rect.y = j * cell_height;
-			tmp_rect.width = cell_width;
-			tmp_rect.height = cell_height;
+			tmp_rect.x = i * cell_width + padding/2;
+			tmp_rect.y = j * cell_height + padding/2;
+			tmp_rect.width = cell_width - padding;
+			tmp_rect.height = cell_height - padding;
 
 			if ( GDK_OVERLAP_RECTANGLE_OUT != gdk_region_rect_in(new_region,&tmp_rect) )
 			{
@@ -2908,7 +2874,7 @@ void quiver_icon_view_click_cell(QuiverIconView *iconview,gulong cell)
 
 gulong quiver_icon_view_get_cursor_cell(QuiverIconView *iconview)
 {
-	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), 0);
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), G_MAXULONG);
 	return iconview->priv->cursor_cell;
 }
 
@@ -2917,6 +2883,36 @@ void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gulong new_cursor
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
 
 	quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)0,FALSE);
+}
+
+gulong quiver_icon_view_get_prelight_cell(QuiverIconView* iconview)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), G_MAXULONG);
+	return iconview->priv->prelight_cell;
+}
+
+void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint cell, gint *x, gint *y)
+{
+	gint wx, wy;
+
+	gtk_widget_get_pointer(GTK_WIDGET(iconview), &wx, &wy);
+
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+
+	guint padding = iconview->priv->cell_padding;
+	guint hadjust = (int)gtk_adjustment_get_value(iconview->priv->hadjustment);
+	guint vadjust = (int)gtk_adjustment_get_value(iconview->priv->vadjustment);
+
+	guint cols, rows;
+	quiver_icon_view_get_col_row_count(iconview,&cols,&rows);
+	gint cell_col = cell % cols;
+	gint cell_row = cell / cols; 
+	gint cell_x = cell_width * cell_col - hadjust;
+	gint cell_y = cell_height * cell_row - vadjust;
+
+	*x = wx - cell_x - padding;
+	*y = wy - cell_y - padding;
 }
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection)
@@ -3005,11 +3001,8 @@ quiver_icon_view_invalidate_window(QuiverIconView *iconview)
 {
 	GtkWidget* widget;
 	widget = GTK_WIDGET(iconview);
-	GdkRectangle rect = {0};
-	rect.width = widget->allocation.width;
-	rect.height = widget->allocation.height;
 	
-	gdk_window_invalidate_rect(widget->window, &rect, FALSE);
+	gdk_window_invalidate_rect(widget->window, NULL, FALSE);
 }
 
 void 

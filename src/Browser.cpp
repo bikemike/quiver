@@ -159,6 +159,8 @@ public:
 
 	ImageLoader m_ImageLoader;
 	IPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
+
+	map<string, string> m_mapFolderToFile;
 	
 /* nested classes */
 	//class ViewerEventHandler;
@@ -384,6 +386,21 @@ list<unsigned int> Browser::GetSelection()
 	return selection_list;
 }
 
+std::string Browser::GetCurrentFolderChild()
+{
+	string item;
+	if (0 != m_BrowserImplPtr->m_ImageListPtr->GetSize())
+	{
+		QuiverFile f = m_BrowserImplPtr->m_ImageListPtr->GetCurrent();
+		map<string,string>::iterator itr = m_BrowserImplPtr->m_mapFolderToFile.find(f.GetURI());
+		if (m_BrowserImplPtr->m_mapFolderToFile.end() != itr)
+		{
+			item = itr->second;
+		}
+	}
+	return item;
+}
+
 void 
 Browser::SetUIManager(GtkUIManager *ui_manager)
 {
@@ -459,6 +476,8 @@ static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
+static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
+
 static gboolean browser_popup_menu_cb (GtkWidget *treeview, gpointer userdata);
 static gboolean browser_button_press_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
 static void browser_show_context_menu(GdkEventButton *event, gpointer userdata);
@@ -772,6 +791,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	// popup menu stuff
 	g_signal_connect(G_OBJECT(m_pIconView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
 	g_signal_connect(G_OBJECT(m_pIconView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);	
+	g_signal_connect(G_OBJECT(m_pIconView), "motion-notify-event", G_CALLBACK(iconview_motion_notify), this);	
 #ifdef QUIVER_MAEMO
 	g_signal_connect (G_OBJECT (m_pIconView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), this);
 	gtk_widget_tap_and_hold_setup (m_pIconView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
@@ -1262,33 +1282,66 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	gboolean need_new_thumb = TRUE;
 	
 	guint width, height;
-	guint thumb_width, thumb_height;
-	guint bound_width, bound_height;
 	quiver_icon_view_get_icon_size(iconview,&width,&height);
-	
 
-	pixbuf = b->m_ThumbnailCache.GetPixbuf((*b->m_ImageListPtr)[cell].GetURI());
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
 
-	if (pixbuf)
+	if (f.IsFolder())
 	{
-		*actual_width = (*b->m_ImageListPtr)[cell].GetWidth();
-		*actual_height = (*b->m_ImageListPtr)[cell].GetHeight();
+		gint x = 0, y = 0;
+		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
 
-		if (4 < (*b->m_ImageListPtr)[cell].GetOrientation())
+		if (0 <= x && 0 <= y && x < gint(width) && y < gint(height))
 		{
-			swap(*actual_width,*actual_height);
+			double percent = double(x) / width;
+			// FIXME: this should be optimized. creating a new list
+			// every time the mouse moves can be quite slow.
+			ImageListPtr lstPtr(new ImageList());
+			lstPtr->SetImageList(f.GetURI());
+			unsigned int listSize = lstPtr->GetSize();
+			if (0 != listSize)
+			{
+				unsigned int index = (unsigned int)(listSize * percent);
+				std::min(index, listSize - 1);
+				pixbuf = (*lstPtr)[index].GetThumbnail(std::max(width, height));
+				*actual_width = (*lstPtr)[index].GetWidth();
+				*actual_height = (*lstPtr)[index].GetHeight();
+				if (4 < (*lstPtr)[index].GetOrientation())
+				{
+					swap(*actual_width,*actual_height);
+				}
+				quiver_icon_view_invalidate_cell(iconview,cell);
+				need_new_thumb = FALSE;
+			}
 		}
+	}
+	else
+	{
+		pixbuf = b->m_ThumbnailCache.GetPixbuf(f.GetURI());
 
-		thumb_width = gdk_pixbuf_get_width(pixbuf);
-		thumb_height = gdk_pixbuf_get_height(pixbuf);
-
-		bound_width = *actual_width;
-		bound_height = *actual_height;
-		quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
-
-		if (bound_width == thumb_width && bound_height == thumb_height)
+		if (pixbuf)
 		{
-			need_new_thumb = FALSE;
+			*actual_width = f.GetWidth();
+			*actual_height = f.GetHeight();
+
+			if (4 < f.GetOrientation())
+			{
+				swap(*actual_width,*actual_height);
+			}
+
+			guint thumb_width, thumb_height;
+			thumb_width = gdk_pixbuf_get_width(pixbuf);
+			thumb_height = gdk_pixbuf_get_height(pixbuf);
+
+			guint bound_width, bound_height;
+			bound_width = *actual_width;
+			bound_height = *actual_height;
+			quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
+
+			if (bound_width == thumb_width && bound_height == thumb_height)
+			{
+				need_new_thumb = FALSE;
+			}
 		}
 	}
 	
@@ -1307,7 +1360,7 @@ overlay_pixbuf_callback(QuiverIconView* iconview, guint cell, QuiverIconOverlayT
 	GdkPixbuf* pixbuf = NULL;
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	QuiverFile f = (*b->m_ImageListPtr)[cell];
-	if (type == QUIVER_ICON_OVERLAY_ICON )
+	if (type == QUIVER_ICON_OVERLAY_ICON && f.IsFolder())
 	{
 		gchar* icon_name = f.GetIconName();
 		if (icon_name)
@@ -1361,6 +1414,64 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 		}
 	}
 	b->m_BrowserParent->EmitSelectionChangedEvent();
+}
+
+static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+{
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
+
+	gint x, y;
+	gtk_widget_get_pointer(GTK_WIDGET(iconview), &x, &y);
+
+	guint cell =  quiver_icon_view_get_cell_for_xy(iconview, x, y);
+
+	if (G_MAXULONG == cell)
+		return FALSE;
+
+	guint width, height;
+	quiver_icon_view_get_icon_size(iconview,&width,&height);
+
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+
+	bool bClearMap = true;
+	if (f.IsFolder())
+	{
+		gint x = 0, y = 0;
+		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
+
+		if (0 <= x && 0 <= y && x < width && y < height)
+		{
+			double percent = double(x) / width;
+			ImageListPtr lstPtr(new ImageList());
+			lstPtr->SetImageList(f.GetURI());
+			unsigned int listSize = lstPtr->GetSize();
+			if (0 != listSize)
+			{
+				unsigned int index = (unsigned int)(listSize * percent);
+				std::min(index, listSize - 1);
+
+				QuiverFile child = (*lstPtr)[index];
+
+				std::string uri_old = b->m_mapFolderToFile[f.GetURI()];
+				std::string uri_new = child.GetURI();
+
+				if (uri_new != uri_old)
+				{
+					quiver_icon_view_invalidate_cell(iconview,cell);
+					b->m_mapFolderToFile[f.GetURI()] = uri_new;
+				}
+				bClearMap = false;
+			}
+		}
+	}
+
+	if (bClearMap)
+	{
+		b->m_mapFolderToFile.clear();
+	}
+
+	return FALSE;
 }
 
 
@@ -1900,7 +2011,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 
 		if (NULL == pixbuf)
 		{
-			pixbuf = f.GetThumbnail(MAX(uiWidth,uiHeight));
+			pixbuf = f.GetThumbnail(std::max(uiWidth,uiHeight));
 		}
 
 		if (NULL != pixbuf)
