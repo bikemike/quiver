@@ -168,6 +168,8 @@ public:
 	std::map<int,bool> m_mapThumbnailExists;
 
 	static boost::shared_ptr<GThreadPool> c_ThreadPoolPtr;
+
+	bool m_bThumbloadFail;
 };
 
 class ThreadPoolDestructor
@@ -234,6 +236,8 @@ QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GFileInfo *info)
 
 void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 {
+	m_bThumbloadFail = false;
+
 	//m_szURI = (gchar*)malloc (sizeof(gchar) * strlen(uri) + 1 );
 	if (NULL != uri)
 	{
@@ -450,7 +454,7 @@ static void get_thumbnail_embedded_size(GdkPixbuf* pixbuf, gint *width, gint *he
 GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 {
 	//Timer t("QuiverFileImpl::GetThumbnail");
-	if (IsFolder())
+	if (IsFolder() || m_bThumbloadFail)
 		return NULL;
 
 	GFileInfo* gFileInfo = GetFileInfo();
@@ -893,6 +897,12 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 		c_ThumbnailCache.m_mapThumbnailCache[thumbSize->size]->AddPixbuf(m_szURI,thumb_pixbuf);
 		m_mapThumbnailExists[thumbSize->size] = true;
 	}
+	else
+	{
+		// failed to get thumbnail
+		m_bThumbloadFail = true;
+	}
+
 
 	return thumb_pixbuf;
 }
@@ -1456,9 +1466,9 @@ void QuiverFile::QuiverFileImpl::GetVideoDimensions(gint *width, gint *height)
 				*width = (guint)((*width * n) / float(d) + .5);
 			else
 				*height = (guint)((*height * d) / float(n) + .5);
-		}
 
-		g_object_unref(pixbuf);
+			g_object_unref(pixbuf);
+		}
 	}
 }
 

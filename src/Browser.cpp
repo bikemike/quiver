@@ -1310,7 +1310,6 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 				{
 					swap(*actual_width,*actual_height);
 				}
-				quiver_icon_view_invalidate_cell(iconview,cell);
 				need_new_thumb = FALSE;
 			}
 		}
@@ -2044,9 +2043,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			g_object_unref(pixbuf);
 
 			gdk_threads_enter();
-			
 			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pBrowserImpl->m_pIconView),item.m_ulIndex);
-			
 			gdk_threads_leave();
 		}
 	}
