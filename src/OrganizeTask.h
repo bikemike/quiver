@@ -47,7 +47,7 @@ public:
 
 	void                SetDayExtension(int extension);
 
-	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime);
+	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int dayExtension = 0);
 
 	class PrivateImpl;
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;
