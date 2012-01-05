@@ -1761,17 +1761,20 @@ int main (int argc, char **argv)
 		if (prefsPtr->HasKey(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY))
 		{	
 			string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
-			files.push_back(photo_library);
+			if (!photo_library.empty())
+				files.push_back(photo_library);
 			GFile* file = g_file_new_for_path("/");
-			GFile* photoLib = g_file_new_for_path(photo_library.c_str());
+			GFile* homedir = g_file_new_for_path(dir);
+			GFile* photoLib = g_file_new_for_uri(photo_library.c_str());
 
-			if (!g_file_equal(file, photoLib))
+			if (!g_file_equal(file, photoLib) && !g_file_equal(photoLib, homedir))
 			{
 				// just in case the users sets the root
 				// as the photo library
 				cqd.bRecursive = true;
 			}
 			g_object_unref(photoLib);
+			g_object_unref(homedir);
 			g_object_unref(file);
 		}
 		else

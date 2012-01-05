@@ -593,6 +593,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 						// the correct orientation so regenerate it
 						g_object_unref(thumb_pixbuf);
 						thumb_pixbuf = NULL;
+						save_thumbnail_to_cache = TRUE;	
 					}
 					else
 					{
