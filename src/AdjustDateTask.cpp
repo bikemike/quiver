@@ -11,6 +11,7 @@
 #include <libexif/exif-data.h>
 #include <libexif/exif-loader.h>
 #include <libexif/exif-tag.h>
+#include <libexif/exif-utils.h>
 
 static void
 exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o)

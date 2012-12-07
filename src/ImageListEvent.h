@@ -21,11 +21,14 @@ public:
 	};
 	
 	unsigned int GetIndex(){return m_iIndex;};
+	unsigned int GetOldIndex(){return m_iIndexOld;};
+	void SetOldIndex(unsigned int old){m_iIndexOld = old;}
 	ImageListEventType GetType(){return m_ImageListEventType;};
 	
 
 private:
 	unsigned int m_iIndex;
+	unsigned int m_iIndexOld;
 	ImageListEventType m_ImageListEventType;
 };
 

@@ -26,7 +26,7 @@ public:
 	void AddEventHandler(IEventHandlerPtr handler);
 
 	void EmitContentsChangedEvent();
-	void EmitCurrentIndexChangedEvent(unsigned int iIndex);
+	void EmitCurrentIndexChangedEvent(unsigned int iIndex, unsigned int iOldIndex);
 	void EmitItemAddedEvent(unsigned int iIndex);
 	void EmitItemRemovedEvent(unsigned int iIndex);
 	void EmitItemChangedEvent(unsigned int iIndex);

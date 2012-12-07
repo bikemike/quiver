@@ -35,6 +35,8 @@
 #include "IconViewThumbLoader.h"
 
 #include <gdk/gdkkeysyms.h>
+#include <libexif/exif-utils.h>
+
 using namespace std;
 
 #define ORIENTATION_ROTATE_CW	0
@@ -1343,19 +1345,19 @@ static void viewer_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_FIRST))
 	{
-		pViewerImpl->SetImageIndex(0,true);
+		pViewerImpl->m_ImageListPtr->First();
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_PREVIOUS) || 0 == strcmp(szAction, ACTION_VIEWER_PREVIOUS_2)) 
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex()-1,false);
+		pViewerImpl->m_ImageListPtr->Previous();
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_NEXT) || 0 == strcmp(szAction, ACTION_VIEWER_NEXT_2)) 
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex()+1,true);
+		pViewerImpl->m_ImageListPtr->Next();
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_LAST))
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetSize()-1,false);
+		pViewerImpl->m_ImageListPtr->Last();
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_VIEW_FILM_STRIP))
 	{
@@ -1502,11 +1504,11 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 	
 	if (GDK_SCROLL_UP == event->direction || GDK_SCROLL_LEFT == event->direction)
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex()-1,false);
+		pViewerImpl->m_ImageListPtr->Previous();
 	}
 	else if (GDK_SCROLL_DOWN == event->direction || GDK_SCROLL_RIGHT == event->direction)
 	{
-		pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex()+1,true);
+		pViewerImpl->m_ImageListPtr->Next();
 	}
 
 

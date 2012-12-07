@@ -1,7 +1,5 @@
 #include <config.h>
 
-#include "quiver-i18n.h"
-
 #include <gst/gst.h>
 
 #include "Quiver.h"
@@ -20,7 +18,6 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
-#include <boost/algorithm/string.hpp>
 
 #include <errno.h>
 
@@ -64,6 +61,10 @@
 #include "IExternalToolsEventHandler.h"
 
 #include "ImageSaveManager.h"
+
+#include <boost/algorithm/string.hpp>
+#include "quiver-i18n.h"
+
 
 // globals needed for preferences
 
@@ -285,6 +286,16 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_ImageListPtr->AddEventHandler(m_ImageListEventHandler);	
 	m_iMergedExternalToolsUI = 0;
 	m_iMergedBookmarksUI = 0;
+
+	// add ignored extensions
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	std::list<std::string> exts = prefsPtr->GetStringList(QUIVER_PREFS_APP, QUIVER_PREFS_APP_IGNORED_EXTENSIONS);
+	for (std::list<std::string>::iterator itr = exts.begin();
+			exts.end() != itr; ++itr)
+	{
+		printf("ignoring extension : %s\n", itr->c_str());
+		m_ImageListPtr->AddIgnoredExtension(*itr);
+	}
 }
 
 QuiverImpl::~QuiverImpl()

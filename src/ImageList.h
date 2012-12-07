@@ -7,8 +7,6 @@
 #include "QuiverFile.h"
 #include "ImageListEventSource.h"
 
-class ImageListImpl;
-typedef boost::shared_ptr<ImageListImpl> ImageListImplPtr;
 	
 class ImageList : public virtual ImageListEventSource
 {
@@ -32,6 +30,9 @@ public:
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(const std::list<std::string> *file_list);
+
+	static void AddIgnoredExtension(std::string ext);
+	static void ClearIgnoreList(std::string ext);
 
 	std::list<std::string> GetFolderList();
 	std::list<std::string> GetFileList();
@@ -74,8 +75,13 @@ public:
 
 	void Sort(SortBy o, bool bSortAscending = true);
 
+public:
+	class ImageListImpl;
+	typedef boost::shared_ptr<ImageListImpl> ImageListImplPtr;
+
 private:
 	ImageListImplPtr m_ImageListImplPtr;
+	static std::vector<std::string> m_vectIgnorgedExtensions;
 	
 };
 

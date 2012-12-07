@@ -14,6 +14,9 @@ extern "C"
 #include "strnatcmp.h"
 }
 
+#include <boost/algorithm/string.hpp>
+
+
 // comment this define out if __gnu_cxx is not available
 #ifdef HAVE_CXX0X
 #include <unordered_map>
@@ -73,7 +76,9 @@ using namespace std;
 
 typedef std::vector<QuiverFile> QuiverFileList;
 
-class ImageListImpl
+std::vector<std::string> ImageList::m_vectIgnorgedExtensions;
+
+class ImageList::ImageListImpl
 {
 public:
 /* constructor*/
@@ -138,6 +143,7 @@ public:
 	bool m_bSortAscend;
 	bool m_bEnableMonitor;
 
+
 };
 
 // sort functions
@@ -148,7 +154,7 @@ class SortByDate;
 class SortByDateModified;
 
 
-StringSet ImageListImpl::c_setSupportedMimeTypes;
+StringSet ImageList::ImageListImpl::c_setSupportedMimeTypes;
 
 // ============================================================================
 
@@ -184,7 +190,7 @@ bool ImageList::SetCurrentFile(std::string file)
 	if (old_index != m_ImageListImplPtr->m_iCurrentIndex)
 	{
 		rval = true;
-		EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex);
+		EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex, old_index);
 	}
 
 	return rval;
@@ -198,8 +204,9 @@ ImageList::SetCurrentIndex(unsigned int new_index)
 	{
 		if ( new_index != m_ImageListImplPtr->m_iCurrentIndex)
 		{
+			unsigned int old = m_ImageListImplPtr->m_iCurrentIndex;
 			m_ImageListImplPtr->m_iCurrentIndex = new_index;
-			EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex);
+			EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex, old);
 		}
 		rval = true;
 	}
@@ -216,7 +223,7 @@ ImageList::Remove(unsigned int iIndex)
 
 	if (iOldIndex != GetCurrentIndex())
 	{
-		EmitCurrentIndexChangedEvent(GetCurrentIndex());
+		EmitCurrentIndexChangedEvent(GetCurrentIndex(), iOldIndex);
 	}
 }
 
@@ -387,6 +394,17 @@ void ImageList::UpdateImageList(const list<string> *file_list)
 	}	
 }
 
+void ImageList::AddIgnoredExtension(std::string ext)
+{
+	m_vectIgnorgedExtensions.push_back(ext);
+}
+
+void ImageList::ClearIgnoreList(std::string ext)
+{
+	m_vectIgnorgedExtensions.clear();
+}
+
+
 std::list<std::string> ImageList::GetFolderList()
 {
 	list<string> listFolders;
@@ -439,7 +457,7 @@ void ImageList::Reload()
 
 	if (iOldIndex != GetCurrentIndex())
 	{
-		EmitCurrentIndexChangedEvent(GetCurrentIndex());
+		EmitCurrentIndexChangedEvent(GetCurrentIndex(), iOldIndex);
 	}
 
 }
@@ -476,7 +494,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 	// FIXME: go through this list of 
 	// changes and sort them out.
 	
-	ImageListImpl *impl = (ImageListImpl*)user_data;
+	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 	gdk_threads_enter();
 	
 	PathChangedMap::iterator itr;
@@ -599,7 +617,7 @@ void monitor_callback (
 	GFileMonitorEvent event_type,
 	gpointer          user_data) 
 {
-	ImageListImpl *impl = (ImageListImpl*)user_data;
+	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 
 	gdk_threads_enter();
 
@@ -637,7 +655,7 @@ void monitor_callback (
 }
 
 
-ImageListImpl::ImageListImpl(ImageList *pImageList)
+ImageList::ImageListImpl::ImageListImpl(ImageList *pImageList)
 {
 	m_pImageList = pImageList;
 	
@@ -648,13 +666,13 @@ ImageListImpl::ImageListImpl(ImageList *pImageList)
 	m_iCurrentIndex = 0;
 }
 
-ImageListImpl::~ImageListImpl()
+ImageList::ImageListImpl::~ImageListImpl()
 {
 	Clear();
 }
 
 
-void ImageListImpl::LoadMimeTypes()
+void ImageList::ImageListImpl::LoadMimeTypes()
 {
 	if ( c_setSupportedMimeTypes.empty())
 	{
@@ -696,7 +714,7 @@ void ImageListImpl::LoadMimeTypes()
 	}
 }
 
-void ImageListImpl::SetCurrentImage(string uri)
+void ImageList::ImageListImpl::SetCurrentImage(string uri)
 {
 	if (!uri.empty())
 	{
@@ -713,7 +731,7 @@ void ImageListImpl::SetCurrentImage(string uri)
 }
 
 
-void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive/* = false*/)
+void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive/* = false*/)
 {
 	if (0 == file_list->size())
 	{
@@ -844,14 +862,14 @@ void ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive
 
 }
 
-void ImageListImpl::SetImageList(const std::list<std::string> *file_list, bool bRecursive /* = false */)
+void ImageList::ImageListImpl::SetImageList(const std::list<std::string> *file_list, bool bRecursive /* = false */)
 {
 	Clear();
 	Add(file_list, bRecursive);
 }
 
 
-bool ImageListImpl::UpdateImageList(const list<string> *file_list)
+bool ImageList::ImageListImpl::UpdateImageList(const list<string> *file_list)
 {
 	// create a set to find the differences
 	// remove the ones not in the file_list but in
@@ -935,7 +953,7 @@ bool ImageListImpl::UpdateImageList(const list<string> *file_list)
 }
 
 
-bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */)
+bool ImageList::ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */)
 {
 	bool bAdded = false;
 	pair<PathMonitorMap::iterator,bool> p;
@@ -1050,7 +1068,7 @@ bool ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /* = false */
 
 
 
-bool ImageListImpl::AddFile(const gchar*  uri)
+bool ImageList::ImageListImpl::AddFile(const gchar*  uri)
 {
 	bool bAdded = false;
 	GFile* gFile = g_file_new_for_uri(uri);
@@ -1084,7 +1102,7 @@ bool ImageListImpl::AddFile(const gchar*  uri)
 	return bAdded;
 }
 
-bool ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
+bool ImageList::ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
 {
 	bool bAdded = false;
 
@@ -1101,35 +1119,51 @@ bool ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
 	}
 	else
 	{
-		const char* content_type = g_file_info_get_content_type(info);
-		if (NULL != content_type)
+		std::string strURI = uri;
+
+		bool ignore = false;
+		for (std::vector<std::string>::iterator itr = ImageList::m_vectIgnorgedExtensions.begin();
+				ImageList::m_vectIgnorgedExtensions.end() != itr; ++itr)
 		{
-			gchar* mimetype = g_content_type_get_mime_type(content_type);
-			
-			if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype ) )
+			if (boost::iends_with(strURI, *itr))
 			{
-				QuiverFile f(uri, info);
-				m_QuiverFileList.push_back(f);
-				bAdded = true;
+				ignore = true;
+				break;
 			}
-			else if (g_strstr_len(mimetype, 5, "video") == mimetype) // video
+		}
+
+		if (!ignore)
+		{
+			const char* content_type = g_file_info_get_content_type(info);
+			if (NULL != content_type)
 			{
-				QuiverFile f(uri, info);
-				m_QuiverFileList.push_back(f);
-				bAdded = true;
+				gchar* mimetype = g_content_type_get_mime_type(content_type);
+				
+				if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype ) )
+				{
+					QuiverFile f(uri, info);
+					m_QuiverFileList.push_back(f);
+					bAdded = true;
+				}
+				else if (g_strstr_len(mimetype, 5, "video") == mimetype) // video
+				{
+					QuiverFile f(uri, info);
+					m_QuiverFileList.push_back(f);
+					bAdded = true;
+				}
+				else
+				{
+					//printf("Unsupported mime_type: %s\n",mimetype);
+				}
+				g_free(mimetype);
 			}
-			else
-			{
-				//printf("Unsupported mime_type: %s\n",mimetype);
-			}
-			g_free(mimetype);
 		}
 	}
 	return bAdded;
 }
 
 
-bool ImageListImpl::RemoveMonitor(string uri)
+bool ImageList::ImageListImpl::RemoveMonitor(string uri)
 {
 	bool bErased = false;
 	PathMonitorMap::iterator itr;
@@ -1199,7 +1233,7 @@ bool ImageListImpl::RemoveMonitor(string uri)
 	return bErased;
 }
 
-void ImageListImpl::Reload()
+void ImageList::ImageListImpl::Reload()
 {
 	string strURI;
 	
@@ -1240,7 +1274,7 @@ void ImageListImpl::Reload()
 	}
 }
 
-void ImageListImpl::Clear()
+void ImageList::ImageListImpl::Clear()
 {
 	PathMonitorMap::iterator itr;
 	for (itr = m_mapDirs.begin(); m_mapDirs.end() != itr; ++itr)
@@ -1263,7 +1297,7 @@ void ImageListImpl::Clear()
 	m_QuiverFileList.clear();
 }
 
-bool ImageListImpl::RemoveFile(unsigned int iIndex)
+bool ImageList::ImageListImpl::RemoveFile(unsigned int iIndex)
 {
 	bool bErased = false;
 
@@ -1304,12 +1338,12 @@ bool ImageListImpl::RemoveFile(unsigned int iIndex)
 }
 
 
-void ImageListImpl::Sort()
+void ImageList::ImageListImpl::Sort()
 {
 	Sort(m_SortBy,m_bSortAscend, true);
 }
 
-void ImageListImpl::Sort(bool bUpdateCurrentIndex)
+void ImageList::ImageListImpl::Sort(bool bUpdateCurrentIndex)
 {
 	Sort(m_SortBy, m_bSortAscend, bUpdateCurrentIndex);
 }
@@ -1419,7 +1453,7 @@ public:
 	}
 };
 
-void ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurrentIndex)
+void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurrentIndex)
 {
 	m_SortBy = o;
 	m_bSortAscend = bSortAscend;

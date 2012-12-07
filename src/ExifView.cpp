@@ -9,6 +9,7 @@
 #include <libexif/exif-data.h>
 #include <libexif/exif-loader.h>
 #include <libexif/exif-tag.h>
+#include <libexif/exif-utils.h>
 
 
 #include "QuiverUtils.h"

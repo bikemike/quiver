@@ -29,9 +29,10 @@ void ImageListEventSource::EmitContentsChangedEvent()
 	
 }
 
-void ImageListEventSource::EmitCurrentIndexChangedEvent(unsigned int iIndex)
+void ImageListEventSource::EmitCurrentIndexChangedEvent(unsigned int iIndex, unsigned int iOldIndex)
 {
 	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::CURRENT_INDEX_CHANGED,iIndex) );
+	event->SetOldIndex(iOldIndex);
 	(*m_sigCurrentIndexChangedPtr)(event);
 	
 }
