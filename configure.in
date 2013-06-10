@@ -4,6 +4,8 @@ dnl Created by Anjuta application wizard.
 AC_INIT([quiver], [0.2.0], [http://mike.yi.org/quiver])
 AC_CONFIG_SRCDIR([src/Quiver.cpp])
 
+AC_CONFIG_MACRO_DIR([m4])
+
 AM_INIT_AUTOMAKE([subdir-objects]) 
 
 AC_LANG_PUSH([C++])
