@@ -109,9 +109,9 @@ void DonateDlg::DonateDlgPriv::LoadWidgets()
 
 		if (m_pWidget)
 		{
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonDonate),TRUE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonClose),FALSE,TRUE,5);
-			gtk_button_box_set_layout  (GTK_BUTTON_BOX(GTK_DIALOG(m_pWidget)->action_area), GTK_BUTTONBOX_EDGE);
+			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonDonate),TRUE,TRUE,5);
+			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose),FALSE,TRUE,5);
+			gtk_button_box_set_layout  (GTK_BUTTON_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))), GTK_BUTTONBOX_EDGE);
 		}
 
 		m_bLoadedDlg = (

@@ -163,13 +163,13 @@ static void exif_update_entry(ExifData *pExifData, ExifIfd ifd,ExifTag tag,const
 AdjustDateTask::AdjustDateTask(int adj_years, int adj_days, int adj_hours, int adj_mins, int adj_secs )
 	: m_bAdjustDate(true), m_iAdjYears(adj_years), m_iAdjDays(adj_days),
 	m_iAdjHours(adj_hours), m_iAdjMins(adj_mins), m_iAdjSecs(adj_secs),
-	m_iCurrentFile(0), m_dFileSavePercent(0), m_flagsDateFields(DATE_FIELD_EXIF_DATE_TIME)
+	m_iCurrentFile(0), m_dFileSavePercent(0), m_flagsDateFields(DATE_FIELD_NONE)
 {
 }
 
 AdjustDateTask::AdjustDateTask(tm tm_new_date)
 	: m_bAdjustDate(false),
-	m_iCurrentFile(0), m_dFileSavePercent(0), m_flagsDateFields(DATE_FIELD_EXIF_DATE_TIME)
+	m_iCurrentFile(0), m_dFileSavePercent(0), m_flagsDateFields(DATE_FIELD_NONE)
 {
 	m_tmNewDate = tm_new_date;
 }
@@ -246,78 +246,137 @@ void AdjustDateTask::Run()
 
 			QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
 
-			ExifData *pExifData = f.GetExifData();
-		
-			time_t date = 0;
-			if (NULL != pExifData)
+			GFileInfo* pInfo = f.GetFileInfo();
+			GTimeVal tv = {0};
+			if (NULL != pInfo)
 			{
-				// use date_time_original
-				ExifEntry* pEntry;
-				pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME);
-				if (NULL != pEntry)
+				// adjust the modification time of the file
+				g_file_info_get_modification_time(pInfo, &tv);
+				
+				// the adjustment is done after the exif data is modified
+				// see below
+			}
+
+			
+			if ((DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields) ||
+				(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
+				(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
+			{
+				ExifData *pExifData = f.GetExifData();
+			
+				time_t date = 0;
+				if (NULL != pExifData)
 				{
-					char szDate[20];
-					exif_entry_get_value(pEntry,szDate,20);
-		
-					tm tm_exif_time;
-					int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
-						&tm_exif_time.tm_year,
-						&tm_exif_time.tm_mon,
-						&tm_exif_time.tm_mday,
-						&tm_exif_time.tm_hour,
-						&tm_exif_time.tm_min,
-						&tm_exif_time.tm_sec);
-					tm_exif_time.tm_year -= 1900;
-					tm_exif_time.tm_mon -= 1;
-					tm_exif_time.tm_isdst = -1;
-					if (6 == num_substs)
+					// use date_time_original
+					ExifEntry* pEntry;
+					pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME_ORIGINAL);
+					if (NULL == pEntry)
 					{
-						tm_exif_time.tm_year += m_iAdjYears;
-						tm_exif_time.tm_mday += m_iAdjDays;
-						tm_exif_time.tm_hour += m_iAdjHours;
-						tm_exif_time.tm_min +=  m_iAdjMins;
-						tm_exif_time.tm_sec +=  m_iAdjSecs;
-						// successfully parsed date
-						date = mktime(&tm_exif_time);
+						// try date_time
+						pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME);
+					}
 
-						g_snprintf(szDate, 20, "%04d:%02d:%02d %02d:%02d:%02d",
-							tm_exif_time.tm_year+1900,tm_exif_time.tm_mon+1,tm_exif_time.tm_mday,
-							tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
-
-						//printf("ymd: %s\n", szDate);
-
-
-						if ( exif_date_format_is_valid(szDate) )
+					if (NULL != pEntry)
+					{
+						char szDate[20];
+						exif_entry_get_value(pEntry,szDate,20);
+			
+						tm tm_exif_time;
+						int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
+							&tm_exif_time.tm_year,
+							&tm_exif_time.tm_mon,
+							&tm_exif_time.tm_mday,
+							&tm_exif_time.tm_hour,
+							&tm_exif_time.tm_min,
+							&tm_exif_time.tm_sec);
+						tm_exif_time.tm_year -= 1900;
+						tm_exif_time.tm_mon -= 1;
+						tm_exif_time.tm_isdst = -1;
+						if (6 == num_substs)
 						{
-							if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
-							{
-								exif_update_entry(pExifData, EXIF_IFD_0, EXIF_TAG_DATE_TIME, szDate);
-							}
-							if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
-							{
-								exif_update_entry(pExifData, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_ORIGINAL, szDate);
-							}
-							if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
-							{
-								exif_update_entry(pExifData, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_DIGITIZED, szDate);
-							}
+							tm_exif_time.tm_year += m_iAdjYears;
+							tm_exif_time.tm_mday += m_iAdjDays;
+							tm_exif_time.tm_hour += m_iAdjHours;
+							tm_exif_time.tm_min +=  m_iAdjMins;
+							tm_exif_time.tm_sec +=  m_iAdjSecs;
+							// successfully parsed date
+							date = mktime(&tm_exif_time);
 
-							f.SetExifData(pExifData);
+							g_snprintf(szDate, 20, "%04d:%02d:%02d %02d:%02d:%02d",
+								tm_exif_time.tm_year+1900,tm_exif_time.tm_mon+1,tm_exif_time.tm_mday,
+								tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
 
-							if (f.Modified())
-							{
-								//now save the file:
-								ImageSaveManager::GetInstance()->SaveImage(f);
-							}
-						} 
+							//printf("ymd: %s\n", szDate);
 
 
+							if ( exif_date_format_is_valid(szDate) )
+							{
+								if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
+								{
+									exif_update_entry(pExifData, EXIF_IFD_0, EXIF_TAG_DATE_TIME, szDate);
+								}
+								if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
+								{
+									exif_update_entry(pExifData, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_ORIGINAL, szDate);
+								}
+								if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
+								{
+									exif_update_entry(pExifData, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_DIGITIZED, szDate);
+								}
+
+								f.SetExifData(pExifData);
+
+								if (f.Modified())
+								{
+									//now save the file:
+									ImageSaveManager::GetInstance()->SaveImage(f);
+								}
+							} 
+
+
+							
+						}
 						
 					}
-					
+					exif_data_unref(pExifData);
 				}
 			}
-			exif_data_unref(pExifData);
+			
+			if (NULL != pInfo)
+			{
+				// adjust the modification time of the file
+				if (DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields)
+				{
+					GDateTime* pDateTime = g_date_time_new_from_timeval_local(&tv);
+
+					GDateTime* pDateTimeNew = g_date_time_add_full(pDateTime,
+					                                               m_iAdjYears,
+																   0,
+					                                               m_iAdjDays,
+					                                               m_iAdjHours,
+					                                               m_iAdjMins,
+					                                               m_iAdjSecs);
+
+					// gchar* olddate = g_date_time_format(pDateTime, "%F %T");
+					// gchar* newdate = g_date_time_format(pDateTimeNew, "%F %T");
+					// printf("old date: %s\n", olddate);
+					// printf("new date: %s\n", newdate);
+					// g_free(newdate);
+					// g_free(olddate);
+
+					g_date_time_to_timeval(pDateTimeNew, &tv);
+					g_file_info_set_modification_time(pInfo, &tv);
+
+					GFile* file = g_file_new_for_uri(f.GetURI());
+					g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+					g_object_unref(file);
+					
+					g_date_time_unref(pDateTimeNew);
+					g_date_time_unref(pDateTime);
+				}
+
+				g_object_unref(pInfo);
+			}
 
 			++m_iCurrentFile;
 

@@ -43,7 +43,7 @@ OrganizeTask::OrganizeTask() :
 	m_iDayExtension(0)
 {
 	SetFolderTemplate("YYYY-MM-DD");
-	SetFileTemplate("%Y-%m-%d %H.%M-##");
+	SetFileTemplate("%Y-%m-%d %H.%M.%S-##");
 }
 OrganizeTask::~OrganizeTask()
 {

@@ -148,8 +148,8 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 
 		if (m_pWidget)
 		{
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonCancel),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonOk),FALSE,TRUE,5);
+			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonCancel),FALSE,TRUE,5);
+			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonOk),FALSE,TRUE,5);
 		}
 
 		m_pToggleMultiple       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_multiple"));

@@ -11,9 +11,11 @@ class AdjustDateTask : public AbstractTask
 public:
 	enum DateFields
 	{
-		DATE_FIELD_EXIF_DATE_TIME           = 1,
-		DATE_FIELD_EXIF_DATE_TIME_ORIG      = 1 << 1,
-		DATE_FIELD_EXIF_DATE_TIME_DIGITIZED = 1 << 2,
+		DATE_FIELD_NONE = 0,
+		DATE_FIELD_MODIFICATION_TIME        = 1,
+		DATE_FIELD_EXIF_DATE_TIME           = 1 << 1,
+		DATE_FIELD_EXIF_DATE_TIME_ORIG      = 1 << 2,
+		DATE_FIELD_EXIF_DATE_TIME_DIGITIZED = 1 << 3,
 	};
 public:
 	                    AdjustDateTask(int adj_years, int adj_days, int adj_hours, int adj_mins, int adj_secs );

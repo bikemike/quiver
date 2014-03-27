@@ -496,6 +496,8 @@ static gboolean timeout_path_changed(gpointer user_data)
 	
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 	gdk_threads_enter();
+
+	impl->m_iTimeoutPathChanged = 0;
 	
 	PathChangedMap::iterator itr;
 	

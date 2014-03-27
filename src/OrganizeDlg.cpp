@@ -45,7 +45,7 @@ public:
 
 	GtkWidget*              m_pBtnOK;
 
-	GtkComboBox*            m_pComboTemplateFolder;
+	GtkComboBoxText*        m_pComboTemplateFolder;
 	GtkEntry*               m_pEntryTemplateFile;
 #ifdef QUIVER_MAEMO
 	GtkButton*              m_pBtnSourceFolder;
@@ -93,7 +93,7 @@ bool OrganizeDlg::Run()
 
 std::string OrganizeDlg::GetFolderTemplate() const
 {
-	return gtk_combo_box_get_active_text(m_PrivPtr->m_pComboTemplateFolder);
+	return gtk_combo_box_text_get_active_text(m_PrivPtr->m_pComboTemplateFolder);
 }
 
 std::string OrganizeDlg::GetFileTemplate() const
@@ -222,9 +222,9 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 
 	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
 	gtk_widget_show(m_pBtnOK);
-	gtk_container_add(GTK_CONTAINER(m_pDialogOrganize->action_area),m_pBtnOK);
+	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogOrganize)),m_pBtnOK);
 
-	m_pComboTemplateFolder       = GTK_COMBO_BOX( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
+	m_pComboTemplateFolder       = GTK_COMBO_BOX_TEXT( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
 	m_pEntryTemplateFile       = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "organize_entry_filename_template") );
 	//m_pTglBtnCurrentSelection = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_current_selection") );
 	//m_pTglBtnFolder           = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_folder") );
@@ -291,7 +291,7 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 
 		gtk_window_set_default_size(GTK_WINDOW(m_pDialogOrganize), 400,-1);
 
-		gtk_combo_box_set_active(m_pComboTemplateFolder, 0);
+		gtk_combo_box_set_active(GTK_COMBO_BOX(m_pComboTemplateFolder), 0);
 
 
 #ifdef QUIVER_MAEMO
@@ -348,7 +348,7 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 		GDateTime* time = g_date_time_new_now_local();
 
 		strLabel += G_DIR_SEPARATOR_S;
-		strLabel += gtk_combo_box_get_active_text(m_pComboTemplateFolder);
+		strLabel += gtk_combo_box_text_get_active_text(m_pComboTemplateFolder);
 		strLabel += gtk_entry_get_text(m_pEntryFolderName);
 		strLabel = OrganizeTask::DoVariableSubstitution(strLabel, time);
 		if (GetRenameFiles())

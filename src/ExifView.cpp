@@ -623,7 +623,7 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 		
 	}
 
-	if (GTK_WIDGET_MAPPED(m_ExifViewImplPtr->m_pScrolledWindow))
+	if (gtk_widget_get_mapped(m_ExifViewImplPtr->m_pScrolledWindow))
 	{
 		if (0 != m_ExifViewImplPtr->m_iIdleLoadID)
 		{

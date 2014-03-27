@@ -33,6 +33,7 @@ public:
 	GtkSpinButton*         m_pSpinMinutes;
 	GtkSpinButton*         m_pSpinSeconds;
 	GtkEntry*              m_pEntryDate;
+	GtkToggleButton*       m_pToggleModificationTime;
 	GtkToggleButton*       m_pToggleExifDate;
 	GtkToggleButton*       m_pToggleExifDateOrig;
 	GtkToggleButton*       m_pToggleExifDateDig;
@@ -40,6 +41,7 @@ public:
 	bool                   m_bIsAdjustDate;
 	bool                   m_bIsSetDate;
 
+	bool                   m_bModificationTime;
 	bool                   m_bExifDate;
 	bool                   m_bExifDateOrig;
 	bool                   m_bExifDateDig;
@@ -81,6 +83,11 @@ bool AdjustDateDlg::IsAdjustDate() const
 bool AdjustDateDlg::IsSetDate() const
 {
 	return m_PrivPtr->m_bIsSetDate;
+}
+
+bool AdjustDateDlg::ModifyModificationTime() const
+{
+	return m_PrivPtr->m_bModificationTime;
 }
 
 bool AdjustDateDlg::ModifyExifDate() const
@@ -171,7 +178,7 @@ void AdjustDateDlg::AdjustDateDlgPriv::LoadWidgets()
 
 	m_pButtonOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
 	gtk_widget_show(m_pButtonOK);
-	gtk_container_add(GTK_CONTAINER(m_pDialogAdjustDate->action_area),m_pButtonOK);
+	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogAdjustDate)),m_pButtonOK);
 
 	m_pToggleAdjustDate    = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_adjust_date") );
 	m_pToggleSetDate       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_set_date") );
@@ -182,9 +189,10 @@ void AdjustDateDlg::AdjustDateDlgPriv::LoadWidgets()
 	m_pSpinSeconds         = GTK_SPIN_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_spinbutton_seconds") );
 	m_pEntryDate           = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_entry_date") );
 
-	m_pToggleExifDate      = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_checkbox_exif_date") );
-	m_pToggleExifDateOrig  = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_checkbox_exif_date_orig") );
-	m_pToggleExifDateDig   = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_checkbox_exif_date_digitized") );
+	m_pToggleModificationTime = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_checkbox_mtime") );
+	m_pToggleExifDate         = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_checkbox_exif_date") );
+	m_pToggleExifDateOrig     = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_checkbox_exif_date_orig") );
+	m_pToggleExifDateDig      = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_checkbox_exif_date_digitized") );
 
 }
 
@@ -258,11 +266,12 @@ bool AdjustDateDlg::AdjustDateDlgPriv::ValidateInput()
 	if (bIsValid)
 	{
 
-		m_bExifDate     = (bool)gtk_toggle_button_get_active(m_pToggleExifDate);
-		m_bExifDateOrig = (bool)gtk_toggle_button_get_active(m_pToggleExifDateOrig);
-		m_bExifDateDig  = (bool)gtk_toggle_button_get_active(m_pToggleExifDateDig);
+		m_bModificationTime = (bool)gtk_toggle_button_get_active(m_pToggleModificationTime);
+		m_bExifDate         = (bool)gtk_toggle_button_get_active(m_pToggleExifDate);
+		m_bExifDateOrig     = (bool)gtk_toggle_button_get_active(m_pToggleExifDateOrig);
+		m_bExifDateDig      = (bool)gtk_toggle_button_get_active(m_pToggleExifDateDig);
 
-		if (!m_bExifDate && !m_bExifDateOrig && !m_bExifDateDig)
+		if (!m_bModificationTime && !m_bExifDate && !m_bExifDateOrig && !m_bExifDateDig)
 		{
 
 			GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_pDialogAdjustDate),

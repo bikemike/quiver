@@ -18,9 +18,10 @@ AM_CONFIG_HEADER([config.h])
 AC_PROG_LIBTOOL
 dnl AM_MAINTAINER_MODE
 
+AM_PROG_CC_C_O
 
 AC_ISC_POSIX
-AC_PROG_CC
+dnl AC_PROG_CC
 AC_HEADER_STDC
 
 AC_CHECK_FUNCS([gettimeofday])
@@ -53,15 +54,11 @@ AM_GLIB_GNU_GETTEXT
 
 AC_PROG_INTLTOOL([0.21])
 
-QUIVER_MODULES="gtk+-2.0 gio-2.0"
+QUIVER_MODULES="gtk+-3.0 gio-2.0"
 
 PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 
-PKG_CHECK_MODULES([CAIRO], [cairo],
-	[AC_DEFINE([HAVE_CAIRO],[1],[cairo is available])],
-	[have_cairo=no])
-
-PKG_CHECK_MODULES([GSTREAMER], [gstreamer-0.10 gstreamer-plugins-base-0.10 gstreamer-video-0.10 gstreamer-app-0.10 gstreamer-interfaces-0.10])
+PKG_CHECK_MODULES([GSTREAMER], [gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-app-1.0])
 
 
 AC_ARG_WITH(

@@ -16,7 +16,6 @@ AM_CFLAGS = \
 	$(HILDON_MIME_CFLAGS) \
 	$(LIBEXIF_CFLAGS) \
 	$(GSTREAMER_CFLAGS) \
-	$(CAIRO_CFLAGS) \
 	-Wall 
 
 AM_CPPFLAGS = \
@@ -35,7 +34,6 @@ AM_CPPFLAGS = \
 	$(BOOST_CPPFLAGS) \
 	$(LIBEXIF_CFLAGS) \
 	$(GSTREAMER_CFLAGS) \
-	$(CAIRO_CFLAGS) \
 	-Wall 
 
 bin_PROGRAMS = quiver 
@@ -183,6 +181,7 @@ quiver_SOURCES = \
 quiver_LDFLAGS = 
 
 quiver_LDADD = \
+	../libquiver/libquiver.la \
 	$(PACKAGE_LIBS) \
 	$(HILDON_LIBS_LIBS) \
 	$(HILDON_1_LIBS) \
@@ -194,9 +193,7 @@ quiver_LDADD = \
 	$(BOOST_SIGNALS_LIB) \
 	$(LIBEXIF_LIBS) \
 	$(GSTREAMER_LIBS) \
-	-ljpeg \
-	../libquiver/libquiver.la \
-	$(CAIRO_LIBS)
+	-ljpeg
 
 #TESTS = test_image_list test_quiver_file test_icon_view
 #check_PROGRAMS = test_image_list test_quiver_file test_icon_view

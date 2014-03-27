@@ -4,8 +4,8 @@
 
 #define QUIVER_STOCK_APP            GTK_STOCK_FILE //"quiver-icon-app"
 #define QUIVER_STOCK_BROWSER        GTK_STOCK_DIRECTORY //"quiver-icon-browser"
-#define QUIVER_STOCK_ROTATE_CW      GTK_STOCK_REDO //"quiver-icon-rotate-cw"
-#define QUIVER_STOCK_ROTATE_CCW     GTK_STOCK_UNDO //"quiver-icon-rotate-ccw"
+#define QUIVER_STOCK_ROTATE_CW      "edit-redo" //GTK_STOCK_REDO //"quiver-icon-rotate-cw"
+#define QUIVER_STOCK_ROTATE_CCW     "edit-undo" // GTK_STOCK_UNDO //"quiver-icon-rotate-ccw"
 #define QUIVER_STOCK_SLIDESHOW      GTK_STOCK_INDEX //"quiver-icon-slideshow"
 
 #define QUIVER_STOCK_ABOUT           GTK_STOCK_ABOUT

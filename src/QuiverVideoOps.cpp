@@ -11,10 +11,12 @@ namespace QuiverVideoOps
 {
 	GdkPixbuf* LoadPixbuf(const gchar *uri, gint* numerator /*= NULL*/, gint* denominator /*= NULL*/)
 	{
+		// FIXME: maybe make this not seek to the middle of the video??
 		Timer t("Load Video Pixbuf");
+
 		GdkPixbuf* pixbuf = NULL;
 
-		GstElement* pipeline = gst_element_factory_make("playbin2", "player");
+		GstElement* pipeline = gst_element_factory_make("playbin", "player");
 
 		GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
 
@@ -32,6 +34,7 @@ namespace QuiverVideoOps
 			"flags", flags, 
 			NULL);
 
+		bool pause_finished = false;
 		GstStateChangeReturn rval = gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PAUSED);
 		if (GST_STATE_CHANGE_FAILURE == rval)
 		{
@@ -39,6 +42,10 @@ namespace QuiverVideoOps
 			gst_object_unref(bus);
 			gst_object_unref(pipeline);
 			return pixbuf;
+		}
+		else if (GST_STATE_CHANGE_SUCCESS == rval)
+		{
+			pause_finished = true;
 		}
 
 		GstState current = GST_STATE_VOID_PENDING;
@@ -53,16 +60,18 @@ namespace QuiverVideoOps
 			gst_object_unref(pipeline);
 			return pixbuf;
 		}
+		else if (GST_STATE_CHANGE_SUCCESS == rval)
+		{
+			pause_finished = true;
+		}
 
 		gint64 clip_duration = 0;
-		GstFormat format = GST_FORMAT_TIME;
-		gst_element_query_duration(GST_ELEMENT(pipeline), &format, &clip_duration);
+		gst_element_query_duration(GST_ELEMENT(pipeline), GST_FORMAT_TIME, &clip_duration);
 
-		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH|GST_SEEK_FLAG_KEY_UNIT), (gint64)(clip_duration / 2));
+		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pipeline), GST_FORMAT_TIME, GstSeekFlags(GST_SEEK_FLAG_FLUSH|GST_SEEK_FLAG_KEY_UNIT), (gint64)(clip_duration / 2));
 
 		// wait for message from bus
 		bool gotAspectRatio = false;
-		bool pause_finished = false;
 		bool seek_finished = (FALSE == seek_started);
 		while (!seek_finished || !pause_finished || !gotAspectRatio) 
 		{
@@ -116,12 +125,13 @@ namespace QuiverVideoOps
 
 		g_object_get(pixbuf_sink, "last-pixbuf", &pixbuf, NULL);
 
-		gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_NULL);
- 
+		rval = gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_NULL);
+
 		gst_object_unref(bus);
 		gst_object_unref(pipeline);
 
 		return pixbuf;
+
 	}
 
 }

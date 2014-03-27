@@ -125,19 +125,19 @@ void quiver_icon_view_invalidate_window(QuiverIconView *iconview);
 void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,gulong cell);
 
 void quiver_icon_view_set_n_items_func (QuiverIconView *iconview, 
-         QuiverIconViewGetNItemsFunc func,gpointer data,GtkDestroyNotify destroy);
+         QuiverIconViewGetNItemsFunc func,gpointer data,GDestroyNotify destroy);
 
 void quiver_icon_view_set_icon_pixbuf_func (QuiverIconView *iconview,
-         QuiverIconViewGetIconPixbufFunc func,gpointer data,GtkDestroyNotify destroy);
+         QuiverIconViewGetIconPixbufFunc func,gpointer data,GDestroyNotify destroy);
 
 void quiver_icon_view_set_thumbnail_pixbuf_func (QuiverIconView *iconview,
-         QuiverIconViewGetThumbnailPixbufFunc func,gpointer data,GtkDestroyNotify destroy);
+         QuiverIconViewGetThumbnailPixbufFunc func,gpointer data,GDestroyNotify destroy);
 
 void quiver_icon_view_set_text_func (QuiverIconView *iconview,
-         QuiverIconViewGetTextFunc func,gpointer data,GtkDestroyNotify destroy);
+         QuiverIconViewGetTextFunc func,gpointer data,GDestroyNotify destroy);
 
 void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
-         QuiverIconViewGetOverlayPixbufFunc func,gpointer data,GtkDestroyNotify destroy);
+         QuiverIconViewGetOverlayPixbufFunc func,gpointer data,GDestroyNotify destroy);
 
 G_END_DECLS
 

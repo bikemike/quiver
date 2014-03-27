@@ -3,6 +3,7 @@ quiver!
 to build from svn:
 
 autoreconf -vifs
+intltoolize
 ./configure
 make
 

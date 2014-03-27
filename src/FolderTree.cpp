@@ -6,6 +6,7 @@
 
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
+#include <stdint.h>
 
 #ifdef QUIVER_MAEMO
 #ifdef HAVE_HILDON_FM_2
@@ -671,7 +672,7 @@ static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpoin
 
 	GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(treeview));
 	gboolean rval = FALSE;
-	if (GDK_Left  == event->keyval)
+	if (GDK_KEY_Left  == event->keyval)
 	{
 		if ( gtk_tree_view_row_expanded (GTK_TREE_VIEW(treeview),path) )
 		{
@@ -707,7 +708,7 @@ static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpoin
 			rval = TRUE;			
 		}
 	}
-	else if (GDK_Right == event->keyval)
+	else if (GDK_KEY_Right == event->keyval)
 	{
 		if ( gtk_tree_view_row_expanded (GTK_TREE_VIEW(treeview),path) )
 		{
@@ -788,7 +789,7 @@ static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpoin
 		rval = TRUE;
 		
 	}
-	else if (GDK_Return == event->keyval)
+	else if (GDK_KEY_Return == event->keyval)
 	{
 		GtkTreePath* path = NULL;
 		gtk_tree_view_get_cursor (GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget), &path, NULL);
@@ -808,7 +809,7 @@ static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpoin
 		}
 	}
 	
-	if (GDK_space == event->keyval &&  !( event->state & (GDK_CONTROL_MASK/*|GDK_SHIFT_MASK*/) ))
+	if (GDK_KEY_space == event->keyval &&  !( event->state & (GDK_CONTROL_MASK/*|GDK_SHIFT_MASK*/) ))
 	{
 		GtkTreeIter iter;
 		gtk_tree_model_get_iter(model,&iter,path);

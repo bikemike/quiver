@@ -19,6 +19,7 @@ public:
 	bool IsAdjustDate() const;
 	bool IsSetDate() const;
 
+	bool ModifyModificationTime() const;
 	bool ModifyExifDate() const;
 	bool ModifyExifDateOrig() const;
 	bool ModifyExifDateDig() const;

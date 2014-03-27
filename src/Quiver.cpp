@@ -87,8 +87,8 @@ static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *
 // gtk_ui_manager signals
 static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
 static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
-static void signal_item_select (GtkItem *proxy,gpointer data);
-static void signal_item_deselect (GtkItem *proxy,gpointer data);
+static void signal_item_select (GtkMenuItem *proxy,gpointer data);
+static void signal_item_deselect (GtkMenuItem *proxy,gpointer data);
 
 #ifdef QUIVER_MAEMO
 static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1, gpointer user_data);
@@ -1140,7 +1140,8 @@ void Quiver::Close()
 	Preferences::Reset();
 	QuiverFile::ClearThumbnailCache();
 	
-	gtk_main_quit ();	
+	gtk_main_quit ();
+	delete this;	
 }
 
 gboolean Quiver::EventDelete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
@@ -1700,8 +1701,7 @@ static gboolean CreateQuiver (gpointer data)
 	QuiverStockIcons::Load();
 	
 	Quiver *pQuiver = new Quiver(*(cqd->pFiles), cqd->bRecursive);
-	gtk_quit_add (0,DestroyQuiver, pQuiver);
-	return TRUE;
+	return FALSE; // run once
 }
 
 int main (int argc, char **argv)
@@ -1711,13 +1711,16 @@ int main (int argc, char **argv)
 	textdomain (GETTEXT_PACKAGE);
 
  	/* init threads */
-	g_thread_init (NULL);
+	//g_type_init ();
 	gdk_threads_init ();
 	gdk_threads_enter ();
 
 	
 	/* Initialize the widget set */
 	gtk_init (&argc, &argv);
+
+	// set dark theme
+	g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", TRUE, NULL);
 
 	gst_init(&argc, &argv);
 
@@ -1797,7 +1800,9 @@ int main (int argc, char **argv)
 	//pthread_setconcurrency(4);
 
 	cqd.pFiles = &files;
-	gtk_init_add (CreateQuiver,&cqd);
+	// FIXME: will not create a window
+	//gtk_init_add (CreateQuiver,&cqd);
+	g_idle_add(CreateQuiver, &cqd);
 	
 	// FIX FOR BUG: http://bugzilla.gnome.org/show_bug.cgi?id=65041
 	// race condition when registering types
@@ -1868,6 +1873,8 @@ static gboolean timeout_event_motion_notify (gpointer data)
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
 	{
+		// FIXME:
+		/*
 		gdk_threads_enter();
 		
 		GdkCursor *empty_cursor;
@@ -1887,6 +1894,7 @@ static gboolean timeout_event_motion_notify (gpointer data)
 		
 		//remove the mouse cursor		
 		gdk_threads_leave();
+		*/
 	}
 	pQuiverImpl->m_iTimeoutMouseMotionNotify = 0;
 	return FALSE;
@@ -1903,7 +1911,7 @@ static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, g
 	}
 
 #ifndef QUIVER_MAEMO	
-	gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
+	gdk_window_set_cursor (gtk_widget_get_window(pQuiverImpl->m_pQuiverWindow), NULL);
 #endif
 
 	pQuiverImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pQuiverImpl);
@@ -1920,7 +1928,7 @@ static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, g
 	// gtk_ui_manager signals
 static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
 {
-	if (GTK_IS_ITEM(proxy))
+	if (GTK_IS_MENU_ITEM(proxy))
 	{
 		g_signal_connect (proxy, "select",G_CALLBACK (signal_item_select), data);
 		g_signal_connect (proxy, "deselect",G_CALLBACK (signal_item_deselect), data);
@@ -1934,7 +1942,7 @@ static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,Gtk
 	*/
 }
 
-static void signal_item_select (GtkItem *proxy,gpointer data)
+static void signal_item_select (GtkMenuItem *proxy,gpointer data)
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	GtkAction* action;
@@ -1952,7 +1960,7 @@ static void signal_item_select (GtkItem *proxy,gpointer data)
 
 }
 
-static void signal_item_deselect (GtkItem *proxy,gpointer data)
+static void signal_item_deselect (GtkMenuItem *proxy,gpointer data)
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	GtkAction* action;
@@ -2868,6 +2876,11 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 								dlg.GetAdjustmentHours(),
 								dlg.GetAdjustmentMinutes(),
 								dlg.GetAdjustmentSeconds()));
+
+				if (dlg.ModifyModificationTime())
+				{
+					adjustDateTaskPtr->AddAdjustDateFields(AdjustDateTask::DATE_FIELD_MODIFICATION_TIME);
+				}
 
 				if (dlg.ModifyExifDate())
 				{

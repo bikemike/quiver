@@ -189,7 +189,7 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 
 	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
 	gtk_widget_show(m_pBtnOK);
-	gtk_container_add(GTK_CONTAINER(m_pDialogRename->action_area),m_pBtnOK);
+	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogRename)),m_pBtnOK);
 
 	m_pTglBtnSubfolders       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "rename_cb_subfolders") );
 

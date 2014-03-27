@@ -330,7 +330,8 @@ public:
 		m_pParent(parent), m_TaskMgrPtr(TaskManager::GetInstance())
 	{
 		m_pWidget = gtk_dialog_new();
-		gtk_dialog_set_has_separator(GTK_DIALOG(m_pWidget),FALSE);
+		//FIXME: function gone?
+		//gtk_dialog_set_has_separator(GTK_DIALOG(m_pWidget),FALSE);
 		/*
 		m_pWidget = gtk_dialog_new_with_buttons ("Task Manager",
 			parent_window,
@@ -349,7 +350,7 @@ public:
 		g_signal_connect (G_OBJECT (m_pWidget), "response",
 			G_CALLBACK (signal_response), this);
 		
-		gtk_box_set_spacing(GTK_BOX(GTK_DIALOG(m_pWidget)->vbox), 10);
+		gtk_box_set_spacing(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))), 10);
 
 		//spacing 10 between each item
 	}
@@ -381,7 +382,7 @@ public:
 		{
 			TaskProgressGUIPtr taskGUIPtr(new TaskProgressGUI(this, taskPtr));
 
-			gtk_box_pack_start (GTK_BOX(GTK_DIALOG(m_pWidget)->vbox),
+			gtk_box_pack_start (GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))),
 				taskGUIPtr->GetWidget(),
 				FALSE,
 				TRUE,
@@ -399,7 +400,7 @@ public:
 		itr = m_mapTaskGUI.find(taskPtr);
 		if (m_mapTaskGUI.end() != itr)
 		{
-			gtk_container_remove(GTK_CONTAINER(GTK_DIALOG(m_pWidget)->vbox), itr->second->GetWidget());
+			gtk_container_remove(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))), itr->second->GetWidget());
 			m_mapTaskGUI.erase(itr);
 
 			int w, h;

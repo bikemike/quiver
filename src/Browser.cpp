@@ -157,6 +157,8 @@ public:
 
 	Browser *m_BrowserParent;
 
+	GtkCssProvider* m_pCssProvider;
+
 	ImageLoader m_ImageLoader;
 	IPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
 
@@ -585,7 +587,7 @@ void notebook_page_removed  (GtkNotebook *notebook,
 	if (0 == gtk_notebook_get_n_pages(notebook))
 	{
 		gtk_widget_hide(GTK_WIDGET(notebook));
-		if (!GTK_WIDGET_VISIBLE(pBrowserImpl->m_pImageView))
+		if (!gtk_widget_get_visible(pBrowserImpl->m_pImageView))
 		{
 			gtk_widget_hide(pBrowserImpl->vpaned);
 		}
@@ -637,6 +639,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	GtkWidget *scrolled_window;
 	GtkWidget *hbox,*vbox;
 	
+	m_pCssProvider = gtk_css_provider_new();
 
 #ifndef QUIVER_MAEMO
 	hscale = gtk_hscale_new_with_range(20,256,1);
@@ -815,19 +818,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
 #endif
 	{
-		if (!strBGColorImg.empty())
-		{
-			GdkColor color;
-			gdk_color_parse(strBGColorImg.c_str(),&color);
-			gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
-		}
-		
-		if (!strBGColorThumb.empty())
-		{
-			GdkColor color;
-			gdk_color_parse(strBGColorThumb.c_str(),&color);
-			gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
-		}
+		std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
+		strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
+		gtk_css_provider_load_from_data(m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
+		gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 	}
 
 	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,this,NULL);
@@ -896,6 +890,8 @@ Browser::BrowserImpl::~BrowserImpl()
 		NULL,
 		this);
 
+	gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(),GTK_STYLE_PROVIDER(m_pCssProvider));
+	g_object_unref(m_pCssProvider);
 
 }
 
@@ -1109,11 +1105,11 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 
 	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
 	
-	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(m_pImageView))
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(m_pImageView))
 	{
 
-		width = m_pImageView->allocation.width;
-		height = m_pImageView->allocation.height;
+		width = gtk_widget_get_allocated_width(m_pImageView);
+		height = gtk_widget_get_allocated_height(m_pImageView);
 	}
 
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
@@ -1134,7 +1130,7 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 			g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
 		}
 		
-		if (GTK_WIDGET_MAPPED(m_pImageView))
+		if (gtk_widget_get_mapped(m_pImageView))
 		{
 			
 			m_ImageLoader.LoadImageAtSize(f,width,height);
@@ -1479,7 +1475,7 @@ entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data)
 {
 	switch(event->keyval)
 	{
-		case GDK_Escape:
+		case GDK_KEY_Escape:
 			gtk_widget_hide(widget);
 			break;
 	}
@@ -1862,10 +1858,10 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(Imag
 	gint width=0, height=0;
 	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(parent->m_pImageView));
 	
-	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(parent->m_pImageView))
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(parent->m_pImageView))
 	{
-		width = parent->m_pImageView->allocation.width;
-		height = parent->m_pImageView->allocation.height;
+		width = gtk_widget_get_allocated_width(parent->m_pImageView);
+		height = gtk_widget_get_allocated_height(parent->m_pImageView);
 	}
 	
 	parent->SetImageIndex(event->GetIndex(),true);
@@ -1909,46 +1905,30 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 			if (event->GetNewBoolean())
 			{
 				// use theme color
-				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, NULL );
-				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, NULL );
+				gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider));
 			}
 			else
 			{
-				GdkColor color;
-				
+				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
 				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
-				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
-						
-				gdk_color_parse(strBGColorThumb.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
-				
-				gdk_color_parse(strBGColorImg.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color);
+				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
+				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
+				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
+				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 				
 			}
 		}
-		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() )
+		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() || QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
 		{
 			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
 			{
-				GdkColor color;
-				
-				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
-				
-				gdk_color_parse(strBGColorImg.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color );
-			}			
-		}
-		else if (QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
-		{
-			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
-			{
-				GdkColor color;
 				
 				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
-
-				gdk_color_parse(strBGColorThumb.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
+				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
+				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
+				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 			}
 		}
 		else if (QUIVER_PREFS_APP_WINDOW_FULLSCREEN == event->GetKey() )
@@ -1974,7 +1954,7 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
 
-	if (GTK_WIDGET_MAPPED(m_pBrowserImpl->m_pIconView) && 
+	if (gtk_widget_get_mapped(m_pBrowserImpl->m_pIconView) && 
 		item.m_ulIndex < m_pBrowserImpl->m_ImageListPtr->GetSize())
 	{
 		QuiverFile f(item.m_QuiverFile);
