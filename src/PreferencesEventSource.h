@@ -10,7 +10,7 @@ class PreferencesEventSource : public virtual AbstractEventSource
 {
 
 public:
-	typedef boost::signal<void (PreferencesEventPtr)> PreferencesSignal;
+	typedef boost::signals2::signal<void (PreferencesEventPtr)> PreferencesSignal;
 	typedef boost::shared_ptr<PreferencesSignal> PreferencesSignalPtr;
 
 	PreferencesEventSource() : m_sigPreferenceChangedPtr(new PreferencesSignal())

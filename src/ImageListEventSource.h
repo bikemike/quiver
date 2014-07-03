@@ -11,7 +11,7 @@ class ImageListEventSource : public virtual AbstractEventSource
 {
 
 public:
-	typedef boost::signal<void (ImageListEventPtr)> ImageListSignal;
+	typedef boost::signals2::signal<void (ImageListEventPtr)> ImageListSignal;
 	typedef boost::shared_ptr<ImageListSignal> ImageListSignalPtr;
 
 	ImageListEventSource() : m_sigContentsChangedPtr(new ImageListSignal()),

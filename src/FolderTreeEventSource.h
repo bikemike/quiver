@@ -9,7 +9,7 @@ class FolderTreeEventSource : public virtual AbstractEventSource
 public:
 	virtual ~FolderTreeEventSource(){};
 
-	typedef boost::signal<void (FolderTreeEventPtr)> FolderTreeSignal;
+	typedef boost::signals2::signal<void (FolderTreeEventPtr)> FolderTreeSignal;
 
 	void AddEventHandler(IEventHandlerPtr handler);
 

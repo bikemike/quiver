@@ -6,7 +6,7 @@ void PreferencesEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 	IPreferencesEventHandlerPtr h = boost::static_pointer_cast<IPreferencesEventHandler>(handler);
 	
-	boost::signals::connection c = m_sigPreferenceChangedPtr->connect( boost::bind(&IPreferencesEventHandler::HandlePreferenceChanged,h,_1) );
+	boost::signals2::connection c = m_sigPreferenceChangedPtr->connect( boost::bind(&IPreferencesEventHandler::HandlePreferenceChanged,h,_1) );
 	MapConnection(handler,c);
 	
 }

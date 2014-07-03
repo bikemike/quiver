@@ -1635,6 +1635,16 @@ static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
 
 
 #endif
+
+static gboolean timeout_folder_tree_thread_pool_add(gpointer user_data)
+{
+	MyDataStruct* mydata = (MyDataStruct*)user_data;
+	folder_tree_thread_pool_add(mydata->pFolderTreeImpl->m_pGThreadPool, mydata);
+
+	return FALSE;
+}
+
+
 void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 {
 	int iNodeOrder = 0;
@@ -1891,7 +1901,8 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	mydata->pFolderTreeImpl = this;
 	//pthread_t thread_id;
 	//pthread_create(&thread_id, NULL, thread_check_for_subdirs, mydata);
-	folder_tree_thread_pool_add(m_pGThreadPool, mydata);
+
+	gdk_threads_add_timeout(1000, timeout_folder_tree_thread_pool_add, mydata);
 	//m_setFolderThreads.insert(thread_id);
 
 	g_object_unref(file_home);

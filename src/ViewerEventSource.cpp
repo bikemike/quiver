@@ -5,7 +5,7 @@ void ViewerEventSource::AddEventHandler(IEventHandlerPtr handler)
 {
 	IViewerEventHandlerPtr h = boost::static_pointer_cast<IViewerEventHandler>(handler);
 	
-	boost::signals::connection c = m_sigCursorChanged.connect( boost::bind(&IViewerEventHandler::HandleCursorChanged,h,_1) );
+	boost::signals2::connection c = m_sigCursorChanged.connect( boost::bind(&IViewerEventHandler::HandleCursorChanged,h,_1) );
 	MapConnection(handler,c);
 
 	c = m_sigItemActivated.connect( boost::bind(&IViewerEventHandler::HandleItemActivated,h,_1) );

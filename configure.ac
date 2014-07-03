@@ -58,6 +58,8 @@ QUIVER_MODULES="gtk+-3.0 gio-2.0"
 
 PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 
+PKG_CHECK_MODULES([LIBSQLITE], [sqlite3], [have_sqlite3=yes],[have_sqlite3=no])
+
 PKG_CHECK_MODULES([GSTREAMER], [gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-app-1.0])
 
 
@@ -121,9 +123,6 @@ AC_SUBST([PACKAGE_CFLAGS])
 PKG_CHECK_MODULES([PACKAGE], [$QUIVER_MODULES])
 
 AX_BOOST_BASE([1.33.1])
-if test x$boost_signals_static = x; then
-AX_BOOST_SIGNALS
-fi
 
 
 AC_SUBST([PACKAGE_CFLAGS])
@@ -131,6 +130,9 @@ AC_SUBST([PACKAGE_LIBS])
 
 AC_SUBST([LIBEXIF_CFLAGS])
 AC_SUBST([LIBEXIF_LIBS])
+
+AC_SUBST([LIBSQLITE_CFLAGS])
+AC_SUBST([LIBSQLITE_LIBS])
 
 AC_SUBST([GSTREAMER_CFLAGS])
 AC_SUBST([GSTREAMER_LIBS])

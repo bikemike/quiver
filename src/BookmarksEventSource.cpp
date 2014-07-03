@@ -6,7 +6,7 @@ void BookmarksEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 	IBookmarksEventHandlerPtr h = boost::static_pointer_cast<IBookmarksEventHandler>(handler);
 	
-	boost::signals::connection c = m_sigBookmarkChangedPtr->connect( boost::bind(&IBookmarksEventHandler::HandleBookmarkChanged,h,_1) );
+	boost::signals2::connection c = m_sigBookmarkChangedPtr->connect( boost::bind(&IBookmarksEventHandler::HandleBookmarkChanged,h,_1) );
 	MapConnection(handler,c);
 	
 }

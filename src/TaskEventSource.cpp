@@ -10,7 +10,7 @@ void TaskEventSource::AddEventHandler(IEventHandlerPtr handler)
 	if (NULL == h.get())
 		return;
 
-	boost::signals::connection c = m_sigTaskStarted.connect( boost::bind(&ITaskEventHandler::HandleTaskStarted,h,_1) );
+	boost::signals2::connection c = m_sigTaskStarted.connect( boost::bind(&ITaskEventHandler::HandleTaskStarted,h,_1) );
 	MapConnection(handler,c);
 
 	c = m_sigTaskResumed.connect( boost::bind(&ITaskEventHandler::HandleTaskResumed,h,_1) );

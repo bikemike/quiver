@@ -10,7 +10,7 @@ class ExternalToolsEventSource : public virtual AbstractEventSource
 {
 
 public:
-	typedef boost::signal<void (ExternalToolsEventPtr)> ExternalToolsSignal;
+	typedef boost::signals2::signal<void (ExternalToolsEventPtr)> ExternalToolsSignal;
 	typedef boost::shared_ptr<ExternalToolsSignal> ExternalToolsSignalPtr;
 
 	ExternalToolsEventSource() : m_sigExternalToolChangedPtr(new ExternalToolsSignal())

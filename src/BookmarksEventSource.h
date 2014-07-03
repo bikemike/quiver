@@ -10,7 +10,7 @@ class BookmarksEventSource : public virtual AbstractEventSource
 {
 
 public:
-	typedef boost::signal<void (BookmarksEventPtr)> BookmarksSignal;
+	typedef boost::signals2::signal<void (BookmarksEventPtr)> BookmarksSignal;
 	typedef boost::shared_ptr<BookmarksSignal> BookmarksSignalPtr;
 
 	BookmarksEventSource() : m_sigBookmarkChangedPtr(new BookmarksSignal())

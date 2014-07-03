@@ -42,7 +42,7 @@ void AbstractEventSource::UnblockHandler(IEventHandlerPtr handler)
 	p = m_mapConnectionsPtr->equal_range(handler);
 	for (itr = p.first; itr != p.second; ++itr)
 	{	
-		itr->second.unblock();
+		m_mapConnectionBlockerMap[itr->second]->unblock();
 	}
 }
 void AbstractEventSource::BlockHandler(IEventHandlerPtr handler)
@@ -52,7 +52,8 @@ void AbstractEventSource::BlockHandler(IEventHandlerPtr handler)
 	p = m_mapConnectionsPtr->equal_range(handler);
 	for (itr = p.first; itr != p.second; ++itr)
 	{	
-		itr->second.block();
+		m_mapConnectionBlockerMap[itr->second]->block();
+
 	}
 }
 void AbstractEventSource::RemoveEventHandler(IEventHandlerPtr handler)

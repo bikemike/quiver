@@ -5,7 +5,7 @@ void BrowserEventSource::AddEventHandler(IEventHandlerPtr handler)
 {
 	IBrowserEventHandlerPtr h = boost::static_pointer_cast<IBrowserEventHandler>(handler);
 	
-	boost::signals::connection c = m_sigSelectionChanged.connect( boost::bind(&IBrowserEventHandler::HandleSelectionChanged,h,_1) );
+	boost::signals2::connection c = m_sigSelectionChanged.connect( boost::bind(&IBrowserEventHandler::HandleSelectionChanged,h,_1) );
 	MapConnection(handler,c);
 
 	c = m_sigCursorChanged.connect( boost::bind(&IBrowserEventHandler::HandleCursorChanged,h,_1) );
