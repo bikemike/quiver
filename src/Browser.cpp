@@ -1419,7 +1419,7 @@ static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event,
 	gint x, y;
 	gtk_widget_get_pointer(GTK_WIDGET(iconview), &x, &y);
 
-	guint cell =  quiver_icon_view_get_cell_for_xy(iconview, x, y);
+	gulong cell =  quiver_icon_view_get_cell_for_xy(iconview, x, y);
 
 	if (G_MAXULONG == cell)
 		return FALSE;

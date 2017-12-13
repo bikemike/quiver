@@ -103,11 +103,37 @@ namespace QuiverVideoOps
 						gint n, d;
 						n = gst_value_get_fraction_numerator(fraction);
 						d = gst_value_get_fraction_denominator(fraction);
-#if !GST_CHECK_VERSION(0,10,36)
-						// bug in gstreamer has n / d reversed
-						// https://bugzilla.gnome.org/show_bug.cgi?id=665882
-						std::swap(n,d);
-#endif
+
+						bool have_plugin_version = true;
+						GstPlugin* plugin = gst_registry_find_plugin(gst_registry_get(), "gdkpixbuf");
+						if (NULL != plugin)
+						{
+							const gchar* ver = gst_plugin_get_version(plugin);
+							int major, minor, micro;
+							major = 0; minor = 0; micro = 0;
+							sscanf(ver, "%d.%d.%d", &major, &minor, &micro);
+
+							if (major < 0)
+								have_plugin_version = false;
+							else if (0 == major)
+								if (minor < 10)
+									have_plugin_version = false;
+								else if (10 == minor)
+									if (micro < 31)
+										have_plugin_version = false;
+						}
+						else
+						{
+							have_plugin_version = false;
+						}
+
+						if (!have_plugin_version)
+						{
+							// bug in gstreamer has n / d reversed
+							// https://bugzilla.gnome.org/show_bug.cgi?id=665882
+							std::swap(n,d);
+						}
+
 						if (NULL != numerator)
 							*numerator = n;
 						if (NULL != denominator)

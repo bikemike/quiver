@@ -33,10 +33,6 @@ public:
 
 
 	void                SetInputFolder(std::string strSrcURI);
-	void                SetIncludeSubfolders(bool bIncludeSubfolders);
-
-	// the output directory must be specified
-	void                SetOutputFolder(std::string strDestDirURI);
 
 	// if not set, the default format is: YYYY-MM-DD
 	// pulled from the exif data
@@ -62,8 +58,6 @@ private:
 	std::vector<QuiverFile> m_vectQuiverFiles;
 
 	std::string       m_strSrcDirURI;
-	bool              m_bIncludeSubfolders;
-	std::string       m_strDestDirURI;
 	std::string       m_strTemplate;
 	int               m_iStartNumber;
 	ImageList::SortBy m_eSortBy;

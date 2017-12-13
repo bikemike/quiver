@@ -35,7 +35,7 @@ public:
 };
 
 RenameTask::RenameTask()
-	: m_PrivateImplPtr(new PrivateImpl(this)), m_iCurrentFile(0), m_bIncludeSubfolders(false), m_iStartNumber(1), m_eSortBy(ImageList::SORT_BY_DATE)
+	: m_PrivateImplPtr(new PrivateImpl(this)), m_iCurrentFile(0), m_iStartNumber(1), m_eSortBy(ImageList::SORT_BY_DATE)
 {
 	//SetOutputFolder("~");
 }
@@ -102,18 +102,6 @@ void RenameTask::AddFiles(std::vector<QuiverFile> vectQuiverFiles)
 void RenameTask::SetInputFolder(std::string strSrcURI)
 {
 	m_strSrcDirURI = strSrcURI;
-}
-
-void RenameTask::SetIncludeSubfolders(bool bIncludeSubfolders)
-{
-	m_bIncludeSubfolders = bIncludeSubfolders;
-}
-
-
-// the output directory must be specified
-void RenameTask::SetOutputFolder(std::string strDestDirURI)
-{
-	m_strDestDirURI = strDestDirURI;
 }
 
 // if not set, the default is an empty template
@@ -209,18 +197,33 @@ void RenameTask::Run()
 {
 	char szText[256];
 	// populate list:
+
+	// FIXME: this should be a class variable so it isn't
+	// updated on pause/resume
 	ImageListPtr imgListPtr(new ImageList(false));
+
 	std::list<std::string> listFiles;
 	listFiles.push_back(m_strSrcDirURI);
-	imgListPtr->SetImageList(&listFiles, m_bIncludeSubfolders);
+
+	imgListPtr->SetImageList(&listFiles, false);
 	imgListPtr->Sort(m_eSortBy);
 
 	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();	
 
 	std::map<std::string, int> mapFileCounter;
+
+	// FIXME: this should be a class variable so it isn't
+	// updated on pause/resume
+	std::vector<std::string> m_vectSrc;
+	//for () // go through the list and make s
+	{
+		//  src = 
+		//  dst = getDestName()
+
+	}
+
 	while (m_iCurrentFile < m_vectQuiverFiles.size() )
 	{
-		GError* error = NULL;
 
 		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
 
@@ -256,9 +259,7 @@ void RenameTask::Run()
 		else
 			dstname = g_strdup_printf("%s", strDstName.c_str());
 
-		GFile* dstdir = g_file_new_for_uri(m_strDestDirURI.c_str());
-
-		GFile* dst = g_file_get_child(dstdir, dstname);
+		GFile* dst = g_file_get_child(srcdir, dstname);
 
 		char* dst_display_name = g_file_get_parse_name(dst);
 
@@ -271,15 +272,18 @@ void RenameTask::Run()
 		if ( NULL != info)
 		{
 			const char* display_name = g_file_info_get_display_name(info);
-			g_snprintf(szText, 256, "Copying %s to %s", display_name, dst_display_name);
+			g_snprintf(szText, 256, "Renaming %s to %s", display_name, dst_display_name);
 			g_object_unref(info);
 		}
 		else
 		{
 			gchar* shortname = g_file_get_basename(src);
-			g_snprintf(szText, 256, "Copying %s to %s", shortname, dst_display_name);
+			g_snprintf(szText, 256, "Renaming %s to %s", shortname, dst_display_name);
 			g_free(shortname);
 		}
+
+		printf(szText);
+		printf("\n");
 
 		g_free(dst_display_name);
 
@@ -288,6 +292,7 @@ void RenameTask::Run()
 
 		GFileCopyFlags flags = G_FILE_COPY_NONE;
 
+		GError* error = NULL;
 		gboolean copied = 
 			g_file_copy(src,
 				dst,
@@ -299,7 +304,7 @@ void RenameTask::Run()
 		// if there was an error, 
 		if (NULL != error)
 		{
-			printf("Error copying file! %s to %s: %s\n", f.GetURI(), m_strDestDirURI.c_str(), error->message); 
+			printf("Error renaming file! %s -> %s : %s\n", f.GetURI(), dst_display_name, error->message); 
 			g_error_free(error);
 			error = NULL;
 			// message box asking if they want to skip, skip all, retry, cancel
@@ -307,7 +312,6 @@ void RenameTask::Run()
 
 
 
-		g_object_unref(dstdir);
 		g_object_unref(dst);
 
 		g_free(dstname);
@@ -347,12 +351,12 @@ void RenameTask::Run()
 
 		if (ShouldPause())
 		{
-			break;
+			//break;
 		}
 
 		if (ShouldCancel())
 		{
-			break;
+			//break;
 		}
 	}				
 }

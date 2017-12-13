@@ -2807,9 +2807,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			// organize pictures dialog
 			RenameTaskPtr renameTaskPtr(new RenameTask());
 			renameTaskPtr->SetInputFolder( dlg.GetInputFolder() );
-			renameTaskPtr->SetOutputFolder( dlg.GetOutputFolder() );
 			renameTaskPtr->SetTemplate( dlg.GetTemplate() );
-			renameTaskPtr->SetIncludeSubfolders( dlg.GetIncludeSubfolders() );
 
 			/*
 			std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
