@@ -1036,6 +1036,9 @@ static gboolean quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr)
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
 
+	cairo_set_source_rgb(cr,0.3,0.3,0.3);
+	cairo_paint(cr);
+
 	cairo_rectangle_list_t* rectangles = cairo_copy_clip_rectangle_list(cr);
 
 	int rect_index = 0;

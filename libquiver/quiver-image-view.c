@@ -1107,6 +1107,9 @@ quiver_image_view_draw(GtkWidget* widget, cairo_t* cr)
 	QuiverImageView *imageview;
 	imageview = QUIVER_IMAGE_VIEW(widget);
 
+	cairo_set_source_rgb(cr,0.,0.,0.);
+	cairo_paint(cr);
+
 	if (NULL != imageview->priv->pixbuf)
 	{
 		draw_pixbuf(imageview, cr);
