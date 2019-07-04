@@ -170,6 +170,7 @@ public:
 	static boost::shared_ptr<GThreadPool> c_ThreadPoolPtr;
 
 	bool m_bThumbloadFail;
+	time_t m_cachedTimeT = 0;
 };
 
 class ThreadPoolDestructor
@@ -1045,7 +1046,9 @@ ExifData* QuiverFile::QuiverFileImpl::GetExifData()
 
 time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 {
-	time_t date = 0;
+	if (m_cachedTimeT != 0)
+		return m_cachedTimeT;
+
 	if (fromExif && !IsVideo())
 	{
 		ExifData* pExifData = GetExifData();
@@ -1060,6 +1063,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 				exif_entry_get_value(pEntry,szDate,20);
 
 				struct tm tm_exif_time = {0};
+				printf("szDate: %s\n", szDate);
 
 				int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
 					&tm_exif_time.tm_year,
@@ -1069,21 +1073,57 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 					&tm_exif_time.tm_min,
 					&tm_exif_time.tm_sec);
 
-				tm_exif_time.tm_year -= 1900;
-				tm_exif_time.tm_mon -= 1;
-				tm_exif_time.tm_isdst = -1;
-
-				if (6 == num_substs)
+				if (6 == num_substs && tm_exif_time.tm_year >= 1970 && tm_exif_time.tm_year < 2100)
 				{
+					tm_exif_time.tm_year -= 1900;
+					tm_exif_time.tm_mon -= 1;
+					tm_exif_time.tm_isdst = -1;
+
 					// successfully parsed date
-					date = mktime(&tm_exif_time);
+					m_cachedTimeT = mktime(&tm_exif_time);
 				}
 				
 			}
 		}
 	}
+	else
+	{
+	       	// try using exiftool, if available
+		// Date/Time Original              : 2017:01:22 14:39:48
+		// Date/Time Original              : 2011:09:18 17:38:37-07:00 DST
+		// exiftool -DateTimeOriginal -MediaCreateDate FILENAME 
+		gchar* output = NULL;
+		bool success = g_spawn_command_line_sync((std::string("exiftool -s3 -DateTimeOriginal -MediaCreateDate \"") + GetFilePath() + "\"").c_str(), &output, NULL,NULL, NULL);
+		if (success)
+		{
+			struct tm tm_exif_time = {0};
 
-	if (0 == date) // unable to get exif date	
+			int num_substs = sscanf(output,"%04d:%02d:%02d %02d:%02d:%02d",
+				&tm_exif_time.tm_year,
+				&tm_exif_time.tm_mon,
+				&tm_exif_time.tm_mday,
+				&tm_exif_time.tm_hour,
+				&tm_exif_time.tm_min,
+				&tm_exif_time.tm_sec);
+
+			tm_exif_time.tm_year -= 1900;
+			tm_exif_time.tm_mon -= 1;
+			tm_exif_time.tm_isdst = -1;
+
+			if (6 == num_substs)
+			{
+				// successfully parsed date
+				m_cachedTimeT = mktime(&tm_exif_time);
+			}
+			
+			printf(output);
+			printf("\n");
+			g_free(output);
+		}
+	}
+
+
+	if (0 == m_cachedTimeT) // unable to get exif date	
 	{
 		// use ctime or mtime
 		GFileInfo *pInfo = GetFileInfo();
@@ -1092,11 +1132,14 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 		{
 			GTimeVal tv;
 			g_file_info_get_modification_time(pInfo, &tv);
-			date = tv.tv_sec;
+			m_cachedTimeT = tv.tv_sec;
 		}
 	}
+
+	printf(GetFilePath().c_str());
+	printf(": %d\n", m_cachedTimeT);
 	
-	return date;
+	return m_cachedTimeT;
 }	
 
 

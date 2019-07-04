@@ -153,28 +153,31 @@ std::string OrganizeTask::DoVariableSubstitution(std::string strTemplate, GDateT
 {
 	std::map<std::string, std::string> mapSubstFields;
 
-	GDateTime* datetime_adjusted = g_date_time_add_hours (datetime, -dayExtension);
-
-	gchar szDate[20];
-
-	g_snprintf(szDate, 20, "%04d",
-		g_date_time_get_year(datetime_adjusted));
-	mapSubstFields.insert(std::pair<std::string, std::string>("YYYY", szDate));
-
-	g_snprintf(szDate, 20, "%02d",
-		(guint)g_date_time_get_month(datetime_adjusted));
-	mapSubstFields.insert(std::pair<std::string, std::string>("MM", szDate));
-
-	g_snprintf(szDate, 20, "%02d",
-		g_date_time_get_day_of_month(datetime_adjusted));
-	mapSubstFields.insert(std::pair<std::string, std::string>("DD", szDate));
-
-	g_date_time_unref(datetime_adjusted);
-
-	std::map<std::string, std::string>::iterator itr;
-	for (itr = mapSubstFields.begin(); mapSubstFields.end() != itr; ++itr)
+	if (datetime)
 	{
-		strTemplate = boost::replace_all_copy( strTemplate, itr->first, itr->second);
+		GDateTime* datetime_adjusted = g_date_time_add_hours (datetime, -dayExtension);
+
+		gchar szDate[20];
+
+		g_snprintf(szDate, 20, "%04d",
+			g_date_time_get_year(datetime_adjusted));
+		mapSubstFields.insert(std::pair<std::string, std::string>("YYYY", szDate));
+
+		g_snprintf(szDate, 20, "%02d",
+			(guint)g_date_time_get_month(datetime_adjusted));
+		mapSubstFields.insert(std::pair<std::string, std::string>("MM", szDate));
+
+		g_snprintf(szDate, 20, "%02d",
+			g_date_time_get_day_of_month(datetime_adjusted));
+		mapSubstFields.insert(std::pair<std::string, std::string>("DD", szDate));
+
+		g_date_time_unref(datetime_adjusted);
+
+		std::map<std::string, std::string>::iterator itr;
+		for (itr = mapSubstFields.begin(); mapSubstFields.end() != itr; ++itr)
+		{
+			strTemplate = boost::replace_all_copy( strTemplate, itr->first, itr->second);
+		}
 	}
 	return strTemplate;
 }
@@ -213,6 +216,10 @@ void OrganizeTask::Run()
 		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile++];
 
 		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
+		if (nullptr == datetime)
+		{
+			printf("ERROR: Date/Time: %s\n", f.GetURI());
+		}
 
 		std::string strFolder = DoVariableSubstitution(m_strFolderTemplate, datetime, m_iDayExtension);
 		std::string strDstDir = m_strDestDirURI + G_DIR_SEPARATOR_S + strFolder + m_strAppendedText;
