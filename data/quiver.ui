@@ -1094,7 +1094,7 @@ see http://foldersize.sf.net
               <object class="GtkEntry" id="rename_entry_template">
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
-                <property name="text" translatable="yes">%Y-%m-%d %H.%M-##</property>
+                <property name="text" translatable="yes">%Y-%m-%d %H.%M.%S-##</property>
                 <property name="primary_icon_activatable">False</property>
                 <property name="secondary_icon_activatable">False</property>
               </object>

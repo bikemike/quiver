@@ -460,8 +460,8 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	//GTK_WIDGET_UNSET_FLAGS(iconview,GTK_DOUBLE_BUFFERED);
 	
 	//iconview->priv->cell_items = g_malloc0( (sizeof *iconview->priv->cell_items));
-	iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(iconview->priv->n_cell_items+1) );
 	iconview->priv->n_cell_items = 0;
+	iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(iconview->priv->n_cell_items+1) );
 
 	//iconview->priv->cell_items[0].selected = TRUE;
 
@@ -536,7 +536,8 @@ quiver_icon_view_realize (GtkWidget *widget)
 					   GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
 					   GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK |
 					   GDK_LEAVE_NOTIFY_MASK |
-					   GDK_SCROLL_MASK
+					   GDK_SCROLL_MASK |
+					   GDK_SMOOTH_SCROLL_MASK
 					   ;
 
 	attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL; // FIXME: | GDK_WA_COLORMAP;
@@ -1423,7 +1424,8 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 gboolean quiver_icon_view_scroll_event ( GtkWidget *widget,
            GdkEventScroll *event)
 {
-	
+printf("Scroll event\n");
+
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
 
@@ -1449,6 +1451,12 @@ gboolean quiver_icon_view_scroll_event ( GtkWidget *widget,
 		{
 			hadjust += gtk_adjustment_get_step_increment(iconview->priv->hadjustment);
 		}
+		else if (GDK_SCROLL_SMOOTH == event->direction)
+		{
+			gdouble page_size = gtk_adjustment_get_page_size (iconview->priv->vadjustment);
+			gdouble scroll_unit = pow (page_size, 2.0 / 3.0);
+			vadjust += event->delta_y * scroll_unit;
+		}
 
 		if (hadjust < gtk_adjustment_get_lower(iconview->priv->hadjustment))
 			hadjust = gtk_adjustment_get_lower(iconview->priv->hadjustment);
@@ -1465,6 +1473,12 @@ gboolean quiver_icon_view_scroll_event ( GtkWidget *widget,
 		else if (GDK_SCROLL_DOWN == event->direction)
 		{
 			vadjust += gtk_adjustment_get_step_increment(iconview->priv->vadjustment);
+		}
+		else if (GDK_SCROLL_SMOOTH == event->direction)
+		{
+			gdouble page_size = gtk_adjustment_get_page_size (iconview->priv->vadjustment);
+			gdouble scroll_unit = pow (page_size, 2.0 / 3.0);
+			vadjust += event->delta_y * scroll_unit;
 		}
 
 		if (vadjust < gtk_adjustment_get_lower(iconview->priv->vadjustment))
@@ -2723,6 +2737,7 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 	}
 	if (iconview->priv->n_cell_items != n_items)
 	{
+		
 		iconview->priv->n_cell_items = n_items;
 		g_free (iconview->priv->cell_items);
 		iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(n_items+1) );

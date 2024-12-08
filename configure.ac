@@ -1,7 +1,7 @@
 dnl Process this file with autoconf to produce a configure script.
 dnl Created by Anjuta application wizard.
 
-AC_INIT([quiver], [0.2.0], [http://mike.yi.org/quiver])
+AC_INIT([quiver],[0.2.0],[http://mike.yi.org/quiver])
 AC_CONFIG_SRCDIR([src/Quiver.cpp])
 
 AC_CONFIG_MACRO_DIR([m4])
@@ -15,14 +15,22 @@ AC_CHECK_HEADER([unordered_map],[AC_DEFINE([HAVE_CXX0X],[],["have cxx0x"])],[])
 AC_LANG_POP([C++])
 
 AM_CONFIG_HEADER([config.h])
-AC_PROG_LIBTOOL
+LT_INIT
 dnl AM_MAINTAINER_MODE
 
 AM_PROG_CC_C_O
 
-AC_ISC_POSIX
+AC_SEARCH_LIBS([strerror],[cposix])
 dnl AC_PROG_CC
-AC_HEADER_STDC
+m4_warn([obsolete],
+[The preprocessor macro `STDC_HEADERS' is obsolete.
+  Except in unusual embedded environments, you can safely include all
+  ISO C90 headers unconditionally.])dnl
+# Autoupdate added the next two lines to ensure that your configure
+# script's behavior did not change.  They are probably safe to remove.
+AC_CHECK_INCLUDES_DEFAULT
+AC_PROG_EGREP
+
 
 AC_CHECK_FUNCS([gettimeofday])
 AC_CHECK_HEADERS([sys/time.h])
@@ -33,7 +41,20 @@ AC_CHECK_HEADER([pthread.h],, [AC_MSG_ERROR([Could not find pthread.h])])
 
 AC_C_CONST
 AC_HEADER_STDBOOL
-AC_HEADER_TIME
+m4_warn([obsolete],
+[Update your code to rely only on HAVE_SYS_TIME_H,
+then remove this warning and the obsolete code below it.
+All current systems provide time.h; it need not be checked for.
+Not all systems provide sys/time.h, but those that do, all allow
+you to include it and time.h simultaneously.])dnl
+AC_CHECK_HEADERS_ONCE([sys/time.h])
+# Obsolete code to be removed.
+if test $ac_cv_header_sys_time_h = yes; then
+  AC_DEFINE([TIME_WITH_SYS_TIME],[1],[Define to 1 if you can safely include both <sys/time.h>
+	     and <time.h>.  This macro is obsolete.])
+fi
+# End of obsolete code.
+
 
 
 AC_PROG_CPP
@@ -52,7 +73,7 @@ dnl Add the languages which your application supports here.
 ALL_LINGUAS="fr"
 AM_GLIB_GNU_GETTEXT
 
-AC_PROG_INTLTOOL([0.21])
+IT_PROG_INTLTOOL([0.21])
 
 QUIVER_MODULES="gtk+-3.0 gio-2.0"
 
@@ -148,7 +169,7 @@ AC_ARG_WITH(
 
 AC_SUBST([quiver_datadir])
 
-AC_OUTPUT([
+AC_CONFIG_FILES([
 Makefile
 po/Makefile.in
 libquiver/Makefile
@@ -156,3 +177,4 @@ src/Makefile
 src/icons/Makefile
 data/Makefile
 ])
+AC_OUTPUT

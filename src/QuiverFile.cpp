@@ -29,6 +29,7 @@
 
 #include <map>
 #include <cmath>
+#include <boost/algorithm/string.hpp>
 
 
 #include <libquiver/quiver-pixbuf-utils.h>
@@ -113,6 +114,7 @@ public:
 	
 	const char* GetMimeType();
 	GFileInfo* GetFileInfo();
+	std::string GetFileName() const;
 	
 	int GetWidth();
 	int GetHeight();
@@ -206,7 +208,7 @@ public:
 
 boost::shared_ptr<GThreadPool> QuiverFile::QuiverFileImpl::c_ThreadPoolPtr;
 
-static void GetImageDimensions(const gchar *uri, gint *width, gint *height);
+static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *width, gint *height);
 static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
                                             gint             height,
                                             gpointer         user_data);
@@ -297,6 +299,17 @@ const char* QuiverFile::QuiverFileImpl::GetMimeType()
 	}
 
 	return m_szMimeType;
+}
+
+std::string QuiverFile::QuiverFileImpl::GetFileName() const
+{
+	std::string s;
+	GFile* gfile = g_file_new_for_uri(m_szURI);
+	char* shortname = g_file_get_basename(gfile);
+	s = shortname;
+	g_free(shortname);
+	g_object_unref(gfile);
+	return s;
 }
 
 GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
@@ -497,7 +510,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	if (NULL != inStream)
 	{
 		GdkPixbufLoader* loader = NULL;
-		loader = gdk_pixbuf_loader_new ();
+		loader = gdk_pixbuf_loader_new_with_mime_type (GetMimeType(), NULL);
 		
 		if (NULL != loader)
 		{
@@ -644,6 +657,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 			{
 				quiver_rect_get_bound_size(size,size, &pixbuf_width,&pixbuf_height,FALSE);
 
+				std::cout << "scale simple 1" << std::endl;
 				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
 									thumb_pixbuf,
 									pixbuf_width,
@@ -666,7 +680,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	{
 		int size = thumbSize->size;
 
-		if (IsVideo())
+		if (IsVideo() && 0)
 		{
 			gint n=1, d=1;
 			GdkPixbuf* video_pixbuf = QuiverVideoOps::LoadPixbuf(m_szURI, &n, &d);
@@ -680,12 +694,14 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				else
 					pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
 
+				std::cout << "setting wxh to " << pixbuf_width << " x " << pixbuf_height << std::endl;
 				m_iWidth = pixbuf_width;
 				m_iHeight = pixbuf_height;
 
 				if (pixbuf_width > size || pixbuf_height > size)
 				{
 					quiver_rect_get_bound_size(size,size, &pixbuf_width,&pixbuf_height,FALSE);
+				std::cout << "scale simple 2" << std::endl;
 					thumb_pixbuf = gdk_pixbuf_scale_simple (
 						video_pixbuf,
 						pixbuf_width,
@@ -783,7 +799,8 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				size_info.size_request = size;			
 
 				GdkPixbufLoader* loader = NULL;
-				loader = gdk_pixbuf_loader_new ();	
+				std::cout << "Mime type: " << GetMimeType() << std::endl;
+				loader = gdk_pixbuf_loader_new_with_mime_type (GetMimeType(), NULL);	
 
 				if (NULL != loader)
 				{
@@ -796,7 +813,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 						gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
 						if (NULL != tmp_error)
 						{
-							printf("error: %s\n",tmp_error->message);
+							printf("error with %s: %s\n",tmp_error->message);
 							g_error_free(tmp_error);
 							break;
 						}
@@ -832,8 +849,12 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				
 				if (-1 == m_iWidth || -1 == m_iHeight)
 				{
-					m_iWidth = size_info.width;
-					m_iHeight = size_info.height;
+					if (size_info.width > 0 && size_info.height > 0)
+					{
+						m_iWidth = size_info.width;
+						m_iHeight = size_info.height;
+						std::cout << "setting2 wxh to " << m_iWidth << " x " << m_iHeight << std::endl;
+					}
 				}
 				
 				if (size_info.width <= size_info.size_request && size_info.height <= size_info.size_request )
@@ -1086,7 +1107,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 			}
 		}
 	}
-	else
+	else if (fromExif)
 	{
 	       	// try using exiftool, if available
 		// Date/Time Original              : 2017:01:22 14:39:48
@@ -1094,8 +1115,16 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 		// exiftool -DateTimeOriginal -MediaCreateDate FILENAME 
 		gchar* output = NULL;
 		bool success = g_spawn_command_line_sync((std::string("exiftool -s3 -DateTimeOriginal -MediaCreateDate \"") + GetFilePath() + "\"").c_str(), &output, NULL,NULL, NULL);
+		//bool success = g_spawn_command_line_sync((std::string("exiftool -api QuickTimeUTC -s3 -DateTimeOriginal -MediaCreateDate \"") + GetFilePath() + "\"").c_str(), &output, NULL,NULL, NULL);
 		if (success)
 		{
+			bool gmt = false;
+			std::string filename = GetFileName();
+			boost::algorithm::to_lower(filename);
+			if (std::string::npos != filename.find("pxl"))
+			{
+				gmt = true;
+			}
 			struct tm tm_exif_time = {0};
 
 			int num_substs = sscanf(output,"%04d:%02d:%02d %02d:%02d:%02d",
@@ -1114,6 +1143,14 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 			{
 				// successfully parsed date
 				m_cachedTimeT = mktime(&tm_exif_time);
+				if (gmt)
+				{
+					GDateTime* datetime = g_date_time_new_utc(tm_exif_time.tm_year + 1900, tm_exif_time.tm_mon + 1, tm_exif_time.tm_mday, tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
+					printf("IS GMT %d - local %d - orig %d\n", m_cachedTimeT, g_date_time_to_unix(datetime));
+					m_cachedTimeT = g_date_time_to_unix(datetime);
+					g_date_time_unref(datetime);
+		
+				}
 			}
 			
 			printf(output);
@@ -1267,7 +1304,7 @@ int QuiverFile::QuiverFileImpl::GetWidth()
 		if (IsVideo())
 			GetVideoDimensions(&m_iWidth, &m_iHeight);
 		else
-			GetImageDimensions(m_szURI, &m_iWidth, &m_iHeight);
+			GetImageDimensions(m_szURI, GetMimeType(), &m_iWidth, &m_iHeight);
 	}
 	return m_iWidth;
 }
@@ -1279,7 +1316,7 @@ int QuiverFile::QuiverFileImpl::GetHeight()
 		if (IsVideo())
 			GetVideoDimensions(&m_iWidth, &m_iHeight);
 		else
-			GetImageDimensions(m_szURI, &m_iWidth, &m_iHeight);
+			GetImageDimensions(m_szURI, GetMimeType(), &m_iWidth, &m_iHeight);
 	}
 	return m_iHeight;
 }
@@ -1419,13 +1456,7 @@ unsigned long long QuiverFile::GetFileSize()
 
 std::string QuiverFile::GetFileName() const
 {
-	std::string s;
-	GFile* gfile = g_file_new_for_uri(m_QuiverFilePtr->m_szURI);
-	char* shortname = g_file_get_basename(gfile);
-	s = shortname;
-	g_free(shortname);
-	g_object_unref(gfile);
-	return s;
+	return m_QuiverFilePtr->GetFileName();
 }
 
 std::string QuiverFile::GetFilePath() const
@@ -1452,10 +1483,12 @@ double QuiverFile::GetLoadTimeInSeconds() const
 void QuiverFile::SetWidth(int w)
 {
 	m_QuiverFilePtr->m_iWidth = w;
+	std::cout << "setting w to " << w << std::endl;
 }
 void QuiverFile::SetHeight(int h)
 {
 	m_QuiverFilePtr->m_iHeight = h;
+	std::cout << "setting h to " << h << std::endl;
 }
 
 void QuiverFile::Reload()
@@ -1516,7 +1549,7 @@ void QuiverFile::QuiverFileImpl::GetVideoDimensions(gint *width, gint *height)
 	}
 }
 
-static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
+static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *width, gint *height)
 {
 	GError *tmp_error = NULL;
 
@@ -1533,7 +1566,7 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 		PixbufLoaderSizeInfo size_info = {0};
 		
 		GdkPixbufLoader* loader = NULL;
-		loader = gdk_pixbuf_loader_new ();	
+		loader = gdk_pixbuf_loader_new_with_mime_type (mimetype, NULL);	
 		
 		if (NULL != loader)
 		{
@@ -1551,6 +1584,7 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 				}
 				if (0 != size_info.width && 0 != size_info.height)
 				{
+					std::cout << "got size" << std::endl;
 					break;
 				}
 			}
@@ -1562,11 +1596,18 @@ static void GetImageDimensions(const gchar *uri, gint *width, gint *height)
 				*width = size_info.width; 
 				*height = size_info.height;
 			}
+			else
+					std::cout << "NOT got size" << std::endl;
+	
 			
 			g_object_unref(loader);
 		}
+		else
+					std::cout << "NOT got size" << std::endl;
 		g_object_unref(inStream);
 	}
+	else
+					std::cout << "NOT got size" << std::endl;
 	g_object_unref(gfile);
 }
 

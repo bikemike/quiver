@@ -232,12 +232,20 @@ void RenameTask::Run()
 		char* basename = g_file_get_basename(src);
 
 		std::string strBaseName(basename);
+		std::string strBaseNameLower = boost::algorithm::to_lower_copy(strBaseName);
 		std::string strExtension;
 
 		std::string::size_type pos = strBaseName.find_last_of(".");
 		if (std::string::npos != pos)
 		{
 			strExtension = strBaseName.substr(pos+1);
+		}
+
+		std::string strSpecialCase;
+		if (f.IsVideo() && strBaseNameLower.find("pxl") != std::string::npos)
+		{
+			// add pxl to rename
+			strSpecialCase = ".pxl";
 		}
 
 		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
@@ -255,7 +263,7 @@ void RenameTask::Run()
 
 		gchar* dstname = NULL;
 		if (!strExtension.empty())
-			dstname = g_strdup_printf("%s.%s", strDstName.c_str(), strExtension.c_str());
+			dstname = g_strdup_printf("%s%s.%s", strDstName.c_str(), strSpecialCase, strExtension.c_str());
 		else
 			dstname = g_strdup_printf("%s", strDstName.c_str());
 

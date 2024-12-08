@@ -566,9 +566,9 @@ public:
 	ImageCache m_ThumbnailCache;
 
 	// gstreamer elements for playing videos
-	GstElement* m_pPipeline;
-	GstElement* m_pXVImageSink;
-	guintptr m_pVideoWindowHandle;
+	//GstElement* m_pPipeline;
+	//GstElement* m_pXVImageSink;
+	//guintptr m_pVideoWindowHandle;
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -1258,11 +1258,13 @@ viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_dat
 			GstFormat format = GST_FORMAT_TIME;
 			gint64 clip_duration = 0;
 
+			/*
 			gboolean queried = gst_element_query_duration(GST_ELEMENT(pViewerImpl->m_pPipeline), format, &clip_duration);
 			if (queried)
 			{
 				gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), ((clip_duration * event->x) / allocation.width));
 			}
+			*/
 
 		}
 	}
@@ -1543,6 +1545,35 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 	{
 		pViewerImpl->m_ImageListPtr->Next();
 	}
+	else if (GDK_SCROLL_SMOOTH == event->direction)
+	{
+		static gdouble delta_x = 0.0;
+		static gdouble delta_y = 0.0;
+		gdouble* delta;
+		delta_x += event->delta_x;
+		delta_y += event->delta_y;
+		if (event->delta_y == 0.f)
+			delta = &delta_x;
+		else 
+			delta = &delta_y;
+
+		if (0.0 <= *delta)
+		{
+			while (*delta > 1.0)
+			{
+				pViewerImpl->m_ImageListPtr->Next();
+				*delta -= 1;
+			}
+		}
+		else
+		{
+			while (*delta < -1.0)
+			{
+				pViewerImpl->m_ImageListPtr->Previous();
+				*delta += 1;
+			}
+		}
+	}
 
 
 	return TRUE;
@@ -1751,7 +1782,7 @@ viewer_volume_value_changed (GtkScaleButton *button, gdouble value, gpointer use
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", gtk_scale_button_get_value(button), NULL);
+	//g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", gtk_scale_button_get_value(button), NULL);
 	//g_object_get(G_OBJECT(m_pPipeline), "current-uri", &uri, NULL);
 }
 
@@ -1909,7 +1940,7 @@ static void signal_image_view_realize (GtkWidget * widget, gpointer user_data)
 #ifdef GDK_WINDOWING_X11
 	{
 		gulong xid = GDK_WINDOW_XID (gtk_widget_get_window (widget));
-		pViewerImpl->m_pVideoWindowHandle = xid;
+		//pViewerImpl->m_pVideoWindowHandle = xid;
 	}
 #endif
 #ifdef GDK_WINDOWING_WIN32
@@ -1958,6 +1989,7 @@ timeout_play_position (gpointer data)
 static gboolean 
 gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 {
+	/*
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	switch (GST_MESSAGE_TYPE (msg)) {
@@ -1997,6 +2029,7 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		default:
 			break;
 	}
+*/
 
 	return TRUE;
 }
@@ -2004,6 +2037,7 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 static GstBusSyncReply
 gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_data)
 {
+/*
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 
@@ -2021,11 +2055,13 @@ gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_da
 	}
 
 	gst_message_unref (message);
+*/
 	return GST_BUS_DROP;
 }
 
 void Viewer::ViewerImpl::UpdateTimeline()
 {
+	/*
 	gint64 pos = 0, len = 0;
 	bool success = gst_element_query_position(m_pPipeline, GST_FORMAT_TIME, &pos);
 	success |= gst_element_query_duration(m_pPipeline, GST_FORMAT_TIME, &len);
@@ -2063,10 +2099,13 @@ void Viewer::ViewerImpl::UpdateTimeline()
 		progress = gdouble(pos)/len;
 
 	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pPlayProgress), progress);
+	*/
 }
 
 void Viewer::ViewerImpl::PlayPauseVideo()
 {
+	return;
+	/*
 	if (!IsVideo())
 		return;
 
@@ -2119,10 +2158,12 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 
 		m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 	}
+*/
 }
 
 void Viewer::ViewerImpl::SkipForward()
 {
+	/*
 	if (IsPlaying())
 	{
 		GstFormat format = GST_FORMAT_TIME;
@@ -2144,10 +2185,12 @@ void Viewer::ViewerImpl::SkipForward()
 			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 		}
 	}
+	*/
 }
 
 void Viewer::ViewerImpl::SkipBack()
 {
+/*
 	if (IsPlaying())
 	{
 		GstFormat format = GST_FORMAT_TIME;
@@ -2169,10 +2212,12 @@ void Viewer::ViewerImpl::SkipBack()
 			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 		}
 	}
+*/
 }
 
 void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 {
+/*
 	SetIsPlaying(false);
 	if (0 != m_iTimeoutMouseMotionNotify)
 	{
@@ -2198,6 +2243,7 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 		if (0 == m_iTimeoutSlideshowID)
 			LoadImage(m_ImageListPtr->GetCurrent());
 	}
+*/
 }
 
 bool Viewer::ViewerImpl::IsVideo()
@@ -2274,6 +2320,8 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 	}
 	else if (widget == pViewerImpl->m_pPlayProgressEventBox)
 	{
+		return FALSE;
+		/*
 		printf("adjust play progress\n");
 		pViewerImpl->m_bWasPlayingBeforeSeek = pViewerImpl->IsPlaying(); 
 
@@ -2299,9 +2347,11 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 
 		if (pViewerImpl->IsPlaying())
 			pViewerImpl->PlayPauseVideo();
+		*/
 	}
 	else
 	{
+		return FALSE;
 		if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
 		{
 			// play video
@@ -2340,7 +2390,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 	g_object_unref(m_pPixbufPlay);
 	g_object_unref(m_pPixbufPlayHighlight);
 
-	gst_object_unref(GST_OBJECT(m_pPipeline));
+	//gst_object_unref(GST_OBJECT(m_pPipeline));
 
 	if (0 != m_iIdleSetIndex)
 	{
@@ -2371,8 +2421,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_ThumbnailLoader(this,2)
 #endif
 	, m_bIsPlaying(false),
-	m_bWasPlayingBeforeSeek(false),
-	m_pVideoWindowHandle(NULL)
+	m_bWasPlayingBeforeSeek(false)//,
+	//m_pVideoWindowHandle(NULL)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -2704,6 +2754,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	
 
 	// set up the gstreamer pipeline
+/*
 	m_pPipeline = gst_element_factory_make("playbin", "player");
 
 	m_pXVImageSink = gst_element_factory_make("xvimagesink", NULL);
@@ -2727,9 +2778,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_scale_button_set_value(GTK_SCALE_BUTTON(m_pVolumeButton), volume);
 
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline));
-	gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL);
-	gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
+	//gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL);
+	//gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
 	gst_object_unref (bus);
+	*/
 }
 
 
@@ -3473,6 +3525,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 
 			if (thumb_width != bound_width || thumb_height != bound_height)
 			{
+				std::cout << "scale simple 3" << std::endl;
 				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
 								pixbuf,
 								bound_width,

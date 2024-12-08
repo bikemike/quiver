@@ -447,6 +447,7 @@ void ImageLoader::Load()
 						
 						if (n != d)
 						{
+							std::cout << "scale simple 5" << std::endl;
 							pixbuf = gdk_pixbuf_scale_simple (
 								video_pixbuf,
 								pixbuf_width,
@@ -465,7 +466,7 @@ void ImageLoader::Load()
 				else
 				{
 
-					GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
+					GdkPixbufLoader* loader = gdk_pixbuf_loader_new_with_mime_type (m_Command.quiverFile.GetMimeType(), NULL);	
 					
 					list<IPixbufLoaderObserver*>::iterator itr;
 					g_mutex_lock(m_csObservers);
@@ -530,6 +531,7 @@ void ImageLoader::Load()
 						gint width,height;
 						width = m_Command.quiverFile.GetWidth();
 						height = m_Command.quiverFile.GetHeight();
+						std::cout << "wxh: " << width << "x" << height << std::endl;
 						if (4 < orientation)
 						{
 							swap(width,height);
@@ -634,6 +636,7 @@ void ImageLoader::Load()
 						
 						if (n != d)
 						{
+							std::cout << "scale simple 4" << std::endl;
 							pixbuf = gdk_pixbuf_scale_simple (
 								video_pixbuf,
 								pixbuf_width,
@@ -651,7 +654,7 @@ void ImageLoader::Load()
 				}
 				else
 				{
-					GdkPixbufLoader* ldr = gdk_pixbuf_loader_new ();	
+					GdkPixbufLoader* ldr = gdk_pixbuf_loader_new_with_mime_type (m_Command.quiverFile.GetMimeType(), NULL);	
 				
 					if (!m_Command.params.fullsize)
 					{
@@ -858,6 +861,9 @@ static gint hack_calculate_size(gdouble ratio, gint size, gint new_size)
 
 void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
+	if (0 == width || 0 == height)
+		return;
+	std::cout << "ImageLoader::SignalSizePrepared: " << width << " x " << height << std::endl;
 	m_Command.quiverFile.SetWidth(width);
 	m_Command.quiverFile.SetHeight(height);
 	

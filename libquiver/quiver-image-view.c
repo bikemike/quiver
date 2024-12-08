@@ -476,7 +476,7 @@ quiver_image_view_realize (GtkWidget *widget)
 					   GDK_EXPOSURE_MASK |
 					   GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK |
 					   GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
-					   GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK| GDK_SCROLL_MASK;
+					   GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK| GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK;
 
 	attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;
 
@@ -1084,15 +1084,13 @@ static void draw_pixbuf(QuiverImageView *imageview, cairo_t *cr)
 	pixbuf_rect.width = MIN(width,gtk_widget_get_allocated_width(widget));
 	pixbuf_rect.height = MIN(height,gtk_widget_get_allocated_height(widget));
 
-	int i;
-	int n_rectangles =0;
-	
 	cairo_save(cr);
 
-	cairo_rectangle(cr,pixbuf_rect.x, pixbuf_rect.y, pixbuf_rect.width, pixbuf_rect.height);
+	cairo_translate(cr, pixbuf_rect.x, pixbuf_rect.y);
+	cairo_rectangle(cr, 0,0, pixbuf_rect.width, pixbuf_rect.height);
 	cairo_clip(cr);
 
-	gdk_cairo_set_source_pixbuf(cr, pixbuf, pixbuf_rect.x, pixbuf_rect.y);
+	gdk_cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
 	cairo_paint(cr);
 
 	cairo_restore(cr);
@@ -1106,9 +1104,6 @@ quiver_image_view_draw(GtkWidget* widget, cairo_t* cr)
 {
 	QuiverImageView *imageview;
 	imageview = QUIVER_IMAGE_VIEW(widget);
-
-	cairo_set_source_rgb(cr,0.,0.,0.);
-	cairo_paint(cr);
 
 	if (NULL != imageview->priv->pixbuf)
 	{
@@ -1530,6 +1525,12 @@ gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
 			quiver_image_view_set_magnification(imageview,
 				quiver_image_view_get_magnification(imageview)*1.3);
 			//vadjust += gtk_adjustment_get_step_increment(imageview->priv->vadjustment);
+		}
+		else if (GDK_SCROLL_SMOOTH == event->direction)
+		{
+			//gdouble page_size = gtk_adjustment_get_page_size (imageview->priv->vadjustment);
+			//gdouble scroll_unit = pow (page_size, 2.0 / 3.0);
+			//vadjust += event->delta_y * scroll_unit;
 		}
 
 	

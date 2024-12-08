@@ -252,10 +252,19 @@ void OrganizeTask::Run()
 		if (m_bRenameFiles)
 		{
 			std::string strExtension;
+			std::string strFilenameLower = boost::algorithm::to_lower_copy(strFilename);
+
 			std::string::size_type pos = strFilename.find_last_of(".");
 			if (std::string::npos != pos)
 			{
 				strExtension = strFilename.substr(pos+1);
+			}
+
+			std::string strSpecialCase;
+			if (f.IsVideo() && strFilenameLower.find("pxl") != std::string::npos)
+			{
+				// add pxl to rename
+				strSpecialCase = ".pxl";
 			}
 
 			std::string strDstNameTmp = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, 0);
@@ -265,7 +274,7 @@ void OrganizeTask::Run()
 				count = mapFileCounter[strDstNameTmp];
 			}
 			strFilename = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, ++count);
-			strFilename += "." + strExtension;
+			strFilename += strSpecialCase + "." + strExtension;
 
 			mapFileCounter[strDstNameTmp] = count;
 		}
@@ -288,13 +297,13 @@ void OrganizeTask::Run()
 		if ( NULL != info)
 		{
 			const char* display_name = g_file_info_get_display_name(info);
-			strText = boost::str(boost::format("Copying %s to %s") % display_name % dstname);
+			strText = boost::str(boost::format("Moving %s to %s") % display_name % dstname);
 			g_object_unref(info);
 		}
 		else
 		{
 			gchar* shortname = g_file_get_basename(src);
-			strText = boost::str(boost::format("Copying %s to %s") % shortname % dstname);
+			strText = boost::str(boost::format("Moving %s to %s") % shortname % dstname);
 			g_free(shortname);
 		}
 		
@@ -329,7 +338,7 @@ void OrganizeTask::Run()
 		*/
 		error = NULL;
 		gboolean copied = 
-			g_file_copy(src,
+			g_file_move(src,
 				dst,
 				flags,
 				m_PrivateImplPtr->m_pCancellable,
@@ -339,7 +348,7 @@ void OrganizeTask::Run()
 		// if there was an error, 
 		if (NULL != error)
 		{
-			printf("Error copying file! %s to %s: %s\n", f.GetURI(), strDstPath.c_str(), error->message); 
+			printf("Error moving file! %s to %s: %s\n", f.GetURI(), strDstPath.c_str(), error->message); 
 			// message box asking if they want to skip, skip all, retry, cancel
 			g_error_free(error);
 			error = NULL;
