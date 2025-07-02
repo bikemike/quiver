@@ -1,0 +1,56 @@
+# Autotools generated files
+Makefile.in
+aclocal.m4
+autom4te.cache/
+compile
+config.guess
+config.h.in
+config.h.in~
+config.log
+config.status
+config.sub
+configure
+depcomp
+install-sh
+ltmain.sh
+missing
+stamp-h1
+
+# Object files and libraries
+*.o
+*.lo
+*.la
+*.slo
+*.so
+*.a
+*.dylib
+
+# Executables
+a.out
+
+# Build directories
+build/
+.deps/
+
+# Other
+*.Po
+*.Tpo
+*~
+*.swp
+*.swo
+quiver
+src/quiver
+po/Makefile.in.in
+po/Makefile.in
+po/Makefile
+po/POTFILES
+po/stamp-it
+po/quiver.pot
+data/quiver.desktop
+data/Makefile.in
+data/Makefile
+src/Makefile.in
+src/Makefile
+libquiver/Makefile.in
+libquiver/Makefile
+Makefile
