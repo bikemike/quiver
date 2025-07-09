@@ -1,7 +1,6 @@
-// JULES_TEST_COMMENT_2
 #include <config.h>
 #include <gtk/gtk.h>
-#include <gdk/gdkkeysyms.h> // For GDK_KEY_* constants, may need review for GTK4 key handling
+#include <gdk/gdkkeysyms.h>
 #include "quiver-icon-view.h"
 #include "quiver-marshallers.h"
 #include <math.h>
@@ -12,12 +11,12 @@
 //#include "gtkintl.h"
 
 
-// #define QUIVER_ICON_VIEW_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), QUIVER_TYPE_ICON_VIEW, QuiverIconViewPrivate)) // Use generated func
+#define QUIVER_ICON_VIEW_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), QUIVER_TYPE_ICON_VIEW, QuiverIconViewPrivate))
 
 /* set up some defaults */
 #define QUIVER_ICON_VIEW_ICON_WIDTH              128
 #define QUIVER_ICON_VIEW_ICON_HEIGHT             128
-#define QUIVER_ICON_VIEW_CELL_PADDING            8 
+#define QUIVER_ICON_VIEW_CELL_PADDING            8
 #define QUIVER_ICON_VIEW_ICON_SHADOW_SIZE        5
 #define QUIVER_ICON_VIEW_ICON_BORDER_SIZE        1
 
@@ -38,7 +37,7 @@ typedef struct _CellItem CellItem;
 struct _CellItem
 {
 	gboolean selected;
-	
+
 };
 
 /* signals */
@@ -65,7 +64,7 @@ enum {
    */
 };
 
-typedef struct _VelocityTimeStruct 
+typedef struct _VelocityTimeStruct
 {
 	gint hvelocity;
 	gint vvelocity;
@@ -106,11 +105,11 @@ struct _QuiverIconViewPrivate
 
 	struct timeval last_motion_time;
 	GList* velocity_time_list;
-	 
+
 	gulong cursor_cell;
 	gulong prelight_cell;
 	gulong cursor_cell_first;
-	
+
 	gboolean mouse_button_is_down;
 
 	gboolean idle_load_running;
@@ -118,15 +117,15 @@ struct _QuiverIconViewPrivate
 	gulong smooth_scroll_cell;
 	gdouble smooth_scroll_hadjust;
 	gdouble smooth_scroll_vadjust;
-	
+
 	QuiverIconViewDragBehavior drag_behavior;
-	
+
 	guint timeout_id_smooth_scroll;
 	guint timeout_id_smooth_scroll_slowdown;
 
 	guint n_columns;
 	guint n_rows;
-	
+
 	/* callback functions and data */
 	QuiverIconViewGetNItemsFunc callback_get_n_items;
 	gpointer callback_get_n_items_data;
@@ -158,25 +157,21 @@ struct _QuiverIconViewPrivate
 
 static void      quiver_icon_view_realize        (GtkWidget *widget);
 
-// static void      quiver_icon_view_size_allocate  (GtkWidget     *widget,
-//                                              GtkAllocation *allocation); // Old GTK3 signature
-static void      quiver_icon_view_size_allocate  (GtkWidget *widget, int width, int height, int baseline); // New GTK4 signature
+static void      quiver_icon_view_size_allocate  (GtkWidget     *widget,
+                                             GtkAllocation *allocation);
 
-/* GtkRequisition based size requests are deprecated in GTK4. Replaced by GtkWidget::measure */
-// static void      quiver_icon_view_size_request (GtkWidget *widget, GtkRequisition *requisition);
-// static void      quiver_icon_view_get_preferred_width (GtkWidget *widget, gint* min_width, gint* natural_width);
-// static void      quiver_icon_view_get_preferred_height (GtkWidget *widget, gint* min_height, gint* natural_height);
-static void      quiver_icon_view_measure (GtkWidget *widget, GtkOrientation orientation, int for_size, int *minimum, int *natural, int *minimum_baseline, int *natural_baseline);
+static void      quiver_icon_view_size_request (GtkWidget *widget, GtkRequisition *requisition);
+static void      quiver_icon_view_get_preferred_width (GtkWidget *widget, gint* min_width, gint* natural_width);
+static void      quiver_icon_view_get_preferred_height (GtkWidget *widget, gint* min_height, gint* natural_height);
 
+static void      quiver_icon_view_send_configure (QuiverIconView *iconview);
 
-static void      quiver_icon_view_send_configure (QuiverIconView *iconview); // May need removal/rework if purely internal state
-
-/* Event VTable functions are deprecated. Event handling is done via Event Controllers in GTK4. */
-/*
 static gboolean  quiver_icon_view_configure_event (GtkWidget *widget,
                     GdkEventConfigure *event);
+static gboolean  quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr);
 static gboolean  quiver_icon_view_button_press_event  (GtkWidget *widget,
                     GdkEventButton *event);
+
 static gboolean  quiver_icon_view_button_release_event (GtkWidget *widget,
                     GdkEventButton *event);
 static gboolean  quiver_icon_view_motion_notify_event (GtkWidget *widget,
@@ -187,12 +182,6 @@ static gboolean  quiver_icon_view_key_press_event  (GtkWidget *widget,
                     GdkEventKey *event);
 static gboolean  quiver_icon_view_leave_notify_event (GtkWidget *widget,
                     GdkEventCrossing *event);
-*/
-
-/* GtkWidget::draw is replaced by GtkWidget::snapshot in GTK4 */
-// static gboolean  quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr);
-static void      quiver_icon_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot);
-
 
 static void      quiver_icon_view_set_hadjustment (QuiverIconView *iconview,
                     GtkAdjustment *hadjustment);
@@ -210,10 +199,9 @@ static void      quiver_icon_view_scroll_to_adjustment_smooth(QuiverIconView *ic
 
 static gboolean  quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview);
 static gboolean  quiver_icon_view_timeout_smooth_scroll(gpointer data);
-// static gboolean  quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data); // Appears unused, can be removed if confirmed
+static gboolean  quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data);
 
-/* GtkStyle is deprecated in GTK4. Styling is done via CSS. */
-// static void      quiver_icon_view_style_set(GtkWidget *widget, GtkStyle *prev_style, gpointer data);
+static void      quiver_icon_view_style_set(GtkWidget *widget, GtkStyle *prev_style, gpointer data);
 
 static void      quiver_icon_view_set_property (GObject *object,
                     guint               prop_id,
@@ -261,7 +249,7 @@ static guint iconview_signals[SIGNAL_COUNT] = {0};
 
 
 /* start private functions */
-static void 
+static void
 quiver_icon_view_class_init (QuiverIconViewClass *klass)
 {
 	GtkWidgetClass *widget_class;
@@ -271,25 +259,17 @@ quiver_icon_view_class_init (QuiverIconViewClass *klass)
 	obj_class = G_OBJECT_CLASS (klass);
 
 	widget_class->realize              = quiver_icon_view_realize;
-	widget_class->size_allocate        = quiver_icon_view_size_allocate; /* Signature updated for GTK4 */
-
-    /* Deprecated size request vfuncs, replaced by measure */
-	// widget_class->get_preferred_width  = quiver_icon_view_get_preferred_width;
-	// widget_class->get_preferred_height = quiver_icon_view_get_preferred_height;
-    widget_class->measure              = quiver_icon_view_measure;
-
-    /* Deprecated draw vfunc, replaced by snapshot */
-	// widget_class->draw                 = quiver_icon_view_draw;
-    gtk_widget_class_set_draw_func(widget_class, quiver_icon_view_snapshot);
-
-	/* Event VTable assignments are deprecated in GTK4. Use event controllers instead. */
-	// widget_class->configure_event      = quiver_icon_view_configure_event;
-	// widget_class->button_press_event   = quiver_icon_view_button_press_event;
-	// widget_class->button_release_event = quiver_icon_view_button_release_event;
-	// widget_class->motion_notify_event  = quiver_icon_view_motion_notify_event;
-	// widget_class->scroll_event         = quiver_icon_view_scroll_event;
-	// widget_class->key_press_event      = quiver_icon_view_key_press_event;
-	// widget_class->leave_notify_event   = quiver_icon_view_leave_notify_event;
+	widget_class->size_allocate        = quiver_icon_view_size_allocate;
+	widget_class->get_preferred_width  = quiver_icon_view_get_preferred_width;
+	widget_class->get_preferred_height = quiver_icon_view_get_preferred_height;
+	widget_class->draw                 = quiver_icon_view_draw;
+	widget_class->configure_event      = quiver_icon_view_configure_event;
+	widget_class->button_press_event   = quiver_icon_view_button_press_event;
+	widget_class->button_release_event = quiver_icon_view_button_release_event;
+	widget_class->motion_notify_event  = quiver_icon_view_motion_notify_event;
+	widget_class->scroll_event         = quiver_icon_view_scroll_event;
+	widget_class->key_press_event      = quiver_icon_view_key_press_event;
+	widget_class->leave_notify_event   = quiver_icon_view_leave_notify_event;
 
 	obj_class->set_property            = quiver_icon_view_set_property;
 	obj_class->get_property            = quiver_icon_view_get_property;
@@ -341,15 +321,15 @@ quiver_icon_view_class_init (QuiverIconViewClass *klass)
 		g_cclosure_marshal_VOID__VOID,
 		G_TYPE_NONE,0);
 
-// #define GTK_PARAM_READABLE G_PARAM_READABLE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB // Already defined or not needed if not installing style props
+#define GTK_PARAM_READABLE G_PARAM_READABLE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
-	/* Style properties are deprecated in GTK4. Styling is done via CSS. */
-	/*
+	/* Style properties */
+	// FIXME -  P_ for last two strings
 	gtk_widget_class_install_style_property (widget_class,
 		g_param_spec_boxed ("selection-box-color",
 		("Selection Box Color"),
 		("Color of the selection box"),
-		GDK_TYPE_COLOR, // GDK_TYPE_COLOR is deprecated, use GdkRGBA. This whole block should be removed.
+		GDK_TYPE_COLOR,
 		GTK_PARAM_READABLE));
 
 	gtk_widget_class_install_style_property (widget_class,
@@ -359,10 +339,7 @@ quiver_icon_view_class_init (QuiverIconViewClass *klass)
 		0, 0xff,
 		0x40,
 		GTK_PARAM_READABLE));
-    */
-    // TODO: If selection-box-color and selection-box-alpha are needed,
-    // they should be implemented using CSS custom properties or by drawing manually in the snapshot function.
-		
+
 	/*
 
 	g_object_class_install_property (obj_class,
@@ -402,10 +379,10 @@ new_default_adjustment (void)
   return GTK_ADJUSTMENT (gtk_adjustment_new (0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
 }
 
-static void 
+static void
 quiver_icon_view_init(QuiverIconView *iconview)
 {
-	iconview->priv = quiver_icon_view_get_instance_private(iconview); /* Correct way to get private struct */
+	iconview->priv = QUIVER_ICON_VIEW_GET_PRIVATE(iconview);
 
 	iconview->priv->callback_get_n_items = NULL;
 	iconview->priv->callback_get_n_items_data = NULL;
@@ -422,7 +399,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->callback_get_text = NULL;
 	iconview->priv->callback_get_text_data = NULL;
 	iconview->priv->callback_get_text_data_destroy = NULL;
-	
+
 	iconview->priv->callback_get_overlay_pixbuf = NULL;
 	iconview->priv->callback_get_overlay_pixbuf_data = NULL;
 	iconview->priv->callback_get_overlay_pixbuf_data_destroy = NULL;
@@ -443,9 +420,9 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->smooth_scroll_cell = G_MAXULONG;
 	iconview->priv->smooth_scroll_hadjust = 0.;
 	iconview->priv->smooth_scroll_vadjust = 0.;
-	
+
 	iconview->priv->drag_behavior = QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND;
-	
+
 	iconview->priv->rubberband_x1 = 0;
 	iconview->priv->rubberband_y1 = 0;
 	iconview->priv->rubberband_x2 = 0;
@@ -456,9 +433,9 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->last_y        = 0;
 	iconview->priv->drag_mode_start = FALSE;
 	iconview->priv->drag_mode_enabled = FALSE;
-	
+
 	iconview->priv->timeout_id_rubberband_scroll = 0;
-	
+
 	iconview->priv->mouse_button_is_down = FALSE;
 
 	iconview->priv->velocity_time_list = NULL;
@@ -480,26 +457,24 @@ quiver_icon_view_init(QuiverIconView *iconview)
 
 
 	gtk_widget_set_can_focus(GTK_WIDGET(iconview),TRUE);
-	/* GTK_DOUBLE_BUFFERED is deprecated in GTK4; widgets are drawn via snapshotting and are effectively always double-buffered. */
-	// GTK_WIDGET_UNSET_FLAGS(iconview,GTK_DOUBLE_BUFFERED);
-	
+	//GTK_WIDGET_UNSET_FLAGS(iconview,GTK_DOUBLE_BUFFERED);
+
 	//iconview->priv->cell_items = g_malloc0( (sizeof *iconview->priv->cell_items));
-	iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(iconview->priv->n_cell_items+1) ); /* +1 for safety, though 0 should be fine for n_cell_items=0 */
+	iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(iconview->priv->n_cell_items+1) );
 	iconview->priv->n_cell_items = 0;
 
-	//iconview->priv->cell_items[0].selected = TRUE; // Example initialization, might not be needed
+	//iconview->priv->cell_items[0].selected = TRUE;
 
-	/* GtkStyle and "style-set" signal are deprecated in GTK4. Use CSS for styling. */
-	// g_signal_connect (GTK_WIDGET(iconview), "style-set",
-	// 		G_CALLBACK (quiver_icon_view_style_set),
-	// 		NULL);
+	g_signal_connect (GTK_WIDGET(iconview), "style-set",
+			G_CALLBACK (quiver_icon_view_style_set),
+			NULL);
 }
 
 static void
 quiver_icon_view_finalize(GObject *object)
 {
 	GObjectClass *parent;
-	QuiverIconViewClass *klass; 
+	QuiverIconViewClass *klass;
 	QuiverIconView *iconview;
 
 	iconview = QUIVER_ICON_VIEW(object);
@@ -523,7 +498,7 @@ quiver_icon_view_finalize(GObject *object)
 	g_list_foreach(iconview->priv->velocity_time_list, (GFunc)g_free, NULL);
 	g_list_free(iconview->priv->velocity_time_list);
 	iconview->priv->velocity_time_list = NULL;
-	
+
 	g_free (iconview->priv->cell_items);
 
 	parent = g_type_class_peek_parent(klass);
@@ -537,41 +512,42 @@ static void
 quiver_icon_view_realize (GtkWidget *widget)
 {
 	QuiverIconView *iconview;
-	// GdkWindowAttr attributes; // GdkWindowAttr is deprecated in GTK4.
-	// gint attributes_mask; // attributes_mask is deprecated.
+	GdkWindowAttr attributes;
+	gint attributes_mask;
 
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (widget));
 
 	iconview = QUIVER_ICON_VIEW (widget);
+	gtk_widget_set_realized(widget, TRUE);
 
-    /* gtk_widget_set_realized is handled by GTK itself in GTK4. Do not call. */
-	// gtk_widget_set_realized(widget, TRUE);
+	attributes.window_type = GDK_WINDOW_CHILD;
+	attributes.x = gtk_widget_get_allocated_width(widget);
+	attributes.y = gtk_widget_get_allocated_height(widget);
+	attributes.width = gtk_widget_get_allocated_width(widget);
+	attributes.height = gtk_widget_get_allocated_height(widget);
+	attributes.wclass = GDK_INPUT_OUTPUT;
+	attributes.visual = gtk_widget_get_visual (widget);
+	// FIXME: colormap?
+	//attributes.colormap = gtk_widget_get_colormap (widget);
+	//attributes.event_mask = GDK_VISIBILITY_NOTIFY_MASK;
+	attributes.event_mask = gtk_widget_get_events (widget) |
+					   GDK_EXPOSURE_MASK |
+					   GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK |
+					   GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+					   GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK |
+					   GDK_LEAVE_NOTIFY_MASK |
+					   GDK_SCROLL_MASK
+					   ;
 
-    /* Call parent class realize first */
-    GTK_WIDGET_CLASS(quiver_icon_view_parent_class)->realize(widget);
+	attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL; // FIXME: | GDK_WA_COLORMAP;
 
-    /* In GTK4, widgets are native by default. A GdkSurface is automatically created when the widget is mapped.
-     * Manual window creation with gdk_window_new and setting attributes is not typically done.
-     * Event masks are also handled differently (usually via event controllers or signal connections on the widget).
-     */
-    // GdkWindow *surface = gtk_widget_get_surface(widget); // Get the GdkSurface
-    // if (surface) {
-    //    g_object_set_data(G_OBJECT(surface), "quiver-icon-view", iconview); // Associate data with surface if needed, or widget
-    // }
-    g_object_set_data(G_OBJECT(widget), "quiver-icon-view", iconview);
+	gtk_widget_set_window(widget,gdk_window_new (gtk_widget_get_parent_window (widget), &attributes, attributes_mask));
 
+	gdk_window_set_user_data(gtk_widget_get_window(widget), iconview);
 
-	/* Styling is now primarily CSS-based or direct Cairo drawing in the snapshot function.
-	 * GtkStyleContext is still used, but direct background setting on the window is not the way.
-	 */
-	// GtkStyleContext* context = gtk_widget_get_style_context(widget);
-	// GdkWindow *window = gtk_widget_get_window (widget); // gtk_widget_get_window is deprecated, use gtk_widget_get_surface
-    // if (window) gtk_style_context_set_background(context, window); // Deprecated pattern
+	GtkStyleContext* context = gtk_widget_get_style_context(widget);
+	gtk_style_context_set_background(context, gtk_widget_get_window(widget));
 
-    /* This function used to send a GdkEventConfigure. In GTK4, layout changes are typically
-     * triggered by queueing a resize or draw. If it's about updating internal layout state
-     * based on the new size, that happens in size_allocate.
-     */
 	quiver_icon_view_send_configure (QUIVER_ICON_VIEW (widget));
 }
 
@@ -579,92 +555,50 @@ quiver_icon_view_realize (GtkWidget *widget)
 static void
 quiver_icon_view_unrealize(GtkWidget *widget)
 {
-    // Call parent unrealize if overridden
-    // GTK_WIDGET_CLASS(quiver_icon_view_parent_class)->unrealize(widget);
+
 }
 */
 
 static void
 quiver_icon_view_size_allocate (GtkWidget     *widget,
-				int width, int height, int baseline) // New GTK4 signature
+				GtkAllocation *allocation)
 {
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (widget));
+	g_return_if_fail (allocation != NULL);
 
+	GtkAllocation orig = {0};
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
 
-    /* In GTK4, gtk_widget_size_allocate takes a GtkAllocation struct.
-     * The x and y are usually 0 unless the widget is a GtkFixed child or similar.
-     * The parent class's size_allocate should typically be chained up to.
-     */
-    GtkAllocation allocation;
-    allocation.x = 0;
-    allocation.y = 0;
-    allocation.width = width;
-    allocation.height = height;
-    // gtk_widget_set_allocation(widget, &allocation); // This is what GTK_WIDGET_CLASS(...)->size_allocate would do.
-                                                  // We should call the parent's implementation.
-    GTK_WIDGET_CLASS(quiver_icon_view_parent_class)->size_allocate(widget, width, height, baseline);
+	gtk_widget_get_allocation(widget, &orig);
 
+	// check if there was a change
+	if (allocation->x == orig.x && allocation->y == orig.y &&
+		allocation->width == orig.width && allocation->height == orig.height)
+		return; // no change
 
-	if (gtk_widget_get_realized (widget)) // gtk_widget_get_realized is okay
+	gtk_widget_set_allocation(widget, allocation);
+
+	if (gtk_widget_get_realized (widget))
 	{
-		/* gdk_window_move_resize is deprecated. The native surface will be sized by GTK's layouting.
-		 * If child widgets need specific placement, it's done here based on the allocation.
-         * For this widget, it seems to be about updating its own content based on size.
-		 */
-		// GdkWindow *surface = gtk_widget_get_surface(widget);
-        // if (surface) gdk_surface_move_resize(surface, allocation.x, allocation.y, allocation.width, allocation.height);
+		gdk_window_move_resize( gtk_widget_get_window((widget)),
+			allocation->x, allocation->y,
+			allocation->width, allocation->height);
 
-		quiver_icon_view_send_configure (QUIVER_ICON_VIEW (widget)); /* To update internal calculations and queue draw */
+		quiver_icon_view_send_configure (QUIVER_ICON_VIEW (widget));
 
-		quiver_icon_view_update_icon_size(iconview); /* Recalculates adjustment bounds */
-		quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,TRUE); /* Ensure cursor visible */
-	}
-}
+		quiver_icon_view_update_icon_size(iconview);
+		quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,TRUE);
 
-/* New measure function for GTK4's size negotiation */
-static void
-quiver_icon_view_measure (GtkWidget *widget, GtkOrientation orientation, int for_size, int *minimum, int *natural, int *minimum_baseline, int *natural_baseline)
-{
-	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
-    gint cell_w = quiver_icon_view_get_cell_width(iconview);
-    gint cell_h = quiver_icon_view_get_cell_height(iconview);
-    gulong n_items = quiver_icon_view_get_n_items(iconview);
-
-    /* If cell dimensions are zero, avoid division by zero and return minimal size */
-    if (cell_w <= 0) cell_w = 1;
-    if (cell_h <= 0) cell_h = 1;
-
-	if (orientation == GTK_ORIENTATION_HORIZONTAL) {
-        if (iconview->priv->n_columns > 0) {
-            *minimum = *natural = cell_w * iconview->priv->n_columns;
-        } else { /* Auto-calculate based on available items, or min 1 cell */
-            *minimum = *natural = cell_w * (n_items > 0 ? 1 : 1); // Simplified: request at least one cell width if items, or just one cell
-        }
-	} else { /* GTK_ORIENTATION_VERTICAL */
-        if (iconview->priv->n_rows > 0) {
-            *minimum = *natural = cell_h * iconview->priv->n_rows;
-        } else if (iconview->priv->n_columns > 0 && n_items > 0) {
-             guint num_rows_calc = (n_items + iconview->priv->n_columns -1) / iconview->priv->n_columns;
-            *minimum = *natural = cell_h * num_rows_calc;
-        } else { /* Auto-calculate based on available items, or min 1 cell */
-            *minimum = *natural = cell_h * (n_items > 0 ? 1 : 1); // Simplified: request at least one cell height
-        }
 	}
 
-    /* This widget doesn't have specific baseline requirements */
-    if (minimum_baseline) *minimum_baseline = -1;
-    if (natural_baseline) *natural_baseline = -1;
+
 }
 
-
-/* Old GtkRequisition based size request functions - deprecated */
-/*
 static void
 quiver_icon_view_size_request (GtkWidget *widget, GtkRequisition *requisition)
 {
 	QuiverIconView *iconview;
-		
+
 	iconview = QUIVER_ICON_VIEW(widget);
 	requisition->width = quiver_icon_view_get_cell_width(iconview);
 	requisition->height = quiver_icon_view_get_cell_height(iconview);
@@ -683,40 +617,43 @@ quiver_icon_view_size_request (GtkWidget *widget, GtkRequisition *requisition)
 static void
 quiver_icon_view_get_preferred_width (GtkWidget *widget, gint* min_width, gint* natural_width)
 {
-	GtkRequisition requisition = {0}; // Not used in GTK4 measure
-    quiver_icon_view_measure(widget, GTK_ORIENTATION_HORIZONTAL, -1, min_width, natural_width, NULL, NULL);
+	GtkRequisition requisition = {0};
+	quiver_icon_view_size_request(widget, &requisition);
+	*min_width = *natural_width = requisition.width;
 }
-
 static void
 quiver_icon_view_get_preferred_height (GtkWidget *widget, gint* min_height, gint* natural_height)
 {
-	GtkRequisition requisition = {0}; // Not used in GTK4 measure
-    quiver_icon_view_measure(widget, GTK_ORIENTATION_VERTICAL, -1, min_height, natural_height, NULL, NULL);
+	GtkRequisition requisition = {0};
+	quiver_icon_view_size_request(widget, &requisition);
+	*min_height = *natural_height = requisition.height;
 }
-*/
 
-/* This function was likely used to inform the widget its size might have changed.
- * In GTK4, this is typically handled by queueing a resize or relying on size_allocate.
- */
 static void
 quiver_icon_view_send_configure (QuiverIconView *iconview)
 {
-  /* Configuration is primarily handled via size_allocate and widget's internal state updates.
-   * If a redraw or re-layout is needed based on new configuration (not just size),
-   * then queue_draw or queue_resize is appropriate.
-   */
-  gtk_widget_queue_resize(GTK_WIDGET(iconview)); /* This will trigger measure and size_allocate */
+  GtkWidget *widget;
+  GdkEvent *event = gdk_event_new (GDK_CONFIGURE);
+
+  widget = GTK_WIDGET (iconview);
+
+  event->configure.window = g_object_ref(gtk_widget_get_window(widget));
+  event->configure.send_event = TRUE;
+  event->configure.x = gtk_widget_get_allocated_width(widget);
+  event->configure.y = gtk_widget_get_allocated_height(widget);
+  event->configure.width = gtk_widget_get_allocated_width(widget);
+  event->configure.height = gtk_widget_get_allocated_height(widget);
+
+  gtk_widget_event (widget, event);
+  gdk_event_free (event);
 }
 
-/* GtkWidget::configure_event vfunc is deprecated. Size changes are handled by GtkWidget::size_allocate. */
-/*
 static gboolean
 quiver_icon_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 {
-	// icon_view_update_size(widget); // This logic should be in size_allocate or triggered from there
-	return TRUE; // Return value not used for deprecated vfuncs
+	/* icon_view_update_size(widget); */
+	return TRUE;
 }
-*/
 
 guint
 quiver_icon_view_get_cell_width(QuiverIconView *iconview)
@@ -741,13 +678,11 @@ quiver_icon_view_get_col_row_count(QuiverIconView *iconview,guint *cols, guint *
 
 	gulong n_cells  = quiver_icon_view_get_n_items(iconview);
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
-    guint widget_width = gtk_widget_get_width(widget);
-
 
 	r = 0;
-	
-	c = (cell_width > 0) ? (widget_width / cell_width) : 1; // Avoid division by zero
-	
+
+	c = gtk_widget_get_allocated_width(widget) / cell_width;
+
 	if (0 == c)
 		c = 1;
 
@@ -757,17 +692,13 @@ quiver_icon_view_get_col_row_count(QuiverIconView *iconview,guint *cols, guint *
 	if (0 != iconview->priv->n_columns)
 	{
 		c = iconview->priv->n_columns;
-        if (c > 0) r = (n_cells-1) / c + 1; else r = n_cells; // Avoid division by zero
+		r = (n_cells-1) / c + 1;
 	}
 	else if (0 != iconview->priv->n_rows)
 	{
 		r = iconview->priv->n_rows;
-        if (r > 0) c = (n_cells-1) / r + 1; else c = n_cells; // Avoid division by zero
+		c = (n_cells-1) / r + 1;
 	}
-
-    if (c == 0 && n_cells > 0) c = 1; // Ensure at least one column if there are items
-    if (r == 0 && n_cells > 0) r = 1; // Ensure at least one row if there are items
-
 
 	if (NULL != cols)
 	{
@@ -785,11 +716,9 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 {
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
-	
+
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
-
-    if (cell_width == 0 || cell_height == 0) return; // Avoid division by zero if cell size is zero
 
 
 	guint vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
@@ -805,8 +734,6 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 	guint num_cols,num_rows;
 	quiver_icon_view_get_col_row_count(iconview,&num_cols,&num_rows);
 
-    if (num_cols == 0) num_cols = 1; // Avoid division by zero later
-
 	guint num_adj_cols = hadjust / cell_width;
 	guint adj_offset_x = hadjust - num_adj_cols * cell_width;
 	//guint num_adj_cells_x = num_adj_cols * num_rows;
@@ -821,15 +748,16 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 	guint row_end = (r.y + adj_offset_y + r.height -1)/ cell_height;
 	guint col_end = (r.x + adj_offset_x + r.width -1) / cell_width;
 
-	if (col_end >= num_cols && num_cols > 0) // Ensure num_cols is not zero
+	if (col_end >= num_cols)
 	{
-		col_end = num_cols - 1;
-	} else if (num_cols == 0) {
-        col_end = 0;
-    }
+		col_end = 0;
+		if (0 != num_cols)
+		{
+			col_end = num_cols - 1;
+		}
+	}
 
-
-	GtkStateFlags state_flags_widget; // Renamed to avoid conflict with GdkEvent's state
+	GtkStateFlags state;
 	guint bound_width = cell_width - padding;
 	guint bound_height = cell_height - padding;
 
@@ -857,33 +785,50 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 				continue;
 			}
 
-			state_flags_widget = gtk_widget_get_state_flags(widget);
+			state = gtk_widget_get_state_flags(widget);
 			if ( iconview->priv->cell_items[current_cell].selected )
 			{
-				// if (gtk_widget_has_focus(widget)) // gtk_widget_has_focus is context-dependent
-				// {
-				// 	state_flags_widget = GTK_STATE_FLAG_SELECTED;
-				// }
-				// else
-				// {
-				// 	state_flags_widget = GTK_STATE_FLAG_ACTIVE;
-				// }
+				if (gtk_widget_has_focus(widget))
+				{
+					state = GTK_STATE_FLAG_SELECTED;
+				}
+				else
+				{
+					state = GTK_STATE_FLAG_ACTIVE;
+				}
 
-                // Basic selection indication (TODO: replace with proper CSS or Cairo drawing)
-                cairo_set_source_rgba(cr, 0.2, 0.2, 0.8, 0.3); // Light blue selection
-                cairo_rectangle(cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
-                cairo_fill(cr);
+				GtkStyleContext* context = gtk_widget_get_style_context(widget);
+				gtk_style_context_save(context);
+				gtk_style_context_set_state(context, state);
+
+				cairo_set_source_rgba (cr, 1., 1., .7, .1);
+				gtk_render_background(context, cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				gtk_render_frame(context,cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				cairo_stroke(cr);
+				gtk_style_context_restore(context);
 			}
-			// else if (current_cell == iconview->priv->prelight_cell) // Prelight handling via CSS :hover
-			// {
-			// }
-
-			if (gtk_widget_has_focus(widget) && current_cell == iconview->priv->cursor_cell)
+			else if (current_cell == iconview->priv->prelight_cell)
 			{
-                // Basic focus indication (TODO: replace with proper CSS or Cairo drawing)
-                cairo_set_source_rgba(cr, 0.2, 0.8, 0.2, 0.5); // Light green focus outline
-                cairo_rectangle(cr, x_cell_offset+padding/2 -1, y_cell_offset+padding/2 -1, bound_width+2, bound_height+2);
-                cairo_stroke(cr);
+				//state = GTK_STATE_PRELIGHT;
+				//gdk_gc_copy(gc_clip,widget->style->bg_gc[state]);
+				//gdk_gc_set_clip_region(gc_clip, in_region);
+				//gdk_draw_rectangle gtk_widget_get_window((widget), gc_clip,TRUE,x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				//cairo_set_line_width(cr, 1);
+				//cairo_rectangle(cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				//cairo_stroke(cr);
+			}
+
+			if (gtk_widget_is_focus(widget) && current_cell == iconview->priv->cursor_cell)
+			{
+				gtk_render_focus(
+					gtk_widget_get_style_context(widget),
+					cr,
+					x_cell_offset-1 + padding/2,
+					y_cell_offset-1 + padding/2,
+					bound_width+2,
+					bound_height +2);//x_cell_offset, y_cell_offset, bound_width, bound_height);
+
+
 			}
 
 			gboolean stock = FALSE;
@@ -907,12 +852,9 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 				guint nw = aw;
 				guint nh = ah;
 
-                if (iconview->priv->icon_width > 0 && iconview->priv->icon_height > 0) { // Avoid division by zero
-				    quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,FALSE);
-                }
+				quiver_rect_get_bound_size(iconview->priv->icon_width,iconview->priv->icon_height,&nw,&nh,FALSE);
 
-
-				if (!stock && (pixbuf_width != nw || pixbuf_height != nh ) && nw > 0 && nh > 0)
+				if (!stock && (pixbuf_width != nw || pixbuf_height != nh ))
 				{
 					pixbuf_width = nw;
 					pixbuf_height = nh;
@@ -920,9 +862,14 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 										pixbuf,
 										nw,
 										nh,
-										GDK_INTERP_NEAREST); // Was GDK_INTERP_BILINEAR
+										//GDK_INTERP_BILINEAR);
+										GDK_INTERP_NEAREST);
+					//printf("resized\n");
 					g_object_unref(pixbuf);
 					pixbuf = newpixbuf;
+					//printf("adding: %d - %s\n",current_cell,f.GetFilePath().c_str());
+					//pixbuf_cache.AddPixbuf(f.GetFilePath(),pixbuf);
+
 				}
 
 				int x_icon_offset = (cell_width - pixbuf_width) /2;
@@ -930,20 +877,28 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 
 				if (current_cell == iconview->priv->prelight_cell)
 				{
-					GdkPixbuf *pixbuf2 = gdk_pixbuf_new(gdk_pixbuf_get_colorspace(pixbuf),gdk_pixbuf_get_has_alpha(pixbuf),
+					GdkPixbuf *pixbuf2 = gdk_pixbuf_new(GDK_COLORSPACE_RGB,gdk_pixbuf_get_has_alpha(pixbuf),
 							gdk_pixbuf_get_bits_per_sample(pixbuf),
 							pixbuf_width,pixbuf_height);
-                    if (pixbuf2) { // Check if allocation succeeded
-					    pixbuf_brighten (pixbuf, pixbuf2, 25); // pixbuf_brighten might not exist or need porting
-					    g_object_unref(pixbuf);
-					    pixbuf = pixbuf2;
-                    }
+
+					pixbuf_brighten (pixbuf, pixbuf2, 25);
+
+					g_object_unref(pixbuf);
+					pixbuf = pixbuf2;
 				}
-				
+
 				cairo_save(cr);
+
 				cairo_translate(cr, x_cell_offset + x_icon_offset, y_cell_offset + y_icon_offset);
+
 				gdk_cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
-				cairo_paint(cr); // cairo_fill might be more appropriate if source is a pattern
+				cairo_pattern_t* src = cairo_get_source(cr);
+				cairo_pattern_set_extend(src, CAIRO_EXTEND_REPEAT);
+
+				cairo_rectangle(cr,0,0, pixbuf_width, pixbuf_height);
+
+				cairo_fill(cr);
+
 				cairo_restore(cr);
 
 				g_object_unref(pixbuf);
@@ -951,20 +906,21 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 				if (!stock)
 				{
 					guint border = iconview->priv->icon_border_size;
-#ifndef QUIVER_MAEMO
-					// GtkStateFlags state_flags = gtk_widget_get_state_flags(widget); // Already got state_flags_widget
-					quiver_icon_view_draw_drop_shadow(iconview, cr, state_flags_widget,
-							x_cell_offset + x_icon_offset - border, 
-							y_cell_offset + y_icon_offset - border, 
-							pixbuf_width + border*2, 
+#ifndef QUIVER_MAEMO // FIXME: drop shadow algorithm is too slow for maemo
+					GtkStateFlags state_flags = gtk_widget_get_state_flags(widget);
+					quiver_icon_view_draw_drop_shadow(iconview, cr, state_flags,
+							x_cell_offset + x_icon_offset - border,
+							y_cell_offset + y_icon_offset - border,
+							pixbuf_width + border*2,
 							pixbuf_height + border *2);
 #endif
+					// draw a border around the thumbnail
 					if (0 < border)
 					{
-						gint border_offset = ceil(border/2.); // Use ceil from math.h
+						gint border_offset = ceill(border/2.);
 						cairo_set_source_rgb (cr, 1, 1, 1);
 						cairo_set_line_width(cr, border);
-						cairo_rectangle(cr, 
+						cairo_rectangle(cr,
 							x_cell_offset + x_icon_offset - border_offset+.5,
 							y_cell_offset + y_icon_offset - border_offset+.5,
 							pixbuf_width + border,
@@ -972,8 +928,10 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 						cairo_stroke(cr);
 					}
 				}
+
 			}
-			
+
+			/* draw the overlay icons */
 			guint k;
 			for (k = 0; k < QUIVER_ICON_OVERLAY_COUNT; k++)
 			{
@@ -982,115 +940,131 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 					GdkPixbuf *overlay = (*iconview->priv->callback_get_overlay_pixbuf)(iconview,
 							current_cell, k,
 							iconview->priv->callback_get_overlay_pixbuf_data);
-							
+
 					if (overlay)
 					{
 						if (current_cell != iconview->priv->cursor_cell)
 						{
 							GdkPixbuf*overlay2 = gdk_pixbuf_copy(overlay);
-                            if (overlay2) { // Check if copy succeeded
-							    if (current_cell != iconview->priv->prelight_cell)
-								    pixbuf_set_grayscale(overlay2); // pixbuf_set_grayscale might not exist or need porting
-							    pixbuf_set_alpha(overlay2,64); // pixbuf_set_alpha might not exist or need porting
-							    g_object_unref(overlay);
-							    overlay = overlay2;
-                            }
+							if (current_cell != iconview->priv->prelight_cell)
+								pixbuf_set_grayscale(overlay2);
+							pixbuf_set_alpha(overlay2,64);
+							g_object_unref(overlay);
+							overlay = overlay2;
 						}
 
 						guint pixbuf_width,pixbuf_height;
+
 						pixbuf_width = gdk_pixbuf_get_width(overlay);
 						pixbuf_height = gdk_pixbuf_get_height(overlay);
 
 						cairo_save(cr);
+
 						cairo_rectangle(cr,x_cell_offset + padding/2 + 2 + 16*k ,y_cell_offset + padding/2 +2, pixbuf_width, pixbuf_height);
 						cairo_clip(cr);
+
 						gdk_cairo_set_source_pixbuf(cr, overlay, x_cell_offset + padding/2 + 2 + 16*k ,y_cell_offset + padding/2 +2);
+						cairo_pattern_t* src = cairo_get_source(cr);
+						cairo_pattern_set_extend(src, CAIRO_EXTEND_REPEAT);
 						cairo_paint(cr);
+
 						cairo_restore(cr);
+
 						g_object_unref(overlay);
 					}
 				}
 			}
+
+
+			/* draw a cell number*/
+			/*
+			char cell_string[10];
+			sprintf(cell_string,"%d",current_cell);
+			//printf("%s, ",cell_string);
+
+			PangoLayout *layout;
+			PangoRectangle logical_rect;
+
+			layout = pango_cairo_create_layout (cr);
+
+			pango_layout_set_text (layout, cell_string, -1);
+			pango_layout_get_pixel_extents (layout, NULL, &logical_rect);
+
+			pango_cairo_update_layout(cr, layout);
+			cairo_move_to(cr, x_cell_offset + 10, y_cell_offset + 10);
+			pango_cairo_show_layout(cr, layout);
+
+			g_object_unref(layout);
+			*/
+
+
 		}
 	}
-	
-	if (iconview->priv->drag_mode_enabled && 
+
+
+	if (iconview->priv->drag_mode_enabled &&
 	    QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
 	{
 		cairo_rectangle_int_t rub_rect = iconview->priv->rubberband_rect;
 		rub_rect.x -= hadjust;
 		rub_rect.y -= vadjust;
-		
+
 		cairo_rectangle(cr, rub_rect.x, rub_rect.y, rub_rect.width, rub_rect.height);
 		cairo_save(cr);
 		cairo_clip(cr);
 
-        // Basic rubberband drawing (TODO: replace with proper CSS or Cairo drawing)
-        cairo_set_source_rgba(cr, 0.3, 0.3, 1.0, 0.3); // Light blue for rubberband
-        cairo_rectangle(cr, rub_rect.x, rub_rect.y, rub_rect.width, rub_rect.height);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgba(cr, 0.3, 0.3, 1.0, 0.7);
-        cairo_stroke(cr);
+		GtkStyleContext* context = gtk_widget_get_style_context(widget);
+
+		gtk_style_context_save(context);
+		gtk_style_context_add_class(context, GTK_STYLE_CLASS_RUBBERBAND);
+
+		gtk_render_background(context, cr, rub_rect.x, rub_rect.y, rub_rect.width, rub_rect.height);
+		gtk_render_frame(context, cr, rub_rect.x, rub_rect.y, rub_rect.width, rub_rect.height);
+
+		gtk_style_context_restore(context);
 
 		cairo_restore(cr);
 	}
+
 	cairo_restore(cr);
+
 }
 
-// static gboolean quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr) // Old draw function
-// {
-// 	QuiverIconView *iconview;
-// 	iconview = QUIVER_ICON_VIEW(widget);
 
-// 	cairo_set_source_rgb(cr,0.3,0.3,0.3);
-// 	cairo_paint(cr);
-
-// 	cairo_rectangle_list_t* rectangles = cairo_copy_clip_rectangle_list(cr);
-
-// 	int rect_index = 0;
-// 	for (rect_index = 0; rect_index < rectangles->num_rectangles; ++rect_index)
-// 	{
-// 		cairo_rectangle_int_t rect;
-
-// 		rect.x =  rectangles->rectangles[rect_index].x;
-// 		rect.y = rectangles->rectangles[rect_index].y;
-// 		rect.width = rectangles->rectangles[rect_index].width;
-// 		rect.height = rectangles->rectangles[rect_index].height;
-
-// 		//gtk_render_background (gtk_widget_get_style_context(widget), cr, rect.x, rect.y, rect.width, rect.height);
-
-// 		quiver_icon_view_draw_icons (GTK_WIDGET(iconview), cr, rect);
-
-// 	}
-
-// 	cairo_rectangle_list_destroy(rectangles);
-
-// 	// GTK4 snapshot function returns void
-// 	// return TRUE;
-// }
-
-static void quiver_icon_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot)
+static gboolean quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr)
 {
-    QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
-    cairo_t *cr = gtk_snapshot_append_cairo(snapshot, &GRAPHENE_RECT_INIT(0,0, gtk_widget_get_width(widget), gtk_widget_get_height(widget)));
+	QuiverIconView *iconview;
+	iconview = QUIVER_ICON_VIEW(widget);
 
-    cairo_set_source_rgb(cr,0.3,0.3,0.3); // TODO: Use CSS background
+	cairo_set_source_rgb(cr,0.3,0.3,0.3);
 	cairo_paint(cr);
 
-    cairo_rectangle_int_t widget_bounds;
-    widget_bounds.x = 0;
-    widget_bounds.y = 0;
-    widget_bounds.width = gtk_widget_get_width(widget);
-    widget_bounds.height = gtk_widget_get_height(widget);
-    quiver_icon_view_draw_icons (GTK_WIDGET(iconview), cr, widget_bounds);
+	cairo_rectangle_list_t* rectangles = cairo_copy_clip_rectangle_list(cr);
 
-    cairo_destroy(cr);
+	int rect_index = 0;
+	for (rect_index = 0; rect_index < rectangles->num_rectangles; ++rect_index)
+	{
+		cairo_rectangle_int_t rect;
+
+		rect.x =  rectangles->rectangles[rect_index].x;
+		rect.y = rectangles->rectangles[rect_index].y;
+		rect.width = rectangles->rectangles[rect_index].width;
+		rect.height = rectangles->rectangles[rect_index].height;
+
+		//gtk_render_background (gtk_widget_get_style_context(widget), cr, rect.x, rect.y, rect.width, rect.height);
+
+		quiver_icon_view_draw_icons (GTK_WIDGET(iconview), cr, rect);
+
+	}
+
+	cairo_rectangle_list_destroy(rectangles);
+
+	return TRUE;
 }
 
 
-/*
-static gboolean 
-quiver_icon_view_button_press_event (GtkWidget *widget, 
+static gboolean
+quiver_icon_view_button_press_event (GtkWidget *widget,
                      GdkEventButton *event)
 {
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
@@ -1104,9 +1078,9 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 
 	iconview->priv->last_x = x;
 	iconview->priv->last_y = y;
-	
+
 	gettimeofday(&iconview->priv->last_motion_time,NULL);
-	
+
 	g_list_foreach(iconview->priv->velocity_time_list, (GFunc)g_free, NULL);
 	g_list_free(iconview->priv->velocity_time_list);
 	iconview->priv->velocity_time_list = NULL;
@@ -1122,19 +1096,19 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 	if (1 == event->button)
 	{
 		iconview->priv->mouse_button_is_down = TRUE;
-	
+
 		iconview->priv->rubberband_x1 = iconview->priv->rubberband_x2 = x + hadjust;
 		iconview->priv->rubberband_y1 = iconview->priv->rubberband_y2 = y + vadjust;
-	
+
 		//int cell_x,cell_y;
 		int cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
-	
+
 
 		if (cell != G_MAXULONG && GDK_2BUTTON_PRESS == event->type)
 		{
 			iconview->priv->mouse_button_is_down = FALSE;
 			quiver_icon_view_activate_cell(iconview,cell);
-		}			    
+		}
 		else if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
 		{
 			iconview->priv->drag_mode_start = TRUE;
@@ -1154,14 +1128,14 @@ quiver_icon_view_button_press_event (GtkWidget *widget,
 			}
 			iconview->priv->drag_mode_start = TRUE;
 		}
-	
+
 	}
 
 	return FALSE;
 }
 
-static gboolean 
-quiver_icon_view_button_release_event (GtkWidget *widget, 
+static gboolean
+quiver_icon_view_button_release_event (GtkWidget *widget,
          GdkEventButton *event)
 {
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
@@ -1169,7 +1143,7 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 	gint x =0, y=0;
 	x = (gint)event->x;
 	y = (gint)event->y;
-	
+
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 
@@ -1179,7 +1153,7 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 	if (1 == event->button)
 	{
 		gulong cell = quiver_icon_view_get_cell_for_xy (iconview,x,y);
-	
+
 		// drag mode enabled means mouse has
 		// moved while button is down
 		if (iconview->priv->drag_mode_enabled)
@@ -1189,15 +1163,15 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 #ifdef QUIVER_MAEMO
 				cairo_region_t *invalid_region;
 				cairo_region_t *tmp_region;
-		
+
 				tmp_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
 				gdk_region_shrink(tmp_region,1,1);
-		
+
 				invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
-		
+
 				gdk_region_subtract(invalid_region,tmp_region);
 				gdk_region_shrink(invalid_region,-1,-1);
-		
+
 				gtk_widget_get_window(gdk_window_invalidate_region(widget),invalid_region,FALSE);
 				gdk_region_destroy(invalid_region);
 				gdk_region_destroy(tmp_region);
@@ -1210,11 +1184,10 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 				cairo_region_t* invalid_region = cairo_region_create_rectangle(&invalid_rect);
 
 				cairo_region_translate(invalid_region,-hadjust,-vadjust);
-	
-				// gdk_window_invalidate_region(gtk_widget_get_window(widget),invalid_region,FALSE); // Deprecated
-                gtk_widget_queue_draw_area(widget, invalid_rect.x - hadjust, invalid_rect.y - vadjust, invalid_rect.width, invalid_rect.height);
+
+				gdk_window_invalidate_region(gtk_widget_get_window(widget),invalid_region,FALSE);
 				cairo_region_destroy(invalid_region);
-#endif			
+#endif
 				if (iconview->priv->timeout_id_rubberband_scroll != 0)
 				{
 					g_source_remove (iconview->priv->timeout_id_rubberband_scroll);
@@ -1228,13 +1201,13 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 
 				gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
 				gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
-				
+
 				if ( 3 == g_list_length(iconview->priv->velocity_time_list) &&
 					(0.1 > new_time - old_time) )
 				{
 					remove_timeout_smooth_scroll(iconview);
 
-					iconview->priv->timeout_id_smooth_scroll_slowdown = 
+					iconview->priv->timeout_id_smooth_scroll_slowdown =
 						g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll_slowdown,iconview);
 				}
 			}
@@ -1262,10 +1235,10 @@ rubberband_scroll_timeout (gpointer data)
 {
 	QuiverIconView *iconview;
 	gdouble xvalue,yvalue;
-	
-	// gdk_threads_enter (); // GTK4 handles thread safety differently
+
+	gdk_threads_enter ();
 	iconview = data;
-	
+
 	xvalue = MIN(gtk_adjustment_get_value(iconview->priv->hadjustment) +
 		iconview->priv->rubberband_scroll_x,
 		gtk_adjustment_get_upper(iconview->priv->hadjustment) -
@@ -1275,13 +1248,13 @@ rubberband_scroll_timeout (gpointer data)
 		iconview->priv->rubberband_scroll_y,
 		gtk_adjustment_get_upper(iconview->priv->vadjustment) -
 		gtk_adjustment_get_page_size(iconview->priv->vadjustment));
-	
+
 	gtk_adjustment_set_value (iconview->priv->hadjustment,xvalue);
 	gtk_adjustment_set_value (iconview->priv->vadjustment, yvalue);
-	
+
 	quiver_icon_view_update_rubber_band (iconview);
-	  
-	// gdk_threads_leave (); // GTK4 handles thread safety differently
+
+	gdk_threads_leave ();
 	return TRUE;
 }
 
@@ -1295,19 +1268,19 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 	GdkModifierType state;
 	gint x =0, y=0;
 
-	// if (event->is_hint) // GdkEventMotion no longer has is_hint
-	// {
-	// 	gdk_window_get_pointer(event->window, &x, &y, &state); // Deprecated
-	// }
-	// else
+	if (event->is_hint)
+	{
+		gdk_window_get_pointer(event->window, &x, &y, &state);
+	}
+	else
 	{
 		x = (gint)event->x;
 		y = (gint)event->y;
-		// state = (GdkModifierType)event->state; // GdkEventMotion no longer has state
-        state = gdk_event_get_modifier_state((GdkEvent*)event); // Correct way to get modifier state
+		state = (GdkModifierType)event->state;
+
 	}
 
-	if (iconview->priv->drag_mode_start && 
+	if (iconview->priv->drag_mode_start &&
 		(10 < abs(x -iconview->priv->start_x) || 10 < abs(y -iconview->priv->start_y)))
 	{
 		iconview->priv->drag_mode_start = FALSE;
@@ -1326,36 +1299,39 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 		if (G_MAXULONG != iconview->priv->prelight_cell)
 		{
 			quiver_icon_view_invalidate_cell(iconview,iconview->priv->prelight_cell);
-			// if (iconview->priv->callback_get_text)
-			// {
-			// 	//gchar *text = (*iconview->priv->callback_get_text)(iconview,iconview->priv->prelight_cell,iconview->priv->callback_get_text_data);
-			// 	//printf("Filename: %s\n",text);
-			// 	//g_free(text);
-			// }
+			if (iconview->priv->callback_get_text)
+			{
+				//gchar *text = (*iconview->priv->callback_get_text)(iconview,iconview->priv->prelight_cell,iconview->priv->callback_get_text_data);
+				//printf("Filename: %s\n",text);
+				//g_free(text);
+			}
 		}
 	}
 
 
-	if (iconview->priv->drag_mode_enabled && 
+	//printf("new_cell : %d \n",new_cell);
+
+	if (iconview->priv->drag_mode_enabled &&
 		QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
 	{
 		quiver_icon_view_update_rubber_band(iconview);
 		iconview->priv->rubberband_scroll_x = 0;
 		iconview->priv->rubberband_scroll_y = 0;
-		
-		if (x < 0 || x > gtk_widget_get_width(widget)) // Use gtk_widget_get_width
+
+		/* check if the window needs to scroll */
+		if (x < 0 || x > gtk_widget_get_allocated_width(widget))
 		{
 			if (x < 0)
 				iconview->priv->rubberband_scroll_x = x;
 			else
-				iconview->priv->rubberband_scroll_x = x - gtk_widget_get_width(widget);
-	
+				iconview->priv->rubberband_scroll_x = x - gtk_widget_get_allocated_width(widget);
+
 			if (iconview->priv->timeout_id_rubberband_scroll == 0)
-				iconview->priv->timeout_id_rubberband_scroll = g_timeout_add (30, rubberband_scroll_timeout, 
+				iconview->priv->timeout_id_rubberband_scroll = g_timeout_add (30, rubberband_scroll_timeout,
 								iconview);
 		}
 		else
-		{ 
+		{
 			if (iconview->priv->timeout_id_rubberband_scroll != 0)
 			{
 				g_source_remove (iconview->priv->timeout_id_rubberband_scroll);
@@ -1363,19 +1339,20 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 			}
 		}
 
-		if (y < 0 || y > gtk_widget_get_height(widget)) // Use gtk_widget_get_height
+		/* check if the window needs to scroll */
+		if (y < 0 || y > gtk_widget_get_allocated_height(widget))
 		{
 			if (y < 0)
 				iconview->priv->rubberband_scroll_y = y;
 			else
-				iconview->priv->rubberband_scroll_y = y - gtk_widget_get_height(widget);
-	
+				iconview->priv->rubberband_scroll_y = y - gtk_widget_get_allocated_height(widget);
+
 			if (iconview->priv->timeout_id_rubberband_scroll == 0)
-				iconview->priv->timeout_id_rubberband_scroll = g_timeout_add (30, rubberband_scroll_timeout, 
+				iconview->priv->timeout_id_rubberband_scroll = g_timeout_add (30, rubberband_scroll_timeout,
 								iconview);
 		}
 		else
-		{ 
+		{
 			if (iconview->priv->timeout_id_rubberband_scroll != 0)
 			{
 				g_source_remove (iconview->priv->timeout_id_rubberband_scroll);
@@ -1384,53 +1361,47 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 		}
 
 	}
-	else if (iconview->priv->drag_mode_enabled && 
+	else if (iconview->priv->drag_mode_enabled &&
 		QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
 	{
-		
+
 		struct timeval new_motion_time = {0};
 		gettimeofday(&new_motion_time,NULL);
 		gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
 		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
-		
+
+		// velocity pixels per second
+		// max velocity should be around +/-12000 pps
 #define MAX_VELOCITY 12000
 		VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
-		
-        if (new_time > old_time) { // Avoid division by zero if time hasn't changed
-		    vt->time = new_time - old_time;
-		    vt->hvelocity = (gint)((x - iconview->priv->last_x) / vt->time);
-		    vt->hvelocity = MIN(MAX_VELOCITY,vt->hvelocity);
-		    vt->hvelocity = MAX(-MAX_VELOCITY,vt->hvelocity);
-		
-		    vt->vvelocity =  (gint)((y - iconview->priv->last_y) / vt->time);
-		    vt->vvelocity = MIN(MAX_VELOCITY,vt->vvelocity);
-		    vt->vvelocity = MAX(-MAX_VELOCITY,vt->vvelocity);
-        } else {
-            vt->time = 0.001; // Arbitrary small time to avoid division by zero
-            vt->hvelocity = 0;
-            vt->vvelocity = 0;
-        }
 
+		vt->time = new_time - old_time;
+		vt->hvelocity = (gint)((x - iconview->priv->last_x) / vt->time);
+		vt->hvelocity = MIN(MAX_VELOCITY,vt->hvelocity);
+		vt->hvelocity = MAX(-MAX_VELOCITY,vt->hvelocity);
+
+		vt->vvelocity =  (gint)((y - iconview->priv->last_y) / vt->time);
+		vt->vvelocity = MIN(MAX_VELOCITY,vt->vvelocity);
+		vt->vvelocity = MAX(-MAX_VELOCITY,vt->vvelocity);
 
 		if ( 3 == g_list_length(iconview->priv->velocity_time_list) )
 		{
 			GList* last = g_list_last(iconview->priv->velocity_time_list);
-            g_free(last->data); // Free the data before removing the link
-			iconview->priv->velocity_time_list = 
-				g_list_remove_link(iconview->priv->velocity_time_list,last);	
+			iconview->priv->velocity_time_list =
+				g_list_remove_link(iconview->priv->velocity_time_list,last);
 		}
-		iconview->priv->velocity_time_list = 
+		iconview->priv->velocity_time_list =
 			g_list_prepend(iconview->priv->velocity_time_list, vt);
-		
-		
+
+
 		iconview->priv->last_motion_time = new_motion_time;
-		
+
 		gdouble hadjust = gtk_adjustment_get_value(iconview->priv->hadjustment);
 		gdouble vadjust = gtk_adjustment_get_value(iconview->priv->vadjustment);
-		
+
 		iconview->priv->rubberband_x2 = x + hadjust;
 		iconview->priv->rubberband_y2 = y + vadjust;
-	
+
 		hadjust += iconview->priv->rubberband_x1 - iconview->priv->rubberband_x2;
 		hadjust = MAX(0,MIN(gtk_adjustment_get_upper(iconview->priv->hadjustment) - gtk_adjustment_get_page_size(iconview->priv->hadjustment),hadjust));
 		vadjust += iconview->priv->rubberband_y1 - iconview->priv->rubberband_y2;
@@ -1441,10 +1412,10 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 		iconview->priv->rubberband_x1 = x + hadjust;
 		iconview->priv->rubberband_y1 = y + vadjust;
 	}
-	
+
 	iconview->priv->last_x = x;
 	iconview->priv->last_y = y;
-		
+
 	return FALSE;
 
 }
@@ -1452,17 +1423,9 @@ quiver_icon_view_motion_notify_event (GtkWidget *widget,
 gboolean quiver_icon_view_scroll_event ( GtkWidget *widget,
            GdkEventScroll *event)
 {
-	
+
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
-    GdkScrollDirection direction;
-    // GdkModifierType state; // No longer directly in GdkScrollEvent
-
-    // gdk_event_get_scroll_direction(event, &direction); // For GdkEvent
-    // state = gdk_event_get_modifier_state(event); // For GdkEvent
-    // For now, assume event is GdkScrollEvent directly, needs checking if it's a generic GdkEvent
-    direction = event->direction;
-
 
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
@@ -1478,11 +1441,11 @@ gboolean quiver_icon_view_scroll_event ( GtkWidget *widget,
 
 	if (1 == iconview->priv->n_rows)
 	{
-		if (GDK_SCROLL_UP == direction)
+		if (GDK_SCROLL_UP == event->direction)
 		{
 			hadjust -= gtk_adjustment_get_step_increment(iconview->priv->hadjustment);
 		}
-		else if (GDK_SCROLL_DOWN == direction)
+		else if (GDK_SCROLL_DOWN == event->direction)
 		{
 			hadjust += gtk_adjustment_get_step_increment(iconview->priv->hadjustment);
 		}
@@ -1495,11 +1458,11 @@ gboolean quiver_icon_view_scroll_event ( GtkWidget *widget,
 	}
 	else
 	{
-		if (GDK_SCROLL_UP == direction)
+		if (GDK_SCROLL_UP == event->direction)
 		{
 			vadjust -= gtk_adjustment_get_step_increment(iconview->priv->vadjustment);
 		}
-		else if (GDK_SCROLL_DOWN == direction)
+		else if (GDK_SCROLL_DOWN == event->direction)
 		{
 			vadjust += gtk_adjustment_get_step_increment(iconview->priv->vadjustment);
 		}
@@ -1531,14 +1494,6 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 {
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
-    guint keyval;
-    GdkModifierType state;
-
-    // keyval = event->keyval; // GdkEventKey is opaque
-    // state = event->state;   // GdkEventKey is opaque
-    gdk_event_get_keyval((GdkEvent*)event, &keyval);
-    state = gdk_event_get_modifier_state((GdkEvent*)event);
-
 
 	gulong n_cells  = quiver_icon_view_get_n_items(iconview);
 
@@ -1547,20 +1502,22 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 	gboolean rval = TRUE;
 
 
+	//guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
-    guint widget_height = gtk_widget_get_height(widget);
 
-
-	guint rows_per_page = (cell_height > 0) ? (widget_height / cell_height) : 1;
+	/* FIXME: we should not use the size from the widget but
+	 * rather have our own width value and use it */
+	guint rows_per_page = gtk_widget_get_allocated_height(widget)/cell_height;
 	if (rows_per_page == 0)
 	{
 		rows_per_page = 1;
 	}
 	guint n_cells_per_page = cols * rows_per_page;
+	//printf("cols: %d ,rows %d, n cells %d\n",cols,rows_per_page,n_cells_per_page);
 
 	gulong new_cursor_cell = iconview->priv->cursor_cell;
-	
-	switch(keyval) // Use extracted keyval
+
+	switch(event->keyval)
 	{
 		case GDK_KEY_Return:
 		case GDK_KEY_KP_Enter:
@@ -1569,13 +1526,13 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 			break;
 		case GDK_KEY_a:
 		case GDK_KEY_A:
-			if (state & GDK_CONTROL_MASK)
+			if (event->state & GDK_CONTROL_MASK)
 			{
 				quiver_icon_view_set_select_all(iconview,TRUE);
 			}
 			break;
 		case GDK_KEY_space:
-			if (state & GDK_CONTROL_MASK)
+			if (event->state & GDK_CONTROL_MASK)
 			{
 				iconview->priv->cell_items[iconview->priv->cursor_cell].selected = !iconview->priv->cell_items[iconview->priv->cursor_cell].selected;
 				g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
@@ -1585,38 +1542,47 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 
 		case GDK_KEY_KP_Left:
 		case GDK_KEY_Left:
-			if (iconview->priv->cursor_cell > 0) new_cursor_cell = iconview->priv->cursor_cell-1;
+			//printf("left %d\n",cursor_cell);
+			new_cursor_cell = iconview->priv->cursor_cell-1;
 			break;
 		case GDK_KEY_KP_Right:
 		case GDK_KEY_Right:
-			if (iconview->priv->cursor_cell < n_cells -1 ) new_cursor_cell = iconview->priv->cursor_cell+1;
+			//printf("right %d\n",cursor_cell);
+			new_cursor_cell = iconview->priv->cursor_cell+1;
 			break;
 		case GDK_KEY_KP_Up:
 		case GDK_KEY_Up:
-            if (iconview->priv->cursor_cell >= cols) new_cursor_cell = iconview->priv->cursor_cell - cols;
+			//printf("up %d, %d\n",cursor_cell, cursor_cell-cols);
+			new_cursor_cell = iconview->priv->cursor_cell - cols;
 			break;
 		case GDK_KEY_KP_Down:
 		case GDK_KEY_Down:
-            if (iconview->priv->cursor_cell + cols < n_cells) new_cursor_cell = iconview->priv->cursor_cell + cols;
+			//printf("down %d\n",cursor_cell);
+			new_cursor_cell = iconview->priv->cursor_cell + cols;
 			break;
 		case GDK_KEY_Home:
 			new_cursor_cell = 0;
 			break;
 		case GDK_KEY_End:
-            if (n_cells > 0) new_cursor_cell = n_cells -1; else new_cursor_cell = 0;
+			new_cursor_cell = n_cells -1;
 			break;
 
 		case GDK_KEY_Page_Up:
 			{
-                if (new_cursor_cell >= n_cells_per_page) new_cursor_cell -= n_cells_per_page;
-                else new_cursor_cell = 0;
+				new_cursor_cell -= n_cells_per_page;
+			}
+			if (new_cursor_cell <= 0)
+			{
+				new_cursor_cell = 0;
 			}
 			break;
 		case GDK_KEY_Page_Down:
 			{
 				new_cursor_cell += n_cells_per_page;
-                if (new_cursor_cell >= n_cells && n_cells > 0) new_cursor_cell = n_cells - 1;
-                else if (n_cells == 0) new_cursor_cell = 0;
+			}
+			if (n_cells <= new_cursor_cell)
+			{
+				new_cursor_cell = n_cells -1;
 			}
 			break;
 
@@ -1626,38 +1592,42 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 
 	}
 
+	/*
+	if (n_cells <= new_cursor_cell)
+	{
+		new_cursor_cell = n_cells -1;
+	}
 
-	if (new_cursor_cell < n_cells) // Check bounds
+	if (new_cursor_cell <= 0)
+	{
+		new_cursor_cell = 0;
+	}
+	*/
+
+	if (0 <= new_cursor_cell && new_cursor_cell < n_cells)
 	{
 		if (new_cursor_cell != iconview->priv->cursor_cell)
 		{
-			quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,state,FALSE);
+			quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)event->state,FALSE);
 		}
 	}
-	else if (n_cells > 0) // If out of bounds but cells exist, snap to last/first
+	else
 	{
-        new_cursor_cell = (new_cursor_cell >= n_cells) ? n_cells -1 : 0;
-        if (new_cursor_cell != iconview->priv->cursor_cell) {
-             quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,state,FALSE);
-        }
-	} else { // No cells, cursor remains invalid or 0
-        new_cursor_cell = G_MAXULONG;
-        if (new_cursor_cell != iconview->priv->cursor_cell) {
-             quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,state,FALSE);
-        }
-    }
-	
-	if (!rval && quiver_icon_view_parent_class && GTK_WIDGET_CLASS(quiver_icon_view_parent_class)->key_press_event) {
-		// rval = GTK_WIDGET_CLASS (quiver_icon_view_parent_class)->key_press_event (widget, event); // GdkEventKey is opaque
-        // TODO: Forwarding key events might need specific GdkEvent an GdkKeymapKey types if still needed
-    }
-	
+		new_cursor_cell = iconview->priv->cursor_cell;
+		quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)event->state,FALSE);
+	}
+
+	//iconview->priv->redraw_needed = TRUE;
+
+	if (!rval)
+		rval = GTK_WIDGET_CLASS (quiver_icon_view_parent_class)->key_press_event (widget, event);
+
 	return rval;
 }
 
 static gboolean
 quiver_icon_view_leave_notify_event (GtkWidget *widget,
-       GdkEventCrossing *event) // GdkEventCrossing is opaque
+       GdkEventCrossing *event)
 {
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
@@ -1668,7 +1638,6 @@ quiver_icon_view_leave_notify_event (GtkWidget *widget,
 	}
 	return FALSE;
 }
-*/
 
 static void
 quiver_icon_view_set_hadjustment (QuiverIconView *iconview, GtkAdjustment *adj)
@@ -1682,10 +1651,6 @@ quiver_icon_view_set_hadjustment (QuiverIconView *iconview, GtkAdjustment *adj)
 
 	if (adj)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (adj));
-    else {
-        adj = new_default_adjustment();
-    }
-
 
 	if (iconview->priv->hadjustment && (iconview->priv->hadjustment != adj))
 	{
@@ -1698,19 +1663,22 @@ quiver_icon_view_set_hadjustment (QuiverIconView *iconview, GtkAdjustment *adj)
 
 	if (iconview->priv->hadjustment != adj)
 	{
-		iconview->priv->hadjustment = g_object_ref(adj); // Use g_object_ref, not g_object_ref_sink if adj might be floating
-	
+		iconview->priv->hadjustment = adj;
+		g_object_ref_sink (iconview->priv->hadjustment);
+
 		if (gtk_widget_get_realized (widget))
 		{
 			guint width = quiver_icon_view_get_width(iconview);
 			quiver_icon_view_set_adjustment_upper (iconview->priv->hadjustment, width, FALSE);
 			need_adjust = TRUE;
 		}
-		g_signal_connect (iconview->priv->hadjustment, "value-changed", // "value-changed", not "value_changed"
+		g_signal_connect (iconview->priv->hadjustment, "value_changed",
 		G_CALLBACK (quiver_icon_view_adjustment_value_changed),
 			iconview);
 	}
 
+	/* vadj or hadj can be NULL while constructing; don't emit a signal
+	then */
 	if (need_adjust && iconview->priv->vadjustment && iconview->priv->hadjustment)
 		quiver_icon_view_adjustment_value_changed (NULL, iconview);
 
@@ -1729,9 +1697,6 @@ quiver_icon_view_set_vadjustment (QuiverIconView *iconview, GtkAdjustment *adj)
 
 	if (adj)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (adj));
-    else {
-        adj = new_default_adjustment();
-    }
 
 	if (iconview->priv->vadjustment && (iconview->priv->vadjustment != adj))
 	{
@@ -1744,19 +1709,22 @@ quiver_icon_view_set_vadjustment (QuiverIconView *iconview, GtkAdjustment *adj)
 
 	if (iconview->priv->vadjustment != adj)
 	{
-		iconview->priv->vadjustment = g_object_ref(adj);  // Use g_object_ref
-	
+		iconview->priv->vadjustment = adj;
+		g_object_ref_sink (iconview->priv->vadjustment);
+
 		if (gtk_widget_get_realized (widget))
 		{
-			guint height = quiver_icon_view_get_height(iconview); // Use height here
-			quiver_icon_view_set_adjustment_upper (iconview->priv->vadjustment, height, FALSE); // Use height
+			guint width = quiver_icon_view_get_width(iconview);
+			quiver_icon_view_set_adjustment_upper (iconview->priv->vadjustment, width, FALSE);
 			need_adjust = TRUE;
 		}
-		g_signal_connect (iconview->priv->vadjustment, "value-changed", // "value-changed"
+		g_signal_connect (iconview->priv->vadjustment, "value_changed",
 		G_CALLBACK (quiver_icon_view_adjustment_value_changed),
 			iconview);
 	}
 
+	/* vadj or vadj can be NULL while constructing; don't emit a signal
+	then */
 	if (need_adjust && iconview->priv->vadjustment && iconview->priv->hadjustment)
 		quiver_icon_view_adjustment_value_changed (NULL, iconview);
 
@@ -1775,7 +1743,7 @@ static void remove_timeout_smooth_scroll(QuiverIconView *iconview)
 		iconview->priv->smooth_scroll_vadjust = 0.;
 	}
 }
-		
+
 static void
 quiver_icon_view_scroll_to_adjustment_smooth(QuiverIconView *iconview, gint hadjust, gint vadjust)
 {
@@ -1819,9 +1787,9 @@ static void quiver_icon_view_scroll_to_cell_smooth(QuiverIconView *iconview, gul
 static gboolean
 quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 {
-	gboolean hdone = FALSE; 
-	gboolean vdone = FALSE; 
-	
+	gboolean hdone = FALSE;
+	gboolean vdone = FALSE;
+
 	gulong cell = iconview->priv->smooth_scroll_cell;
 
 	gint hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
@@ -1843,11 +1811,6 @@ quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 		guint cell_width = quiver_icon_view_get_cell_width(iconview);
 		guint cell_height = quiver_icon_view_get_cell_height(iconview);
 
-        if (cols == 0) cols = 1; // Avoid division by zero
-        if (cell_width == 0) cell_width = 1; // Avoid division by zero
-        if (cell_height == 0) cell_height = 1; // Avoid division by zero
-
-
 		gulong cell_x = (cell % cols) * cell_width;
 		gulong cell_y = (cell / cols) * cell_height;
 
@@ -1856,7 +1819,7 @@ quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 			new_hadjust = cell_x - gtk_adjustment_get_page_size(iconview->priv->hadjustment)/2 + cell_width/2;
 			new_hadjust = MAX (0,new_hadjust);
 			new_hadjust = MIN(new_hadjust, gtk_adjustment_get_upper(iconview->priv->hadjustment) - gtk_adjustment_get_page_size(iconview->priv->hadjustment));
-			
+
 
 			new_vadjust = cell_y - gtk_adjustment_get_page_size(iconview->priv->vadjustment)/2 + cell_height/2;
 			new_vadjust = MAX (0,new_vadjust);
@@ -1931,37 +1894,36 @@ quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 	return TRUE;
 }
 
-static gboolean 
+static gboolean
 quiver_icon_view_timeout_smooth_scroll(gpointer data)
 {
 	QuiverIconView *iconview = (QuiverIconView*)data;
 	gboolean notdone = FALSE;
 
-	// gdk_threads_enter(); // GTK4 handles thread safety differently
+	gdk_threads_enter();
 	notdone = quiver_icon_view_smooth_scroll_step(iconview);
-	// gdk_threads_leave(); // GTK4 handles thread safety differently
-	
+	gdk_threads_leave();
+
 	return notdone;
 }
 
-/*
 static gboolean
 quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 {
 	QuiverIconView *iconview = (QuiverIconView*)data;
 
-	gdouble divider = 1.02; 	
+	gdouble divider = 1.02;
 	gdouble timeout_secs = SMOOTH_SCROLL_TIMEOUT / 1000.;
 
 	gboolean hdone = FALSE;
 	gboolean vdone = FALSE;
 
-	// gdk_threads_enter(); // GTK4 handles thread safety differently
-	
+	gdk_threads_enter();
+
 	GList* list_itr = g_list_first(iconview->priv->velocity_time_list);
 	gint hvelocity_avg = 0;
 	gint vvelocity_avg = 0;
-	gdouble total_time = 0; 
+	gdouble total_time = 0;
 	if (NULL != list_itr)
 	{
 		do
@@ -1973,14 +1935,9 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 			list_itr = g_list_next(list_itr);
 		} while (NULL !=list_itr);
 	}
-	
-    if (total_time > 0) { // Avoid division by zero
-	    hvelocity_avg = (gint)(hvelocity_avg/total_time);
-	    vvelocity_avg = (gint)(vvelocity_avg/total_time);
-    } else {
-        hvelocity_avg = 0;
-        vvelocity_avg = 0;
-    }
+
+	hvelocity_avg = (gint)(hvelocity_avg/total_time);
+	vvelocity_avg = (gint)(vvelocity_avg/total_time);
 
 
 	if (1 != g_list_length(iconview->priv->velocity_time_list) )
@@ -1988,30 +1945,30 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 		g_list_foreach(iconview->priv->velocity_time_list, (GFunc)g_free, NULL);
 		g_list_free(iconview->priv->velocity_time_list);
 		iconview->priv->velocity_time_list = NULL;
-		
+
 		VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
 		vt->hvelocity = hvelocity_avg;
 		vt->vvelocity = vvelocity_avg;
 		vt->time = total_time;
-		
-		iconview->priv->velocity_time_list = 
+
+		iconview->priv->velocity_time_list =
 			g_list_append(iconview->priv->velocity_time_list,vt);
 	}
 	GList* first = g_list_first(iconview->priv->velocity_time_list);
-	
+
 	VelocityTimeStruct* vt = (VelocityTimeStruct*)first->data;
 	vt->hvelocity = (gint)(hvelocity_avg/divider);
 	vt->vvelocity = (gint)(vvelocity_avg/divider);
-	
+
 	gint hdistance = (gint)(timeout_secs * hvelocity_avg);
-	
+
 	if (0 == hdistance || 0 == hvelocity_avg)
 	{
 		hdone = TRUE;
 	}
 	else
 	{
-	
+
 		gint old_hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 		gint hadjust = old_hadjust;
 		hadjust = MAX (0,hadjust - hdistance);
@@ -2025,7 +1982,7 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 			gtk_adjustment_set_value(iconview->priv->hadjustment,hadjust);
 		}
 	}
-	
+
 	gint vdistance = (gint)(timeout_secs * vvelocity_avg);
 
 	if (0 == vdistance || 0 == vvelocity_avg)
@@ -2034,7 +1991,7 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 	}
 	else
 	{
-	
+
 		gint old_vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 		gint vadjust = old_vadjust;
 		vadjust = MAX (0,vadjust - vdistance);
@@ -2048,26 +2005,23 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 			gtk_adjustment_set_value(iconview->priv->vadjustment,vadjust);
 		}
 	}
-	
-	
+
+
 	if (hdone && vdone)
 	{
 		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
 	}
-	
-	// gdk_threads_leave(); // GTK4 handles thread safety differently
-	
+
+	gdk_threads_leave();
+
 	return !(hdone && vdone);
 }
-*/
 
-/*
 static void
 quiver_icon_view_style_set(GtkWidget *widget, GtkStyle *prev_style, gpointer data)
 {
-	// QuiverIconView* iconview = QUIVER_ICON_VIEW(widget); // GtkStyle is deprecated
+	QuiverIconView* iconview = QUIVER_ICON_VIEW(widget);
 }
-*/
 
 /* start callbacks */
 static void
@@ -2084,12 +2038,11 @@ quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjustment,
 	{
 		if (iconview->priv->scroll_draw)
 		{
-			// gint hdiff = (gint)(iconview->priv->last_hadjustment - hadj); // For gdk_window_scroll
-			// gint vdiff = (gint)(iconview->priv->last_vadjustment - vadj); // For gdk_window_scroll
+			gint hdiff = (gint)(iconview->priv->last_hadjustment - hadj);
+			gint vdiff = (gint)(iconview->priv->last_vadjustment - vadj);
 
-			// gdk_window_scroll(gtk_widget_get_window(widget),hdiff,vdiff); // Deprecated
-			// gdk_window_process_updates(gtk_widget_get_window(widget), FALSE); // Deprecated
-            gtk_widget_queue_draw(widget); // Preferred way to request redraw
+			gdk_window_scroll(gtk_widget_get_window(widget),hdiff,vdiff);
+			gdk_window_process_updates(gtk_widget_get_window(widget), FALSE);
 		}
 		iconview->priv->last_vadjustment = vadj;
 		iconview->priv->last_hadjustment = hadj;
@@ -2143,7 +2096,7 @@ quiver_icon_view_set_property (GObject *object,
 
 }
 
-static void      
+static void
 quiver_icon_view_get_property (GObject    *object,
                     guint       prop_id,
                     GValue     *value,
@@ -2218,7 +2171,7 @@ quiver_icon_view_set_adjustment_upper (GtkAdjustment *adj,
 {
   gboolean changed = FALSE;
   gboolean value_changed = FALSE;
-  
+
   gdouble min = MAX (0., upper - gtk_adjustment_get_page_size(adj));
 
   if (upper != gtk_adjustment_get_upper(adj))
@@ -2226,19 +2179,17 @@ quiver_icon_view_set_adjustment_upper (GtkAdjustment *adj,
       gtk_adjustment_set_upper(adj, upper);
       changed = TRUE;
     }
-      
+
   if (gtk_adjustment_get_value(adj) > min)
     {
       gtk_adjustment_set_value(adj, min);
       value_changed = TRUE;
     }
-  
-  if (changed || always_emit_changed) {
-    // gtk_adjustment_changed (adj); // In GTK4, "changed" signal is emitted automatically
-  }
-  if (value_changed) {
-    // gtk_adjustment_value_changed (adj); // In GTK4, "value-changed" signal is emitted automatically
-  }
+
+  if (changed || always_emit_changed)
+    gtk_adjustment_changed (adj);
+  if (value_changed)
+    gtk_adjustment_value_changed (adj);
 }
 
 gulong
@@ -2247,24 +2198,19 @@ quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y)
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
 
-    if (cell_width == 0 || cell_height == 0) return G_MAXULONG; // Avoid division by zero
-
-
 	guint padding = iconview->priv->cell_padding;
 	guint hadjust = (int)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	guint vadjust = (int)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
 	guint cols, rows;
 	quiver_icon_view_get_col_row_count(iconview,&cols,&rows);
-    if (cols == 0) return G_MAXULONG; // Avoid division by zero if no columns
-
 
 	guint current_row,current_col;
 	guint remainder;
 	current_col = (x+hadjust) / cell_width;
 	// if the column is greater than the total number of columns
 	// return -1
-	
+
 	if (current_col >= cols)
 		return G_MAXULONG;
 
@@ -2272,9 +2218,14 @@ quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y)
 	// check if x is in padding area, if so return -1
 	if (padding/2 > remainder || padding/2 > cell_width-remainder)
 		return G_MAXULONG;
-	
+
 	current_row =  (y +vadjust) / cell_height;
-	
+
+	//GdkPixbuf *pixbuf = GetStockIcon(f);
+
+
+
+
 	remainder = (y + vadjust) - current_row * cell_height;
 	if (padding/2 > remainder || padding/2 > cell_height-remainder)
 		return G_MAXULONG;
@@ -2294,7 +2245,7 @@ static void
 quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor_cell,GdkModifierType state,gboolean is_mouse)
 {
 	gulong old_cell = iconview->priv->cursor_cell;
-	
+
 	if (state & GDK_CONTROL_MASK)
 	{
 		// normal mode, deselect all, select new cell
@@ -2303,10 +2254,8 @@ quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor
 		if (is_mouse)
 		{
 			// for the mouse, we want to toggle the item on the control click
-            if (new_cursor_cell < iconview->priv->n_cell_items) { // Bounds check
-			    iconview->priv->cell_items[iconview->priv->cursor_cell].selected = !iconview->priv->cell_items[iconview->priv->cursor_cell].selected;
-			    g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
-            }
+			iconview->priv->cell_items[iconview->priv->cursor_cell].selected = !iconview->priv->cell_items[iconview->priv->cursor_cell].selected;
+			g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 		}
 		quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
 		iconview->priv->cursor_cell_first = G_MAXULONG;
@@ -2343,20 +2292,16 @@ quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor
 		}
 
 		iconview->priv->cursor_cell = new_cursor_cell;
-		
-        if (new_cursor_cell < iconview->priv->n_cell_items) { // Bounds check
-		    if (!iconview->priv->cell_items[new_cursor_cell].selected)
-		    {
-			    change_selection = TRUE;
-		    }
-        }
 
+		if (!iconview->priv->cell_items[new_cursor_cell].selected)
+		{
+			change_selection = TRUE;
+		}
 
 		if (change_selection)
 		{
-            if (new_cursor_cell < iconview->priv->n_cell_items) { // Bounds check
-			    iconview->priv->cell_items[iconview->priv->cursor_cell].selected = TRUE;
-            }
+			//quiver_icon_view_set_select_all(iconview,FALSE);
+			iconview->priv->cell_items[iconview->priv->cursor_cell].selected = TRUE;
 			quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
 			g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 		}
@@ -2367,9 +2312,10 @@ quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor
 	{
 		g_signal_emit(iconview,iconview_signals[SIGNAL_CURSOR_CHANGED],0,new_cursor_cell);
 	}
+	//redraw_needed = TRUE;
 }
 
-static void 
+static void
 quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,gboolean force_top)
 {
 	guint cols,rows;
@@ -2378,18 +2324,21 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
 
-    if (cols == 0 || cell_width == 0 || cell_height == 0) return; // Avoid division by zero
-
-
 	gint hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	gint vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
 	guint cell_x;
 	guint cell_y;
-		
+
 	if (0 != iconview->priv->n_rows)
 	{
-        if (rows == 0) return; // Avoid division by zero
+		// FIXME: this is a bug for anything but row=1
+		// also we should probably switch the drawing order so it draws like this:
+		// 1 3 5 7 9
+		// 2 4 6 8
+		// instead of:
+		// 1 2 3 4 5
+		// 6 7 8 9
 		cell_x = (cell / rows) * cell_width;
 		cell_y = (cell % rows) * cell_height;
 	}
@@ -2399,7 +2348,21 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 		cell_y = (cell / cols) * cell_height;
 
 	}
-	
+
+	/*
+	if ( force_top || cell_y < vadjust)
+	{
+		if (cell_y < gtk_adjustment_get_upper(iconview->priv->vadjustment) - gtk_adjustment_get_page_size(iconview->priv->vadjustment))
+			gtk_adjustment_set_value(iconview->priv->vadjustment,cell_y);
+		else
+			gtk_adjustment_get_upper(gtk_adjustment_set_value(iconview->priv->vadjustment,iconview->priv->vadjustment) - gtk_adjustment_get_page_size(iconview->priv->vadjustment));
+	}
+	else if (vadjust + gtk_adjustment_get_page_size(iconview->priv->vadjustment) < cell_y+cell_height)
+	{
+		gtk_adjustment_set_value(iconview->priv->vadjustment,cell_y+cell_height gtk_adjustment_get_page_size(-iconview->priv->vadjustment));
+	}
+	*/
+
 	if (QUIVER_ICON_VIEW_SCROLL_NORMAL != iconview->priv->scroll_type && !force_top)
 	{
 		quiver_icon_view_scroll_to_cell_smooth(iconview,cell);
@@ -2407,6 +2370,7 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 		return;
 	}
 
+	/* horizontal adjustment */
 	gint new_hadjust;
 	if (QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER == iconview->priv->scroll_type)
 	{
@@ -2433,6 +2397,7 @@ quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,g
 		gtk_adjustment_set_value(iconview->priv->hadjustment, new_hadjust);
 	}
 
+	/* vertical adjustment */
 	gint new_vadjust;
 	if (QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER == iconview->priv->scroll_type)
 	{
@@ -2475,14 +2440,12 @@ quiver_icon_view_set_select_all(QuiverIconView *iconview, gboolean selected)
 	changed = FALSE;
 	for (i = 0; i < n_cells;i++)
 	{
-        if (i < iconview->priv->n_cell_items) { // Bounds check
-		    if (iconview->priv->cell_items[i].selected != selected)
-		    {
-			    iconview->priv->cell_items[i].selected = selected;
-			    quiver_icon_view_invalidate_cell(iconview,i);
-			    changed = TRUE;
-		    }
-        }
+		if (iconview->priv->cell_items[i].selected != selected)
+		{
+			iconview->priv->cell_items[i].selected = selected;
+			quiver_icon_view_invalidate_cell(iconview,i);
+			changed = TRUE;
+		}
 	}
 	if (changed)
 	{
@@ -2503,9 +2466,9 @@ quiver_icon_view_shift_select_cells(QuiverIconView *iconview,gulong new_cursor_c
 	{
 		return;
 	}
-	
+
 	gulong n_cells  = quiver_icon_view_get_n_items(iconview);
-	
+
 	if (0 == n_cells)
 	{
 		return;
@@ -2523,73 +2486,90 @@ quiver_icon_view_shift_select_cells(QuiverIconView *iconview,gulong new_cursor_c
 	quiver_icon_view_invalidate_cell(iconview,new_cursor_cell);
 
 	iconview->priv->cursor_cell = new_cursor_cell;
-	
+
 	for (i = start; i <= end; i++)
 	{
-        if (i < iconview->priv->n_cell_items) { // Bounds check
 		if (select_range_start <= i && i <= select_range_end)
 		{
 			// select this range
-			    if (!iconview->priv->cell_items[i].selected)
+			if (!iconview->priv->cell_items[i].selected)
 			{
 				iconview->priv->cell_items[i].selected = TRUE;
 				quiver_icon_view_invalidate_cell(iconview,i);
 				selection_changed = TRUE;
-			    }
-			
+			}
+
 		}
 		else
-		    {
-			    // unselect the old range
+		{
+			// unselect the old range
 			if (iconview->priv->cell_items[i].selected)
 			{
 				iconview->priv->cell_items[i].selected = FALSE;
 				quiver_icon_view_invalidate_cell(iconview,i);
-				    selection_changed = TRUE;
+				selection_changed = TRUE;
 			}
 		}
-        }
 	}
 	if (selection_changed)
 	{
 		g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 	}
 }
-
-/*
-static void 
+static void
 quiver_icon_view_update_rubber_band(QuiverIconView *iconview)
 {
-	// gint x =0, y=0; // Data would come from event controller
-	// GdkModifierType state; // Data would come from event controller
+	gint x =0, y=0;
+	cairo_region_t *invalid_region;
+	cairo_region_t *old_region;
+	GdkModifierType state;
 	GtkWidget *widget;
-	
+
 	widget = GTK_WIDGET (iconview);
-	// gdk_window_get_pointer(gtk_widget_get_window(widget), &x, &y, &state); // Deprecated
+	gdk_window_get_pointer(gtk_widget_get_window(widget), &x, &y, &state);
 
-    // This function's logic heavily relies on GdkWindow and direct pointer/state access.
-    // It needs to be re-thought with event controllers (e.g., GtkGestureDrag).
-    // For now, we'll just queue a draw to update the rubberband visually based on stored coordinates.
-    // The coordinates themselves would be updated by the event controller.
+	iconview->priv->rubberband_rect_old.x = MIN (iconview->priv->rubberband_x1, iconview->priv->rubberband_x2);
+	iconview->priv->rubberband_rect_old.y = MIN (iconview->priv->rubberband_y1, iconview->priv->rubberband_y2);
+	iconview->priv->rubberband_rect_old.width = ABS (iconview->priv->rubberband_x1 - iconview->priv->rubberband_x2)+1;
+	iconview->priv->rubberband_rect_old.height = ABS (iconview->priv->rubberband_y1 - iconview->priv->rubberband_y2)+1;
 
-	// gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment); // Not needed if coords are widget-relative
-	// gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment); // Not needed if coords are widget-relative
-	
-    // Assuming iconview->priv->rubberband_x1, y1, x2, y2 are updated by an event controller
-    // and are relative to the widget allocation.
-	iconview->priv->rubberband_rect_old = iconview->priv->rubberband_rect;
-	
-	// iconview->priv->rubberband_x2 = x + hadjust; // This logic would change with event controllers
-	// iconview->priv->rubberband_y2 = y + vadjust; // This logic would change
-	
+	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
+	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
+
+	iconview->priv->rubberband_x2 = x + hadjust;
+	iconview->priv->rubberband_y2 = y + vadjust;
+
 	iconview->priv->rubberband_rect.x = MIN (iconview->priv->rubberband_x1, iconview->priv->rubberband_x2);
 	iconview->priv->rubberband_rect.y = MIN (iconview->priv->rubberband_y1, iconview->priv->rubberband_y2);
 	iconview->priv->rubberband_rect.width = ABS (iconview->priv->rubberband_x1 - iconview->priv->rubberband_x2)+1;
 	iconview->priv->rubberband_rect.height = ABS (iconview->priv->rubberband_y1 - iconview->priv->rubberband_y2)+1;
-	
+
+	invalid_region = cairo_region_create_rectangle(&iconview->priv->rubberband_rect);
+	old_region = cairo_region_create_rectangle(&iconview->priv->rubberband_rect_old);
+	cairo_region_xor(invalid_region,old_region);
+
+	int num_rects = cairo_region_num_rectangles(invalid_region);
+	cairo_region_t* invalid_region_expanded = cairo_region_create();
+	int i = 0;
+	for (i = 0; i < num_rects; ++i)
+	{
+		cairo_rectangle_int_t tmprect = {0};
+		cairo_region_get_rectangle(invalid_region, i, &tmprect);
+		tmprect.x -= 1;
+		tmprect.y -= 1;
+		tmprect.width += 2;
+		tmprect.height += 2;
+		cairo_region_union_rectangle(invalid_region_expanded, &tmprect);
+	}
+
 	quiver_icon_view_update_rubber_band_selection(iconview);
-	
-    gtk_widget_queue_draw(widget);
+
+	//redraw_needed = TRUE;
+	cairo_region_translate(invalid_region_expanded,-hadjust,-vadjust);
+	gdk_window_invalidate_region(gtk_widget_get_window(widget),invalid_region_expanded,FALSE);
+	cairo_region_destroy(invalid_region_expanded);
+	cairo_region_destroy(invalid_region);
+	cairo_region_destroy(old_region);
 }
 
 static void
@@ -2601,8 +2581,6 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
-    if (cell_width == 0 || cell_height == 0) return; // Avoid division by zero
-
 	guint padding = iconview->priv->cell_padding;
 
 	gulong i = 0;
@@ -2610,10 +2588,15 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 
 	guint num_cols,num_rows;
 	quiver_icon_view_get_col_row_count(iconview,&num_cols,&num_rows);
-    if (num_cols == 0) return; // Avoid division by zero if no columns
+
+	cairo_region_t *old_region;
+	cairo_region_t *new_region;
+	new_region = cairo_region_create_rectangle(&iconview->priv->rubberband_rect);
+	old_region = cairo_region_create_rectangle(&iconview->priv->rubberband_rect_old);
 
 	cairo_rectangle_int_t tmp_rect;
 
+	// FIXME : this is not optimized. currently it iterates over all cells /
 	gulong n_cells  = quiver_icon_view_get_n_items(iconview);
 	for (j=0;j <= num_rows; j++)
 	{
@@ -2621,37 +2604,27 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 		{
 			int current_cell = j * num_cols + i;
 			if (current_cell >= n_cells)
-				continue;
+				break;
 
 			tmp_rect.x = i * cell_width + padding/2;
 			tmp_rect.y = j * cell_height + padding/2;
 			tmp_rect.width = cell_width - padding;
 			tmp_rect.height = cell_height - padding;
 
-            gboolean in_new_rubberband = FALSE;
-            if (iconview->priv->rubberband_rect.width > 0 && iconview->priv->rubberband_rect.height > 0) {
-                 cairo_rectangle_int_t intersection;
-                 in_new_rubberband = gdk_rectangle_intersect(&tmp_rect, &iconview->priv->rubberband_rect, &intersection);
-            }
-
-
-			if (in_new_rubberband)
+			if ( CAIRO_REGION_OVERLAP_OUT != cairo_region_contains_rectangle(new_region,&tmp_rect) )
 			{
-				if (current_cell < iconview->priv->n_cell_items && !iconview->priv->cell_items[current_cell].selected)
+				// select!
+				if (!iconview->priv->cell_items[current_cell].selected)
 				{
 					iconview->priv->cell_items[current_cell].selected = TRUE;
 					quiver_icon_view_invalidate_cell(iconview,current_cell);
 					selection_changed = TRUE;
 				}
 			}
-			else
+			else if ( CAIRO_REGION_OVERLAP_OUT != cairo_region_contains_rectangle(old_region,&tmp_rect) )
 			{
-                gboolean in_old_rubberband = FALSE;
-                if(iconview->priv->rubberband_rect_old.width > 0 && iconview->priv->rubberband_rect_old.height > 0) {
-                    cairo_rectangle_int_t intersection_old;
-                    in_old_rubberband = gdk_rectangle_intersect(&tmp_rect, &iconview->priv->rubberband_rect_old, &intersection_old);
-                }
-				if (current_cell < iconview->priv->n_cell_items && iconview->priv->cell_items[current_cell].selected && in_old_rubberband)
+				// unselect!
+				if (iconview->priv->cell_items[current_cell].selected)
 				{
 					iconview->priv->cell_items[current_cell].selected = FALSE;
 					quiver_icon_view_invalidate_cell(iconview,current_cell);
@@ -2665,6 +2638,9 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 	{
 		g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 	}
+
+	cairo_region_destroy(new_region);
+	cairo_region_destroy(old_region);
 }
 
 
@@ -2689,32 +2665,48 @@ quiver_icon_view_update_icon_size(QuiverIconView *iconview)
 	hadjustment = iconview->priv->hadjustment;
 	vadjustment = iconview->priv->vadjustment;
 
-	gtk_adjustment_set_page_size(hadjustment, gtk_widget_get_width(widget));
-	gtk_adjustment_set_page_increment(hadjustment, gtk_widget_get_width(widget));
+	gtk_adjustment_set_page_size(hadjustment, gtk_widget_get_allocated_width(widget));
+	gtk_adjustment_set_page_increment(hadjustment, gtk_widget_get_allocated_width(widget));
 	gtk_adjustment_set_step_increment(hadjustment,  cell_width);
 	gtk_adjustment_set_lower(hadjustment, 0);
-	gtk_adjustment_set_upper(hadjustment, MAX(gtk_widget_get_width(widget), width));
+	gtk_adjustment_set_upper(hadjustment, MAX(gtk_widget_get_allocated_width(widget), width));
 
 	if (gtk_adjustment_get_value(hadjustment) > gtk_adjustment_get_upper(hadjustment) - gtk_adjustment_get_page_size(hadjustment))
 		gtk_adjustment_set_value (hadjustment, MAX(0, gtk_adjustment_get_upper(hadjustment) - gtk_adjustment_get_page_size(hadjustment)));
 
-	gtk_adjustment_set_page_size(vadjustment, gtk_widget_get_height(widget));
-	gtk_adjustment_set_page_increment(vadjustment, gtk_widget_get_height(widget));
+	gtk_adjustment_set_page_size(vadjustment, gtk_widget_get_allocated_height(widget));
+	gtk_adjustment_set_page_increment(vadjustment, gtk_widget_get_allocated_height(widget));
 	gtk_adjustment_set_step_increment(vadjustment, cell_height);
 	gtk_adjustment_set_lower(vadjustment, 0);
-	gtk_adjustment_set_upper(vadjustment, MAX(gtk_widget_get_height(widget), height));
+	gtk_adjustment_set_upper(vadjustment, MAX(gtk_widget_get_allocated_height(widget), height));
 
-	// gtk_adjustment_changed (hadjustment); // In GTK4, "changed" signal is emitted automatically
-	// gtk_adjustment_changed (vadjustment); // In GTK4, "changed" signal is emitted automatically
+	/* FIXME: We should have an option for this if the user doesnt want resize to keep
+	 * the current focus cell in view
+	 * */
+	/*
+	if gtk_adjustment_get_value((vadjustment) > gtk_adjustment_get_upper(vadjustment) - gtk_adjustment_get_page_size(vadjustment))
+		gtk_adjustment_set_value (vadjustment, MAX (0, gtk_adjustment_get_upper(vadjustment) - gtk_adjustment_get_page_size(vadjustment)));
+		*/
+
+	gtk_adjustment_changed (hadjustment);
+	gtk_adjustment_changed (vadjustment);
 
 
 	iconview->priv->scroll_draw = FALSE;
 
 	quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,TRUE);
 
+	//printf("invalidating whole area\n");
+
+	cairo_rectangle_int_t rect;
+	rect.x = 0;
+	rect.y = 0;
+	rect.width = gtk_widget_get_allocated_width(widget);
+	rect.height = gtk_widget_get_allocated_height(widget);
 	if (gtk_widget_get_realized(widget))
 	{
-        gtk_widget_queue_draw(widget);
+		gdk_window_invalidate_rect(gtk_widget_get_window(widget),&rect,FALSE);
+		gdk_window_process_updates(gtk_widget_get_window(widget),FALSE);
 	}
 
 	iconview->priv->scroll_draw = TRUE;
@@ -2731,22 +2723,12 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 	}
 	if (iconview->priv->n_cell_items != n_items)
 	{
-        CellItem* new_items = (CellItem*)g_try_realloc(iconview->priv->cell_items, (n_items + 1) * sizeof(CellItem)); // +1 for safety, though 0 should be fine
-        if (new_items || n_items == 0) {
-            iconview->priv->cell_items = new_items;
-            if (n_items > 0 && n_items > iconview->priv->n_cell_items) {
-                 memset(iconview->priv->cell_items + iconview->priv->n_cell_items, 0, (n_items - iconview->priv->n_cell_items) * sizeof(CellItem));
-            } else if (n_items == 0) { // If n_items is 0, ensure cell_items is NULL or points to minimal allocation
-                 g_free(iconview->priv->cell_items);
-                 iconview->priv->cell_items = (CellItem*)g_malloc0(sizeof(CellItem)); // Allocate for 0 items + 1 safety
-            }
-		    iconview->priv->n_cell_items = n_items;
-		    quiver_icon_view_update_icon_size(iconview);
-		    g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
-        } else {
-            g_warning("Failed to reallocate cell_items");
-            return iconview->priv->n_cell_items;
-        }
+		iconview->priv->n_cell_items = n_items;
+		g_free (iconview->priv->cell_items);
+		iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(n_items+1) );
+		quiver_icon_view_update_icon_size(iconview);
+
+		g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 	}
 	return n_items;
 }
@@ -2774,10 +2756,12 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, cairo_t*
 
 	cairo_save(cr);
 
+	// set region to be with in this
 	cairo_rectangle (cr, rect_x - shadow_width, rect_y - shadow_width, rect_w + shadow_width*2, rect_h + shadow_width*2);
+	// but not within this (specified in reverse winding)
 	cairo_rectangle (cr, rect_x + rect_w, rect_y, -rect_w, rect_h);
 	cairo_clip (cr);
-	
+
 
 	cairo_set_source_rgba (cr, 0, 0, 0, .1);
 	cairo_set_line_join(cr,CAIRO_LINE_JOIN_ROUND);
@@ -2785,6 +2769,7 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, cairo_t*
 	for (k = shadow_width*2;k >=1; k-=2)
 	{
 		cairo_set_line_width(cr,k);
+		//cairo_rectangle (cr, top, left, width, height);
 		cairo_rectangle (cr, rect_x, rect_y, rect_w, rect_h);
 		cairo_stroke(cr);
 	}
@@ -2801,7 +2786,7 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, cairo_t*
 GtkWidget *
 quiver_icon_view_new()
 {
-	return g_object_new(QUIVER_TYPE_ICON_VIEW, 
+	return g_object_new(QUIVER_TYPE_ICON_VIEW,
 		"hadjustment", new_default_adjustment(),
 		"vadjustment", new_default_adjustment(),
 		NULL);
@@ -2811,16 +2796,12 @@ void quiver_icon_view_set_n_columns(QuiverIconView *iconview,guint n_columns)
 {
 	iconview->priv->n_columns = n_columns;
 	iconview->priv->n_rows = 0;
-    quiver_icon_view_update_icon_size(iconview);
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
 }
 
 void quiver_icon_view_set_n_rows(QuiverIconView *iconview,guint n_rows)
 {
 	iconview->priv->n_rows = n_rows;
 	iconview->priv->n_columns = 0;
-    quiver_icon_view_update_icon_size(iconview);
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
 }
 
 void quiver_icon_view_set_scroll_type(QuiverIconView *iconview, QuiverIconViewScrollType scroll_type)
@@ -2828,27 +2809,41 @@ void quiver_icon_view_set_scroll_type(QuiverIconView *iconview, QuiverIconViewSc
 	iconview->priv->scroll_type = scroll_type;
 }
 
-void 
+void
 quiver_icon_view_set_drag_behavior(QuiverIconView *iconview,QuiverIconViewDragBehavior behavior)
 {
 	iconview->priv->drag_behavior = behavior;
 }
 
-void 
+void
 quiver_icon_view_set_icon_size(QuiverIconView *iconview, guint width,guint height)
 {
 	iconview->priv->icon_width  = width;
 	iconview->priv->icon_height = height;
 
-    quiver_icon_view_update_icon_size(iconview);
-    gtk_widget_queue_resize(GTK_WIDGET(iconview));
+	guint request_width,request_height;
+
+	request_width = quiver_icon_view_get_cell_width(iconview);
+	request_height = quiver_icon_view_get_cell_height(iconview);
+
+	if (0 != iconview->priv->n_columns)
+	{
+		request_width *= iconview->priv->n_columns;
+	}
+
+	if (0 != iconview->priv->n_rows)
+	{
+		request_height *= iconview->priv->n_rows;
+	}
+	gtk_widget_set_size_request(GTK_WIDGET(iconview),request_width,request_height);
+	/* adjust the size of the scrollbars accordingly */
+	quiver_icon_view_update_icon_size(iconview);
 }
 
 void
 quiver_icon_view_set_cell_padding(QuiverIconView *iconview,guint padding)
 {
 	iconview->priv->cell_padding = padding;
-    gtk_widget_queue_resize(GTK_WIDGET(iconview));
 }
 
 void
@@ -2867,19 +2862,17 @@ quiver_icon_view_get_cell_padding(QuiverIconView *iconview)
 void quiver_icon_view_activate_cell(QuiverIconView *iconview,gulong cell)
 {
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
-	
+
 	g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_ACTIVATED],0,cell);
 }
 
-/*
 static
 void quiver_icon_view_click_cell(QuiverIconView *iconview,gulong cell)
 {
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
-	
+
 	g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_CLICKED],0,cell);
 }
-*/
 
 gulong quiver_icon_view_get_cursor_cell(QuiverIconView *iconview)
 {
@@ -2902,12 +2895,26 @@ gulong quiver_icon_view_get_prelight_cell(QuiverIconView* iconview)
 
 void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint cell, gint *x, gint *y)
 {
-	// gint wx, wy; // Data would come from event controller
+	gint wx, wy;
 
-	// gtk_widget_get_pointer(GTK_WIDGET(iconview), &wx, &wy); // Deprecated
-    *x = 0; // Placeholder
-    *y = 0; // Placeholder
+	gtk_widget_get_pointer(GTK_WIDGET(iconview), &wx, &wy);
 
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+
+	guint padding = iconview->priv->cell_padding;
+	guint hadjust = (int)gtk_adjustment_get_value(iconview->priv->hadjustment);
+	guint vadjust = (int)gtk_adjustment_get_value(iconview->priv->vadjustment);
+
+	guint cols, rows;
+	quiver_icon_view_get_col_row_count(iconview,&cols,&rows);
+	gint cell_col = cell % cols;
+	gint cell_row = cell / cols;
+	gint cell_x = cell_width * cell_col - hadjust;
+	gint cell_y = cell_height * cell_row - vadjust;
+
+	*x = wx - cell_x - padding;
+	*y = wy - cell_y - padding;
 }
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection)
@@ -2927,14 +2934,13 @@ void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *select
 
 	while (NULL != selection_iter)
 	{
-		gulong item = GPOINTER_TO_UINT(selection_iter->data);
+		gulong item = (gulong)selection_iter->data;
 		if (item < iconview->priv->n_cell_items)
 		{
 			iconview->priv->cell_items[item].selected = TRUE;
 			quiver_icon_view_invalidate_cell(iconview,item);
 			selection_changed = TRUE;
 		}
-        selection_iter = g_list_next(selection_iter);
 	}
 	if (selection_changed)
 	{
@@ -2953,7 +2959,7 @@ GList* quiver_icon_view_get_selection(QuiverIconView *iconview)
 	{
 		if (iconview->priv->cell_items[i].selected)
 		{
-			selection = g_list_append(selection,GUINT_TO_POINTER(i));
+			selection = g_list_append(selection,(gpointer)i);
 		}
 	}
 	return selection;
@@ -2965,36 +2971,29 @@ void quiver_icon_view_get_visible_range(QuiverIconView *iconview,gulong *first, 
 
 	guint num_cols,num_rows;
 	quiver_icon_view_get_col_row_count(iconview,&num_cols,&num_rows);
-    if (num_cols == 0 || num_rows == 0) {
-        *first = 0;
-        *last = 0;
-        return;
-    }
 
+	/*guint cell_width = quiver_icon_view_get_cell_width(iconview);*/
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
-    if (cell_height == 0) {
-        *first = 0;
-        *last = 0;
-        return;
-    }
-
 
 	guint adj = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
 	guint row_first = adj / cell_height;
-	guint row_last = (adj + gtk_widget_get_height(widget)) / cell_height;
+	guint row_last = (adj + gtk_widget_get_allocated_height(widget)) / cell_height;
+
+	/* so , the current view contains icons from col 0, row_first
+	 * to col num_cols -1, row_last
+	 * so that is
+	 */
 
 	gulong cell_start = row_first * num_cols;
 	gulong cell_end = row_last * num_cols + num_cols;
 
-	gulong n_cells = quiver_icon_view_get_n_items(iconview); 
+	gulong n_cells = quiver_icon_view_get_n_items(iconview);
 
 	if ( n_cells < cell_end )
 	{
 		cell_end = n_cells ;
 	}
-    if (cell_start > cell_end && n_cells > 0) cell_start = cell_end > 0 ? cell_end -1 : 0;
-
 	*first = cell_start;
 	*last = cell_end;
 }
@@ -3004,37 +3003,34 @@ quiver_icon_view_invalidate_window(QuiverIconView *iconview)
 {
 	GtkWidget* widget;
 	widget = GTK_WIDGET(iconview);
-	
-    gtk_widget_queue_draw(widget);
+
+	gdk_window_invalidate_rect(gtk_widget_get_window(widget), NULL, FALSE);
 }
 
-void 
+void
 quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
 		gulong cell)
 {
 
 	GtkWidget *widget = GTK_WIDGET (iconview);
-	
+
 	if (!gtk_widget_get_realized(widget))
 	{
 		return;
 	}
-	
+
 	gulong n_cells = quiver_icon_view_get_n_items(iconview);
-	if (cell >= n_cells && n_cells > 0)
+	if (0 > cell || cell >= n_cells)
 		return;
-    if (n_cells == 0 && cell != G_MAXULONG) return;
-    if (cell == G_MAXULONG) return;
-	
+
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);
 	guint cell_height = quiver_icon_view_get_cell_height(iconview);
-    if (cell_width == 0 || cell_height == 0) return;
-
 
 	guint num_cols,num_rows;
 	quiver_icon_view_get_col_row_count(iconview,&num_cols,&num_rows);
-    if (num_cols == 0) return;
 
+	/*guint width = quiver_icon_view_get_width(iconview);*/
+	//guint height = quiver_icon_view_get_height(iconview);
 
 	guint hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	guint vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
@@ -3049,11 +3045,12 @@ quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
 	cell_rect.width = cell_width;
 	cell_rect.height = cell_height;
 
-    gtk_widget_queue_draw_area(widget, cell_rect.x, cell_rect.y, cell_rect.width, cell_rect.height);
+	gdk_window_invalidate_rect(gtk_widget_get_window(widget),&cell_rect,FALSE);
+	//redraw_needed = TRUE;
 }
 
 void
-quiver_icon_view_set_n_items_func (QuiverIconView *iconview, 
+quiver_icon_view_set_n_items_func (QuiverIconView *iconview,
          QuiverIconViewGetNItemsFunc func,gpointer data,GDestroyNotify destroy)
 {
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
@@ -3064,9 +3061,6 @@ quiver_icon_view_set_n_items_func (QuiverIconView *iconview,
 	iconview->priv->callback_get_n_items = func;
 	iconview->priv->callback_get_n_items_data = data;
 	iconview->priv->callback_get_n_items_data_destroy = destroy;
-
-    quiver_icon_view_update_icon_size(iconview);
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
 
 }
 
@@ -3082,7 +3076,6 @@ quiver_icon_view_set_icon_pixbuf_func (QuiverIconView *iconview,
 	iconview->priv->callback_get_icon_pixbuf = func;
 	iconview->priv->callback_get_icon_pixbuf_data = data;
 	iconview->priv->callback_get_icon_pixbuf_data_destroy = destroy;
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
 
 }
 
@@ -3098,7 +3091,6 @@ quiver_icon_view_set_thumbnail_pixbuf_func (QuiverIconView *iconview,
 	iconview->priv->callback_get_thumbnail_pixbuf = func;
 	iconview->priv->callback_get_thumbnail_pixbuf_data = data;
 	iconview->priv->callback_get_thumbnail_pixbuf_data_destroy = destroy;
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
 
 }
 
@@ -3114,7 +3106,6 @@ quiver_icon_view_set_text_func (QuiverIconView *iconview,
 	iconview->priv->callback_get_text = func;
 	iconview->priv->callback_get_text_data = data;
 	iconview->priv->callback_get_text_data_destroy = destroy;
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
 
 }
 
@@ -3129,6 +3120,6 @@ void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
 	iconview->priv->callback_get_overlay_pixbuf = func;
 	iconview->priv->callback_get_overlay_pixbuf_data = data;
 	iconview->priv->callback_get_overlay_pixbuf_data_destroy = destroy;
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
+
 }
 /* end public functions */

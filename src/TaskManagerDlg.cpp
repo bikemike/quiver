@@ -145,7 +145,7 @@ public:
 			m_TaskHandlerPtr(new TaskHandler(this))
 		{
 			// vbox to hold everything
-			m_vboxTaskArea = gtk_vbox_new(FALSE, 3);
+			m_vboxTaskArea = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
 
 			// title lable to vbox
 			m_labelTitle = gtk_label_new( taskPtr->GetDescription().c_str() );
@@ -159,7 +159,7 @@ public:
 			gtk_misc_set_alignment(GTK_MISC(m_labelTitle), 0., 0.);
 
 			//hbox for image / task details
-			m_hboxTaskDetails = gtk_hbox_new(FALSE, 5);
+			m_hboxTaskDetails = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 
 			//image
 			GdkPixbuf* pixbuf = NULL;
@@ -167,7 +167,7 @@ public:
 			m_imgThumbnail = gtk_image_new_from_pixbuf(pixbuf);
 
 			// task details (text, progress, time stuff)
-			m_vboxDetails = gtk_vbox_new(FALSE, 3);
+			m_vboxDetails = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
 			
 			// text
 			m_labelDetails = gtk_label_new( taskPtr->GetProgressText().c_str() );
@@ -175,7 +175,7 @@ public:
 			gtk_misc_set_alignment(GTK_MISC(m_labelDetails), 0., 0.);
 
 			// progress
-			m_hboxProgress = gtk_hbox_new(FALSE, 2);
+			m_hboxProgress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
 			m_pbarProgress    = gtk_progress_bar_new();
 
 			m_btnPause    = gtk_button_new();
@@ -209,29 +209,29 @@ public:
 
 			gtk_misc_set_alignment(GTK_MISC(m_labelProgDetails), 0., 0.);
 
-			gtk_box_pack_start (GTK_BOX(m_vboxTaskArea),
-				m_labelTitle, FALSE, TRUE, 0);
-			gtk_box_pack_start (GTK_BOX(m_vboxTaskArea),
-				m_hboxTaskDetails, TRUE, TRUE, 0);
+			gtk_box_append (GTK_BOX(m_vboxTaskArea),
+				m_labelTitle);
+			gtk_box_append (GTK_BOX(m_vboxTaskArea),
+				m_hboxTaskDetails);
 
-			gtk_box_pack_start (GTK_BOX(m_hboxTaskDetails),
-				m_imgThumbnail, FALSE, TRUE, 0);
-			gtk_box_pack_start (GTK_BOX(m_hboxTaskDetails),
-				m_vboxDetails, TRUE, TRUE, 0);
+			gtk_box_append (GTK_BOX(m_hboxTaskDetails),
+				m_imgThumbnail);
+			gtk_box_append (GTK_BOX(m_hboxTaskDetails),
+				m_vboxDetails);
 
-			gtk_box_pack_start (GTK_BOX(m_vboxDetails),
-				m_labelDetails, FALSE, TRUE, 0);
-			gtk_box_pack_start (GTK_BOX(m_vboxDetails),
-				m_hboxProgress, TRUE, TRUE, 0);
-			gtk_box_pack_start (GTK_BOX(m_vboxDetails),
-				m_labelProgDetails, FALSE, TRUE, 0);
+			gtk_box_append (GTK_BOX(m_vboxDetails),
+				m_labelDetails);
+			gtk_box_append (GTK_BOX(m_vboxDetails),
+				m_hboxProgress);
+			gtk_box_append (GTK_BOX(m_vboxDetails),
+				m_labelProgDetails);
 
-			gtk_box_pack_start (GTK_BOX(m_hboxProgress),
-				m_pbarProgress, TRUE, TRUE, 0);
-			gtk_box_pack_start (GTK_BOX(m_hboxProgress),
-				m_btnPause, FALSE, TRUE, 0);
-			gtk_box_pack_start (GTK_BOX(m_hboxProgress),
-				m_btnCancel, FALSE, TRUE, 0);
+			gtk_box_append (GTK_BOX(m_hboxProgress),
+				m_pbarProgress);
+			gtk_box_append (GTK_BOX(m_hboxProgress),
+				m_btnPause);
+			gtk_box_append (GTK_BOX(m_hboxProgress),
+				m_btnCancel);
 
 			gtk_widget_show_all(m_vboxTaskArea);
 
@@ -382,11 +382,8 @@ public:
 		{
 			TaskProgressGUIPtr taskGUIPtr(new TaskProgressGUI(this, taskPtr));
 
-			gtk_box_pack_start (GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))),
-				taskGUIPtr->GetWidget(),
-				FALSE,
-				TRUE,
-				0);
+			gtk_box_append (GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))),
+				taskGUIPtr->GetWidget());
 
 			m_mapTaskGUI.insert(pair<AbstractTaskPtr, TaskProgressGUIPtr>(taskPtr, taskGUIPtr));
 
@@ -403,9 +400,9 @@ public:
 			gtk_container_remove(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))), itr->second->GetWidget());
 			m_mapTaskGUI.erase(itr);
 
-			int w, h;
-			gtk_window_get_size(GTK_WINDOW(m_pWidget), &w,&h);
-			gtk_window_resize(GTK_WINDOW(m_pWidget), w, 100);
+			gint w,h;
+			gtk_window_get_default_size(GTK_WINDOW(m_pWidget), &w,&h);
+			gtk_window_set_default_size(GTK_WINDOW(m_pWidget), w, 100);
 		}
 
 		if (0 == m_mapTaskGUI.size())

@@ -54,7 +54,7 @@ AM_GLIB_GNU_GETTEXT
 
 AC_PROG_INTLTOOL([0.21])
 
-QUIVER_MODULES="gtk+-3.0 gio-2.0"
+QUIVER_MODULES="gtk4 gio-2.0"
 
 PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 

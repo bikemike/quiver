@@ -154,12 +154,12 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		m_pBtnPhotoLibrary = GTK_BUTTON( gtk_button_new() );
 		gtk_widget_show(GTK_WIDGET(m_pBtnPhotoLibrary));
 		
-		gtk_box_pack_start(hbox_photo_library, GTK_WIDGET(m_pBtnPhotoLibrary), TRUE, TRUE, 5);
+		gtk_box_append(GTK_BOX(hbox_photo_library), GTK_WIDGET(m_pBtnPhotoLibrary));
 #else
 		m_pFCBtnPhotoLibrary = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Photo Library Directory", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
 		gtk_widget_show(GTK_WIDGET(m_pFCBtnPhotoLibrary));
 		
-		gtk_box_pack_start(hbox_photo_library, GTK_WIDGET(m_pFCBtnPhotoLibrary), TRUE, TRUE, 0);
+		gtk_box_append(GTK_BOX(hbox_photo_library), GTK_WIDGET(m_pFCBtnPhotoLibrary));
 #endif
 
 
@@ -574,3 +574,5 @@ void PreferencesDlg::PreferencesDlgPriv::PreferencesEventHandler::HandlePreferen
 
 
 
+
+[end of src/PreferencesDlg.cpp]

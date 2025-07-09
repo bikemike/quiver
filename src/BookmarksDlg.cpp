@@ -147,11 +147,11 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 		if (m_pWidget)
 		{
 			/*
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonAdd),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonEdit),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonRemove),FALSE,TRUE,5);
+			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonAdd));
+			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonEdit));
+			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonRemove));
 			*/
-			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose),FALSE,TRUE,5);
+			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose));
 		}
 		if (m_pTreeViewBookmarks)
 		{
@@ -536,3 +536,5 @@ void BookmarksDlg::BookmarksDlgPriv::BookmarksEventHandler::HandleBookmarkChange
 
 
 
+
+[end of src/BookmarksDlg.cpp]

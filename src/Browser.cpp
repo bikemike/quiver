@@ -308,6 +308,8 @@ static const char *ui_browser =
 "	</menubar>"
 #endif
 "	<toolbar name='ToolbarMain'>"
+"		<placeholder name='UIModeItems'/>"
+"		<separator/>"
 "		<placeholder name='NavToolItems'>"
 "			<toolitem action='"ACTION_BROWSER_HISTORY_BACK"'/>"
 "			<toolitem action='"ACTION_BROWSER_HISTORY_FORWARD"'/>"
@@ -702,13 +704,13 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	gtk_container_add(GTK_CONTAINER(scrolled_window),m_pIconView);
 	
-	hbox = gtk_hbox_new(FALSE,0);
-	vbox = gtk_vbox_new(FALSE,0);
+	hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+	vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
 	
-	gtk_box_pack_start (GTK_BOX (hbox), m_pLocationEntry, TRUE, TRUE, 0);
+	gtk_box_append (GTK_BOX (hbox), m_pLocationEntry);
 	//gtk_box_pack_start (GTK_BOX (hbox), hscale, FALSE, FALSE, 0);
-	gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
-	gtk_box_pack_start (GTK_BOX (vbox), scrolled_window, TRUE, TRUE, 0);
+	gtk_box_append (GTK_BOX (vbox), hbox);
+	gtk_box_append (GTK_BOX (vbox), scrolled_window);
 	
 	gtk_paned_pack1(GTK_PANED(vpaned),m_pNotebook,TRUE,TRUE);
 	gtk_paned_pack2(GTK_PANED(vpaned),m_pImageView,FALSE,FALSE);
@@ -821,7 +823,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 		strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
 		gtk_css_provider_load_from_data(m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
-		gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
+		gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 	}
 
 	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,this,NULL);
@@ -890,7 +892,7 @@ Browser::BrowserImpl::~BrowserImpl()
 		NULL,
 		this);
 
-	gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(),GTK_STYLE_PROVIDER(m_pCssProvider));
+	gtk_style_context_remove_provider_for_display(gdk_display_get_default(),GTK_STYLE_PROVIDER(m_pCssProvider));
 	g_object_unref(m_pCssProvider);
 
 }
@@ -1905,7 +1907,7 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 			if (event->GetNewBoolean())
 			{
 				// use theme color
-				gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider));
+				gtk_style_context_remove_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider));
 			}
 			else
 			{
@@ -1914,7 +1916,7 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
 				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
-				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
+				gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 				
 			}
 		}
@@ -1928,7 +1930,7 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
 				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
-				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
+				gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 			}
 		}
 		else if (QUIVER_PREFS_APP_WINDOW_FULLSCREEN == event->GetKey() )
@@ -2077,3 +2079,5 @@ void Browser::BrowserImpl::BrowserThumbLoader::SetCacheSize(guint uiCacheSize)
 	m_pBrowserImpl->m_ThumbnailCache.SetSize(uiCacheSize);
 }
 
+
+[end of src/Browser.cpp]

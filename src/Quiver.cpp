@@ -542,11 +542,26 @@ void QuiverImpl::SaveAs()
 	g_slist_free (formats);
 }
 
+void QuiverImpl::SaveWindowState()
+{
+	if (gtk_window_is_maximized(GTK_WINDOW(m_pQuiverWindow)) ||
+		gtk_window_is_fullscreen(GTK_WINDOW(m_pQuiverWindow)))
+	{
+		m_bMaximized = true;
+	}
+	else
+	{
+		m_bMaximized = false;
+		//gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
+		gtk_window_get_default_size(GTK_WINDOW(m_pQuiverWindow),&m_iAppWidth,&m_iAppHeight);
+	}
+}
+
 bool QuiverImpl::CanClose()
 {
 #ifndef QUIVER_MAEMO
-	gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
-	gtk_window_get_size(GTK_WINDOW(m_pQuiverWindow),&m_iAppWidth,&m_iAppHeight);
+	//gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
+	SaveWindowState();
 #endif
 	return true;
 }
@@ -1096,7 +1111,7 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 #ifdef QUIVER_MAEMO
-		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
+		gdk_window_set_cursor (gtk_widget_get_window(pQuiverImpl->m_pQuiverWindow), NULL);
 #endif
 	}
 	
@@ -1250,7 +1265,7 @@ void Quiver::Init()
 		//set the size and position of the window
 		//gtk_widget_set_uposition(quiver_window,m_iAppX,m_iAppY);
 #ifndef QUIVER_MAEMO
-		gtk_window_move(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppX,m_QuiverImplPtr->m_iAppY);
+		//gtk_window_move(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppX,m_QuiverImplPtr->m_iAppY);
 		gtk_window_set_default_size (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppWidth,m_QuiverImplPtr->m_iAppHeight);
 #endif
 
@@ -1357,11 +1372,11 @@ void Quiver::Init()
 
 	GtkWidget* hbox_browser_viewer_container;
 	
-	vbox = gtk_vbox_new(FALSE,0);
+	vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
 	m_QuiverImplPtr->m_pHPanedMainArea = gtk_hpaned_new();
 	gtk_widget_set_name(m_QuiverImplPtr->m_pHPanedMainArea,"Quiver hpaned");
 	
-	hbox_browser_viewer_container = gtk_hbox_new(FALSE,0);
+	hbox_browser_viewer_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	gtk_widget_set_name(hbox_browser_viewer_container,"Quiver hbox 1");
 	m_QuiverImplPtr->m_pNBProperties = gtk_notebook_new();
 	gtk_widget_set_name(m_QuiverImplPtr->m_pNBProperties ,"Quiver notebook 1");
@@ -1451,8 +1466,8 @@ void Quiver::Init()
 	
 
 	// pack the browser and viewer area
-	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_BrowserPtr->GetWidget(), TRUE, TRUE, 0);
-	gtk_box_pack_start (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_ViewerPtr->GetWidget(), TRUE, TRUE, 0);
+	gtk_box_append (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_BrowserPtr->GetWidget());
+	gtk_box_append (GTK_BOX (hbox_browser_viewer_container), m_QuiverImplPtr->m_ViewerPtr->GetWidget());
 
 	// pack the hpaned (main gui area)
 	gtk_paned_pack1(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),hbox_browser_viewer_container,TRUE,TRUE);
@@ -1469,15 +1484,15 @@ void Quiver::Init()
 
 	//gtk_widget_tap_and_hold_setup(m_QuiverImplPtr->m_pQuiverWindow, context_menu, NULL, GTK_TAP_AND_HOLD_NONE  ); 
 #else
-	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pMenubar, FALSE, FALSE, 0);
-	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pToolbar, FALSE, FALSE, 0);
+	gtk_box_append (GTK_BOX (vbox), m_QuiverImplPtr->m_pMenubar);
+	gtk_box_append (GTK_BOX (vbox), m_QuiverImplPtr->m_pToolbar);
 #endif
 
-	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pHPanedMainArea, TRUE, TRUE, 0);
-	gtk_box_pack_start (GTK_BOX (vbox),statusbar , FALSE, FALSE, 0);
+	gtk_box_append (GTK_BOX (vbox), m_QuiverImplPtr->m_pHPanedMainArea);
+	gtk_box_append (GTK_BOX (vbox),statusbar);
 
 	// add the gui elements to the main window
-	gtk_container_add (GTK_CONTAINER (m_QuiverImplPtr->m_pQuiverWindow),vbox);
+	gtk_window_set_child (GTK_WINDOW (m_QuiverImplPtr->m_pQuiverWindow),vbox);
 
 
 	/* Show the application window */
@@ -1593,6 +1608,7 @@ void Quiver::SaveSettings()
 	}
 	
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	m_QuiverImplPtr->SaveWindowState();
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_LEFT,m_QuiverImplPtr->m_iAppX);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP,m_QuiverImplPtr->m_iAppY);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH,m_QuiverImplPtr->m_iAppWidth);
@@ -1886,7 +1902,7 @@ static gboolean timeout_event_motion_notify (gpointer data)
 		empty_cursor = gdk_cursor_new_from_pixmap (empty_bitmap,empty_bitmap,&blank,&blank,0,0);
 
 #ifndef QUIVER_MAEMO
-		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, empty_cursor);
+		gdk_window_set_cursor (gtk_widget_get_window(pQuiverImpl->m_pQuiverWindow), empty_cursor);
 #endif
 		
 		g_object_unref(empty_bitmap);
@@ -3142,4 +3158,3 @@ void QuiverImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr even
 {
 	parent->m_pQuiver->ImageChanged();
 }
-

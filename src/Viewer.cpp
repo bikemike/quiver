@@ -1033,7 +1033,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			gtk_widget_hide(m_pMediaControls);
 		}
 
-		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
+		gtk_window_set_default_size (GTK_WINDOW (m_pNavigationWindow),1,1);
 		QuiverFile f = m_ImageListPtr->GetCurrent();
 		GdkPixbuf *pixbuf = f.GetThumbnail(128);
 		quiver_navigation_control_set_pixbuf(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),pixbuf);
@@ -1174,14 +1174,14 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		case FSTRIP_POS_BOTTOM:
 			box = GTK_BOX(m_pVBox);
 			quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView),1);
-			gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+			gtk_box_append (box, m_pIconView);
 			
 			break;
 		case FSTRIP_POS_LEFT:
 		case FSTRIP_POS_RIGHT:
 			box = GTK_BOX(m_pHBox);
 			quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
-			gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+			gtk_box_append (box, m_pIconView);
 			break;		
 	}
 
@@ -1770,7 +1770,7 @@ viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, g
 	gtk_widget_show_all (pViewerImpl->m_pNavigationWindow);
 
 	gint w,h;
-	gtk_window_get_size(GTK_WINDOW (pViewerImpl->m_pNavigationWindow),&w,&h);
+	gtk_window_get_default_size(GTK_WINDOW (pViewerImpl->m_pNavigationWindow),&w,&h);
   	int ww, wh, pos_x,pos_y;
   	ww = w+2;
   	wh = h+2;
@@ -1789,7 +1789,8 @@ viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, g
   	else if (0 > pos_y)
   		pos_y = 0;
 	
-	gtk_window_move (GTK_WINDOW (pViewerImpl->m_pNavigationWindow), pos_x, pos_y);
+	//gtk_window_move (GTK_WINDOW (pViewerImpl->m_pNavigationWindow), pos_x, pos_y);
+	// TODO: Re-evaluate window positioning for GTK4
 
 	GdkCursor *cursor;	
 	cursor = gdk_cursor_new (GDK_FLEUR); 
@@ -2367,9 +2368,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_alignment_set_padding(GTK_ALIGNMENT(alignment), 0, 10, 10,10);
 
 	GtkWidget* align2    = gtk_alignment_new(0.,1.,1., 0.);
-	GtkWidget* hbox1     = gtk_hbox_new(FALSE,0);
+	GtkWidget* hbox1     = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	m_pMediaControls     = hbox1;
-	GtkWidget* hbox2     = gtk_hbox_new(FALSE,0);
+	GtkWidget* hbox2     = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	m_pPlayProgress      = gtk_progress_bar_new();
 	m_pTimeLabel         = gtk_label_new("");
 	GtkWidget* eventbox2 = gtk_event_box_new();
@@ -2377,9 +2378,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pPlayProgressEventBox = gtk_event_box_new();
 	gtk_container_add(GTK_CONTAINER(m_pPlayProgressEventBox), m_pPlayProgress);
 
-	gtk_box_pack_start (GTK_BOX (hbox2), m_pTimeLabel, FALSE, TRUE, 10);
-	gtk_box_pack_start (GTK_BOX (hbox2), m_pPlayProgressEventBox, TRUE, TRUE, 0);
-	gtk_box_pack_start (GTK_BOX (hbox2), m_pVolumeButton, FALSE, TRUE, 0);
+	gtk_box_append (GTK_BOX (hbox2), m_pTimeLabel);
+	gtk_box_append (GTK_BOX (hbox2), m_pPlayProgressEventBox);
+	gtk_box_append (GTK_BOX (hbox2), m_pVolumeButton);
 
 	GtkWidget* align3   = gtk_alignment_new(0.,0.,1., 1.);
 	gtk_alignment_set_padding(GTK_ALIGNMENT(align3), 5, 5, 5,10);
@@ -2427,8 +2428,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	//gtk_container_add(GTK_CONTAINER(alignment), eventbox);
 
-	gtk_box_pack_start (GTK_BOX (hbox1), eventbox, FALSE, TRUE, 10);
-	gtk_box_pack_start (GTK_BOX (hbox1), align2, TRUE, TRUE, 0);
+	gtk_box_append (GTK_BOX (hbox1), eventbox);
+	gtk_box_append (GTK_BOX (hbox1), align2);
 
 	gtk_container_add(GTK_CONTAINER(alignment), hbox1);
 	gtk_widget_show_all(eventbox);
@@ -2500,12 +2501,12 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	//gtk_grid_attach (GTK_GRID (m_pGrid), m_pNavigationBox, 1, 1, 1, 1);
 
 //	GTK_WIDGET_SET_FLAGS(m_pGrid,GTK_CAN_FOCUS);
-	m_pHBox = gtk_hbox_new(FALSE,0);
+	m_pHBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	g_object_ref(m_pHBox);
-	m_pVBox = gtk_vbox_new(FALSE,0);
+	m_pVBox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
 
-	gtk_box_pack_start (GTK_BOX (m_pVBox), m_pGrid, TRUE, TRUE, 0);
-	gtk_box_pack_start (GTK_BOX (m_pHBox), m_pVBox, TRUE, TRUE, 0);
+	gtk_box_append (GTK_BOX (m_pVBox), m_pGrid);
+	gtk_box_append (GTK_BOX (m_pHBox), m_pVBox);
 
 	AddFilmstrip();
 
@@ -2636,7 +2637,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_no_show_all(m_pHBox,TRUE);
 	
 	
-	m_pNavigationWindow = gtk_window_new (GTK_WINDOW_POPUP);
+	m_pNavigationWindow = gtk_window_new ();
+	// TODO: Investigate if gtk_window_set_transient_for() and gtk_window_set_modal() are needed.
 	m_pNavigationControl = quiver_navigation_control_new_with_adjustments (m_pAdjustmentH, m_pAdjustmentV);
 
 	g_signal_connect (G_OBJECT (m_pNavigationControl), "button_release_event",  
@@ -3420,7 +3422,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 
 		if (NULL == pixbuf)
 		{
-			pixbuf = f.GetThumbnail(MAX(uiWidth,uiHeight));
+			pixbuf = f.GetThumbnail(std::max(uiWidth,uiHeight));
 	
 		}
 
