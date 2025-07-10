@@ -34,7 +34,7 @@ public:
 	void Show();
 	void Hide();
 	
-	void SetUIManager(GtkUIManager *ui_manager);
+	// void SetUIManager(GtkUIManager *ui_manager); // GtkUIManager is deprecated
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 
 	double GetMagnification() const;

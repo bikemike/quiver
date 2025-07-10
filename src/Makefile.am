@@ -21,6 +21,10 @@ AM_CFLAGS = \
 
 AM_CPPFLAGS = \
 	-I$(top_srcdir) \
+	-I$(srcdir) \
+	-I$(top_srcdir)/src \
+	-I. \
+	-I$(top_srcdir)/libquiver \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \

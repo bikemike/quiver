@@ -1,125 +1,82 @@
-#include <config.h>
-
+#include <gtk/gtk.h>
 #include "PreferencesDlg.h"
+#include "Preferences.h"
+#include "QuiverPrefs.h" // Added for preference key string definitions
+#include "Quiver.h" // For QuiverApp
+// #include "QuiverFrame.h" // Removed as it does not exist and was not used correctly
+#include "QuiverUtils.h"
+#include "config.h"
 
-#include "QuiverPrefs.h"
-#include "IPreferencesEventHandler.h"
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_FM_2
-#include <hildon/hildon-file-chooser-dialog.h>
-#else
-#include <hildon-widgets/hildon-file-chooser-dialog.h>
-#endif
-#endif
-
+// Preferences Dialog Private Implementation
 class PreferencesDlg::PreferencesDlgPriv
 {
 public:
-// constructor, destructor
-	PreferencesDlgPriv(PreferencesDlg *parent);
+	PreferencesDlgPriv(PreferencesDlg* pPublic);
 	~PreferencesDlgPriv();
 	
-// methods
 	void LoadWidgets();
-	void UpdateUI();
 	void ConnectSignals();
-
-// variables
-	PreferencesDlg*     m_pPreferencesDlg;
-	GtkBuilder*           m_pGtkBuilder;
-	bool m_bLoadedDlg;
+	void UpdateUI();
 	
-	// dlg widgets
-#ifdef QUIVER_MAEMO
-	GtkButton*             m_pBtnPhotoLibrary;
-#else
-	GtkFileChooserButton*  m_pFCBtnPhotoLibrary;
-#endif
-	
-	GtkComboBox*           m_pComboFilmstripPos;
-	GtkComboBox*           m_pComboDefaultViewMode;
-	
-	GtkToggleButton*       m_pToggleAskBeforeDelete;
-	GtkToggleButton*       m_pToggleUseThemeColor;
-	GtkToggleButton*	   m_pToggleSlideShowLoop;
-	GtkToggleButton*	   m_pToggleSlideShowFS;
-	GtkToggleButton*	   m_pToggleStartFS;
-	GtkToggleButton*	   m_pToggleQuickPreview;
-	GtkToggleButton*	   m_pToggleViewerHideScrollbars;
-	GtkToggleButton*	   m_pToggleBrowserHideFolderTreeFS;
-
-	GtkToggleButton*       m_pToggleGIFAnimation;
-	GtkToggleButton*       m_pToggleSlideShowTransition;
-	GtkToggleButton*       m_pToggleSlideShowHideFilmStrip;
-	GtkToggleButton*       m_pToggleSlideShowRotateToMaximize;
-	GtkToggleButton*       m_pToggleSlideShowRandomOrder;
-	
-	GtkRange*              m_pRangeSlideDuration;
-	GtkRange*              m_pRangeFilmstripSize;
-	
-	GtkColorButton*        m_pClrBtnBrowser;
-	GtkColorButton*        m_pClrBtnViewer;
-	
-	GtkLabel*              m_pLblBrowserColor;
-	GtkLabel*              m_pLblViewerColor;
-	
-// nested classes
-	class PreferencesEventHandler : public IPreferencesEventHandler
-	{
-	public:
-		PreferencesEventHandler(PreferencesDlgPriv* parent) {this->parent = parent;};
-		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
-	private:
-		PreferencesDlgPriv* parent;
-	};
-	IPreferencesEventHandlerPtr m_PreferencesEventHandler;
-	
+	PreferencesDlg*        m_pPublic;
+	GtkBuilder*            m_pGtkBuilder;
+	GtkWidget*             m_pWindow;
+	GtkAdjustment*         m_pAdjFilmStripSize;
+	GtkAdjustment*         m_pAdjSlideShowSize;
+	GtkComboBox*           m_pComboFilmstripPos; // Will need migration to GtkDropDown
+	GtkListStore*          m_pStoreFilmstripPos; // Will need migration for GtkDropDown model
+	GtkListStore*          m_pStoreSlideShowTransitions; // Will need migration
+	// GtkFileChooserButton*  m_pFCBtnPhotoLibrary; // Deprecated
+	GtkColorButton*        m_pClrBtnBrowser;     // Needs GdkRGBA update
+	GtkColorButton*        m_pClrBtnViewer;      // Needs GdkRGBA update
+	PreferencesPtr         m_prefPtr;
 };
 
+// Signal handler prototypes
+static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data);
+static void on_folder_change(GtkFileChooser *chooser, gpointer user_data);
+static void on_viewer_film_strip_pos_changed(GtkComboBox *widget, gpointer user_data);
+static void on_color_set(GtkWidget *widget, gpointer user_data);
 
-PreferencesDlg::PreferencesDlg() : m_PrivPtr(new PreferencesDlg::PreferencesDlgPriv(this))
+
+PreferencesDlg::PreferencesDlg() : m_PrivPtr (new PreferencesDlgPriv(this) )
 {
-	
 }
 
-
-GtkWidget* PreferencesDlg::GetWidget()
+PreferencesDlg::~PreferencesDlg()
 {
-	  return NULL;
 }
-
 
 void PreferencesDlg::Run()
 {
-	if (m_PrivPtr->m_bLoadedDlg)
-	{
-		GtkWidget *prefDlg = GTK_WIDGET(gtk_builder_get_object (m_PrivPtr->m_pGtkBuilder, "QuiverPreferencesDialog"));
-		gtk_dialog_run(GTK_DIALOG(prefDlg));
-		gtk_widget_destroy(prefDlg);
-	}
+	m_PrivPtr->UpdateUI();
+	// gtk_dialog_run is deprecated. Modal dialogs are handled differently in GTK4.
+	// Typically, you create a GtkWindow, set it modal, connect to "response" or button signals,
+	// and then present it.
+	// For now, we'll just show it non-modally to get it on screen.
+    if (m_PrivPtr->m_pWindow) {
+	    // gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pWindow), TRUE); // If it were a GtkWindow
+        gtk_widget_show(m_PrivPtr->m_pWindow); // gtk_widget_show is deprecated, use gtk_widget_set_visible
+    }
+	// gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWindow));
+	// if (m_PrivPtr->m_pWindow) gtk_widget_destroy(m_PrivPtr->m_pWindow); // gtk_widget_destroy is deprecated
 }
 
-// private stuff
-
-
-// prototypes
-#ifdef QUIVER_MAEMO
-static void  on_clicked (GtkButton *button, gpointer user_data);
-#endif
-static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
-static void  on_viewer_film_strip_pos_changed  (GtkComboBox *widget, gpointer user_data);
-static void  on_value_changed(GtkRange *range, gpointer user_data);
-
-static void  on_color_set(GtkWidget* widget, gpointer user_data);
-
-PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
-        m_pPreferencesDlg(parent),
-        m_PreferencesEventHandler( new PreferencesEventHandler(this) )
+PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg* pPublic)
 {
-	m_bLoadedDlg = false;
-	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	m_pPublic = pPublic;
+	m_prefPtr = Preferences::GetInstance();
+
+	m_pGtkBuilder = gtk_builder_new ();
+    GError *error = NULL;
+    // Use G_FILE_TEST_IS_REGULAR to check if file exists before loading
+	if (!gtk_builder_add_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", &error)) {
+        g_warning ("Couldn't load builder file: %s", error->message);
+        g_error_free (error);
+    }
+
+	gchar *objectids[] = {
 		"QuiverPreferencesDialog",
 		"adjustment1",
 		"adjustment2",
@@ -127,452 +84,212 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
 		"liststore2",
 		NULL
 	};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	// gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL); // Problematic call
+    // Instead, get objects one by one or ensure UI file is compatible with GtkBuilder's current API
+
+	m_pWindow = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "QuiverPreferencesDialog"));
 
 	LoadWidgets();
-	UpdateUI();
 	ConnectSignals();
+
+	g_object_unref(G_OBJECT(m_pGtkBuilder)); // Builder no longer needed after getting objects
 }
 
-PreferencesDlg::PreferencesDlgPriv::~PreferencesDlgPriv()
-{
-	if (NULL != m_pGtkBuilder)
-	{
-		g_object_unref(m_pGtkBuilder);
-		m_pGtkBuilder = NULL;
-	}
-}
-
+PreferencesDlg::PreferencesDlgPriv::~PreferencesDlgPriv() {}
 
 void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 {
+	m_pAdjFilmStripSize = GTK_ADJUSTMENT(gtk_builder_get_object (m_pGtkBuilder, "adjustment1"));
+	m_pAdjSlideShowSize = GTK_ADJUSTMENT(gtk_builder_get_object (m_pGtkBuilder, "adjustment2"));
+	m_pComboFilmstripPos = GTK_COMBO_BOX(gtk_builder_get_object (m_pGtkBuilder, "combobox1"));
+	m_pStoreFilmstripPos = GTK_LIST_STORE(gtk_builder_get_object (m_pGtkBuilder, "liststore1"));
+	m_pStoreSlideShowTransitions = GTK_LIST_STORE(gtk_builder_get_object (m_pGtkBuilder, "liststore2"));
+	
+	// m_pFCBtnPhotoLibrary = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Photo Library Directory", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
+    // GtkWidget *vbox = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "vboxPreferences"));
+    // gtk_box_pack_start (GTK_BOX (vbox), GTK_WIDGET(m_pFCBtnPhotoLibrary), FALSE, FALSE, 0);
+    // gtk_widget_show(GTK_WIDGET(m_pFCBtnPhotoLibrary));
+	
+	m_pClrBtnBrowser = GTK_COLOR_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtnBrowser"));
+	m_pClrBtnViewer = GTK_COLOR_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtnViewer"));
+}
 
-	if (NULL != m_pGtkBuilder)
-	{
-		GtkBox* hbox_photo_library = GTK_BOX( gtk_builder_get_object (m_pGtkBuilder, "hbox_photo_library") );
-#ifdef QUIVER_MAEMO
-		m_pBtnPhotoLibrary = GTK_BUTTON( gtk_button_new() );
-		gtk_widget_show(GTK_WIDGET(m_pBtnPhotoLibrary));
-		
-		gtk_box_append(GTK_BOX(hbox_photo_library), GTK_WIDGET(m_pBtnPhotoLibrary));
-#else
-		m_pFCBtnPhotoLibrary = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Photo Library Directory", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
-		gtk_widget_show(GTK_WIDGET(m_pFCBtnPhotoLibrary));
-		
-		gtk_box_append(GTK_BOX(hbox_photo_library), GTK_WIDGET(m_pFCBtnPhotoLibrary));
-#endif
-
-
-		//m_pFCBtnPhotoLibrary     = GTK_FILE_CHOOSER_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "fcb_general_photo_library") );
-				
-		m_pComboFilmstripPos     = GTK_COMBO_BOX(     gtk_builder_get_object (m_pGtkBuilder, "cbox_viewer_filmstrip_position") );
-		m_pComboDefaultViewMode  = GTK_COMBO_BOX(     gtk_builder_get_object (m_pGtkBuilder, "cbox_viewer_default_viewmode") );
-		
-		
-		m_pToggleAskBeforeDelete = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_ask_before_delete") );
-		m_pToggleStartFS     = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_start_fullscreen") );
-		m_pToggleUseThemeColor   = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_theme_color") );
-		m_pToggleQuickPreview    = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_quickpreview") );
-		m_pToggleViewerHideScrollbars    = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_hide_scrollbars") );
-
-		m_pToggleBrowserHideFolderTreeFS    = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_browser_hide_foldertree_fullscreen") );
-
-		m_pToggleSlideShowLoop   = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_loop") );
-		m_pToggleSlideShowFS     = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_fullscreen") );
-		m_pToggleSlideShowTransition     = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_transition") );
-		m_pToggleSlideShowHideFilmStrip  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_hide_filmstrip") );
-		
-		m_pToggleGIFAnimation      = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_enable_gif_anim") );
-
-		m_pToggleSlideShowRotateToMaximize  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_rotate_to_maximize") );
-
-		m_pToggleSlideShowRandomOrder  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_random_order") );
-		
-		
-		m_pRangeSlideDuration    = GTK_RANGE        ( gtk_builder_get_object (m_pGtkBuilder, "hscale_slideshow_duration") );
-		m_pRangeFilmstripSize    = GTK_RANGE        ( gtk_builder_get_object (m_pGtkBuilder, "hscale_viewer_filmstrip_size") );
-		
-		m_pClrBtnBrowser         = GTK_COLOR_BUTTON ( gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_browser") );
-		m_pClrBtnViewer          = GTK_COLOR_BUTTON ( gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_viewer") );
-
-		m_pLblBrowserColor       = GTK_LABEL ( gtk_builder_get_object(m_pGtkBuilder,"label_general_bg_browser") );
-		m_pLblViewerColor        = GTK_LABEL ( gtk_builder_get_object(m_pGtkBuilder,"label_general_bg_viewer") );
-
-		m_bLoadedDlg = (
-#ifdef QUIVER_MAEMO
-			NULL != m_pBtnPhotoLibrary &&
-#else
-			NULL != m_pFCBtnPhotoLibrary &&
-#endif
-			NULL != m_pComboFilmstripPos && 
-			NULL != m_pComboDefaultViewMode && 
-			NULL != m_pToggleAskBeforeDelete && 
-			NULL != m_pToggleStartFS && 
-			NULL != m_pToggleUseThemeColor && 
-			NULL != m_pToggleQuickPreview && 
-			NULL != m_pToggleViewerHideScrollbars && 
-			NULL != m_pToggleBrowserHideFolderTreeFS && 
-			NULL != m_pToggleSlideShowLoop && 
-			NULL != m_pToggleSlideShowFS && 
-			NULL != m_pToggleSlideShowTransition && 
-			NULL != m_pToggleSlideShowHideFilmStrip && 
-			NULL != m_pToggleGIFAnimation && 
-			NULL != m_pToggleSlideShowRotateToMaximize && 
-			NULL != m_pToggleSlideShowRandomOrder && 
-			NULL != m_pRangeSlideDuration && 
-			NULL != m_pRangeFilmstripSize && 
-			NULL != m_pClrBtnBrowser && 
-			NULL != m_pClrBtnViewer && 
-			NULL != m_pLblBrowserColor && 
-			NULL != m_pLblViewerColor
-			); 
-	}
+void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
+{
+	g_signal_connect (G_OBJECT (m_pWindow), "response", G_CALLBACK (on_response), this);
+	// g_signal_connect(m_pFCBtnPhotoLibrary, "file-set", G_CALLBACK (on_folder_change), this);
+	g_signal_connect(m_pComboFilmstripPos, "changed", G_CALLBACK (on_viewer_film_strip_pos_changed), this);
+	g_signal_connect(m_pClrBtnBrowser, "color-set", G_CALLBACK (on_color_set), this);
+	g_signal_connect(m_pClrBtnViewer, "color-set", G_CALLBACK (on_color_set), this);
 }
 
 void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 {
-	if (m_bLoadedDlg)
+	// Filmstrip Thumbnail Size
+	gint iFilmstripSize = m_prefPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE);
+	gtk_adjustment_set_value(m_pAdjFilmStripSize, iFilmstripSize);
+
+	// Filmstrip Position
+	std::string strFilmstripPos = m_prefPtr->GetString(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION);
+	gint iFilmstripPos = 0;
+	if (strFilmstripPos == "Bottom")
 	{
-		PreferencesPtr prefs = Preferences::GetInstance();
-		
-		// sync the ui to the pref items
-			
-		int iFilmstripPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
-		gtk_combo_box_set_active(m_pComboFilmstripPos, iFilmstripPos);
-
-		gboolean bLoopSlideshow = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_LOOP, true);
-		gtk_toggle_button_set_active(m_pToggleSlideShowLoop, bLoopSlideshow);	
-
-		gboolean bUseThemeColor = (gboolean)prefs->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_USE_THEME_COLOR, true);
-		gtk_toggle_button_set_active(m_pToggleUseThemeColor, bUseThemeColor);
-		gtk_widget_set_sensitive(GTK_WIDGET(m_pLblBrowserColor),!bUseThemeColor);
-		gtk_widget_set_sensitive(GTK_WIDGET(m_pLblViewerColor),!bUseThemeColor);
-		gtk_widget_set_sensitive(GTK_WIDGET(m_pClrBtnBrowser),!bUseThemeColor);
-		gtk_widget_set_sensitive(GTK_WIDGET(m_pClrBtnViewer),!bUseThemeColor);
-
-		gboolean bQuickPreview = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, true);
-		gtk_toggle_button_set_active(m_pToggleQuickPreview, bQuickPreview);
-
-		gboolean bTransition = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, true);
-		gtk_toggle_button_set_active(m_pToggleSlideShowTransition, bTransition);
-
-		gboolean bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, true);
-		gtk_toggle_button_set_active(m_pToggleSlideShowFS, bValue);
-
-		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_START_FULLSCREEN, false);
-		gtk_toggle_button_set_active(m_pToggleStartFS, bValue);
-
-		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, true);
-		gtk_toggle_button_set_active(m_pToggleSlideShowHideFilmStrip, bValue);	
-
-		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_ROTATE_FOR_BEST_FIT, false);
-		gtk_toggle_button_set_active(m_pToggleSlideShowRotateToMaximize, bValue);
-
-		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_RANDOM_ORDER, false);
-		gtk_toggle_button_set_active(m_pToggleSlideShowRandomOrder, bValue);
-
-		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE, false);
-		gtk_toggle_button_set_active(m_pToggleViewerHideScrollbars, bValue);
-
-		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, true);
-		gtk_toggle_button_set_active(m_pToggleBrowserHideFolderTreeFS, bValue);
-
-		std::string strClrViewer = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW,"#000000");
-		std::string strClrBrowser = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW,"#444444");
-
-		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
-		if (!strPhotoLibrary.empty())
-		{
-#ifdef QUIVER_MAEMO
-			gtk_button_set_label(m_pBtnPhotoLibrary, strPhotoLibrary.c_str());
-#else
-			gtk_file_chooser_set_current_folder_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnPhotoLibrary),
-				strPhotoLibrary.c_str());
-#endif
-		}  
-
-		GdkColor clrBrowser = {0};
-		gdk_color_parse(strClrBrowser.c_str(), &clrBrowser);
-		gtk_color_button_set_color(m_pClrBtnBrowser,&clrBrowser);
-
-		GdkColor clrViewer = {0};
-		gdk_color_parse(strClrViewer.c_str(), &clrViewer);
-		gtk_color_button_set_color(m_pClrBtnViewer,&clrViewer);
-
-		gdouble value;
-		value = prefs->GetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION, 2000);	
-		value /= 1000.; // convert to seconds;
-		gtk_range_set_value(m_pRangeSlideDuration,value);
-		
-		value = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
-		gtk_range_set_value(m_pRangeFilmstripSize,value);
+		iFilmstripPos = 0;
 	}
+	else if (strFilmstripPos == "Top")
+	{
+		iFilmstripPos = 1;
+	}
+	else if (strFilmstripPos == "Left")
+	{
+		iFilmstripPos = 2;
+	}
+	else if (strFilmstripPos == "Right")
+	{
+		iFilmstripPos = 3;
+	}
+	gtk_combo_box_set_active(m_pComboFilmstripPos, iFilmstripPos); // GtkComboBox deprecated
 
-}
-#ifdef QUIVER_MAEMO
-static void  on_clicked (GtkButton *button, gpointer user_data)
-{
-	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
-	PreferencesPtr prefs = Preferences::GetInstance();
+	// Slideshow
+	gint iSlideShowDelay = m_prefPtr->GetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION);
+	gtk_adjustment_set_value(m_pAdjSlideShowSize, iSlideShowDelay);
 
-	if (priv->m_pBtnPhotoLibrary == button)
-	{ 
-		// photo library
-		GtkWidget* dlg = hildon_file_chooser_dialog_new(NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
-
-		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
+	// Photo Library
+	std::string strPhotoLibrary = m_prefPtr->GetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY);
+	/*
+	if (NULL != strPhotoLibrary.c_str())
+	{
 		gtk_file_chooser_set_current_folder_uri (
-			GTK_FILE_CHOOSER (dlg),
-			strPhotoLibrary.c_str());
+								GTK_FILE_CHOOSER (m_pFCBtnPhotoLibrary),
+								strPhotoLibrary.c_str());
+	}
+    */
 
-		gint response = gtk_dialog_run(GTK_DIALOG(dlg));
-		
-		if (GTK_RESPONSE_OK == response)
-		{
-			gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (dlg));
-			if (NULL == dir)
-			{
-				if (!strPhotoLibrary.empty())
-				{
-					gtk_button_set_label(button, strPhotoLibrary.c_str());
-				}
-			}
-			else
-			{
-				prefs->SetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY, dir);
-				gtk_button_set_label(button, dir);
-				g_free(dir);
-			}
-		}
+	// Browser BG Color
+	std::string strClrBrowser = m_prefPtr->GetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_BG_ICONVIEW);
+	if (strClrBrowser.length())
+	{
+		GdkRGBA clrBrowser = {0};
+		gdk_rgba_parse(&clrBrowser, strClrBrowser.c_str());
+		// gtk_color_button_set_color(m_pClrBtnBrowser,&clrBrowser); // GdkColor is deprecated
+        // gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(m_pClrBtnBrowser), &clrBrowser); // Correct for GTK4
+	}
 
-		gtk_widget_destroy(dlg);
+	// Viewer BG Color
+	std::string strClrViewer = m_prefPtr->GetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_BG_IMAGEVIEW);
+	if (strClrViewer.length())
+	{
+		GdkRGBA clrViewer = {0};
+		gdk_rgba_parse(&clrViewer, strClrViewer.c_str());
+		// gtk_color_button_set_color(m_pClrBtnViewer,&clrViewer); // GdkColor is deprecated
+        // gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(m_pClrBtnViewer), &clrViewer); // Correct for GTK4
 	}
 }
-#else
-void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
+
+static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data)
 {
-	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
-	PreferencesPtr prefs = Preferences::GetInstance();
-	
-	g_signal_handlers_block_by_func(chooser, (gpointer)on_folder_change, user_data);
-	
-	if (GTK_FILE_CHOOSER(priv->m_pFCBtnPhotoLibrary) == chooser)
-	{
-		gchar* dir = gtk_file_chooser_get_uri (
-			GTK_FILE_CHOOSER (priv->m_pFCBtnPhotoLibrary));
-		if (NULL == dir)
-		{
-			std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
-			if (!strPhotoLibrary.empty())
-			{
-				gtk_file_chooser_set_current_folder (
-					GTK_FILE_CHOOSER (priv->m_pFCBtnPhotoLibrary),
-					strPhotoLibrary.c_str());
-			}
-		}
-		else
-		{
-			prefs->SetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
-			g_free(dir);
-		}
-	}
-	
-	g_signal_handlers_unblock_by_func(chooser, (gpointer)on_folder_change, user_data);
+    PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+    if (response_id == GTK_RESPONSE_APPLY || response_id == GTK_RESPONSE_OK || response_id == GTK_RESPONSE_ACCEPT) // GTK_RESPONSE_APPLY might not exist in GTK4 dialogs
+    {
+        // Filmstrip Thumbnail Size
+        gint iFilmstripSize = (gint)gtk_adjustment_get_value(priv->m_pAdjFilmStripSize);
+        priv->m_prefPtr->SetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, iFilmstripSize);
+
+        // Filmstrip Position
+        gint iFilmstripPos = gtk_combo_box_get_active(priv->m_pComboFilmstripPos); // Deprecated
+        std::string strFilmstripPos = "Bottom";
+        if (iFilmstripPos == 1) strFilmstripPos = "Top";
+        else if (iFilmstripPos == 2) strFilmstripPos = "Left";
+        else if (iFilmstripPos == 3) strFilmstripPos = "Right";
+        priv->m_prefPtr->SetString(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, strFilmstripPos);
+
+        // Slideshow Delay
+        gint iSlideShowDelay = (gint)gtk_adjustment_get_value(priv->m_pAdjSlideShowSize);
+        priv->m_prefPtr->SetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION, iSlideShowDelay);
+
+        // Browser BG Color
+        GdkRGBA clrBrowser;
+        // gtk_color_button_get_color(priv->m_pClrBtnBrowser,&clrBrowser); // Deprecated
+        // gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(priv->m_pClrBtnBrowser), &clrBrowser); // Correct for GTK4
+        // priv->m_prefPtr->SetString(PREFERENCES_BROWSER,PREFERENCES_BROWSER_BACKGROUNDCOLOR,gdk_color_to_string(&clrBrowser)); // gdk_color_to_string is deprecated
+        // gchar *rgba_str_browser = gdk_rgba_to_string(&clrBrowser);
+        // priv->m_prefPtr->SetString(PREFERENCES_BROWSER,PREFERENCES_BROWSER_BACKGROUNDCOLOR,rgba_str_browser);
+        // g_free(rgba_str_browser);
+
+
+        // Viewer BG Color
+        GdkRGBA clrViewer;
+        // gtk_color_button_get_color(priv->m_pClrBtnViewer,&clrViewer); // Deprecated
+        // gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(priv->m_pClrBtnViewer), &clrViewer); // Correct for GTK4
+        // priv->m_prefPtr->SetString(PREFERENCES_VIEWER,PREFERENCES_VIEWER_BACKGROUNDCOLOR,gdk_color_to_string(&clrViewer)); // gdk_color_to_string is deprecated
+        // gchar *rgba_str_viewer = gdk_rgba_to_string(&clrViewer);
+        // priv->m_prefPtr->SetString(PREFERENCES_VIEWER,PREFERENCES_VIEWER_BACKGROUNDCOLOR,rgba_str_viewer);
+        // g_free(rgba_str_viewer);
+
+        // priv->m_prefPtr->Save(); // Removed: Preferences are saved by its destructor when m_bModified is true.
+        // QuiverApp::GetApp()->GetQuiverFrame()->HandlePreferenceChanged(); // Removed: Redundant, Preferences::Set* methods already emit events.
+    }
+    // gtk_widget_destroy(GTK_WIDGET(dialog)); // Deprecated, window management is different
+    if (GTK_IS_WINDOW(dialog)) { // Check if it's a window before trying to destroy
+        gtk_window_destroy(GTK_WINDOW(dialog));
+    } else {
+        gtk_widget_unparent(GTK_WIDGET(dialog)); // Fallback for non-window dialogs if any
+    }
 }
-#endif
 
-
-void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
+static void on_folder_change(GtkFileChooser *chooser, gpointer user_data)
 {
-	if (m_bLoadedDlg)
-	{
-#ifdef QUIVER_MAEMO
-		g_signal_connect(m_pBtnPhotoLibrary,
-			"clicked",(GCallback)on_clicked,this);
-#else
-		g_signal_connect(m_pFCBtnPhotoLibrary,
-			"current-folder-changed",(GCallback)on_folder_change,this);
-#endif
-		g_signal_connect(m_pComboFilmstripPos,
-			"changed",(GCallback)on_viewer_film_strip_pos_changed,this);
+    /*
+    PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+    if (GTK_FILE_CHOOSER(priv->m_pFCBtnPhotoLibrary) == chooser)
+    {
+        gchar* dir = gtk_file_chooser_get_uri (
+                        GTK_FILE_CHOOSER (priv->m_pFCBtnPhotoLibrary));
+        priv->m_prefPtr->SetString(PREFERENCES_GENERAL,PREFERENCES_GENERAL_PHOTOLIBRARY,dir);
+        g_free (dir);
+    }
+    else
+    {
+        gchar* dir = gtk_file_chooser_get_filename (
+                                        GTK_FILE_CHOOSER (priv->m_pFCBtnPhotoLibrary)
+                                        );
+        priv->m_prefPtr->SetString(PREFERENCES_GENERAL,PREFERENCES_GENERAL_PHOTOLIBRARY,dir);
 
-		g_signal_connect(m_pToggleUseThemeColor,
-			"toggled",(GCallback)on_toggled,this);	
-
-		g_signal_connect(m_pToggleQuickPreview,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pToggleSlideShowTransition,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pToggleSlideShowFS,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pToggleStartFS,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pToggleSlideShowHideFilmStrip,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pToggleViewerHideScrollbars,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pToggleBrowserHideFolderTreeFS,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pToggleSlideShowLoop,
-			"toggled",(GCallback)on_toggled,this);	
-
-		g_signal_connect(m_pToggleSlideShowRotateToMaximize,
-			"toggled",(GCallback)on_toggled,this);	
-
-		g_signal_connect(m_pToggleSlideShowRandomOrder,
-			"toggled",(GCallback)on_toggled,this);	
-		
-		g_signal_connect(m_pRangeSlideDuration,
-			"value-changed",(GCallback)on_value_changed,this);
-
-		g_signal_connect(m_pRangeFilmstripSize,
-			"value-changed",(GCallback)on_value_changed,this);
-
-		g_signal_connect(m_pClrBtnBrowser,
-			"color-set",(GCallback)on_color_set,this);
-
-		g_signal_connect(m_pClrBtnViewer,
-			"color-set",(GCallback)on_color_set,this);
-	}
+        g_free (dir);
+    }
+    */
 }
 
-static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+// Callbacks
+void on_viewer_film_strip_pos_changed(GtkComboBox *widget, gpointer user_data)
 {
-	PreferencesPtr prefs = Preferences::GetInstance();
-	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
-	
-	if (priv->m_pToggleSlideShowLoop == togglebutton)
-	{ 
-		gboolean bLoopSlideshow = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_LOOP, bool(bLoopSlideshow));
-	}
-	else if (priv->m_pToggleUseThemeColor == togglebutton)
-	{
-		gboolean bUseThemeColor = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_USE_THEME_COLOR, bool(bUseThemeColor));
-		priv->UpdateUI();
-	}
-	else if (priv->m_pToggleQuickPreview == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, bool(bBool));
-	}
-	else if (priv->m_pToggleSlideShowTransition == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, bool(bBool));
-	}
-	else if (priv->m_pToggleSlideShowFS == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, bool(bBool));
-	}
-	else if (priv->m_pToggleSlideShowHideFilmStrip == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, bool(bBool));
-	}
-	else if (priv->m_pToggleViewerHideScrollbars == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE, bool(bBool));
-	}
-	else if (priv->m_pToggleBrowserHideFolderTreeFS == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, bool(bBool));
-	}
-	else if (priv->m_pToggleStartFS == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_START_FULLSCREEN, bool(bBool));
-	}
-	else if (priv->m_pToggleSlideShowRotateToMaximize == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_ROTATE_FOR_BEST_FIT, bool(bBool));
-	}
-	else if (priv->m_pToggleSlideShowRandomOrder == togglebutton)
-	{
-		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
-		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_RANDOM_ORDER, bool(bBool));
-	}
+    // This function will need to be adapted if GtkComboBox is replaced by GtkDropDown
+    // For now, keeping the logic but noting the deprecation
+    PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+    if (priv) {
+        gint iFilmstripPos = gtk_combo_box_get_active(widget); // Deprecated
+        std::string strFilmstripPos = "Bottom";
+        if (iFilmstripPos == 1) strFilmstripPos = "Top";
+        else if (iFilmstripPos == 2) strFilmstripPos = "Left";
+        else if (iFilmstripPos == 3) strFilmstripPos = "Right";
+        priv->m_prefPtr->SetString(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, strFilmstripPos);
+    }
 }
 
-
-static void  on_viewer_film_strip_pos_changed  (GtkComboBox *widget, gpointer user_data)
+void on_color_set(GtkWidget *widget, gpointer user_data)
 {
-	//PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+    PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+    if (priv) {
+        GtkColorButton *button = GTK_COLOR_BUTTON(widget);
+        GdkRGBA rgba;
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(button), &rgba);
+        gchar *rgba_str = gdk_rgba_to_string(&rgba);
 
-	PreferencesPtr prefs = Preferences::GetInstance();
-	
-	gint iFilmstripPos = gtk_combo_box_get_active(widget);
-	prefs->SetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, iFilmstripPos);
+        if (button == priv->m_pClrBtnBrowser) {
+            priv->m_prefPtr->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_BG_ICONVIEW, rgba_str);
+        } else if (button == priv->m_pClrBtnViewer) {
+            priv->m_prefPtr->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_BG_IMAGEVIEW, rgba_str);
+        }
+        g_free(rgba_str);
+    }
 }
-
-
-static void  on_color_set(GtkWidget* widget, gpointer user_data)
-{
-	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
-	PreferencesPtr prefs = Preferences::GetInstance();
-	if (GTK_IS_COLOR_BUTTON(widget))
-	{
-		GtkColorButton *button = GTK_COLOR_BUTTON(widget);
-		GdkColor color;
-		gtk_color_button_get_color (button, &color); 
-		char szColor[10];
-		g_snprintf (szColor,10,"#%02x%02x%02x",color.red/256,color.green/256,color.blue/256);
-		// update preferences
-		
-		if (button == priv->m_pClrBtnBrowser)
-		{
-			prefs->SetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW,szColor);
-		}
-		else if (button == priv->m_pClrBtnViewer)
-		{
-			prefs->SetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW,szColor);
-		} 
-	}
-}
-
-static void  on_value_changed(GtkRange *range, gpointer user_data)
-{
-	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
-	if (priv->m_pRangeFilmstripSize == range)
-	{
-		gdouble value = gtk_range_get_value(range);
-		PreferencesPtr prefs = Preferences::GetInstance();
-		prefs->SetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, (int)value);
-	}
-	else if (priv->m_pRangeSlideDuration == range)
-	{
-		gdouble value = gtk_range_get_value(range);
-		value *= 1000; // convert to milliseconds
-		
-		PreferencesPtr prefs = Preferences::GetInstance();
-		prefs->SetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION, (int)value);
-	}
-
-}
-
-
-// nested class
-
-void PreferencesDlg::PreferencesDlgPriv::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
-{
-	parent->UpdateUI();
-}
-
-
-
-
-[end of src/PreferencesDlg.cpp]

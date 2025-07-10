@@ -42,7 +42,7 @@ IconViewThumbLoader::~IconViewThumbLoader()
 		// this call to gdk_threads_leave is made to make sure we dont get into
 		// a deadlock between this thread(gui) and the IconViewThumbLoader thread which calls
 		// gdk_threads_enter 
-		gdk_threads_leave();
+		// gdk_threads_leave(); // GTK4: UI updates must be on main thread.
 
 		pthread_mutex_lock (&m_pConditionMutexes[i]);
 		pthread_cond_signal(&m_pConditions[i]);

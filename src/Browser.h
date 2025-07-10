@@ -22,7 +22,7 @@ public:
 	
 	void SetImageList(ImageListPtr list);
 	
-	void SetUIManager(GtkUIManager *ui_manager);
+	// void SetUIManager(GtkUIManager *ui_manager); // GtkUIManager is deprecated
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 	
 	void GrabFocus();

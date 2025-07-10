@@ -10,7 +10,7 @@ class PreferencesDlg
 public:
 	//constructor
 	PreferencesDlg();
-	//~PreferencesDlg();
+	~PreferencesDlg(); // Added destructor declaration
 	
 	//member functions
 	GtkWidget *GetWidget();

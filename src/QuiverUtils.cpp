@@ -7,22 +7,19 @@ static bool g_bAcceleratorsDisabled = false;
 
 namespace QuiverUtils
 {
-	
+	/* GtkUIManager and GtkAction are deprecated in GTK4.
+	   These functions need to be reimplemented using GActionMap, GAction, GMenuModel, etc.
+	   For now, they are commented out to allow compilation to proceed.
+	*/
+/*
 	GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
 	{
-		GList * action_groups = gtk_ui_manager_get_action_groups(ui);
-		GtkAction * action = NULL;
-		while (NULL != action_groups)
-		{
-			action = gtk_action_group_get_action (GTK_ACTION_GROUP(action_groups->data),action_name);
-			if (NULL != action)
-			{
-				break;
-			}                      
-			action_groups = g_list_next(action_groups);
-		}
-	
-		return action;
+		// In GTK4, you would typically get a GActionMap from a GtkWidget (e.g. GtkApplicationWindow)
+		// or GtkApplication and then lookup the GAction.
+		// GActionMap *action_map = gtk_widget_get_action_map(GTK_WIDGET(widget_with_map), name);
+		// GAction *action = g_action_map_lookup_action(action_map, action_name);
+		// return G_IS_ACTION(action) ? action : NULL; // This would return GAction*, not GtkAction*
+		return NULL; // Placeholder
 	}
 	
 	
@@ -31,14 +28,13 @@ namespace QuiverUtils
 		gint i;
 		for ( i = 0; i < n_actions; i++)
 		{
-			GtkAction* action = QuiverUtils::GetAction(pUIManager, actions[i]);
-			if (NULL != action)
-			{
-				gtk_action_set_sensitive(action,bSensitive);
-			}
+			// GAction* action = GetActionFromSomewhere(actions[i]); // New helper needed
+			// if (action) {
+			// 	 g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bSensitive);
+			// }
 		}
 	}
-	
+*/
 	
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
 	{
@@ -111,106 +107,21 @@ namespace QuiverUtils
 		return modified;
 	}
 
-
+/*
 	void DisconnectUnmodifiedAccelerators(GtkUIManager *pUIManager)
 	{
-		GList * action_groups = gtk_ui_manager_get_action_groups(pUIManager);
-		GtkAction * action = NULL;
-
-		if (!g_bAcceleratorsDisabled)
-		{		
-			while (NULL != action_groups)
-			{
-				GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
-				GList *actions = actions_list;
-				while (NULL != actions)
-				{
-					action = (GtkAction*)actions->data;
-					GtkAccelKey accel_key = {0};
-					
-					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
-					{
-						// list of modifiers to check
-						guint mask = 0;
-						
-						mask |= GDK_CONTROL_MASK;
-						mask |= GDK_MOD1_MASK;    // normally alt
-						mask |= GDK_MOD2_MASK;
-						mask |= GDK_MOD3_MASK;
-						mask |= GDK_MOD4_MASK;
-						mask |= GDK_MOD5_MASK;
-	
-						gchar *accel_label;
-						accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
-						//printf("disable  accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
-						//printf("disable accel key: %s - %d\n",accel_label, accel_key.accel_key);
-	
-						if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
-						{
-							for (int i = 0; i < N_LOOPS; i++)
-								gtk_action_disconnect_accelerator(action);
-						}
-						//printf("disabled accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
-						g_free(accel_label);
-					}
-					actions = g_list_next(actions);
-				}
-				
-				g_list_free(actions_list);
-				
-				action_groups = g_list_next(action_groups);
-			}
-			g_bAcceleratorsDisabled = true;
-		}
+		// GtkUIManager is deprecated. Accelerators are handled differently in GTK4,
+		// often via GtkApplication, GtkBuilder, or GtkMenuModel.
+		// This function likely needs to be removed or completely rethought.
+		// For example, one might iterate GActions and remove their accelerators
+		// from the GtkApplication or specific widgets if they were added programmatically.
 	}
 	
 	void ConnectUnmodifiedAccelerators(GtkUIManager *pUIManager)
 	{
-		GList * action_groups = gtk_ui_manager_get_action_groups(pUIManager);
-		GtkAction * action = NULL;
-		if (g_bAcceleratorsDisabled)
-		{
-			while (NULL != action_groups)
-			{
-				GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
-				GList *actions = actions_list;
-				while (NULL != actions)
-				{
-					action = (GtkAction*)actions->data;
-					GtkAccelKey accel_key = {0};
-					
-					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
-					{
-						// list of modifiers to check
-						guint mask = 0;
-						
-						mask |= GDK_CONTROL_MASK;
-						mask |= GDK_MOD1_MASK;    // normally alt
-						mask |= GDK_MOD2_MASK;
-						mask |= GDK_MOD3_MASK;
-						mask |= GDK_MOD4_MASK;
-						mask |= GDK_MOD5_MASK;
-	
-						if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
-						{
-							gchar *accel_label;
-							accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
-							//printf("enable accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
-							//printf("enable accel key: %s - %d\n",accel_label, accel_key.accel_key);
-							for (int i = 0; i < N_LOOPS; i++)
-								gtk_action_connect_accelerator(action);
-							g_free(accel_label);
-						}
-					}
-					actions = g_list_next(actions);
-				}
-				
-				g_list_free(actions_list);
-				
-				action_groups = g_list_next(action_groups);
-			}
-			g_bAcceleratorsDisabled = false;
-		}
+		// Similar to DisconnectUnmodifiedAccelerators, this is deprecated.
+		// Accelerators would be (re)connected using GTK4 mechanisms.
 	}
+*/
 }
 

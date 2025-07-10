@@ -7,8 +7,10 @@
 
 #include "FolderTreeEventSource.h"
 
-typedef struct _GtkWidget GtkWidget;
-typedef struct _GtkUIManager GtkUIManager;
+#include <gtk/gtk.h> // Add GTK4 includes
+
+// typedef struct _GtkWidget GtkWidget; // GtkWidget is now defined in gtk/gtk.h
+// typedef struct _GtkUIManager GtkUIManager; // GtkUIManager is deprecated and removed
 
 class FolderTree : public virtual FolderTreeEventSource
 {
@@ -19,7 +21,7 @@ public:
 
 	GtkWidget* GetWidget() const;
 
-	void SetUIManager(GtkUIManager *ui_manager);
+	// void SetUIManager(GtkUIManager *ui_manager); // GtkUIManager is deprecated
 	
 	void SetSelectedFolders(std::list<std::string> &uris);
 

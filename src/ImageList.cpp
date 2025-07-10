@@ -495,7 +495,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 	// changes and sort them out.
 	
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
-	gdk_threads_enter();
+	// gdk_threads_enter(); // GTK4: UI updates must be on main thread.
 
 	impl->m_iTimeoutPathChanged = 0;
 	
@@ -607,7 +607,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 	
 	impl->m_mapPathChanged.clear();
 	
-	gdk_threads_leave();
+	// gdk_threads_leave(); // GTK4: UI updates must be on main thread.
 	return FALSE;
 }
 
@@ -621,7 +621,7 @@ void monitor_callback (
 {
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 
-	gdk_threads_enter();
+	// gdk_threads_enter(); // GTK4: UI updates must be on main thread.
 
 	char* uri = g_file_get_uri(file);
 	
@@ -653,7 +653,7 @@ void monitor_callback (
 
 	g_free(uri);
 
-	gdk_threads_leave();
+	// gdk_threads_leave(); // GTK4: UI updates must be on main thread.
 }
 
 

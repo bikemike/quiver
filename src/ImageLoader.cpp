@@ -6,6 +6,7 @@
 
 #include <gio/gio.h>
 #include <gst/gst.h>
+#include <sched.h> // For sched_yield
 
 #include <libquiver/quiver-pixbuf-utils.h>
 #include <string.h>
@@ -52,7 +53,9 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	pthread_mutex_init(&m_ConditionMutex, NULL);
 	pthread_mutex_init(&m_CommandMutex, NULL);
 
-	m_csObservers = g_mutex_new();
+    // m_csObservers = g_mutex_new(); // Deprecated
+    m_csObservers = new GMutex;
+    g_mutex_init(m_csObservers);
 	
 	AddPixbufLoaderObserver(this);
 	m_iLoadOrientation = 1;
@@ -80,7 +83,9 @@ ImageLoader::~ImageLoader()
 
 	RemovePixbufLoaderObserver(this);
 
-	g_mutex_free(m_csObservers);
+	// g_mutex_free(m_csObservers); // Deprecated
+    g_mutex_clear(m_csObservers);
+    delete m_csObservers;
 }
 
 
@@ -133,7 +138,7 @@ int ImageLoader::Run()
 		
 		Load();
 		
-		pthread_yield();
+		sched_yield();
 	}
 	
 	return 0;
