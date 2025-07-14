@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 #include <string>
+#include <functional> // For std::function
 #include <boost/shared_ptr.hpp>
 
 class AdjustDateDlg
@@ -14,7 +15,8 @@ public:
 	
 	//member functions
 	GtkWidget *GetWidget() const;
-	bool Run();
+	void Run(); // Changed to void, will not be blocking
+    void set_on_result_callback(std::function<void(int)> callback);
 
 	bool IsAdjustDate() const;
 	bool IsSetDate() const;

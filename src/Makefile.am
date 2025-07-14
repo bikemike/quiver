@@ -21,10 +21,6 @@ AM_CFLAGS = \
 
 AM_CPPFLAGS = \
 	-I$(top_srcdir) \
-	-I$(srcdir) \
-	-I$(top_srcdir)/src \
-	-I. \
-	-I$(top_srcdir)/libquiver \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
@@ -41,6 +37,14 @@ AM_CPPFLAGS = \
 	$(LIBSQLITE_CFLAGS) \
 	$(GSTREAMER_CFLAGS) \
 	-Wall 
+
+noinst_LIBRARIES = libquiver_utils.a
+
+libquiver_utils_a_SOURCES = \
+	strnatcmp.c \
+	libjpeg/gio_jdatadst.c \
+	libjpeg/gio_jdatasrc.c \
+	libjpeg/transupp.c
 
 bin_PROGRAMS = quiver 
 
@@ -128,9 +132,9 @@ quiver_SOURCES = \
 	BookmarksEventSource.h \
 	BookmarksEventSource.cpp \
 	BookmarksDlg.h \
-	BookmarksDlg.cpp \
+	#BookmarksDlg.cpp \
 	BookmarkAddEditDlg.h \
-	BookmarkAddEditDlg.cpp \
+	#BookmarkAddEditDlg.cpp \
 	Bookmarks.cpp \
 	BrowserHistory.h \
 	BrowserHistory.cpp \
@@ -141,7 +145,7 @@ quiver_SOURCES = \
 	TaskEvent.h \
 	TaskManagerEvent.h \
 	TaskManagerDlg.h \
-	TaskManagerDlg.cpp \
+	#TaskManagerDlg.cpp \
 	TaskManager.cpp \
 	TaskManagerEventSource.cpp \
 	ITaskEventHandler.h \
@@ -157,13 +161,12 @@ quiver_SOURCES = \
 	MessageBox.h \
 	MessageBox.cpp \
 	OrganizeDlg.h \
-	OrganizeDlg.cpp \
+	#OrganizeDlg.cpp \
 	strnatcmp.h \
-	strnatcmp.c \
 	ExternalTools.cpp \
-	ExternalToolsDlg.cpp \
+	#ExternalToolsDlg.cpp \
 	ExternalToolsDlg.h \
-	ExternalToolAddEditDlg.cpp \
+	#ExternalToolAddEditDlg.cpp \
 	ExternalToolAddEditDlg.h \
 	ExternalToolsEvent.h \
 	ExternalToolsEventSource.cpp \
@@ -171,22 +174,21 @@ quiver_SOURCES = \
 	ExternalTools.h \
 	IExternalToolsEventHandler.h \
 	RenameDlg.h \
-	RenameDlg.cpp \
+	#RenameDlg.cpp \
 	RenameTask.h \
 	RenameTask.cpp \
 	SaveImageTask.h \
 	SaveImageTask.cpp \
 	libjpeg/jinclude.h \
-	libjpeg/gio_jdatadst.c \
-	libjpeg/gio_jdatasrc.c \
-	libjpeg/transupp.h \
-	libjpeg/transupp.c
-
-
+	libjpeg/transupp.h
 
 quiver_LDFLAGS = 
 
 quiver_LDADD = \
+	libquiver_utils.a \
+	BrowserHistory.o \
+	AbstractTask.o \
+	TaskEventSource.o \
 	../libquiver/libquiver.la \
 	$(PACKAGE_LIBS) \
 	$(HILDON_LIBS_LIBS) \

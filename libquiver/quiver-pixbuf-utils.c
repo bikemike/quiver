@@ -2,6 +2,12 @@
 #include <gtk/gtk.h>
 #include "quiver-pixbuf-utils.h"
 
+// HACK: Provide a dummy implementation for the linker ghost
+void gtk_widget_queue_draw_region(GtkWidget *widget, const cairo_region_t *region) {
+    gtk_widget_queue_draw(widget);
+}
+
+
 void pixbuf_set_alpha(GdkPixbuf *src, guchar alpha)
 {
 	g_return_if_fail (GDK_IS_PIXBUF (src));
@@ -167,5 +173,4 @@ void quiver_rect_get_bound_size(guint bound_width,guint bound_height,guint *widt
 			*height = bound_height;
 		}
 	}
-}	
-
+}

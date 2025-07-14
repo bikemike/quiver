@@ -27,5 +27,13 @@
  * functions in strnatcmp.c */
 typedef char nat_char;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int strnatcmp(nat_char const *a, nat_char const *b);
 int strnatcasecmp(nat_char const *a, nat_char const *b);
+
+#ifdef __cplusplus
+}
+#endif

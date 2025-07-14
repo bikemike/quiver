@@ -75,34 +75,34 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 	m_pLabelDateTime = gtk_label_new ("");
 	
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
+	// gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN); // Deprecated in GTK4
 	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelDateTime);
 	gtk_box_append (GTK_BOX (m_pStatusbar), frame);
 	
 	m_pLabelImageSize  = gtk_label_new ("");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
+	// gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN); // Deprecated in GTK4
 	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelImageSize);
 	gtk_box_append (GTK_BOX (m_pStatusbar), frame);
 	
 	
 	m_pLabelZoom = gtk_label_new ("");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
+	// gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN); // Deprecated in GTK4
 	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelZoom);
 	gtk_box_append (GTK_BOX (m_pStatusbar), frame);
 
 
 	m_pLabelListPosition = gtk_label_new ("");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
+	// gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN); // Deprecated in GTK4
 	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelListPosition);
 	gtk_box_append (GTK_BOX (m_pStatusbar), frame);
 	
 	
 	m_pLabelLoadTime = gtk_label_new ("0.000s");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
+	// gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN); // Deprecated in GTK4
 	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelLoadTime);
 	gtk_box_append (GTK_BOX (m_pStatusbar), frame);
 
@@ -110,7 +110,7 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 	gtk_widget_set_size_request (m_pProgressbar, 75, 0);
 	
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
+	// gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN); // Deprecated in GTK4
 	gtk_frame_set_child(GTK_FRAME(frame),m_pProgressbar);
 	gtk_box_append (GTK_BOX (m_pStatusbar), frame);
 	
@@ -118,7 +118,7 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 	m_iDefaultContext = gtk_statusbar_get_context_id (GTK_STATUSBAR(m_pStatusbar),"default");
 
 	//m_pWidget = gtk_frame_new(NULL);
-	//gtk_frame_set_shadow_type(GTK_FRAME(m_pWidget),GTK_SHADOW_OUT);;
+	//gtk_frame_set_shadow_type(GTK_FRAME(m_pWidget),GTK_SHADOW_OUT);; // Deprecated in GTK4
 	//gtk_container_add(GTK_CONTAINER(m_pWidget), m_pStatusbar);
 	m_pWidget = m_pStatusbar;
 
@@ -363,11 +363,11 @@ public:
 
 static gboolean idle_update_progress(gpointer data)
 {
-	gdk_threads_enter();
+	// gdk_threads_enter(); // Removed for GTK4
 	IdleBytesReadData* pData = static_cast<IdleBytesReadData*>(data);
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(pData->pStatusBarImpl->m_pProgressbar), pData->progress);
 	pData->pStatusBarImpl->m_uiIdleSourceID = 0;
-	gdk_threads_leave();
+	// gdk_threads_leave(); // Removed for GTK4
 	return FALSE;
 }
 
@@ -454,8 +454,8 @@ void Statusbar::SetQuiverFile(QuiverFile quiverFile)
 gboolean progress_bar_pulse (gpointer data)
 {
 	Statusbar::StatusbarImpl* pStatusbarImpl = (Statusbar::StatusbarImpl*)data;
-	gdk_threads_enter();
+	// gdk_threads_enter(); // Removed for GTK4
 	gtk_progress_bar_pulse(GTK_PROGRESS_BAR(pStatusbarImpl->m_pProgressbar));
-	gdk_threads_leave();
+	// gdk_threads_leave(); // Removed for GTK4
 	return TRUE;
 }

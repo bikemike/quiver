@@ -66,6 +66,8 @@ public:
 	void OnQuit();
 	
 	void Close();
+
+	void SetApplication(GtkApplication* app);
 		
 private:
 	QuiverImplPtr m_QuiverImplPtr;

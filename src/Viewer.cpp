@@ -27,7 +27,7 @@
 #include "QuiverPrefs.h"
 #include "IPreferencesEventHandler.h"
 
-#include "QuiverStockIcons.h"
+// #include "QuiverStockIcons.h" // Stock items are deprecated, and QuiverStockIcons.cpp is currently commented out
 #include "QuiverFileOps.h"
 
 #include "IImageListEventHandler.h"
@@ -369,7 +369,7 @@ public:
 		if (IsPlaying())
 		{
 			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPause); // GtkImage is for static images
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic", GTK_ICON_SIZE_BUTTON);
+			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
 
 
 			m_iTimeoutPlayProgress = g_timeout_add(200,timeout_play_position,this);
@@ -377,7 +377,7 @@ public:
 		else
 		{
 			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPlay); // GtkImage is for static images
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic", GTK_ICON_SIZE_BUTTON);
+			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
 		}
 	}
 
@@ -1054,8 +1054,10 @@ static void viewer_motion_notify_cb(GtkEventControllerMotion* controller, double
 	}
 	else if (widget == pViewerImpl->m_pPlayProgressEventBox)
 	{
-        GdkDevice* device = gtk_event_controller_get_device(GTK_EVENT_CONTROLLER(controller));
-        if (device && gdk_device_get_grab_surface(device))
+        GdkDevice* device = gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(controller));
+        // Check if button 1 is pressed during motion as a proxy for drag, since gdk_device_get_grab_surface is gone
+        // and this isn't a full GtkGestureDrag yet.
+        if (device && (gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller)) & GDK_BUTTON1_MASK))
 		{
             gint widget_width = gtk_widget_get_width(widget);
 
@@ -1080,18 +1082,18 @@ static void viewer_play_button_mouse_in_cb(GtkEventControllerMotion* controller,
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (pViewerImpl->IsPlaying())
-        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-pause-symbolic", GTK_ICON_SIZE_BUTTON);
+        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-pause-symbolic");
 	else
-        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-start-symbolic", GTK_ICON_SIZE_BUTTON);
+        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-start-symbolic");
 }
 
 static void viewer_play_button_mouse_out_cb(GtkEventControllerMotion* controller, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (pViewerImpl->IsPlaying())
-        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-pause-symbolic", GTK_ICON_SIZE_BUTTON);
+        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-pause-symbolic");
 	else
-        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-start-symbolic", GTK_ICON_SIZE_BUTTON);
+        gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-start-symbolic");
 }
 
 
@@ -1373,9 +1375,20 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 			g_object_set(G_OBJECT(m_pPipeline), "uri", new_uri, NULL);
 			// For GtkVideo, you'd set the media stream
 			if (GTK_IS_VIDEO(m_pVideoWidget)) {
-				GtkMediaStream* stream = gtk_media_file_new_for_uri(new_uri);
-				gtk_video_set_media_stream(GTK_VIDEO(m_pVideoWidget), stream);
-				if(stream) g_object_unref(stream);
+                if (g_str_has_prefix(new_uri, "file://")) {
+                    GFile* file = g_file_new_for_uri(new_uri);
+                    char* path = g_file_get_path(file);
+                    gtk_video_set_filename(GTK_VIDEO(m_pVideoWidget), path);
+                    g_free(path);
+                    g_object_unref(file);
+                } else {
+                    // Assuming new_uri might be a direct path or other URI GtkVideo can handle
+                    gtk_video_set_filename(GTK_VIDEO(m_pVideoWidget), new_uri);
+                }
+                // The GtkMediaFile method is more for when you manage the stream explicitly.
+                // GtkMediaStream* stream = GTK_MEDIA_STREAM(gtk_media_file_new_for_filename(path_from_new_uri));
+				// gtk_video_set_media_stream(GTK_VIDEO(m_pVideoWidget), stream);
+				// if(stream) g_object_unref(stream);
 			}
 		}
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
@@ -1574,7 +1587,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	GtkWidget* hbox2     = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
 	m_pPlayProgress      = gtk_progress_bar_new();
 	m_pTimeLabel         = gtk_label_new("0:00 / 0:00");
-	m_pVolumeButton      = gtk_scale_button_new();
+	// Default GtkScaleButton: min 0, max 1, step 0.05. Icons: "audio-volume-muted-symbolic", "audio-volume-low-symbolic", "audio-volume-medium-symbolic", "audio-volume-high-symbolic"
+	const char* icons[] = {"audio-volume-muted-symbolic", "audio-volume-low-symbolic", "audio-volume-medium-symbolic", "audio-volume-high-symbolic", NULL};
+	m_pVolumeButton      = gtk_scale_button_new(0.0, 1.0, 0.05, icons);
 
     m_pPlayProgressEventBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_box_append(GTK_BOX(m_pPlayProgressEventBox), m_pPlayProgress);
@@ -1588,7 +1603,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     m_pTimeline = hbox2;
 
     m_pPlayButton = gtk_button_new();
-    m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start-symbolic", GTK_ICON_SIZE_BUTTON);
+    m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start-symbolic");
     gtk_button_set_child(GTK_BUTTON(m_pPlayButton), m_pPlayImage);
 
 
@@ -1652,10 +1667,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	GdkPixbuf *nav_pixbuf = gdk_pixbuf_new_from_xpm_data ((const char**) nav_button_xpm);
 	GtkWidget *nav_image = NULL;
     if (nav_pixbuf) {
-        nav_image = gtk_image_new_from_pixbuf (nav_pixbuf);
+        nav_image = gtk_image_new_from_paintable (GDK_PAINTABLE(nav_pixbuf));
 	    g_object_unref (G_OBJECT (nav_pixbuf));
     } else {
-        nav_image = gtk_image_new_from_icon_name("image-missing-symbolic", GTK_ICON_SIZE_BUTTON);
+        nav_image = gtk_image_new_from_icon_name("image-missing-symbolic");
     }
 	gtk_box_append (GTK_BOX(m_pNavigationBox),nav_image);
 	gtk_widget_set_visible(nav_image, TRUE);
@@ -1788,7 +1803,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 
 	GtkWidget * frame = gtk_frame_new(NULL);
-    gtk_widget_set_css_classes(frame, g_list_append(NULL, "navigation-frame"));
+    const char* frame_classes[] = {"navigation-frame", NULL};
+    gtk_widget_set_css_classes(frame, frame_classes);
 	
 	gtk_window_set_child(GTK_WINDOW(m_pNavigationWindow), frame);
     gtk_frame_set_child(GTK_FRAME(frame), m_pNavigationControl);
@@ -1818,11 +1834,15 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
             g_object_set(G_OBJECT(m_pPipeline), "audio-sink", audiosink_element, NULL);
         } else {
         }
-		if (GTK_IS_VIDEO(m_pVideoWidget)) {
-			GtkMediaStream* stream = gtk_media_stream_new(m_pPipeline, NULL); //gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline)));
-			gtk_video_set_media_stream(GTK_VIDEO(m_pVideoWidget), stream);
-			if (stream) g_object_unref(stream);
-		}
+        // Commenting out direct GtkMediaStream creation from GstPipeline for now,
+        // as it's complex and gtk_media_stream_new is not the correct API for this.
+        // Video playback might be affected until GtkVideo is fully integrated with playbin
+        // (e.g. by setting filename on GtkVideo directly, or using GstPlayer).
+		// if (GTK_IS_VIDEO(m_pVideoWidget)) {
+			// GtkMediaStream* stream = gtk_media_stream_new(m_pPipeline, NULL); // This API is not for this purpose
+			// gtk_video_set_media_stream(GTK_VIDEO(m_pVideoWidget), stream);
+			// if (stream) g_object_unref(stream);
+		// }
     }
 
 	gdouble volume = 0.;
