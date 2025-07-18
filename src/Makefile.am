@@ -38,17 +38,16 @@ AM_CPPFLAGS = \
 	$(GSTREAMER_CFLAGS) \
 	-Wall 
 
-noinst_LIBRARIES = libquiver_utils.a
-
-libquiver_utils_a_SOURCES = \
-	strnatcmp.c \
-	libjpeg/gio_jdatadst.c \
-	libjpeg/gio_jdatasrc.c \
-	libjpeg/transupp.c
 
 bin_PROGRAMS = quiver 
 
 quiver_SOURCES = \
+	strnatcmp.c \
+	libjpeg/gio_jdatadst.c \
+	libjpeg/gio_jdatasrc.c \
+	libjpeg/transupp.c \
+	AbstractTask.cpp \
+	TaskEventSource.cpp \
 	quiver-i18n.h \
 	MD5.h \
 	MD5.cpp \
@@ -132,16 +131,17 @@ quiver_SOURCES = \
 	BookmarksEventSource.h \
 	BookmarksEventSource.cpp \
 	BookmarksDlg.h \
-	#BookmarksDlg.cpp \
+	BookmarksDlg.cpp \
 	BookmarkAddEditDlg.h \
-	#BookmarkAddEditDlg.cpp \
+	BookmarkAddEditDlg.cpp \
 	Bookmarks.cpp \
+	BookmarkRow.h \
+	BookmarkRow.cpp \
 	BrowserHistory.h \
 	BrowserHistory.cpp \
 	DonateDlg.h \
 	DonateDlg.cpp \
 	TaskManager.h \
-	TaskEventSource.cpp \
 	TaskEvent.h \
 	TaskManagerEvent.h \
 	TaskManagerDlg.h \
@@ -151,7 +151,6 @@ quiver_SOURCES = \
 	ITaskEventHandler.h \
 	ITaskManagerEventHandler.h \
 	AbstractTask.h \
-	AbstractTask.cpp \
 	TaskManagerEventSource.h \
 	TaskEventSource.h \
 	OrganizeTask.h \
@@ -185,10 +184,6 @@ quiver_SOURCES = \
 quiver_LDFLAGS = 
 
 quiver_LDADD = \
-	libquiver_utils.a \
-	BrowserHistory.o \
-	AbstractTask.o \
-	TaskEventSource.o \
 	../libquiver/libquiver.la \
 	$(PACKAGE_LIBS) \
 	$(HILDON_LIBS_LIBS) \

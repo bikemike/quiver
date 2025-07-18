@@ -3,8 +3,6 @@
 #include <gtk/gtk.h>
 #include <sstream>
 
-#include "QuiverStockIcons.h"
-
 #define BOOKMARKS_SECTION          "Bookmarks"
 #define BOOKMARKS_CATEGORY_DEFAULT "default"
 #define BOOKMARK_SECTION_PREFIX    "Bookmark_"
@@ -140,7 +138,7 @@ void Bookmarks::LoadFromPreferences()
 				
 				if (icon.empty())
 				{
-					icon = QUIVER_STOCK_DIRECTORY;
+					icon = "folder";
 				}
 				
 				Bookmark b(name, desc, icon, uris,recursive);
@@ -173,7 +171,7 @@ void Bookmarks::SaveToPreferences()
 
 		if (itr->second.GetIcon().empty())
 		{
-			itr->second.SetIcon(QUIVER_STOCK_DIRECTORY);
+			itr->second.SetIcon("folder");
 		}
 		prefs->SetString(section,BOOKMARK_KEY_ICON, itr->second.GetIcon());
 
@@ -206,7 +204,7 @@ bool Bookmarks::AddBookmark(Bookmark bookmark)
 
 	if (bookmark.GetIcon().empty())
 	{
-		bookmark.SetIcon(QUIVER_STOCK_DIRECTORY);
+		bookmark.SetIcon("folder");
 	}
 
 	BookmarkMap::iterator itr;
@@ -396,6 +394,3 @@ bool Bookmarks::MoveDown (int id)
 	}
 	return false;
 }
-
-
-

@@ -1,7 +1,6 @@
 #include <config.h>
 
 #include "DonateDlg.h"
-#include "QuiverStockIcons.h"
 
 #ifdef QUIVER_MAEMO
 #include <libosso.h>
@@ -50,14 +49,17 @@ GtkWidget* DonateDlg::GetWidget() const
 	  return NULL;
 }
 
+static void on_donate_dialog_response(GtkDialog *dialog, gint response_id, gpointer user_data)
+{
+    gtk_window_destroy(GTK_WINDOW(dialog));
+}
 
 void DonateDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
-
-		gtk_widget_destroy(m_PrivPtr->m_pWidget);
+        g_signal_connect(m_PrivPtr->m_pWidget, "response", G_CALLBACK(on_donate_dialog_response), NULL);
+		gtk_widget_set_visible(m_PrivPtr->m_pWidget, true);
 	}
 }
 
@@ -74,7 +76,7 @@ DonateDlg::DonateDlgPriv::DonateDlgPriv(DonateDlg *parent) :
 	m_bLoadedDlg = false;
 
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const char* objectids[] = {
 		"DonateDialog",
 		NULL};
 	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
@@ -101,17 +103,17 @@ void DonateDlg::DonateDlgPriv::LoadWidgets()
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "DonateDialog"));
 
 		m_pButtonDonate          = GTK_BUTTON( gtk_button_new_with_label("Donate to Quiver"));
-		m_pButtonClose              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
+		m_pButtonClose              = GTK_BUTTON( gtk_button_new_with_label("Close") );
 
 
-		gtk_widget_show(GTK_WIDGET(m_pButtonDonate));
-		gtk_widget_show(GTK_WIDGET(m_pButtonClose));
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonDonate), true);
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonClose), true);
 
 		if (m_pWidget)
 		{
-			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonDonate));
-			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose));
-			gtk_button_box_set_layout  (GTK_BUTTON_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))), GTK_BUTTONBOX_EDGE);
+            GtkWidget *action_area = gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget));
+			gtk_box_append(GTK_BOX(action_area),GTK_WIDGET(m_pButtonDonate));
+			gtk_box_append(GTK_BOX(action_area),GTK_WIDGET(m_pButtonClose));
 		}
 
 		m_bLoadedDlg = (
@@ -173,7 +175,3 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 #endif
 	}
 }
-
-
-
-[end of src/DonateDlg.cpp]
