@@ -402,12 +402,12 @@ quiver_image_view_init(QuiverImageView *imageview)
     QuiverImageViewPrivate *priv = imageview->priv;
 
     priv->click_gesture = gtk_gesture_click_new();
-    gtk_gesture_set_button(GTK_GESTURE(priv->click_gesture), 0); // Any button
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->click_gesture), 0); // Any button
     g_signal_connect(priv->click_gesture, "pressed", G_CALLBACK(quiver_image_view_handle_click_pressed), imageview);
     g_signal_connect(priv->click_gesture, "released",G_CALLBACK(quiver_image_view_handle_click_released), imageview);
 
     priv->drag_gesture = gtk_gesture_drag_new();
-    gtk_gesture_set_button(GTK_GESTURE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
     g_signal_connect(priv->drag_gesture, "drag-begin", G_CALLBACK(quiver_image_view_handle_drag_begin), imageview);
     g_signal_connect(priv->drag_gesture, "drag-update", G_CALLBACK(quiver_image_view_handle_drag_update), imageview);
     g_signal_connect(priv->drag_gesture, "drag-end", G_CALLBACK(quiver_image_view_handle_drag_end), imageview);
@@ -778,7 +778,7 @@ static void      quiver_image_view_set_hadjustment (QuiverImageView *imageview,
 	if (hadjustment)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (hadjustment));
 	else
-		hadjustment = new_default_adjustment ();
+		hadjustment = gtk_adjustment_new (0.0, 0.0, 100.0, 10.0, 20.0, 0.0);
 
 	if (imageview->priv->hadjustment && (imageview->priv->hadjustment != hadjustment))
 	{
@@ -815,7 +815,7 @@ void quiver_image_view_set_vadjustment (QuiverImageView *imageview,
 	if (vadjustment)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (vadjustment));
 	else
-		vadjustment = new_default_adjustment ();
+		vadjustment = gtk_adjustment_new (0.0, 0.0, 100.0, 10.0, 20.0, 0.0);
 
 	if (imageview->priv->vadjustment && (imageview->priv->vadjustment != vadjustment))
 	{

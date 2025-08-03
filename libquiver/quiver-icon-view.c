@@ -1,6 +1,6 @@
 #include <config.h>
 #include <gtk/gtk.h>
-#include <gdk/gdkkeysyms-compat.h> // For GDK_KEY_ constants
+#include <gdk/gdkkeys.h> // For GDK_KEY_ constants
 #include "quiver-icon-view.h"
 #include "quiver-marshallers.h"
 #include <math.h>
@@ -219,7 +219,7 @@ static void quiver_icon_view_class_init(QuiverIconViewClass *klass) {
 	g_object_class_override_property(obj_class, PROP_HSCROLL_POLICY, "hscroll-policy");
 	g_object_class_override_property(obj_class, PROP_VSCROLL_POLICY, "vscroll-policy");
 
-	iconview_signals[SIGNAL_CELL_CLICKED] = g_signal_new("cell-clicked", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, cell_clicked), NULL, NULL, g_cclosure_marshal_VOID__UINT_UINT_POINTER, G_TYPE_NONE, 3, G_TYPE_ULONG, G_TYPE_UINT, G_TYPE_POINTER); // cell_idx, button, GdkModifierType
+	iconview_signals[SIGNAL_CELL_CLICKED] = g_signal_new("cell-clicked", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, cell_clicked), NULL, NULL, g_cclosure_marshal_VOID__POINTER, G_TYPE_NONE, 3, G_TYPE_ULONG, G_TYPE_UINT, G_TYPE_POINTER); // cell_idx, button, GdkModifierType
 	iconview_signals[SIGNAL_CELL_ACTIVATED] = g_signal_new("cell-activated", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, cell_activated), NULL, NULL, g_cclosure_marshal_VOID__UINT, G_TYPE_NONE, 1, G_TYPE_ULONG); // cell_idx
 	iconview_signals[SIGNAL_CURSOR_CHANGED] = g_signal_new("cursor-changed", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, cursor_changed), NULL, NULL, g_cclosure_marshal_VOID__UINT, G_TYPE_NONE, 1, G_TYPE_ULONG); // new_cursor_cell_idx
 	iconview_signals[SIGNAL_SELECTION_CHANGED] = g_signal_new("selection-changed", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, selection_changed), NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0);
@@ -252,13 +252,13 @@ static void quiver_icon_view_init(QuiverIconView *iconview) {
     gtk_widget_set_focus_on_click(GTK_WIDGET(iconview), TRUE);
 
     priv->click_gesture = gtk_gesture_click_new();
-    gtk_gesture_set_button(GTK_GESTURE(priv->click_gesture), 0); // All buttons for initial processing
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->click_gesture), 0); // All buttons for initial processing
     g_signal_connect(priv->click_gesture, "pressed", G_CALLBACK(quiver_icon_view_handle_click_pressed), iconview);
     g_signal_connect(priv->click_gesture, "released", G_CALLBACK(quiver_icon_view_handle_click_released), iconview);
     // g_signal_connect_swapped(priv->click_gesture, "stopped", G_CALLBACK(quiver_icon_view_handle_click_stopped), iconview); // If needed
 
     priv->drag_gesture = gtk_gesture_drag_new();
-    gtk_gesture_set_button(GTK_GESTURE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
     g_signal_connect(priv->drag_gesture, "drag-begin", G_CALLBACK(quiver_icon_view_handle_drag_begin), iconview);
     g_signal_connect(priv->drag_gesture, "drag-update", G_CALLBACK(quiver_icon_view_handle_drag_update), iconview);
     g_signal_connect(priv->drag_gesture, "drag-end", G_CALLBACK(quiver_icon_view_handle_drag_end), iconview);
@@ -355,9 +355,19 @@ static void quiver_icon_view_realize(GtkWidget *widget) {
 // The full, correct C code would be much longer.
 
 // Dummy implementations for now for some critical functions to allow compilation
-static gulong quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview, gint x, gint y) { return G_MAXULONG; }
-static void quiver_icon_view_invalidate_cell(QuiverIconView *iconview, gulong cell_idx) { gtk_widget_queue_draw(GTK_WIDGET(iconview)); }
+gulong quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview, gint x, gint y) { return G_MAXULONG; }
+void quiver_icon_view_invalidate_cell(QuiverIconView *iconview, gulong cell_idx) { gtk_widget_queue_draw(GTK_WIDGET(iconview)); }
 static void quiver_icon_view_draw_cell_contents(QuiverIconView *iconview, cairo_t *cr, gulong cell_idx, cairo_rectangle_int_t *cell_rect, GtkStateFlags cell_state) {}
+
+static void quiver_icon_view_unrealize(GtkWidget *widget) {
+    GTK_WIDGET_CLASS(quiver_icon_view_parent_class)->unrealize(widget);
+}
+
+static void quiver_icon_view_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+}
+
+static void quiver_icon_view_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+}
 
 // Stubs for event handlers (to be filled in)
 static void quiver_icon_view_handle_click_pressed(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {}
@@ -440,7 +450,7 @@ static void quiver_icon_view_measure(GtkWidget *widget, GtkOrientation orientati
         } else { // Dynamic columns
             // Request minimum of 1 cell, natural can be wider if items exist
             *minimum = cell_w;
-            if (for_size > 0 && cell_h > 0 && priv->hscroll_policy == GTK_SCROLL_NEVER) { // Calculate needed width if height is constrained and no hscroll
+            if (for_size > 0 && cell_h > 0 && priv->hscroll_policy == GTK_POLICY_NEVER) { // Calculate needed width if height is constrained and no hscroll
                 guint num_rows_for_size = MAX(1, for_size / cell_h);
                 guint num_cols_needed = (n_items > 0) ? (n_items + num_rows_for_size -1) / num_rows_for_size : 1;
                 *natural = cell_w * num_cols_needed;
@@ -453,7 +463,7 @@ static void quiver_icon_view_measure(GtkWidget *widget, GtkOrientation orientati
             *minimum = *natural = cell_h * priv->n_rows_fixed;
         } else { // Dynamic rows
             *minimum = cell_h;
-            if (for_size > 0 && cell_w > 0 && priv->vscroll_policy == GTK_SCROLL_NEVER) { // Calculate needed height if width is constrained and no vscroll
+            if (for_size > 0 && cell_w > 0 && priv->vscroll_policy == GTK_POLICY_NEVER) { // Calculate needed height if width is constrained and no vscroll
                 guint num_cols_for_size = MAX(1, for_size / cell_w);
                 guint num_rows_needed = (n_items > 0) ? (n_items + num_cols_for_size -1) / num_cols_for_size : 1;
                 *natural = cell_h * num_rows_needed;
@@ -471,10 +481,9 @@ static void quiver_icon_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) 
     QuiverIconViewPrivate *priv = iconview->priv;
     int width = gtk_widget_get_width(widget);
     int height = gtk_widget_get_height(widget);
+    GdkRGBA bg_color = {0, 0, 0, 1}; // Black background as a fallback
     GtkStyleContext *context = gtk_widget_get_style_context(widget);
-    GdkRGBA bg_color;
-
-    gtk_style_context_get_background_color(context, &bg_color); // GTK4 way
+    gtk_style_context_get_color(context, &bg_color);
     gtk_snapshot_append_color(snapshot, &bg_color, &GRAPHENE_RECT_INIT(0, 0, width, height));
 
     cairo_t *cr = gtk_snapshot_append_cairo(snapshot, &GRAPHENE_RECT_INIT(0,0, width, height));
@@ -545,6 +554,7 @@ static void quiver_icon_view_set_vadjustment(QuiverIconView *iconview, GtkAdjust
 // A full migration would require implementing all of them.
 
 // Public API (ensure these call internal logic correctly)
+void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint cell, gint *x, gint *y) { *x=0; *y=0; }
 GtkWidget * quiver_icon_view_new() { return g_object_new(QUIVER_TYPE_ICON_VIEW, NULL); } // Adjustments set by GtkScrollable
 void quiver_icon_view_set_n_columns(QuiverIconView *iconview,guint n_columns){ QuiverIconViewPrivate *priv = iconview->priv; priv->n_columns_fixed = n_columns; priv->n_rows_fixed = 0; quiver_icon_view_recalculate_adjustments(iconview); gtk_widget_queue_draw(GTK_WIDGET(iconview));}
 void quiver_icon_view_set_n_rows(QuiverIconView *iconview,guint n_rows){ QuiverIconViewPrivate *priv = iconview->priv; priv->n_rows_fixed = n_rows; priv->n_columns_fixed = 0; quiver_icon_view_recalculate_adjustments(iconview); gtk_widget_queue_draw(GTK_WIDGET(iconview));}
@@ -656,4 +666,3 @@ static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, cairo_t*
 //     quiver_icon_view_apply_rubberband_selection(iconview);
 //     return G_SOURCE_CONTINUE;
 // }
-Tool output for `overwrite_file_with_block`:
