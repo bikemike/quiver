@@ -145,7 +145,7 @@ void ExternalTools::LoadFromPreferences()
 				
 				if (icon.empty())
 				{
-					icon = QUIVER_STOCK_EXECUTE;
+					icon = "system-run";
 				}
 				
 				ExternalTool b(name, tooltip, icon, cmd , multi, output, errors);
@@ -179,7 +179,7 @@ void ExternalTools::SaveToPreferences()
 
 		if (itr->second.GetIcon().empty())
 		{
-			itr->second.SetIcon(QUIVER_STOCK_EXECUTE);
+			itr->second.SetIcon("system-run");
 		}
 		prefs->SetString(section,EXTERNAL_TOOL_KEY_ICON, itr->second.GetIcon());
 
@@ -211,7 +211,7 @@ bool ExternalTools::AddExternalTool(ExternalTool external_tool)
 
 	if (external_tool.GetIcon().empty())
 	{
-		external_tool.SetIcon(QUIVER_STOCK_EXECUTE);
+		external_tool.SetIcon("system-run");
 	}
 
 	ExternalToolMap::iterator itr;
