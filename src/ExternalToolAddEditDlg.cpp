@@ -123,13 +123,13 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 		m_pButtonOk              = (GtkButton*)gtk_button_new_from_icon_name("dialog-ok");
 
 
-		gtk_widget_show(GTK_WIDGET(m_pButtonCancel));
-		gtk_widget_show(GTK_WIDGET(m_pButtonOk));
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonCancel), true);
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonOk), true);
 
 		if (m_pWidget)
 		{
-			gtk_box_append(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonCancel));
-			gtk_box_append(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonOk));
+			gtk_box_append(GTK_BOX(gtk_window_get_child(GTK_WINDOW(m_pWidget))),GTK_WIDGET(m_pButtonCancel));
+			gtk_box_append(GTK_BOX(gtk_window_get_child(GTK_WINDOW(m_pWidget))),GTK_WIDGET(m_pButtonOk));
 		}
 
 		m_pToggleMultiple       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_multiple"));
@@ -222,5 +222,3 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 		gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
 	}
 }
-
-

@@ -128,37 +128,28 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 		m_pTreeViewExternalTools     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
 
 		m_pButtonClose           = (GtkButton*)gtk_button_new_from_icon_name("window-close");
-		gtk_widget_show(GTK_WIDGET(m_pButtonClose));
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonClose), true);
 
 		if (m_pWidget)
 		{
-			gtk_box_append(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose));
+			gtk_box_append(GTK_BOX(gtk_window_get_child(GTK_WINDOW(m_pWidget))),GTK_WIDGET(m_pButtonClose));
 		}
 		if (m_pTreeViewExternalTools)
 		{
-			GtkTreeViewColumn*column;
+			GtkCellRenderer* renderer = gtk_cell_renderer_pixbuf_new();
+			GtkTreeViewColumn* column = gtk_tree_view_column_new_with_attributes("Icon", renderer, "icon-name", COLUMN_ICON, NULL);
+			gtk_tree_view_append_column(m_pTreeViewExternalTools, column);
 
-			GtkCellRenderer* renderer = gtk_cell_renderer_pixbuf_new ();
-			column = gtk_tree_view_column_new_with_attributes ("icon",
-			  renderer,
-			  "icon-name", COLUMN_ICON,
-			NULL);
-			gtk_tree_view_append_column (m_pTreeViewExternalTools, column);
+			renderer = gtk_cell_renderer_text_new();
+			g_object_set(renderer, "editable", TRUE, NULL);
+			g_signal_connect(renderer, "edited", (GCallback)cell_edited_callback, this);
 
-			renderer = gtk_cell_renderer_text_new ();
-			g_object_set (G_OBJECT (renderer),  "editable", TRUE,  NULL);
-			g_signal_connect(renderer, "edited", (GCallback) cell_edited_callback, this);
+			column = gtk_tree_view_column_new_with_attributes("Name", renderer, "text", COLUMN_NAME, NULL);
+			gtk_tree_view_append_column(m_pTreeViewExternalTools, column);
 
-			column = gtk_tree_view_column_new_with_attributes ("externaltool",
-			  renderer,
-			  "text",COLUMN_NAME,
-			NULL);
-
-			gtk_tree_view_append_column (m_pTreeViewExternalTools, column);
-
-			gtk_tree_view_set_search_column (m_pTreeViewExternalTools,COLUMN_NAME);
+			gtk_tree_view_set_search_column(m_pTreeViewExternalTools, COLUMN_NAME);
 			GtkTreeSelection* selection = gtk_tree_view_get_selection(m_pTreeViewExternalTools);
-			gtk_tree_selection_set_mode(selection,GTK_SELECTION_MULTIPLE);
+			gtk_tree_selection_set_mode(selection, GTK_SELECTION_MULTIPLE);
 		}
 
 		m_pButtonMoveUp          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_move_up") );
@@ -182,11 +173,9 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 
 void ExternalToolsDlg::ExternalToolsDlgPriv::SelectionChanged()
 {
-	GtkTreeModel *model;
 	GtkTreeSelection* selection;
 	int selection_count = 0;
 	
-	model = gtk_tree_view_get_model(m_pTreeViewExternalTools);
 	selection = gtk_tree_view_get_selection(m_pTreeViewExternalTools);
 
 	selection_count = gtk_tree_selection_count_selected_rows(selection);
@@ -223,21 +212,14 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::UpdateUI()
 	{
 		ExternalToolsPtr externaltoolsPtr = m_ExternalToolsPtr;
 		
-		GtkListStore *store;
-		store = gtk_list_store_new(COLUMN_COUNT, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING);
+		GListStore *store;
+		store = g_list_store_new(G_TYPE_OBJECT);
 		vector<ExternalTool> externaltools = externaltoolsPtr->GetExternalTools();
 		vector<ExternalTool>::iterator itr;
 
 		for (itr = externaltools.begin(); externaltools.end() != itr; ++itr)
 		{
-			GtkTreeIter iter1 = {0};
-			gtk_list_store_append (store, &iter1);
-			gtk_list_store_set (store, &iter1,
-				COLUMN_ID, itr->GetID(),
-				COLUMN_NAME, itr->GetName().c_str(),
-				COLUMN_ICON, itr->GetIcon().c_str(),
-				-1);
-
+			g_list_store_append (store, &(*itr));
 		}
 		gtk_tree_view_set_model(m_pTreeViewExternalTools, GTK_TREE_MODEL (store));
 		g_object_unref(store);
@@ -287,9 +269,9 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	{
 		GtkTreePath* path = (GtkTreePath*)l->data;
 		GtkTreeIter iter;
-		gtk_tree_model_get_iter(gtk_tree_view_get_model(priv->m_pTreeViewExternalTools), &iter, path);
+		gtk_tree_model_get_iter(model, &iter, path);
 		int id;
-		gtk_tree_model_get(gtk_tree_view_get_model(priv->m_pTreeViewExternalTools), &iter, COLUMN_ID, &id, -1);
+		gtk_tree_model_get(model, &iter, COLUMN_ID, &id, -1);
 
 		if (button == priv->m_pButtonMoveUp)
 		{
@@ -381,7 +363,3 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsEventHandler::HandleEx
 		parent->UpdateUI();
 	}
 }
-
-
-
-

@@ -143,7 +143,7 @@ public:
 			//image
 			GdkPixbuf* pixbuf = NULL;
 			// taskPtr->GetPixbuf();
-			m_imgThumbnail = gtk_image_new_from_pixbuf(pixbuf);
+			m_imgThumbnail = gtk_image_new_from_paintable(GDK_PAINTABLE(pixbuf));
 
 			// task details (text, progress, time stuff)
 			m_vboxDetails = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);

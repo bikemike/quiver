@@ -63,22 +63,9 @@ public:
 
 		// FIXME : NULL should be the main application window
 		GtkWindow *window = NULL;
-		m_pDlg = gtk_dialog_new_with_buttons (m_strMsg.c_str(),
-			  window,
-			  GTK_DIALOG_DESTROY_WITH_PARENT,
-			  NULL);
-        GtkWidget* content_area = gtk_dialog_get_content_area(GTK_DIALOG(m_pDlg));
-        GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-        gtk_widget_set_margin_start(vbox, 10);
-        gtk_widget_set_margin_end(vbox, 10);
-        gtk_widget_set_margin_top(vbox, 10);
-        gtk_widget_set_margin_bottom(vbox, 10);
-        gtk_box_append(GTK_BOX(content_area), vbox);
-
-        GtkWidget* label = gtk_label_new(m_strDetails.c_str());
-        gtk_label_set_wrap(GTK_LABEL(label), TRUE);
-        gtk_box_append(GTK_BOX(vbox), label);
-
+		m_pDlg = gtk_message_dialog_new(window, GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_OTHER, GTK_BUTTONS_NONE, "%s", m_strMsg.c_str());
+		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(m_pDlg), m_strMsg.c_str());
+		gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(m_pDlg), "%s", m_strDetails.c_str());
 	}
 
 	~PrivateImpl()
@@ -160,7 +147,7 @@ void MessageBox::AddButton(BUTTON_ICON icon, const std::string &text, ResponseTy
 	}
 	gtk_widget_set_visible(button, true);
 	gtk_widget_set_can_focus(button, TRUE);
-	gtk_dialog_add_button(GTK_DIALOG(m_pPrivateImpl->m_pDlg), text.c_str(), (gint)respType);
+	gtk_dialog_add_button(GTK_DIALOG(m_pPrivateImpl->m_pDlg), (const char*)button, (gint)respType);
 
 }
 
@@ -196,8 +183,7 @@ void MessageBox::SetDefaultResponseType(ResponseType respType)
 			response = (gint) respType;
 	}
 
-	gtk_window_set_default_widget(GTK_WINDOW(m_pPrivateImpl->m_pDlg),
-        gtk_dialog_get_widget_for_response(GTK_DIALOG(m_pPrivateImpl->m_pDlg), response));
+	gtk_dialog_set_default_response(GTK_DIALOG(m_pPrivateImpl->m_pDlg), response);
 }
 
 

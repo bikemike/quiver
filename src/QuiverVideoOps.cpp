@@ -1,6 +1,6 @@
 #include <config.h>
 
-#include "QuiverVideoOps.h"
+#include "QuiverVideoOps.hh"
 
 #include <gst/gst.h>
 #include <gst/video/video.h>

@@ -8,9 +8,7 @@
 #include "QuiverStockIcons.h"
 
 #include <gio/gio.h>
-
-#include <algorithm>
-#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string.hpp>
 
 #ifdef QUIVER_MAEMO
 #ifdef HAVE_HILDON_FM_2
@@ -97,9 +95,8 @@ void RenameDlg::SetInputFolder(std::string folder)
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer   user_data);
 static void on_folder_button_clicked(GtkButton* button, gpointer user_data);
-static void on_folder_selected(GtkNativeDialog *dialog, int response_id, gpointer user_data);
+static void on_folder_selected(GtkFileChooser* chooser, gint response_id, gpointer user_data);
 static void on_editable_changed (GtkEditable *editable, gpointer user_data);
-static void combo_changed (GtkComboBox *widget, gpointer user_data);
 
 
 RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent) :
@@ -135,7 +132,7 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 
 	m_pBtnOK               = gtk_button_new_with_label("OK");
     gtk_button_set_icon_name(GTK_BUTTON(m_pBtnOK), "dialog-ok");
-	gtk_dialog_add_buttons(GTK_DIALOG(m_pDialogRename), "OK", GTK_RESPONSE_OK, NULL);
+	gtk_dialog_add_buttons(GTK_DIALOG(m_pDialogRename), "_OK", GTK_RESPONSE_OK, "_Cancel", GTK_RESPONSE_CANCEL, NULL);
 
 
 	GtkBox* src_cont = GTK_BOX( gtk_builder_get_object(m_pGtkBuilder, "rename_align_source_folder") );
@@ -246,6 +243,7 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 			GTK_DIALOG_DESTROY_WITH_PARENT,
 			GTK_MESSAGE_ERROR,
 			GTK_BUTTONS_CLOSE,
+			"%s",
 			strMsg.c_str());
 		gtk_window_set_title(GTK_WINDOW(dialog), strTitle.c_str());
 		gtk_window_present(GTK_WINDOW(dialog));
@@ -269,28 +267,29 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 static void on_folder_button_clicked(GtkButton* button, gpointer user_data)
 {
     RenameDlg::RenameDlgPriv *priv = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
-    GtkFileChooserNative* dialog = gtk_file_chooser_native_new("Select a folder",
+    GtkWidget* dialog = gtk_file_chooser_dialog_new("Select a folder",
         GTK_WINDOW(priv->m_pDialogRename),
         GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-        "_Select",
-        "_Cancel");
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Select", GTK_RESPONSE_ACCEPT,
+        NULL);
 
-    g_signal_connect(dialog, "response", G_CALLBACK(on_folder_selected), user_data);
-    gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));
+    g_signal_connect(dialog, "response", G_CALLBACK(on_folder_selected), priv);
+    gtk_widget_show(GTK_WIDGET(dialog));
 }
 
-static void on_folder_selected(GtkNativeDialog *dialog, int response_id, gpointer user_data)
+static void on_folder_selected(GtkFileChooser* chooser, gint response_id, gpointer user_data)
 {
     if (response_id == GTK_RESPONSE_ACCEPT)
     {
         RenameDlg::RenameDlgPriv *priv = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
-        GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
+        GFile* file = gtk_file_chooser_get_file(chooser);
         char* uri = g_file_get_uri(file);
 		gtk_label_set_text(priv->m_pLabelSourceFolder, uri);
         g_free(uri);
         g_object_unref(file);
     }
-    g_object_unref(dialog);
+    gtk_window_destroy(GTK_WINDOW(chooser));
 }
 
 static void on_editable_changed (GtkEditable *editable, gpointer user_data)
@@ -303,9 +302,10 @@ static void on_editable_changed (GtkEditable *editable, gpointer user_data)
 	std::string strTemplate(text);
 	std::string strNewTemplate = strTemplate;
    
-	std::string::iterator itr = 
-		std::remove_if(strNewTemplate.begin(), strNewTemplate.end(), boost::is_any_of(invalid_chars));
-	strNewTemplate.erase(itr, strNewTemplate.end());
+	strNewTemplate.erase(std::remove_if(strNewTemplate.begin(), strNewTemplate.end(),
+		[&invalid_chars](char c) {
+			return invalid_chars.find(c) != std::string::npos;
+		}), strNewTemplate.end());
 
 	if (strNewTemplate != strTemplate)
 	{
@@ -314,7 +314,3 @@ static void on_editable_changed (GtkEditable *editable, gpointer user_data)
 
 	priv->UpdateUI();
 }
-
-
-
-

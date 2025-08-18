@@ -73,8 +73,6 @@ static void quiver_navigation_control_class_init(QuiverNavigationControlClass *k
 	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 	GObjectClass *obj_class = G_OBJECT_CLASS(klass);
 
-    g_type_class_add_private(klass, sizeof(QuiverNavigationControlPrivate));
-
 	widget_class->realize = quiver_navigation_control_realize;
     widget_class->unrealize = quiver_navigation_control_unrealize;
     widget_class->map = quiver_navigation_control_map;
@@ -100,7 +98,7 @@ static GtkAdjustment* new_default_adjustment(void) {
 }
 
 static void quiver_navigation_control_init(QuiverNavigationControl *navcontrol) {
-	navcontrol->priv = QUIVER_NAVIGATION_CONTROL_GET_PRIVATE(navcontrol);
+	navcontrol->priv = quiver_navigation_control_get_instance_private(navcontrol);
     QuiverNavigationControlPrivate *priv = navcontrol->priv;
 
 	priv->pixbuf = NULL;

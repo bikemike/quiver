@@ -94,7 +94,7 @@ bool OrganizeDlg::Run()
 
 std::string OrganizeDlg::GetFolderTemplate() const
 {
-	return gtk_combo_box_text_get_active_text(m_PrivPtr->m_pComboTemplateFolder);
+	return gtk_combo_box_get_active_id(GTK_COMBO_BOX(m_PrivPtr->m_pComboTemplateFolder));
 }
 
 std::string OrganizeDlg::GetFileTemplate() const
@@ -146,7 +146,6 @@ bool OrganizeDlg::GetRenameFiles() const
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer   user_data);
 static void on_folder_button_clicked(GtkButton* button, gpointer user_data);
-static void on_folder_selected(GtkNativeDialog *dialog, int response_id, gpointer user_data);
 static void on_editable_changed (GtkEditable *editable, gpointer user_data);
 static void combo_changed (GtkComboBox *widget, gpointer user_data);
 
@@ -184,7 +183,7 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 
 	m_pBtnOK               = GTK_WIDGET(gtk_button_new_with_label("OK"));
     gtk_button_set_icon_name(GTK_BUTTON(m_pBtnOK), "dialog-ok");
-	gtk_dialog_add_buttons(GTK_DIALOG(m_pDialogOrganize), "OK", GTK_RESPONSE_OK, NULL);
+	gtk_dialog_add_buttons(GTK_DIALOG(m_pDialogOrganize), "_OK", GTK_RESPONSE_OK, "_Cancel", GTK_RESPONSE_CANCEL, NULL);
 
 	m_pComboTemplateFolder       = GTK_COMBO_BOX_TEXT( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
 	m_pEntryTemplateFile       = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "organize_entry_filename_template") );
@@ -245,7 +244,7 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		if (!strPhotoLibrary.empty())
 		{
 			GFile *file = g_file_new_for_path(strPhotoLibrary.c_str());
-			gtk_file_chooser_set_file(GTK_FILE_CHOOSER(m_pBtnDestFolder), file, NULL);
+			gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(m_pBtnDestFolder), file, NULL);
 			g_object_unref(file);
 		}
 	}  
@@ -259,7 +258,7 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 		GDateTime* time = g_date_time_new_now_local();
 
 		strLabel += G_DIR_SEPARATOR_S;
-		strLabel += gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(m_pComboTemplateFolder));
+		strLabel += gtk_combo_box_get_active_id(GTK_COMBO_BOX(m_pComboTemplateFolder));
 		strLabel += gtk_editable_get_text(GTK_EDITABLE(m_pEntryFolderName));
 		strLabel = OrganizeTask::DoVariableSubstitution(strLabel, time);
 		if (GetRenameFiles())
@@ -340,7 +339,7 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 		{
 			bIsValid = false;
 
-            GtkWidget* dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(m_pDialogOrganize),
+            GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(m_pDialogOrganize),
                 GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_ERROR,
                 GTK_BUTTONS_CLOSE,
@@ -354,14 +353,18 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 	return bIsValid;
 }
 
+static void on_folder_button_clicked(GtkButton* button, gpointer user_data);
+static void on_folder_selected(GtkFileChooser* chooser, int response_id, gpointer user_data);
+
 static void on_folder_button_clicked(GtkButton* button, gpointer user_data)
 {
     OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
-    GtkFileChooserNative* dialog = gtk_file_chooser_native_new("Select a folder",
+    GtkFileChooser* dialog = GTK_FILE_CHOOSER(gtk_file_chooser_dialog_new("Select a folder",
         GTK_WINDOW(priv->m_pDialogOrganize),
         GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-        "_Select",
-        "_Cancel");
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Select", GTK_RESPONSE_ACCEPT,
+        NULL));
 
     gpointer callback_data = NULL;
     if (button == priv->m_pBtnSourceFolder)
@@ -374,21 +377,21 @@ static void on_folder_button_clicked(GtkButton* button, gpointer user_data)
     }
 
     g_signal_connect(dialog, "response", G_CALLBACK(on_folder_selected), callback_data);
-    gtk_native_dialog_show(GTK_NATIVE_DIALOG(dialog));
+    gtk_widget_show(GTK_WIDGET(dialog));
 }
 
-static void on_folder_selected(GtkNativeDialog *dialog, int response_id, gpointer user_data)
+static void on_folder_selected(GtkFileChooser* chooser, int response_id, gpointer user_data)
 {
     if (response_id == GTK_RESPONSE_ACCEPT)
     {
         GtkLabel* label = GTK_LABEL(user_data);
-        GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
+        GFile* file = gtk_file_chooser_get_file(chooser);
         char* uri = g_file_get_uri(file);
         gtk_label_set_text(label, uri);
         g_free(uri);
         g_object_unref(file);
     }
-    g_object_unref(dialog);
+    gtk_window_destroy(GTK_WINDOW(chooser));
 }
 
 bool OrganizeDlg::OrganizeDlgPriv::GetRenameFiles() const

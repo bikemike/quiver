@@ -2,7 +2,7 @@
 
 #include "ImageLoader.h"
 #include "QuiverUtils.h"
-#include "QuiverVideoOps.h"
+#include "QuiverVideoOps.hh"
 
 #include <gio/gio.h>
 #include <gst/gst.h>

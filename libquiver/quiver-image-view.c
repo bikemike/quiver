@@ -300,9 +300,6 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 	g_object_class_override_property (obj_class, PROP_HSCROLL_POLICY, "hscroll-policy");
 	g_object_class_override_property (obj_class, PROP_VSCROLL_POLICY, "vscroll-policy");
 
-	g_type_class_add_private (obj_class, sizeof (QuiverImageViewPrivate));
-
-
 	imageview_signals[SIGNAL_ACTIVATED] = g_signal_new (/*FIXME: I_*/("activated"),
 		G_TYPE_FROM_CLASS (obj_class),
 		G_SIGNAL_RUN_LAST,
@@ -1173,10 +1170,7 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 	QuiverImageView *imageview = (QuiverImageView*)data;
 	GtkWidget *widget;
 	widget = GTK_WIDGET(imageview);
-	
 	gint width, height;
-	width = 0;
-	height = 0;
 
 	if (NULL != imageview->priv->transition_pixbufs_intermediate)
 	{
