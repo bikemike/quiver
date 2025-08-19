@@ -43,7 +43,7 @@ struct QuiverFileCompare
 static GdkPixbuf* scale_pixbuf(GdkPixbuf* pixbuf, int size);
 static void GetImageDimensions(const gchar *pszFilename, gint *width, gint *height);
 
-/*
+
 class QuiverFile::QuiverFileImpl
 {
 public:
@@ -56,7 +56,7 @@ public:
 	string GetFileName() const;
 	string GetFilePath() const;
 	const gchar* GetURI() const;
-	const string& GetMD5() const;
+	string m_strMD5;
 	const string& GetFileExtension() const;
 
 	void SetFileName(const string& strFileName);
@@ -99,7 +99,6 @@ private:
 	string m_strFileName;
 	string m_strFilePath;
 	string m_strURI;
-	string m_strMD5;
 	string m_strFileExtension;
 
 	mutable GdkPixbuf* m_pThumb;
@@ -126,95 +125,58 @@ ImageCache QuiverFile::QuiverFileImpl::m_thumbnailCache(200);
 
 QuiverFile::QuiverFile()
 {
-	//m_pImpl = new QuiverFileImpl("", "");
-}
-
-QuiverFile::QuiverFile(const QuiverFile& qf)
-{
-	//if (NULL != qf.m_pImpl)
-	//{
-	//	m_pImpl = new QuiverFileImpl(*(qf.m_pImpl));
-	//}
-	//else
-	//{
-	//	m_pImpl = NULL;
-	//}
+	m_QuiverFilePtr.reset(new QuiverFileImpl("", ""));
 }
 
 QuiverFile::QuiverFile(const gchar* uri)
 {
-	//gchar* filename = g_filename_from_uri(uri, NULL, NULL);
-	//if (filename)
-	//{
-	//	string strPath, strName;
-	//	//QuiverUtils::SplitPath(filename, strPath, strName);
-	//	//m_pImpl = new QuiverFileImpl(strPath, strName);
-	//	g_free(filename);
-	//}
-	//else
-	//{
-	//	//m_pImpl = new QuiverFileImpl("", "");
-	//}
+	gchar* filename = g_filename_from_uri(uri, NULL, NULL);
+	if (filename)
+	{
+		string strPath, strName;
+		//QuiverUtils::SplitPath(filename, strPath, strName);
+		m_QuiverFilePtr.reset(new QuiverFileImpl(strPath, strName));
+		g_free(filename);
+	}
+	else
+	{
+		m_QuiverFilePtr.reset(new QuiverFileImpl("", ""));
+	}
 }
 
 QuiverFile::QuiverFile(const gchar* path, GFileInfo *info)
 {
-	//const char* name = g_file_info_get_name(info);
-	//m_pImpl = new QuiverFileImpl(path, name);
+	const char* name = g_file_info_get_name(info);
+	m_QuiverFilePtr.reset(new QuiverFileImpl(path, name));
 }
 
 
 QuiverFile::~QuiverFile()
 {
-	//if (NULL != m_pImpl)
-	//{
-	//	delete m_pImpl;
-	//	m_pImpl = NULL;
-	//}
-}
-
-QuiverFile& QuiverFile::operator=(const QuiverFile& qf)
-{
-	//if (this != &qf)
-	//{
-	//	if (NULL != m_pImpl)
-	//	{
-	//		delete m_pImpl;
-	//		m_pImpl = NULL;
-	//	}
-
-	//	if (NULL != qf.m_pImpl)
-	//	{
-	//		m_pImpl = new QuiverFileImpl(*(qf.m_pImpl));
-	//	}
-	//}
-	return *this;
 }
 
 bool QuiverFile::operator==(const QuiverFile& qf) const
 {
-	//if (NULL == m_pImpl && NULL == qf.m_pImpl) return true;
-	//if (NULL == m_pImpl || NULL == qf.m_pImpl) return false;
-	//return (m_pImpl->GetURI() == qf.m_pImpl->GetURI());
-	return true;
+	if (NULL == m_QuiverFilePtr.get() && NULL == qf.m_QuiverFilePtr.get()) return true;
+	if (NULL == m_QuiverFilePtr.get() || NULL == qf.m_QuiverFilePtr.get()) return false;
+	return (m_QuiverFilePtr->GetURI() == qf.m_QuiverFilePtr->GetURI());
 }
 
 bool QuiverFile::operator!=(const QuiverFile& qf) const
 {
-	//if (NULL == m_pImpl && NULL == qf.m_pImpl) return false;
-	//if (NULL == m_pImpl || NULL == qf.m_pImpl) return true;
-	//return (m_pImpl->GetURI() != qf.m_pImpl->GetURI());
-	return false;
+	if (NULL == m_QuiverFilePtr.get() && NULL == qf.m_QuiverFilePtr.get()) return false;
+	if (NULL == m_QuiverFilePtr.get() || NULL == qf.m_QuiverFilePtr.get()) return true;
+	return (m_QuiverFilePtr->GetURI() != qf.m_QuiverFilePtr->GetURI());
 }
 
 const gchar* QuiverFile::GetURI() const
 {
-	return "";//m_pImpl->GetURI();
+	return m_QuiverFilePtr->GetURI();
 }
 
 GdkPixbuf* QuiverFile::GetThumbnail(int size)
 {
-	return NULL; //m_pImpl->GetThumbnail(size);
+	return m_QuiverFilePtr->GetThumbnail(size);
 }
 
 GFileInfo* QuiverFile::GetFileInfo()
@@ -227,63 +189,121 @@ GFileInfo* QuiverFile::GetFileInfo()
 
 bool QuiverFile::IsVideo()
 {
-	return false; //m_pImpl->IsVideo();
+	return m_QuiverFilePtr->IsVideo();
 }
 
 
 ExifData* QuiverFile::GetExifData()
 {
-	return NULL; //m_pImpl->GetExifData(false);
+	return m_QuiverFilePtr->GetExifData(false);
 }
 
 bool QuiverFile::SetExifData(ExifData* pExifData)
 {
-	//m_pImpl->SetExifData(pExifData);
+	m_QuiverFilePtr->SetExifData(pExifData);
 	return true;
 }
 
 
 unsigned long long QuiverFile::GetFileSize()
 {
-	return 0; //m_pImpl->GetFileSize();
+	return m_QuiverFilePtr->GetFileSize();
 }
 
 GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 {
-	return NULL; //m_pImpl->GetIcon(std::max(width_desired,height_desired));
+	return m_QuiverFilePtr->GetIcon(std::max(width_desired,height_desired));
 }
 
 
 std::string QuiverFile::GetFileName() const
 {
-	return ""; //m_pImpl->GetFileName();
+	return m_QuiverFilePtr->GetFileName();
 }
 std::string QuiverFile::GetFilePath() const
 {
-	return ""; //m_pImpl->GetFilePath();
+	return m_QuiverFilePtr->GetFilePath();
 }
 
 int QuiverFile::GetWidth()
 {
-	return 0; //m_pImpl->GetWidth();
+	return m_QuiverFilePtr->GetWidth();
 }
 int QuiverFile::GetHeight()
 {
-	return 0; //m_pImpl->GetHeight();
+	return m_QuiverFilePtr->GetHeight();
 }
 
 
 int QuiverFile::GetOrientation()
 {
-	return 1; //m_pImpl->GetOrientation();
+	return m_QuiverFilePtr->GetOrientation();
 }
 
 time_t QuiverFile::GetTimeT(bool fromExif) const
 {
-	return 0; //m_pImpl->GetTimeT(fromExif);
+	return m_QuiverFilePtr->GetTimeT(fromExif);
 }
 
+void QuiverFile::Reload()
+{
+}
 
+bool QuiverFile::IsFolder() const
+{
+	return false;
+}
+
+gchar* QuiverFile::GetIconName()
+{
+	return NULL;
+}
+
+void QuiverFile::SetWidth(int width)
+{
+}
+
+void QuiverFile::SetHeight(int height)
+{
+}
+
+bool QuiverFile::HasThumbnail(int size)
+{
+	return false;
+}
+
+double QuiverFile::GetLoadTimeInSeconds() const
+{
+	return 0;
+}
+
+void QuiverFile::SetLoadTimeInSeconds(double seconds)
+{
+}
+
+const char* QuiverFile::GetMimeType()
+{
+	return "";
+}
+
+bool QuiverFile::Modified() const
+{
+	return false;
+}
+
+bool QuiverFile::IsWriteable()
+{
+	return false;
+}
+
+void QuiverFile::RemoveCachedThumbnail(int size)
+{
+}
+
+bool QuiverFile::IsWidthHeightSet() const
+{
+	return false;
+}
 QuiverFile::QuiverFileImpl::QuiverFileImpl(const string& filePath, const string& fileName, GdkPixbuf* pThumb)
 {
 
@@ -317,24 +337,6 @@ string QuiverFile::QuiverFileImpl::GetFilePath() const
 const gchar* QuiverFile::QuiverFileImpl::GetURI() const
 {
 	return m_strURI.c_str();
-}
-
-const string& QuiverFile::QuiverFileImpl::GetMD5() const
-{
-	if (m_strMD5.empty())
-	{
-		if (IsDirectory())
-		{
-			//m_strMD5 = "d41d8cd98f00b204e9800998ecf8427e";
-		}
-		else
-		{
-			//CMD5 md5;
-			//md5.Generate(m_strFilePath.c_str());
-			//m_strMD5 = md5.GetHash();
-		}
-	}
-	return m_strMD5;
 }
 
 const string& QuiverFile::QuiverFileImpl::GetFileExtension() const
@@ -525,8 +527,6 @@ GdkPixbuf* QuiverFile::QuiverFileImpl::GetIcon(int size)
 		GtkIconPaintable *icon_paintable = gtk_icon_theme_lookup_icon(icon_theme, "folder", NULL, size, 1, GTK_TEXT_DIR_NONE, (GtkIconLookupFlags)0);
 		if (icon_paintable)
 		{
-			GdkPaintable* paintable = GDK_PAINTABLE(icon_paintable);
-			//pixbuf = gdk_paintable_get_pixbuf(paintable);
 			g_object_unref(icon_paintable);
 		}
 	}
@@ -536,8 +536,6 @@ GdkPixbuf* QuiverFile::QuiverFileImpl::GetIcon(int size)
 		GtkIconPaintable *icon_paintable = gtk_icon_theme_lookup_icon(icon_theme, "package-x-generic", NULL, size, 1, GTK_TEXT_DIR_NONE, (GtkIconLookupFlags)0);
 		if (icon_paintable)
 		{
-			GdkPaintable* paintable = GDK_PAINTABLE(icon_paintable);
-			//pixbuf = gdk_paintable_get_pixbuf(paintable);
 			g_object_unref(icon_paintable);
 		}
 	}
@@ -547,8 +545,6 @@ GdkPixbuf* QuiverFile::QuiverFileImpl::GetIcon(int size)
 		GtkIconPaintable *icon_paintable = gtk_icon_theme_lookup_icon(icon_theme, "video-x-generic", NULL, size, 1, GTK_TEXT_DIR_NONE, (GtkIconLookupFlags)0);
 		if (icon_paintable)
 		{
-			GdkPaintable* paintable = GDK_PAINTABLE(icon_paintable);
-			//pixbuf = gdk_paintable_get_pixbuf(paintable);
 			g_object_unref(icon_paintable);
 		}
 	}
@@ -645,7 +641,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool bUseExif) const
 {
 	if (bUseExif && IsImage())
 	{
-		//ReadExifData();
+		const_cast<QuiverFileImpl*>(this)->ReadExifData();
 		if (NULL != m_pExifData)
 		{
 			ExifEntry *entry = exif_content_get_entry(m_pExifData->ifd[EXIF_IFD_EXIF], EXIF_TAG_DATE_TIME_ORIGINAL);
@@ -661,7 +657,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool bUseExif) const
 	}
 	if (0 == m_cachedTimeT)
 	{
-		//ReadFileData();
+		const_cast<QuiverFileImpl*>(this)->ReadFileData();
 	}
 	return m_cachedTimeT;
 }
@@ -734,5 +730,3 @@ static void GetImageDimensions(const gchar *pszFilename, gint *width, gint *heig
 	gdk_pixbuf_loader_close(loader, &error);
 	g_object_unref(loader);
 }
-
-*/
