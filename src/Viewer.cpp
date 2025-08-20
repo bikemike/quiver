@@ -11,7 +11,6 @@
 
 #include <gst/gst.h>
 #include <gst/video/video.h>
-#include <gtk/gtk.h>
 
 
 #include "Viewer.h"
@@ -79,9 +78,6 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
 
-// static void viewer_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data); // Commented out - GtkRadioAction is deprecated
-// static void viewer_action_handler_cb(GtkAction *action, gpointer data); // Commented out - GtkAction is deprecated
-
 // static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data ); // GTK3
 static gboolean viewer_scrollwheel_event_cb(GtkEventControllerScroll* controller, gdouble dx, gdouble dy, gpointer data); // GTK4 scroll event
 static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data);
@@ -97,188 +93,7 @@ static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,
 
 static void viewer_volume_value_changed (GtkScaleButton *button, gdouble value, gpointer user_data);
 
-// static gboolean viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata); // GdkEventButton is GTK3
-// static gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data ); // GdkEventButton is GTK3
-// Event controllers for navigation control gestures will be needed.
-
-// popup menu callbacks - GtkMenu is deprecated, use GtkPopoverMenu
-// static gboolean viewer_popup_menu_cb (GtkWidget *treeview, gpointer userdata);
-// static gboolean viewer_button_press_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data);
-// static gboolean viewer_button_release_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data);
-// static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata);
-
-
-// drag/drop targets - GtkTargetEntry and GdkDragContext are part of GTK3 DND. GTK4 uses GdkDrop, GdkDrag, GtkDropTarget, GtkDragSource.
-/*
-enum {
-	QUIVER_TARGET_STRING,
-	QUIVER_TARGET_URI
-};
-
-static GtkTargetEntry quiver_drag_target_table[] = {
-		{ "STRING",     0, QUIVER_TARGET_STRING },
-		{ "text/plain", 0, QUIVER_TARGET_STRING },
-		 { "text/uri-list", 0, QUIVER_TARGET_URI },
-};
-
-static void signal_drag_data_get  (GtkWidget *widget, GdkDragContext *context, GtkSelectionData *selection_data, guint info, guint time,gpointer user_data);
-static void signal_drag_data_delete  (GtkWidget *widget,GdkDragContext *context,gpointer user_data);
-static void signal_drag_data_received(GtkWidget *widget,GdkDragContext *drag_context, gint x,gint y, GtkSelectionData *data, guint info, guint time,gpointer user_data);
-static void signal_drag_begin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
-static void signal_drag_end(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
-static void signal_drag_motion (GtkWidget *widget, GdkDragContext *context, gint x, gint y, guint time, gpointer user_data);
-static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_context, gint x, gint y, guint time,  gpointer user_data);
-*/
-
 static gboolean timeout_play_position (gpointer data);
-
-#define ACTION_VIEWER_CUT              "ViewerCut"
-#define ACTION_VIEWER_COPY             "ViewerCopy"
-#define ACTION_VIEWER_TRASH            "ViewerTrash"
-#define ACTION_VIEWER_PREVIOUS         "ImagePrevious"
-#define ACTION_VIEWER_NEXT             "ImageNext"
-#define ACTION_VIEWER_FIRST            "ImageFirst"
-#define ACTION_VIEWER_LAST             "ImageLast"
-#define ACTION_VIEWER_ZOOM             "Zoom"
-#define ACTION_VIEWER_ZOOM_FIT         "ZoomFit"
-#define ACTION_VIEWER_ZOOM_FIT_STRETCH "ZoomFitStretch"
-#define ACTION_VIEWER_ZOOM_FILL_SCREEN "ZoomFillScreen"
-#define ACTION_VIEWER_ZOOM_100         "Zoom100"
-#define ACTION_VIEWER_ZOOM_IN          "ZoomIn"
-#define ACTION_VIEWER_ZOOM_OUT         "ZoomOut"
-#define ACTION_VIEWER_ROTATE_CW        "RotateCW"
-#define ACTION_VIEWER_ROTATE_CCW       "RotateCCW"
-#define ACTION_VIEWER_FLIP_H           "FlipH"
-#define ACTION_VIEWER_FLIP_V           "FlipV"
-#define ACTION_VIEWER_VIEW_FILM_STRIP  "ViewFilmStrip"
-#define ACTION_VIEWER_NEXT_2            ACTION_VIEWER_NEXT "_2"
-#define ACTION_VIEWER_PREVIOUS_2        ACTION_VIEWER_PREVIOUS "_2"
-#define ACTION_VIEWER_ROTATE_CW_2       ACTION_VIEWER_ROTATE_CW "_2"
-#define ACTION_VIEWER_ROTATE_CCW_2      ACTION_VIEWER_ROTATE_CCW "_2"
-#define ACTION_VIEWER_ROTATE_FOR_BEST_FIT "MaximizeForDisplay"
-#define ACTION_VIEWER_FLIP_H_2          ACTION_VIEWER_FLIP_H "_2"
-#define ACTION_VIEWER_FLIP_V_2          ACTION_VIEWER_FLIP_V "_2"
-
-#define ACTION_VIEWER_VIDEO_PLAY         "VideoPlay"
-#define ACTION_VIEWER_VIDEO_SKIP_FORWARD "VideoSkipForward"
-#define ACTION_VIEWER_VIDEO_SKIP_BACK    "VideoSkipBack"
-#define ACTION_VIEWER_VIDEO_PLAY_2       ACTION_VIEWER_VIDEO_PLAY "_2"
-
-// #ifdef QUIVER_MAEMO // Hildon specific
-// #define ACTION_VIEWER_ZOOM_IN_MAEMO     ACTION_VIEWER_ZOOM_IN"_MAEMO"
-// #define ACTION_VIEWER_ZOOM_OUT_MAEMO    ACTION_VIEWER_ZOOM_OUT"_MAEMO"
-// #endif
-
-// GtkUIManager related UI definition string - will need replacement with GMenuModel / GtkBuilder
-/*
-static const char *ui_viewer =
-"<ui>"
-#ifdef QUIVER_MAEMO
-"	<popup name='MenubarMain'>"
-#else
-"	<menubar name='MenubarMain'>"
-#endif
-// ... (rest of UI string commented out as it's very long and all GtkUIManager based) ...
-"</ui>";
-*/
-
-// GtkActionEntry arrays are deprecated
-/*
-static  GtkToggleActionEntry action_entries_toggle[] = {
-	{ ACTION_VIEWER_VIEW_FILM_STRIP, "","Film Strip", "<Control><Shift>f", "Show/Hide Film Strip", G_CALLBACK(viewer_action_handler_cb),TRUE},
-	{ ACTION_VIEWER_ROTATE_FOR_BEST_FIT, "","Rotate to Maximize View", "", "Rotate Images to Maximize Display Area", G_CALLBACK(viewer_action_handler_cb),TRUE},
-};
-
-static const gchar* pszActionsImage[] =
-{
-	ACTION_VIEWER_CUT,
-	ACTION_VIEWER_COPY,
-	ACTION_VIEWER_TRASH,
-	ACTION_VIEWER_ZOOM_FIT,
-	ACTION_VIEWER_ZOOM_FIT_STRETCH,
-	ACTION_VIEWER_ZOOM_100,
-	ACTION_VIEWER_ZOOM_IN,
-	ACTION_VIEWER_ZOOM_OUT,
-	ACTION_VIEWER_ROTATE_FOR_BEST_FIT,
-	ACTION_VIEWER_ROTATE_CW,
-	ACTION_VIEWER_ROTATE_CCW,
-	ACTION_VIEWER_ROTATE_CW_2,
-	ACTION_VIEWER_ROTATE_CCW_2,
-	ACTION_VIEWER_FLIP_H,
-	ACTION_VIEWER_FLIP_V,
-	ACTION_VIEWER_FLIP_H_2,
-	ACTION_VIEWER_FLIP_V_2,
-// #ifdef QUIVER_MAEMO
-//	ACTION_VIEWER_ZOOM_IN_MAEMO,
-//	ACTION_VIEWER_ZOOM_OUT_MAEMO,
-// #endif
-};
-
-// has next
-static const gchar* pszActionsNext[] =
-{
-	ACTION_VIEWER_NEXT,
-	ACTION_VIEWER_NEXT_2,
-	ACTION_VIEWER_LAST,
-};
-// has prev
-static const gchar* pszActionsPrev[] =
-{
-	ACTION_VIEWER_PREVIOUS,
-	ACTION_VIEWER_PREVIOUS_2,
-	ACTION_VIEWER_FIRST,
-};
-
-
-static GtkActionEntry action_entries[] = {
-
-//	{ "MenuFile", NULL, N_("_File") },
-	{ ACTION_VIEWER_CUT, QUIVER_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(viewer_action_handler_cb)},
-// #ifdef QUIVER_MAEMO
-//	{ ACTION_VIEWER_TRASH, QUIVER_STOCK_DELETE, "_Delete", "Delete", "Delete image", G_CALLBACK(viewer_action_handler_cb)},
-// #else
-	{ ACTION_VIEWER_TRASH, QUIVER_STOCK_DELETE, "_Move To Trash", "Delete", "Move image to the Trash", G_CALLBACK(viewer_action_handler_cb)},
-// #endif
-
-	{ ACTION_VIEWER_PREVIOUS, QUIVER_STOCK_GO_BACK, "_Previous Image", "BackSpace", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_PREVIOUS_2, QUIVER_STOCK_GO_BACK, "_Previous Image", "<Shift>space", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_NEXT, QUIVER_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_NEXT_2, QUIVER_STOCK_GO_FORWARD, "_Next Image", "<Shift>BackSpace", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
-// #ifdef QUIVER_MAEMO
-//	{ ACTION_VIEWER_ZOOM_IN_MAEMO, QUIVER_STOCK_ZOOM_IN,"Zoom _In", "F7", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
-//	{ ACTION_VIEWER_ZOOM_OUT_MAEMO, QUIVER_STOCK_ZOOM_OUT,"Zoom _Out", "F8", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
-// #endif
-	{ ACTION_VIEWER_FIRST, QUIVER_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_LAST, QUIVER_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
-
-	{ ACTION_VIEWER_ZOOM_IN, QUIVER_STOCK_ZOOM_IN,"Zoom _In", "equal", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_ZOOM_OUT, QUIVER_STOCK_ZOOM_OUT,"Zoom _Out", "minus", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
-
-	{ ACTION_VIEWER_ROTATE_CW, QUIVER_STOCK_ROTATE_CW, "_Rotate Clockwise", "r", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_ROTATE_CW_2, QUIVER_STOCK_ROTATE_CW, "_Rotate Clockwise", "<Shift>l", "Rotate Clockwise", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_ROTATE_CCW, QUIVER_STOCK_ROTATE_CCW, "Rotate _Counterclockwise", "l", "Rotate Counterclockwise", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_ROTATE_CCW_2, QUIVER_STOCK_ROTATE_CCW, "Rotate _Counterclockwise", "<Shift>r", "Rotate Counterclockwise", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_FLIP_H, "", "Flip _Horizontally", "h", "Flip Horizontally", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_FLIP_H_2, "", "Flip _Horizontally", "<Shift>v", "Flip Horizontally", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_FLIP_V, "", "Flip _Vertically", "v", "Flip Vertically", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_FLIP_V_2, "", "Flip _Vertically", "<Shift>h", "Flip Vertically", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_VIDEO_PLAY, "", "Play/Pause Video", "P", "Play/Pause Video", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_VIDEO_PLAY_2, "", "Play/Pause Video", "<Control>space", "Play/Pause Video", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_VIDEO_SKIP_FORWARD, "", "Skip Forward", "period", "Skip Forward", G_CALLBACK(viewer_action_handler_cb)},
-	{ ACTION_VIEWER_VIDEO_SKIP_BACK, "", "Skip Back", "comma", "Skip Back", G_CALLBACK(viewer_action_handler_cb)},
-};
-
-
-static GtkRadioActionEntry zoom_radio_action_entries[] = { // GtkRadioAction is deprecated
-	{ ACTION_VIEWER_ZOOM_FIT, QUIVER_STOCK_ZOOM_FIT,"Zoom _Fit", "<Control>1", "Fit to Window",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW},
-	{ ACTION_VIEWER_ZOOM_FIT_STRETCH, QUIVER_STOCK_ZOOM_FIT,"Zoom _Fit Stretch", "", "Fit to Window Stretch",QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH},
-	{ ACTION_VIEWER_ZOOM_100, QUIVER_STOCK_ZOOM_100, "_Actual Size", "<Control>0", "Actual Size",QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE},
-	{ ACTION_VIEWER_ZOOM_FILL_SCREEN, "", "Fill Screen", NULL, "Fill the screen with the image",QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN},
-	{ ACTION_VIEWER_ZOOM, "", NULL, NULL, NULL, QUIVER_IMAGE_VIEW_MODE_ZOOM},
-};
-*/
-
 
 class ViewerImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
@@ -369,7 +184,6 @@ public:
 
 		if (IsPlaying())
 		{
-			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPause); // GtkImage is for static images
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
 
 
@@ -377,7 +191,6 @@ public:
 		}
 		else
 		{
-			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPlay); // GtkImage is for static images
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
 		}
 	}
@@ -424,16 +237,10 @@ public:
 	GtkWidget* m_pPlayProgressEventBox; // EventBox for progress bar interaction
 	GtkWidget* m_pVolumeButton;       // GtkVolumeButton (deprecated) -> GtkScaleButton or custom
 
-	// GdkPixbuf* m_pPixbufPlayHighlight; // Not needed if using icon names
-	// GdkPixbuf* m_pPixbufPlay;
-	// GdkPixbuf* m_pPixbufPauseHighlight;
-	// GdkPixbuf* m_pPixbufPause;
-
 	QuiverFile m_QuiverFileCurrent;
 
 	int m_iCurrentOrientation;
 
-	// GtkUIManager *m_pUIManager; // Deprecated - Commented out
 	guint m_iMergedViewerUI; // Related to GtkUIManager, will likely be removed or repurposed
 
 	StatusbarPtr m_StatusbarPtr;
@@ -550,62 +357,6 @@ void Viewer::ViewerImpl::SetImageList(ImageListPtr imgList)
 
 void Viewer::ViewerImpl::UpdateUI()
 {
-	// This function was heavily reliant on GtkUIManager and GtkAction.
-	// For GTK4, this would involve updating GAction states or GMenuModel items.
-	// For now, commenting out the GtkUIManager/GtkAction specific parts.
-	// The logic for enabling/disabling next/prev actions might be reusable with GAction.
-
-	/*
-	if (m_ImageListPtr->GetSize())
-	{
-		// ... (logic for pszActionsNext/Prev based on image list state) ...
-		// QuiverUtils::SetActionsSensitive(m_pUIManager, pszActionsImage, G_N_ELEMENTS(pszActionsImage), TRUE);
-	}
-	else
-	{
-		// QuiverUtils::SetActionsSensitive(m_pUIManager, pszActionsPrev, G_N_ELEMENTS(pszActionsPrev), FALSE);
-		// QuiverUtils::SetActionsSensitive(m_pUIManager, pszActionsNext, G_N_ELEMENTS(pszActionsNext), FALSE);
-		// QuiverUtils::SetActionsSensitive(m_pUIManager, pszActionsImage, G_N_ELEMENTS(pszActionsImage), FALSE);
-	}
-
-	if (!quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), TRUE))
-	{
-		// GtkAction* action;
-		// action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_IN);
-		// if (NULL != action) gtk_action_set_sensitive(action,FALSE);
-	}
-
-	if (!quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), FALSE))
-	{
-		// GtkAction* action;
-		// action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ZOOM_OUT);
-		// if (NULL != action) gtk_action_set_sensitive(action,FALSE);
-	}
-
-	// PreferencesPtr prefsPtr = Preferences::GetInstance();
-	// GtkAction* action;
-
-	if (0 != m_iTimeoutSlideshowID) // Slideshow mode
-	{
-		// bool bMaximize = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_ROTATE_FOR_BEST_FIT, false);
-		// action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ROTATE_FOR_BEST_FIT);
-		// if (NULL != action) gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bMaximize ? TRUE : FALSE);
-
-		// bool bHideFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, true);
-		// action = QuiverUtils::GetAction(m_pUIManager,ACTION_VIEWER_VIEW_FILM_STRIP);
-		// if (NULL != action) gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bHideFilmStrip ? FALSE : TRUE);
-	}
-	else // Normal viewer mode
-	{
-		// bool bMaximize = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, false);
-		// action = QuiverUtils::GetAction(m_pUIManager, ACTION_VIEWER_ROTATE_FOR_BEST_FIT);
-		// if (NULL != action) gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bMaximize ? TRUE : FALSE);
-
-		// bool bShowFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW);
-		// GtkAction* action = QuiverUtils::GetAction(m_pUIManager,ACTION_VIEWER_VIEW_FILM_STRIP);
-		// if (NULL != action) gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bShowFilmStrip ? TRUE : FALSE);
-	}
-	*/
 }
 
 void Viewer::ViewerImpl::UpdateScrollbars()
@@ -633,7 +384,7 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 	gint area_h = gtk_widget_get_height(m_pGrid);
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	bool bHideScrollbars = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE);
+	bool bHideScrollbars = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE);
 
 	bool show_v_scrollbar = false;
 	bool show_h_scrollbar = false;
@@ -663,27 +414,6 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 	gtk_widget_set_visible(nav_box, show_v_scrollbar && show_h_scrollbar);
 
 	m_iTimeoutScrollbars = 0;
-
-	// DND logic related to scrollbar state needs to be re-evaluated with GTK4 DND.
-	/*
-	GtkAdjustment *h_adj = m_pAdjustmentH;
-	GtkAdjustment *v_adj = m_pAdjustmentV;
-
-	if (NULL == h_adj || NULL == v_adj) return;
-
-	if (gtk_adjustment_get_page_size(h_adj) >= gtk_adjustment_get_upper(h_adj) &&
-		gtk_adjustment_get_page_size(v_adj) >= gtk_adjustment_get_upper(v_adj))
-	{
-		// gtk_drag_source_set (m_pImageView, (GdkModifierType)(GDK_BUTTON1_MASK | GDK_BUTTON3_MASK),
-		// 		   quiver_drag_target_table, G_N_ELEMENTS(quiver_drag_target_table), (GdkDragAction)( GDK_ACTION_COPY |
-		// 	       GDK_ACTION_MOVE | GDK_ACTION_LINK | GDK_ACTION_ASK ));
-	}
-	else
-	{
-		gtk_widget_grab_focus(m_pImageView);
-		// gtk_drag_source_unset (m_pImageView);
-	}
-	*/
 }
 
 void Viewer::ViewerImpl::CacheImageAtSize(QuiverFile f, int w, int h)
@@ -850,8 +580,6 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			gtk_widget_set_visible(m_pVideoWidget, TRUE);
 			if (m_pPipeline) { // Ensure pipeline exists
 				g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
-				// Optionally set to PAUSED or READY state until user clicks play
-				// gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PAUSED);
 			}
 		}
 		else
@@ -1056,8 +784,6 @@ static void viewer_motion_notify_cb(GtkEventControllerMotion* controller, double
 	else if (widget == pViewerImpl->m_pPlayProgressEventBox)
 	{
         GdkDevice* device = gtk_event_controller_get_current_event_device(GTK_EVENT_CONTROLLER(controller));
-        // Check if button 1 is pressed during motion as a proxy for drag, since gdk_device_get_grab_surface is gone
-        // and this isn't a full GtkGestureDrag yet.
         if (device && (gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller)) & GDK_BUTTON1_MASK))
 		{
             gint widget_width = gtk_widget_get_width(widget);
@@ -1374,7 +1100,6 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		gtk_widget_set_visible(m_pVideoWidget, TRUE);
 		if (new_uri) {
 			g_object_set(G_OBJECT(m_pPipeline), "uri", new_uri, NULL);
-			// For GtkVideo, you'd set the media stream
 			if (GTK_IS_VIDEO(m_pVideoWidget)) {
                 if (g_str_has_prefix(new_uri, "file://")) {
                     GFile* file = g_file_new_for_uri(new_uri);
@@ -1383,13 +1108,8 @@ void Viewer::ViewerImpl::PlayPauseVideo()
                     g_free(path);
                     g_object_unref(file);
                 } else {
-                    // Assuming new_uri might be a direct path or other URI GtkVideo can handle
                     gtk_video_set_filename(GTK_VIDEO(m_pVideoWidget), new_uri);
                 }
-                // The GtkMediaFile method is more for when you manage the stream explicitly.
-                // GtkMediaStream* stream = GTK_MEDIA_STREAM(gtk_media_file_new_for_filename(path_from_new_uri));
-				// gtk_video_set_media_stream(GTK_VIDEO(m_pVideoWidget), stream);
-				// if(stream) g_object_unref(stream);
 			}
 		}
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
@@ -1588,7 +1308,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	GtkWidget* hbox2     = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
 	m_pPlayProgress      = gtk_progress_bar_new();
 	m_pTimeLabel         = gtk_label_new("0:00 / 0:00");
-	// Default GtkScaleButton: min 0, max 1, step 0.05. Icons: "audio-volume-muted-symbolic", "audio-volume-low-symbolic", "audio-volume-medium-symbolic", "audio-volume-high-symbolic"
 	const char* icons[] = {"audio-volume-muted-symbolic", "audio-volume-low-symbolic", "audio-volume-medium-symbolic", "audio-volume-high-symbolic", NULL};
 	m_pVolumeButton      = gtk_scale_button_new(0.0, 1.0, 0.05, icons);
 
@@ -1693,7 +1412,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_vexpand(m_pImageView, TRUE);
 	gtk_grid_attach (GTK_GRID (m_pGrid), m_pImageView, 0, 0, 1, 1);
 
-	// Media controls overlay on image view / video widget
     gtk_widget_set_hexpand(media_controls_box, TRUE);
 	gtk_widget_set_vexpand(media_controls_box, TRUE);
     gtk_widget_set_halign(media_controls_box, GTK_ALIGN_END);
@@ -1733,7 +1451,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     GtkEventController* image_view_motion_controller = gtk_event_controller_motion_new();
     g_signal_connect(image_view_motion_controller, "motion", G_CALLBACK(viewer_motion_notify_cb), this);
     gtk_widget_add_controller(m_pImageView, image_view_motion_controller);
-	// Add motion controller also to video widget if it exists
 	if (m_pVideoWidget) {
 		GtkEventController* video_widget_motion_controller = gtk_event_controller_motion_new();
 		g_signal_connect(video_widget_motion_controller, "motion", G_CALLBACK(viewer_motion_notify_cb), this);
@@ -1758,7 +1475,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     GtkEventController* scroll_controller = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
     g_signal_connect(scroll_controller, "scroll", G_CALLBACK(viewer_scrollwheel_event_cb), this);
     gtk_widget_add_controller(m_pImageView, scroll_controller);
-	// Add scroll controller also to video widget if it exists
 	if (m_pVideoWidget) {
 		GtkEventController* video_scroll_controller = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
 		g_signal_connect(video_scroll_controller, "scroll", G_CALLBACK(viewer_scrollwheel_event_cb), this); // Assuming same handling
@@ -1774,7 +1490,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     GtkEventController* key_controller_imageview = gtk_event_controller_key_new();
     g_signal_connect(key_controller_imageview, "key-pressed", G_CALLBACK(viewer_imageview_key_press_event_cb), this);
     gtk_widget_add_controller(m_pImageView, key_controller_imageview);
-	// Add key controller also to video widget if it exists
 	if (m_pVideoWidget) {
 		GtkEventController* key_controller_video = gtk_event_controller_key_new();
 		g_signal_connect(key_controller_video, "key-pressed", G_CALLBACK(viewer_imageview_key_press_event_cb), this); // Assuming same handling
@@ -1826,24 +1541,12 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     GstElement* audiosink_element = gst_element_factory_make("autoaudiosink",NULL);
 
     if(m_pPipeline) {
-		// For GtkVideo, playbin's video-sink should be set to a sink that GtkVideo can use,
-        // or GtkVideo should be given a GtkMediaStream derived from the pipeline.
-        // Let's try setting video-sink to NULL and then use GtkMediaStream for GtkVideo
         g_object_set(G_OBJECT(m_pPipeline), "video-sink", NULL, NULL);
 
         if(audiosink_element) {
             g_object_set(G_OBJECT(m_pPipeline), "audio-sink", audiosink_element, NULL);
         } else {
         }
-        // Commenting out direct GtkMediaStream creation from GstPipeline for now,
-        // as it's complex and gtk_media_stream_new is not the correct API for this.
-        // Video playback might be affected until GtkVideo is fully integrated with playbin
-        // (e.g. by setting filename on GtkVideo directly, or using GstPlayer).
-		// if (GTK_IS_VIDEO(m_pVideoWidget)) {
-			// GtkMediaStream* stream = gtk_media_stream_new(m_pPipeline, NULL); // This API is not for this purpose
-			// gtk_video_set_media_stream(GTK_VIDEO(m_pVideoWidget), stream);
-			// if (stream) g_object_unref(stream);
-		// }
     }
 
 	gdouble volume = 0.;
@@ -2264,38 +1967,11 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 	{
 		if (QUIVER_PREFS_APP_USE_THEME_COLOR == event->GetKey() )
 		{
-			GtkStyleContext *context_icon = gtk_widget_get_style_context(parent->m_pIconView);
-			GtkStyleContext *context_image = gtk_widget_get_style_context(parent->m_pImageView);
-			if (event->GetNewBoolean())
-			{
-				gtk_style_context_remove_provider(context_icon, GTK_STYLE_PROVIDER(gtk_css_provider_new())); // Placeholder to remove custom provider
-				gtk_style_context_remove_provider(context_image, GTK_STYLE_PROVIDER(gtk_css_provider_new()));// Placeholder
-			}
-			else
-			{
-				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
-				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
-
-				GtkCssProvider *provider_icon = gtk_css_provider_new();
-				char css_icon[100];
-				sprintf(css_icon, "* { background-color: %s; }", strBGColorThumb.c_str());
-				gtk_css_provider_load_from_data(provider_icon, css_icon, -1);
-				gtk_style_context_add_provider(context_icon, GTK_STYLE_PROVIDER(provider_icon), GTK_STYLE_PROVIDER_PRIORITY_USER);
-				g_object_unref(provider_icon);
-
-				GtkCssProvider *provider_image = gtk_css_provider_new();
-				char css_image[100];
-				sprintf(css_image, "* { background-color: %s; }", strBGColorImg.c_str());
-				gtk_css_provider_load_from_data(provider_image, css_image, -1);
-				gtk_style_context_add_provider(context_image, GTK_STYLE_PROVIDER(provider_image), GTK_STYLE_PROVIDER_PRIORITY_USER);
-				g_object_unref(provider_image);
-			}
 		}
 		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() || QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
 		{
 			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
 			{
-                // Similar logic to above to update specific CSS provider if already applied
 			}
 		}
 	}
