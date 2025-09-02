@@ -73,6 +73,8 @@ static void quiver_navigation_control_class_init(QuiverNavigationControlClass *k
 	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 	GObjectClass *obj_class = G_OBJECT_CLASS(klass);
 
+    g_type_class_add_private(klass, sizeof(QuiverNavigationControlPrivate));
+
 	widget_class->realize = quiver_navigation_control_realize;
     widget_class->unrealize = quiver_navigation_control_unrealize;
     widget_class->map = quiver_navigation_control_map;
@@ -98,7 +100,7 @@ static GtkAdjustment* new_default_adjustment(void) {
 }
 
 static void quiver_navigation_control_init(QuiverNavigationControl *navcontrol) {
-	navcontrol->priv = quiver_navigation_control_get_instance_private(navcontrol);
+	navcontrol->priv = QUIVER_NAVIGATION_CONTROL_GET_PRIVATE(navcontrol);
     QuiverNavigationControlPrivate *priv = navcontrol->priv;
 
 	priv->pixbuf = NULL;
@@ -110,13 +112,13 @@ static void quiver_navigation_control_init(QuiverNavigationControl *navcontrol) 
 
 
     priv->click_gesture = gtk_gesture_click_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->click_gesture), GDK_BUTTON_PRIMARY);
+    gtk_gesture_set_button(GTK_GESTURE(priv->click_gesture), GDK_BUTTON_PRIMARY);
     g_signal_connect(priv->click_gesture, "pressed", G_CALLBACK(quiver_navigation_control_handle_click_pressed), navcontrol);
     gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(priv->click_gesture), GTK_PHASE_CAPTURE);
 
 
     priv->drag_gesture = gtk_gesture_drag_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
+    gtk_gesture_set_button(GTK_GESTURE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
     g_signal_connect(priv->drag_gesture, "drag-begin", G_CALLBACK(quiver_navigation_control_handle_drag_begin), navcontrol);
     g_signal_connect(priv->drag_gesture, "drag-update", G_CALLBACK(quiver_navigation_control_handle_drag_update), navcontrol);
     g_signal_connect(priv->drag_gesture, "drag-end", G_CALLBACK(quiver_navigation_control_handle_drag_end), navcontrol);
@@ -451,9 +453,8 @@ static void quiver_navigation_control_update_adjustments_from_xy(QuiverNavigatio
 
 static void quiver_navigation_control_handle_click_pressed(GtkGestureClick *gesture, int n_press, double x, double y, QuiverNavigationControl *navcontrol) {
     // GtkGesture *controller = GTK_GESTURE(gesture); // Not needed
-    // TODO: gtk_gesture_get_current_event_type is removed. The check for button press should be done in a "pressed" handler if needed.
-    // For now, we assume if the click gesture is for the primary button, it's a press.
-    if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) == GDK_BUTTON_PRIMARY) {
+    if (gtk_gesture_get_current_event_type(GTK_GESTURE(gesture)) == GDK_BUTTON_PRESS && // Ensure it's an actual press
+        gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) == GDK_BUTTON_PRIMARY) {
 
         if (!gtk_widget_has_focus(GTK_WIDGET(navcontrol))) {
             gtk_widget_grab_focus(GTK_WIDGET(navcontrol));

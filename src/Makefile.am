@@ -145,7 +145,7 @@ quiver_SOURCES = \
 	TaskEvent.h \
 	TaskManagerEvent.h \
 	TaskManagerDlg.h \
-	TaskManagerDlg.cpp \
+	#TaskManagerDlg.cpp \
 	TaskManager.cpp \
 	TaskManagerEventSource.cpp \
 	ITaskEventHandler.h \
@@ -160,12 +160,12 @@ quiver_SOURCES = \
 	MessageBox.h \
 	MessageBox.cpp \
 	OrganizeDlg.h \
-	OrganizeDlg.cpp \
+	#OrganizeDlg.cpp \
 	strnatcmp.h \
 	ExternalTools.cpp \
-	ExternalToolsDlg.cpp \
+	#ExternalToolsDlg.cpp \
 	ExternalToolsDlg.h \
-	ExternalToolAddEditDlg.cpp \
+	#ExternalToolAddEditDlg.cpp \
 	ExternalToolAddEditDlg.h \
 	ExternalToolsEvent.h \
 	ExternalToolsEventSource.cpp \
@@ -173,7 +173,7 @@ quiver_SOURCES = \
 	ExternalTools.h \
 	IExternalToolsEventHandler.h \
 	RenameDlg.h \
-	RenameDlg.cpp \
+	#RenameDlg.cpp \
 	RenameTask.h \
 	RenameTask.cpp \
 	SaveImageTask.h \

@@ -300,6 +300,9 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 	g_object_class_override_property (obj_class, PROP_HSCROLL_POLICY, "hscroll-policy");
 	g_object_class_override_property (obj_class, PROP_VSCROLL_POLICY, "vscroll-policy");
 
+	g_type_class_add_private (obj_class, sizeof (QuiverImageViewPrivate));
+
+
 	imageview_signals[SIGNAL_ACTIVATED] = g_signal_new (/*FIXME: I_*/("activated"),
 		G_TYPE_FROM_CLASS (obj_class),
 		G_SIGNAL_RUN_LAST,
@@ -399,12 +402,12 @@ quiver_image_view_init(QuiverImageView *imageview)
     QuiverImageViewPrivate *priv = imageview->priv;
 
     priv->click_gesture = gtk_gesture_click_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->click_gesture), 0); // Any button
+    gtk_gesture_set_button(GTK_GESTURE(priv->click_gesture), 0); // Any button
     g_signal_connect(priv->click_gesture, "pressed", G_CALLBACK(quiver_image_view_handle_click_pressed), imageview);
     g_signal_connect(priv->click_gesture, "released",G_CALLBACK(quiver_image_view_handle_click_released), imageview);
 
     priv->drag_gesture = gtk_gesture_drag_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
+    gtk_gesture_set_button(GTK_GESTURE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
     g_signal_connect(priv->drag_gesture, "drag-begin", G_CALLBACK(quiver_image_view_handle_drag_begin), imageview);
     g_signal_connect(priv->drag_gesture, "drag-update", G_CALLBACK(quiver_image_view_handle_drag_update), imageview);
     g_signal_connect(priv->drag_gesture, "drag-end", G_CALLBACK(quiver_image_view_handle_drag_end), imageview);
@@ -775,7 +778,7 @@ static void      quiver_image_view_set_hadjustment (QuiverImageView *imageview,
 	if (hadjustment)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (hadjustment));
 	else
-		hadjustment = gtk_adjustment_new (0.0, 0.0, 100.0, 10.0, 20.0, 0.0);
+		hadjustment = new_default_adjustment ();
 
 	if (imageview->priv->hadjustment && (imageview->priv->hadjustment != hadjustment))
 	{
@@ -812,7 +815,7 @@ void quiver_image_view_set_vadjustment (QuiverImageView *imageview,
 	if (vadjustment)
 		g_return_if_fail (GTK_IS_ADJUSTMENT (vadjustment));
 	else
-		vadjustment = gtk_adjustment_new (0.0, 0.0, 100.0, 10.0, 20.0, 0.0);
+		vadjustment = new_default_adjustment ();
 
 	if (imageview->priv->vadjustment && (imageview->priv->vadjustment != vadjustment))
 	{
@@ -1170,7 +1173,10 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 	QuiverImageView *imageview = (QuiverImageView*)data;
 	GtkWidget *widget;
 	widget = GTK_WIDGET(imageview);
+
 	gint width, height;
+	width = 0;
+	height = 0;
 
 	if (NULL != imageview->priv->transition_pixbufs_intermediate)
 	{

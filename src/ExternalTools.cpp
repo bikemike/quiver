@@ -73,7 +73,8 @@ public:
 		return i;
 	}
 
-	class SortBySortOrder
+	class SortBySortOrder : public std::binary_function<ExternalTool,ExternalTool,bool>,
+		public std::binary_function<int,int,bool>
 	{
 	public:
 
@@ -144,7 +145,7 @@ void ExternalTools::LoadFromPreferences()
 				
 				if (icon.empty())
 				{
-					icon = "system-run";
+					icon = QUIVER_STOCK_EXECUTE;
 				}
 				
 				ExternalTool b(name, tooltip, icon, cmd , multi, output, errors);
@@ -178,7 +179,7 @@ void ExternalTools::SaveToPreferences()
 
 		if (itr->second.GetIcon().empty())
 		{
-			itr->second.SetIcon("system-run");
+			itr->second.SetIcon(QUIVER_STOCK_EXECUTE);
 		}
 		prefs->SetString(section,EXTERNAL_TOOL_KEY_ICON, itr->second.GetIcon());
 
@@ -210,7 +211,7 @@ bool ExternalTools::AddExternalTool(ExternalTool external_tool)
 
 	if (external_tool.GetIcon().empty())
 	{
-		external_tool.SetIcon("system-run");
+		external_tool.SetIcon(QUIVER_STOCK_EXECUTE);
 	}
 
 	ExternalToolMap::iterator itr;

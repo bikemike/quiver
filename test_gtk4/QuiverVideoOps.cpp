@@ -27,11 +27,11 @@ namespace QuiverVideoOps
 		g_object_get(G_OBJECT(pipeline), "flags", &flags, NULL);
 		flags = (GstPlayFlags) (GST_PLAY_FLAG_DEINTERLACE|flags);
 
-		g_object_set(G_OBJECT(pipeline), 
-			"uri", uri, 
-			"video-sink", pixbuf_sink, 
-			"audio-sink", fakesink, 
-			"flags", flags, 
+		g_object_set(G_OBJECT(pipeline),
+			"uri", uri,
+			"video-sink", pixbuf_sink,
+			"audio-sink", fakesink,
+			"flags", flags,
 			NULL);
 
 		bool pause_finished = false;
@@ -73,7 +73,7 @@ namespace QuiverVideoOps
 		// wait for message from bus
 		bool gotAspectRatio = false;
 		bool seek_finished = (FALSE == seek_started);
-		while (!seek_finished || !pause_finished || !gotAspectRatio) 
+		while (!seek_finished || !pause_finished || !gotAspectRatio)
 		{
 			GstMessage* message;
 

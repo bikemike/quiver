@@ -63,21 +63,74 @@ public:
 
 		// FIXME : NULL should be the main application window
 		GtkWindow *window = NULL;
-		m_pDlg = gtk_message_dialog_new(window, GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_OTHER, GTK_BUTTONS_NONE, "%s", m_strMsg.c_str());
-		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(m_pDlg), m_strMsg.c_str());
-		gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(m_pDlg), "%s", m_strDetails.c_str());
+		m_pDlg = gtk_message_dialog_new (window,
+			  GTK_DIALOG_DESTROY_WITH_PARENT,
+			  messageType,
+			  button_type,
+			  m_strMsg.c_str());
+
+		gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(m_pDlg),
+				m_strDetails.c_str());
+
 	}
 
 	~PrivateImpl()
 	{
-		gtk_window_destroy (GTK_WINDOW(m_pDlg));
+		if (!ThreadUtil::IsGUIThread())
+		{
+			gdk_threads_enter();
+		}
+
+		gtk_widget_destroy (m_pDlg);
+
+		if (!ThreadUtil::IsGUIThread())
+		{
+			gdk_threads_leave();
+		}
+
 	}
 
 	ResponseType Run()
 	{
-		g_signal_connect (m_pDlg, "response", G_CALLBACK (gtk_window_destroy), NULL);
-		gtk_window_present(GTK_WINDOW(m_pDlg));
-        return RESPONSE_TYPE_OK;
+		if (!ThreadUtil::IsGUIThread())
+		{
+			gdk_threads_enter();
+		}
+
+		gint response = gtk_dialog_run (GTK_DIALOG (m_pDlg));
+
+		if (!ThreadUtil::IsGUIThread())
+		{
+			gdk_threads_leave();
+		}
+
+		ResponseType responseType;
+		switch (response)
+		{
+			case GTK_RESPONSE_NONE:
+				responseType = RESPONSE_TYPE_NONE;
+				break;
+			case GTK_RESPONSE_OK:
+				responseType = RESPONSE_TYPE_OK;
+				break;
+			case GTK_RESPONSE_CANCEL:
+				responseType = RESPONSE_TYPE_CANCEL;
+				break;
+			case GTK_RESPONSE_CLOSE:
+				responseType = RESPONSE_TYPE_CLOSE;
+				break;
+			case GTK_RESPONSE_YES:
+				responseType = RESPONSE_TYPE_YES;
+				break;
+			case GTK_RESPONSE_NO:
+				responseType = RESPONSE_TYPE_NO;
+				break;
+			default:
+				responseType = (ResponseType)response;
+				break;
+		}
+
+		return responseType;
 	}
 
 	MessageBox* m_pParent;
@@ -116,38 +169,137 @@ MessageBox::ResponseType  MessageBox::Run(IconType iconType, ButtonType buttonTy
 
 void MessageBox::AddButton(BUTTON_ICON icon, const std::string &text, ResponseType respType)
 {
-	const char* icon_name = NULL;
-	if (icon == BUTTON_ICON_ADD) icon_name = "list-add-symbolic";
-	else if (icon == BUTTON_ICON_APPLY) icon_name = "object-select-symbolic";
-	else if (icon == BUTTON_ICON_CANCEL) icon_name = "window-close-symbolic";
-	else if (icon == BUTTON_ICON_CLEAR) icon_name = "edit-clear-all-symbolic";
-	else if (icon == BUTTON_ICON_CLOSE) icon_name = "window-close-symbolic";
-	else if (icon == BUTTON_ICON_CONNECT) icon_name = "network-wired-symbolic";
-	else if (icon == BUTTON_ICON_DELETE) icon_name = "edit-delete-symbolic";
-	else if (icon == BUTTON_ICON_DIRECTORY) icon_name = "folder-symbolic";
-	else if (icon == BUTTON_ICON_DISCONNECT) icon_name = "network-wired-disconnected-symbolic";
-	else if (icon == BUTTON_ICON_EDIT) icon_name = "document-edit-symbolic";
-	else if (icon == BUTTON_ICON_EXECUTE) icon_name = "system-run-symbolic";
-	else if (icon == BUTTON_ICON_INFO) icon_name = "dialog-information-symbolic";
-	else if (icon == BUTTON_ICON_NO) icon_name = "dialog-cancel-symbolic";
-	else if (icon == BUTTON_ICON_OK) icon_name = "dialog-ok-symbolic";
-	else if (icon == BUTTON_ICON_REDO) icon_name = "edit-redo-symbolic";
-	else if (icon == BUTTON_ICON_REFRESH) icon_name = "view-refresh-symbolic";
-	else if (icon == BUTTON_ICON_REMOVE) icon_name = "list-remove-symbolic";
-	else if (icon == BUTTON_ICON_SAVE) icon_name = "document-save-symbolic";
-	else if (icon == BUTTON_ICON_SAVE_AS) icon_name = "document-save-as-symbolic";
-	else if (icon == BUTTON_ICON_STOP) icon_name = "process-stop-symbolic";
-	else if (icon == BUTTON_ICON_UNDO) icon_name = "edit-undo-symbolic";
-	else if (icon == BUTTON_ICON_YES) icon_name = "dialog-ok-symbolic";
+	const char* stock_icon;
+
+	switch(icon)
+	{
+	case BUTTON_ICON_NONE:
+		stock_icon = NULL;
+		break;
+	case BUTTON_ICON_ADD:
+		stock_icon = GTK_STOCK_ADD;
+		break;
+
+	case BUTTON_ICON_APPLY:
+		stock_icon = GTK_STOCK_APPLY;
+		break;
+
+	case BUTTON_ICON_CANCEL:
+		stock_icon = GTK_STOCK_CANCEL;
+		break;
+
+	case BUTTON_ICON_CLEAR:
+		stock_icon = GTK_STOCK_CLEAR;
+		break;
+
+	case BUTTON_ICON_CLOSE:
+		stock_icon = GTK_STOCK_CLOSE;
+		break;
+
+	case BUTTON_ICON_CONNECT:
+		stock_icon = GTK_STOCK_CONNECT;
+		break;
+
+	case BUTTON_ICON_DELETE:
+		stock_icon = GTK_STOCK_DELETE;
+		break;
+
+	case BUTTON_ICON_DIRECTORY:
+		stock_icon = GTK_STOCK_DIRECTORY;
+		break;
+
+	case BUTTON_ICON_DISCONNECT:
+		stock_icon = GTK_STOCK_DISCONNECT;
+		break;
+
+	case BUTTON_ICON_EDIT:
+		stock_icon = GTK_STOCK_EDIT;
+		break;
+
+	case BUTTON_ICON_EXECUTE:
+		stock_icon = GTK_STOCK_EXECUTE;
+		break;
+
+	case BUTTON_ICON_INFO:
+		stock_icon = GTK_STOCK_INFO;
+		break;
+
+	case BUTTON_ICON_NO:
+		stock_icon = GTK_STOCK_NO;
+		break;
+
+	case BUTTON_ICON_OK:
+		stock_icon = GTK_STOCK_OK;
+		break;
+
+	case BUTTON_ICON_REDO:
+		stock_icon = GTK_STOCK_REDO;
+		break;
+
+	case BUTTON_ICON_REFRESH:
+		stock_icon = GTK_STOCK_REFRESH;
+		break;
+
+	case BUTTON_ICON_REMOVE:
+		stock_icon = GTK_STOCK_REMOVE;
+		break;
+
+	case BUTTON_ICON_SAVE:
+		stock_icon = GTK_STOCK_SAVE;
+		break;
+
+	case BUTTON_ICON_SAVE_AS:
+		stock_icon = GTK_STOCK_SAVE_AS;
+		break;
+
+	case BUTTON_ICON_STOP:
+		stock_icon = GTK_STOCK_STOP;
+		break;
+
+	case BUTTON_ICON_UNDO:
+		stock_icon = GTK_STOCK_UNDO;
+		break;
+
+	case BUTTON_ICON_YES:
+		stock_icon = GTK_STOCK_YES;
+		break;
+
+	}
+
+	gint response = GTK_RESPONSE_NONE;
+	switch (respType)
+	{
+		case RESPONSE_TYPE_NONE:
+			response = GTK_RESPONSE_NONE;
+			break;
+		case RESPONSE_TYPE_OK:
+			response = GTK_RESPONSE_OK;
+			break;
+		case RESPONSE_TYPE_CANCEL:
+			response = GTK_RESPONSE_CANCEL;
+			break;
+		case RESPONSE_TYPE_CLOSE:
+			response = GTK_RESPONSE_CLOSE;
+			break;
+		case RESPONSE_TYPE_YES:
+			response = GTK_RESPONSE_YES;
+			break;
+		case RESPONSE_TYPE_NO:
+			response = GTK_RESPONSE_NO;
+			break;
+		default:
+			response = (gint) respType;
+	}
 
 	GtkWidget* button = gtk_button_new_with_mnemonic(text.c_str());
-	if (icon_name) {
-		GtkWidget* image = gtk_image_new_from_icon_name(icon_name);
-		gtk_button_set_child(GTK_BUTTON(button), image);
+	if ( NULL != stock_icon)
+	{
+		GtkWidget* image  = gtk_image_new_from_stock(stock_icon, GTK_ICON_SIZE_BUTTON);
+		gtk_button_set_image(GTK_BUTTON(button), image);
 	}
-	gtk_widget_set_visible(button, true);
-	gtk_widget_set_can_focus(button, TRUE);
-	gtk_dialog_add_button(GTK_DIALOG(m_pPrivateImpl->m_pDlg), (const char*)button, (gint)respType);
+	gtk_widget_show(button);
+	gtk_widget_set_can_default(button, TRUE);
+	gtk_dialog_add_action_widget(GTK_DIALOG(m_pPrivateImpl->m_pDlg), button, response);
 
 }
 
@@ -183,7 +335,7 @@ void MessageBox::SetDefaultResponseType(ResponseType respType)
 			response = (gint) respType;
 	}
 
-	gtk_dialog_set_default_response(GTK_DIALOG(m_pPrivateImpl->m_pDlg), response);
+	gtk_dialog_set_default_response (GTK_DIALOG(m_pPrivateImpl->m_pDlg), response);
 }
 
 

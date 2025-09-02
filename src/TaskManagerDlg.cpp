@@ -71,33 +71,54 @@ public:
 
 			void HandleTaskFinished(TaskEventPtr event) 
 			{
+				bool bIsGUIThread = ThreadUtil::IsGUIThread();
+				if (!bIsGUIThread)
+				{
+					gdk_threads_enter();
+				}
 				gtk_widget_set_sensitive(m_pParent->m_btnCancel, TRUE);
-				gtk_button_set_child(GTK_BUTTON(m_pParent->m_btnCancel),
-					gtk_image_new_from_icon_name("edit-clear-all-symbolic"));
+				gtk_button_set_image(GTK_BUTTON(m_pParent->m_btnCancel),
+					gtk_image_new_from_stock(GTK_STOCK_CLEAR, GTK_ICON_SIZE_BUTTON));
 				gtk_widget_set_sensitive(m_pParent->m_btnPause, FALSE);
 				//gtk_widget_set_sensitive(m_pParent->m_labelTitle, FALSE);
 				gtk_widget_set_sensitive(m_pParent->m_labelDetails, FALSE);
 				gtk_widget_set_sensitive(m_pParent->m_labelProgDetails, FALSE);
 				gtk_widget_set_sensitive(m_pParent->m_pbarProgress, FALSE);
+				if (!bIsGUIThread)
+				{
+					gdk_threads_leave();
+				}
 			}
 
 			void HandleTaskCancelled(TaskEventPtr event) 
 			{
+				bool bIsGUIThread = ThreadUtil::IsGUIThread();
+				if (!bIsGUIThread)
+				{
+					gdk_threads_enter();
+				}
 				gtk_widget_set_sensitive(m_pParent->m_btnCancel, TRUE);
-				gtk_button_set_child(GTK_BUTTON(m_pParent->m_btnCancel),
-					gtk_image_new_from_icon_name("edit-clear-all-symbolic"));
+				gtk_button_set_image(GTK_BUTTON(m_pParent->m_btnCancel),
+					gtk_image_new_from_stock(GTK_STOCK_CLEAR, GTK_ICON_SIZE_BUTTON));
 				gtk_widget_set_sensitive(m_pParent->m_btnPause, FALSE);
 				//gtk_widget_set_sensitive(m_pParent->m_labelTitle, FALSE);
 				gtk_widget_set_sensitive(m_pParent->m_labelDetails, FALSE);
 				gtk_widget_set_sensitive(m_pParent->m_labelProgDetails, FALSE);
 				gtk_widget_set_sensitive(m_pParent->m_pbarProgress, FALSE);
+				if (!bIsGUIThread)
+				{
+					gdk_threads_leave();
+				}
 			}
 
 			void HandleTaskProgressUpdated(TaskEventPtr event) 
 			{
 				
+				gdk_threads_enter();
+
 				m_pParent->UpdateTaskGUI();
 
+				gdk_threads_leave();
 			}
 
 		};
@@ -135,7 +156,7 @@ public:
 			gtk_label_set_attributes(GTK_LABEL(m_labelTitle), attrs);
 			pango_attr_list_unref(attrs);
 
-			gtk_widget_set_halign(m_labelTitle, GTK_ALIGN_START);
+			gtk_misc_set_alignment(GTK_MISC(m_labelTitle), 0., 0.);
 
 			//hbox for image / task details
 			m_hboxTaskDetails = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
@@ -143,7 +164,7 @@ public:
 			//image
 			GdkPixbuf* pixbuf = NULL;
 			// taskPtr->GetPixbuf();
-			m_imgThumbnail = gtk_image_new_from_paintable(GDK_PAINTABLE(pixbuf));
+			m_imgThumbnail = gtk_image_new_from_pixbuf(pixbuf);
 
 			// task details (text, progress, time stuff)
 			m_vboxDetails = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
@@ -151,15 +172,15 @@ public:
 			// text
 			m_labelDetails = gtk_label_new( taskPtr->GetProgressText().c_str() );
 			gtk_label_set_ellipsize(GTK_LABEL(m_labelDetails), PANGO_ELLIPSIZE_MIDDLE);
-			gtk_widget_set_halign(m_labelDetails, GTK_ALIGN_START);
+			gtk_misc_set_alignment(GTK_MISC(m_labelDetails), 0., 0.);
 
 			// progress
 			m_hboxProgress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
 			m_pbarProgress    = gtk_progress_bar_new();
 
 			m_btnPause    = gtk_button_new();
-			gtk_button_set_child(GTK_BUTTON(m_btnPause),
-					gtk_image_new_from_icon_name("media-playback-pause-symbolic"));
+			gtk_button_set_image(GTK_BUTTON(m_btnPause),
+					gtk_image_new_from_stock(GTK_STOCK_MEDIA_PAUSE, GTK_ICON_SIZE_BUTTON));
 
 			if (!taskPtr->CanPause())
 			{
@@ -167,8 +188,8 @@ public:
 			}
 
 			m_btnCancel    = gtk_button_new();
-			gtk_button_set_child(GTK_BUTTON(m_btnCancel),
-					gtk_image_new_from_icon_name("edit-delete-symbolic"));
+			gtk_button_set_image(GTK_BUTTON(m_btnCancel),
+					gtk_image_new_from_stock(GTK_STOCK_CANCEL, GTK_ICON_SIZE_BUTTON));
 
 			if (!taskPtr->CanCancel())
 			{
@@ -186,7 +207,7 @@ public:
 			gtk_label_set_attributes(GTK_LABEL(m_labelProgDetails), attrs);
 			pango_attr_list_unref(attrs);
 
-			gtk_widget_set_halign(m_labelProgDetails, GTK_ALIGN_START);
+			gtk_misc_set_alignment(GTK_MISC(m_labelProgDetails), 0., 0.);
 
 			gtk_box_append (GTK_BOX(m_vboxTaskArea),
 				m_labelTitle);
@@ -212,7 +233,7 @@ public:
 			gtk_box_append (GTK_BOX(m_hboxProgress),
 				m_btnCancel);
 
-			gtk_widget_set_visible(m_vboxTaskArea, true);
+			gtk_widget_show_all(m_vboxTaskArea);
 
 			g_signal_connect(m_btnPause,
 				"clicked",(GCallback)on_clicked,this);
@@ -262,14 +283,14 @@ public:
 				{
 					pGUI->m_TaskPtr->Pause();
 
-					gtk_button_set_child(GTK_BUTTON(button),
-							gtk_image_new_from_icon_name("media-playback-start-symbolic"));
+					gtk_button_set_image(GTK_BUTTON(button),
+							gtk_image_new_from_stock(GTK_STOCK_MEDIA_PLAY, GTK_ICON_SIZE_BUTTON));
 				}
 				else
 				{
 					pGUI->m_TaskPtr->Resume();
-					gtk_button_set_child(GTK_BUTTON(button),
-							gtk_image_new_from_icon_name("media-playback-pause-symbolic"));
+					gtk_button_set_image(GTK_BUTTON(button),
+							gtk_image_new_from_stock(GTK_STOCK_MEDIA_PAUSE, GTK_ICON_SIZE_BUTTON));
 				}
 			}
 			else if (GTK_BUTTON(pGUI->m_btnCancel) == button)
@@ -308,20 +329,28 @@ public:
 	TaskManagerDlgPriv(TaskManagerDlg* parent, GtkWindow* parent_window) :
 		m_pParent(parent), m_TaskMgrPtr(TaskManager::GetInstance())
 	{
-		m_pWidget = gtk_window_new();
-		gtk_window_set_transient_for(GTK_WINDOW(m_pWidget), parent_window);
-		gtk_window_set_modal(GTK_WINDOW(m_pWidget), TRUE);
-		gtk_window_set_default_size(GTK_WINDOW(m_pWidget), 500,-1);
+		m_pWidget = gtk_dialog_new();
+		//FIXME: function gone?
+		//gtk_dialog_set_has_separator(GTK_DIALOG(m_pWidget),FALSE);
+		/*
+		m_pWidget = gtk_dialog_new_with_buttons ("Task Manager",
+			parent_window,
+			GTK_DIALOG_DESTROY_WITH_PARENT,
+			GTK_STOCK_CLOSE,
+			GTK_RESPONSE_CLOSE,
+			NULL);
+			*/
 
-		g_signal_connect (G_OBJECT (m_pWidget), "close-request",
+		gtk_window_set_default_size(GTK_WINDOW(m_pWidget), 500,-1);
+	//		gtk_widget_hide_on_delete (m_pWidget);
+
+		g_signal_connect (G_OBJECT (m_pWidget), "delete_event",
 			G_CALLBACK (event_delete), this);
 		
-		GtkWidget* content_area = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-        gtk_widget_set_margin_start(content_area, 10);
-        gtk_widget_set_margin_end(content_area, 10);
-        gtk_widget_set_margin_top(content_area, 10);
-        gtk_widget_set_margin_bottom(content_area, 10);
-		gtk_window_set_child(GTK_WINDOW(m_pWidget), content_area);
+		g_signal_connect (G_OBJECT (m_pWidget), "response",
+			G_CALLBACK (signal_response), this);
+
+		gtk_box_set_spacing(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))), 10);
 
 		//spacing 10 between each item
 	}
@@ -330,16 +359,21 @@ public:
 	{
 		if (NULL != m_pWidget)
 		{
-			gtk_window_destroy(GTK_WINDOW(m_pWidget));
+			gtk_widget_destroy(m_pWidget);
 		}
 	}
 
 	static gboolean event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
 	{
 		//TaskManagerDlgPriv* dlgPriv = static_cast<TaskManagerDlgPriv*>(user_data);
-		gtk_widget_set_visible(widget, false);
+		gtk_widget_hide(widget);
 
 		return TRUE; // do not propagate
+	}
+
+	static void signal_response( GtkDialog *dlg, gint arg1, gpointer user_data )
+	{
+		gtk_widget_hide(GTK_WIDGET(dlg));
 	}
 
 	void AddTaskGUI(AbstractTaskPtr taskPtr)
@@ -348,7 +382,7 @@ public:
 		{
 			TaskProgressGUIPtr taskGUIPtr(new TaskProgressGUI(this, taskPtr));
 
-			gtk_box_append (GTK_BOX(gtk_window_get_child(GTK_WINDOW(m_pWidget))),
+			gtk_box_append (GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))),
 				taskGUIPtr->GetWidget());
 
 			m_mapTaskGUI.insert(pair<AbstractTaskPtr, TaskProgressGUIPtr>(taskPtr, taskGUIPtr));
@@ -363,7 +397,7 @@ public:
 		itr = m_mapTaskGUI.find(taskPtr);
 		if (m_mapTaskGUI.end() != itr)
 		{
-			gtk_box_remove(GTK_BOX(gtk_window_get_child(GTK_WINDOW(m_pWidget))), itr->second->GetWidget());
+			gtk_container_remove(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget))), itr->second->GetWidget());
 			m_mapTaskGUI.erase(itr);
 
 			gint w,h;
@@ -419,10 +453,10 @@ TaskManagerDlgPtr TaskManagerDlg::GetInstance()
 
 void TaskManagerDlg::Show()
 {
-	gtk_widget_set_visible(m_PrivPtr->m_pWidget, true);
+	gtk_widget_show(m_PrivPtr->m_pWidget);
 }
 
 void TaskManagerDlg::Hide()
 {
-	gtk_widget_set_visible(m_PrivPtr->m_pWidget, false);
+	gtk_widget_hide(m_PrivPtr->m_pWidget);
 }
