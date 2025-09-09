@@ -58,12 +58,100 @@ typedef GdkPixbuf* (*QuiverIconViewGetIconPixbufFunc) (QuiverIconView *iconview,
 typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,gulong cell,gint* actual_width, gint *actual_height, gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview,gulong cell, QuiverIconOverlayType type,gpointer user_data);
 
-struct _QuiverIconView
-{
-	GtkWidget parent;
+typedef struct _CellItem CellItem;
+struct _CellItem {
+	gboolean selected;
+    // Add other per-cell state if needed, e.g., GdkPixbuf *cached_thumb;
+};
 
-	/* private */
-	QuiverIconViewPrivate *priv;
+struct _QuiverIconView {
+    GtkWidget parent;
+};
+
+struct _QuiverIconViewPrivate {
+	GtkAdjustment *hadjustment;
+	GtkAdjustment *vadjustment;
+	GtkScrollablePolicy hscroll_policy;
+	GtkScrollablePolicy vscroll_policy;
+
+	gdouble last_hadjustment_val; // Store last adjustment values for diff calculation
+	gdouble last_vadjustment_val;
+
+	guint icon_width;
+	guint icon_height;
+	guint icon_border_size; // For drawing borders around icons
+	guint cell_padding;     // Padding within a cell, around an icon
+
+    // Rubberband selection state
+	gboolean rubberband_active;
+	cairo_rectangle_int_t rubberband_rect; // Current rubberband rectangle in widget coordinates
+    double rubberband_start_x;
+    double rubberband_start_y;
+
+	// Scrolling and drag state
+	gboolean scroll_draw; // From old code, might mean "draw immediately on scroll"
+	// gboolean drag_mode_start; // Replaced by gesture states
+	gboolean drag_mode_enabled; // General flag if a drag operation is in progress (either type)
+
+	gint rubberband_scroll_x_direction; // -1, 0, 1 for auto-scroll during rubberband
+	gint rubberband_scroll_y_direction; // -1, 0, 1
+	guint timeout_id_rubberband_scroll;
+
+	// struct timeval last_motion_time; // For legacy smooth scroll
+	// GList* velocity_time_list;       // For legacy smooth scroll
+
+	gulong cursor_cell;     // Index of the cell with keyboard focus/cursor
+	gulong prelight_cell;   // Index of the cell under mouse hover
+	gulong selection_anchor_cell; // For shift-click range selection
+
+	gboolean mouse_button_is_down; // Still useful to track general mouse down state across gestures
+
+    QuiverIconViewScrollType scroll_type; // User preference for scroll behavior
+	// gulong smooth_scroll_cell; // Legacy
+	// gdouble smooth_scroll_hadjust; // Legacy
+	// gdouble smooth_scroll_vadjust; // Legacy
+	QuiverIconViewDragBehavior drag_behavior; // Rubberband or scroll content on drag
+
+	// guint timeout_id_smooth_scroll; // Legacy
+	// guint timeout_id_smooth_scroll_slowdown; // Legacy
+
+	guint n_columns_actual; // Calculated number of columns based on width
+	guint n_rows_actual;    // Calculated number of rows based on height and items
+
+    // User-configurable fixed columns/rows
+    guint n_columns_fixed;
+	guint n_rows_fixed;
+
+    // Callbacks for data model
+	QuiverIconViewGetNItemsFunc callback_get_n_items;
+	gpointer callback_get_n_items_data;
+	GDestroyNotify callback_get_n_items_data_destroy;
+
+	QuiverIconViewGetIconPixbufFunc callback_get_icon_pixbuf;
+	gpointer callback_get_icon_pixbuf_data;
+	GDestroyNotify callback_get_icon_pixbuf_data_destroy;
+
+	QuiverIconViewGetThumbnailPixbufFunc callback_get_thumbnail_pixbuf;
+	gpointer callback_get_thumbnail_pixbuf_data;
+	GDestroyNotify callback_get_thumbnail_pixbuf_data_destroy;
+
+	QuiverIconViewGetTextFunc callback_get_text;
+	gpointer callback_get_text_data;
+	GDestroyNotify callback_get_text_data_destroy;
+
+	QuiverIconViewGetOverlayPixbufFunc callback_get_overlay_pixbuf;
+	gpointer callback_get_overlay_pixbuf_data;
+	GDestroyNotify callback_get_overlay_pixbuf_data_destroy;
+
+	CellItem *cell_items;   // Array to store selection state for each item
+	gulong n_cell_items_allocated; // Allocated size of cell_items array
+
+    // Event Controllers
+    GtkGesture *click_gesture;
+    GtkGesture *drag_gesture;
+    GtkEventController *motion_controller;
+    GtkEventController *scroll_controller;
+    GtkEventController *key_controller;
 };
 
 struct _QuiverIconViewClass
