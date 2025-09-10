@@ -28,14 +28,15 @@
 
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
-G_DEFINE_TYPE_WITH_CODE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET, G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL));
 
+/*
 #if (GLIB_MAJOR_VERSION < 2) || (GLIB_MAJOR_VERSION == 2 && GLIB_MINOR_VERSION < 10)
 #define g_object_ref_sink(o) G_STMT_START{	\
 	  g_object_ref (o);				\
 	  gtk_object_sink ((GtkObject*)o);		\
 }G_STMT_END
 #endif
+*/
 
 
 /* start private data structures */
@@ -80,7 +81,7 @@ typedef struct _VelocityTimeStruct
 
 
 
-struct _QuiverImageViewPrivate
+typedef struct _QuiverImageViewPrivate
 {
 	GdkPixbuf *pixbuf;
 	GdkPixbuf *pixbuf_scaled;
@@ -155,9 +156,15 @@ struct _QuiverImageViewPrivate
 	
 	gboolean reload_event_sent;
 
-};
+} QuiverImageViewPrivate;
 /* end private data structures */
 
+static void quiver_image_view_scrollable_interface_init(GtkScrollableInterface *iface);
+//static void quiver_image_view_init(QuiverImageView *imageview);
+
+G_DEFINE_TYPE_WITH_CODE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET, 
+    G_ADD_PRIVATE(QuiverImageView)
+	G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, quiver_image_view_scrollable_interface_init));
 
 /* start private function prototypes */
 static void quiver_image_view_map (GtkWidget *widget);
@@ -340,66 +347,65 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 static void 
 quiver_image_view_init(QuiverImageView *imageview)
 {
-	imageview->priv = quiver_image_view_get_instance_private(imageview);
+    QuiverImageViewPrivate *priv = quiver_image_view_get_instance_private(imageview);
 
-	imageview->priv->pixbuf        = NULL;
-	imageview->priv->pixbuf_scaled = NULL;
-	imageview->priv->pixbuf_animation = NULL;
-	imageview->priv->pixbuf_animation_iter = NULL;
+	priv->pixbuf        = NULL;
+	priv->pixbuf_scaled = NULL;
+	priv->pixbuf_animation = NULL;
+	priv->pixbuf_animation_iter = NULL;
 	
-	imageview->priv->pixbuf_width  = 0;
-	imageview->priv->pixbuf_height = 0;
+	priv->pixbuf_width  = 0;
+	priv->pixbuf_height = 0;
 
-	imageview->priv->pixbuf_width_next  = 0;
-	imageview->priv->pixbuf_height_next = 0;
+	priv->pixbuf_width_next  = 0;
+	priv->pixbuf_height_next = 0;
 	
-	imageview->priv->view_mode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
-	imageview->priv->view_mode_last = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
+	priv->view_mode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
+	priv->view_mode_last = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
 	
-	imageview->priv->transitions_enabled = FALSE;
-	imageview->priv->transition_n_frames = 10;
-	imageview->priv->transition_pixbuf_old = NULL;
-	imageview->priv->transition_pixbuf_new = NULL;
-	imageview->priv->transition_pixbufs_intermediate = NULL;
-	imageview->priv->transition_timeout_id = 0;
-	imageview->priv->idle_transition_create_id = 0;
+	priv->transitions_enabled = FALSE;
+	priv->transition_n_frames = 10;
+	priv->transition_pixbuf_old = NULL;
+	priv->transition_pixbuf_new = NULL;
+	priv->transition_pixbufs_intermediate = NULL;
+	priv->transition_timeout_id = 0;
+	priv->idle_transition_create_id = 0;
 
 
-	imageview->priv->magnification = 1; // magnification level as a percent (1 = 100%)
-	imageview->priv->magnification_timeout_id = 0; // 
-	imageview->priv->magnification_final = 1;
+	priv->magnification = 1; // magnification level as a percent (1 = 100%)
+	priv->magnification_timeout_id = 0; // 
+	priv->magnification_final = 1;
 	
-	imageview->priv->timeout_scale_hq_id = 0;
+	priv->timeout_scale_hq_id = 0;
 
-	imageview->priv->hadjustment  = NULL;
-	imageview->priv->vadjustment  = NULL;
+	priv->hadjustment  = NULL;
+	priv->vadjustment  = NULL;
 
-	imageview->priv->scroll_timeout_id = 0;
-	imageview->priv->last_hadjustment = 0.0;
-	imageview->priv->last_vadjustment = 0.0;
+	priv->scroll_timeout_id = 0;
+	priv->last_hadjustment = 0.0;
+	priv->last_vadjustment = 0.0;
 
-	imageview->priv->area_updated = FALSE;
-	imageview->priv->animation_timeout_id = FALSE;
+	priv->area_updated = FALSE;
+	priv->animation_timeout_id = FALSE;
 
-	imageview->priv->scroll_draw   = TRUE;
-	imageview->priv->smooth_scroll = FALSE;
+	priv->scroll_draw   = TRUE;
+	priv->smooth_scroll = FALSE;
 	
-	imageview->priv->reload_event_sent = FALSE;
+	priv->reload_event_sent = FALSE;
 	
-	imageview->priv->mouse_move_mode = QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG;
+	priv->mouse_move_mode = QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG;
 
-	imageview->priv->rubberband_mode_start = FALSE;
-	imageview->priv->rubberband_mode = FALSE;
-	imageview->priv->dragging_view = FALSE;
-	imageview->priv->press_x = 0;
-	imageview->priv->press_y = 0;
+	priv->rubberband_mode_start = FALSE;
+	priv->rubberband_mode = FALSE;
+	priv->dragging_view = FALSE;
+	priv->press_x = 0;
+	priv->press_y = 0;
 
 	gtk_widget_set_can_focus(GTK_WIDGET(imageview), TRUE);
 
 	gtk_widget_set_size_request(GTK_WIDGET(imageview),QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE,QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE);
 
     // Create and connect event controllers
-    QuiverImageViewPrivate *priv = imageview->priv;
 
     priv->click_gesture = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(priv->click_gesture), 0); // Any button
@@ -417,6 +423,16 @@ quiver_image_view_init(QuiverImageView *imageview)
 
     priv->motion_controller = gtk_event_controller_motion_new();
     g_signal_connect(priv->motion_controller, "motion", G_CALLBACK(quiver_image_view_handle_motion), imageview);
+}
+
+
+static void
+quiver_image_view_scrollable_interface_init(GtkScrollableInterface *iface)
+{
+    iface->get_hadjustment = quiver_image_view_get_hadjustment;
+    iface->set_hadjustment = quiver_image_view_set_hadjustment;
+    iface->get_vadjustment = quiver_image_view_get_vadjustment;
+    iface->set_vadjustment = quiver_image_view_set_vadjustment;
 }
 
 static void

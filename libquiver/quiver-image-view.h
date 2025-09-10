@@ -7,16 +7,16 @@
 
 G_BEGIN_DECLS
 
-#define QUIVER_TYPE_IMAGE_VIEW            (quiver_image_view_get_type ())
-#define QUIVER_IMAGE_VIEW(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageView))
-#define QUIVER_IMAGE_VIEW_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
-#define QUIVER_IS_IMAGE_VIEW(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), QUIVER_TYPE_IMAGE_VIEW))
-#define QUIVER_IS_IMAGE_VIEW_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), QUIVER_TYPE_IMAGE_VIEW))
-#define QUIVER_IMAGE_VIEW_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
+//#define QUIVER_TYPE_IMAGE_VIEW            (quiver_image_view_get_type ())
+//#define QUIVER_IMAGE_VIEW(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageView))
+//#define QUIVER_IMAGE_VIEW_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
+//#define QUIVER_IS_IMAGE_VIEW(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), QUIVER_TYPE_IMAGE_VIEW))
+//#define QUIVER_IS_IMAGE_VIEW_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), QUIVER_TYPE_IMAGE_VIEW))
+//#define QUIVER_IMAGE_VIEW_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
 
-typedef struct _QuiverImageView        QuiverImageView;
-typedef struct _QuiverImageViewClass   QuiverImageViewClass;
-typedef struct _QuiverImageViewPrivate QuiverImageViewPrivate;
+//typedef struct _QuiverImageView        QuiverImageView;
+//typedef struct _QuiverImageViewClass   QuiverImageViewClass;
+//typedef struct _QuiverImageViewPrivate QuiverImageViewPrivate;
 
 
 typedef enum _QuiverImageViewMouseMode {
@@ -40,22 +40,13 @@ typedef enum QuiverImageViewMagnificationMode{
 	QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_COUNT
 } QuiverImageViewMagnificationMode;
 
+#define QUIVER_TYPE_IMAGE_VIEW (quiver_image_view_get_type())
 
-struct _QuiverImageView
-{
-	GtkWidget parent;
-
-	/* private */
-	QuiverImageViewPrivate *priv;
-};
+G_DECLARE_DERIVABLE_TYPE(QuiverImageView, quiver_image_view, QUIVER, IMAGE_VIEW, GtkWidget)
 
 struct _QuiverImageViewClass
 {
 	GtkWidgetClass parent_class;
-
-	void  (*set_scroll_adjustments)   (QuiverImageView	    *imageview,
-					 GtkAdjustment  *hadjustment,
-					 GtkAdjustment  *vadjustment);
 
 	void (*activated) (QuiverImageView *imageview);
 	void (*reload) (QuiverImageView *imageview);
