@@ -23,6 +23,8 @@ public:
     void SelectionChanged();
     void ConnectSignals();
     void setup_factories();
+    void Add();
+    void Edit();
 
     BookmarksDlg*     m_pBookmarksDlg;
     GtkBuilder*         m_pGtkBuilder;
@@ -61,12 +63,13 @@ static void factory_setup_cb(GtkListItemFactory* factory, GtkListItem* list_item
 static void factory_bind_name_cb(GtkListItemFactory* factory, GtkListItem* list_item, gpointer user_data);
 static void factory_bind_icon_cb(GtkListItemFactory* factory, GtkListItem* list_item, gpointer user_data);
 
+
 BookmarksDlg::BookmarksDlg() : m_PrivPtr(new BookmarksDlg::BookmarksDlgPriv(this)) {}
 
 void BookmarksDlg::Run()
 {
     if (m_PrivPtr->m_bLoadedDlg) {
-        gtk_widget_show(m_PrivPtr->m_pWidget);
+        gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
     }
 }
 
@@ -199,6 +202,40 @@ void BookmarksDlg::BookmarksDlgPriv::SelectionChanged()
     gtk_bitset_unref(selection);
 }
 
+void BookmarksDlg::BookmarksDlgPriv::Add()
+{
+	BookmarkAddEditDlg* dlg = new BookmarkAddEditDlg();
+    dlg->Run([this, dlg](int response_id) {
+        if (response_id == GTK_RESPONSE_OK) {
+            m_BookmarksPtr->AddBookmark(dlg->GetBookmark());
+        }
+        delete dlg;
+    });
+}
+
+
+void BookmarksDlg::BookmarksDlgPriv::Edit()
+{
+    GtkBitset* selection = gtk_selection_model_get_selection(GTK_SELECTION_MODEL(m_pSelectionModel));
+    if (gtk_bitset_get_size(selection) == 1)
+    {
+        guint position = gtk_bitset_get_minimum(selection);
+        BookmarkRow* row = BOOKMARK_ROW(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), position));
+        if (row)
+        {
+            const Bookmark* bm = m_BookmarksPtr->GetBookmark(bookmark_row_get_id(row));
+            BookmarkAddEditDlg* dlg = new BookmarkAddEditDlg(*bm);
+            dlg->Run([this, dlg](int response_id) {
+                if (response_id == GTK_RESPONSE_OK) {
+                    m_BookmarksPtr->UpdateBookmark(dlg->GetBookmark());
+                }
+                delete dlg;
+            });
+        }
+    }
+    gtk_bitset_unref(selection);
+}
+
 void BookmarksDlg::BookmarksDlgPriv::BookmarksEventHandler::HandleBookmarkChanged(BookmarksEventPtr event)
 {
     if (parent->m_bLoadedDlg) {
@@ -249,7 +286,7 @@ static void selection_changed_cb(GObject *selection_model, GParamSpec *pspec, gp
 static void column_view_activate_cb(GtkColumnView* self, guint position, gpointer user_data)
 {
     BookmarksDlg::BookmarksDlgPriv *priv = static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
-    on_clicked(priv->m_pButtonEdit, priv);
+    priv->Edit();
 }
 
 static void on_clicked(GtkButton *button, gpointer user_data)
@@ -261,6 +298,15 @@ static void on_clicked(GtkButton *button, gpointer user_data)
         gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
         return;
     }
+    if (button == priv->m_pButtonAdd) {
+        priv->Add();
+        return;
+    }
+    if (button == priv->m_pButtonEdit) {
+        priv->Edit();
+        return;
+    }
 
-    g_warning("Button functionality (Add, Edit, Remove, Move) is not fully implemented yet.");
+
+    g_warning("Button functionality (Remove, Move) is not fully implemented yet.");
 }

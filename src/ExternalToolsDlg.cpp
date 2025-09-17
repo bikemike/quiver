@@ -133,17 +133,7 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 		m_pTreeViewExternalTools     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
 
 		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
-		/*
-		m_pButtonAdd             = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_ADD) );
-		m_pButtonEdit            = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_EDIT) );
-		m_pButtonRemove          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_REMOVE) );
-
-
-		gtk_widget_show(GTK_WIDGET(m_pButtonAdd));
-		gtk_widget_show(GTK_WIDGET(m_pButtonEdit));
-		gtk_widget_show(GTK_WIDGET(m_pButtonRemove));
-		*/
-		gtk_widget_show(GTK_WIDGET(m_pButtonClose));
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonClose), TRUE);
 
 		if (m_pWidget)
 		{

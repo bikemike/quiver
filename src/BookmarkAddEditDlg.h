@@ -6,6 +6,7 @@
 #include <boost/shared_ptr.hpp>
 
 #include "Bookmarks.h"
+#include <functional>
 
 class BookmarkAddEditDlg
 {
@@ -17,8 +18,8 @@ public:
 	//member functions
 	GtkWidget *GetWidget() const;
 	Bookmark GetBookmark() const;
-	void Run();
-	bool Cancelled() const;
+	void Run(std::function<void(int)> callback);
+
 
 	class BookmarkAddEditDlgPriv;
 	typedef boost::shared_ptr<BookmarkAddEditDlgPriv> BookmarkAddEditDlgPrivPtr;
@@ -32,4 +33,3 @@ private:
 
 
 #endif // FILE_BOOKMARK_ADD_EDIT_DLG_H
-

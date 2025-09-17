@@ -233,7 +233,7 @@ public:
 			gtk_box_append (GTK_BOX(m_hboxProgress),
 				m_btnCancel);
 
-			gtk_widget_show_all(m_vboxTaskArea);
+			gtk_widget_set_visible(m_vboxTaskArea, TRUE);
 
 			g_signal_connect(m_btnPause,
 				"clicked",(GCallback)on_clicked,this);
@@ -453,7 +453,7 @@ TaskManagerDlgPtr TaskManagerDlg::GetInstance()
 
 void TaskManagerDlg::Show()
 {
-	gtk_widget_show(m_PrivPtr->m_pWidget);
+	gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
 }
 
 void TaskManagerDlg::Hide()

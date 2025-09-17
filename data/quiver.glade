@@ -26,8 +26,9 @@
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
-                      <widget class="GtkHBox" id="hbox_photo_library">
+                      <widget class="GtkBox" id="hbox_photo_library">
                         <property name="visible">True</property>
+                        <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                         <child>
                           <widget class="GtkLabel" id="label6">
                             <property name="visible">True</property>
@@ -137,8 +138,9 @@
                           </packing>
                         </child>
                         <child>
-                          <widget class="GtkHBox" id="hbox4">
+                          <widget class="GtkBox" id="hbox4">
                             <property name="visible">True</property>
+                            <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                             <child>
                               <widget class="GtkTable" id="table2">
                                 <property name="visible">True</property>
@@ -227,8 +229,9 @@
               </widget>
             </child>
             <child>
-              <widget class="GtkHBox" id="hbox2">
+              <widget class="GtkBox" id="hbox2">
                 <property name="visible">True</property>
+                <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
                   <widget class="GtkImage" id="image1">
                     <property name="visible">True</property>
@@ -283,8 +286,9 @@
               </packing>
             </child>
             <child>
-              <widget class="GtkHBox" id="hbox10">
+              <widget class="GtkBox" id="hbox10">
                 <property name="visible">True</property>
+                <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
                   <widget class="GtkImage" id="image5">
                     <property name="visible">True</property>
@@ -320,7 +324,8 @@
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
-                      <widget class="GtkHBox" id="hbox8">
+                      <widget class="GtkBox" id="hbox8">
+                        <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                         <child>
                           <widget class="GtkLabel" id="label5">
                             <property name="visible">True</property>
@@ -354,8 +359,9 @@ Fill Screen</property>
                       </packing>
                     </child>
                     <child>
-                      <widget class="GtkHBox" id="hbox7">
+                      <widget class="GtkBox" id="hbox7">
                         <property name="visible">True</property>
+                        <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                         <child>
                           <widget class="GtkLabel" id="label51">
                             <property name="visible">True</property>
@@ -390,9 +396,10 @@ Right</property>
                       </packing>
                     </child>
                     <child>
-                      <widget class="GtkHBox" id="hbox1">
+                      <widget class="GtkBox" id="hbox1">
                         <property name="visible">True</property>
                         <property name="spacing">10</property>
+                        <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                         <child>
                           <widget class="GtkLabel" id="label1">
                             <property name="visible">True</property>
@@ -476,8 +483,9 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkHBox" id="hbox3">
+              <widget class="GtkBox" id="hbox3">
                 <property name="visible">True</property>
+                <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
                   <widget class="GtkImage" id="image2">
                     <property name="visible">True</property>
@@ -512,9 +520,10 @@ Right</property>
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
-                      <widget class="GtkHBox" id="hbox6">
+                      <widget class="GtkBox" id="hbox6">
                         <property name="visible">True</property>
                         <property name="spacing">10</property>
+                        <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                         <child>
                           <widget class="GtkLabel" id="label50">
                             <property name="visible">True</property>
@@ -641,8 +650,9 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkHBox" id="hbox5">
+              <widget class="GtkBox" id="hbox5">
                 <property name="visible">True</property>
+                <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
                   <widget class="GtkImage" id="image3">
                     <property name="visible">True</property>
@@ -1343,9 +1353,10 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkHBox" id="hbox14">
+              <widget class="GtkBox" id="hbox14">
                 <property name="visible">True</property>
                 <property name="spacing">5</property>
+                <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
                   <widget class="GtkVBox" id="vbox17">
                     <property name="visible">True</property>
@@ -1479,9 +1490,10 @@ Right</property>
         <property name="visible">True</property>
         <property name="spacing">2</property>
         <child>
-          <widget class="GtkHBox" id="hbox12">
+          <widget class="GtkBox" id="hbox12">
             <property name="visible">True</property>
             <property name="spacing">10</property>
+            <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
             <child>
               <widget class="GtkVBox" id="vbox24">
                 <property name="width_request">200</property>
@@ -1646,9 +1658,10 @@ Right</property>
                   </packing>
                 </child>
                 <child>
-                  <widget class="GtkHBox" id="hbox13">
+                  <widget class="GtkBox" id="hbox13">
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
+                    <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                     <property name="homogeneous">True</property>
                     <child>
                       <widget class="GtkButton" id="bookmark_button_add">
@@ -1986,9 +1999,10 @@ YYYY/MM/DD</property>
                 <property name="visible">True</property>
                 <property name="spacing">2</property>
                 <child>
-                  <widget class="GtkHBox" id="hbox9">
+                  <widget class="GtkBox" id="hbox9">
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
+                    <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                     <child>
                       <widget class="GtkLabel" id="label31">
                         <property name="visible">True</property>
@@ -2109,9 +2123,10 @@ YYYY/MM/DD</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkHBox" id="hbox11">
+              <widget class="GtkBox" id="hbox11">
                 <property name="visible">True</property>
                 <property name="spacing">5</property>
+                <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
                   <widget class="GtkVBox" id="vbox21">
                     <property name="visible">True</property>

@@ -73,7 +73,7 @@ void AdjustDateDlg::Run()
 	// In GTK4, Run is non-blocking. It just shows the dialog.
     // The result is handled by the "response" signal handler.
     if (m_PrivPtr->m_pDialogAdjustDate) {
-	    gtk_widget_show(GTK_WIDGET(m_PrivPtr->m_pDialogAdjustDate));
+	    gtk_widget_set_visible(GTK_WIDGET(m_PrivPtr->m_pDialogAdjustDate), TRUE);
     }
 }
 
@@ -125,13 +125,11 @@ void AdjustDateDlg::AdjustDateDlgPriv::LoadWidgets()
         return;
     }
 
-    gtk_dialog_add_buttons(m_pDialogAdjustDate,
-                           "_Cancel", GTK_RESPONSE_CANCEL,
-                           "_OK", GTK_RESPONSE_OK,
-                           NULL);
-    GtkWidget* ok_button = gtk_dialog_get_widget_for_response(m_pDialogAdjustDate, GTK_RESPONSE_OK);
-    if(ok_button) gtk_widget_set_sensitive(ok_button, TRUE); // Example of how to access it if needed
-    gtk_dialog_set_default_response(m_pDialogAdjustDate, GTK_RESPONSE_OK);
+    gtk_dialog_add_button(m_pDialogAdjustDate,
+                           "_Cancel", GTK_RESPONSE_CANCEL);
+    GtkWidget* ok_button = gtk_dialog_add_button(m_pDialogAdjustDate,
+                           "_OK", GTK_RESPONSE_OK);
+    gtk_widget_grab_focus(ok_button);
 
 	m_pToggleAdjustDate    = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_adjust_date") );
 	m_pToggleSetDate       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_set_date") );

@@ -143,8 +143,8 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 		m_pButtonOk              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_OK) );
 
 
-		gtk_widget_show(GTK_WIDGET(m_pButtonCancel));
-		gtk_widget_show(GTK_WIDGET(m_pButtonOk));
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonCancel), TRUE);
+		gtk_widget_set_visible(GTK_WIDGET(m_pButtonOk), TRUE);
 
 		if (m_pWidget)
 		{

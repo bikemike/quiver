@@ -467,9 +467,6 @@ public:
 	bool m_bMaximizeViewableArea;
 	bool m_bMaximizeViewabe; // Typo? Should be m_bMaximizeViewableArea?
 
-	bool m_bIsPlaying;
-	bool m_bWasPlayingBeforeSeek;
-
 	ImageCache m_ThumbnailCache;
 
 	// gstreamer elements for playing videos
@@ -528,6 +525,9 @@ public:
 
 	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
 	IImageListEventHandlerPtr    m_ImageListEventHandlerPtr;
+	GtkCssProvider*              m_pCssProvider;
+	bool m_bIsPlaying;
+	bool m_bWasPlayingBeforeSeek;
 	ViewerThumbLoader            m_ThumbnailLoader;
 
 };
@@ -1553,6 +1553,12 @@ Viewer::ViewerImpl::~ViewerImpl()
 	if (prefsPtr && m_PreferencesEventHandlerPtr) {
 	    prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
     }
+
+    if (m_pCssProvider) {
+        gtk_style_context_remove_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider));
+        g_object_unref(m_pCssProvider);
+        m_pCssProvider = NULL;
+    }
 }
 
 Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
@@ -1560,9 +1566,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_ThumbnailCache(100),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
-	m_ThumbnailLoader(this,2),
+	m_pCssProvider(gtk_css_provider_new()),
 	m_bIsPlaying(false),
 	m_bWasPlayingBeforeSeek(false),
+	m_ThumbnailLoader(this,2),
     m_pPipeline(NULL), m_pVideoWidget(NULL)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -1571,8 +1578,22 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pViewer = pViewer;
 
 	m_pIconView = quiver_icon_view_new();
+    gtk_widget_add_css_class(m_pIconView, "icon-view");
 	m_pImageView = quiver_image_view_new();
+    gtk_widget_add_css_class(m_pImageView, "image-view");
 	gtk_widget_set_size_request(m_pImageView, 100, 100);
+
+    string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+    string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
+    string css = ".icon-view.custom-bg { background-color: " + strBGColorThumb + "; } .image-view.custom-bg { background-color: " + strBGColorImg + "; }";
+    gtk_css_provider_load_from_string(m_pCssProvider, css.c_str());
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
+    {
+        gtk_widget_add_css_class(m_pIconView, "custom-bg");
+        gtk_widget_add_css_class(m_pImageView, "custom-bg");
+    }
 
 
     GtkWidget* media_controls_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -2263,38 +2284,22 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 	{
 		if (QUIVER_PREFS_APP_USE_THEME_COLOR == event->GetKey() )
 		{
-			GtkStyleContext *context_icon = gtk_widget_get_style_context(parent->m_pIconView);
-			GtkStyleContext *context_image = gtk_widget_get_style_context(parent->m_pImageView);
 			if (event->GetNewBoolean())
 			{
-				gtk_style_context_remove_provider(context_icon, GTK_STYLE_PROVIDER(gtk_css_provider_new())); // Placeholder to remove custom provider
-				gtk_style_context_remove_provider(context_image, GTK_STYLE_PROVIDER(gtk_css_provider_new()));// Placeholder
+				gtk_widget_remove_css_class(parent->m_pIconView, "custom-bg");
+				gtk_widget_remove_css_class(parent->m_pImageView, "custom-bg");
 			}
 			else
 			{
-				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
-				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
-
-				GtkCssProvider *provider_icon = gtk_css_provider_new();
-				char css_icon[100];
-				sprintf(css_icon, "* { background-color: %s; }", strBGColorThumb.c_str());
-				gtk_css_provider_load_from_string(provider_icon, css_icon);
-				gtk_style_context_add_provider(context_icon, GTK_STYLE_PROVIDER(provider_icon), GTK_STYLE_PROVIDER_PRIORITY_USER);
-				g_object_unref(provider_icon);
-
-				GtkCssProvider *provider_image = gtk_css_provider_new();
-				char css_image[100];
-				sprintf(css_image, "* { background-color: %s; }", strBGColorImg.c_str());
-				gtk_css_provider_load_from_string(provider_image, css_image);
-				gtk_style_context_add_provider(context_image, GTK_STYLE_PROVIDER(provider_image), GTK_STYLE_PROVIDER_PRIORITY_USER);
-				g_object_unref(provider_image);
+				gtk_widget_add_css_class(parent->m_pIconView, "custom-bg");
+				gtk_widget_add_css_class(parent->m_pImageView, "custom-bg");
 			}
 		}
 		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() || QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
 		{
 			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
 			{
-                // Similar logic to above to update specific CSS provider if already applied
+                // The provider is reloaded in the main constructor, so no need to do anything here.
 			}
 		}
 	}

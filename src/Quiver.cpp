@@ -103,7 +103,11 @@ static void app_activate (GtkApplication* app, gpointer user_data)
     gtk_window_set_child(GTK_WINDOW(window), label);
 
     // Connect the window's close request to the application's quit method
-    g_signal_connect_swapped(window, "close-request", G_CALLBACK(&Quiver::OnQuit), quiver_app);
+    g_signal_connect(window, "close-request", G_CALLBACK(+[](GtkWindow* window, gpointer user_data) -> gboolean {
+        Quiver* app = (Quiver*)user_data;
+        app->OnQuit();
+        return GDK_EVENT_STOP;
+    }), quiver_app);
 
 	gtk_window_present (GTK_WINDOW (window));
 }

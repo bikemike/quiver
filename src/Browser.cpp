@@ -557,7 +557,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
     // gtk_widget_set_child(GTK_WIDGET(alignment), hscale); // Replaced gtk_container_add
 	// gtk_widget_set_child(GTK_WIDGET(m_pToolItemThumbSizer), alignment); // Replaced gtk_container_add
 
-	// gtk_widget_show(GTK_WIDGET(m_pToolItemThumbSizer));
 	// g_object_ref(m_pToolItemThumbSizer); // GtkToolItem is deprecated
 	
 	m_pLocationEntry = gtk_entry_new();

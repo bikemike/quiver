@@ -7,11 +7,7 @@
 
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_STRINGS // G_PARAM_STATIC_STRINGS for GParamSpec overrides
 
-// G_DEFINE_TYPE_WITH_PRIVATE(QuiverNavigationControl, quiver_navigation_control, GTK_TYPE_WIDGET) // GTK3 style private
-G_DEFINE_TYPE_WITH_CODE(QuiverNavigationControl, quiver_navigation_control, GTK_TYPE_WIDGET,
-                        G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL)
-                        // G_ADD_PRIVATE(QuiverNavigationControl) // For G_DEFINE_TYPE_WITH_CODE
-                        );
+G_DEFINE_TYPE_WITH_PRIVATE(QuiverNavigationControl, quiver_navigation_control, GTK_TYPE_WIDGET);
 
 
 /* Properties */
@@ -74,6 +70,9 @@ static void quiver_navigation_control_class_init(QuiverNavigationControlClass *k
 	GObjectClass *obj_class = G_OBJECT_CLASS(klass);
 
     g_type_class_add_private(klass, sizeof(QuiverNavigationControlPrivate));
+    G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL);
+
+    g_type_class_add_private(klass, sizeof(QuiverNavigationControlPrivate));
 
 	widget_class->realize = quiver_navigation_control_realize;
     widget_class->unrealize = quiver_navigation_control_unrealize;
@@ -112,11 +111,13 @@ static void quiver_navigation_control_init(QuiverNavigationControl *navcontrol) 
 
 
     priv->click_gesture = gtk_gesture_click_new();
+    gtk_gesture_set_button(GTK_GESTURE(priv->click_gesture), GDK_BUTTON_PRIMARY);
     g_signal_connect(priv->click_gesture, "pressed", G_CALLBACK(quiver_navigation_control_handle_click_pressed), navcontrol);
     gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(priv->click_gesture), GTK_PHASE_CAPTURE);
 
 
     priv->drag_gesture = gtk_gesture_drag_new();
+    gtk_gesture_set_button(GTK_GESTURE(priv->drag_gesture), GDK_BUTTON_PRIMARY);
     g_signal_connect(priv->drag_gesture, "drag-begin", G_CALLBACK(quiver_navigation_control_handle_drag_begin), navcontrol);
     g_signal_connect(priv->drag_gesture, "drag-update", G_CALLBACK(quiver_navigation_control_handle_drag_update), navcontrol);
     g_signal_connect(priv->drag_gesture, "drag-end", G_CALLBACK(quiver_navigation_control_handle_drag_end), navcontrol);
@@ -450,7 +451,9 @@ static void quiver_navigation_control_update_adjustments_from_xy(QuiverNavigatio
 }
 
 static void quiver_navigation_control_handle_click_pressed(GtkGestureClick *gesture, int n_press, double x, double y, QuiverNavigationControl *navcontrol) {
-    if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) == GDK_BUTTON_PRIMARY) {
+    // GtkGesture *controller = GTK_GESTURE(gesture); // Not needed
+    if (gtk_gesture_get_current_event_type(GTK_GESTURE(gesture)) == GDK_BUTTON_PRESS && // Ensure it's an actual press
+        gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) == GDK_BUTTON_PRIMARY) {
 
         if (!gtk_widget_has_focus(GTK_WIDGET(navcontrol))) {
             gtk_widget_grab_focus(GTK_WIDGET(navcontrol));
@@ -492,7 +495,6 @@ static void quiver_navigation_control_handle_drag_end(GtkGestureDrag *gesture, d
         // quiver_navigation_control_update_adjustments_from_xy(navcontrol, current_x, current_y);
     }
 }
-
 
 
 /* Public API */

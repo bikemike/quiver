@@ -221,7 +221,7 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 	m_pDialogOrganize         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "OrganizeDialog"));
 
 	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
-	gtk_widget_show(m_pBtnOK);
+	gtk_widget_set_visible(m_pBtnOK, TRUE);
 	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogOrganize)),m_pBtnOK);
 
 	m_pComboTemplateFolder       = GTK_COMBO_BOX_TEXT( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
@@ -240,8 +240,8 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 #ifdef QUIVER_MAEMO
 		m_pBtnSourceFolder = GTK_BUTTON( gtk_button_new() );
 		m_pBtnDestFolder = GTK_BUTTON( gtk_button_new() );
-		gtk_widget_show(GTK_WIDGET(m_pBtnSourceFolder));
-		gtk_widget_show(GTK_WIDGET(m_pBtnDestFolder));
+		gtk_widget_set_visible(GTK_WIDGET(m_pBtnSourceFolder), TRUE);
+		gtk_widget_set_visible(GTK_WIDGET(m_pBtnDestFolder), TRUE);
 		gtk_container_add(src_cont, GTK_WIDGET(m_pBtnSourceFolder));
 		gtk_container_add(dst_cont, GTK_WIDGET(m_pBtnDestFolder));
 #else
@@ -249,8 +249,8 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder), FALSE);
 		m_pFCBtnDestFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Destination Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
 		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnDestFolder), FALSE);
-		gtk_widget_show(GTK_WIDGET(m_pFCBtnSourceFolder));
-		gtk_widget_show(GTK_WIDGET(m_pFCBtnDestFolder));
+		gtk_widget_set_visible(GTK_WIDGET(m_pFCBtnSourceFolder), TRUE);
+		gtk_widget_set_visible(GTK_WIDGET(m_pFCBtnDestFolder), TRUE);
 
 		gtk_container_add(src_cont, GTK_WIDGET(m_pFCBtnSourceFolder));
 		gtk_container_add(dst_cont, GTK_WIDGET(m_pFCBtnDestFolder));

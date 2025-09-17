@@ -7,16 +7,16 @@
 
 G_BEGIN_DECLS
 
-//#define QUIVER_TYPE_IMAGE_VIEW            (quiver_image_view_get_type ())
-//#define QUIVER_IMAGE_VIEW(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageView))
-//#define QUIVER_IMAGE_VIEW_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
-//#define QUIVER_IS_IMAGE_VIEW(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), QUIVER_TYPE_IMAGE_VIEW))
-//#define QUIVER_IS_IMAGE_VIEW_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), QUIVER_TYPE_IMAGE_VIEW))
-//#define QUIVER_IMAGE_VIEW_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
+#define QUIVER_TYPE_IMAGE_VIEW            (quiver_image_view_get_type ())
+#define QUIVER_IMAGE_VIEW(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageView))
+#define QUIVER_IMAGE_VIEW_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
+#define QUIVER_IS_IMAGE_VIEW(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), QUIVER_TYPE_IMAGE_VIEW))
+#define QUIVER_IS_IMAGE_VIEW_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), QUIVER_TYPE_IMAGE_VIEW))
+#define QUIVER_IMAGE_VIEW_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), QUIVER_TYPE_IMAGE_VIEW, QuiverImageViewClass))
 
-//typedef struct _QuiverImageView        QuiverImageView;
-//typedef struct _QuiverImageViewClass   QuiverImageViewClass;
-//typedef struct _QuiverImageViewPrivate QuiverImageViewPrivate;
+typedef struct _QuiverImageView        QuiverImageView;
+typedef struct _QuiverImageViewClass   QuiverImageViewClass;
+typedef struct _QuiverImageViewPrivate QuiverImageViewPrivate;
 
 
 typedef enum _QuiverImageViewMouseMode {
@@ -40,13 +40,96 @@ typedef enum QuiverImageViewMagnificationMode{
 	QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_COUNT
 } QuiverImageViewMagnificationMode;
 
-#define QUIVER_TYPE_IMAGE_VIEW (quiver_image_view_get_type())
 
-G_DECLARE_DERIVABLE_TYPE(QuiverImageView, quiver_image_view, QUIVER, IMAGE_VIEW, GtkWidget)
+struct _QuiverImageView
+{
+	GtkWidget parent;
+};
+
+struct _QuiverImageViewPrivate
+{
+	GdkPixbuf *pixbuf;
+	GdkPixbuf *pixbuf_scaled;
+	GdkPixbufAnimation *pixbuf_animation;
+	GdkPixbufAnimationIter *pixbuf_animation_iter;
+
+	gint pixbuf_width;
+	gint pixbuf_height;
+
+	// used to keep track of the actual size
+	// of the image being loaded
+	gint pixbuf_width_next;
+	gint pixbuf_height_next;
+
+	QuiverImageViewMode view_mode;
+	QuiverImageViewMode view_mode_last;
+
+	gboolean transitions_enabled;
+	gint transition_n_frames;
+	GdkPixbuf *transition_pixbuf_old;
+	GdkPixbuf *transition_pixbuf_new;
+	// list of intermediate pixbufs for the transition
+	GList *transition_pixbufs_intermediate;
+	guint transition_timeout_id;
+	guint idle_transition_create_id;
+
+	QuiverImageViewMagnificationMode magnification_mode;
+
+	guint magnification_timeout_id;
+
+	gdouble magnification_final;
+	gdouble magnification; // magnification level as a percent (1 = 100%)
+
+	guint timeout_scale_hq_id;
+
+	GtkAdjustment *hadjustment;
+	GtkAdjustment *vadjustment;
+	GtkScrollablePolicy hscroll_policy; // Changed from bitfield
+	GtkScrollablePolicy vscroll_policy; // Changed from bitfield
+
+	guint scroll_timeout_id; // For debouncing scroll related updates
+	gdouble last_hadjustment; // For scroll diff calculation
+	gdouble last_vadjustment; // For scroll diff calculation
+
+	/* has the area been updated as the image is being loaded?*/
+	gboolean area_updated;
+	guint animation_timeout_id; // For GdkPixbufAnimation
+
+	// Event handling related private members
+	GtkGesture *drag_gesture;
+	GtkGesture *click_gesture;
+	GtkEventController *scroll_controller;
+    GtkEventController *motion_controller; // For rubberband when not dragging
+
+	QuiverImageViewMouseMode mouse_move_mode; // To differentiate between drag and select/rubberband
+	gdouble press_x, press_y; // Store initial press coordinates for drag/rubberband
+    gboolean dragging_view; // True if a view drag operation is active
+
+	gboolean scroll_draw; // Whether to draw during scroll, or just on timeout
+
+	gboolean rubberband_mode_start; // Flag to indicate start of rubberband selection
+	gboolean rubberband_mode;       // Flag to indicate that rubberband selection is active
+	cairo_rectangle_int_t rubberband_rect;     // Current rubberband rectangle
+	cairo_rectangle_int_t rubberband_rect_old; // Old rubberband rectangle for invalidation
+
+	gboolean smooth_scroll; // User preference for smooth scroll (may need rethinking in GTK4)
+
+	// Smooth scroll kinetic effect - this is complex and might be simplified or removed
+	// guint timeout_id_smooth_scroll_slowdown;
+	// struct timeval last_motion_time; // For velocity calculation
+	// GList* velocity_time_list; // For velocity calculation
+
+	gboolean reload_event_sent;
+
+};
 
 struct _QuiverImageViewClass
 {
 	GtkWidgetClass parent_class;
+
+	void  (*set_scroll_adjustments)   (QuiverImageView	    *imageview,
+					 GtkAdjustment  *hadjustment,
+					 GtkAdjustment  *vadjustment);
 
 	void (*activated) (QuiverImageView *imageview);
 	void (*reload) (QuiverImageView *imageview);

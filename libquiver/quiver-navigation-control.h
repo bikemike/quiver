@@ -12,7 +12,6 @@ G_BEGIN_DECLS
 #define QUIVER_IS_NAVIGATION_CONTROL(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), QUIVER_TYPE_NAVIGATION_CONTROL))
 #define QUIVER_IS_NAVIGATION_CONTROL_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), QUIVER_TYPE_NAVIGATION_CONTROL))
 #define QUIVER_NAVIGATION_CONTROL_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), QUIVER_TYPE_NAVIGATION_CONTROL, QuiverNavigationControlClass))
-#define QUIVER_NAVIGATION_CONTROL_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), QUIVER_TYPE_NAVIGATION_CONTROL, QuiverNavigationControlPrivate))
 
 typedef struct _QuiverNavigationControl        QuiverNavigationControl;
 typedef struct _QuiverNavigationControlClass   QuiverNavigationControlClass;
@@ -21,8 +20,6 @@ typedef struct _QuiverNavigationControlPrivate QuiverNavigationControlPrivate;
 struct _QuiverNavigationControl
 {
 	GtkWidget parent_instance; // Changed from parent to parent_instance for clarity with G_DEFINE_TYPE
-
-	/* private */
 	QuiverNavigationControlPrivate *priv;
 };
 
