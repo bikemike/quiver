@@ -1663,10 +1663,9 @@ see http://foldersize.sf.net
                                       </packing>
                                     </child>
                                     <child>
-                                      <object class="GtkColorButton" id="clrbtn_general_bg_browser">
+                                      <object class="GtkColorDialogButton" id="clrbtn_general_bg_browser">
                                         <property name="sensitive">0</property>
                                         <property name="focusable">1</property>
-                                        <property name="title" translatable="1">Pick a Color for the Browser</property>
                                       </object>
                                       <packing>
                                         <property name="left_attach">1</property>
@@ -1676,10 +1675,9 @@ see http://foldersize.sf.net
                                       </packing>
                                     </child>
                                     <child>
-                                      <object class="GtkColorButton" id="clrbtn_general_bg_viewer">
+                                      <object class="GtkColorDialogButton" id="clrbtn_general_bg_viewer">
                                         <property name="sensitive">0</property>
                                         <property name="focusable">1</property>
-                                        <property name="title" translatable="1">Pick a Color for the Viewer</property>
                                       </object>
                                       <packing>
                                         <property name="left_attach">1</property>

@@ -1,14 +1,11 @@
 #include <gtk/gtk.h>
 #include "PreferencesDlg.h"
 #include "Preferences.h"
-#include "QuiverPrefs.h" // Added for preference key string definitions
-#include "Quiver.h" // For QuiverApp
-// #include "QuiverFrame.h" // Removed as it does not exist and was not used correctly
+#include "QuiverPrefs.h"
+#include "Quiver.h"
 #include "QuiverUtils.h"
 #include "config.h"
 
-
-// Preferences Dialog Private Implementation
 class PreferencesDlg::PreferencesDlgPriv
 {
 public:
@@ -26,16 +23,15 @@ public:
 	GtkAdjustment*         m_pAdjSlideShowSize;
 	GtkDropDown*           m_pDropDownFilmstripPos;
 	GtkStringList*         m_pStoreFilmstripPos;
-	GtkColorButton*        m_pClrBtnBrowser;
-	GtkColorButton*        m_pClrBtnViewer;
+	GtkColorDialogButton*  m_pClrBtnBrowser;
+	GtkColorDialogButton*  m_pClrBtnViewer;
 	PreferencesPtr         m_prefPtr;
 };
 
-// Signal handler prototypes
 static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data);
 static void on_folder_change(GtkFileChooser *chooser, gpointer user_data);
 static void on_viewer_film_strip_pos_changed(GtkDropDown *widget, GParamSpec* pspec, gpointer user_data);
-static void on_color_set(GtkWidget *widget, gpointer user_data);
+static void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data);
 
 
 PreferencesDlg::PreferencesDlg() : m_PrivPtr (new PreferencesDlgPriv(this) )
@@ -86,16 +82,16 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 	m_pStoreFilmstripPos = gtk_string_list_new(pos);
 	gtk_drop_down_set_model(m_pDropDownFilmstripPos, G_LIST_MODEL(m_pStoreFilmstripPos));
 	
-	m_pClrBtnBrowser = GTK_COLOR_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtnBrowser"));
-	m_pClrBtnViewer = GTK_COLOR_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtnViewer"));
+	m_pClrBtnBrowser = GTK_COLOR_DIALOG_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_browser"));
+	m_pClrBtnViewer = GTK_COLOR_DIALOG_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_viewer"));
 }
 
 void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 {
 	g_signal_connect (G_OBJECT (m_pWindow), "response", G_CALLBACK (on_response), this);
 	g_signal_connect(m_pDropDownFilmstripPos, "notify::selected", G_CALLBACK (on_viewer_film_strip_pos_changed), this);
-	g_signal_connect(m_pClrBtnBrowser, "color-set", G_CALLBACK (on_color_set), this);
-	g_signal_connect(m_pClrBtnViewer, "color-set", G_CALLBACK (on_color_set), this);
+	g_signal_connect(m_pClrBtnBrowser, "notify::rgba", G_CALLBACK (on_color_changed), this);
+	g_signal_connect(m_pClrBtnViewer, "notify::rgba", G_CALLBACK (on_color_changed), this);
 }
 
 void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
@@ -122,7 +118,7 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 	{
 		GdkRGBA clrBrowser = {0};
 		gdk_rgba_parse(&clrBrowser, strClrBrowser.c_str());
-        gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(m_pClrBtnBrowser), &clrBrowser);
+        gtk_color_dialog_button_set_rgba(m_pClrBtnBrowser, &clrBrowser);
 	}
 
 	// Viewer BG Color
@@ -131,7 +127,7 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 	{
 		GdkRGBA clrViewer = {0};
 		gdk_rgba_parse(&clrViewer, strClrViewer.c_str());
-        gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(m_pClrBtnViewer), &clrViewer);
+        gtk_color_dialog_button_set_rgba(m_pClrBtnViewer, &clrViewer);
 	}
 }
 
@@ -169,18 +165,16 @@ void on_viewer_film_strip_pos_changed(GtkDropDown *widget, GParamSpec* pspec, gp
     }
 }
 
-void on_color_set(GtkWidget *widget, gpointer user_data)
+void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data)
 {
     PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
     if (priv) {
-        GtkColorButton *button = GTK_COLOR_BUTTON(widget);
-        GdkRGBA rgba;
-        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(button), &rgba);
-        gchar *rgba_str = gdk_rgba_to_string(&rgba);
+        const GdkRGBA* rgba = gtk_color_dialog_button_get_rgba(widget);
+        gchar *rgba_str = gdk_rgba_to_string(rgba);
 
-        if (button == priv->m_pClrBtnBrowser) {
+        if (widget == priv->m_pClrBtnBrowser) {
             priv->m_prefPtr->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_BG_ICONVIEW, rgba_str);
-        } else if (button == priv->m_pClrBtnViewer) {
+        } else if (widget == priv->m_pClrBtnViewer) {
             priv->m_prefPtr->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_BG_IMAGEVIEW, rgba_str);
         }
         g_free(rgba_str);
