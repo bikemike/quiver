@@ -332,6 +332,20 @@ see http://foldersize.sf.net
         <property name="can_focus">False</property>
         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
         <property name="layout_style">end</property>
+        <child>
+          <object class="GtkButton" id="donate_button">
+            <property name="label" translatable="yes">Donate to Quiver</property>
+            <property name="focusable">1</property>
+            <property name="receives_default">1</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="close_button">
+            <property name="label" translatable="yes">Close</property>
+            <property name="focusable">1</property>
+            <property name="receives_default">1</property>
+          </object>
+        </child>
       </object>
     </child>
   </object>
@@ -652,11 +666,9 @@ see http://foldersize.sf.net
       <object class="GtkBox" id="dialog-vbox12">
         <property name="spacing">2</property>
         <child>
-          <object class="GtkTable" id="table4">
+          <object class="GtkGrid" id="table4">
             <property name="visible">True</property>
             <property name="can_focus">False</property>
-            <property name="n_rows">5</property>
-            <property name="n_columns">2</property>
             <property name="column_spacing">5</property>
             <property name="row_spacing">3</property>
             <child>
@@ -670,9 +682,11 @@ see http://foldersize.sf.net
                   <placeholder/>
                 </child>
               </object>
-              <packing>
-                <property name="right_attach">2</property>
-              </packing>
+              <layout>
+                <property name="column">0</property>
+                <property name="row">0</property>
+                <property name="column-span">2</property>
+              </layout>
             </child>
             <child>
               <object class="GtkLabel" id="rename_label_example">
@@ -680,26 +694,22 @@ see http://foldersize.sf.net
                 <property name="use_markup">1</property>
                 <property name="ellipsize">start</property>
               </object>
-              <packing>
-                <property name="right_attach">2</property>
-                <property name="top_attach">4</property>
-                <property name="bottom_attach">5</property>
-                <property name="x_padding">10</property>
-              </packing>
+              <layout>
+                <property name="column">0</property>
+                <property name="row">4</property>
+                <property name="column-span">2</property>
+              </layout>
             </child>
             <child>
               <object class="GtkLabel" id="label34">
                 <property name="xalign">0</property>
                 <property name="label" translatable="1">Example Output:</property>
               </object>
-              <packing>
-                <property name="right_attach">2</property>
-                <property name="top_attach">3</property>
-                <property name="bottom_attach">4</property>
-                <property name="x_options">GTK_FILL</property>
-                <property name="y_options">GTK_FILL</property>
-                <property name="y_padding">10</property>
-              </packing>
+              <layout>
+                <property name="column">0</property>
+                <property name="row">3</property>
+                <property name="column-span">2</property>
+              </layout>
             </child>
             <child>
               <object class="GtkEntry" id="rename_entry_template">
@@ -708,24 +718,20 @@ see http://foldersize.sf.net
                 <property name="primary_icon_activatable">0</property>
                 <property name="secondary_icon_activatable">0</property>
               </object>
-              <packing>
-                <property name="left_attach">1</property>
-                <property name="right_attach">2</property>
-                <property name="top_attach">1</property>
-                <property name="bottom_attach">2</property>
-              </packing>
+              <layout>
+                <property name="column">1</property>
+                <property name="row">1</property>
+              </layout>
             </child>
             <child>
               <object class="GtkLabel" id="label39">
                 <property name="xalign">0</property>
                 <property name="label" translatable="1">Template</property>
               </object>
-              <packing>
-                <property name="top_attach">1</property>
-                <property name="bottom_attach">2</property>
-                <property name="x_options">GTK_FILL</property>
-                <property name="y_options">GTK_FILL</property>
-              </packing>
+              <layout>
+                <property name="column">0</property>
+                <property name="row">1</property>
+              </layout>
             </child>
             <child>
               <object class="GtkLabel" id="label_tempate_options">
@@ -738,12 +744,10 @@ see http://foldersize.sf.net
                   <attribute name="scale" value="0.75"></attribute>
                 </attributes>
               </object>
-              <packing>
-                <property name="left_attach">1</property>
-                <property name="right_attach">2</property>
-                <property name="top_attach">2</property>
-                <property name="bottom_attach">3</property>
-              </packing>
+              <layout>
+                <property name="column">1</property>
+                <property name="row">2</property>
+              </layout>
             </child>
           </object>
         </child>
@@ -881,12 +885,10 @@ see http://foldersize.sf.net
                                 <property name="top_padding">5</property>
                                 <property name="left_padding">10</property>
                                 <child>
-                                  <object class="GtkTable" id="table1">
+                                  <object class="GtkGrid" id="table1">
                                     <property name="visible">True</property>
                                     <property name="can_focus">False</property>
                                     <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                                    <property name="n_rows">2</property>
-                                    <property name="n_columns">6</property>
                                     <property name="column_spacing">5</property>
                                     <property name="row_spacing">5</property>
                                     <property name="homogeneous">True</property>
@@ -900,12 +902,10 @@ see http://foldersize.sf.net
                                         <property name="snap_to_ticks">1</property>
                                         <property name="numeric">1</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">2</property>
-                                        <property name="right_attach">3</property>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">2</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_seconds">
@@ -918,12 +918,10 @@ see http://foldersize.sf.net
                                         <property name="snap_to_ticks">1</property>
                                         <property name="numeric">1</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">4</property>
-                                        <property name="right_attach">5</property>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">4</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkLabel" id="label14">
@@ -931,12 +929,10 @@ see http://foldersize.sf.net
                                         <property name="xalign">0</property>
                                         <property name="label" translatable="1">seconds</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">5</property>
-                                        <property name="right_attach">6</property>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">5</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkLabel" id="label13">
@@ -944,12 +940,10 @@ see http://foldersize.sf.net
                                         <property name="xalign">0</property>
                                         <property name="label" translatable="1">minutes</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">3</property>
-                                        <property name="right_attach">4</property>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">3</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkLabel" id="label12">
@@ -957,12 +951,10 @@ see http://foldersize.sf.net
                                         <property name="xalign">0</property>
                                         <property name="label" translatable="1">hours</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">1</property>
-                                        <property name="right_attach">2</property>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">1</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_hours">
@@ -974,10 +966,10 @@ see http://foldersize.sf.net
                                         <property name="snap_to_ticks">1</property>
                                         <property name="numeric">1</property>
                                       </object>
-                                      <packing>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">0</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_years">
@@ -989,6 +981,10 @@ see http://foldersize.sf.net
                                         <property name="snap_to_ticks">1</property>
                                         <property name="numeric">1</property>
                                       </object>
+                                      <layout>
+                                        <property name="column">0</property>
+                                        <property name="row">0</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkLabel" id="label11">
@@ -996,10 +992,10 @@ see http://foldersize.sf.net
                                         <property name="xalign">0</property>
                                         <property name="label" translatable="1">years</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">1</property>
-                                        <property name="right_attach">2</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">1</property>
+                                        <property name="row">0</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_days">
@@ -1011,10 +1007,10 @@ see http://foldersize.sf.net
                                         <property name="snap_to_ticks">1</property>
                                         <property name="numeric">1</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">2</property>
-                                        <property name="right_attach">3</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">2</property>
+                                        <property name="row">0</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkLabel" id="label10">
@@ -1022,10 +1018,11 @@ see http://foldersize.sf.net
                                         <property name="xalign">0</property>
                                         <property name="label" translatable="1">days </property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">3</property>
-                                        <property name="right_attach">6</property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">3</property>
+                                        <property name="row">0</property>
+                                        <property name="column-span">3</property>
+                                      </layout>
                                     </child>
                                   </object>
                                 </child>
@@ -1165,7 +1162,8 @@ see http://foldersize.sf.net
       </object>
     </child>
     <action-widgets>
-      <action-widget response="-6">button1</action-widget>
+      <action-widget response="-6">adjust_date_cancel_button</action-widget>
+      <action-widget response="-5" default="true">adjust_date_ok_button</action-widget>
     </action-widgets>
     <child internal-child="action_area">
       <object class="GtkButtonBox" id="dialog-action_area4">
@@ -1174,18 +1172,22 @@ see http://foldersize.sf.net
         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
         <property name="layout_style">end</property>
         <child>
-          <object class="GtkButton" id="button1">
+          <object class="GtkButton" id="adjust_date_cancel_button">
             <property name="label">gtk-cancel</property>
             <property name="focusable">1</property>
             <property name="receives_default">1</property>
             <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
             <property name="use_stock">True</property>
           </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-            <property name="position">0</property>
-          </packing>
+        </child>
+        <child>
+          <object class="GtkButton" id="adjust_date_ok_button">
+            <property name="label">gtk-ok</property>
+            <property name="focusable">1</property>
+            <property name="receives_default">1</property>
+            <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
+            <property name="use_stock">True</property>
+          </object>
         </child>
       </object>
     </child>
@@ -1210,11 +1212,9 @@ see http://foldersize.sf.net
             <property name="can_focus">0</property>
             <property name="spacing">10</property>
             <child>
-              <object class="GtkTable" id="table3">
+              <object class="GtkGrid" id="table3">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-                <property name="n_rows">12</property>
-                <property name="n_columns">2</property>
                 <property name="column_spacing">5</property>
                 <property name="row_spacing">3</property>
                 <child>
@@ -1225,12 +1225,10 @@ see http://foldersize.sf.net
                     <property name="xalign">0</property>
                     <property name="label" translatable="1">Folder suffix</property>
                   </object>
-                  <packing>
-                    <property name="top_attach">6</property>
-                    <property name="bottom_attach">7</property>
-                    <property name="x_options">GTK_FILL</property>
-                    <property name="y_options">GTK_FILL</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">6</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkEntry" id="organize_entry_folder_name">
@@ -1238,12 +1236,10 @@ see http://foldersize.sf.net
                     <property name="primary_icon_activatable">0</property>
                     <property name="secondary_icon_activatable">0</property>
                   </object>
-                  <packing>
-                    <property name="left_attach">1</property>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">6</property>
-                    <property name="bottom_attach">7</property>
-                  </packing>
+                  <layout>
+                    <property name="column">1</property>
+                    <property name="row">6</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="label26">
@@ -1252,12 +1248,11 @@ see http://foldersize.sf.net
                     <property name="label" translatable="1">&lt;b&gt;Destination:&lt;/b&gt;</property>
                     <property name="use_markup">1</property>
                   </object>
-                  <packing>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">3</property>
-                    <property name="bottom_attach">4</property>
-                    <property name="y_padding">10</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">3</property>
+                    <property name="column-span">2</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="label25">
@@ -1266,47 +1261,42 @@ see http://foldersize.sf.net
                     <property name="label" translatable="1">&lt;b&gt;Source:&lt;/b&gt;</property>
                     <property name="use_markup">1</property>
                   </object>
-                  <packing>
-                    <property name="right_attach">2</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">0</property>
+                    <property name="column-span">2</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="label18">
                     <property name="xalign">0</property>
                     <property name="label" translatable="1">Base output folder</property>
                   </object>
-                  <packing>
-                    <property name="top_attach">4</property>
-                    <property name="bottom_attach">5</property>
-                    <property name="x_options">GTK_FILL</property>
-                    <property name="y_options">GTK_FILL</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">4</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="label19">
                     <property name="xalign">0</property>
                     <property name="label" translatable="1">Folder template</property>
                   </object>
-                  <packing>
-                    <property name="top_attach">5</property>
-                    <property name="bottom_attach">6</property>
-                    <property name="x_options">GTK_FILL</property>
-                    <property name="y_options">GTK_FILL</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">5</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="label24">
                     <property name="xalign">0</property>
                     <property name="label" translatable="1">Example Output Location:</property>
                   </object>
-                  <packing>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">10</property>
-                    <property name="bottom_attach">11</property>
-                    <property name="x_options">GTK_FILL</property>
-                    <property name="y_options">GTK_FILL</property>
-                    <property name="y_padding">10</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">10</property>
+                    <property name="column-span">2</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="organize_label_example_output">
@@ -1314,12 +1304,11 @@ see http://foldersize.sf.net
                     <property name="use_markup">1</property>
                     <property name="ellipsize">start</property>
                   </object>
-                  <packing>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">11</property>
-                    <property name="bottom_attach">12</property>
-                    <property name="x_padding">10</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">11</property>
+                    <property name="column-span">2</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkCheckButton" id="organize_cb_subfolders">
@@ -1328,11 +1317,11 @@ see http://foldersize.sf.net
                     <property name="xalign">0.5</property>
                     <property name="active">1</property>
                   </object>
-                  <packing>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">2</property>
-                    <property name="bottom_attach">3</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">2</property>
+                    <property name="column-span">2</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkAlignment" id="organize_align_source_folder">
@@ -1342,11 +1331,11 @@ see http://foldersize.sf.net
                       <placeholder/>
                     </child>
                   </object>
-                  <packing>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">1</property>
-                    <property name="bottom_attach">2</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">1</property>
+                    <property name="column-span">2</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkAlignment" id="organize_align_dest_folder">
@@ -1356,12 +1345,10 @@ see http://foldersize.sf.net
                       <placeholder/>
                     </child>
                   </object>
-                  <packing>
-                    <property name="left_attach">1</property>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">4</property>
-                    <property name="bottom_attach">5</property>
-                  </packing>
+                  <layout>
+                    <property name="column">1</property>
+                    <property name="row">4</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkCheckButton" id="organize_cb_rename_files">
@@ -1370,23 +1357,21 @@ see http://foldersize.sf.net
                     <property name="xalign">0.5</property>
                     <property name="active">1</property>
                   </object>
-                  <packing>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">7</property>
-                    <property name="bottom_attach">8</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">7</property>
+                    <property name="column-span">2</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="label_filename_template">
                     <property name="xalign">0</property>
                     <property name="label" translatable="1">Filename template</property>
                   </object>
-                  <packing>
-                    <property name="top_attach">8</property>
-                    <property name="bottom_attach">9</property>
-                    <property name="x_options">GTK_FILL</property>
-                    <property name="y_options">GTK_FILL</property>
-                  </packing>
+                  <layout>
+                    <property name="column">0</property>
+                    <property name="row">8</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkEntry" id="organize_entry_filename_template">
@@ -1396,12 +1381,10 @@ see http://foldersize.sf.net
                     <property name="primary_icon_activatable">0</property>
                     <property name="secondary_icon_activatable">0</property>
                   </object>
-                  <packing>
-                    <property name="left_attach">1</property>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">8</property>
-                    <property name="bottom_attach">9</property>
-                  </packing>
+                  <layout>
+                    <property name="column">1</property>
+                    <property name="row">8</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkLabel" id="label_filename_tempate_info">
@@ -1414,12 +1397,10 @@ see http://foldersize.sf.net
                       <attribute name="scale" value="0.75"></attribute>
                     </attributes>
                   </object>
-                  <packing>
-                    <property name="left_attach">1</property>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">9</property>
-                    <property name="bottom_attach">10</property>
-                  </packing>
+                  <layout>
+                    <property name="column">1</property>
+                    <property name="row">9</property>
+                  </layout>
                 </child>
                 <child>
                   <object class="GtkComboBoxText" id="organize_combo_template">
@@ -1430,12 +1411,10 @@ see http://foldersize.sf.net
                       <item translatable="yes">YYYY-MM-DD</item>
                     </items>
                   </object>
-                  <packing>
-                    <property name="left_attach">1</property>
-                    <property name="right_attach">2</property>
-                    <property name="top_attach">5</property>
-                    <property name="bottom_attach">6</property>
-                  </packing>
+                  <layout>
+                    <property name="column">1</property>
+                    <property name="row">5</property>
+                  </layout>
                 </child>
               </object>
             </child>
@@ -1675,12 +1654,10 @@ see http://foldersize.sf.net
                                 <property name="vexpand">1</property>
                                 <property name="can_focus">0</property>
                                 <child>
-                                  <object class="GtkTable" id="table2">
+                                  <object class="GtkGrid" id="table2">
                                     <property name="halign">center</property>
                                     <property name="visible">True</property>
                                     <property name="can_focus">False</property>
-                                    <property name="n_rows">2</property>
-                                    <property name="n_columns">2</property>
                                     <property name="column_spacing">20</property>
                                     <property name="row_spacing">2</property>
                                     <child>
@@ -1689,38 +1666,30 @@ see http://foldersize.sf.net
                                         <property name="xalign">0</property>
                                         <property name="label" translatable="1">Viewer background color:</property>
                                       </object>
-                                      <packing>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                        <property name="x_options"></property>
-                                        <property name="y_options"></property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">0</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkColorDialogButton" id="clrbtn_general_bg_browser">
                                         <property name="sensitive">0</property>
                                         <property name="focusable">1</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">1</property>
-                                        <property name="right_attach">2</property>
-                                        <property name="x_options"></property>
-                                        <property name="y_options"></property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">1</property>
+                                        <property name="row">0</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkColorDialogButton" id="clrbtn_general_bg_viewer">
                                         <property name="sensitive">0</property>
                                         <property name="focusable">1</property>
                                       </object>
-                                      <packing>
-                                        <property name="left_attach">1</property>
-                                        <property name="right_attach">2</property>
-                                        <property name="top_attach">1</property>
-                                        <property name="bottom_attach">2</property>
-                                        <property name="x_options"></property>
-                                        <property name="y_options"></property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">1</property>
+                                        <property name="row">1</property>
+                                      </layout>
                                     </child>
                                     <child>
                                       <object class="GtkLabel" id="label_general_bg_browser">
@@ -1728,10 +1697,10 @@ see http://foldersize.sf.net
                                         <property name="xalign">0</property>
                                         <property name="label" translatable="1">Browser background color:</property>
                                       </object>
-                                      <packing>
-                                        <property name="x_options"></property>
-                                        <property name="y_options"></property>
-                                      </packing>
+                                      <layout>
+                                        <property name="column">0</property>
+                                        <property name="row">0</property>
+                                      </layout>
                                     </child>
                                   </object>
                                 </child>

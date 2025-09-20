@@ -102,19 +102,8 @@ void DonateDlg::DonateDlgPriv::LoadWidgets()
 	{
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "DonateDialog"));
 
-		m_pButtonDonate          = GTK_BUTTON( gtk_button_new_with_label("Donate to Quiver"));
-		m_pButtonClose              = GTK_BUTTON( gtk_button_new_with_label("Close") );
-
-
-		gtk_widget_set_visible(GTK_WIDGET(m_pButtonDonate), true);
-		gtk_widget_set_visible(GTK_WIDGET(m_pButtonClose), true);
-
-		if (m_pWidget)
-		{
-            GtkWidget *action_area = gtk_dialog_get_content_area(GTK_DIALOG(m_pWidget));
-			gtk_box_append(GTK_BOX(action_area),GTK_WIDGET(m_pButtonDonate));
-			gtk_box_append(GTK_BOX(action_area),GTK_WIDGET(m_pButtonClose));
-		}
+		m_pButtonDonate          = GTK_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "donate_button"));
+		m_pButtonClose           = GTK_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "close_button"));
 
 		m_bLoadedDlg = (
 				NULL != m_pWidget && 
@@ -167,10 +156,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 			DONATION_URL_MIME);
 #endif
 #else
-	gchar* contentType =
-			g_content_type_from_mime_type("text/html");
-	gboolean launched = g_app_info_launch_default_for_uri(DONATION_URL, NULL, NULL);
-	g_free(contentType);
+	g_app_info_launch_default_for_uri(DONATION_URL, NULL, NULL);
 
 #endif
 	}

@@ -1,4 +1,5 @@
 #include "IconViewThumbLoader.h"
+#include <sched.h>
 
 IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 {
@@ -245,7 +246,7 @@ void IconViewThumbLoader::Run(int iThreadID)
 				break;
 			}
 
-			pthread_yield();
+			sched_yield();
 		}
 
 		if (m_bStopThreads)
