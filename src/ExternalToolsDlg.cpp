@@ -81,8 +81,7 @@ void ExternalToolsDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
-		gtk_widget_destroy(m_PrivPtr->m_pWidget);
+		gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
 	}
 }
 
@@ -476,7 +475,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonClose)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_CLOSE);
+		gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
 	}
 }
 

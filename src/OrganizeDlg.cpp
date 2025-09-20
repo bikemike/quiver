@@ -81,14 +81,12 @@ GtkWidget* OrganizeDlg::GetWidget() const
 }
 
 
-bool OrganizeDlg::Run()
+void OrganizeDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pDialogOrganize));
-		return (GTK_RESPONSE_OK == result);
+		gtk_widget_set_visible(GTK_WIDGET(m_PrivPtr->m_pDialogOrganize), TRUE);
 	}
-	return false;
 }
 
 std::string OrganizeDlg::GetFolderTemplate() const
@@ -491,7 +489,7 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 	{
 		if (priv->ValidateInput())
 		{
-			gtk_dialog_response(priv->m_pDialogOrganize, GTK_RESPONSE_OK);
+			gtk_window_destroy(GTK_WINDOW(priv->m_pDialogOrganize));
 		}
 	}
 	else if (button == GTK_BUTTON(priv->m_pTglBtnRenameFiles))

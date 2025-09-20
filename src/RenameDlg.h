@@ -14,7 +14,7 @@ public:
 	
 	//member functions
 	GtkWidget*  GetWidget() const;
-	bool        Run();
+	void        Run();
 
 	std::string GetTemplate() const;
 

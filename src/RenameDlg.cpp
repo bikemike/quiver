@@ -68,14 +68,12 @@ GtkWidget* RenameDlg::GetWidget() const
 }
 
 
-bool RenameDlg::Run()
+void RenameDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pDialogRename));
-		return (GTK_RESPONSE_OK == result);
+		gtk_widget_set_visible(GTK_WIDGET(m_PrivPtr->m_pDialogRename), TRUE);
 	}
-	return false;
 }
 
 std::string RenameDlg::GetTemplate() const
@@ -332,7 +330,7 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 	{
 		if (priv->ValidateInput())
 		{
-			gtk_dialog_response(priv->m_pDialogRename, GTK_RESPONSE_OK);
+			gtk_window_destroy(GTK_WINDOW(priv->m_pDialogRename));
 		}
 	}
 

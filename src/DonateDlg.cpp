@@ -151,7 +151,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	
 	if (button == priv->m_pButtonClose)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_CLOSE);
+		gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
 	}
 	else if (button == priv->m_pButtonDonate)
 	{
