@@ -156,7 +156,7 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 {
 	m_pDialogRename         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "RenameDialog"));
 
-	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
+	m_pBtnOK               = GTK_BUTTON(gtk_button_new_from_icon_name("gtk-ok"));
 	gtk_widget_set_visible(m_pBtnOK, TRUE);
 	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogRename)),m_pBtnOK);
 

@@ -131,7 +131,7 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "ExternalToolsDialog"));
 		m_pTreeViewExternalTools     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
 
-		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
+		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_icon_name("window-close-symbolic") );
 		gtk_widget_set_visible(GTK_WIDGET(m_pButtonClose), TRUE);
 
 		if (m_pWidget)
