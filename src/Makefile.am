@@ -101,6 +101,8 @@ quiver_SOURCES = \
 	QuiverUtils.cpp \
 	QuiverStockIcons.h \
 	QuiverStockIcons.cpp \
+	QuiverExternalTool.h \
+	QuiverExternalTool.cpp \
 	Quiver.h \
 	Quiver.cpp \
 	QuiverPrefs.h \

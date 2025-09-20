@@ -581,16 +581,50 @@ see http://foldersize.sf.net
                     <property name="focusable">1</property>
                     <property name="shadow_type">in</property>
                     <property name="child">
-                      <object class="GtkTreeView" id="externaltools_treeview">
-                        <property name="width_request">350</property>
+                      <object class="GtkColumnView" id="externaltools_treeview">
+                        <property name="width-request">350</property>
                         <property name="focusable">1</property>
-                        <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                        <property name="headers_visible">0</property>
-                        <property name="search_column">0</property>
-                        <property name="show_expanders">0</property>
-                        <child internal-child="selection">
-                          <object class="GtkTreeSelection" id="treeview-selection3"/>
-                        </child>
+                        <property name="single-click-activate">0</property>
+                        <columns>
+                          <column>
+                            <object class="GtkColumnViewColumn">
+                              <property name="title">Icon</property>
+                              <property name="factory">
+                                <object class="GtkBuilderListItemFactory">
+                                  <property name="bytes"><![CDATA[
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <template class="GtkListItem">
+    <property name="child">
+      <object class="GtkImage"/>
+    </property>
+  </template>
+</interface>
+                                  ]]></property>
+                                </object>
+                              </property>
+                            </object>
+                          </column>
+                          <column>
+                            <object class="GtkColumnViewColumn">
+                              <property name="title">Name</property>
+                              <property name="factory">
+                                <object class="GtkBuilderListItemFactory">
+                                  <property name="bytes"><![CDATA[
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <template class="GtkListItem">
+    <property name="child">
+      <object class="GtkLabel"/>
+    </property>
+  </template>
+</interface>
+                                  ]]></property>
+                                </object>
+                              </property>
+                            </object>
+                          </column>
+                        </columns>
                       </object>
                     </property>
                   </object>
