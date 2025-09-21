@@ -9,7 +9,8 @@
     <property name="icon_name">gtk-preferences</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox1">
+      <widget class="GtkBox" id="dialog-vbox1">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <child>
           <widget class="GtkNotebook" id="notebook1">
@@ -22,7 +23,8 @@
                 <property name="left_padding">12</property>
                 <property name="right_padding">5</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox4">
+                  <widget class="GtkBox" id="vbox4">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
@@ -120,7 +122,8 @@
                       </packing>
                     </child>
                     <child>
-                      <widget class="GtkVBox" id="vbox11">
+                      <widget class="GtkBox" id="vbox11">
+                        <property name="orientation">vertical</property>
                         <property name="visible">True</property>
                         <child>
                           <widget class="GtkCheckButton" id="chkbtn_general_theme_color">
@@ -261,7 +264,8 @@
                 <property name="left_padding">12</property>
                 <property name="right_padding">5</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox18">
+                  <widget class="GtkBox" id="vbox18">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
@@ -320,7 +324,8 @@
                 <property name="left_padding">12</property>
                 <property name="right_padding">5</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox10">
+                  <widget class="GtkBox" id="vbox10">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
@@ -516,7 +521,8 @@ Right</property>
                 <property name="left_padding">12</property>
                 <property name="right_padding">5</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox6">
+                  <widget class="GtkBox" id="vbox6">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
@@ -690,8 +696,8 @@ Right</property>
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="can_default">True</property>
-                <property name="label">gtk-close</property>
-                <property name="use_stock">True</property>
+                <property name="label" translatable="yes">Close</property>
+                <property name="icon_name">window-close-symbolic</property>
                 <property name="response_id">-7</property>
                 <signal name="activate" handler="on_btn_close_activate"/>
               </widget>
@@ -709,15 +715,18 @@ Right</property>
     <property name="title" translatable="yes">External Tool Editor</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox3">
+      <widget class="GtkBox" id="dialog-vbox3">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <child>
-          <widget class="GtkVBox" id="vbox12">
+          <widget class="GtkBox" id="vbox12">
+            <property name="orientation">vertical</property>
             <property name="visible">True</property>
             <property name="border_width">4</property>
             <property name="spacing">10</property>
             <child>
-              <widget class="GtkVBox" id="vbox15">
+              <widget class="GtkBox" id="vbox15">
+                <property name="orientation">vertical</property>
                 <property name="visible">True</property>
                 <child>
                   <widget class="GtkLabel" id="label53">
@@ -748,7 +757,8 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkVBox" id="vbox14">
+              <widget class="GtkBox" id="vbox14">
+                <property name="orientation">vertical</property>
                 <property name="visible">True</property>
                 <child>
                   <widget class="GtkLabel" id="label52">
@@ -781,7 +791,8 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkVBox" id="vbox22">
+              <widget class="GtkBox" id="vbox22">
+                <property name="orientation">vertical</property>
                 <property name="visible">True</property>
                 <child>
                   <widget class="GtkLabel" id="label29">
@@ -814,7 +825,8 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkVBox" id="vbox28">
+              <widget class="GtkBox" id="vbox28">
+                <property name="orientation">vertical</property>
                 <property name="sensitive">False</property>
                 <child>
                   <widget class="GtkLabel" id="label30">
@@ -863,7 +875,8 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkVBox" id="vbox13">
+              <widget class="GtkBox" id="vbox13">
+                <property name="orientation">vertical</property>
                 <property name="spacing">5</property>
                 <child>
                   <widget class="GtkCheckButton" id="external_tools_edit_show_output">
@@ -934,16 +947,19 @@ Right</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <property name="has_separator">False</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox4">
+      <widget class="GtkBox" id="dialog-vbox4">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
         <property name="spacing">2</property>
         <child>
-          <widget class="GtkVBox" id="vbox1">
+          <widget class="GtkBox" id="vbox1">
+            <property name="orientation">vertical</property>
             <property name="visible">True</property>
             <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
             <child>
-              <widget class="GtkVBox" id="vbox5">
+              <widget class="GtkBox" id="vbox5">
+                <property name="orientation">vertical</property>
                 <property name="visible">True</property>
                 <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                 <child>
@@ -966,12 +982,14 @@ Right</property>
                     <property name="bottom_padding">5</property>
                     <property name="left_padding">10</property>
                     <child>
-                      <widget class="GtkVBox" id="vbox7">
+                      <widget class="GtkBox" id="vbox7">
+                        <property name="orientation">vertical</property>
                         <property name="visible">True</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                         <property name="spacing">5</property>
                         <child>
-                          <widget class="GtkVBox" id="vbox8">
+                          <widget class="GtkBox" id="vbox8">
+                            <property name="orientation">vertical</property>
                             <property name="visible">True</property>
                             <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                             <child>
@@ -1142,7 +1160,8 @@ Right</property>
                           </packing>
                         </child>
                         <child>
-                          <widget class="GtkVBox" id="vbox9">
+                          <widget class="GtkBox" id="vbox9">
+                            <property name="orientation">vertical</property>
                             <property name="visible">True</property>
                             <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                             <child>
@@ -1206,7 +1225,8 @@ Right</property>
                 <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                 <property name="spacing">5</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox2">
+                  <widget class="GtkBox" id="vbox2">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                     <property name="spacing">5</property>
@@ -1225,7 +1245,8 @@ Right</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                         <property name="left_padding">10</property>
                         <child>
-                          <widget class="GtkVBox" id="vbox3">
+                          <widget class="GtkBox" id="vbox3">
+                            <property name="orientation">vertical</property>
                             <property name="visible">True</property>
                             <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
                             <child>
@@ -1309,8 +1330,8 @@ Right</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
                 <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                <property name="label" translatable="yes">gtk-cancel</property>
-                <property name="use_stock">True</property>
+                <property name="label" translatable="yes">Cancel</property>
+                <property name="icon_name">window-close-symbolic</property>
                 <property name="response_id">-6</property>
               </widget>
             </child>
@@ -1332,11 +1353,13 @@ Right</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <property name="has_separator">False</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox5">
+      <widget class="GtkBox" id="dialog-vbox5">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <property name="spacing">2</property>
         <child>
-          <widget class="GtkVBox" id="vbox16">
+          <widget class="GtkBox" id="vbox16">
+            <property name="orientation">vertical</property>
             <property name="visible">True</property>
             <child>
               <widget class="GtkLabel" id="label15">
@@ -1358,7 +1381,8 @@ Right</property>
                 <property name="spacing">5</property>
                 <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox17">
+                  <widget class="GtkBox" id="vbox17">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
@@ -1367,8 +1391,8 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">True</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                        <property name="label" translatable="yes">gtk-add</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Add</property>
+                        <property name="icon_name">list-add-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                     </child>
@@ -1378,8 +1402,8 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">True</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                        <property name="label" translatable="yes">gtk-edit</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Edit</property>
+                        <property name="icon_name">document-edit-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -1392,8 +1416,8 @@ Right</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">True</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                        <property name="label" translatable="yes">gtk-remove</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Remove</property>
+                        <property name="icon_name">list-remove-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -1404,8 +1428,8 @@ Right</property>
                       <widget class="GtkButton" id="button_move_up">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
-                        <property name="label">gtk-go-up</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Move Up</property>
+                        <property name="icon_name">go-up-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -1417,8 +1441,8 @@ Right</property>
                       <widget class="GtkButton" id="button_move_down">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
-                        <property name="label">gtk-go-down</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Move Down</property>
+                        <property name="icon_name">go-down-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -1486,7 +1510,8 @@ Right</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <property name="has_separator">False</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox6">
+      <widget class="GtkBox" id="dialog-vbox6">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <property name="spacing">2</property>
         <child>
@@ -1495,11 +1520,13 @@ Right</property>
             <property name="spacing">10</property>
             <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
             <child>
-              <widget class="GtkVBox" id="vbox24">
+              <widget class="GtkBox" id="vbox24">
+                <property name="orientation">vertical</property>
                 <property name="width_request">200</property>
                 <property name="visible">True</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox25">
+                  <widget class="GtkBox" id="vbox25">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <child>
                       <widget class="GtkLabel" id="label21">
@@ -1532,7 +1559,8 @@ Right</property>
                   </packing>
                 </child>
                 <child>
-                  <widget class="GtkVBox" id="vbox26">
+                  <widget class="GtkBox" id="vbox26">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <child>
                       <widget class="GtkLabel" id="label22">
@@ -1567,7 +1595,8 @@ Right</property>
                   </packing>
                 </child>
                 <child>
-                  <widget class="GtkVBox" id="vbox27">
+                  <widget class="GtkBox" id="vbox27">
+                    <property name="orientation">vertical</property>
                     <child>
                       <widget class="GtkLabel" id="label23">
                         <property name="visible">True</property>
@@ -1605,7 +1634,8 @@ Right</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkVBox" id="vbox23">
+              <widget class="GtkBox" id="vbox23">
+                <property name="orientation">vertical</property>
                 <property name="width_request">350</property>
                 <property name="visible">True</property>
                 <property name="spacing">5</property>
@@ -1667,8 +1697,8 @@ Right</property>
                       <widget class="GtkButton" id="bookmark_button_add">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
-                        <property name="label">gtk-add</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Add</property>
+                        <property name="icon_name">list-add-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -1679,8 +1709,8 @@ Right</property>
                       <widget class="GtkButton" id="bookmark_button_remove">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
-                        <property name="label">gtk-remove</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Remove</property>
+                        <property name="icon_name">list-remove-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -1727,7 +1757,8 @@ Right</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <property name="has_separator">False</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox7">
+      <widget class="GtkBox" id="dialog-vbox7">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
         <property name="spacing">2</property>
@@ -1809,11 +1840,13 @@ see http://foldersize.sf.net
     <property name="window_position">GTK_WIN_POS_CENTER_ON_PARENT</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox8">
+      <widget class="GtkBox" id="dialog-vbox8">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <property name="spacing">2</property>
         <child>
-          <widget class="GtkVBox" id="vbox20">
+          <widget class="GtkBox" id="vbox20">
+            <property name="orientation">vertical</property>
             <property name="visible">True</property>
             <property name="spacing">10</property>
             <child>
@@ -1995,7 +2028,8 @@ YYYY/MM/DD</property>
               </packing>
             </child>
             <child>
-              <widget class="GtkVBox" id="vbox29">
+              <widget class="GtkBox" id="vbox29">
+                <property name="orientation">vertical</property>
                 <property name="visible">True</property>
                 <property name="spacing">2</property>
                 <child>
@@ -2079,8 +2113,8 @@ YYYY/MM/DD</property>
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
-                <property name="label" translatable="yes">gtk-cancel</property>
-                <property name="use_stock">True</property>
+                <property name="label" translatable="yes">Cancel</property>
+                <property name="icon_name">window-close-symbolic</property>
                 <property name="response_id">-6</property>
               </widget>
             </child>
@@ -2102,11 +2136,13 @@ YYYY/MM/DD</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <property name="has_separator">False</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox10">
+      <widget class="GtkBox" id="dialog-vbox10">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <property name="spacing">2</property>
         <child>
-          <widget class="GtkVBox" id="vbox19">
+          <widget class="GtkBox" id="vbox19">
+            <property name="orientation">vertical</property>
             <property name="visible">True</property>
             <child>
               <widget class="GtkLabel" id="label27">
@@ -2128,7 +2164,8 @@ YYYY/MM/DD</property>
                 <property name="spacing">5</property>
                 <property name="orientation">GTK_ORIENTATION_HORIZONTAL</property>
                 <child>
-                  <widget class="GtkVBox" id="vbox21">
+                  <widget class="GtkBox" id="vbox21">
+                    <property name="orientation">vertical</property>
                     <property name="visible">True</property>
                     <property name="spacing">5</property>
                     <child>
@@ -2137,8 +2174,8 @@ YYYY/MM/DD</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">True</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                        <property name="label" translatable="yes">gtk-add</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Add</property>
+                        <property name="icon_name">list-add-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                     </child>
@@ -2148,8 +2185,8 @@ YYYY/MM/DD</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">True</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                        <property name="label" translatable="yes">gtk-edit</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Edit</property>
+                        <property name="icon_name">document-edit-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -2162,8 +2199,8 @@ YYYY/MM/DD</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">True</property>
                         <property name="events">GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK</property>
-                        <property name="label" translatable="yes">gtk-remove</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Remove</property>
+                        <property name="icon_name">list-remove-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -2174,8 +2211,8 @@ YYYY/MM/DD</property>
                       <widget class="GtkButton" id="externaltools_button_move_up">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
-                        <property name="label">gtk-go-up</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Move Up</property>
+                        <property name="icon_name">go-up-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -2187,8 +2224,8 @@ YYYY/MM/DD</property>
                       <widget class="GtkButton" id="externaltools_button_move_down">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
-                        <property name="label">gtk-go-down</property>
-                        <property name="use_stock">True</property>
+                        <property name="label" translatable="yes">Move Down</property>
+                        <property name="icon_name">go-down-symbolic</property>
                         <property name="response_id">0</property>
                       </widget>
                       <packing>
@@ -2253,7 +2290,8 @@ YYYY/MM/DD</property>
     <property name="window_position">GTK_WIN_POS_CENTER_ON_PARENT</property>
     <property name="type_hint">GDK_WINDOW_TYPE_HINT_DIALOG</property>
     <child internal-child="vbox">
-      <widget class="GtkVBox" id="dialog-vbox12">
+      <widget class="GtkBox" id="dialog-vbox12">
+        <property name="orientation">vertical</property>
         <property name="visible">True</property>
         <property name="spacing">2</property>
         <child>
@@ -2414,8 +2452,8 @@ YYYY/MM/DD</property>
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
-                <property name="label" translatable="yes">gtk-cancel</property>
-                <property name="use_stock">True</property>
+                <property name="label" translatable="yes">Cancel</property>
+                <property name="icon_name">window-close-symbolic</property>
                 <property name="response_id">-6</property>
               </widget>
             </child>

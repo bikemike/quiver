@@ -63,25 +63,25 @@ static void quiver_icon_view_handle_leave(GtkEventControllerMotion *controller, 
 static gboolean quiver_icon_view_handle_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data);
 static gboolean quiver_icon_view_handle_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 
-static void quiver_icon_view_set_hadjustment(QuiverIconView *iconview, GtkAdjustment *hadjustment);
-static void quiver_icon_view_set_vadjustment(QuiverIconView *iconview, GtkAdjustment *vadjustment);
-static void quiver_icon_view_adjustment_value_changed(GtkAdjustment *adjustment, gpointer user_data);
+// static void quiver_icon_view_set_hadjustment(QuiverIconView *iconview, GtkAdjustment *hadjustment);
+// static void quiver_icon_view_set_vadjustment(QuiverIconView *iconview, GtkAdjustment *vadjustment);
+// static void quiver_icon_view_adjustment_value_changed(GtkAdjustment *adjustment, gpointer user_data);
 static void quiver_icon_view_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
 static void quiver_icon_view_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 static void quiver_icon_view_finalize(GObject *object);
-static void quiver_icon_view_calculate_grid_layout(QuiverIconView *iconview, guint *cols, guint *rows) {}
+// static void quiver_icon_view_calculate_grid_layout(QuiverIconView *iconview, guint *cols, guint *rows) {}
 static void quiver_icon_view_set_cursor_cell_internal(QuiverIconView *iconview, gulong new_cursor_cell, GdkModifierType state, gboolean is_mouse_action, gboolean extend_selection);
 static void quiver_icon_view_scroll_to_cell_ensure_visible(QuiverIconView *iconview, gulong cell, gboolean force_top_left);
-static void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select);
-static void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulong target_cell);
-static void quiver_icon_view_start_rubberband(QuiverIconView *iconview, double x, double y);
-static void quiver_icon_view_update_rubberband_rect(QuiverIconView *iconview, double x, double y);
-static void quiver_icon_view_end_rubberband(QuiverIconView *iconview);
-static void quiver_icon_view_apply_rubberband_selection(QuiverIconView *iconview);
+// static void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select);
+// static void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulong target_cell);
+// static void quiver_icon_view_start_rubberband(QuiverIconView *iconview, double x, double y);
+// static void quiver_icon_view_update_rubberband_rect(QuiverIconView *iconview, double x, double y);
+// static void quiver_icon_view_end_rubberband(QuiverIconView *iconview);
+// static void quiver_icon_view_apply_rubberband_selection(QuiverIconView *iconview);
 static void quiver_icon_view_recalculate_adjustments(QuiverIconView *iconview);
 static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview);
-static void quiver_icon_view_emit_cell_clicked(QuiverIconView *iconview, gulong cell, guint button, GdkModifierType state);
-static gboolean rubberband_scroll_timeout_cb (gpointer data);
+// static void quiver_icon_view_emit_cell_clicked(QuiverIconView *iconview, gulong cell, guint button, GdkModifierType state);
+// static gboolean rubberband_scroll_timeout_cb (gpointer data);
 static void quiver_icon_view_draw_cell_contents(QuiverIconView *iconview, cairo_t *cr, gulong cell_idx, cairo_rectangle_int_t *cell_rect, GtkStateFlags cell_state);
 
 
@@ -113,9 +113,9 @@ static void quiver_icon_view_class_init(QuiverIconViewClass *klass) {
 	iconview_signals[SIGNAL_SELECTION_CHANGED] = g_signal_new("selection-changed", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, selection_changed), NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0);
 }
 
-static GtkAdjustment* new_default_adjustment_internal (void) { // Renamed to avoid conflict if GTK defines similar
+/* static GtkAdjustment* new_default_adjustment_internal (void) { // Renamed to avoid conflict if GTK defines similar
   return gtk_adjustment_new (0.0, 0.0, 100.0, 10.0, 20.0, 0.0); // Sensible defaults: value, lower, upper, step_inc, page_inc, page_size (0 means auto)
-}
+} */
 
 static void quiver_icon_view_init(QuiverIconView *iconview) {
 	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
@@ -261,15 +261,15 @@ static void quiver_icon_view_handle_motion(GtkEventControllerMotion *controller,
 static void quiver_icon_view_handle_leave(GtkEventControllerMotion *controller, gpointer user_data) {}
 static gboolean quiver_icon_view_handle_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data) { return FALSE; }
 static gboolean quiver_icon_view_handle_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) { return FALSE; }
-static void quiver_icon_view_adjustment_value_changed(GtkAdjustment *adjustment, gpointer user_data) {}
+// static void quiver_icon_view_adjustment_value_changed(GtkAdjustment *adjustment, gpointer user_data) {}
 static void quiver_icon_view_set_cursor_cell_internal(QuiverIconView *iconview, gulong new_cursor_cell, GdkModifierType state, gboolean is_mouse_action, gboolean extend_selection) {}
 static void quiver_icon_view_scroll_to_cell_ensure_visible(QuiverIconView *iconview, gulong cell, gboolean force_top_left) {}
-static void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select){}
-static void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulong target_cell) {}
-static void quiver_icon_view_start_rubberband(QuiverIconView *iconview, double x, double y) {}
-static void quiver_icon_view_update_rubberband_rect(QuiverIconView *iconview, double x, double y) {}
-static void quiver_icon_view_end_rubberband(QuiverIconView *iconview) {}
-static void quiver_icon_view_apply_rubberband_selection(QuiverIconView *iconview) {}
+// static void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select){}
+// static void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulong target_cell) {}
+// static void quiver_icon_view_start_rubberband(QuiverIconView *iconview, double x, double y) {}
+// static void quiver_icon_view_update_rubberband_rect(QuiverIconView *iconview, double x, double y) {}
+// static void quiver_icon_view_end_rubberband(QuiverIconView *iconview) {}
+// static void quiver_icon_view_apply_rubberband_selection(QuiverIconView *iconview) {}
 static void quiver_icon_view_recalculate_adjustments(QuiverIconView *iconview) {}
 static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview) {
     QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
@@ -277,8 +277,8 @@ static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview) {
         return priv->callback_get_n_items(iconview, priv->callback_get_n_items_data);
     return 0;
 }
-static gboolean rubberband_scroll_timeout_cb (gpointer data) { return G_SOURCE_REMOVE;}
-static void quiver_icon_view_emit_cell_clicked(QuiverIconView *iconview, gulong cell, guint button, GdkModifierType state) { g_signal_emit(iconview, iconview_signals[SIGNAL_CELL_CLICKED], 0, cell, button, state); }
+// static gboolean rubberband_scroll_timeout_cb (gpointer data) { return G_SOURCE_REMOVE;}
+// static void quiver_icon_view_emit_cell_clicked(QuiverIconView *iconview, gulong cell, guint button, GdkModifierType state) { g_signal_emit(iconview, iconview_signals[SIGNAL_CELL_CLICKED], 0, cell, button, state); }
 
 
 // Copied from existing code, ensure they are compatible or adapted
@@ -385,6 +385,7 @@ static void quiver_icon_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot) 
     cairo_destroy(cr);
 }
 
+/*
 static void quiver_icon_view_set_hadjustment(QuiverIconView *iconview, GtkAdjustment *adj) {
     QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
 	if (priv->hadjustment == adj) return;
@@ -400,7 +401,9 @@ static void quiver_icon_view_set_hadjustment(QuiverIconView *iconview, GtkAdjust
 	quiver_icon_view_recalculate_adjustments(iconview);
 	g_object_notify_by_pspec(G_OBJECT(iconview), g_object_class_find_property(G_OBJECT_GET_CLASS(iconview),"hadjustment"));
 }
+*/
 
+/*
 static void quiver_icon_view_set_vadjustment(QuiverIconView *iconview, GtkAdjustment *adj) {
     QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
     if (priv->vadjustment == adj) return;
@@ -416,6 +419,7 @@ static void quiver_icon_view_set_vadjustment(QuiverIconView *iconview, GtkAdjust
     quiver_icon_view_recalculate_adjustments(iconview);
 	g_object_notify_by_pspec(G_OBJECT(iconview), g_object_class_find_property(G_OBJECT_GET_CLASS(iconview),"vadjustment"));
 }
+*/
 
 // Other functions (set_property, get_property, get_col_row_count, etc.) would follow,
 // many requiring careful adaptation or complete rewrites for GTK4.
@@ -518,23 +522,23 @@ void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview, QuiverI
 // }
 
 // Other stubs from previous version
-static void quiver_icon_view_scroll_to_adjustment_smooth(QuiverIconView *iconview, gint hadjust, gint vadjust){/* TODO */}
-static gboolean quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview){ return FALSE; }
-static gboolean quiver_icon_view_timeout_smooth_scroll(gpointer data){ return FALSE; }
-static gboolean quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data){ return FALSE; }
-static void quiver_icon_view_set_adjustment_upper (GtkAdjustment *adj, gdouble upper, gboolean always_emit_changed){/* TODO */}
+// static void quiver_icon_view_scroll_to_adjustment_smooth(QuiverIconView *iconview, gint hadjust, gint vadjust){/* TODO */}
+// static gboolean quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview){ return FALSE; }
+// static gboolean quiver_icon_view_timeout_smooth_scroll(gpointer data){ return FALSE; }
+// static gboolean quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data){ return FALSE; }
+// static void quiver_icon_view_set_adjustment_upper (GtkAdjustment *adj, gdouble upper, gboolean always_emit_changed){/* TODO */}
 // static void quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor_cell,GdkModifierType state,gboolean is_mouse){}
-static void quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,gboolean force_top){/* TODO */}
+// static void quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,gboolean force_top){/* TODO */}
 // static void quiver_icon_view_scroll_to_cell(QuiverIconView *iconview,gulong cell){ quiver_icon_view_scroll_to_cell_force_top(iconview, cell, FALSE); }
 // static void quiver_icon_view_set_select_all(QuiverIconView *iconview, gboolean selected){/* TODO */}
-static void quiver_icon_view_shift_select_cells(QuiverIconView *iconview,gulong new_cursor_cell){/* TODO */}
-static void quiver_icon_view_update_rubber_band(QuiverIconView *iconview){ gtk_widget_queue_draw(GTK_WIDGET(iconview));}
-static void quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview){}
+// static void quiver_icon_view_shift_select_cells(QuiverIconView *iconview,gulong new_cursor_cell){/* TODO */}
+// static void quiver_icon_view_update_rubber_band(QuiverIconView *iconview){ gtk_widget_queue_draw(GTK_WIDGET(iconview));}
+// static void quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview){}
 // static void quiver_icon_view_update_icon_size(QuiverIconView *iconview){ if(gtk_widget_get_realized(GTK_WIDGET(iconview))) gtk_widget_queue_resize(GTK_WIDGET(iconview));}
 // static gulong quiver_icon_view_get_n_items(QuiverIconView* iconview){ if(iconview->priv->callback_get_n_items) return iconview->priv->callback_get_n_items(iconview, iconview->priv->callback_get_n_items_data); return 0;}
-static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height){return NULL;}
-static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulong cell){return NULL;}
-static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, cairo_t* cr, GtkStateFlags state_flags, int rect_x,int rect_y, int rect_w, int rect_h){}
+// static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height){return NULL;}
+// static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulong cell){return NULL;}
+// static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, cairo_t* cr, GtkStateFlags state_flags, int rect_x,int rect_y, int rect_w, int rect_h){}
 // static void quiver_icon_view_click_cell(QuiverIconView *iconview,gulong cell) { g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_CLICKED],0,cell); }
 // static gboolean rubberband_scroll_timeout (gpointer data) {
 // 	QuiverIconView *iconview = QUIVER_ICON_VIEW(data); QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
