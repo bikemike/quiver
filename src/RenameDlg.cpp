@@ -24,7 +24,7 @@ class RenameDlg::RenameDlgPriv
 {
 public:
 // constructor, destructor
-	RenameDlgPriv(RenameDlg *parent);
+	RenameDlgPriv(RenameDlg *parent, GtkWindow* pParent);
 	~RenameDlgPriv();
 	
 // methods
@@ -52,11 +52,12 @@ public:
 #endif
 	GtkEntry*               m_pEntryTemplate;
 	GtkLabel*               m_pLabelExample;
+    GtkWindow*              m_pParent;
 
 };
 
 
-RenameDlg::RenameDlg() : m_PrivPtr(new RenameDlg::RenameDlgPriv(this))
+RenameDlg::RenameDlg(GtkWindow* parent) : m_PrivPtr(new RenameDlg::RenameDlgPriv(this, parent))
 {
 	
 }
@@ -64,7 +65,7 @@ RenameDlg::RenameDlg() : m_PrivPtr(new RenameDlg::RenameDlgPriv(this))
 
 GtkWidget* RenameDlg::GetWidget() const
 {
-	  return NULL;
+	  return GTK_WIDGET(m_PrivPtr->m_pDialogRename);
 }
 
 
@@ -78,7 +79,7 @@ void RenameDlg::Run()
 
 std::string RenameDlg::GetTemplate() const
 {
-	return gtk_entry_get_text(m_PrivPtr->m_pEntryTemplate);
+	return gtk_entry_get_text(GTK_ENTRY(m_PrivPtr->m_pEntryTemplate));
 }
 
 std::string RenameDlg::GetInputFolder() const
@@ -121,8 +122,8 @@ static void on_editable_changed (GtkEditable *editable, gpointer user_data);
 static void combo_changed (GtkComboBox *widget, gpointer user_data);
 
 
-RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent) :
-        m_pRenameDlg(parent)
+RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent, GtkWindow* pParent) :
+        m_pRenameDlg(parent), m_pParent(pParent)
 {
 	m_pDialogRename = NULL;
 	m_pGtkBuilder = gtk_builder_new();
@@ -155,10 +156,12 @@ RenameDlg::RenameDlgPriv::~RenameDlgPriv()
 void RenameDlg::RenameDlgPriv::LoadWidgets()
 {
 	m_pDialogRename         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "RenameDialog"));
+    gtk_window_set_transient_for(GTK_WINDOW(m_pDialogRename), m_pParent);
+    gtk_window_set_modal(GTK_WINDOW(m_pDialogRename), TRUE);
 
-	m_pBtnOK               = GTK_BUTTON(gtk_button_new_from_icon_name("gtk-ok"));
-	gtk_widget_set_visible(m_pBtnOK, TRUE);
-	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogRename)),m_pBtnOK);
+
+	m_pBtnOK               = gtk_dialog_add_button(m_pDialogRename, "_OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(m_pDialogRename, "_Cancel", GTK_RESPONSE_CANCEL);
 
 
 	GtkContainer* src_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "rename_align_source_folder") );

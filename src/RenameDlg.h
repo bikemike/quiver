@@ -9,7 +9,7 @@ class RenameDlg
 {
 public:
 	//constructor
-	            RenameDlg();
+	            RenameDlg(GtkWindow* parent);
 	//~RenameDlg();
 	
 	//member functions

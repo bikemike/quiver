@@ -2,7 +2,6 @@
 
 #include <iostream>
 #include <algorithm>
-#include <random>
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
@@ -188,7 +187,7 @@ bool ImageList::SetCurrentFile(std::string file)
 
 	m_ImageListImplPtr->SetCurrentImage(file);
 
-	if ((unsigned int)old_index != m_ImageListImplPtr->m_iCurrentIndex)
+	if (old_index != m_ImageListImplPtr->m_iCurrentIndex)
 	{
 		rval = true;
 		EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex, old_index);
@@ -1352,7 +1351,7 @@ void ImageList::ImageListImpl::Sort(bool bUpdateCurrentIndex)
 }
 
 
-class SortByFilename
+class SortByFilename : public std::binary_function<QuiverFile,QuiverFile,bool>
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
@@ -1366,7 +1365,7 @@ public:
 	}
 };
 
-class SortByFilenameNatural
+class SortByFilenameNatural : public std::binary_function<QuiverFile,QuiverFile,bool>
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
@@ -1412,7 +1411,7 @@ public:
 	}
 };
 
-class SortByDateModified
+class SortByDateModified : public std::binary_function<QuiverFile,QuiverFile,bool>
 {
 public:
 
@@ -1434,7 +1433,7 @@ public:
 	}
 };
 
-class SortByDate
+class SortByDate : public std::binary_function<QuiverFile,QuiverFile,bool>
 {
 public:
 
@@ -1500,9 +1499,7 @@ void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool b
 		}
 		case ImageList::SORT_BY_RANDOM:
 		{
-			std::random_device rd;
-			std::mt19937 g(rd());
-			std::shuffle(m_QuiverFileList.begin(), m_QuiverFileList.end(), g);
+			std::random_shuffle(m_QuiverFileList.begin(), m_QuiverFileList.end());
 			break;
 		}
 		default:

@@ -9,7 +9,7 @@ class DonateDlg
 {
 public:
 	//constructor
-	DonateDlg();
+	DonateDlg(GtkWindow* pParent);
 	
 	//member functions
 	GtkWidget *GetWidget() const;

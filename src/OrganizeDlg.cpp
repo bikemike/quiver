@@ -22,7 +22,7 @@ class OrganizeDlg::OrganizeDlgPriv
 {
 public:
 // constructor, destructor
-	OrganizeDlgPriv(OrganizeDlg *parent);
+	OrganizeDlgPriv(OrganizeDlg *parent, GtkWindow* pParent);
 	~OrganizeDlgPriv();
 	
 // methods
@@ -65,19 +65,18 @@ public:
 
 	//GtkToggleButton*        m_pTglBtnCopy;
 	//GtkToggleButton*        m_pTglBtnMove;
+    GtkWindow*              m_pParent;
 };
 
 
-OrganizeDlg::OrganizeDlg()
+OrganizeDlg::OrganizeDlg(GtkWindow* parent) : m_PrivPtr(new OrganizeDlgPriv(this, parent))
 {
-	OrganizeDlgPrivPtr ptr(new OrganizeDlgPriv(this));
-	m_PrivPtr = ptr;
 }
 
 
 GtkWidget* OrganizeDlg::GetWidget() const
 {
-	  return NULL;
+	  return GTK_WIDGET(m_PrivPtr->m_pDialogOrganize);
 }
 
 
@@ -181,8 +180,8 @@ static void on_editable_changed (GtkEditable *editable, gpointer user_data);
 static void combo_changed (GtkComboBox *widget, gpointer user_data);
 
 
-OrganizeDlg::OrganizeDlgPriv::OrganizeDlgPriv(OrganizeDlg *parent) :
-        m_pOrganizeDlg(parent)
+OrganizeDlg::OrganizeDlgPriv::OrganizeDlgPriv(OrganizeDlg *parent, GtkWindow* pParent) :
+        m_pOrganizeDlg(parent), m_pParent(pParent)
 {
 	m_pDialogOrganize = NULL;
 	m_pGtkBuilder = gtk_builder_new();
@@ -217,17 +216,14 @@ OrganizeDlg::OrganizeDlgPriv::~OrganizeDlgPriv()
 void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 {
 	m_pDialogOrganize         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "OrganizeDialog"));
+    gtk_window_set_transient_for(GTK_WINDOW(m_pDialogOrganize), m_pParent);
+    gtk_window_set_modal(GTK_WINDOW(m_pDialogOrganize), TRUE);
 
-	m_pBtnOK               = GTK_BUTTON(gtk_button_new_from_icon_name("gtk-ok"));
-	gtk_widget_set_visible(m_pBtnOK, TRUE);
-	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogOrganize)),m_pBtnOK);
+	m_pBtnOK               = GTK_BUTTON(gtk_dialog_add_button(m_pDialogOrganize, "_OK", GTK_RESPONSE_OK));
+	gtk_dialog_add_button(m_pDialogOrganize, "_Cancel", GTK_RESPONSE_CANCEL);
 
 	m_pComboTemplateFolder       = GTK_COMBO_BOX_TEXT( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
 	m_pEntryTemplateFile       = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "organize_entry_filename_template") );
-	//m_pTglBtnCurrentSelection = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_current_selection") );
-	//m_pTglBtnFolder           = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_folder") );
-	//m_pTglBtnCopy             = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_copy") );
-	//m_pTglBtnMove             = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_move") );
 	m_pSpinExtension            = GTK_SPIN_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_spinbutton_day_offset") );
 
 	m_pTglBtnSubfolders       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_subfolders") );
@@ -261,10 +257,6 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		NULL != m_pDialogOrganize        &&
 		NULL != m_pComboTemplateFolder   &&
 		NULL != m_pEntryTemplateFile     &&
-		//NULL != m_pTglBtnCurrentSelection&&
-		//NULL != m_pTglBtnFolder          &&
-		//NULL != m_pTglBtnCopy            &&
-		//NULL != m_pTglBtnMove            &&
 		NULL != m_pSpinExtension         &&
 		NULL != m_pTglBtnSubfolders      &&
 		NULL != m_pTglBtnRenameFiles     &&
@@ -390,14 +382,6 @@ void OrganizeDlg::OrganizeDlgPriv::ConnectSignals()
 		g_signal_connect(m_pTglBtnRenameFiles,
 			"clicked",(GCallback)on_clicked,this);
 
-		/*
-		g_signal_connect(m_pTglBtnCurrentSelection,
-			"toggled",(GCallback)on_toggled,this);
-
-		g_signal_connect(m_pTglBtnFolder,
-			"toggled",(GCallback)on_toggled,this);
-			*/
-
 		g_signal_connect(m_pEntryFolderName,
 			"changed",(GCallback)on_editable_changed,this);
 
@@ -457,7 +441,7 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 				GTK_BUTTONS_CLOSE,
 				"Source and Destination folders overlap. Please choose a different destination folder.");
 			gtk_window_set_title(GTK_WINDOW(dialog), "Folder Conflict");
-			gtk_dialog_run (GTK_DIALOG (dialog));
+			gint response = gtk_dialog_run (GTK_DIALOG (dialog));
 			gtk_widget_destroy (dialog);
 		}
 	}
@@ -574,7 +558,3 @@ void combo_changed (GtkComboBox *widget, gpointer user_data)
 	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
 	priv->UpdateUI();
 }
-
-
-
-

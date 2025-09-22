@@ -175,7 +175,7 @@ quiver_SOURCES = \
 	ExternalTools.h \
 	IExternalToolsEventHandler.h \
 	RenameDlg.h \
-	#RenameDlg.cpp \
+	RenameDlg.cpp \
 	RenameTask.h \
 	RenameTask.cpp \
 	SaveImageTask.h \

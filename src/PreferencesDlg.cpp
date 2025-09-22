@@ -9,7 +9,7 @@
 class PreferencesDlg::PreferencesDlgPriv
 {
 public:
-	PreferencesDlgPriv(PreferencesDlg* pPublic);
+	PreferencesDlgPriv(PreferencesDlg* pPublic, GtkWindow* pParent);
 	~PreferencesDlgPriv();
 	
 	void LoadWidgets();
@@ -26,6 +26,7 @@ public:
 	GtkColorDialogButton*  m_pClrBtnBrowser;
 	GtkColorDialogButton*  m_pClrBtnViewer;
 	PreferencesPtr         m_prefPtr;
+    GtkWindow*             m_pParent;
 };
 
 static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data);
@@ -34,7 +35,7 @@ static void on_viewer_film_strip_pos_changed(GtkDropDown *widget, GParamSpec* ps
 static void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data);
 
 
-PreferencesDlg::PreferencesDlg() : m_PrivPtr (new PreferencesDlgPriv(this) )
+PreferencesDlg::PreferencesDlg(GtkWindow* pParent) : m_PrivPtr (new PreferencesDlgPriv(this, pParent) )
 {
 }
 
@@ -50,7 +51,7 @@ void PreferencesDlg::Run()
     }
 }
 
-PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg* pPublic)
+PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg* pPublic, GtkWindow* pParent) : m_pParent(pParent)
 {
 	m_pPublic = pPublic;
 	m_prefPtr = Preferences::GetInstance();
@@ -63,6 +64,8 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg* pPublic)
     }
 
 	m_pWindow = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "QuiverPreferencesDialog"));
+    gtk_window_set_transient_for(GTK_WINDOW(m_pWindow), m_pParent);
+    gtk_window_set_modal(GTK_WINDOW(m_pWindow), TRUE);
 
 	LoadWidgets();
 	ConnectSignals();

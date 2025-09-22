@@ -12,8 +12,8 @@ void pixbuf_set_alpha(GdkPixbuf *src, guchar alpha)
 {
 	g_return_if_fail (GDK_IS_PIXBUF (src));
 	  
-	int i, j; //, t;
-	int width, height, has_alpha, src_rowstride, n_channels; //, bytes_per_pixel;
+	int i, j, t;
+	int width, height, has_alpha, src_rowstride, bytes_per_pixel,n_channels;
 	guchar *src_line;
 	guchar *src_pixel;
 
@@ -62,7 +62,7 @@ void pixbuf_set_grayscale(GdkPixbuf *src)
 
 	g_return_if_fail (GDK_IS_PIXBUF (src));
 	  
-	int i, j; //, t;
+	int i, j, t;
 	int width, height, has_alpha, src_rowstride, bytes_per_pixel;
 	guchar *src_line;
 	guchar *src_pixel;

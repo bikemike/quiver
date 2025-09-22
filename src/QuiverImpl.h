@@ -1,31 +1,15 @@
-#ifndef __QUIVER_H__
-#define __QUIVER_H__
+#ifndef QUIVER_IMPL_H
+#define QUIVER_IMPL_H
 
-#include <list>
-#include <string>
-#include <boost/shared_ptr.hpp>
 #include <gtk/gtk.h>
+#include <string>
+#include <list>
 
-class QuiverImpl;
-
-class Quiver
-{
-public:
-    Quiver(GtkApplication* app);
-    ~Quiver();
-
-    void Init(const std::list<std::string>& files, bool bStartSlideShow);
-
-    static gboolean EventDelete(GtkWidget *widget, gpointer data);
-
-    boost::shared_ptr<QuiverImpl> m_QuiverImplPtr;
-    GtkApplication* m_pApp;
-};
-
+// Forward declarations
+class Quiver;
 class Browser;
 class Viewer;
 class ExifView;
-class Statusbar;
 
 class QuiverImpl
 {
@@ -37,9 +21,6 @@ public:
     void CreateUI(GtkApplication* app);
     void Close();
 
-    void ShowBrowser();
-    void ShowViewer();
-
     void OnQuit();
     void OnFullScreen();
     void OnShowToolbar(bool bShow);
@@ -47,20 +28,23 @@ public:
     void OnShowMenubar(bool bShow);
     void OnOpenFile();
     void OnOpenFolder();
+    void OnHistoryUp();
+    void OnHistoryBack();
+    void OnHistoryForward();
+    void OnAbout();
+    void OnDonate();
     void OnOpenLocation();
     void OnClose();
     void OnPrint();
     void OnPreferences();
-    void OnAbout();
-    void OnDonate();
     void OnAdjustDate();
     void OnRename();
     void OnOrganize();
     void OnDelete();
     void OnFileProperties();
-    void OnHistoryUp();
-    void OnHistoryBack();
-    void OnHistoryForward();
+
+    void ShowBrowser();
+    void ShowViewer();
 
     void LoadSettings();
     void SaveSettings();
@@ -69,16 +53,15 @@ public:
     GtkWidget* m_pMainVBox;
     GtkWidget* m_pMenubar;
     GtkWidget* m_pToolbar;
-    Statusbar* m_pStatusbar;
+    GtkWidget* m_pStatusbar;
     GtkWidget* m_pCurrentView;
     Browser* m_BrowserPtr;
     Viewer* m_ViewerPtr;
     ExifView* m_pExifView;
     int m_iUIMode;
-
     Quiver* m_pQuiver;
     std::list<std::string> m_files;
     bool m_bStartSlideShow;
 };
 
-#endif // __QUIVER_H__
+#endif // QUIVER_IMPL_H

@@ -9,7 +9,7 @@ class OrganizeDlg
 {
 public:
 	//constructor
-	            OrganizeDlg();
+	            OrganizeDlg(GtkWindow* parent);
 	//~OrganizeDlg();
 	
 	//member functions

@@ -1,163 +1,100 @@
-#include <config.h>
+#include "config.h"
 
 #include "DonateDlg.h"
 
-#ifdef QUIVER_MAEMO
-#include <libosso.h>
-#ifdef HAVE_HILDON_MIME
-#include <hildon-mime.h>
-#else
-#include <osso-mime.h>
-#endif
-extern osso_context_t* osso_context;
-#endif
+#include <gtk/gtk.h>
+#include <gdk/gdk.h>
 
-#define DONATION_URL_MIME "text/html"
-#define DONATION_URL "http://mike.yi.org/donations/quiver/redirect/"
+#include <string>
 
-using namespace std;
+#define DONATION_URL "http://www.kainjow.com/quiver/donate.html"
 
 class DonateDlg::DonateDlgPriv
 {
 public:
-// constructor, destructor
-	DonateDlgPriv(DonateDlg *parent);
+	DonateDlgPriv(GtkWindow* pParent);
 	~DonateDlgPriv();
 	
-// methods
 	void LoadWidgets();
-	void UpdateUI();
 	void ConnectSignals();
 
-// variables
-	DonateDlg*     m_pDonateDlg;
-	GtkBuilder*         m_pGtkBuilder;
-	bool m_bLoadedDlg;
-	GtkWidget*             m_pWidget;
-	GtkButton*             m_pButtonClose;
-	GtkButton*             m_pButtonDonate;
+	GtkWindow* m_pParent;
+	GtkWidget* m_pWidget;
 };
 
+// --- Static Callbacks ---
+static void  on_clicked (GtkButton *button, gpointer user_data);
 
-DonateDlg::DonateDlg() : m_PrivPtr(new DonateDlg::DonateDlgPriv(this))
+
+DonateDlg::DonateDlg(GtkWindow* pParent) : m_PrivPtr(new DonateDlg::DonateDlgPriv(pParent))
 {
 }
-
 
 GtkWidget* DonateDlg::GetWidget() const
 {
-	  return NULL;
-}
-
-static void on_donate_dialog_response(GtkDialog *dialog, gint response_id, gpointer user_data)
-{
-    gtk_window_destroy(GTK_WINDOW(dialog));
+	return m_PrivPtr->m_pWidget;
 }
 
 void DonateDlg::Run()
 {
-	if (m_PrivPtr->m_bLoadedDlg)
-	{
-        g_signal_connect(m_PrivPtr->m_pWidget, "response", G_CALLBACK(on_donate_dialog_response), NULL);
-		gtk_widget_set_visible(m_PrivPtr->m_pWidget, true);
-	}
+    gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
 }
 
-// private stuff
 
-
-// prototypes
-static void  on_clicked (GtkButton *button, gpointer user_data);
-
-
-DonateDlg::DonateDlgPriv::DonateDlgPriv(DonateDlg *parent) :
-        m_pDonateDlg(parent)
+DonateDlg::DonateDlgPriv::DonateDlgPriv(GtkWindow* pParent) : m_pParent(pParent)
 {
-	m_bLoadedDlg = false;
-
-	m_pGtkBuilder = gtk_builder_new();
-	const char* objectids[] = {
-		"DonateDialog",
-		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 	LoadWidgets();
-	UpdateUI();
 	ConnectSignals();
 }
 
 DonateDlg::DonateDlgPriv::~DonateDlgPriv()
 {
-	if (NULL != m_pGtkBuilder)
+	if (NULL != m_pWidget)
 	{
-		g_object_unref(m_pGtkBuilder);
-		m_pGtkBuilder = NULL;
+		gtk_window_destroy(GTK_WINDOW(m_pWidget));
+		m_pWidget = NULL;
 	}
 }
 
 
 void DonateDlg::DonateDlgPriv::LoadWidgets()
 {
+    m_pWidget = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(m_pWidget), "Donate");
+    gtk_window_set_transient_for(GTK_WINDOW(m_pWidget), m_pParent);
+    gtk_window_set_modal(GTK_WINDOW(m_pWidget), TRUE);
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(m_pWidget), TRUE);
 
-	if (NULL != m_pGtkBuilder)
-	{
-		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "DonateDialog"));
+    gtk_dialog_add_button(GTK_DIALOG(m_pWidget), "_Close", GTK_RESPONSE_CLOSE);
 
-		m_pButtonDonate          = GTK_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "donate_button"));
-		m_pButtonClose           = GTK_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "close_button"));
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_start(vbox, 10);
+    gtk_widget_set_margin_end(vbox, 10);
+    gtk_widget_set_margin_top(vbox, 10);
+    gtk_widget_set_margin_bottom(vbox, 10);
 
-		m_bLoadedDlg = (
-				NULL != m_pWidget && 
-				NULL != m_pButtonClose && 
-				NULL != m_pButtonDonate 
-				); 
-	}
+    GtkWidget* label = gtk_label_new("If you enjoy using Quiver, please consider making a donation to support its development.");
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_box_append(GTK_BOX(vbox), label);
+
+    GtkWidget* button = gtk_button_new_with_label("Donate via PayPal");
+    gtk_box_append(GTK_BOX(vbox), button);
+    g_signal_connect(button, "clicked", G_CALLBACK(on_clicked), NULL);
+
+    gtk_window_set_child(GTK_WINDOW(m_pWidget), vbox);
 }
-
-void DonateDlg::DonateDlgPriv::UpdateUI()
-{
-	if (m_bLoadedDlg)
-	{
-	}	
-}
-
 
 void DonateDlg::DonateDlgPriv::ConnectSignals()
 {
-	if (m_bLoadedDlg)
-	{
-		g_signal_connect(m_pButtonClose,
-			"clicked",(GCallback)on_clicked,this);
-		g_signal_connect(m_pButtonDonate,
-			"clicked",(GCallback)on_clicked,this);
-
-	}
+	g_signal_connect(m_pWidget, "response", G_CALLBACK(gtk_window_destroy), NULL);
 }
 
-
-static void  on_clicked (GtkButton *button, gpointer user_data)
+static void on_clicked(GtkButton *button, gpointer user_data)
 {
-	DonateDlg::DonateDlgPriv *priv = static_cast<DonateDlg::DonateDlgPriv*>(user_data);
-	
-	if (button == priv->m_pButtonClose)
-	{
-		gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
-	}
-	else if (button == priv->m_pButtonDonate)
-	{
-#ifdef QUIVER_MAEMO
-		DBusConnection *con = (DBusConnection*)osso_get_dbus_connection(osso_context);
-#ifdef HAVE_HILDON_MIME
-		hildon_mime_open_file_with_mime_type (con,
-			DONATION_URL,
-			DONATION_URL_MIME);
-#else
-		osso_mime_open_file_with_mime_type (con,
-			DONATION_URL,
-			DONATION_URL_MIME);
-#endif
-#else
-	g_app_info_launch_default_for_uri(DONATION_URL, NULL, NULL);
-
-#endif
-	}
+    GError *error = NULL;
+    g_app_info_launch_default_for_uri(DONATION_URL, NULL, &error);
+    if (error) {
+        g_warning("Failed to open donation URL: %s", error->message);
+        g_error_free(error);
+    }
 }

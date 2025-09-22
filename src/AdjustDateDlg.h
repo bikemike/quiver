@@ -10,7 +10,7 @@ class AdjustDateDlg
 {
 public:
 	//constructor
-	AdjustDateDlg();
+	AdjustDateDlg(GtkWindow* parent);
 	//~AdjustDateDlg();
 	
 	//member functions

@@ -1,0 +1,10 @@
+#ifndef QUIVER_DEFS_H
+#define QUIVER_DEFS_H
+
+#define QUIVER_UI_MODE_NONE 0
+#define QUIVER_UI_MODE_BROWSER 1
+#define QUIVER_UI_MODE_VIEWER 2
+
+#define QUIVER_PREFS_APP "app"
+
+#endif // QUIVER_DEFS_H

@@ -97,12 +97,11 @@ fill_input_buffer (j_decompress_ptr cinfo)
 	nbytes = g_input_stream_read(src->infile, src->buffer, INPUT_BUF_SIZE, NULL, NULL);
 
 	if (nbytes <= 0) {
-		if (src->start_of_file) {	/* Treat empty input file as fatal error */
+		if (src->start_of_file)	/* Treat empty input file as fatal error */
 			printf("jpeg_gio_src fill_input_buffer: input is empty\n");
 			// FIXME: error
 			//ERREXIT(cinfo, JERR_INPUT_EMPTY);
-		}
-		WARNMS(cinfo, JWRN_JPEG_EOF);
+			WARNMS(cinfo, JWRN_JPEG_EOF);
 		/* Insert a fake EOI marker */
 		src->buffer[0] = (JOCTET) 0xFF;
 		src->buffer[1] = (JOCTET) JPEG_EOI;

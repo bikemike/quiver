@@ -417,3 +417,7 @@ gboolean progress_bar_pulse (gpointer data)
 	gtk_progress_bar_pulse(GTK_PROGRESS_BAR(pStatusbarImpl->m_pProgressbar));
 	return TRUE;
 }
+
+Statusbar::~Statusbar()
+{
+}

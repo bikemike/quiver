@@ -1,120 +1,559 @@
-#include <config.h>
-#include <gtk/gtk.h> // Should be the main GTK4 header
-#include <glib/gi18n.h> // For N_()
+#include "config.h"
 
-// Keep essential includes that are not GTK3 UI specific
+#include <gtk/gtk.h>
+#include <gdk/gdkkeysyms.h>
+
+#include <iostream>
+#include <algorithm>
+#include <vector>
+
 #include "Quiver.h"
-#include "ImageList.h" // Example, might be needed by other parts
-#include "QuiverFile.h"  // Example
-#include "QuiverPrefs.h" // Example
-#include "AbstractEventSource.h"
-#include "BrowserEventSource.h"
-#include "ViewerEventSource.h"
-#include "strnatcmp.h"
+#include "Statusbar.h"
+#include "Browser.h"
+#include "Viewer.h"
+#include "ExifView.h"
+#include "Preferences.h"
+#include "QuiverUtils.h"
+#include "QuiverDefs.h"
+#include "AdjustDateDlg.h"
+#include "RenameDlg.h"
+#include "OrganizeDlg.h"
+#include "DonateDlg.h"
+#include "QuiverFileOps.h"
 
+#ifdef HAVE_GSTREAMER
+#include <gst/gst.h>
+#endif
 
-// Forward declaration for the activate function
-static void app_activate (GtkApplication* app, gpointer user_data);
+gchar g_szConfigFilePath[1024];
 
-// Global for config path, might be needed by Preferences
-gchar g_szConfigDir[256]      = "";
-gchar g_szConfigFilePath[256] = "";
+// No class definition here
 
+static void app_activate(GtkApplication* app, gpointer user_data);
+static void app_open(GApplication* app, GFile** files, gint n_files, const gchar* hint, gpointer user_data);
 
-// A minimal Quiver class definition to allow compilation.
-// The actual functionality will be restored piece by piece.
-class QuiverImpl {
-public:
-    GtkApplication* m_pApp;
-};
-Quiver::Quiver(std::list<std::string> &images, bool bRecursive) : m_QuiverImplPtr(new QuiverImpl()) {
-    m_QuiverImplPtr->m_pApp = NULL;
+// Action handlers
+static void on_about(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    ((Quiver*)user_data)->m_QuiverImplPtr->OnAbout();
 }
-Quiver::~Quiver() {}
-void Quiver::Init() {}
-bool Quiver::LoadSettings() { return true; }
-void Quiver::SaveSettings() {}
-void Quiver::SetImageList(std::list<std::string>& images, bool bRecursive) {}
-void Quiver::ShowViewer() {}
-void Quiver::ShowBrowser() {}
-void Quiver::OnAbout() {}
-void Quiver::OnQuit() { if (m_QuiverImplPtr->m_pApp) g_application_quit(G_APPLICATION(m_QuiverImplPtr->m_pApp)); }
-void Quiver::OnFullScreen() {}
-void Quiver::OnShowToolbar(bool bShow) {}
-void Quiver::OnShowStatusbar(bool bShow) {}
-void Quiver::OnShowMenubar(bool bShow) {}
-void Quiver::OnShowProperties(bool bShow) {}
-void Quiver::OnOpenFile() {}
-void Quiver::OnOpenFolder() {}
-void Quiver::OnSlideShow(bool bStart) {}
-void Quiver::ImageChanged() {}
-void Quiver::Close() { if (m_QuiverImplPtr->m_pApp) g_application_quit(G_APPLICATION(m_QuiverImplPtr->m_pApp));}
-gboolean Quiver::EventDelete( GtkWidget *widget,GdkEvent  *event, gpointer   data ) {
-    Quiver* self = (Quiver*)data;
-    if (self) self->Close();
-    return TRUE; // Prevent default handler
+static void on_donate(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    ((Quiver*)user_data)->m_QuiverImplPtr->OnDonate();
 }
-gboolean Quiver::IdleQuiverInit(gpointer data) {return FALSE;}
-
-void Quiver::SetApplication(GtkApplication* app) {
-    m_QuiverImplPtr->m_pApp = app;
+static void on_quit(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    ((Quiver*)user_data)->m_QuiverImplPtr->Close();
 }
 
+static void on_open_file_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->OnOpenFile();
+}
+static void on_open_folder_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->OnOpenFolder();
+}
+static void on_view_browser_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->ShowBrowser();
+}
+static void on_view_viewer_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->ShowViewer();
+}
+static void on_fullscreen_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->OnFullScreen();
+}
+static void on_history_back_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->OnHistoryBack();
+}
+static void on_history_forward_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->OnHistoryForward();
+}
+static void on_history_up_action(GSimpleAction* action, GVariant* param, gpointer user_data) {
+    ((QuiverImpl*)user_data)->OnHistoryUp();
+}
 
-// Minimal main function for GTK4
-int main (int argc, char **argv)
+// Stateful actions
+static void on_show_menubar_change_state(GSimpleAction* action, GVariant* state, gpointer user_data) {
+    QuiverImpl* self = (QuiverImpl*)user_data;
+    gboolean bShow = g_variant_get_boolean(state);
+    self->OnShowMenubar(bShow);
+    g_simple_action_set_state(action, g_variant_new_boolean(bShow));
+}
+static void on_show_toolbar_change_state(GSimpleAction* action, GVariant* state, gpointer user_data) {
+    QuiverImpl* self = (QuiverImpl*)user_data;
+    gboolean bShow = g_variant_get_boolean(state);
+    self->OnShowToolbar(bShow);
+    g_simple_action_set_state(action, g_variant_new_boolean(bShow));
+}
+static void on_show_statusbar_change_state(GSimpleAction* action, GVariant* state, gpointer user_data) {
+    QuiverImpl* self = (QuiverImpl*)user_data;
+    gboolean bShow = g_variant_get_boolean(state);
+    self->OnShowStatusbar(bShow);
+    g_simple_action_set_state(action, g_variant_new_boolean(bShow));
+}
+
+
+// Main
+int main (int argc, char *argv[])
 {
-    // Internationalization
-    bindtextdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
-	bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
-	textdomain (GETTEXT_PACKAGE);
+    const gchar* config_dir = g_get_user_config_dir();
+    g_snprintf(g_szConfigFilePath, sizeof(g_szConfigFilePath), "%s/quiver/quiver.conf", config_dir);
 
-    // Config directory setup (minimal)
-	gchar* szConfDir = g_build_filename(g_get_user_config_dir(), "quiver",NULL);
-	strncpy(g_szConfigDir,szConfDir,255);
-	g_free(szConfDir);
-    g_mkdir_with_parents(g_szConfigDir, 0755);
+    GOptionContext* context = g_option_context_new("- image browser and viewer");
 
+    // Quiver options
+    gboolean bSlideShow = false;
+    GOptionEntry entries[] =
+    {
+        { "slideshow", 's', 0, G_OPTION_ARG_NONE, &bSlideShow, "Start in slideshow mode", NULL },
+        { NULL }
+    };
+    g_option_context_add_main_entries(context, entries, GETTEXT_PACKAGE);
 
-	GtkApplication* app = gtk_application_new ("org.yi.quiver", G_APPLICATION_DEFAULT_FLAGS);
+    // GStreamer options
+#ifdef HAVE_GSTREAMER
+    g_option_context_add_group(context, gst_init_get_option_group());
+#endif
 
-    // Create Quiver instance and pass app to it
-    std::list<std::string> images; // Dummy list
-    Quiver quiver_app(images, false);
-    quiver_app.SetApplication(app);
+    GError* error = NULL;
+    if (!g_option_context_parse(context, &argc, &argv, &error))
+    {
+        g_print("option parsing failed: %s\n", error->message);
+        return 1;
+    }
 
-	g_signal_connect (app, "activate", G_CALLBACK (app_activate), &quiver_app); // Pass quiver_app as user_data
-	int status = g_application_run (G_APPLICATION (app), argc, argv);
-	g_object_unref (app);
-	return status;
+#if !GLIB_CHECK_VERSION(2,35,0)
+    g_type_init();
+#endif
+
+    GtkApplication* app = gtk_application_new("org.quiver.quiver", G_APPLICATION_HANDLES_OPEN);
+
+    Quiver quiver(app);
+
+    const GActionEntry app_actions[] = {
+        { "about", on_about },
+        { "donate", on_donate },
+        { "quit", on_quit }
+    };
+    g_action_map_add_action_entries(G_ACTION_MAP(app), app_actions, G_N_ELEMENTS(app_actions), &quiver);
+
+    g_signal_connect(app, "activate", G_CALLBACK(app_activate), &quiver);
+    g_signal_connect(app, "open", G_CALLBACK(app_open), &quiver);
+
+#ifdef HAVE_GSTREAMER
+    gst_init (&argc, &argv);
+#endif
+
+    int status = g_application_run(G_APPLICATION(app), argc, argv);
+    g_object_unref(app);
+
+    return status;
 }
 
-static void app_activate (GtkApplication* app, gpointer user_data)
+static void app_activate(GtkApplication* app, gpointer user_data)
 {
-	GtkWidget *window;
-    Quiver* quiver_app = (Quiver*)user_data;
-
-	window = gtk_application_window_new (app);
-	gtk_window_set_title (GTK_WINDOW (window), "Quiver (GTK4 Migration - Minimal)");
-	gtk_window_set_default_size (GTK_WINDOW (window), 200, 200);
-
-    // Add a label to show something
-    GtkWidget *label = gtk_label_new ("Minimal Quiver Window");
-    gtk_window_set_child(GTK_WINDOW(window), label);
-
-    // Connect the window's close request to the application's quit method
-    g_signal_connect(window, "close-request", G_CALLBACK(+[](GtkWindow* window, gpointer user_data) -> gboolean {
-        Quiver* app = (Quiver*)user_data;
-        app->OnQuit();
-        return GDK_EVENT_STOP;
-    }), quiver_app);
-
-	gtk_window_present (GTK_WINDOW (window));
+    Quiver* quiver = (Quiver*)user_data;
+    std::list<std::string> files;
+    quiver->Init(files, false);
+    quiver->m_QuiverImplPtr->Init();
+    quiver->m_QuiverImplPtr->CreateUI(app);
 }
 
-// Comment out the rest of the original Quiver.cpp content for now
-/*
-// ... original Quiver.cpp content from here onwards is commented out ...
-// ... to avoid massive linker errors during this phase of migration.
-// ... It will be restored and migrated piece by piece.
-*/
+static void app_open(GApplication* app, GFile** files, gint n_files, const gchar* hint, gpointer user_data)
+{
+    Quiver* quiver = (Quiver*)user_data;
+    std::list<std::string> file_list;
+    for (int i = 0; i < n_files; i++) {
+        char* path = g_file_get_path(files[i]);
+        file_list.push_back(path);
+        g_free(path);
+    }
+    quiver->Init(file_list, false);
+    quiver->m_QuiverImplPtr->Init();
+    quiver->m_QuiverImplPtr->CreateUI(GTK_APPLICATION(app));
+}
+
+
+QuiverImpl::QuiverImpl(Quiver* pQuiver, std::list<std::string>& files, bool bStartSlideShow) :
+    m_pWindow(NULL),
+    m_pMainVBox(NULL),
+    m_pMenubar(NULL),
+    m_pToolbar(NULL),
+    m_pStatusbar(NULL),
+    m_pCurrentView(NULL),
+    m_BrowserPtr(NULL),
+    m_ViewerPtr(NULL),
+    m_pExifView(NULL),
+    m_iUIMode(QUIVER_UI_MODE_NONE),
+    m_pQuiver(pQuiver),
+    m_files(files),
+    m_bStartSlideShow(bStartSlideShow)
+{
+}
+
+QuiverImpl::~QuiverImpl()
+{
+    SaveSettings();
+
+    delete m_pStatusbar;
+    delete m_BrowserPtr;
+    delete m_ViewerPtr;
+    delete m_pExifView;
+}
+
+void QuiverImpl::Init()
+{
+    // Get the UI mode from preferences
+    Preferences* prefs = Preferences::GetInstance().get();
+    m_iUIMode = prefs->GetInteger(QUIVER_PREFS_APP, "ui_mode", QUIVER_UI_MODE_BROWSER);
+
+    // If we have files, then force viewer mode
+    if (!m_files.empty() || m_bStartSlideShow)
+        if (QUIVER_UI_MODE_VIEWER == m_iUIMode)
+            m_iUIMode = QUIVER_UI_MODE_BROWSER;
+}
+
+void QuiverImpl::Close()
+{
+    g_application_quit(G_APPLICATION(gtk_window_get_application(m_pWindow)));
+}
+
+void QuiverImpl::CreateUI(GtkApplication* app)
+{
+    // Create the widgets
+    m_pWindow = GTK_WINDOW(gtk_application_window_new(app));
+    g_signal_connect (G_OBJECT (m_pWindow), "close-request",
+              G_CALLBACK (Quiver::EventDelete), m_pQuiver);
+
+    m_pMainVBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(m_pWindow, m_pMainVBox);
+
+    GtkBuilder* builder = gtk_builder_new();
+    gchar* ui_file = g_build_filename(QUIVER_DATADIR, "quiver.ui", NULL);
+    if (g_file_test(ui_file, G_FILE_TEST_EXISTS)) {
+        gtk_builder_add_from_file(builder, ui_file, NULL);
+    }
+    g_free(ui_file);
+
+    m_pMenubar = GTK_WIDGET(gtk_builder_get_object(builder, "menubar"));
+    // The menubar is handled by the application in GTK4
+    // gtk_box_append(GTK_BOX(m_pMainVBox), m_pMenubar);
+    gtk_application_set_menubar(app, G_MENU_MODEL(m_pMenubar));
+
+
+    m_pToolbar = GTK_WIDGET(gtk_builder_get_object(builder, "toolbar"));
+    gtk_box_append(GTK_BOX(m_pMainVBox), m_pToolbar);
+
+    // Create the status bar
+    m_pStatusbar = new Statusbar();
+    gtk_box_append(GTK_BOX(m_pMainVBox), m_pStatusbar->GetWidget());
+
+    const GActionEntry win_actions[] = {
+        { "open-file", on_open_file_action },
+        { "open-folder", on_open_folder_action },
+        { "view-browser", on_view_browser_action },
+        { "view-viewer", on_view_viewer_action },
+        { "fullscreen", on_fullscreen_action },
+        { "back", on_history_back_action },
+        { "forward", on_history_forward_action },
+        { "up", on_history_up_action }
+    };
+    g_action_map_add_action_entries(G_ACTION_MAP(m_pWindow), win_actions, G_N_ELEMENTS(win_actions), this);
+
+    // show-menubar
+    GAction* show_menubar_action = G_ACTION(g_simple_action_new_stateful(
+        "show-menubar", NULL,
+        g_variant_new_boolean(gtk_widget_get_visible(GTK_WIDGET(m_pMenubar)))
+    ));
+    g_signal_connect(show_menubar_action, "change-state", G_CALLBACK(on_show_menubar_change_state), this);
+    g_action_map_add_action(G_ACTION_MAP(m_pWindow), show_menubar_action);
+    g_object_unref(show_menubar_action);
+
+    // show-toolbar
+    GAction* show_toolbar_action = G_ACTION(g_simple_action_new_stateful(
+        "show-toolbar", NULL,
+        g_variant_new_boolean(gtk_widget_get_visible(GTK_WIDGET(m_pToolbar)))
+    ));
+    g_signal_connect(show_toolbar_action, "change-state", G_CALLBACK(on_show_toolbar_change_state), this);
+    g_action_map_add_action(G_ACTION_MAP(m_pWindow), show_toolbar_action);
+    g_object_unref(show_toolbar_action);
+
+    // show-statusbar
+    GAction* show_statusbar_action = G_ACTION(g_simple_action_new_stateful(
+        "show-statusbar", NULL,
+        g_variant_new_boolean(gtk_widget_get_visible(GTK_WIDGET(m_pStatusbar->GetWidget())))
+    ));
+    g_signal_connect(show_statusbar_action, "change-state", G_CALLBACK(on_show_statusbar_change_state), this);
+    g_action_map_add_action(G_ACTION_MAP(m_pWindow), show_statusbar_action);
+    g_object_unref(show_statusbar_action);
+
+    m_pExifView = new ExifView();
+    m_BrowserPtr = new Browser();
+    m_ViewerPtr = new Viewer();
+
+    // Show the correct view
+    if (m_iUIMode == QUIVER_UI_MODE_BROWSER)
+        ShowBrowser();
+    else
+        ShowViewer();
+
+    // Show all the widgets
+    gtk_window_present(GTK_WINDOW(m_pWindow));
+
+    LoadSettings();
+}
+
+void QuiverImpl::ShowBrowser()
+{
+    if (m_pCurrentView == m_BrowserPtr->GetWidget())
+        return;
+
+    m_iUIMode = QUIVER_UI_MODE_BROWSER;
+
+    if (m_pCurrentView)
+        gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), false);
+
+    m_pCurrentView = m_BrowserPtr->GetWidget();
+    gtk_box_append(GTK_BOX(m_pMainVBox), m_pCurrentView);
+    gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), true);
+}
+
+void QuiverImpl::ShowViewer()
+{
+    if (m_pCurrentView == m_ViewerPtr->GetWidget())
+        return;
+
+    m_iUIMode = QUIVER_UI_MODE_VIEWER;
+
+    if (m_pCurrentView)
+        gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), false);
+
+    m_pCurrentView = m_ViewerPtr->GetWidget();
+    gtk_box_append(GTK_BOX(m_pMainVBox), m_pCurrentView);
+    gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), true);
+}
+
+Quiver::Quiver(GtkApplication* app) :
+    m_QuiverImplPtr(NULL)
+{
+    m_pApp = app;
+}
+
+Quiver::~Quiver()
+{
+    // The m_QuiverImplPtr is a boost::shared_ptr, so it will be deleted automatically.
+}
+
+void Quiver::Init(const std::list<std::string>& files, bool bStartSlideShow)
+{
+    if (!m_QuiverImplPtr)
+        m_QuiverImplPtr.reset(new QuiverImpl(this, const_cast<std::list<std::string>&>(files), bStartSlideShow));
+}
+
+void QuiverImpl::OnQuit()
+{
+    Close();
+}
+
+void QuiverImpl::OnFullScreen()
+{
+    Preferences* prefs = Preferences::GetInstance().get();
+    bool bFS = prefs->GetBoolean(QUIVER_PREFS_APP, "fullscreen", false);
+
+    if (bFS)
+    {
+        gtk_window_unfullscreen(m_pWindow);
+        prefs->SetBoolean(QUIVER_PREFS_APP, "fullscreen", false);
+    }
+    else
+    {
+        gtk_window_fullscreen(m_pWindow);
+        prefs->SetBoolean(QUIVER_PREFS_APP, "fullscreen", true);
+    }
+}
+
+void QuiverImpl::OnShowToolbar(bool bShow)
+{
+    Preferences* prefs = Preferences::GetInstance().get();
+    prefs->SetBoolean(QUIVER_PREFS_APP, "show_toolbar", bShow);
+
+    gtk_widget_set_visible(GTK_WIDGET(m_pToolbar), bShow);
+}
+
+void QuiverImpl::OnShowStatusbar(bool bShow)
+{
+    Preferences* prefs = Preferences::GetInstance().get();
+    prefs->SetBoolean(QUIVER_PREFS_APP, "show_statusbar", bShow);
+
+    gtk_widget_set_visible(GTK_WIDGET(m_pStatusbar->GetWidget()), bShow);
+}
+
+void QuiverImpl::OnShowMenubar(bool bShow)
+{
+    Preferences* prefs = Preferences::GetInstance().get();
+    prefs->SetBoolean(QUIVER_PREFS_APP, "show_menubar", bShow);
+
+    gtk_widget_set_visible(GTK_WIDGET(m_pMenubar), bShow);
+}
+
+static void open_file_dialog_callback(GObject* source_object, GAsyncResult* res, gpointer user_data)
+{
+    GtkFileDialog* dialog = GTK_FILE_DIALOG(source_object);
+    GFile* file = gtk_file_dialog_open_finish(dialog, res, NULL);
+    if (file) {
+        QuiverImpl* self = (QuiverImpl*)user_data;
+        char* uri = g_file_get_uri(file);
+        self->m_files.clear();
+        self->m_files.push_back(uri);
+        g_free(uri);
+        g_object_unref(file);
+        self->ShowBrowser();
+        // self->m_ViewerPtr->OpenFile(self->m_files.front().c_str());
+    }
+}
+
+void QuiverImpl::OnOpenFile()
+{
+    GtkFileDialog* dialog = gtk_file_dialog_new();
+    gtk_file_dialog_open(dialog, m_pWindow, NULL, open_file_dialog_callback, this);
+    g_object_unref(dialog);
+}
+
+static void select_folder_dialog_callback(GObject* source_object, GAsyncResult* res, gpointer user_data)
+{
+    GtkFileDialog* dialog = GTK_FILE_DIALOG(source_object);
+    GFile* file = gtk_file_dialog_select_folder_finish(dialog, res, NULL);
+    if (file) {
+        QuiverImpl* self = (QuiverImpl*)user_data;
+        char* uri = g_file_get_uri(file);
+        // self->m_BrowserPtr->OpenFolder(uri); // This still needs to be fixed
+        g_free(uri);
+        g_object_unref(file);
+        self->ShowBrowser();
+    }
+}
+
+void QuiverImpl::OnOpenFolder()
+{
+    GtkFileDialog* dialog = gtk_file_dialog_new();
+    gtk_file_dialog_select_folder(dialog, m_pWindow, NULL, select_folder_dialog_callback, this);
+    g_object_unref(dialog);
+}
+
+void QuiverImpl::OnHistoryUp()
+{
+    // This will be handled by the browser/viewer actions
+}
+
+void QuiverImpl::OnHistoryBack()
+{
+    // This will be handled by the browser/viewer actions
+}
+
+void QuiverImpl::OnHistoryForward()
+{
+    // This will be handled by the browser/viewer actions
+}
+
+void QuiverImpl::LoadSettings()
+{
+    Preferences* prefs = Preferences::GetInstance().get();
+
+    // Restore window size and position
+    bool bMaximised = prefs->GetBoolean(QUIVER_PREFS_APP, "maximised", false);
+    if (bMaximised)
+    {
+        gtk_window_maximize(m_pWindow);
+    }
+    else
+    {
+        int w = prefs->GetInteger(QUIVER_PREFS_APP, "w", -1);
+        int h = prefs->GetInteger(QUIVER_PREFS_APP, "h", -1);
+        if (w > 0 && h > 0)
+        {
+            gtk_window_set_default_size(m_pWindow,w,h);
+        }
+    }
+}
+
+void QuiverImpl::SaveSettings()
+{
+    Preferences* prefs = Preferences::GetInstance().get();
+
+    if (gtk_window_is_fullscreen(m_pWindow))
+    {
+        // Don't save settings if fullscreen
+    }
+    else if (gtk_window_is_maximized(m_pWindow))
+    {
+        prefs->SetBoolean(QUIVER_PREFS_APP, "maximised", true);
+    }
+    else
+    {
+        prefs->SetBoolean(QUIVER_PREFS_APP, "maximised", false);
+        int w,h;
+        gtk_window_get_default_size(m_pWindow,&w,&h);
+        prefs->SetInteger(QUIVER_PREFS_APP,"w",w);
+        prefs->SetInteger(QUIVER_PREFS_APP,"h",h);
+    }
+
+    prefs->SetInteger(QUIVER_PREFS_APP, "ui_mode", m_iUIMode);
+}
+
+gboolean Quiver::EventDelete(GtkWidget *widget, gpointer data)
+{
+    Quiver* pQuiver = (Quiver*)data;
+    pQuiver->m_QuiverImplPtr->Close();
+    return TRUE;
+}
+
+
+void QuiverImpl::OnAbout()
+{
+    const gchar *authors[] = { "Mike Morrison <mike@yi.org>", NULL };
+    gtk_show_about_dialog(m_pWindow,
+                          "program-name", "Quiver",
+                          "version", VERSION,
+                          "copyright", "Copyright © 2008 Mike Morrison",
+                          "website", "http://www.kainjow.com/quiver",
+                          "comments", "An image viewer for the GNOME desktop.",
+                          "authors", authors,
+                          "logo-icon-name", "quiver-icon-app",
+                          NULL);
+}
+
+void QuiverImpl::OnDonate()
+{
+    //DonateDlg donate(m_pWindow);
+    //donate.Run();
+}
+
+void QuiverImpl::OnOpenLocation()
+{
+}
+void QuiverImpl::OnClose()
+{
+}
+void QuiverImpl::OnPrint()
+{
+}
+void QuiverImpl::OnPreferences()
+{
+}
+void QuiverImpl::OnAdjustDate()
+{
+    //AdjustDateDlg dlg(m_pWindow);
+    //dlg.Run();
+}
+void QuiverImpl::OnRename()
+{
+    //RenameDlg dlg(m_pWindow);
+    //dlg.Run();
+}
+void QuiverImpl::OnOrganize()
+{
+    //OrganizeDlg dlg(m_pWindow);
+    //dlg.Run();
+}
+void QuiverImpl::OnDelete()
+{
+}
+void QuiverImpl::OnFileProperties()
+{
+}
