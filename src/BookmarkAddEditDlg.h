@@ -12,8 +12,8 @@ class BookmarkAddEditDlg
 {
 public:
 	//constructor
-	BookmarkAddEditDlg();
-	BookmarkAddEditDlg(Bookmark bookmark);
+	BookmarkAddEditDlg(GtkWindow* pParent);
+	BookmarkAddEditDlg(GtkWindow* pParent, Bookmark bookmark);
 	
 	//member functions
 	GtkWidget *GetWidget() const;

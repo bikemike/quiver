@@ -54,3 +54,5 @@ src/Makefile
 libquiver/Makefile.in
 libquiver/Makefile
 Makefile
+config.h
+po/.intltool-merge-cache
