@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <algorithm>
+#include <random>
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
@@ -710,9 +711,6 @@ void ImageList::ImageListImpl::LoadMimeTypes()
 		cout << endl;
 		//g_slist_foreach (formats, add_if_writable, &writable_formats);
 		g_slist_free (formats);
-#ifdef QUIVER_MAEMO
-		c_setSupportedMimeTypes.insert("sketch/png");
-#endif
 	}
 }
 
@@ -1411,7 +1409,7 @@ public:
 	}
 };
 
-class SortByDateModified : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByDate
 {
 public:
 
@@ -1433,7 +1431,7 @@ public:
 	}
 };
 
-class SortByDate : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByDate
 {
 public:
 
@@ -1499,7 +1497,9 @@ void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool b
 		}
 		case ImageList::SORT_BY_RANDOM:
 		{
-			std::random_shuffle(m_QuiverFileList.begin(), m_QuiverFileList.end());
+			std::random_device rd;
+			std::mt19937 g(rd());
+			std::shuffle(m_QuiverFileList.begin(), m_QuiverFileList.end(), g);
 			break;
 		}
 		default:

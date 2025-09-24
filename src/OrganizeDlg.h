@@ -10,7 +10,7 @@ class OrganizeDlg
 public:
 	//constructor
 	            OrganizeDlg(GtkWindow* parent);
-	//~OrganizeDlg();
+	            ~OrganizeDlg();
 	
 	//member functions
 	GtkWidget*  GetWidget() const;

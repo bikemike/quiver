@@ -76,12 +76,28 @@ namespace QuiverFileOps
 
 	bool CopyFile(QuiverFile src, QuiverFile dst)
 	{
-		// g_file_copy
+		GFile* src_file = g_file_new_for_uri(src.GetURI());
+		GFile* dst_dir = g_file_new_for_uri(dst.GetURI());
+		gboolean rval = g_file_copy(src_file, dst_dir, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, NULL);
+		g_object_unref(src_file);
+		g_object_unref(dst_dir);
+		return rval;
 	}
 
 	bool MoveFile(QuiverFile src, QuiverFile dst)
 	{
-		// g_file_move
+		GFile* src_file = g_file_new_for_uri(src.GetURI());
+		GFile* dst_dir = g_file_new_for_uri(dst.GetURI());
+		GError* error = NULL;
+		gboolean rval = g_file_move(src_file, dst_dir, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &error);
+		if (error)
+		{
+			cout << "Error moving file: " << error->message << endl;
+			g_error_free(error);
+		}
+		g_object_unref(src_file);
+		g_object_unref(dst_dir);
+		return rval;
 	}
 
 }

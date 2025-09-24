@@ -713,7 +713,6 @@ static GdkPixbuf* scale_pixbuf(GdkPixbuf* pixbuf, int size)
 {
 	gint width = gdk_pixbuf_get_width(pixbuf);
 	gint height = gdk_pixbuf_get_height(pixbuf);
-	gint dest_x = 0, dest_y = 0;
 	gint dest_width, dest_height;
 
 	if (width > height)

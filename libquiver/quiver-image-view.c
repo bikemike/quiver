@@ -1104,10 +1104,6 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 	GtkWidget *widget;
 	widget = GTK_WIDGET(imageview);
 
-	gint width, height;
-	width = 0;
-	height = 0;
-
 	if (NULL != priv->transition_pixbufs_intermediate)
 	{
 		
@@ -1143,12 +1139,6 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 			}
 			g_object_ref(pixbuf);
 			priv->pixbuf_scaled = pixbuf;
-
-			if (NULL != priv->pixbuf_scaled)
-			{
-				width = gdk_pixbuf_get_width(priv->pixbuf_scaled);
-				height = gdk_pixbuf_get_height(priv->pixbuf_scaled);
-			}
 
 			GList* next = 
 				g_list_next(priv->transition_pixbufs_intermediate);

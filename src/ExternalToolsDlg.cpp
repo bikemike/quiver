@@ -7,14 +7,14 @@
 #include "ExternalToolAddEditDlg.h"
 #include "QuiverStockIcons.h"
 #include "QuiverExternalTool.h"
-#include <gtk/gtkbitset.h>
+#include <gtk/gtk.h>
 
 using namespace std;
 
 class ExternalToolsDlg::ExternalToolsDlgPriv
 {
 public:
-	ExternalToolsDlgPriv(ExternalToolsDlg *parent);
+	ExternalToolsDlgPriv(ExternalToolsDlg *parent, GtkWindow* pParent);
 	~ExternalToolsDlgPriv();
 	
 	void LoadWidgets();
@@ -25,6 +25,7 @@ public:
 	ExternalToolsDlg*     m_pExternalToolsDlg;
 	GtkBuilder*         m_pGtkBuilder;
 	ExternalToolsPtr      m_ExternalToolsPtr;
+    GtkWindow*          m_pParent;
 
 	bool m_bLoadedDlg;
 	
@@ -52,17 +53,21 @@ static void on_clicked (GtkButton *button, gpointer user_data);
 static void selection_changed (GObject* selection, GParamSpec* pspec, gpointer user_data);
 static void setup_icon_factory(GtkListItemFactory* factory, GtkListItem* list_item);
 static void setup_name_factory(GtkListItemFactory* factory, GtkListItem* list_item);
-static void bind_icon_factory(GtkSignalListItemFactory* factory, GtkListItem* list_item);
-static void bind_name_factory(GtkSignalListItemFactory* factory, GtkListItem* list_item);
+static void bind_icon_factory(GtkListItemFactory* factory, GtkListItem* list_item);
+static void bind_name_factory(GtkListItemFactory* factory, GtkListItem* list_item);
 
 
-ExternalToolsDlg::ExternalToolsDlg() : m_PrivPtr(new ExternalToolsDlg::ExternalToolsDlgPriv(this))
+ExternalToolsDlg::ExternalToolsDlg(GtkWindow* parent) : m_PrivPtr(new ExternalToolsDlg::ExternalToolsDlgPriv(this, parent))
+{
+}
+
+ExternalToolsDlg::~ExternalToolsDlg()
 {
 }
 
 GtkWidget* ExternalToolsDlg::GetWidget()
 {
-	  return NULL;
+	  return m_PrivPtr->m_pWidget;
 }
 
 void ExternalToolsDlg::Run()
@@ -73,8 +78,9 @@ void ExternalToolsDlg::Run()
 	}
 }
 
-ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *parent) :
+ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *parent, GtkWindow* pParent) :
         m_pExternalToolsDlg(parent),
+        m_pParent(pParent),
         m_ExternalToolsEventHandler( new ExternalToolsEventHandler(this) )
 {
 	m_ExternalToolsPtr = ExternalTools::GetInstance();
@@ -82,7 +88,7 @@ ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *p
 	m_bLoadedDlg = false;
 
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const gchar* objectids[] = {
 		"ExternalToolsDialog",
 		NULL};
 	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
@@ -105,30 +111,33 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 {
 	if (NULL != m_pGtkBuilder)
 	{
-		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "ExternalToolsDialog"));
-		m_pColumnViewExternalTools     = GTK_COLUMN_VIEW(gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
+		m_pWidget = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "ExternalToolsDialog"));
+        gtk_window_set_transient_for(GTK_WINDOW(m_pWidget), m_pParent);
+		m_pColumnViewExternalTools = GTK_COLUMN_VIEW(gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
 
-		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_icon_name("window-close-symbolic") );
-		gtk_widget_set_visible(GTK_WIDGET(m_pButtonClose), TRUE);
+		m_pButtonClose = GTK_BUTTON( gtk_button_new_from_icon_name("window-close-symbolic") );
+        gtk_dialog_add_button(GTK_DIALOG(m_pWidget), "Close", GTK_RESPONSE_CLOSE);
 
-		if (m_pWidget)
-		{
-			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose));
-		}
+
 		if (m_pColumnViewExternalTools)
 		{
-            GtkColumnViewColumn* icon_column = gtk_column_view_get_column(m_pColumnViewExternalTools, 0);
-            GtkColumnViewColumn* name_column = gtk_column_view_get_column(m_pColumnViewExternalTools, 1);
+            GListModel* columns = gtk_column_view_get_columns(m_pColumnViewExternalTools);
+            GtkColumnViewColumn* icon_column = GTK_COLUMN_VIEW_COLUMN(g_list_model_get_item(columns, 0));
+            GtkColumnViewColumn* name_column = GTK_COLUMN_VIEW_COLUMN(g_list_model_get_item(columns, 1));
 
-            GtkSignalListItemFactory* icon_factory = gtk_signal_list_item_factory_new();
+            GtkListItemFactory* icon_factory = gtk_signal_list_item_factory_new();
             g_signal_connect(icon_factory, "setup", G_CALLBACK(setup_icon_factory), NULL);
             g_signal_connect(icon_factory, "bind", G_CALLBACK(bind_icon_factory), NULL);
-            gtk_column_view_column_set_factory(icon_column, GTK_LIST_ITEM_FACTORY(icon_factory));
+            gtk_column_view_column_set_factory(icon_column, icon_factory);
 
-            GtkSignalListItemFactory* name_factory = gtk_signal_list_item_factory_new();
+            GtkListItemFactory* name_factory = gtk_signal_list_item_factory_new();
             g_signal_connect(name_factory, "setup", G_CALLBACK(setup_name_factory), NULL);
             g_signal_connect(name_factory, "bind", G_CALLBACK(bind_name_factory), NULL);
-            gtk_column_view_column_set_factory(name_column, GTK_LIST_ITEM_FACTORY(name_factory));
+            gtk_column_view_column_set_factory(name_column, name_factory);
+
+            g_object_unref(icon_column);
+            g_object_unref(name_column);
+            g_object_unref(columns);
 		}
 
 		m_pButtonMoveUp          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_move_up") );
@@ -151,11 +160,11 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 
 void ExternalToolsDlg::ExternalToolsDlgPriv::SelectionChanged()
 {
-    GtkMultiSelection* selection = GTK_MULTI_SELECTION(gtk_column_view_get_model(m_pColumnViewExternalTools));
+    GtkSelectionModel* selection = gtk_column_view_get_model(m_pColumnViewExternalTools);
     if (!selection) return;
 
-    GtkBitset* selected_bitset = gtk_selection_model_get_selection(GTK_SELECTION_MODEL(selection));
-    int selection_count = gtk_bitset_size(selected_bitset);
+    GtkBitset* selected_bitset = gtk_selection_model_get_selection(selection);
+    guint selection_count = gtk_bitset_get_size(selected_bitset);
     gtk_bitset_unref(selected_bitset);
 
 	if (0 == selection_count)
@@ -222,20 +231,22 @@ static void on_clicked (GtkButton *button, gpointer user_data)
 {
 	ExternalToolsDlg::ExternalToolsDlgPriv *priv = static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
 	
-    GtkMultiSelection* selection = GTK_MULTI_SELECTION(gtk_column_view_get_model(priv->m_pColumnViewExternalTools));
-    if (!selection) return;
+    GtkSelectionModel* selection_model = gtk_column_view_get_model(priv->m_pColumnViewExternalTools);
+    if (!selection_model) return;
 
-    GtkBitset* selected_bitset = gtk_selection_model_get_selection(GTK_SELECTION_MODEL(selection));
+    GtkBitset* selected_bitset = gtk_selection_model_get_selection(selection_model);
 
     list<int> values;
     GtkBitsetIter iter;
     guint position;
-    for (position = gtk_bitset_iter_init_first(selected_bitset, &iter); position != GTK_BITSET_INVALID; position = gtk_bitset_iter_init_next(selected_bitset, &iter))
+    if (gtk_bitset_iter_init_first(&iter, selected_bitset, &position))
     {
-        QuiverExternalTool* tool_obj = (QuiverExternalTool*)g_list_model_get_item(G_LIST_MODEL(selection), position);
-        const ExternalTool& tool = quiver_external_tool_get_tool(tool_obj);
-        values.push_back(tool.GetID());
-        g_object_unref(tool_obj);
+        do {
+            QuiverExternalTool* tool_obj = (QuiverExternalTool*)g_list_model_get_item(G_LIST_MODEL(selection_model), position);
+            const ExternalTool& tool = quiver_external_tool_get_tool(tool_obj);
+            values.push_back(tool.GetID());
+            g_object_unref(tool_obj);
+        } while (gtk_bitset_iter_next(&iter, &position));
     }
     gtk_bitset_unref(selected_bitset);
 
@@ -255,7 +266,7 @@ static void on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonAdd)
 	{
-		ExternalToolAddEditDlg dlg;
+		ExternalToolAddEditDlg dlg(priv->m_pParent);
 		dlg.Run();
 	}
 	else if (button == priv->m_pButtonEdit)
@@ -265,7 +276,7 @@ static void on_clicked (GtkButton *button, gpointer user_data)
 			const ExternalTool* ext = priv->m_ExternalToolsPtr->GetExternalTool(id);
 			if (NULL != ext)
 			{
-				ExternalToolAddEditDlg dlg(*ext);
+				ExternalToolAddEditDlg dlg(priv->m_pParent, *ext);
 				dlg.Run();
 			}
 		}
@@ -301,7 +312,7 @@ static void setup_name_factory(GtkListItemFactory* factory, GtkListItem* list_it
     gtk_list_item_set_child(list_item, GTK_WIDGET(label));
 }
 
-static void bind_icon_factory(GtkSignalListItemFactory* factory, GtkListItem* list_item)
+static void bind_icon_factory(GtkListItemFactory* factory, GtkListItem* list_item)
 {
     GtkImage* image = GTK_IMAGE(gtk_list_item_get_child(list_item));
     QuiverExternalTool* tool = (QuiverExternalTool*)gtk_list_item_get_item(list_item);
@@ -311,7 +322,7 @@ static void bind_icon_factory(GtkSignalListItemFactory* factory, GtkListItem* li
     }
 }
 
-static void bind_name_factory(GtkSignalListItemFactory* factory, GtkListItem* list_item)
+static void bind_name_factory(GtkListItemFactory* factory, GtkListItem* list_item)
 {
     GtkLabel* label = GTK_LABEL(gtk_list_item_get_child(list_item));
     QuiverExternalTool* tool = (QuiverExternalTool*)gtk_list_item_get_item(list_item);

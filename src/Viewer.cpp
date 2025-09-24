@@ -16,6 +16,7 @@
 #include "Viewer.h"
 #include "Timer.h"
 #include "icons/nav_button.xpm"
+#include "IconManager.h"
 
 // #include "QuiverUtils.h" // Contains GtkUIManager helpers, commented out for now
 #include "QuiverVideoOps.h"
@@ -77,6 +78,10 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data);
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
+
+static void viewer_action_handler_cb(GAction *action, GVariant *parameter, gpointer user_data);
+static void viewer_toggle_action_handler_cb(GAction *action, GVariant *state, gpointer user_data);
+static void viewer_zoom_action_handler_cb(GAction *action, GVariant *state, gpointer user_data);
 
 // static void viewer_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data); // Commented out - GtkRadioAction is deprecated
 // static void viewer_action_handler_cb(GtkAction *action, gpointer data); // Commented out - GtkAction is deprecated
@@ -163,10 +168,6 @@ static gboolean timeout_play_position (gpointer data);
 #define ACTION_VIEWER_VIDEO_SKIP_BACK    "VideoSkipBack"
 #define ACTION_VIEWER_VIDEO_PLAY_2       ACTION_VIEWER_VIDEO_PLAY "_2"
 
-// #ifdef QUIVER_MAEMO // Hildon specific
-// #define ACTION_VIEWER_ZOOM_IN_MAEMO     ACTION_VIEWER_ZOOM_IN"_MAEMO"
-// #define ACTION_VIEWER_ZOOM_OUT_MAEMO    ACTION_VIEWER_ZOOM_OUT"_MAEMO"
-// #endif
 
 // GtkUIManager related UI definition string - will need replacement with GMenuModel / GtkBuilder
 /*
@@ -207,10 +208,6 @@ static const gchar* pszActionsImage[] =
 	ACTION_VIEWER_FLIP_V,
 	ACTION_VIEWER_FLIP_H_2,
 	ACTION_VIEWER_FLIP_V_2,
-// #ifdef QUIVER_MAEMO
-//	ACTION_VIEWER_ZOOM_IN_MAEMO,
-//	ACTION_VIEWER_ZOOM_OUT_MAEMO,
-// #endif
 };
 
 // has next
@@ -244,10 +241,6 @@ static GtkActionEntry action_entries[] = {
 	{ ACTION_VIEWER_PREVIOUS_2, QUIVER_STOCK_GO_BACK, "_Previous Image", "<Shift>space", "Go to previous image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_NEXT, QUIVER_STOCK_GO_FORWARD, "_Next Image", "space", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_NEXT_2, QUIVER_STOCK_GO_FORWARD, "_Next Image", "<Shift>BackSpace", "Go to next image", G_CALLBACK(viewer_action_handler_cb)},
-// #ifdef QUIVER_MAEMO
-//	{ ACTION_VIEWER_ZOOM_IN_MAEMO, QUIVER_STOCK_ZOOM_IN,"Zoom _In", "F7", "Zoom In", G_CALLBACK(viewer_action_handler_cb)},
-//	{ ACTION_VIEWER_ZOOM_OUT_MAEMO, QUIVER_STOCK_ZOOM_OUT,"Zoom _Out", "F8", "Zoom Out", G_CALLBACK(viewer_action_handler_cb)},
-// #endif
 	{ ACTION_VIEWER_FIRST, QUIVER_STOCK_GOTO_FIRST, "_First Image", "Home", "Go to first image", G_CALLBACK(viewer_action_handler_cb)},
 	{ ACTION_VIEWER_LAST, QUIVER_STOCK_GOTO_LAST, "_Last Image", "End", "Go to last image", G_CALLBACK(viewer_action_handler_cb)},
 
@@ -530,6 +523,8 @@ public:
 	bool m_bWasPlayingBeforeSeek;
 	ViewerThumbLoader            m_ThumbnailLoader;
 
+    GSimpleActionGroup *m_pActionGroup;
+    GtkWidget* m_pContextMenu;
 };
 
 void Viewer::ViewerImpl::SetImageList(ImageListPtr imgList)
@@ -543,6 +538,45 @@ void Viewer::ViewerImpl::SetImageList(ImageListPtr imgList)
 	if (m_ImageListPtr) { // Check if successfully set
 		m_ImageListPtr->AddEventHandler(m_ImageListEventHandlerPtr);
 	}
+}
+
+static void viewer_action_handler_cb(GAction *action, GVariant *parameter, gpointer user_data)
+{
+    Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
+    const gchar *name = g_action_get_name(action);
+
+    // TODO: Implement handlers for stateless actions
+}
+
+static void viewer_toggle_action_handler_cb(GAction *action, GVariant *state, gpointer user_data)
+{
+    Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
+    const gchar *name = g_action_get_name(action);
+    gboolean is_active = g_variant_get_boolean(state);
+
+    if (strcmp(name, ACTION_VIEWER_VIEW_FILM_STRIP) == 0)
+    {
+        gtk_widget_set_visible(pViewerImpl->m_pIconView, is_active);
+        Preferences::GetInstance()->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, is_active);
+    }
+    else if (strcmp(name, ACTION_VIEWER_ROTATE_FOR_BEST_FIT) == 0)
+    {
+        pViewerImpl->m_bMaximizeViewableArea = is_active;
+        Preferences::GetInstance()->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, is_active);
+    }
+
+    g_action_change_state(action, state);
+}
+
+static void viewer_zoom_action_handler_cb(GAction *action, GVariant *state, gpointer user_data)
+{
+    Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
+    const gchar *name = g_action_get_name(action);
+
+    QuiverImageViewMode mode = (QuiverImageViewMode)g_variant_get_int32(state);
+    quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView), mode);
+
+    g_action_change_state(action, state);
 }
 // has image
 
@@ -1577,10 +1611,28 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	m_pViewer = pViewer;
 
-	m_pIconView = quiver_icon_view_new();
-    gtk_widget_add_css_class(m_pIconView, "icon-view");
-	m_pImageView = quiver_image_view_new();
-    gtk_widget_add_css_class(m_pImageView, "image-view");
+    GtkBuilder* builder = gtk_builder_new_from_file(QUIVER_DATADIR "/viewer.ui");
+    m_pHBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_hbox"));
+    m_pVBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_vbox"));
+    m_pGrid = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_grid"));
+    m_pIconView = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_icon_view"));
+    m_pImageView = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_image_view"));
+    m_pVideoWidget = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_video_widget"));
+    m_pMediaControls = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_media_controls"));
+    m_pPlayButton = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_play_button"));
+    m_pPlayImage = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_play_image"));
+    m_pTimeline = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_timeline_box"));
+    m_pTimeLabel = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_time_label"));
+    m_pPlayProgress = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_play_progress"));
+    m_pPlayProgressEventBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_progress_box"));
+    m_pVolumeButton = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_volume_button"));
+    m_pScrollbarV = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_scrollbar_v"));
+    m_pScrollbarH = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_scrollbar_h"));
+    m_pNavigationBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_navigation_box"));
+    m_pContextMenu = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_context_menu"));
+    gtk_widget_set_parent(m_pContextMenu, m_pHBox);
+    g_object_unref(builder);
+
 	gtk_widget_set_size_request(m_pImageView, 100, 100);
 
     string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
@@ -1594,39 +1646,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
         gtk_widget_add_css_class(m_pIconView, "custom-bg");
         gtk_widget_add_css_class(m_pImageView, "custom-bg");
     }
-
-
-    GtkWidget* media_controls_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_halign(media_controls_box, GTK_ALIGN_END);
-    gtk_widget_set_valign(media_controls_box, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(media_controls_box, 10);
-    gtk_widget_set_margin_end(media_controls_box, 10);
-	m_pMediaControls = media_controls_box;
-
-
-	GtkWidget* hbox1     = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
-	GtkWidget* hbox2     = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,5);
-	m_pPlayProgress      = gtk_progress_bar_new();
-	m_pTimeLabel         = gtk_label_new("0:00 / 0:00");
-	// Default GtkScaleButton: min 0, max 1, step 0.05. Icons: "audio-volume-muted-symbolic", "audio-volume-low-symbolic", "audio-volume-medium-symbolic", "audio-volume-high-symbolic"
-	const char* icons[] = {"audio-volume-muted-symbolic", "audio-volume-low-symbolic", "audio-volume-medium-symbolic", "audio-volume-high-symbolic", NULL};
-	m_pVolumeButton      = gtk_scale_button_new(0.0, 1.0, 0.05, icons);
-
-    m_pPlayProgressEventBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_box_append(GTK_BOX(m_pPlayProgressEventBox), m_pPlayProgress);
-    gtk_widget_set_hexpand(m_pPlayProgress, TRUE);
-
-
-	gtk_box_append (GTK_BOX (hbox2), m_pTimeLabel);
-	gtk_box_append (GTK_BOX (hbox2), m_pPlayProgressEventBox);
-	gtk_box_append (GTK_BOX (hbox2), m_pVolumeButton);
-
-    m_pTimeline = hbox2;
-
-    m_pPlayButton = gtk_button_new();
-    m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start-symbolic");
-    gtk_button_set_child(GTK_BUTTON(m_pPlayButton), m_pPlayImage);
-
 
 	g_signal_connect(G_OBJECT(m_pVolumeButton), "value-changed", G_CALLBACK(viewer_volume_value_changed), this);
 
@@ -1657,13 +1676,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     gtk_widget_add_controller(m_pPlayProgressEventBox, progress_motion);
 
 
-	gtk_box_append (GTK_BOX (hbox1), m_pPlayButton);
-	gtk_box_append (GTK_BOX (hbox1), m_pTimeline);
-    gtk_widget_set_hexpand(m_pTimeline, TRUE);
-
-
-    gtk_box_append(GTK_BOX(media_controls_box), hbox1);
-    gtk_widget_set_visible(media_controls_box, FALSE);
+    gtk_widget_set_visible(m_pMediaControls, FALSE);
 
 	m_iCurrentOrientation = 1;
 	m_iMergedViewerUI = 0;
@@ -1681,17 +1694,16 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
 	m_pAdjustmentV = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
 
-	m_pScrollbarV = gtk_scrollbar_new (GTK_ORIENTATION_VERTICAL, m_pAdjustmentV);
-	m_pScrollbarH = gtk_scrollbar_new (GTK_ORIENTATION_HORIZONTAL, m_pAdjustmentH);
+    gtk_scrollbar_set_adjustment(GTK_SCROLLBAR(m_pScrollbarH), m_pAdjustmentH);
+    gtk_scrollbar_set_adjustment(GTK_SCROLLBAR(m_pScrollbarV), m_pAdjustmentV);
 
-	m_pNavigationBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	GdkPixbuf *nav_pixbuf = gdk_pixbuf_new_from_xpm_data ((const char**) nav_button_xpm);
 	GtkWidget *nav_image = NULL;
     if (nav_pixbuf) {
         nav_image = gtk_image_new_from_paintable (GDK_PAINTABLE(nav_pixbuf));
 	    g_object_unref (G_OBJECT (nav_pixbuf));
     } else {
-        nav_image = gtk_image_new_from_icon_name("image-missing-symbolic");
+        nav_image = gtk_image_new_from_paintable(IconManager::GetInstance()->GetIcon("image-missing-symbolic"));
     }
 	gtk_box_append (GTK_BOX(m_pNavigationBox),nav_image);
 	gtk_widget_set_visible(nav_image, TRUE);
@@ -1700,42 +1712,60 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_visible(m_pScrollbarH,FALSE);
 	gtk_widget_set_visible(m_pNavigationBox,FALSE);
 
-
-	m_pGrid = gtk_grid_new ();
-
-	m_pVideoWidget = gtk_video_new(); // Create GtkVideo widget
     gtk_widget_set_visible(m_pVideoWidget, FALSE);
-    gtk_widget_set_hexpand(m_pVideoWidget, TRUE);
-    gtk_widget_set_vexpand(m_pVideoWidget, TRUE);
-    gtk_grid_attach(GTK_GRID(m_pGrid), m_pVideoWidget, 0, 0, 1, 1); // Add GtkVideo to grid, same spot as ImageView
-
-	gtk_widget_set_hexpand(m_pImageView, TRUE);
-	gtk_widget_set_vexpand(m_pImageView, TRUE);
-	gtk_grid_attach (GTK_GRID (m_pGrid), m_pImageView, 0, 0, 1, 1);
-
-	// Media controls overlay on image view / video widget
-    gtk_widget_set_hexpand(media_controls_box, TRUE);
-	gtk_widget_set_vexpand(media_controls_box, TRUE);
-    gtk_widget_set_halign(media_controls_box, GTK_ALIGN_END);
-    gtk_widget_set_valign(media_controls_box, GTK_ALIGN_START);
-	gtk_grid_attach (GTK_GRID (m_pGrid), media_controls_box, 0, 0, 1, 1);
-
-
-	gtk_widget_set_vexpand(m_pScrollbarV, TRUE);
-	gtk_grid_attach (GTK_GRID (m_pGrid), m_pScrollbarV, 1, 0, 1, 1);
-
-	gtk_widget_set_hexpand(m_pScrollbarH, TRUE);
-	gtk_grid_attach (GTK_GRID (m_pGrid), m_pScrollbarH, 0, 1, 1, 1);
-
-	gtk_grid_attach (GTK_GRID (m_pGrid), m_pNavigationBox, 1, 1, 1, 1);
-
-	m_pHBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
-	m_pVBox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
-
-	gtk_box_append (GTK_BOX (m_pVBox), m_pGrid);
-	gtk_box_append (GTK_BOX (m_pHBox), m_pVBox);
 
 	AddFilmstrip();
+
+    m_pActionGroup = g_simple_action_group_new();
+
+    // Add toggle actions
+    GAction *toggle_action_filmstrip = (GAction*)g_simple_action_new_stateful(
+        ACTION_VIEWER_VIEW_FILM_STRIP, NULL, g_variant_new_boolean(prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true)));
+    g_signal_connect(toggle_action_filmstrip, "change-state", G_CALLBACK(viewer_toggle_action_handler_cb), this);
+    g_action_map_add_action(G_ACTION_MAP(m_pActionGroup), toggle_action_filmstrip);
+
+    GAction *toggle_action_rotate_best_fit = (GAction*)g_simple_action_new_stateful(
+        ACTION_VIEWER_ROTATE_FOR_BEST_FIT, NULL, g_variant_new_boolean(prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, false)));
+    g_signal_connect(toggle_action_rotate_best_fit, "change-state", G_CALLBACK(viewer_toggle_action_handler_cb), this);
+    g_action_map_add_action(G_ACTION_MAP(m_pActionGroup), toggle_action_rotate_best_fit);
+
+    // Add zoom action
+    GVariant* current_zoom_state = g_variant_new_int32(prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW));
+    GAction *zoom_action = (GAction*)g_simple_action_new_stateful("zoom", g_variant_type_new("i"), current_zoom_state);
+    g_signal_connect(zoom_action, "change-state", G_CALLBACK(viewer_zoom_action_handler_cb), this);
+    g_action_map_add_action(G_ACTION_MAP(m_pActionGroup), zoom_action);
+
+
+    // Add stateless actions
+    const gchar *actions[] = {
+        ACTION_VIEWER_CUT,
+        ACTION_VIEWER_COPY,
+        ACTION_VIEWER_TRASH,
+        ACTION_VIEWER_PREVIOUS,
+        ACTION_VIEWER_NEXT,
+        ACTION_VIEWER_FIRST,
+        ACTION_VIEWER_LAST,
+        ACTION_VIEWER_ZOOM_IN,
+        ACTION_VIEWER_ZOOM_OUT,
+        ACTION_VIEWER_ROTATE_CW,
+        ACTION_VIEWER_ROTATE_CCW,
+        ACTION_VIEWER_FLIP_H,
+        ACTION_VIEWER_FLIP_V,
+        ACTION_VIEWER_VIDEO_PLAY,
+        ACTION_VIEWER_VIDEO_SKIP_FORWARD,
+        ACTION_VIEWER_VIDEO_SKIP_BACK,
+        NULL
+    };
+
+    for (int i = 0; actions[i] != NULL; ++i)
+    {
+        GAction *action = (GAction*)g_simple_action_new(actions[i], NULL);
+        g_signal_connect(action, "activate", G_CALLBACK(viewer_action_handler_cb), this);
+        g_action_map_add_action(G_ACTION_MAP(m_pActionGroup), action);
+    }
+
+    gtk_widget_insert_action_group(m_pHBox, "viewer", G_ACTION_GROUP(m_pActionGroup));
+
 
     if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true)) {
     }
@@ -1774,6 +1804,12 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     GtkGesture* image_view_click_gesture = gtk_gesture_click_new();
     g_signal_connect(image_view_click_gesture, "pressed", G_CALLBACK(viewer_button_press_cb), this);
     gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(image_view_click_gesture));
+
+    GtkGesture* context_menu_gesture = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(context_menu_gesture), GDK_BUTTON_SECONDARY);
+    g_signal_connect_swapped(context_menu_gesture, "pressed", G_CALLBACK(gtk_popover_popup), m_pContextMenu);
+    gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(context_menu_gesture));
+    gtk_widget_add_controller(m_pVideoWidget, GTK_EVENT_CONTROLLER(g_object_ref(context_menu_gesture)));
 
     GtkEventController* scroll_controller = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
     g_signal_connect(scroll_controller, "scroll", G_CALLBACK(viewer_scrollwheel_event_cb), this);

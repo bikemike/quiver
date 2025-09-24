@@ -20,6 +20,7 @@
 #include "OrganizeDlg.h"
 #include "DonateDlg.h"
 #include "QuiverFileOps.h"
+#include "BrowserHistory.h"
 
 #ifdef HAVE_GSTREAMER
 #include <gst/gst.h>
@@ -404,7 +405,9 @@ static void open_file_dialog_callback(GObject* source_object, GAsyncResult* res,
         g_free(uri);
         g_object_unref(file);
         self->ShowBrowser();
-        // self->m_ViewerPtr->OpenFile(self->m_files.front().c_str());
+        ImageListPtr imageList(new ImageList());
+        imageList->SetImageList(&self->m_files);
+        self->m_BrowserPtr->SetImageList(imageList);
     }
 }
 
@@ -422,7 +425,11 @@ static void select_folder_dialog_callback(GObject* source_object, GAsyncResult* 
     if (file) {
         QuiverImpl* self = (QuiverImpl*)user_data;
         char* uri = g_file_get_uri(file);
-        // self->m_BrowserPtr->OpenFolder(uri); // This still needs to be fixed
+        std::list<std::string> files;
+        files.push_back(uri);
+        ImageListPtr imageList(new ImageList());
+        imageList->SetImageList(&files);
+        self->m_BrowserPtr->SetImageList(imageList);
         g_free(uri);
         g_object_unref(file);
         self->ShowBrowser();
@@ -438,17 +445,26 @@ void QuiverImpl::OnOpenFolder()
 
 void QuiverImpl::OnHistoryUp()
 {
-    // This will be handled by the browser/viewer actions
+    if (m_iUIMode == QUIVER_UI_MODE_BROWSER)
+    {
+        // m_BrowserPtr->GetBrowserHistory().Up();
+    }
 }
 
 void QuiverImpl::OnHistoryBack()
 {
-    // This will be handled by the browser/viewer actions
+    if (m_iUIMode == QUIVER_UI_MODE_BROWSER)
+    {
+        m_BrowserPtr->GetBrowserHistory().GoBack();
+    }
 }
 
 void QuiverImpl::OnHistoryForward()
 {
-    // This will be handled by the browser/viewer actions
+    if (m_iUIMode == QUIVER_UI_MODE_BROWSER)
+    {
+        m_BrowserPtr->GetBrowserHistory().GoForward();
+    }
 }
 
 void QuiverImpl::LoadSettings()
@@ -520,8 +536,8 @@ void QuiverImpl::OnAbout()
 
 void QuiverImpl::OnDonate()
 {
-    //DonateDlg donate(m_pWindow);
-    //donate.Run();
+    DonateDlg donate(m_pWindow);
+    donate.Run();
 }
 
 void QuiverImpl::OnOpenLocation()
@@ -538,8 +554,8 @@ void QuiverImpl::OnPreferences()
 }
 void QuiverImpl::OnAdjustDate()
 {
-    //AdjustDateDlg dlg(m_pWindow);
-    //dlg.Run();
+    AdjustDateDlg dlg(m_pWindow);
+    dlg.Run();
 }
 void QuiverImpl::OnRename()
 {

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkDialog" id="TaskManagerDialog">
+    <property name="title" translatable="yes">Task Manager</property>
+    <property name="modal">0</property>
+    <property name="destroy-with-parent">1</property>
+    <property name="default-width">500</property>
+    <property name="default-height">300</property>
+    <child internal-child="content_area">
+      <object class="GtkBox" id="content_area">
+        <property name="orientation">vertical</property>
+        <property name="spacing">10</property>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <property name="child">
+              <object class="GtkBox" id="task_list_box">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+              </object>
+            </property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="action">
+      <object class="GtkButton" id="close_button">
+        <property name="label" translatable="yes">_Close</property>
+        <property name="use-underline">1</property>
+        <property name="receives-default">1</property>
+      </object>
+    </child>
+  </object>
+</interface>

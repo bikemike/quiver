@@ -19,14 +19,10 @@ quiverdoc_DATA = \
 	INSTALL\
 	NEWS
 
-if MAEMO
-maemo_3rdparty = 3rdparty 
-endif
-
 EXTRA_DIST = config.rpath  ${quiverdoc_DATA} \
      intltool-extract.in \
 	 intltool-merge.in \
-	 intltool-update.in ${maemo_3rdparty}
+	 intltool-update.in
 
 
 dist-hook:

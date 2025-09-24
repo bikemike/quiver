@@ -1,7 +1,7 @@
 dnl Process this file with autoconf to produce a configure script.
 dnl Created by Anjuta application wizard.
 
-AC_INIT([quiver], [0.2.0], [http://mike.yi.org/quiver])
+AC_INIT([quiver],[0.2.0],[http://mike.yi.org/quiver])
 AC_CONFIG_SRCDIR([src/Quiver.cpp])
 
 AC_CONFIG_MACRO_DIR([m4])
@@ -15,14 +15,22 @@ AC_CHECK_HEADER([unordered_map],[AC_DEFINE([HAVE_CXX0X],[],["have cxx0x"])],[])
 AC_LANG_POP([C++])
 
 AM_CONFIG_HEADER([config.h])
-AC_PROG_LIBTOOL
+LT_INIT
 dnl AM_MAINTAINER_MODE
 
 AM_PROG_CC_C_O
 
-AC_ISC_POSIX
+AC_SEARCH_LIBS([strerror],[cposix])
 dnl AC_PROG_CC
-AC_HEADER_STDC
+m4_warn([obsolete],
+[The preprocessor macro `STDC_HEADERS' is obsolete.
+  Except in unusual embedded environments, you can safely include all
+  ISO C90 headers unconditionally.])dnl
+# Autoupdate added the next two lines to ensure that your configure
+# script's behavior did not change.  They are probably safe to remove.
+AC_CHECK_INCLUDES_DEFAULT
+AC_PROG_EGREP
+
 
 AC_CHECK_FUNCS([gettimeofday])
 AC_CHECK_HEADERS([sys/time.h])
@@ -33,7 +41,20 @@ AC_CHECK_HEADER([pthread.h],, [AC_MSG_ERROR([Could not find pthread.h])])
 
 AC_C_CONST
 AC_HEADER_STDBOOL
-AC_HEADER_TIME
+m4_warn([obsolete],
+[Update your code to rely only on HAVE_SYS_TIME_H,
+then remove this warning and the obsolete code below it.
+All current systems provide time.h; it need not be checked for.
+Not all systems provide sys/time.h, but those that do, all allow
+you to include it and time.h simultaneously.])dnl
+AC_CHECK_HEADERS_ONCE([sys/time.h])
+# Obsolete code to be removed.
+if test $ac_cv_header_sys_time_h = yes; then
+  AC_DEFINE([TIME_WITH_SYS_TIME],[1],[Define to 1 if you can safely include both <sys/time.h>
+	     and <time.h>.  This macro is obsolete.])
+fi
+# End of obsolete code.
+
 
 
 AC_PROG_CPP
@@ -52,7 +73,7 @@ dnl Add the languages which your application supports here.
 ALL_LINGUAS="fr"
 AM_GLIB_GNU_GETTEXT
 
-AC_PROG_INTLTOOL([0.21])
+IT_PROG_INTLTOOL([0.21])
 
 QUIVER_MODULES="gtk4 gio-2.0"
 
@@ -72,51 +93,7 @@ AC_ARG_WITH(
 	[build_config=$withval],
 	[])
 
-AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo]) 
-if test x$build_config = xmaemo; then
-	third_party_dir=`pwd`/${srcdir}/3rdparty
-# Hildon-libs -> libhildon1 (pkg-config name hildon-1)
-	PKG_CHECK_MODULES([HILDON_1], [hildon-1],
-		[ AC_DEFINE([HAVE_HILDON_1],[1],[hildon-1 is available]) ],
-		[have_hildon1=no]
-		[ PKG_CHECK_MODULES([HILDON_LIBS], [hildon-libs],
-			[ AC_DEFINE([HAVE_HILDON_LIBS],[1],[hildon-libs is available]) ],
-			[have_holdon_libs=no])])
-
-# Hildon-fm -> libhildonfm2 (pkg-config name hildon-fm-2)
-	PKG_CHECK_MODULES([HILDON_FM_2], [hildon-fm-2],
-		[ AC_DEFINE([HAVE_HILDON_FM_2],[1],[hildonfm2 is available]) ],
-		[have_hildon_fm_2=no]
-		[PKG_CHECK_MODULES([HILDON_FM], [hildon-fm],
-			[ AC_DEFINE([HAVE_HILDON_FM],[1],[hildon-fm is available]) ],
-			[have_hildon_fm=no])])
-
-# Libossomime0 -> libhildonmime0
-	PKG_CHECK_MODULES([HILDON_MIME], [libhildonmime],
-		[ AC_DEFINE([HAVE_HILDON_MIME],[1],[libhildonmime is available]) ],
-		[have_hildon_mime=no]
-		[PKG_CHECK_MODULES([OSSO_MIME], [libossomime],
-			[ AC_DEFINE([HAVE_OSSO_MIME],[1],[libossomime is available]) ],
-			[have_osso_mime=no])])
-
-	if test x$build_cpu = xarm; then
-		AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
-		ac_boost_path=${third_party_dir}/boost
-		boost_signals_static=yes
-		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
-		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/armel/libexif.a
-		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/armel/mt/release/libboost_signals-gcc-mt-1_33_1.a 
-	else
-		AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
-		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/x86/mt/release/libboost_signals-gcc-mt-1_33_1.a 
-		ac_boost_path=${third_party_dir}/boost
-		boost_signals_static=yes
-		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
-		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/x86/libexif.a
-	fi
-else
 	QUIVER_MODULES="$QUIVER_MODULES"
-fi
 
 AC_SUBST([PACKAGE_CFLAGS])
 
@@ -148,7 +125,7 @@ AC_ARG_WITH(
 
 AC_SUBST([quiver_datadir])
 
-AC_OUTPUT([
+AC_CONFIG_FILES([
 Makefile
 po/Makefile.in
 libquiver/Makefile
@@ -156,3 +133,4 @@ src/Makefile
 src/icons/Makefile
 data/Makefile
 ])
+AC_OUTPUT

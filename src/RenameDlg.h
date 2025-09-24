@@ -10,7 +10,7 @@ class RenameDlg
 public:
 	//constructor
 	            RenameDlg(GtkWindow* parent);
-	//~RenameDlg();
+	            ~RenameDlg();
 	
 	//member functions
 	GtkWidget*  GetWidget() const;

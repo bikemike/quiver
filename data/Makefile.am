@@ -1,27 +1,8 @@
-if MAEMO
-desktopdir = ${datadir}/applications/hildon
-
-servicedir = ${datadir}/dbus-1/services
-service_DATA = org.yi.mike.quiver.service
-
-icon_dir = hildon
-icons_64x54dir = ${datadir}/icons/hicolor/scalable/${icon_dir}
-
-icons_64x54_DATA = \
-	icons/64x54/quiver-icon-app.png
-
-
-desktop_src_files = quiver.desktop.in-maemo
-quiver.desktop.in: quiver.desktop.in-maemo
-	cp ${srcdir}/quiver.desktop.in-maemo quiver.desktop.in
-
-else
 desktopdir = ${datadir}/applications
 icon_dir = apps
 desktop_src_files = quiver.desktop.in-desktop
 quiver.desktop.in: quiver.desktop.in-desktop
 	cp ${srcdir}/quiver.desktop.in-desktop quiver.desktop.in
-endif
 
 uidir=${datadir}/quiver/data
 
@@ -68,6 +49,10 @@ icons_128x128_DATA = \
 
 ui_DATA = \
 	quiver.ui \
+	browser.ui \
+	viewer.ui \
+	task-manager-dialog.ui \
+	task-progress-widget.ui \
 	play.png \
 	pause.png \
 	filmholes.png \
