@@ -419,7 +419,7 @@ static void browser_imageview_reload(QuiverImageView *imageview,gpointer data);
 
 
 // static gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data) // GdkEventFocus is GTK3
-static void entry_focus_in_cb (GtkEventControllerFocus *controller, GParamSpec *pspec, gpointer user_data)
+static void entry_focus_in_cb (GtkEventControllerFocus* /*controller*/, GParamSpec* /*pspec*/, gpointer user_data)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 	// QuiverUtils::DisconnectUnmodifiedAccelerators(pBrowserImpl->m_pUIManager); // GtkUIManager is deprecated
@@ -439,7 +439,7 @@ static gboolean timeout_hide_location (gpointer data)
 }
 
 // static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data) // GdkEventFocus is GTK3
-static void entry_focus_out_cb (GtkEventControllerFocus *controller, GParamSpec *pspec, gpointer user_data)
+static void entry_focus_out_cb (GtkEventControllerFocus *controller, GParamSpec* /*pspec*/, gpointer user_data)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
     GtkWidget* entry = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
@@ -451,7 +451,7 @@ static void entry_focus_out_cb (GtkEventControllerFocus *controller, GParamSpec 
 	}
 }
 
-static void pane_position_notify_cb (GObject *gobject, GParamSpec *pspec, gpointer user_data)
+static void pane_position_notify_cb (GObject *gobject, GParamSpec* /*pspec*/, gpointer /*user_data*/)
 {
     GtkPaned* paned = GTK_PANED(gobject);
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -466,7 +466,7 @@ static void pane_position_notify_cb (GObject *gobject, GParamSpec *pspec, gpoint
 }
 
 void notebook_page_added_cb  (GtkNotebook *notebook,
-	GtkWidget *child, guint page_num, gpointer user_data)
+	GtkWidget* /*child*/, guint /*page_num*/, gpointer user_data)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
@@ -477,7 +477,7 @@ void notebook_page_added_cb  (GtkNotebook *notebook,
 }
 
 void notebook_page_removed_cb  (GtkNotebook *notebook,
-	GtkWidget *child, guint page_num, gpointer     user_data)
+	GtkWidget* /*child*/, guint /*page_num*/, gpointer user_data)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 	
@@ -1452,7 +1452,7 @@ static void browser_toggle_action_handler_cb(GAction *action, GVariant *state, g
     g_action_change_state(action, state);
 }
 
-static void browser_action_handler_cb(GAction *action, GVariant *parameter, gpointer user_data)
+static void browser_action_handler_cb(GAction *action, GVariant* /*parameter*/, gpointer user_data)
 {
     Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl *)user_data;
     const gchar *name = g_action_get_name(action);
@@ -1488,7 +1488,7 @@ static void browser_action_handler_cb(GAction *action, GVariant *parameter, gpoi
     }
     else if (strcmp(name, ACTION_BROWSER_SELECT_ALL) == 0)
     {
-        gtk_icon_view_select_all(GTK_ICON_VIEW(pBrowserImpl->m_pIconView));
+        quiver_icon_view_select_all_cells(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), TRUE);
     }
     else if (strcmp(name, ACTION_BROWSER_ZOOM_IN) == 0)
     {

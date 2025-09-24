@@ -52,6 +52,7 @@ using namespace std;
 
 #define SLIDESHOW_WAIT_DURATION 100 // milliseconds
 
+/*
 static int orientation_matrix[4][9] =
 {
 	{0,6,7,8,5,2,3,4,1}, //cw rotation
@@ -59,6 +60,7 @@ static int orientation_matrix[4][9] =
 	{0,2,1,4,3,6,5,8,7}, //flip h
 	{0,4,3,2,1,8,7,6,5}, //flip v
 };
+*/
 
 // combines two orientations
 static int combine_matrix[9][9] =
@@ -462,9 +464,6 @@ public:
 
 	ImageCache m_ThumbnailCache;
 
-	// gstreamer elements for playing videos
-	GstElement* m_pPipeline;
-	GtkWidget*  m_pVideoWidget; // The widget for video display (e.g., GtkVideo)
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -522,9 +521,11 @@ public:
 	bool m_bIsPlaying;
 	bool m_bWasPlayingBeforeSeek;
 	ViewerThumbLoader            m_ThumbnailLoader;
-
     GSimpleActionGroup *m_pActionGroup;
     GtkWidget* m_pContextMenu;
+	// gstreamer elements for playing videos
+	GstElement* m_pPipeline;
+	GtkWidget*  m_pVideoWidget; // The widget for video display (e.g., GtkVideo)
 };
 
 void Viewer::ViewerImpl::SetImageList(ImageListPtr imgList)
@@ -540,10 +541,10 @@ void Viewer::ViewerImpl::SetImageList(ImageListPtr imgList)
 	}
 }
 
-static void viewer_action_handler_cb(GAction *action, GVariant *parameter, gpointer user_data)
+static void viewer_action_handler_cb(GAction* /*action*/, GVariant* /*parameter*/, gpointer /*user_data*/)
 {
-    Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
-    const gchar *name = g_action_get_name(action);
+    // Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
+    // const gchar *name = g_action_get_name(action);
 
     // TODO: Implement handlers for stateless actions
 }
@@ -571,7 +572,7 @@ static void viewer_toggle_action_handler_cb(GAction *action, GVariant *state, gp
 static void viewer_zoom_action_handler_cb(GAction *action, GVariant *state, gpointer user_data)
 {
     Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
-    const gchar *name = g_action_get_name(action);
+    // const gchar *name = g_action_get_name(action);
 
     QuiverImageViewMode mode = (QuiverImageViewMode)g_variant_get_int32(state);
     quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView), mode);
@@ -1112,7 +1113,7 @@ static void viewer_motion_notify_cb(GtkEventControllerMotion* controller, double
 	}
 }
 
-static void viewer_play_button_mouse_in_cb(GtkEventControllerMotion* controller, double x, double y, gpointer user_data)
+static void viewer_play_button_mouse_in_cb(GtkEventControllerMotion* /*controller*/, double /*x*/, double /*y*/, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (pViewerImpl->IsPlaying())
@@ -1121,7 +1122,7 @@ static void viewer_play_button_mouse_in_cb(GtkEventControllerMotion* controller,
         gtk_image_set_from_icon_name(GTK_IMAGE(pViewerImpl->m_pPlayImage), "media-playback-start-symbolic");
 }
 
-static void viewer_play_button_mouse_out_cb(GtkEventControllerMotion* controller, gpointer user_data)
+static void viewer_play_button_mouse_out_cb(GtkEventControllerMotion* /*controller*/, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (pViewerImpl->IsPlaying())
@@ -1131,7 +1132,7 @@ static void viewer_play_button_mouse_out_cb(GtkEventControllerMotion* controller
 }
 
 
-static gboolean viewer_scrollwheel_event_cb(GtkEventControllerScroll* controller, gdouble dx, gdouble dy, gpointer data)
+static gboolean viewer_scrollwheel_event_cb(GtkEventControllerScroll* controller, gdouble /*dx*/, gdouble dy, gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
     GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
@@ -1152,13 +1153,13 @@ static gboolean viewer_scrollwheel_event_cb(GtkEventControllerScroll* controller
 }
 
 
-static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
+static void viewer_imageview_activated(QuiverImageView* /*imageview*/,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
 	pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 }
 
-static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
+static void viewer_imageview_reload(QuiverImageView* /*imageview*/,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
 	ImageLoader::LoadParams params = {0};
@@ -1175,7 +1176,7 @@ static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
 }
 
 
-static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gpointer data)
+static void viewer_imageview_magnification_changed(QuiverImageView* /*imageview*/,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
 	double mag = quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
@@ -1184,7 +1185,7 @@ static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gp
     }
 }
 
-static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpointer data)
+static void viewer_imageview_view_mode_changed(QuiverImageView* /*imageview*/,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
 
@@ -1195,7 +1196,7 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 	prefsPtr->SetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, unmagnified_mode);
 }
 
-static gboolean viewer_imageview_key_press_event_cb(GtkEventControllerKey* controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata)
+static gboolean viewer_imageview_key_press_event_cb(GtkEventControllerKey* /*controller*/, guint keyval, guint /*keycode*/, GdkModifierType /*state*/, gpointer userdata)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)userdata;
 	gboolean rval = FALSE;
@@ -1253,18 +1254,18 @@ static gboolean viewer_imageview_key_press_event_cb(GtkEventControllerKey* contr
 	return rval;
 }
 
-static void viewer_iconview_cell_activated(QuiverIconView *iconview,gulong cell,gpointer data)
+static void viewer_iconview_cell_activated(QuiverIconView* /*iconview*/,gulong /*cell*/,gpointer /*data*/)
 {
 }
 
-static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,gpointer data)
+static void viewer_iconview_cursor_changed(QuiverIconView* /*iconview*/,gulong cell,gpointer data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
 	bool bDirectionForward = (pViewerImpl->m_ImageListPtr->GetSize() && pViewerImpl->m_ImageListPtr->GetCurrentIndex() < cell);
 	pViewerImpl->SetImageIndex(cell,bDirectionForward);
 }
 
-static void viewer_volume_value_changed (GtkScaleButton *button, gdouble value, gpointer user_data)
+static void viewer_volume_value_changed (GtkScaleButton* /*button*/, gdouble value, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
     if (pViewerImpl->m_pPipeline) {
@@ -1298,7 +1299,7 @@ timeout_play_position (gpointer data)
 }
 
 static gboolean
-gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
+gstreamer_bus_watcher(GstBus* /*bus*/, GstMessage* msg, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
     if (!pViewerImpl || !pViewerImpl->m_pPipeline) return TRUE;
@@ -1504,7 +1505,7 @@ bool Viewer::ViewerImpl::IsVideo()
 }
 
 
-static void viewer_button_release_cb(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data)
+static void viewer_button_release_cb(GtkGestureClick* gesture, int /*n_press*/, double /*x*/, double /*y*/, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
     GtkWidget* widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
@@ -1518,7 +1519,7 @@ static void viewer_button_release_cb(GtkGestureClick* gesture, int n_press, doub
 	}
 }
 
-static void viewer_button_press_cb(GtkGestureClick* gesture, int n_press, double x, double y, gpointer user_data)
+static void viewer_button_press_cb(GtkGestureClick* gesture, int /*n_press*/, double x, double y, gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
     GtkWidget* widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
@@ -2261,7 +2262,7 @@ static gboolean timeout_update_scrollbars(gpointer user_data)
 	return G_SOURCE_REMOVE;
 }
 
-static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data)
+static void image_view_adjustment_changed (GtkAdjustment* /*adjustment*/, gpointer user_data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (0 != pViewerImpl->m_iTimeoutScrollbars)
@@ -2273,7 +2274,7 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 }
 
 
-void Viewer::ViewerImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
+void Viewer::ViewerImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr /*event*/)
 {
 	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
 	parent->m_ThumbnailLoader.UpdateList(true);
@@ -2282,12 +2283,12 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageL
 {
 	parent->SetImageIndex(event->GetIndex(),true);
 }
-void Viewer::ViewerImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
+void Viewer::ViewerImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr /*event*/)
 {
 	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
 	parent->m_ThumbnailLoader.UpdateList(true);
 }
-void Viewer::ViewerImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
+void Viewer::ViewerImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr /*event*/)
 {
 	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
 	parent->m_ThumbnailLoader.UpdateList(true);

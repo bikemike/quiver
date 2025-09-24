@@ -59,29 +59,31 @@ DonateDlg::DonateDlgPriv::~DonateDlgPriv()
 
 void DonateDlg::DonateDlgPriv::LoadWidgets()
 {
-    m_pWidget = gtk_dialog_new();
+    m_pWidget = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(m_pWidget), "Donate");
     gtk_window_set_transient_for(GTK_WINDOW(m_pWidget), m_pParent);
     gtk_window_set_modal(GTK_WINDOW(m_pWidget), TRUE);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(m_pWidget), TRUE);
-
-    gtk_dialog_add_button(GTK_DIALOG(m_pWidget), "_Close", GTK_RESPONSE_CLOSE);
+    gtk_window_set_default_size(GTK_WINDOW(m_pWidget), 300, 150);
 
     GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_set_margin_start(vbox, 10);
     gtk_widget_set_margin_end(vbox, 10);
     gtk_widget_set_margin_top(vbox, 10);
     gtk_widget_set_margin_bottom(vbox, 10);
+    gtk_window_set_child(GTK_WINDOW(m_pWidget), vbox);
 
     GtkWidget* label = gtk_label_new("If you enjoy using Quiver, please consider making a donation to support its development.");
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
     gtk_box_append(GTK_BOX(vbox), label);
 
     GtkWidget* button = gtk_button_new_with_label("Donate via PayPal");
-    gtk_box_append(GTK_BOX(vbox), button);
     g_signal_connect(button, "clicked", G_CALLBACK(on_clicked), NULL);
+    gtk_box_append(GTK_BOX(vbox), button);
 
-    gtk_window_set_child(GTK_WINDOW(m_pWidget), vbox);
+    GtkWidget* close_button = gtk_button_new_with_label("Close");
+    g_signal_connect_swapped(close_button, "clicked", G_CALLBACK(gtk_window_destroy), m_pWidget);
+    gtk_box_append(GTK_BOX(vbox), close_button);
 }
 
 void DonateDlg::DonateDlgPriv::ConnectSignals()

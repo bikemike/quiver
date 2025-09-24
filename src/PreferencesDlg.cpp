@@ -30,7 +30,6 @@ public:
 };
 
 static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data);
-static void on_folder_change(GtkFileChooser *chooser, gpointer user_data);
 static void on_viewer_film_strip_pos_changed(GtkDropDown *widget, GParamSpec* pspec, gpointer user_data);
 static void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data);
 
@@ -154,6 +153,9 @@ static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data)
     }
 }
 
+static void on_viewer_film_strip_pos_changed(GtkDropDown *widget, GParamSpec* pspec, gpointer user_data)
+{
+    PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
     if (priv) {
         guint iFilmstripPos = gtk_drop_down_get_selected(widget);
         const char* strFilmstripPos = gtk_string_list_get_string(priv->m_pStoreFilmstripPos, iFilmstripPos);
@@ -161,7 +163,7 @@ static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data)
     }
 }
 
-void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data)
+static void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data)
 {
     PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
     if (priv) {

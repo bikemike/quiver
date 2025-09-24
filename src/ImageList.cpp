@@ -184,7 +184,7 @@ ImageList::GetCurrentIndex() const
 bool ImageList::SetCurrentFile(std::string file)
 {
 	bool rval = false;
-	int old_index = m_ImageListImplPtr->m_iCurrentIndex;
+	unsigned int old_index = m_ImageListImplPtr->m_iCurrentIndex;
 
 	m_ImageListImplPtr->SetCurrentImage(file);
 
@@ -1349,7 +1349,7 @@ void ImageList::ImageListImpl::Sort(bool bUpdateCurrentIndex)
 }
 
 
-class SortByFilename : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByFilename
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
@@ -1363,7 +1363,7 @@ public:
 	}
 };
 
-class SortByFilenameNatural : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByFilenameNatural
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
@@ -1409,7 +1409,7 @@ public:
 	}
 };
 
-class SortByDate
+class SortByDateModified
 {
 public:
 
