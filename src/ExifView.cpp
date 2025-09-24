@@ -19,7 +19,6 @@
 
 // static GtkTreeModel * create_numbers_model (void); // Deprecated: GtkListStore
 // static void exif_orientation_to_text (GtkTreeViewColumn *tree_column, GtkCellRenderer   *cell, GtkTreeModel *tree_model, GtkTreeIter *iter, gpointer data); // Deprecated
-static void exif_content_foreach_entry_func (ExifEntry *entry, void *user_data); // Still used by EXIF logic
 // static void exif_tree_store_add_entry (ExifView::ExifViewImpl *pExifViewImpl, GtkTreeStore *store,GtkTreeIter *parent, GtkTreeIter *new_child, ExifEntry *entry); // Deprecated
 // static void exif_tree_store_update_iter_entry (ExifView::ExifViewImpl *pExifViewImpl, GtkTreeStore *store, GtkTreeIter *iter, ExifEntry *entry); // Deprecated
 
@@ -31,11 +30,6 @@ static void exif_content_foreach_entry_func (ExifEntry *entry, void *user_data);
 // static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, GtkWidget *treeview, guint button, guint32 activate_time); // Deprecated (GtkMenu)
 // static void exif_value_cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data); // Deprecated
 
-static void exif_convert_arg_to_entry (const char*set_value, ExifEntry *e, ExifByteOrder o);
-static int exif_data_get_orientation(ExifData *pExifData);
-static gboolean exif_update_orientation(ExifData *pExifData, int value);
-static void exif_update_entry(ExifData *pExifData, ExifIfd ifd,ExifTag tag,const char *value);
-static gboolean exif_date_format_is_valid(const char *date);
 
 // static void exif_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data); // Deprecated (GtkMenuItem)
 // static void exif_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data);    // Deprecated (GtkMenuItem)
@@ -44,7 +38,6 @@ static gboolean exif_date_format_is_valid(const char *date);
 // static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifIfd ifd, ExifTag tag);	// Deprecated
 
 static void exif_view_map(GtkWidget *widget, gpointer user_data);
-static gboolean exif_view_idle_load_exif_tree_view(gpointer data);
 // static gboolean entry_focus_out ( GtkWidget *widget, GdkEvent *event, gpointer user_data); // Deprecated
 
 
@@ -149,12 +142,6 @@ GtkWidget * ExifView::GetWidget() {
 	return m_ExifViewImplPtr->m_pScrolledWindow;
 }
 
-static gboolean exif_view_idle_load_exif_tree_view(gpointer data) {
-	/* ExifView::ExifViewImpl *pExifViewImpl = static_cast<ExifView::ExifViewImpl*>(data);
-	   ... entire function body commented out as it relies on GtkTreeStore ...
-	   pExifViewImpl->m_iIdleLoadID = 0; */
-	return FALSE;
-}
 
 void ExifView::SetQuiverFile(QuiverFile quiverFile) {
 	m_ExifViewImplPtr->m_QuiverFile = quiverFile;
@@ -193,60 +180,5 @@ static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifI
 */
 
 // Utility functions (mostly EXIF logic, less GTK dependent)
-static void exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o) {
-	unsigned int i; const char *value_p;
-	if (e->format == EXIF_FORMAT_ASCII) {
-		if (e->data) free (e->data);
-		e->components = strlen (set_value) + 1;
-		e->size = sizeof (char) * e->components;
-		e->data = (unsigned char*)malloc (e->size);
-		if (!e->data) { return; }
-		strcpy ((char*)e->data, set_value);
-		return;
-	}
-	value_p = set_value;
-	for (i = 0; i < e->components; i++) {
-		const char *begin, *end; unsigned char *buf;
-		const char comp_separ = ' ';
-		begin = value_p; value_p = strchr (begin, comp_separ);
-		if (!value_p) { if (i != e->components - 1) { break; } else { end = begin + strlen (begin); } } else { end = value_p++; }
-		buf = (unsigned char*)malloc ((end - begin + 1) * sizeof (char)); strncpy ((char*)buf, begin, end - begin); buf[end - begin] = '\0';
-		unsigned int s = exif_format_get_size (e->format);
-		switch (e->format) {
-			case EXIF_FORMAT_SHORT: exif_set_short (e->data + (s * i), o, atoi ((char*)buf)); break;
-			case EXIF_FORMAT_LONG: exif_set_long (e->data + (s * i), o, atol ((char*)buf)); break;
-			case EXIF_FORMAT_SLONG: exif_set_slong (e->data + (s * i), o, atol ((char*)buf)); break;
-			default: break;
-		}
-		free (buf);
-	}
-}
-static int exif_data_get_orientation(ExifData *pExifData) {
-	ExifEntry *e; int orientation = 1;
-	if (pExifData) {
-		e = exif_content_get_entry (pExifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
-		if (e) { orientation = exif_get_short (e->data, exif_data_get_byte_order (pExifData)); }
-	} return orientation;
-}
-static gboolean exif_update_orientation(ExifData *pExifData, int value) {
-	gboolean update = FALSE; ExifEntry *e;
-	e = exif_content_get_entry (pExifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
-	if (!e) { e = exif_entry_new (); exif_content_add_entry (pExifData->ifd[EXIF_IFD_0], e); exif_entry_initialize (e, EXIF_TAG_ORIENTATION); update = TRUE; }
-	else { if (exif_get_short(e->data, exif_data_get_byte_order(pExifData)) != value) update = TRUE; }
-	if (update) { exif_set_short (e->data , exif_data_get_byte_order (pExifData), value); }
-	return update;
-}
-static void exif_update_entry(ExifData *pExifData, ExifIfd ifd,ExifTag tag,const char *value) {
-	ExifEntry *e; e = exif_content_get_entry (pExifData->ifd[ifd], tag);
-	if (!e) { e = exif_entry_new (); exif_content_add_entry (pExifData->ifd[ifd], e); exif_entry_initialize (e, tag); }
-	exif_convert_arg_to_entry (value, e, exif_data_get_byte_order (pExifData));
-}
-static gboolean exif_date_format_is_valid(const char *date) {
-	gboolean retval = FALSE; if (date && 19 == strlen(date)) {
-		int year, month, day, hour, min, sec;
-		if (sscanf(date,"%d:%d:%d %d:%d:%d",&year, &month, &day, &hour, &min, &sec) == 6) {
-			if (month >= 1 && month <= 12 && day >=1 && day <=31 && hour >=0 && hour <=23 && min >=0 && min <=59 && sec >=0 && sec <=59) retval = TRUE;
-		}} return retval;
-}
 
 void ExifView::ExifViewImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event) {}

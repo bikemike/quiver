@@ -244,8 +244,36 @@ static void quiver_icon_view_handle_motion(GtkEventControllerMotion *controller,
 static void quiver_icon_view_handle_leave(GtkEventControllerMotion *controller, gpointer user_data) {}
 static gboolean quiver_icon_view_handle_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data) { return FALSE; }
 static gboolean quiver_icon_view_handle_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) { return FALSE; }
-static void quiver_icon_view_set_cursor_cell_internal(QuiverIconView *iconview, gulong new_cursor_cell, GdkModifierType state, gboolean is_mouse_action, gboolean extend_selection) {}
-static void quiver_icon_view_scroll_to_cell_ensure_visible(QuiverIconView *iconview, gulong cell, gboolean force_top_left) {}
+static void quiver_icon_view_set_cursor_cell_internal(QuiverIconView *iconview, gulong new_cursor_cell, GdkModifierType state, gboolean is_mouse_action, gboolean extend_selection)
+{
+	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+
+	if (new_cursor_cell >= quiver_icon_view_get_n_items_internal(iconview))
+		return;
+
+	if (priv->cursor_cell != new_cursor_cell)
+	{
+		priv->cursor_cell = new_cursor_cell;
+		g_signal_emit(iconview, iconview_signals[SIGNAL_CURSOR_CHANGED], 0, new_cursor_cell);
+	}
+}
+static void quiver_icon_view_scroll_to_cell_ensure_visible(QuiverIconView *iconview, gulong cell, gboolean force_top_left)
+{
+	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+	GtkAdjustment *hadjustment = priv->hadjustment;
+	GtkAdjustment *vadjustment = priv->vadjustment;
+
+	if (!hadjustment || !vadjustment)
+		return;
+
+	// This is a simplified implementation. A real one would need to calculate the cell's exact position.
+	// For now, we'll just scroll to the top if the cell is 0.
+	if (cell == 0)
+	{
+		gtk_adjustment_set_value(hadjustment, 0);
+		gtk_adjustment_set_value(vadjustment, 0);
+	}
+}
 void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select)
 {
 	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
@@ -269,6 +297,8 @@ void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select
 	gtk_widget_queue_draw(GTK_WIDGET(iconview));
 	g_signal_emit(iconview, iconview_signals[SIGNAL_SELECTION_CHANGED], 0);
 }
+
+
 static void quiver_icon_view_recalculate_adjustments(QuiverIconView *iconview) {}
 static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview) {
     QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);

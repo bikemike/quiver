@@ -37,6 +37,7 @@
 
 #include "IPixbufLoaderObserver.h"
 #include "IconViewThumbLoader.h"
+#include <libquiver/quiver-image-view.h>
 
 
 #include <libexif/exif-utils.h>
@@ -44,6 +45,7 @@
 #include <iostream> // For cout (debugging, should be removed later)
 
 using namespace std;
+
 
 #define ORIENTATION_ROTATE_CW	0
 #define ORIENTATION_ROTATE_CCW 	1
@@ -387,6 +389,8 @@ public:
 
 
 // member variables
+    std::vector<std::string> m_clipboard;
+    bool m_is_cut;
 
 	GtkWidget *m_pIconView;
 	GtkWidget *m_pImageView;
@@ -541,12 +545,97 @@ void Viewer::ViewerImpl::SetImageList(ImageListPtr imgList)
 	}
 }
 
-static void viewer_action_handler_cb(GAction* /*action*/, GVariant* /*parameter*/, gpointer /*user_data*/)
+static void viewer_action_handler_cb(GAction* action, GVariant* /*parameter*/, gpointer user_data)
 {
-    // Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
-    // const gchar *name = g_action_get_name(action);
+    Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
+    const gchar *name = g_action_get_name(action);
 
-    // TODO: Implement handlers for stateless actions
+	if (strcmp(name, ACTION_VIEWER_CUT) == 0)
+	{
+		pViewerImpl->m_clipboard.clear();
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		pViewerImpl->m_clipboard.push_back(f.GetURI());
+		pViewerImpl->m_is_cut = true;
+	}
+	else if (strcmp(name, ACTION_VIEWER_COPY) == 0)
+	{
+		pViewerImpl->m_clipboard.clear();
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		pViewerImpl->m_clipboard.push_back(f.GetURI());
+		pViewerImpl->m_is_cut = false;
+	}
+	else if (strcmp(name, ACTION_VIEWER_TRASH) == 0)
+	{
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		QuiverFileOps::MoveToTrash(f);
+		pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
+	}
+	else if (strcmp(name, ACTION_VIEWER_PREVIOUS) == 0 || strcmp(name, ACTION_VIEWER_PREVIOUS_2) == 0)
+	{
+		pViewerImpl->m_ImageListPtr->Previous();
+	}
+	else if (strcmp(name, ACTION_VIEWER_NEXT) == 0 || strcmp(name, ACTION_VIEWER_NEXT_2) == 0)
+	{
+		pViewerImpl->m_ImageListPtr->Next();
+	}
+	else if (strcmp(name, ACTION_VIEWER_FIRST) == 0)
+	{
+		pViewerImpl->m_ImageListPtr->First();
+	}
+	else if (strcmp(name, ACTION_VIEWER_LAST) == 0)
+	{
+		pViewerImpl->m_ImageListPtr->Last();
+	}
+	else if (strcmp(name, ACTION_VIEWER_ZOOM_IN) == 0)
+	{
+		gdouble current_mag = quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+		quiver_image_view_set_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView), current_mag * 1.1);
+	}
+	else if (strcmp(name, ACTION_VIEWER_ZOOM_OUT) == 0)
+	{
+		gdouble current_mag = quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+		quiver_image_view_set_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView), current_mag / 1.1);
+	}
+	else if (strcmp(name, ACTION_VIEWER_ROTATE_CW) == 0 || strcmp(name, ACTION_VIEWER_ROTATE_CW_2) == 0)
+	{
+		int orientation = pViewerImpl->GetCurrentOrientation();
+		orientation = combine_matrix[orientation][ORIENTATION_ROTATE_CW];
+		pViewerImpl->SetCurrentOrientation(orientation);
+		pViewerImpl->LoadImage(pViewerImpl->m_ImageListPtr->GetCurrent());
+	}
+	else if (strcmp(name, ACTION_VIEWER_ROTATE_CCW) == 0 || strcmp(name, ACTION_VIEWER_ROTATE_CCW_2) == 0)
+	{
+		int orientation = pViewerImpl->GetCurrentOrientation();
+		orientation = combine_matrix[orientation][ORIENTATION_ROTATE_CCW];
+		pViewerImpl->SetCurrentOrientation(orientation);
+		pViewerImpl->LoadImage(pViewerImpl->m_ImageListPtr->GetCurrent());
+	}
+	else if (strcmp(name, ACTION_VIEWER_FLIP_H) == 0 || strcmp(name, ACTION_VIEWER_FLIP_H_2) == 0)
+	{
+		int orientation = pViewerImpl->GetCurrentOrientation();
+		orientation = combine_matrix[orientation][ORIENTATION_FLIP_H];
+		pViewerImpl->SetCurrentOrientation(orientation);
+		pViewerImpl->LoadImage(pViewerImpl->m_ImageListPtr->GetCurrent());
+	}
+	else if (strcmp(name, ACTION_VIEWER_FLIP_V) == 0 || strcmp(name, ACTION_VIEWER_FLIP_V_2) == 0)
+	{
+		int orientation = pViewerImpl->GetCurrentOrientation();
+		orientation = combine_matrix[orientation][ORIENTATION_FLIP_V];
+		pViewerImpl->SetCurrentOrientation(orientation);
+		pViewerImpl->LoadImage(pViewerImpl->m_ImageListPtr->GetCurrent());
+	}
+	else if (strcmp(name, ACTION_VIEWER_VIDEO_PLAY) == 0 || strcmp(name, ACTION_VIEWER_VIDEO_PLAY_2) == 0)
+	{
+		pViewerImpl->PlayPauseVideo();
+	}
+	else if (strcmp(name, ACTION_VIEWER_VIDEO_SKIP_FORWARD) == 0)
+	{
+		pViewerImpl->SkipForward();
+	}
+	else if (strcmp(name, ACTION_VIEWER_VIDEO_SKIP_BACK) == 0)
+	{
+		pViewerImpl->SkipBack();
+	}
 }
 
 static void viewer_toggle_action_handler_cb(GAction *action, GVariant *state, gpointer user_data)
@@ -1604,6 +1693,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pCssProvider(gtk_css_provider_new()),
 	m_bIsPlaying(false),
 	m_bWasPlayingBeforeSeek(false),
+    m_is_cut(false),
 	m_ThumbnailLoader(this,2),
     m_pPipeline(NULL), m_pVideoWidget(NULL)
 {
@@ -1698,7 +1788,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     gtk_scrollbar_set_adjustment(GTK_SCROLLBAR(m_pScrollbarH), m_pAdjustmentH);
     gtk_scrollbar_set_adjustment(GTK_SCROLLBAR(m_pScrollbarV), m_pAdjustmentV);
 
-	GdkPixbuf *nav_pixbuf = gdk_pixbuf_new_from_xpm_data ((const char**) nav_button_xpm);
+GdkPixbuf *nav_pixbuf = gdk_pixbuf_new_from_xpm_data (nav_button_xpm);
 	GtkWidget *nav_image = NULL;
     if (nav_pixbuf) {
         nav_image = gtk_image_new_from_paintable (GDK_PAINTABLE(nav_pixbuf));
