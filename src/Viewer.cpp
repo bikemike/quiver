@@ -390,7 +390,6 @@ public:
 
 // member variables
     std::vector<std::string> m_clipboard;
-    bool m_is_cut;
 
 	GtkWidget *m_pIconView;
 	GtkWidget *m_pImageView;
@@ -524,6 +523,7 @@ public:
 	GtkCssProvider*              m_pCssProvider;
 	bool m_bIsPlaying;
 	bool m_bWasPlayingBeforeSeek;
+    bool m_is_cut;
 	ViewerThumbLoader            m_ThumbnailLoader;
     GSimpleActionGroup *m_pActionGroup;
     GtkWidget* m_pContextMenu;
