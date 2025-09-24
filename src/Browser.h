@@ -33,6 +33,8 @@ public:
 
 	std::string GetCurrentFolderChild();
 
+    class BrowserHistory& GetBrowserHistory();
+
 	class BrowserImpl;
 private:
 	boost::shared_ptr<BrowserImpl> m_BrowserImplPtr;

@@ -7,7 +7,7 @@ using namespace std;
 class BookmarkAddEditDlg::BookmarkAddEditDlgPriv
 {
 public:
-	BookmarkAddEditDlgPriv(BookmarkAddEditDlg *pPublic);
+	BookmarkAddEditDlgPriv(BookmarkAddEditDlg *pPublic, GtkWindow* pParent);
 	~BookmarkAddEditDlgPriv();
 	
 	void LoadWidgets();
@@ -15,6 +15,7 @@ public:
 	void ConnectSignals();
 	
 	BookmarkAddEditDlg*    m_pPublic;
+    GtkWindow*             m_pParent;
 	GtkBuilder*            m_pGtkBuilder;
 	GtkWidget*             m_pDialog;
 	GtkEntry*              m_pEntryName;
@@ -26,11 +27,11 @@ public:
 // --- Static Callbacks ---
 static void on_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
 
-BookmarkAddEditDlg::BookmarkAddEditDlg() : m_PrivPtr (new BookmarkAddEditDlgPriv(this))
+BookmarkAddEditDlg::BookmarkAddEditDlg(GtkWindow* pParent) : m_PrivPtr (new BookmarkAddEditDlgPriv(this, pParent))
 {
 }
 
-BookmarkAddEditDlg::BookmarkAddEditDlg(Bookmark bookmark) : m_PrivPtr (new BookmarkAddEditDlgPriv(this))
+BookmarkAddEditDlg::BookmarkAddEditDlg(GtkWindow* pParent, Bookmark bookmark) : m_PrivPtr (new BookmarkAddEditDlgPriv(this, pParent))
 {
 	m_PrivPtr->m_Bookmark = bookmark;
 }
@@ -46,9 +47,10 @@ Bookmark BookmarkAddEditDlg::GetBookmark() const
 	return m_PrivPtr->m_Bookmark;
 }
 
-BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(BookmarkAddEditDlg* pPublic)
+BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(BookmarkAddEditDlg* pPublic, GtkWindow* pParent)
 {
 	m_pPublic = pPublic;
+    m_pParent = pParent;
 
 	m_pGtkBuilder = gtk_builder_new();
 	GError *error = NULL;
@@ -74,6 +76,7 @@ BookmarkAddEditDlg::BookmarkAddEditDlgPriv::~BookmarkAddEditDlgPriv()
 void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 {
 	m_pDialog = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "dialog_add_bookmark"));
+    gtk_window_set_transient_for(GTK_WINDOW(m_pDialog), m_pParent);
 	m_pEntryName = GTK_ENTRY(gtk_builder_get_object (m_pGtkBuilder, "entry_bookmark_name"));
 	m_pEntryLocation = GTK_ENTRY(gtk_builder_get_object (m_pGtkBuilder, "entry_bookmark_location"));
 }

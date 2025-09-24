@@ -11,8 +11,9 @@ class ExternalToolAddEditDlg
 {
 public:
 	//constructor
-	ExternalToolAddEditDlg();
-	ExternalToolAddEditDlg(ExternalTool bookmark);
+	ExternalToolAddEditDlg(GtkWindow* parent);
+	ExternalToolAddEditDlg(GtkWindow* parent, ExternalTool bookmark);
+	~ExternalToolAddEditDlg();
 	
 	//member functions
 	GtkWidget*   GetWidget() const;

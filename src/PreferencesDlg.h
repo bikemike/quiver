@@ -9,8 +9,8 @@ class PreferencesDlg
 {
 public:
 	//constructor
-	PreferencesDlg();
-	~PreferencesDlg(); // Added destructor declaration
+	PreferencesDlg(GtkWindow* parent);
+	~PreferencesDlg();
 	
 	//member functions
 	GtkWidget *GetWidget();

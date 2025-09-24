@@ -1,21 +1,20 @@
 #include <config.h>
 #include "BookmarksDlg.h"
-#include "BookmarkRow.h" // Include the new GObject for our list store
-#include <gtk/gtkmultiselection.h> // For GtkMultiSelection
-#include <gtk/gtkbitset.h>         // For GtkBitset
-#include <list>
-#include <vector>
+#include "BookmarkRow.h"
 #include "Bookmarks.h"
 #include "IBookmarksEventHandler.h"
 #include "BookmarkAddEditDlg.h"
 #include "QuiverStockIcons.h"
+#include <gtk/gtk.h>
+#include <list>
+#include <vector>
 
 using namespace std;
 
 class BookmarksDlg::BookmarksDlgPriv
 {
 public:
-    BookmarksDlgPriv(BookmarksDlg *parent);
+    BookmarksDlgPriv(GtkWindow* pParent);
     ~BookmarksDlgPriv();
 
     void LoadWidgets();
@@ -25,8 +24,11 @@ public:
     void setup_factories();
     void Add();
     void Edit();
+    void Remove();
+    void MoveUp();
+    void MoveDown();
 
-    BookmarksDlg*     m_pBookmarksDlg;
+    GtkWindow*        m_pParent;
     GtkBuilder*         m_pGtkBuilder;
     BookmarksPtr      m_BookmarksPtr;
 
@@ -64,7 +66,7 @@ static void factory_bind_name_cb(GtkListItemFactory* factory, GtkListItem* list_
 static void factory_bind_icon_cb(GtkListItemFactory* factory, GtkListItem* list_item, gpointer user_data);
 
 
-BookmarksDlg::BookmarksDlg() : m_PrivPtr(new BookmarksDlg::BookmarksDlgPriv(this)) {}
+BookmarksDlg::BookmarksDlg(GtkWindow* pParent) : m_PrivPtr(new BookmarksDlg::BookmarksDlgPriv(pParent)) {}
 
 void BookmarksDlg::Run()
 {
@@ -73,8 +75,13 @@ void BookmarksDlg::Run()
     }
 }
 
-BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
-        m_pBookmarksDlg(parent),
+GtkWidget* BookmarksDlg::GetWidget()
+{
+    return m_PrivPtr->m_pWidget;
+}
+
+BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(GtkWindow* pParent) :
+        m_pParent(pParent),
         m_BookmarksEventHandler(new BookmarksEventHandler(this))
 {
     m_BookmarksPtr = Bookmarks::GetInstance();
@@ -116,6 +123,7 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
     if (!m_pGtkBuilder) return;
 
     m_pWidget = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "BookmarksDialog"));
+    gtk_window_set_transient_for(GTK_WINDOW(m_pWidget), m_pParent);
     m_pColumnViewBookmarks = GTK_COLUMN_VIEW(gtk_builder_get_object(m_pGtkBuilder, "treeview_bookmarks"));
 
     m_pButtonMoveUp   = GTK_BUTTON(gtk_builder_get_object(m_pGtkBuilder, "button_move_up"));
@@ -204,7 +212,7 @@ void BookmarksDlg::BookmarksDlgPriv::SelectionChanged()
 
 void BookmarksDlg::BookmarksDlgPriv::Add()
 {
-	BookmarkAddEditDlg* dlg = new BookmarkAddEditDlg();
+	BookmarkAddEditDlg* dlg = new BookmarkAddEditDlg(m_pParent);
     dlg->Run([this, dlg](int response_id) {
         if (response_id == GTK_RESPONSE_OK) {
             m_BookmarksPtr->AddBookmark(dlg->GetBookmark());
@@ -224,7 +232,7 @@ void BookmarksDlg::BookmarksDlgPriv::Edit()
         if (row)
         {
             const Bookmark* bm = m_BookmarksPtr->GetBookmark(bookmark_row_get_id(row));
-            BookmarkAddEditDlg* dlg = new BookmarkAddEditDlg(*bm);
+            BookmarkAddEditDlg* dlg = new BookmarkAddEditDlg(m_pParent, *bm);
             dlg->Run([this, dlg](int response_id) {
                 if (response_id == GTK_RESPONSE_OK) {
                     m_BookmarksPtr->UpdateBookmark(dlg->GetBookmark());
@@ -235,6 +243,68 @@ void BookmarksDlg::BookmarksDlgPriv::Edit()
     }
     gtk_bitset_unref(selection);
 }
+
+void BookmarksDlg::BookmarksDlgPriv::Remove()
+{
+    GtkBitset* selection = gtk_selection_model_get_selection(GTK_SELECTION_MODEL(m_pSelectionModel));
+    if (gtk_bitset_is_empty(selection))
+    {
+        gtk_bitset_unref(selection);
+        return;
+    }
+
+    std::vector<int> ids_to_remove;
+    GtkBitsetIter iter;
+    guint position;
+    gtk_bitset_iter_init_first(&iter, selection, &position);
+    while(position != GTK_INVALID_LIST_POSITION)
+    {
+        BookmarkRow* row = BOOKMARK_ROW(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), position));
+        if(row)
+        {
+            ids_to_remove.push_back(bookmark_row_get_id(row));
+        }
+        gtk_bitset_iter_next(&iter, &position);
+    }
+
+    for(int id : ids_to_remove)
+    {
+        m_BookmarksPtr->Remove(id);
+    }
+
+    gtk_bitset_unref(selection);
+}
+
+void BookmarksDlg::BookmarksDlgPriv::MoveUp()
+{
+    GtkBitset* selection = gtk_selection_model_get_selection(GTK_SELECTION_MODEL(m_pSelectionModel));
+    if (gtk_bitset_get_size(selection) == 1)
+    {
+        guint position = gtk_bitset_get_minimum(selection);
+        BookmarkRow* row = BOOKMARK_ROW(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), position));
+        if (row)
+        {
+            m_BookmarksPtr->MoveUp(bookmark_row_get_id(row));
+        }
+    }
+    gtk_bitset_unref(selection);
+}
+
+void BookmarksDlg::BookmarksDlgPriv::MoveDown()
+{
+    GtkBitset* selection = gtk_selection_model_get_selection(GTK_SELECTION_MODEL(m_pSelectionModel));
+    if (gtk_bitset_get_size(selection) == 1)
+    {
+        guint position = gtk_bitset_get_minimum(selection);
+        BookmarkRow* row = BOOKMARK_ROW(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), position));
+        if (row)
+        {
+            m_BookmarksPtr->MoveDown(bookmark_row_get_id(row));
+        }
+    }
+    gtk_bitset_unref(selection);
+}
+
 
 void BookmarksDlg::BookmarksDlgPriv::BookmarksEventHandler::HandleBookmarkChanged(BookmarksEventPtr event)
 {
@@ -306,7 +376,16 @@ static void on_clicked(GtkButton *button, gpointer user_data)
         priv->Edit();
         return;
     }
-
-
-    g_warning("Button functionality (Remove, Move) is not fully implemented yet.");
+    if (button == priv->m_pButtonRemove) {
+        priv->Remove();
+        return;
+    }
+    if (button == priv->m_pButtonMoveUp) {
+        priv->MoveUp();
+        return;
+    }
+    if (button == priv->m_pButtonMoveDown) {
+        priv->MoveDown();
+        return;
+    }
 }

@@ -3,6 +3,10 @@
 
 #include <string>
 
+// Forward declaration
+struct _GtkWindow;
+typedef struct _GtkWindow GtkWindow;
+
 class MessageBox
 {
 public:
@@ -62,24 +66,25 @@ public:
 		BUTTON_ICON_YES,
 	} BUTTON_ICON;
 
-	                     MessageBox(IconType iconType, 
-	                         ButtonType buttonType, 
+	                     MessageBox(GtkWindow* parent,
+                                      IconType iconType,
+	                         ButtonType buttonType,
 	                         std::string msg,
 	                         std::string details);
 
 	                     ~MessageBox();
 
-	void                 AddButton(BUTTON_ICON icon, const std::string &text, 
+	void                 AddButton(BUTTON_ICON icon, const std::string &text,
 	                         ResponseType resp_type);
 
-	void                 AddButton(const std::string &text, 
+	void                 AddButton(const std::string &text,
 	                         ResponseType resp_type);
 
 	void                 SetDefaultResponseType(ResponseType respType);
 
 	// blocks until the user reponds
 	ResponseType         Run();
-	static ResponseType  Run(IconType iconType, ButtonType buttonType, std::string msg, std::string details);
+	static ResponseType  Run(GtkWindow* parent, IconType iconType, ButtonType buttonType, std::string msg, std::string details);
 
 	class PrivateImpl;
 

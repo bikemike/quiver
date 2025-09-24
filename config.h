@@ -39,21 +39,6 @@
 /* Define to 1 if you have the `gettimeofday' function. */
 #define HAVE_GETTIMEOFDAY 1
 
-/* hildon-1 is available */
-/* #undef HAVE_HILDON_1 */
-
-/* hildon-fm is available */
-/* #undef HAVE_HILDON_FM */
-
-/* hildonfm2 is available */
-/* #undef HAVE_HILDON_FM_2 */
-
-/* hildon-libs is available */
-/* #undef HAVE_HILDON_LIBS */
-
-/* libhildonmime is available */
-/* #undef HAVE_HILDON_MIME */
-
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
 
@@ -62,9 +47,6 @@
 
 /* Define to 1 if you have the <locale.h> header file. */
 #define HAVE_LOCALE_H 1
-
-/* libossomime is available */
-/* #undef HAVE_OSSO_MIME */
 
 /* Define to 1 if stdbool.h conforms to C99. */
 #define HAVE_STDBOOL_H 1
@@ -125,9 +107,6 @@
 
 /* Define to the version of this package. */
 #define PACKAGE_VERSION "0.2.0"
-
-/* quiver for maemo build configuration */
-/* #undef QUIVER_MAEMO */
 
 /* Define to 1 if all of the C90 standard headers exist (not just the ones
    required in a freestanding environment). This macro is provided for

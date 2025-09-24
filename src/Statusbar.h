@@ -8,6 +8,7 @@ class Statusbar : public PixbufLoaderObserver
 {
 public:
 	Statusbar();
+    ~Statusbar();
 	GtkWidget * GetWidget();
 	
 	void SetPosition(int pos, int n);

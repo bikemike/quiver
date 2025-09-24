@@ -9,12 +9,12 @@ class OrganizeDlg
 {
 public:
 	//constructor
-	            OrganizeDlg();
-	//~OrganizeDlg();
+	            OrganizeDlg(GtkWindow* parent);
+	            ~OrganizeDlg();
 	
 	//member functions
 	GtkWidget*  GetWidget() const;
-	bool        Run();
+	void        Run();
 
 	std::string GetFolderTemplate() const;
 	std::string GetFileTemplate() const;

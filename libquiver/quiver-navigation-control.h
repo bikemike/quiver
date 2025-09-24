@@ -19,8 +19,7 @@ typedef struct _QuiverNavigationControlPrivate QuiverNavigationControlPrivate;
 
 struct _QuiverNavigationControl
 {
-	GtkWidget parent_instance; // Changed from parent to parent_instance for clarity with G_DEFINE_TYPE
-	QuiverNavigationControlPrivate *priv;
+	GtkWidget parent_instance;
 };
 
 struct _QuiverNavigationControlClass

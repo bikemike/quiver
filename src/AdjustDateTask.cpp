@@ -252,7 +252,7 @@ void AdjustDateTask::Run()
 			{
 				// adjust the modification time of the file
 				g_file_info_get_modification_time(pInfo, &tv);
-				
+
 				// the adjustment is done after the exif data is modified
 				// see below
 			}
@@ -370,7 +370,7 @@ void AdjustDateTask::Run()
 					GFile* file = g_file_new_for_uri(f.GetURI());
 					g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
 					g_object_unref(file);
-					
+
 					g_date_time_unref(pDateTimeNew);
 					g_date_time_unref(pDateTime);
 				}

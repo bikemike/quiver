@@ -9,7 +9,7 @@ class BookmarksDlg
 {
 public:
 	//constructor
-	BookmarksDlg();
+	BookmarksDlg(GtkWindow* pParent);
 	//~BookmarksDlg();
 	
 	//member functions

@@ -9,8 +9,8 @@ class ExternalToolsDlg
 {
 public:
 	//constructor
-	ExternalToolsDlg();
-	//~ExternalToolsDlg();
+	ExternalToolsDlg(GtkWindow* parent);
+	~ExternalToolsDlg();
 	
 	//member functions
 	GtkWidget* GetWidget();

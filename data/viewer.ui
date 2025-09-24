@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkBox" id="viewer_hbox">
+    <property name="orientation">horizontal</property>
+    <child>
+      <object class="GtkBox" id="viewer_vbox">
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkGrid" id="viewer_grid">
+            <child>
+              <object class="QuiverImageView" id="viewer_image_view">
+                <property name="hexpand">1</property>
+                <property name="vexpand">1</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">0</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkVideo" id="viewer_video_widget">
+                <property name="hexpand">1</property>
+                <property name="vexpand">1</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">0</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="viewer_media_controls">
+                 <property name="halign">end</property>
+                 <property name="valign">start</property>
+                 <property name="margin-top">10</property>
+                 <property name="margin-end">10</property>
+                 <property name="orientation">horizontal</property>
+                 <property name="spacing">5</property>
+                 <child>
+                   <object class="GtkButton" id="viewer_play_button">
+                     <property name="child">
+                       <object class="GtkImage" id="viewer_play_image">
+                         <property name="icon-name">media-playback-start-symbolic</property>
+                       </object>
+                     </property>
+                   </object>
+                 </child>
+                 <child>
+                    <object class="GtkBox" id="viewer_timeline_box">
+                      <property name="orientation">horizontal</property>
+                      <property name="spacing">5</property>
+                      <property name="hexpand">1</property>
+                       <child>
+                         <object class="GtkLabel" id="viewer_time_label">
+                           <property name="label">0:00 / 0:00</property>
+                         </object>
+                       </child>
+                       <child>
+                          <object class="GtkBox" id="viewer_progress_box">
+                            <property name="hexpand">1</property>
+                            <child>
+                              <object class="GtkProgressBar" id="viewer_play_progress"/>
+                            </child>
+                          </object>
+                       </child>
+                       <child>
+                         <object class="GtkScaleButton" id="viewer_volume_button">
+                           <property name="icons">
+                              <item>audio-volume-muted-symbolic</item>
+                              <item>audio-volume-low-symbolic</item>
+                              <item>audio-volume-medium-symbolic</item>
+                              <item>audio-volume-high-symbolic</item>
+                           </property>
+                         </object>
+                       </child>
+                    </object>
+                 </child>
+              </object>
+              <layout>
+                <property name="column">0</property>
+                <property name="row">0</property>
+              </layout>
+            </child>
+            <child>
+                <object class="GtkMenuButton" id="viewer_menubutton">
+                  <property name="icon-name">open-menu-symbolic</property>
+                  <property name="halign">end</property>
+                  <property name="valign">start</property>
+                  <property name="margin-top">10</property>
+                  <property name="margin-end">10</property>
+                  <property name="popover">
+                    <object class="GtkPopoverMenu">
+                      <property name="menu-model">
+                        <object class="GMenu">
+                          <section>
+                            <item>
+                              <attribute name="label" translatable="yes">Filmstrip</attribute>
+                              <attribute name="action">viewer.ViewFilmStrip</attribute>
+                            </item>
+                            <item>
+                              <attribute name="label" translatable="yes">Rotate for Best Fit</attribute>
+                              <attribute name="action">viewer.MaximizeForDisplay</attribute>
+                            </item>
+                          </section>
+                          <section>
+                            <item>
+                              <attribute name="label" translatable="yes">Zoom Fit</attribute>
+                              <attribute name="action">viewer.zoom</attribute>
+                              <attribute name="target" type="i">0</attribute>
+                            </item>
+                            <item>
+                              <attribute name="label" translatable="yes">Zoom Fit Stretch</attribute>
+                              <attribute name="action">viewer.zoom</attribute>
+                              <attribute name="target" type="i">1</attribute>
+                            </item>
+                            <item>
+                              <attribute name="label" translatable="yes">Actual Size</attribute>
+                              <attribute name="action">viewer.zoom</attribute>
+                              <attribute name="target" type="i">2</attribute>
+                            </item>
+                            <item>
+                              <attribute name="label" translatable="yes">Fill Screen</attribute>
+                              <attribute name="action">viewer.zoom</attribute>
+                              <attribute name="target" type="i">3</attribute>
+                            </item>
+                          </section>
+                        </object>
+                      </property>
+                    </object>
+                  </property>
+                </object>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">0</property>
+                </layout>
+            </child>
+            <child>
+              <object class="GtkScrollbar" id="viewer_scrollbar_v">
+                <property name="orientation">vertical</property>
+                <property name="vexpand">1</property>
+                <layout>
+                  <property name="column">1</property>
+                  <property name="row">0</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkScrollbar" id="viewer_scrollbar_h">
+                <property name="orientation">horizontal</property>
+                <property name="hexpand">1</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">1</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="viewer_navigation_box">
+                <child>
+                  <object class="GtkImage" id="viewer_navigation_image">
+                    <property name="icon-name">image-missing-symbolic</property>
+                  </object>
+                </child>
+                <layout>
+                  <property name="column">1</property>
+                  <property name="row">1</property>
+                </layout>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+        <object class="QuiverIconView" id="viewer_icon_view">
+            <property name="orientation">vertical</property>
+        </object>
+    </child>
+  </object>
+  <object class="GtkPopoverMenu" id="viewer_context_menu">
+    <property name="menu-model">
+      <object class="GMenu">
+        <section>
+          <item>
+            <attribute name="label" translatable="yes">Rotate Clockwise</attribute>
+            <attribute name="action">viewer.RotateCW</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Rotate Counter-Clockwise</attribute>
+            <attribute name="action">viewer.RotateCCW</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Flip Horizontally</attribute>
+            <attribute name="action">viewer.FlipH</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Flip Vertically</attribute>
+            <attribute name="action">viewer.FlipV</attribute>
+          </item>
+        </section>
+        <section>
+          <item>
+            <attribute name="label" translatable="yes">Cut</attribute>
+            <attribute name="action">viewer.ViewerCut</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Copy</attribute>
+            <attribute name="action">viewer.ViewerCopy</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Move to Trash</attribute>
+            <attribute name="action">viewer.ViewerTrash</attribute>
+          </item>
+        </section>
+      </object>
+    </property>
+  </object>
+</interface>

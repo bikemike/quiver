@@ -9,12 +9,12 @@ class RenameDlg
 {
 public:
 	//constructor
-	            RenameDlg();
-	//~RenameDlg();
+	            RenameDlg(GtkWindow* parent);
+	            ~RenameDlg();
 	
 	//member functions
 	GtkWidget*  GetWidget() const;
-	bool        Run();
+	void        Run();
 
 	std::string GetTemplate() const;
 

@@ -4,7 +4,7 @@
 class AdjustDateDlg::AdjustDateDlgPriv
 {
 public:
-	AdjustDateDlgPriv(AdjustDateDlg *parent);
+	AdjustDateDlgPriv(AdjustDateDlg *parent, GtkWindow* pParent);
 	~AdjustDateDlgPriv();
 	
 	void LoadWidgets();
@@ -46,6 +46,7 @@ public:
 	int                    m_iSeconds;
 
     std::function<void(int)> on_result_callback;
+    GtkWindow*             m_pParent;
 };
 
 // --- Static Callbacks ---
@@ -53,7 +54,7 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
 static void  on_dialog_response(GtkDialog* dialog, gint response_id, gpointer user_data);
 
 
-AdjustDateDlg::AdjustDateDlg() : m_PrivPtr(new AdjustDateDlg::AdjustDateDlgPriv(this))
+AdjustDateDlg::AdjustDateDlg(GtkWindow* parent) : m_PrivPtr(new AdjustDateDlg::AdjustDateDlgPriv(this, parent))
 {
 }
 
@@ -70,8 +71,6 @@ GtkWidget* AdjustDateDlg::GetWidget() const
 
 void AdjustDateDlg::Run()
 {
-	// In GTK4, Run is non-blocking. It just shows the dialog.
-    // The result is handled by the "response" signal handler.
     if (m_PrivPtr->m_pDialogAdjustDate) {
 	    gtk_widget_set_visible(GTK_WIDGET(m_PrivPtr->m_pDialogAdjustDate), TRUE);
     }
@@ -92,8 +91,8 @@ int AdjustDateDlg::GetAdjustmentMinutes() const { return m_PrivPtr->m_iMinutes; 
 int AdjustDateDlg::GetAdjustmentSeconds() const { return m_PrivPtr->m_iSeconds; }
 
 
-AdjustDateDlg::AdjustDateDlgPriv::AdjustDateDlgPriv(AdjustDateDlg *parent) :
-        m_pAdjustDateDlg(parent), m_pDialogAdjustDate(nullptr)
+AdjustDateDlg::AdjustDateDlgPriv::AdjustDateDlgPriv(AdjustDateDlg *parent, GtkWindow* pParent) :
+        m_pAdjustDateDlg(parent), m_pDialogAdjustDate(nullptr), m_pParent(pParent)
 {
 	m_pGtkBuilder = gtk_builder_new();
 	 GError *error = NULL;
@@ -124,12 +123,12 @@ void AdjustDateDlg::AdjustDateDlgPriv::LoadWidgets()
         g_warning("Failed to get AdjustDateDialog from builder.");
         return;
     }
+    gtk_window_set_transient_for(GTK_WINDOW(m_pDialogAdjustDate), m_pParent);
+    gtk_window_set_modal(GTK_WINDOW(m_pDialogAdjustDate), TRUE);
 
-    gtk_dialog_add_button(m_pDialogAdjustDate,
-                           "_Cancel", GTK_RESPONSE_CANCEL);
-    GtkWidget* ok_button = gtk_dialog_add_button(m_pDialogAdjustDate,
-                           "_OK", GTK_RESPONSE_OK);
-    gtk_widget_grab_focus(ok_button);
+    gtk_dialog_add_button(m_pDialogAdjustDate, "_Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_add_button(m_pDialogAdjustDate, "_OK", GTK_RESPONSE_OK);
+
 
 	m_pToggleAdjustDate    = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_adjust_date") );
 	m_pToggleSetDate       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_set_date") );
@@ -184,8 +183,6 @@ bool AdjustDateDlg::AdjustDateDlgPriv::ValidateInput()
 		
 		if (!bIsValid)
 		{
-            // The async nature of GTK4 makes modal validation dialogs complex.
-            // For now, we will just log an error. A full solution would involve another dialog.
             g_warning("Validation failed: To adjust date, at least one value must be non-zero.");
 		}
 	}
@@ -224,24 +221,14 @@ static void  on_dialog_response(GtkDialog* dialog, gint response_id, gpointer us
 
     if (response_id == GTK_RESPONSE_OK) {
         if (!priv->ValidateInput()) {
-            // Validation failed. The validation function already showed an error.
-            // We do not close the dialog, allowing the user to correct the input.
             return;
         }
     }
 
-    // If response is OK (and validation passed), or any other response (Cancel, Delete),
-    // we call the callback and destroy the dialog.
     if (priv->on_result_callback) {
         priv->on_result_callback(response_id);
     }
 
-    // Ensure the dialog widget pointer in the parent object is cleared to avoid use-after-free
-    // This is a bit tricky, but we can assume the parent AdjustDateDlg object outlives this callback.
-    if (priv->m_pAdjustDateDlg) {
-       // A way to nullify the dialog pointer would be needed if the AdjustDateDlg object persists.
-       // For now, we assume the AdjustDateDlg object is destroyed after the callback.
-    }
     gtk_window_destroy(GTK_WINDOW(dialog));
 }
 

@@ -6,22 +6,13 @@
 #include <list>
 #include <vector>
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_FM_2
-#include <hildon/hildon-file-chooser-dialog.h>
-#else
-#include <hildon-widgets/hildon-file-chooser-dialog.h>
-#endif
-#endif
-
-
 using namespace std;
 
 class ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv
 {
 public:
 // constructor, destructor
-	ExternalToolAddEditDlgPriv(ExternalTool b, ExternalToolAddEditDlg *parent);
+	ExternalToolAddEditDlgPriv(GtkWindow* pParent, ExternalTool b, ExternalToolAddEditDlg *parent);
 	~ExternalToolAddEditDlgPriv();
 	
 // methods
@@ -34,6 +25,8 @@ public:
 	GtkBuilder*         m_pGtkBuilder;
 	ExternalTool m_ExternalTool;
 	bool m_bCancelled;
+    GtkWindow* m_pParent;
+    GMainLoop* m_loop = nullptr;
 
 	bool m_bLoadedDlg;
 	
@@ -49,13 +42,16 @@ public:
 };
 
 
-ExternalToolAddEditDlg::ExternalToolAddEditDlg() : m_PrivPtr(new ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv(ExternalTool(),this))
+ExternalToolAddEditDlg::ExternalToolAddEditDlg(GtkWindow* parent) : m_PrivPtr(new ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv(parent, ExternalTool(),this))
 {
 }
-ExternalToolAddEditDlg::ExternalToolAddEditDlg(ExternalTool b) : m_PrivPtr(new ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv(b,this))
+ExternalToolAddEditDlg::ExternalToolAddEditDlg(GtkWindow* parent, ExternalTool b) : m_PrivPtr(new ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv(parent, b,this))
 {
 }
 
+ExternalToolAddEditDlg::~ExternalToolAddEditDlg()
+{
+}
 
 ExternalTool ExternalToolAddEditDlg::GetExternalTool() const
 {
@@ -64,7 +60,7 @@ ExternalTool ExternalToolAddEditDlg::GetExternalTool() const
 
 GtkWidget* ExternalToolAddEditDlg::GetWidget() const
 {
-	  return NULL;
+	  return m_PrivPtr->m_pWidget;
 }
 
 
@@ -72,23 +68,11 @@ void ExternalToolAddEditDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
-		if (GTK_RESPONSE_OK == result)
-		{
-			m_PrivPtr->m_bCancelled = false;
-
-			m_PrivPtr->m_ExternalTool.SetName( gtk_entry_get_text(m_PrivPtr->m_pEntryName) );
-			std::string tooltip = gtk_entry_get_text(m_PrivPtr->m_pEntryTooltip);
-			if (tooltip.empty())
-			{
-				tooltip = gtk_entry_get_text(m_PrivPtr->m_pEntryName);
-			}
-			m_PrivPtr->m_ExternalTool.SetTooltip( tooltip );
-			m_PrivPtr->m_ExternalTool.SetIcon( gtk_entry_get_text(m_PrivPtr->m_pEntryIcon) );
-			m_PrivPtr->m_ExternalTool.SetCmd( gtk_entry_get_text(m_PrivPtr->m_pEntryCmd) );
-			m_PrivPtr->m_ExternalTool.SetSupportsMultiple( gtk_toggle_button_get_active(m_PrivPtr->m_pToggleMultiple) ? true : false );
-		}
-		gtk_widget_destroy(m_PrivPtr->m_pWidget);
+		gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
+        m_PrivPtr->m_loop = g_main_loop_new(NULL, FALSE);
+        g_main_loop_run(m_PrivPtr->m_loop);
+        g_main_loop_unref(m_PrivPtr->m_loop);
+        m_PrivPtr->m_loop = nullptr;
 	}
 }
 
@@ -102,21 +86,20 @@ bool ExternalToolAddEditDlg::Cancelled() const
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer user_data);
-//static void  on_toggled (GtkToggleButton *button, gpointer user_data);
 
 
-ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ExternalToolAddEditDlgPriv(ExternalTool b, ExternalToolAddEditDlg *parent) :
-        m_pExternalToolAddEditDlg(parent), m_ExternalTool(b)
+ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ExternalToolAddEditDlgPriv(GtkWindow* pParent, ExternalTool b, ExternalToolAddEditDlg *parent) :
+        m_pExternalToolAddEditDlg(parent), m_ExternalTool(b), m_pParent(pParent)
 {
 	m_bLoadedDlg = false;
 	m_bCancelled = true;
 
 
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const gchar* objectids[] = {
 		"ExternalToolAddEditDialog",
 		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (const char**)objectids, NULL);
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
@@ -137,20 +120,11 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 
 	if (NULL != m_pGtkBuilder)
 	{
-		m_pWidget                = GTK_WIDGET( gtk_builder_get_object (m_pGtkBuilder, "ExternalToolAddEditDialog"));
+		m_pWidget = GTK_WIDGET( gtk_builder_get_object (m_pGtkBuilder, "ExternalToolAddEditDialog"));
+        gtk_window_set_transient_for(GTK_WINDOW(m_pWidget), m_pParent);
 
-		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CANCEL) );
-		m_pButtonOk              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_OK) );
-
-
-		gtk_widget_set_visible(GTK_WIDGET(m_pButtonCancel), TRUE);
-		gtk_widget_set_visible(GTK_WIDGET(m_pButtonOk), TRUE);
-
-		if (m_pWidget)
-		{
-			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonCancel));
-			gtk_box_append(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonOk));
-		}
+        m_pButtonCancel = GTK_BUTTON(gtk_dialog_add_button(GTK_DIALOG(m_pWidget), "_Cancel", GTK_RESPONSE_CANCEL));
+        m_pButtonOk = GTK_BUTTON(gtk_dialog_add_button(GTK_DIALOG(m_pWidget), "_OK", GTK_RESPONSE_OK));
 
 		m_pToggleMultiple       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_multiple"));
 		m_pEntryName             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_name"));
@@ -170,10 +144,10 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 				); 
 
 	
-		gtk_entry_set_text(m_pEntryName, m_ExternalTool.GetName().c_str());
-		gtk_entry_set_text(m_pEntryCmd, m_ExternalTool.GetCmd().c_str());
-		gtk_entry_set_text(m_pEntryTooltip, m_ExternalTool.GetTooltip().c_str());
-		gtk_entry_set_text(m_pEntryIcon, m_ExternalTool.GetIcon().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(m_pEntryName), m_ExternalTool.GetName().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(m_pEntryCmd), m_ExternalTool.GetCmd().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(m_pEntryTooltip), m_ExternalTool.GetTooltip().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(m_pEntryIcon), m_ExternalTool.GetIcon().c_str());
 
 		gtk_toggle_button_set_active(m_pToggleMultiple, m_ExternalTool.GetSupportsMultiple() ? TRUE : FALSE );
 
@@ -193,45 +167,33 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
-		/*
-		g_signal_connect(m_pToggleMultiple,
-			"toggled",(GCallback)on_toggled,this);
-
-		*/
-		g_signal_connect(m_pButtonOk,
-			"clicked",(GCallback)on_clicked,this);
-		g_signal_connect(m_pButtonCancel,
-			"clicked",(GCallback)on_clicked,this);
+		g_signal_connect(m_pButtonOk, "clicked",(GCallback)on_clicked,this);
+		g_signal_connect(m_pButtonCancel, "clicked",(GCallback)on_clicked,this);
 	}
 }
-
-/*
-
-static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
-{
-	ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv *priv = static_cast<ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv*>(user_data);
-	if (priv->m_pToggleMultiple == togglebutton)
-	{ 
-		gboolean bMultiple = gtk_toggle_button_get_active(togglebutton);
-	}
-}
-*/
 
 static void  on_clicked (GtkButton *button, gpointer user_data)
 {
 	ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv *priv = static_cast<ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv*>(user_data);
 	
-	list<int> values;
-
 	if (button == priv->m_pButtonOk)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_OK);
+		priv->m_bCancelled = false;
+
+		priv->m_ExternalTool.SetName( gtk_editable_get_text(GTK_EDITABLE(priv->m_pEntryName)) );
+		std::string tooltip = gtk_editable_get_text(GTK_EDITABLE(priv->m_pEntryTooltip));
+		if (tooltip.empty())
+		{
+			tooltip = gtk_editable_get_text(GTK_EDITABLE(priv->m_pEntryName));
+		}
+		priv->m_ExternalTool.SetTooltip( tooltip );
+		priv->m_ExternalTool.SetIcon( gtk_editable_get_text(GTK_EDITABLE(priv->m_pEntryIcon)) );
+		priv->m_ExternalTool.SetCmd( gtk_editable_get_text(GTK_EDITABLE(priv->m_pEntryCmd)) );
+		priv->m_ExternalTool.SetSupportsMultiple( gtk_toggle_button_get_active(priv->m_pToggleMultiple) ? true : false );
 	}
-	else if (button == priv->m_pButtonCancel)
-	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_CANCEL);
-	}
+
+    if (priv->m_loop) {
+        g_main_loop_quit(priv->m_loop);
+    }
+	gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
 }
-
-
-[end of src/ExternalToolAddEditDlg.cpp]
