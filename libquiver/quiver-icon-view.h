@@ -208,6 +208,7 @@ GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
 void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select);
 
 void quiver_icon_view_get_visible_range(QuiverIconView *iconview,gulong *first, gulong *last);
+void quiver_icon_view_scroll_to_cell(QuiverIconView* iconview, gulong cell);
 
 void quiver_icon_view_invalidate_window(QuiverIconView *iconview);
 

@@ -152,6 +152,7 @@ public:
 	IPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
 
 	map<string, string> m_mapFolderToFile;
+    std::list<QuiverFile> m_CutFiles;
 	
 /* nested classes */
 	//class ViewerEventHandler;
@@ -519,7 +520,13 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent, GtkApplication* app) :
 
     gchar* ui_file = g_build_filename(QUIVER_DATADIR, "browser.ui", NULL);
     GtkBuilder* builder = gtk_builder_new_from_file(ui_file);
+    if (!builder) {
+        g_critical("Failed to load UI file: %s", ui_file);
+        g_free(ui_file);
+        throw std::runtime_error("Failed to load browser.ui");
+    }
     g_free(ui_file);
+
     m_pBrowserWidget = GTK_WIDGET(gtk_builder_get_object(builder, "browser_hpaned"));
     vpaned = GTK_WIDGET(gtk_builder_get_object(builder, "browser_vpaned"));
     m_pNotebook = GTK_WIDGET(gtk_builder_get_object(builder, "browser_notebook"));
@@ -527,6 +534,13 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent, GtkApplication* app) :
     m_pLocationEntry = GTK_WIDGET(gtk_builder_get_object(builder, "browser_location_entry"));
     hscale = GTK_WIDGET(gtk_builder_get_object(builder, "browser_thumb_sizer"));
     m_pIconView = GTK_WIDGET(gtk_builder_get_object(builder, "browser_icon_view"));
+
+    if (!m_pBrowserWidget || !vpaned || !m_pNotebook || !m_pImageView || !m_pLocationEntry || !hscale || !m_pIconView) {
+        g_critical("Failed to get one or more widgets from browser.ui");
+        g_object_unref(builder);
+        throw std::runtime_error("Failed to get widgets from browser.ui");
+    }
+
     g_object_unref(builder);
 
 	g_signal_connect (G_OBJECT (m_pNotebook), "page-added", G_CALLBACK (notebook_page_added_cb), this);
@@ -1502,65 +1516,104 @@ static void browser_action_handler_cb(GAction *action, GVariant *parameter, gpoi
     }
     else if (strcmp(name, ACTION_BROWSER_CUT) == 0)
     {
+        pBrowserImpl->m_CutFiles.clear();
         GdkClipboard* clipboard = gtk_widget_get_clipboard(pBrowserImpl->m_pIconView);
         GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
-		GFile** files = g_new(GFile*, g_list_length(selection) + 1);
-		int i = 0;
+        if (!selection) return;
+
+        GSList* file_slist = NULL;
         for (GList *item = selection; item != NULL; item = g_list_next(item))
         {
             QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[GPOINTER_TO_UINT(item->data)];
-			files[i++] = g_file_new_for_uri(f.GetURI());
+            pBrowserImpl->m_CutFiles.push_back(f);
+            GFile* file = g_file_new_for_uri(f.GetURI());
+            file_slist = g_slist_prepend(file_slist, file);
         }
-		files[i] = NULL;
         g_list_free(selection);
-		GValue value = G_VALUE_INIT;
-		g_value_init(&value, G_TYPE_FILE);
-		g_value_set_object(&value, files);
+        file_slist = g_slist_reverse(file_slist);
+
+        GdkFileList* file_list_obj = gdk_file_list_new_from_list(file_slist);
+        GValue value = G_VALUE_INIT;
+        g_value_init(&value, GDK_TYPE_FILE_LIST);
+        g_value_set_boxed(&value, file_list_obj);
         gdk_clipboard_set_content(clipboard, gdk_content_provider_new_for_value(&value));
+        g_value_unset(&value);
+        g_object_unref(file_list_obj);
     }
     else if (strcmp(name, ACTION_BROWSER_COPY) == 0)
     {
+        pBrowserImpl->m_CutFiles.clear();
         GdkClipboard* clipboard = gtk_widget_get_clipboard(pBrowserImpl->m_pIconView);
         GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
-		GFile** files = g_new(GFile*, g_list_length(selection) + 1);
-		int i = 0;
+        if (!selection) return;
+
+        GSList* file_slist = NULL;
         for (GList *item = selection; item != NULL; item = g_list_next(item))
         {
             QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[GPOINTER_TO_UINT(item->data)];
-			files[i++] = g_file_new_for_uri(f.GetURI());
+            GFile* file = g_file_new_for_uri(f.GetURI());
+            file_slist = g_slist_prepend(file_slist, file);
         }
-		files[i] = NULL;
         g_list_free(selection);
-		GValue value = G_VALUE_INIT;
-		g_value_init(&value, G_TYPE_FILE);
-		g_value_set_object(&value, files);
+        file_slist = g_slist_reverse(file_slist);
+
+        GdkFileList* file_list_obj = gdk_file_list_new_from_list(file_slist);
+        GValue value = G_VALUE_INIT;
+        g_value_init(&value, GDK_TYPE_FILE_LIST);
+        g_value_set_boxed(&value, file_list_obj);
         gdk_clipboard_set_content(clipboard, gdk_content_provider_new_for_value(&value));
+        g_value_unset(&value);
+        g_object_unref(file_list_obj);
     }
     else if (strcmp(name, ACTION_BROWSER_PASTE) == 0)
     {
         GdkClipboard* clipboard = gtk_widget_get_clipboard(pBrowserImpl->m_pIconView);
-        gdk_clipboard_read_value_async(clipboard, G_TYPE_FILE, G_PRIORITY_DEFAULT, NULL, (GAsyncReadyCallback)[](GObject* source_object, GAsyncResult* res, gpointer user_data) {
+        gdk_clipboard_read_value_async(clipboard, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT, NULL, (GAsyncReadyCallback)[](GObject* source_object, GAsyncResult* res, gpointer user_data) {
             GdkClipboard* clipboard = GDK_CLIPBOARD(source_object);
             Browser::BrowserImpl* pBrowserImpl = (Browser::BrowserImpl*)user_data;
             GError* error = NULL;
             const GValue* value = gdk_clipboard_read_value_finish(clipboard, res, &error);
+
+            if (error) {
+                g_warning("Error reading clipboard: %s", error->message);
+                g_error_free(error);
+                return;
+            }
+
             if (value)
             {
-                GFile* file = (GFile*)g_value_get_object(value);
-                if (file)
+                GdkFileList* file_list = (GdkFileList*)g_value_get_boxed(value);
+                if (file_list)
                 {
                     const std::list<std::string>& dest_folder_uri_list = pBrowserImpl->m_BrowserHistory.GetCurrentFiles();
-                    if (!dest_folder_uri_list.empty())
+                    if (dest_folder_uri_list.empty()) return;
+
+                    std::string dest_folder_uri = dest_folder_uri_list.front();
+                    QuiverFile dest_folder(dest_folder_uri.c_str());
+                    if (!dest_folder.IsFolder()) return;
+
+                    GSList* files = gdk_file_list_get_files(file_list);
+                    bool is_cut = !pBrowserImpl->m_CutFiles.empty();
+
+                    for (GSList* l = files; l != NULL; l = l->next)
                     {
-                        std::string dest_folder_uri = dest_folder_uri_list.front();
-                        QuiverFile dest_folder(dest_folder_uri.c_str());
+                        GFile* file = (GFile*)l->data;
                         char* uri = g_file_get_uri(file);
                         QuiverFile src_file(uri);
                         g_free(uri);
-                        QuiverFileOps::CopyFile(src_file, dest_folder);
-                        pBrowserImpl->m_ImageListPtr->Reload();
+                        if (is_cut) {
+                            QuiverFileOps::MoveFile(src_file, dest_folder);
+                        } else {
+                            QuiverFileOps::CopyFile(src_file, dest_folder);
+                        }
                     }
-                    g_object_unref(file);
+                    g_slist_free_full(files, g_object_unref);
+
+                    if (is_cut) {
+                        pBrowserImpl->m_CutFiles.clear();
+                    }
+
+                    pBrowserImpl->m_ImageListPtr->Reload();
                 }
             }
         }, pBrowserImpl);

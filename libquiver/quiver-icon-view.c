@@ -343,23 +343,25 @@ void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulo
     if (cell >= n_items)
         return;
 
-    if (priv->selection_anchor_cell == G_MAXULONG)
-    {
-        priv->selection_anchor_cell = cell;
-    }
-
-    gulong start = MIN(priv->selection_anchor_cell, cell);
-    gulong end = MAX(priv->selection_anchor_cell, cell);
-
-    for (gulong i = 0; i < n_items; i++)
-    {
-        if (i >= start && i <= end)
-        {
-            priv->cell_items[i].selected = TRUE;
+    if (!(state & GDK_SHIFT_MASK)) {
+        // If shift is not held, just select the single cell
+        for (gulong i = 0; i < n_items; i++) {
+            priv->cell_items[i].selected = (i == cell);
         }
-        else
+        priv->selection_anchor_cell = cell;
+    } else {
+        // If shift is held, select from anchor to current cell
+        if (priv->selection_anchor_cell == G_MAXULONG)
         {
-            priv->cell_items[i].selected = FALSE;
+            priv->selection_anchor_cell = cell;
+        }
+
+        gulong start = MIN(priv->selection_anchor_cell, cell);
+        gulong end = MAX(priv->selection_anchor_cell, cell);
+
+        for (gulong i = 0; i < n_items; i++)
+        {
+            priv->cell_items[i].selected = (i >= start && i <= end);
         }
     }
 
@@ -379,7 +381,43 @@ void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulo
 }
 
 
-static void quiver_icon_view_recalculate_adjustments(QuiverIconView *iconview) {}
+static void quiver_icon_view_recalculate_adjustments(QuiverIconView *iconview) {
+    QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+    gint width = gtk_widget_get_width(GTK_WIDGET(iconview));
+    gint height = gtk_widget_get_height(GTK_WIDGET(iconview));
+    gulong n_items = quiver_icon_view_get_n_items_internal(iconview);
+    gint cell_width = quiver_icon_view_get_cell_width(iconview);
+    gint cell_height = quiver_icon_view_get_cell_height(iconview);
+
+    if (width <= 0 || height <= 0 || cell_width <= 0 || cell_height <= 0) {
+        return;
+    }
+
+    if (priv->n_columns_fixed > 0) {
+        priv->n_columns_actual = priv->n_columns_fixed;
+        priv->n_rows_actual = (n_items + priv->n_columns_actual - 1) / priv->n_columns_actual;
+    } else if (priv->n_rows_fixed > 0) {
+        priv->n_rows_actual = priv->n_rows_fixed;
+        priv->n_columns_actual = (n_items + priv->n_rows_actual - 1) / priv->n_rows_actual;
+    } else {
+        priv->n_columns_actual = MAX(1, width / cell_width);
+        priv->n_rows_actual = (n_items + priv->n_columns_actual - 1) / priv->n_columns_actual;
+    }
+
+    if (priv->hadjustment) {
+        gdouble upper = priv->n_columns_actual * cell_width;
+        gtk_adjustment_set_lower(priv->hadjustment, 0);
+        gtk_adjustment_set_upper(priv->hadjustment, upper);
+        gtk_adjustment_set_page_size(priv->hadjustment, width);
+    }
+    if (priv->vadjustment) {
+        gdouble upper = priv->n_rows_actual * cell_height;
+        gtk_adjustment_set_lower(priv->vadjustment, 0);
+        gtk_adjustment_set_upper(priv->vadjustment, upper);
+        gtk_adjustment_set_page_size(priv->vadjustment, height);
+    }
+}
+
 static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview) {
     QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
     if(priv->callback_get_n_items)

@@ -64,8 +64,47 @@ namespace QuiverFileOps
 
 	bool RestoreFromTrash(QuiverFile quiverFile)
 	{
-		// g_file_untrash is not available in GTK4
-		return true;
+		GFile* trashed_file = g_file_new_for_uri(quiverFile.GetURI());
+		char* base_name = g_file_get_basename(trashed_file);
+
+		const char* data_dir = g_get_user_data_dir();
+		if (!data_dir) {
+			g_object_unref(trashed_file);
+			g_free(base_name);
+			return false;
+		}
+        char* trash_dir = g_build_filename(data_dir, "Trash", NULL);
+		char* info_path = g_build_filename(trash_dir, "info", base_name, ".trashinfo", NULL);
+        g_free(trash_dir);
+		GKeyFile* key_file = g_key_file_new();
+		bool success = false;
+
+		if (g_key_file_load_from_file(key_file, info_path, G_KEY_FILE_NONE, NULL)) {
+			char* original_path = g_key_file_get_string(key_file, "Trash Info", "Path", NULL);
+			if (original_path) {
+				GFile* original_file_parent = g_file_new_for_path(original_path);
+                GFile* dest_dir = g_file_get_parent(original_file_parent);
+
+                if (dest_dir) {
+				    success = g_file_move(trashed_file, dest_dir, G_FILE_COPY_NONE, NULL, NULL, NULL, NULL);
+				    if (success) {
+					    GFile* info_file = g_file_new_for_path(info_path);
+					    g_file_delete(info_file, NULL, NULL);
+					    g_object_unref(info_file);
+				    }
+                    g_object_unref(dest_dir);
+                }
+				g_free(original_path);
+                g_object_unref(original_file_parent);
+			}
+		}
+
+		g_key_file_free(key_file);
+		g_free(info_path);
+		g_free(base_name);
+		g_object_unref(trashed_file);
+
+		return success;
 	}
 
 	bool CopyFile(QuiverFile src, QuiverFile dst)

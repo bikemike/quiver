@@ -147,8 +147,7 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
     gtk_window_set_modal(GTK_WINDOW(m_pDialogRename), TRUE);
 
 
-	m_pBtnOK = gtk_dialog_add_button(m_pDialogRename, "_OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(m_pDialogRename, "_Cancel", GTK_RESPONSE_CANCEL);
+    m_pBtnOK = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "rename_ok_button"));
 
     GtkGrid* grid = GTK_GRID(gtk_builder_get_object(m_pGtkBuilder, "table4"));
 	m_pBtnSourceFolder = GTK_BUTTON(gtk_button_new_with_label ("Choose Source Folder"));
@@ -263,35 +262,35 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 	return bIsValid;
 }
 
-void RenameDlg::RenameDlgPriv::OnFolderClicked() {
-    GtkWidget* dialog = gtk_file_chooser_dialog_new("Choose Source Folder",
-                                                    GTK_WINDOW(m_pDialogRename),
-                                                    GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-                                                    "_Cancel", GTK_RESPONSE_CANCEL,
-                                                    "_Open", GTK_RESPONSE_ACCEPT,
-                                                    NULL);
-    g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog* dialog, int response_id, gpointer user_data){
-        RenameDlgPriv* self = static_cast<RenameDlgPriv*>(user_data);
-        self->OnFolderChooserResponse(response_id, GTK_FILE_CHOOSER(dialog));
-        gtk_window_destroy(GTK_WINDOW(dialog));
-    }), this);
-    gtk_widget_show(dialog);
+static void select_folder_callback(GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+    RenameDlg::RenameDlgPriv* self = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
+    GtkFileDialog* dialog = GTK_FILE_DIALOG(source_object);
+    GError* error = NULL;
+    GFile* folder = gtk_file_dialog_select_folder_finish(dialog, res, &error);
+
+    if (error) {
+        g_warning("Error selecting folder: %s", error->message);
+        g_error_free(error);
+        self->UpdateUI();
+        return;
+    }
+
+    if (folder) { // User selected a folder, NULL if cancelled
+        if (self->m_pSourceFolderFile) g_object_unref(self->m_pSourceFolderFile);
+        self->m_pSourceFolderFile = folder; // takes ownership from finish function
+        char* path = g_file_get_path(self->m_pSourceFolderFile);
+        gtk_button_set_label(self->m_pBtnSourceFolder, path);
+        g_free(path);
+    }
+    self->UpdateUI();
 }
 
-void RenameDlg::RenameDlgPriv::OnFolderChooserResponse(int response_id, GtkFileChooser* chooser) {
-    if (response_id == GTK_RESPONSE_ACCEPT) {
-        GListModel* files = gtk_file_chooser_get_files(chooser);
-        if (g_list_model_get_n_items(files) > 0) {
-            GFile* folder = G_FILE(g_list_model_get_item(files, 0));
-            if (m_pSourceFolderFile) g_object_unref(m_pSourceFolderFile);
-            m_pSourceFolderFile = folder; // takes ownership
-            char* path = g_file_get_path(m_pSourceFolderFile);
-            gtk_button_set_label(m_pBtnSourceFolder, path);
-            g_free(path);
-        }
-        g_object_unref(files);
-    }
-    UpdateUI();
+void RenameDlg::RenameDlgPriv::OnFolderClicked() {
+    GtkFileDialog* dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Choose Source Folder");
+    gtk_file_dialog_select_folder(dialog, GTK_WINDOW(m_pDialogRename), NULL, select_folder_callback, this);
+    g_object_unref(dialog);
 }
 
 

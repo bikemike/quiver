@@ -161,6 +161,7 @@ static gboolean timeout_play_position (gpointer data);
 #define ACTION_VIEWER_ROTATE_CW_2       ACTION_VIEWER_ROTATE_CW "_2"
 #define ACTION_VIEWER_ROTATE_CCW_2      ACTION_VIEWER_ROTATE_CCW "_2"
 #define ACTION_VIEWER_ROTATE_FOR_BEST_FIT "MaximizeForDisplay"
+#define ACTION_VIEWER_VIEW_EXIF_SIDEBAR "ViewExifSidebar"
 #define ACTION_VIEWER_FLIP_H_2          ACTION_VIEWER_FLIP_H "_2"
 #define ACTION_VIEWER_FLIP_V_2          ACTION_VIEWER_FLIP_V "_2"
 
@@ -651,6 +652,10 @@ static void viewer_toggle_action_handler_cb(GAction *action, GVariant *state, gp
     {
         pViewerImpl->m_bMaximizeViewableArea = is_active;
         Preferences::GetInstance()->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, is_active);
+    }
+    else if (strcmp(name, ACTION_VIEWER_VIEW_EXIF_SIDEBAR) == 0)
+    {
+        // This action is not yet implemented in the UI
     }
 
     g_action_change_state(action, state);
@@ -1700,7 +1705,15 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer, GtkApplication* app) :
 
 	m_pViewer = pViewer;
 
-    GtkBuilder* builder = gtk_builder_new_from_file(QUIVER_DATADIR "/viewer.ui");
+    gchar* ui_file = g_build_filename(QUIVER_DATADIR, "viewer.ui", NULL);
+    GtkBuilder* builder = gtk_builder_new_from_file(ui_file);
+    if (!builder) {
+        g_critical("Failed to load UI file: %s", ui_file);
+        g_free(ui_file);
+        throw std::runtime_error("Failed to load viewer.ui");
+    }
+    g_free(ui_file);
+
     m_pHBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_hbox"));
     m_pVBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_vbox"));
     m_pGrid = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_grid"));
@@ -1719,6 +1732,17 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer, GtkApplication* app) :
     m_pScrollbarH = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_scrollbar_h"));
     m_pNavigationBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_navigation_box"));
     m_pContextMenu = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_context_menu"));
+
+    // Check that all widgets were loaded successfully
+    if (!m_pHBox || !m_pVBox || !m_pGrid || !m_pIconView || !m_pImageView || !m_pVideoWidget ||
+        !m_pMediaControls || !m_pPlayButton || !m_pPlayImage || !m_pTimeline || !m_pTimeLabel ||
+        !m_pPlayProgress || !m_pPlayProgressEventBox || !m_pVolumeButton || !m_pScrollbarV ||
+        !m_pScrollbarH || !m_pNavigationBox || !m_pContextMenu) {
+        g_critical("Failed to get one or more widgets from viewer.ui");
+        g_object_unref(builder);
+        throw std::runtime_error("Failed to get widgets from viewer.ui");
+    }
+
     gtk_widget_set_parent(m_pContextMenu, m_pHBox);
     g_object_unref(builder);
 
