@@ -15,7 +15,7 @@ class Viewer : public virtual ViewerEventSource
 {
 public:
 	//constructor
-	Viewer();
+	Viewer(GtkApplication* app);
 	~Viewer();
 	
 	//member functions

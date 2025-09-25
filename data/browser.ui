@@ -3,11 +3,9 @@
   <requires lib="gtk" version="4.0"/>
   <object class="GtkPaned" id="browser_hpaned">
     <property name="orientation">horizontal</property>
-    <property name="wide-handle">1</property>
     <child>
       <object class="GtkPaned" id="browser_vpaned">
         <property name="orientation">vertical</property>
-        <property name="wide-handle">1</property>
         <child>
           <object class="GtkNotebook" id="browser_notebook">
             <property name="scrollable">1</property>

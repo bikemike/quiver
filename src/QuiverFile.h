@@ -46,6 +46,7 @@ public:
 
 	GdkPixbuf *GetExifThumbnail();
 	GdkPixbuf *GetThumbnail(int iSize = 0);
+	GdkPixbuf *GetPixbuf();
 	
 	void RemoveCachedThumbnail(int iSize = 0);
 

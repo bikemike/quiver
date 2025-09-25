@@ -358,7 +358,7 @@ void Preferences::SetStringList(std::string section, std::string key, std::list<
 		if (NULL != strings)
 		{
 			g_key_file_set_string_list (m_KeyFile, section.c_str(), key.c_str(), (const gchar* const*)strings, nstrings);
-			delete[] strings;
+			g_strfreev(strings);
 		}
 
 		m_bModified = true;

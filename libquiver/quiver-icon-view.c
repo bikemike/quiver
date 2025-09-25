@@ -259,20 +259,58 @@ static void quiver_icon_view_set_cursor_cell_internal(QuiverIconView *iconview, 
 }
 static void quiver_icon_view_scroll_to_cell_ensure_visible(QuiverIconView *iconview, gulong cell, gboolean force_top_left)
 {
-	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
-	GtkAdjustment *hadjustment = priv->hadjustment;
-	GtkAdjustment *vadjustment = priv->vadjustment;
+    QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+    GtkAdjustment *hadjustment = priv->hadjustment;
+    GtkAdjustment *vadjustment = priv->vadjustment;
 
-	if (!hadjustment || !vadjustment)
-		return;
+    if (!hadjustment || !vadjustment)
+        return;
 
-	// This is a simplified implementation. A real one would need to calculate the cell's exact position.
-	// For now, we'll just scroll to the top if the cell is 0.
-	if (cell == 0)
-	{
-		gtk_adjustment_set_value(hadjustment, 0);
-		gtk_adjustment_set_value(vadjustment, 0);
-	}
+    gint cell_width = quiver_icon_view_get_cell_width(iconview);
+    gint cell_height = quiver_icon_view_get_cell_height(iconview);
+    gint n_cols = priv->n_columns_actual;
+    gint n_rows = priv->n_rows_actual;
+
+    if (n_cols == 0 || n_rows == 0)
+        return;
+
+    gint row = cell / n_cols;
+    gint col = cell % n_cols;
+
+    gdouble x = col * cell_width;
+    gdouble y = row * cell_height;
+
+    gdouble lower = gtk_adjustment_get_lower(hadjustment);
+    gdouble upper = gtk_adjustment_get_upper(hadjustment);
+    gdouble page_size = gtk_adjustment_get_page_size(hadjustment);
+    gdouble value = gtk_adjustment_get_value(hadjustment);
+
+    if (x < value)
+    {
+        value = x;
+    }
+    else if (x + cell_width > value + page_size)
+    {
+        value = x + cell_width - page_size;
+    }
+    value = CLAMP(value, lower, upper - page_size);
+    gtk_adjustment_set_value(hadjustment, value);
+
+    lower = gtk_adjustment_get_lower(vadjustment);
+    upper = gtk_adjustment_get_upper(vadjustment);
+    page_size = gtk_adjustment_get_page_size(vadjustment);
+    value = gtk_adjustment_get_value(vadjustment);
+
+    if (y < value)
+    {
+        value = y;
+    }
+    else if (y + cell_height > value + page_size)
+    {
+        value = y + cell_height - page_size;
+    }
+    value = CLAMP(value, lower, upper - page_size);
+    gtk_adjustment_set_value(vadjustment, value);
 }
 void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select)
 {
@@ -296,6 +334,48 @@ void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select
 
 	gtk_widget_queue_draw(GTK_WIDGET(iconview));
 	g_signal_emit(iconview, iconview_signals[SIGNAL_SELECTION_CHANGED], 0);
+}
+
+void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulong cell, GdkModifierType state)
+{
+    QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+    gulong n_items = quiver_icon_view_get_n_items_internal(iconview);
+    if (cell >= n_items)
+        return;
+
+    if (priv->selection_anchor_cell == G_MAXULONG)
+    {
+        priv->selection_anchor_cell = cell;
+    }
+
+    gulong start = MIN(priv->selection_anchor_cell, cell);
+    gulong end = MAX(priv->selection_anchor_cell, cell);
+
+    for (gulong i = 0; i < n_items; i++)
+    {
+        if (i >= start && i <= end)
+        {
+            priv->cell_items[i].selected = TRUE;
+        }
+        else
+        {
+            priv->cell_items[i].selected = FALSE;
+        }
+    }
+
+    // Update the internal selection list
+    g_list_free(priv->selection);
+    priv->selection = NULL;
+    for (gulong i = 0; i < n_items; i++)
+    {
+        if (priv->cell_items[i].selected)
+        {
+            priv->selection = g_list_append(priv->selection, GUINT_TO_POINTER(i));
+        }
+    }
+
+    gtk_widget_queue_draw(GTK_WIDGET(iconview));
+    g_signal_emit(iconview, iconview_signals[SIGNAL_SELECTION_CHANGED], 0);
 }
 
 

@@ -619,6 +619,11 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 	return m_QuiverFilePtr->GetIcon(std::max(width_desired,height_desired));
 }
 
+GdkPixbuf* QuiverFile::GetPixbuf()
+{
+	return gdk_pixbuf_new_from_file(m_QuiverFilePtr->GetFilePath().c_str(), NULL);
+}
+
 
 std::string QuiverFile::GetFileName() const
 {

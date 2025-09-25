@@ -285,8 +285,8 @@ void QuiverImpl::CreateUI(GtkApplication* app)
     g_object_unref(show_statusbar_action);
 
     m_pExifView = new ExifView();
-    m_BrowserPtr = new Browser();
-    m_ViewerPtr = new Viewer();
+    m_BrowserPtr = new Browser(app);
+    m_ViewerPtr = new Viewer(app);
 
     // Show the correct view
     if (m_iUIMode == QUIVER_UI_MODE_BROWSER)
