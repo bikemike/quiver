@@ -5,6 +5,8 @@
 #include <string>
 #include <boost/shared_ptr.hpp>
 #include <gtk/gtk.h>
+#include "IBrowserEventHandler.h"
+#include "IViewerEventHandler.h"
 
 class QuiverImpl;
 
@@ -27,7 +29,7 @@ class Viewer;
 class ExifView;
 class Statusbar;
 
-class QuiverImpl
+class QuiverImpl : public IBrowserEventHandler, public IViewerEventHandler
 {
 public:
     QuiverImpl(Quiver* pQuiver, std::list<std::string>& files, bool bStartSlideShow);
@@ -39,6 +41,18 @@ public:
 
     void ShowBrowser();
     void ShowViewer();
+
+    // IBrowserEventHandler
+	virtual void HandleItemActivated(BrowserEventPtr event);
+	virtual void HandleSelectionChanged(BrowserEventPtr event);
+	virtual void HandleCursorChanged(BrowserEventPtr event);
+
+	// IViewerEventHandler
+	virtual void HandleItemClicked(ViewerEventPtr event);
+	virtual void HandleItemActivated(ViewerEventPtr event);
+	virtual void HandleCursorChanged(ViewerEventPtr event);
+	virtual void HandleSlideShowStarted(ViewerEventPtr event);
+	virtual void HandleSlideShowStopped(ViewerEventPtr event);
 
     void OnQuit();
     void OnFullScreen();
@@ -67,10 +81,11 @@ public:
 
     GtkWindow* m_pWindow;
     GtkWidget* m_pMainVBox;
+    GtkWidget* m_pMainHPaned;
+    GtkWidget* m_pMainStack;
     GtkWidget* m_pMenubar;
     GtkWidget* m_pToolbar;
     Statusbar* m_pStatusbar;
-    GtkWidget* m_pCurrentView;
     Browser* m_BrowserPtr;
     Viewer* m_ViewerPtr;
     ExifView* m_pExifView;

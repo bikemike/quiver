@@ -44,8 +44,6 @@ enum {
 
 
 // Forward declarations for static functions
-static void quiver_icon_view_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
-static void quiver_icon_view_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 static void quiver_icon_view_dispose(GObject *object);
 static void quiver_icon_view_realize(GtkWidget *widget);
 static void quiver_icon_view_unrealize(GtkWidget *widget);
@@ -71,6 +69,7 @@ static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview);
 static void quiver_icon_view_draw_cell_contents(QuiverIconView *iconview, cairo_t *cr, gulong cell_idx, cairo_rectangle_int_t *cell_rect, GtkStateFlags cell_state);
 
 
+static void quiver_icon_view_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {}
 static void quiver_icon_view_class_init(QuiverIconViewClass *klass) {
 	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 	GObjectClass *obj_class = G_OBJECT_CLASS(klass);
@@ -83,8 +82,6 @@ static void quiver_icon_view_class_init(QuiverIconViewClass *klass) {
 	widget_class->measure = quiver_icon_view_measure;
     widget_class->snapshot = quiver_icon_view_snapshot;
 
-	obj_class->set_property = quiver_icon_view_set_property;
-	obj_class->get_property = quiver_icon_view_get_property;
     obj_class->dispose = quiver_icon_view_dispose;
 	obj_class->finalize = quiver_icon_view_finalize;
 
@@ -97,6 +94,10 @@ static void quiver_icon_view_class_init(QuiverIconViewClass *klass) {
 	iconview_signals[SIGNAL_CELL_ACTIVATED] = g_signal_new("cell-activated", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, cell_activated), NULL, NULL, g_cclosure_marshal_generic, G_TYPE_NONE, 1, G_TYPE_ULONG); // cell_idx
 	iconview_signals[SIGNAL_CURSOR_CHANGED] = g_signal_new("cursor-changed", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, cursor_changed), NULL, NULL, g_cclosure_marshal_generic, G_TYPE_NONE, 1, G_TYPE_ULONG); // new_cursor_cell_idx
 	iconview_signals[SIGNAL_SELECTION_CHANGED] = g_signal_new("selection-changed", G_TYPE_FROM_CLASS(obj_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(QuiverIconViewClass, selection_changed), NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0);
+}
+
+static GtkAdjustment* new_default_adjustment_internal (void) { // Renamed to avoid conflict if GTK defines similar
+  return gtk_adjustment_new (0.0, 0.0, 100.0, 10.0, 20.0, 0.0); // Sensible defaults: value, lower, upper, step_inc, page_inc, page_size (0 means auto)
 }
 
 static void quiver_icon_view_init(QuiverIconView *iconview) {
@@ -116,7 +117,6 @@ static void quiver_icon_view_init(QuiverIconView *iconview) {
     priv->n_cell_items_allocated = 0;
 	priv->cell_items = NULL;
     priv->rubberband_active = FALSE;
-	priv->selection = NULL;
 
 	gtk_widget_set_can_focus(GTK_WIDGET(iconview), TRUE);
     gtk_widget_set_focus_on_click(GTK_WIDGET(iconview), TRUE);
@@ -244,180 +244,33 @@ static void quiver_icon_view_handle_motion(GtkEventControllerMotion *controller,
 static void quiver_icon_view_handle_leave(GtkEventControllerMotion *controller, gpointer user_data) {}
 static gboolean quiver_icon_view_handle_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data) { return FALSE; }
 static gboolean quiver_icon_view_handle_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) { return FALSE; }
-static void quiver_icon_view_set_cursor_cell_internal(QuiverIconView *iconview, gulong new_cursor_cell, GdkModifierType state, gboolean is_mouse_action, gboolean extend_selection)
-{
-	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+static void quiver_icon_view_adjustment_value_changed(GtkAdjustment *adjustment, gpointer user_data) {}
+static void quiver_icon_view_set_cursor_cell_internal(QuiverIconView *iconview, gulong new_cursor_cell, GdkModifierType state, gboolean is_mouse_action, gboolean extend_selection) {}
+static void quiver_icon_view_scroll_to_cell_ensure_visible(QuiverIconView *iconview, gulong cell, gboolean force_top_left) {}
 
-	if (new_cursor_cell >= quiver_icon_view_get_n_items_internal(iconview))
-		return;
-
-	if (priv->cursor_cell != new_cursor_cell)
-	{
-		priv->cursor_cell = new_cursor_cell;
-		g_signal_emit(iconview, iconview_signals[SIGNAL_CURSOR_CHANGED], 0, new_cursor_cell);
-	}
-}
-static void quiver_icon_view_scroll_to_cell_ensure_visible(QuiverIconView *iconview, gulong cell, gboolean force_top_left)
-{
-    QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
-    GtkAdjustment *hadjustment = priv->hadjustment;
-    GtkAdjustment *vadjustment = priv->vadjustment;
-
-    if (!hadjustment || !vadjustment)
-        return;
-
-    gint cell_width = quiver_icon_view_get_cell_width(iconview);
-    gint cell_height = quiver_icon_view_get_cell_height(iconview);
-    gint n_cols = priv->n_columns_actual;
-    gint n_rows = priv->n_rows_actual;
-
-    if (n_cols == 0 || n_rows == 0)
-        return;
-
-    gint row = cell / n_cols;
-    gint col = cell % n_cols;
-
-    gdouble x = col * cell_width;
-    gdouble y = row * cell_height;
-
-    gdouble lower = gtk_adjustment_get_lower(hadjustment);
-    gdouble upper = gtk_adjustment_get_upper(hadjustment);
-    gdouble page_size = gtk_adjustment_get_page_size(hadjustment);
-    gdouble value = gtk_adjustment_get_value(hadjustment);
-
-    if (x < value)
-    {
-        value = x;
-    }
-    else if (x + cell_width > value + page_size)
-    {
-        value = x + cell_width - page_size;
-    }
-    value = CLAMP(value, lower, upper - page_size);
-    gtk_adjustment_set_value(hadjustment, value);
-
-    lower = gtk_adjustment_get_lower(vadjustment);
-    upper = gtk_adjustment_get_upper(vadjustment);
-    page_size = gtk_adjustment_get_page_size(vadjustment);
-    value = gtk_adjustment_get_value(vadjustment);
-
-    if (y < value)
-    {
-        value = y;
-    }
-    else if (y + cell_height > value + page_size)
-    {
-        value = y + cell_height - page_size;
-    }
-    value = CLAMP(value, lower, upper - page_size);
-    gtk_adjustment_set_value(vadjustment, value);
-}
 void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select)
 {
-	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
-	gulong n_items = quiver_icon_view_get_n_items_internal(iconview);
-	for (gulong i = 0; i < n_items; i++)
-	{
-		priv->cell_items[i].selected = select;
-	}
-
-	// Update the internal selection list
-	g_list_free(priv->selection);
-	priv->selection = NULL;
-	if (select)
-	{
-		for (gulong i = 0; i < n_items; i++)
-		{
-			priv->selection = g_list_append(priv->selection, GUINT_TO_POINTER(i));
-		}
-	}
-
-	gtk_widget_queue_draw(GTK_WIDGET(iconview));
-	g_signal_emit(iconview, iconview_signals[SIGNAL_SELECTION_CHANGED], 0);
-}
-
-void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulong cell, GdkModifierType state)
-{
     QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
     gulong n_items = quiver_icon_view_get_n_items_internal(iconview);
-    if (cell >= n_items)
-        return;
+    gboolean changed = FALSE;
 
-    if (!(state & GDK_SHIFT_MASK)) {
-        // If shift is not held, just select the single cell
-        for (gulong i = 0; i < n_items; i++) {
-            priv->cell_items[i].selected = (i == cell);
-        }
-        priv->selection_anchor_cell = cell;
-    } else {
-        // If shift is held, select from anchor to current cell
-        if (priv->selection_anchor_cell == G_MAXULONG)
-        {
-            priv->selection_anchor_cell = cell;
-        }
+    if (!priv->cell_items || priv->n_cell_items_allocated < n_items) return;
 
-        gulong start = MIN(priv->selection_anchor_cell, cell);
-        gulong end = MAX(priv->selection_anchor_cell, cell);
-
-        for (gulong i = 0; i < n_items; i++)
-        {
-            priv->cell_items[i].selected = (i >= start && i <= end);
+    for (gulong i = 0; i < n_items; i++) {
+        if (priv->cell_items[i].selected != select) {
+            priv->cell_items[i].selected = select;
+            changed = TRUE;
         }
     }
 
-    // Update the internal selection list
-    g_list_free(priv->selection);
-    priv->selection = NULL;
-    for (gulong i = 0; i < n_items; i++)
-    {
-        if (priv->cell_items[i].selected)
-        {
-            priv->selection = g_list_append(priv->selection, GUINT_TO_POINTER(i));
-        }
-    }
-
-    gtk_widget_queue_draw(GTK_WIDGET(iconview));
-    g_signal_emit(iconview, iconview_signals[SIGNAL_SELECTION_CHANGED], 0);
-}
-
-
-static void quiver_icon_view_recalculate_adjustments(QuiverIconView *iconview) {
-    QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
-    gint width = gtk_widget_get_width(GTK_WIDGET(iconview));
-    gint height = gtk_widget_get_height(GTK_WIDGET(iconview));
-    gulong n_items = quiver_icon_view_get_n_items_internal(iconview);
-    gint cell_width = quiver_icon_view_get_cell_width(iconview);
-    gint cell_height = quiver_icon_view_get_cell_height(iconview);
-
-    if (width <= 0 || height <= 0 || cell_width <= 0 || cell_height <= 0) {
-        return;
-    }
-
-    if (priv->n_columns_fixed > 0) {
-        priv->n_columns_actual = priv->n_columns_fixed;
-        priv->n_rows_actual = (n_items + priv->n_columns_actual - 1) / priv->n_columns_actual;
-    } else if (priv->n_rows_fixed > 0) {
-        priv->n_rows_actual = priv->n_rows_fixed;
-        priv->n_columns_actual = (n_items + priv->n_rows_actual - 1) / priv->n_rows_actual;
-    } else {
-        priv->n_columns_actual = MAX(1, width / cell_width);
-        priv->n_rows_actual = (n_items + priv->n_columns_actual - 1) / priv->n_columns_actual;
-    }
-
-    if (priv->hadjustment) {
-        gdouble upper = priv->n_columns_actual * cell_width;
-        gtk_adjustment_set_lower(priv->hadjustment, 0);
-        gtk_adjustment_set_upper(priv->hadjustment, upper);
-        gtk_adjustment_set_page_size(priv->hadjustment, width);
-    }
-    if (priv->vadjustment) {
-        gdouble upper = priv->n_rows_actual * cell_height;
-        gtk_adjustment_set_lower(priv->vadjustment, 0);
-        gtk_adjustment_set_upper(priv->vadjustment, upper);
-        gtk_adjustment_set_page_size(priv->vadjustment, height);
+    if (changed) {
+        g_signal_emit(iconview, iconview_signals[SIGNAL_SELECTION_CHANGED], 0);
+        gtk_widget_queue_draw(GTK_WIDGET(iconview));
     }
 }
 
+static void quiver_icon_view_update_selection_with_shift(QuiverIconView *iconview, gulong target_cell) {}
+static void quiver_icon_view_recalculate_adjustments(QuiverIconView *iconview) {}
 static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview) {
     QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
     if(priv->callback_get_n_items)
@@ -604,5 +457,3 @@ void quiver_icon_view_set_text_func (QuiverIconView *iconview, QuiverIconViewGet
 void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview, QuiverIconViewGetOverlayPixbufFunc func,gpointer data,GDestroyNotify destroy){ QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview); if(priv->callback_get_overlay_pixbuf_data && priv->callback_get_overlay_pixbuf_data_destroy) priv->callback_get_overlay_pixbuf_data_destroy(priv->callback_get_overlay_pixbuf_data); priv->callback_get_overlay_pixbuf = func; priv->callback_get_overlay_pixbuf_data = data; priv->callback_get_overlay_pixbuf_data_destroy = destroy; gtk_widget_queue_draw(GTK_WIDGET(iconview));}
 
 static void quiver_icon_view_unrealize(GtkWidget *widget) {}
-static void quiver_icon_view_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {}
-static void quiver_icon_view_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {}

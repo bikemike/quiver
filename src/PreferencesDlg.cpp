@@ -15,7 +15,6 @@ public:
 	void LoadWidgets();
 	void ConnectSignals();
 	void UpdateUI();
-    void OnFolderClicked();
 	
 	PreferencesDlg*        m_pPublic;
 	GtkBuilder*            m_pGtkBuilder;
@@ -31,6 +30,7 @@ public:
 };
 
 static void on_response(GtkDialog *dialog, gint response_id, gpointer user_data);
+static void on_folder_change(GtkFileChooser *chooser, gpointer user_data);
 static void on_viewer_film_strip_pos_changed(GtkDropDown *widget, GParamSpec* pspec, gpointer user_data);
 static void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data);
 
@@ -87,14 +87,6 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 	
 	m_pClrBtnBrowser = GTK_COLOR_DIALOG_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_browser"));
 	m_pClrBtnViewer = GTK_COLOR_DIALOG_BUTTON(gtk_builder_get_object (m_pGtkBuilder, "clrbtn_general_bg_viewer"));
-
-    // Add Photo Library chooser button
-    GtkGrid* grid = GTK_GRID(gtk_builder_get_object(m_pGtkBuilder, "grid_general"));
-    GtkWidget* pBtnPhotoLibrary = gtk_button_new_with_label("Choose...");
-    gtk_grid_attach(grid, pBtnPhotoLibrary, 2, 0, 1, 1);
-    g_signal_connect(pBtnPhotoLibrary, "clicked", G_CALLBACK(+[](GtkButton* button, gpointer user_data){
-        static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data)->OnFolderClicked();
-    }), this);
 }
 
 void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
@@ -103,35 +95,6 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 	g_signal_connect(m_pDropDownFilmstripPos, "notify::selected", G_CALLBACK (on_viewer_film_strip_pos_changed), this);
 	g_signal_connect(m_pClrBtnBrowser, "notify::rgba", G_CALLBACK (on_color_changed), this);
 	g_signal_connect(m_pClrBtnViewer, "notify::rgba", G_CALLBACK (on_color_changed), this);
-}
-
-static void select_folder_callback(GObject *source_object, GAsyncResult *res, gpointer user_data)
-{
-    PreferencesDlg::PreferencesDlgPriv* self = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
-    GtkFileDialog* dialog = GTK_FILE_DIALOG(source_object);
-    GError* error = NULL;
-    GFile* folder = gtk_file_dialog_select_folder_finish(dialog, res, &error);
-
-    if (error) {
-        g_warning("Error selecting folder: %s", error->message);
-        g_error_free(error);
-        return;
-    }
-
-    if (folder) {
-        char* uri = g_file_get_uri(folder);
-        self->m_prefPtr->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY, uri);
-        g_free(uri);
-        g_object_unref(folder);
-    }
-}
-
-void PreferencesDlg::PreferencesDlgPriv::OnFolderClicked()
-{
-    GtkFileDialog* dialog = gtk_file_dialog_new();
-    gtk_file_dialog_set_title(dialog, "Choose Photo Library");
-    gtk_file_dialog_select_folder(dialog, m_pParent, NULL, select_folder_callback, this);
-    g_object_unref(dialog);
 }
 
 void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
@@ -201,7 +164,7 @@ static void on_viewer_film_strip_pos_changed(GtkDropDown *widget, GParamSpec* ps
     }
 }
 
-static void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data)
+void on_color_changed(GtkColorDialogButton *widget, GParamSpec* pspec, gpointer user_data)
 {
     PreferencesDlg::PreferencesDlgPriv* priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
     if (priv) {

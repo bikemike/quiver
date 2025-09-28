@@ -13,7 +13,7 @@ typedef boost::shared_ptr<Statusbar> StatusbarPtr;
 class Browser : public virtual BrowserEventSource
 {
 public:
-	Browser(GtkApplication* app);
+	Browser();
 	~Browser();
 	
 	GtkWidget* GetWidget();

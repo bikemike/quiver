@@ -174,10 +174,11 @@ static void app_open(GApplication* app, GFile** files, gint n_files, const gchar
 QuiverImpl::QuiverImpl(Quiver* pQuiver, std::list<std::string>& files, bool bStartSlideShow) :
     m_pWindow(NULL),
     m_pMainVBox(NULL),
+    m_pMainHPaned(NULL),
+    m_pMainStack(NULL),
     m_pMenubar(NULL),
     m_pToolbar(NULL),
     m_pStatusbar(NULL),
-    m_pCurrentView(NULL),
     m_BrowserPtr(NULL),
     m_ViewerPtr(NULL),
     m_pExifView(NULL),
@@ -233,13 +234,25 @@ void QuiverImpl::CreateUI(GtkApplication* app)
     g_free(ui_file);
 
     m_pMenubar = GTK_WIDGET(gtk_builder_get_object(builder, "menubar"));
-    // The menubar is handled by the application in GTK4
-    // gtk_box_append(GTK_BOX(m_pMainVBox), m_pMenubar);
     gtk_application_set_menubar(app, G_MENU_MODEL(m_pMenubar));
 
 
     m_pToolbar = GTK_WIDGET(gtk_builder_get_object(builder, "toolbar"));
     gtk_box_append(GTK_BOX(m_pMainVBox), m_pToolbar);
+
+    // Create the main layout
+    m_pMainHPaned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_vexpand(m_pMainHPaned, TRUE);
+    gtk_box_append(GTK_BOX(m_pMainVBox), m_pMainHPaned);
+
+    m_pMainStack = gtk_stack_new();
+    gtk_paned_set_start_child(GTK_PANED(m_pMainHPaned), m_pMainStack);
+
+    m_pExifView = new ExifView();
+    gtk_paned_set_end_child(GTK_PANED(m_pMainHPaned), m_pExifView->GetWidget());
+    gtk_paned_set_resize_end_child(GTK_PANED(m_pMainHPaned), FALSE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(m_pMainHPaned), FALSE);
+
 
     // Create the status bar
     m_pStatusbar = new Statusbar();
@@ -284,9 +297,16 @@ void QuiverImpl::CreateUI(GtkApplication* app)
     g_action_map_add_action(G_ACTION_MAP(m_pWindow), show_statusbar_action);
     g_object_unref(show_statusbar_action);
 
-    m_pExifView = new ExifView();
-    m_BrowserPtr = new Browser(app);
-    m_ViewerPtr = new Viewer(app);
+    m_BrowserPtr = new Browser();
+    m_ViewerPtr = new Viewer();
+
+    // Add browser and viewer to the stack
+    gtk_stack_add_named(GTK_STACK(m_pMainStack), m_BrowserPtr->GetWidget(), "browser");
+    gtk_stack_add_named(GTK_STACK(m_pMainStack), m_ViewerPtr->GetWidget(), "viewer");
+
+    // Add event handlers
+    m_BrowserPtr->AddEventHandler(m_pQuiver->m_QuiverImplPtr);
+    m_ViewerPtr->AddEventHandler(m_pQuiver->m_QuiverImplPtr);
 
     // Show the correct view
     if (m_iUIMode == QUIVER_UI_MODE_BROWSER)
@@ -302,32 +322,18 @@ void QuiverImpl::CreateUI(GtkApplication* app)
 
 void QuiverImpl::ShowBrowser()
 {
-    if (m_pCurrentView == m_BrowserPtr->GetWidget())
-        return;
-
     m_iUIMode = QUIVER_UI_MODE_BROWSER;
-
-    if (m_pCurrentView)
-        gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), false);
-
-    m_pCurrentView = m_BrowserPtr->GetWidget();
-    gtk_box_append(GTK_BOX(m_pMainVBox), m_pCurrentView);
-    gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), true);
+    gtk_stack_set_visible_child_name(GTK_STACK(m_pMainStack), "browser");
+    m_BrowserPtr->Show();
+    m_ViewerPtr->Hide();
 }
 
 void QuiverImpl::ShowViewer()
 {
-    if (m_pCurrentView == m_ViewerPtr->GetWidget())
-        return;
-
     m_iUIMode = QUIVER_UI_MODE_VIEWER;
-
-    if (m_pCurrentView)
-        gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), false);
-
-    m_pCurrentView = m_ViewerPtr->GetWidget();
-    gtk_box_append(GTK_BOX(m_pMainVBox), m_pCurrentView);
-    gtk_widget_set_visible(GTK_WIDGET(m_pCurrentView), true);
+    gtk_stack_set_visible_child_name(GTK_STACK(m_pMainStack), "viewer");
+    m_ViewerPtr->Show();
+    m_BrowserPtr->Hide();
 }
 
 Quiver::Quiver(GtkApplication* app) :
@@ -571,5 +577,62 @@ void QuiverImpl::OnDelete()
 {
 }
 void QuiverImpl::OnFileProperties()
+{
+}
+
+//=============================================================================
+// IBrowserEventHandler implementation
+//=============================================================================
+void QuiverImpl::HandleItemActivated(BrowserEventPtr event)
+{
+    ShowViewer();
+    m_ViewerPtr->SetImageList(m_BrowserPtr->GetImageList());
+}
+
+void QuiverImpl::HandleSelectionChanged(BrowserEventPtr event)
+{
+    // For now, we only care about the single-item cursor change for the EXIF view.
+}
+
+void QuiverImpl::HandleCursorChanged(BrowserEventPtr event)
+{
+    if (m_BrowserPtr && m_pExifView) {
+        ImageListPtr imageList = m_BrowserPtr->GetImageList();
+        if (imageList && imageList->GetSize() > 0) {
+            QuiverFile qf = imageList->GetCurrent();
+            m_pExifView->SetQuiverFile(qf);
+        }
+    }
+}
+
+//=============================================================================
+// IViewerEventHandler implementation
+//=============================================================================
+void QuiverImpl::HandleItemClicked(ViewerEventPtr event)
+{
+}
+
+void QuiverImpl::HandleItemActivated(ViewerEventPtr event)
+{
+    // In viewer, activating an item might mean switching back to browser
+    ShowBrowser();
+}
+
+void QuiverImpl::HandleCursorChanged(ViewerEventPtr event)
+{
+    if (m_ViewerPtr && m_pExifView) {
+        ImageListPtr imageList = m_ViewerPtr->GetImageList();
+        if (imageList && imageList->GetSize() > 0) {
+            QuiverFile qf = imageList->GetCurrent();
+            m_pExifView->SetQuiverFile(qf);
+        }
+    }
+}
+
+void QuiverImpl::HandleSlideShowStarted(ViewerEventPtr event)
+{
+}
+
+void QuiverImpl::HandleSlideShowStopped(ViewerEventPtr event)
 {
 }

@@ -619,11 +619,6 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 	return m_QuiverFilePtr->GetIcon(std::max(width_desired,height_desired));
 }
 
-GdkPixbuf* QuiverFile::GetPixbuf()
-{
-	return gdk_pixbuf_new_from_file(m_QuiverFilePtr->GetFilePath().c_str(), NULL);
-}
-
 
 std::string QuiverFile::GetFileName() const
 {
@@ -742,8 +737,7 @@ static GdkPixbuf* scale_pixbuf(GdkPixbuf* pixbuf, int size)
 
 	GdkPixbuf* pEmptyThumb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, size, size);
 	gdk_pixbuf_fill(pEmptyThumb, 0x00000000);
-    // The offsets should be 0,0 to use the whole source pixbuf. The dest_x/y handle positioning.
-	gdk_pixbuf_composite(pixbuf, pEmptyThumb, dest_x, dest_y, dest_width, dest_height, 0, 0, (double)dest_width / (double)width, (double)dest_height / (double)height, GDK_INTERP_BILINEAR, 255);
+	gdk_pixbuf_composite(pixbuf, pEmptyThumb, dest_x, dest_y, dest_width, dest_height, dest_x, dest_y, (double)dest_width / (double)width, (double)dest_height / (double)height, GDK_INTERP_BILINEAR, 255);
 
 	return pEmptyThumb;
 }

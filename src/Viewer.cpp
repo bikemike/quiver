@@ -45,7 +45,6 @@
 
 using namespace std;
 
-
 #define ORIENTATION_ROTATE_CW	0
 #define ORIENTATION_ROTATE_CCW 	1
 #define ORIENTATION_FLIP_H    	2
@@ -161,7 +160,6 @@ static gboolean timeout_play_position (gpointer data);
 #define ACTION_VIEWER_ROTATE_CW_2       ACTION_VIEWER_ROTATE_CW "_2"
 #define ACTION_VIEWER_ROTATE_CCW_2      ACTION_VIEWER_ROTATE_CCW "_2"
 #define ACTION_VIEWER_ROTATE_FOR_BEST_FIT "MaximizeForDisplay"
-#define ACTION_VIEWER_VIEW_EXIF_SIDEBAR "ViewExifSidebar"
 #define ACTION_VIEWER_FLIP_H_2          ACTION_VIEWER_FLIP_H "_2"
 #define ACTION_VIEWER_FLIP_V_2          ACTION_VIEWER_FLIP_V "_2"
 
@@ -320,7 +318,7 @@ public:
 	}ScrollbarType;
 
 // constructor / destructor
-	ViewerImpl(Viewer *pViewer, GtkApplication* app);
+	ViewerImpl(Viewer *pViewer);
 	~ViewerImpl();
 
 // methods
@@ -363,15 +361,11 @@ public:
 
 		if (IsPlaying())
 		{
-			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPause); // GtkImage is for static images
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
-
-
 			m_iTimeoutPlayProgress = g_timeout_add(200,timeout_play_position,this);
 		}
 		else
 		{
-			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPlay); // GtkImage is for static images
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
 		}
 	}
@@ -464,6 +458,32 @@ public:
 
 	ImageCache m_ThumbnailCache;
 
+	class ViewerThumbLoader : public IconViewThumbLoader
+	{
+	public:
+		ViewerThumbLoader(ViewerImpl* pViewerImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
+		{
+			m_pViewerImpl = pViewerImpl;
+		}
+
+		~ViewerThumbLoader(){}
+
+	protected:
+
+		virtual void LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight);
+		virtual QuiverFile GetQuiverFile(gulong index);
+		virtual void GetVisibleRange(gulong* pulStart, gulong* pulEnd);
+		virtual void GetIconSize(guint* puiWidth, guint* puiHeight);
+		virtual gulong GetNumItems();
+		virtual void SetIsRunning(bool bIsRunning);
+		virtual void SetCacheSize(guint uiCacheSize);
+
+
+	private:
+		ViewerImpl* m_pViewerImpl;
+
+	};
+
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline;
 	GtkWidget*  m_pVideoWidget; // The widget for video display (e.g., GtkVideo)
@@ -490,32 +510,6 @@ public:
 		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
 	private:
 		ViewerImpl* parent;
-	};
-
-	class ViewerThumbLoader : public IconViewThumbLoader
-	{
-	public:
-		ViewerThumbLoader(ViewerImpl* pViewerImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
-		{
-			m_pViewerImpl = pViewerImpl;
-		}
-
-		~ViewerThumbLoader(){}
-
-	protected:
-
-		virtual void LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight);
-		virtual QuiverFile GetQuiverFile(gulong index);
-		virtual void GetVisibleRange(gulong* pulStart, gulong* pulEnd);
-		virtual void GetIconSize(guint* puiWidth, guint* puiHeight);
-		virtual gulong GetNumItems();
-		virtual void SetIsRunning(bool bIsRunning);
-		virtual void SetCacheSize(guint uiCacheSize);
-
-
-	private:
-		ViewerImpl* m_pViewerImpl;
-
 	};
 
 	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
@@ -547,94 +541,7 @@ static void viewer_action_handler_cb(GAction *action, GVariant *parameter, gpoin
     Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl *)user_data;
     const gchar *name = g_action_get_name(action);
 
-    if (strcmp(name, ACTION_VIEWER_CUT) == 0)
-    {
-        GdkClipboard* clipboard = gtk_widget_get_clipboard(pViewerImpl->m_pImageView);
-        QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
-        GdkPixbuf* pixbuf = f.GetPixbuf();
-        if (pixbuf)
-        {
-            GValue value = G_VALUE_INIT;
-            g_value_init(&value, GDK_TYPE_PIXBUF);
-            g_value_set_object(&value, pixbuf);
-            gdk_clipboard_set_content(clipboard, gdk_content_provider_new_for_value(&value));
-            g_object_unref(pixbuf);
-        }
-    }
-    else if (strcmp(name, ACTION_VIEWER_COPY) == 0)
-    {
-        GdkClipboard* clipboard = gtk_widget_get_clipboard(pViewerImpl->m_pImageView);
-        QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
-        GdkPixbuf* pixbuf = f.GetPixbuf();
-        if (pixbuf)
-        {
-            GValue value = G_VALUE_INIT;
-            g_value_init(&value, GDK_TYPE_PIXBUF);
-            g_value_set_object(&value, pixbuf);
-            gdk_clipboard_set_content(clipboard, gdk_content_provider_new_for_value(&value));
-            g_object_unref(pixbuf);
-        }
-    }
-    else if (strcmp(name, ACTION_VIEWER_TRASH) == 0)
-    {
-        QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
-        QuiverFileOps::MoveToTrash(f);
-        pViewerImpl->m_ImageListPtr->Reload();
-    }
-    else if (strcmp(name, ACTION_VIEWER_PREVIOUS) == 0)
-    {
-        pViewerImpl->m_ImageListPtr->Previous();
-    }
-    else if (strcmp(name, ACTION_VIEWER_NEXT) == 0)
-    {
-        pViewerImpl->m_ImageListPtr->Next();
-    }
-    else if (strcmp(name, ACTION_VIEWER_FIRST) == 0)
-    {
-        pViewerImpl->m_ImageListPtr->First();
-    }
-    else if (strcmp(name, ACTION_VIEWER_LAST) == 0)
-    {
-        pViewerImpl->m_ImageListPtr->Last();
-    }
-    else if (strcmp(name, ACTION_VIEWER_ZOOM_IN) == 0)
-    {
-        gdouble current_mag = quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
-        quiver_image_view_set_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView), current_mag * 1.1);
-    }
-    else if (strcmp(name, ACTION_VIEWER_ZOOM_OUT) == 0)
-    {
-        gdouble current_mag = quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
-        quiver_image_view_set_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView), current_mag / 1.1);
-    }
-    else if (strcmp(name, ACTION_VIEWER_ROTATE_CW) == 0)
-    {
-        pViewerImpl->SetCurrentOrientation(orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->GetCurrentOrientation()]);
-    }
-    else if (strcmp(name, ACTION_VIEWER_ROTATE_CCW) == 0)
-    {
-        pViewerImpl->SetCurrentOrientation(orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->GetCurrentOrientation()]);
-    }
-    else if (strcmp(name, ACTION_VIEWER_FLIP_H) == 0)
-    {
-        pViewerImpl->SetCurrentOrientation(orientation_matrix[ORIENTATION_FLIP_H][pViewerImpl->GetCurrentOrientation()]);
-    }
-    else if (strcmp(name, ACTION_VIEWER_FLIP_V) == 0)
-    {
-        pViewerImpl->SetCurrentOrientation(orientation_matrix[ORIENTATION_FLIP_V][pViewerImpl->GetCurrentOrientation()]);
-    }
-    else if (strcmp(name, ACTION_VIEWER_VIDEO_PLAY) == 0)
-    {
-        pViewerImpl->PlayPauseVideo();
-    }
-    else if (strcmp(name, ACTION_VIEWER_VIDEO_SKIP_FORWARD) == 0)
-    {
-        pViewerImpl->SkipForward();
-    }
-    else if (strcmp(name, ACTION_VIEWER_VIDEO_SKIP_BACK) == 0)
-    {
-        pViewerImpl->SkipBack();
-    }
+    // TODO: Implement handlers for stateless actions
 }
 
 static void viewer_toggle_action_handler_cb(GAction *action, GVariant *state, gpointer user_data)
@@ -652,10 +559,6 @@ static void viewer_toggle_action_handler_cb(GAction *action, GVariant *state, gp
     {
         pViewerImpl->m_bMaximizeViewableArea = is_active;
         Preferences::GetInstance()->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, is_active);
-    }
-    else if (strcmp(name, ACTION_VIEWER_VIEW_EXIF_SIDEBAR) == 0)
-    {
-        // This action is not yet implemented in the UI
     }
 
     g_action_change_state(action, state);
@@ -1688,7 +1591,7 @@ Viewer::ViewerImpl::~ViewerImpl()
     }
 }
 
-Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer, GtkApplication* app) :
+Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_ImageListPtr(new ImageList()),
 	m_ThumbnailCache(100),
     m_pPipeline(NULL),
@@ -1705,15 +1608,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer, GtkApplication* app) :
 
 	m_pViewer = pViewer;
 
-    gchar* ui_file = g_build_filename(QUIVER_DATADIR, "viewer.ui", NULL);
-    GtkBuilder* builder = gtk_builder_new_from_file(ui_file);
-    if (!builder) {
-        g_critical("Failed to load UI file: %s", ui_file);
-        g_free(ui_file);
-        throw std::runtime_error("Failed to load viewer.ui");
-    }
-    g_free(ui_file);
-
+    GtkBuilder* builder = gtk_builder_new_from_file(QUIVER_DATADIR "/viewer.ui");
     m_pHBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_hbox"));
     m_pVBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_vbox"));
     m_pGrid = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_grid"));
@@ -1732,17 +1627,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer, GtkApplication* app) :
     m_pScrollbarH = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_scrollbar_h"));
     m_pNavigationBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_navigation_box"));
     m_pContextMenu = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_context_menu"));
-
-    // Check that all widgets were loaded successfully
-    if (!m_pHBox || !m_pVBox || !m_pGrid || !m_pIconView || !m_pImageView || !m_pVideoWidget ||
-        !m_pMediaControls || !m_pPlayButton || !m_pPlayImage || !m_pTimeline || !m_pTimeLabel ||
-        !m_pPlayProgress || !m_pPlayProgressEventBox || !m_pVolumeButton || !m_pScrollbarV ||
-        !m_pScrollbarH || !m_pNavigationBox || !m_pContextMenu) {
-        g_critical("Failed to get one or more widgets from viewer.ui");
-        g_object_unref(builder);
-        throw std::runtime_error("Failed to get widgets from viewer.ui");
-    }
-
     gtk_widget_set_parent(m_pContextMenu, m_pHBox);
     g_object_unref(builder);
 
@@ -2029,8 +1913,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer, GtkApplication* app) :
 }
 
 
-Viewer::Viewer(GtkApplication* app) : m_ViewerImplPtr(new Viewer::ViewerImpl(this, app))
+Viewer::Viewer() : m_ViewerImplPtr(new Viewer::ViewerImpl(this))
 {
+
 
 }
 
@@ -2052,6 +1937,11 @@ GtkWidget *Viewer::GetWidget()
 void Viewer::SetImageList(ImageListPtr imgList)
 {
 	m_ViewerImplPtr->SetImageList(imgList);
+}
+
+ImageListPtr Viewer::GetImageList()
+{
+	return m_ViewerImplPtr->m_ImageListPtr;
 }
 
 bool Viewer::ResetViewMode()

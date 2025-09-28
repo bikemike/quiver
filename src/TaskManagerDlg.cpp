@@ -12,10 +12,7 @@ using namespace std;
 
 TaskManagerDlgPtr TaskManagerDlg::c_pTaskManagerDlgPtr;
 
-static void on_close_button_clicked(GtkButton* /*button*/, gpointer user_data)
-{
-	gtk_widget_set_visible(GTK_WIDGET(user_data), FALSE);
-}
+
 
 class TaskManagerDlg::TaskManagerDlgPriv
 	: public ITaskManagerEventHandler
@@ -245,7 +242,7 @@ public:
         gtk_window_set_transient_for(GTK_WINDOW(m_pWidget), parent_window);
 
         GtkWidget* close_button = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "close_button"));
-		g_signal_connect(close_button, "clicked", G_CALLBACK(on_close_button_clicked), m_pWidget);
+        g_signal_connect_swapped(close_button, "clicked", G_CALLBACK(gtk_widget_hide), m_pWidget);
 
 		g_signal_connect (G_OBJECT (m_pWidget), "delete_event",
 			G_CALLBACK (event_delete), this);
@@ -265,14 +262,14 @@ public:
 	static gboolean event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
 	{
 		//TaskManagerDlgPriv* dlgPriv = static_cast<TaskManagerDlgPriv*>(user_data);
-		gtk_widget_set_visible(widget, FALSE);
+		gtk_widget_hide(widget);
 
 		return TRUE; // do not propagate
 	}
 
 	static void signal_response( GtkDialog *dlg, gint arg1, gpointer user_data )
 	{
-		gtk_widget_set_visible(GTK_WIDGET(dlg), FALSE);
+		gtk_widget_hide(GTK_WIDGET(dlg));
 	}
 
 	void AddTaskGUI(AbstractTaskPtr taskPtr)
@@ -354,5 +351,5 @@ void TaskManagerDlg::Show()
 
 void TaskManagerDlg::Hide()
 {
-	gtk_widget_set_visible(m_PrivPtr->m_pWidget, FALSE);
+	gtk_widget_hide(m_PrivPtr->m_pWidget);
 }

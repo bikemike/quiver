@@ -1,3 +1,4 @@
+
 #ifndef QUIVER_ICON_VIEW_H
 #define QUIVER_ICON_VIEW_H
 
@@ -102,7 +103,6 @@ struct _QuiverIconViewPrivate {
 	gulong cursor_cell;     // Index of the cell with keyboard focus/cursor
 	gulong prelight_cell;   // Index of the cell under mouse hover
 	gulong selection_anchor_cell; // For shift-click range selection
-	GList *selection;
 
 	gboolean mouse_button_is_down; // Still useful to track general mouse down state across gestures
 
@@ -205,14 +205,14 @@ void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint ce
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection);
 GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
-void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select);
 
 void quiver_icon_view_get_visible_range(QuiverIconView *iconview,gulong *first, gulong *last);
-void quiver_icon_view_scroll_to_cell(QuiverIconView* iconview, gulong cell);
 
 void quiver_icon_view_invalidate_window(QuiverIconView *iconview);
 
 void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,gulong cell);
+
+void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select);
 
 void quiver_icon_view_set_n_items_func (QuiverIconView *iconview, 
          QuiverIconViewGetNItemsFunc func,gpointer data,GDestroyNotify destroy);

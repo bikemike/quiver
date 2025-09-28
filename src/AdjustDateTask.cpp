@@ -241,17 +241,17 @@ void AdjustDateTask::Run()
 	if (m_bAdjustDate)
 	{
 		// adjust exif date
-		while ((unsigned int)m_iCurrentFile < m_vectQuiverFiles.size() )
+		while (m_iCurrentFile < m_vectQuiverFiles.size() )
 		{
 
 			QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
 
 			GFileInfo* pInfo = f.GetFileInfo();
-			GDateTime* dt = NULL;
+			GTimeVal tv = {0};
 			if (NULL != pInfo)
 			{
 				// adjust the modification time of the file
-				dt = g_file_info_get_modification_date_time(pInfo);
+				g_file_info_get_modification_time(pInfo, &tv);
 
 				// the adjustment is done after the exif data is modified
 				// see below
@@ -264,6 +264,7 @@ void AdjustDateTask::Run()
 			{
 				ExifData *pExifData = f.GetExifData();
 			
+				time_t date = 0;
 				if (NULL != pExifData)
 				{
 					// use date_time_original
@@ -299,7 +300,7 @@ void AdjustDateTask::Run()
 							tm_exif_time.tm_min +=  m_iAdjMins;
 							tm_exif_time.tm_sec +=  m_iAdjSecs;
 							// successfully parsed date
-							mktime(&tm_exif_time);
+							date = mktime(&tm_exif_time);
 
 							g_snprintf(szDate, 20, "%04d:%02d:%02d %02d:%02d:%02d",
 								tm_exif_time.tm_year+1900,tm_exif_time.tm_mon+1,tm_exif_time.tm_mday,
@@ -346,7 +347,9 @@ void AdjustDateTask::Run()
 				// adjust the modification time of the file
 				if (DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields)
 				{
-					GDateTime* pDateTimeNew = g_date_time_add_full(dt,
+					GDateTime* pDateTime = g_date_time_new_from_timeval_local(&tv);
+
+					GDateTime* pDateTimeNew = g_date_time_add_full(pDateTime,
 					                                               m_iAdjYears,
 																   0,
 					                                               m_iAdjDays,
@@ -361,14 +364,15 @@ void AdjustDateTask::Run()
 					// g_free(newdate);
 					// g_free(olddate);
 
-					g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
+					g_date_time_to_timeval(pDateTimeNew, &tv);
+					g_file_info_set_modification_time(pInfo, &tv);
 
 					GFile* file = g_file_new_for_uri(f.GetURI());
 					g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
 					g_object_unref(file);
 
 					g_date_time_unref(pDateTimeNew);
-					g_date_time_unref(dt);
+					g_date_time_unref(pDateTime);
 				}
 
 				g_object_unref(pInfo);

@@ -15,13 +15,14 @@ class Viewer : public virtual ViewerEventSource
 {
 public:
 	//constructor
-	Viewer(GtkApplication* app);
+	Viewer();
 	~Viewer();
 	
 	//member functions
 	GtkWidget *GetWidget();
 
 	void SetImageList(ImageListPtr imgList);
+	ImageListPtr GetImageList();
 	int GetCurrentOrientation();
 
 	void SlideShowStart();

@@ -357,8 +357,8 @@ void Preferences::SetStringList(std::string section, std::string key, std::list<
 		
 		if (NULL != strings)
 		{
-			g_key_file_set_string_list (m_KeyFile, section.c_str(), key.c_str(), (const gchar* const*)strings, nstrings);
-			g_strfreev(strings);
+			g_key_file_set_string_list (m_KeyFile, section.c_str(), key.c_str(), strings, nstrings);
+			free(strings);
 		}
 
 		m_bModified = true;
@@ -405,7 +405,7 @@ void Preferences::SetBooleanList(std::string section, std::string key, std::list
 		if (NULL != values)
 		{
 			g_key_file_set_boolean_list (m_KeyFile, section.c_str(), key.c_str(), values, nvals);
-			delete[] values;
+			free(values);
 		}
 
 		m_bModified = true;
@@ -447,7 +447,7 @@ void Preferences::SetIntegerList(std::string section, std::string key, std::list
 		if (NULL != values)
 		{
 			g_key_file_set_integer_list (m_KeyFile, section.c_str(), key.c_str(), values, nvals);
-			delete[] values;
+			free(values);
 		}
 
 		m_bModified = true;

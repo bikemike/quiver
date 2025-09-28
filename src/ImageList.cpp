@@ -169,6 +169,10 @@ ImageList::ImageList(bool bEnableMonitor) : m_ImageListImplPtr( new ImageListImp
 	m_ImageListImplPtr->m_bEnableMonitor = bEnableMonitor;
 }
 
+ImageList::~ImageList()
+{
+}
+
 unsigned int
 ImageList::GetSize()  const
 {
@@ -184,7 +188,7 @@ ImageList::GetCurrentIndex() const
 bool ImageList::SetCurrentFile(std::string file)
 {
 	bool rval = false;
-	unsigned int old_index = m_ImageListImplPtr->m_iCurrentIndex;
+	int old_index = m_ImageListImplPtr->m_iCurrentIndex;
 
 	m_ImageListImplPtr->SetCurrentImage(file);
 
@@ -1349,7 +1353,7 @@ void ImageList::ImageListImpl::Sort(bool bUpdateCurrentIndex)
 }
 
 
-class SortByFilename
+class SortByFilename : public std::binary_function<QuiverFile,QuiverFile,bool>
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
@@ -1363,7 +1367,7 @@ public:
 	}
 };
 
-class SortByFilenameNatural
+class SortByFilenameNatural : public std::binary_function<QuiverFile,QuiverFile,bool>
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
