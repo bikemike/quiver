@@ -3,7 +3,8 @@
 
 void BrowserEventSource::AddEventHandler(IEventHandlerPtr handler)
 {
-	IBrowserEventHandlerPtr h = boost::static_pointer_cast<IBrowserEventHandler>(handler);
+	IBrowserEventHandlerPtr h = boost::dynamic_pointer_cast<IBrowserEventHandler>(handler);
+	if (!h) return;
 	
 	boost::signals2::connection c = m_sigSelectionChanged.connect( boost::bind(&IBrowserEventHandler::HandleSelectionChanged,h,_1) );
 	MapConnection(handler,c);

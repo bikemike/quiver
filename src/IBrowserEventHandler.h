@@ -4,7 +4,7 @@
 #include "IEventHandler.h"
 #include "BrowserEvent.h"
 
-class IBrowserEventHandler : public IEventHandler
+class IBrowserEventHandler : public virtual IEventHandler
 {
 public:
 	virtual void HandleItemActivated(BrowserEventPtr event) = 0;

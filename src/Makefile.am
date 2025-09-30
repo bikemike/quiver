@@ -7,6 +7,7 @@ AM_CFLAGS = \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
 	-DQUIVER_DATADIR=\""$(quiver_datadir)"\" \
+	-DBOOST_BIND_GLOBAL_PLACEHOLDERS \
 	$(PACKAGE_CFLAGS) \
 	$(HILDON_LIBS_CFLAGS) \
 	$(HILDON_1_CFLAGS) \

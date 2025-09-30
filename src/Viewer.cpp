@@ -361,15 +361,11 @@ public:
 
 		if (IsPlaying())
 		{
-			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPause); // GtkImage is for static images
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
-
-
 			m_iTimeoutPlayProgress = g_timeout_add(200,timeout_play_position,this);
 		}
 		else
 		{
-			// gtk_image_set_from_pixbuf(GTK_IMAGE(m_pPlayImage), m_pPixbufPlay); // GtkImage is for static images
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
 		}
 	}
@@ -462,6 +458,32 @@ public:
 
 	ImageCache m_ThumbnailCache;
 
+	class ViewerThumbLoader : public IconViewThumbLoader
+	{
+	public:
+		ViewerThumbLoader(ViewerImpl* pViewerImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
+		{
+			m_pViewerImpl = pViewerImpl;
+		}
+
+		~ViewerThumbLoader(){}
+
+	protected:
+
+		virtual void LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight);
+		virtual QuiverFile GetQuiverFile(gulong index);
+		virtual void GetVisibleRange(gulong* pulStart, gulong* pulEnd);
+		virtual void GetIconSize(guint* puiWidth, guint* puiHeight);
+		virtual gulong GetNumItems();
+		virtual void SetIsRunning(bool bIsRunning);
+		virtual void SetCacheSize(guint uiCacheSize);
+
+
+	private:
+		ViewerImpl* m_pViewerImpl;
+
+	};
+
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline;
 	GtkWidget*  m_pVideoWidget; // The widget for video display (e.g., GtkVideo)
@@ -488,32 +510,6 @@ public:
 		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
 	private:
 		ViewerImpl* parent;
-	};
-
-	class ViewerThumbLoader : public IconViewThumbLoader
-	{
-	public:
-		ViewerThumbLoader(ViewerImpl* pViewerImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
-		{
-			m_pViewerImpl = pViewerImpl;
-		}
-
-		~ViewerThumbLoader(){}
-
-	protected:
-
-		virtual void LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight);
-		virtual QuiverFile GetQuiverFile(gulong index);
-		virtual void GetVisibleRange(gulong* pulStart, gulong* pulEnd);
-		virtual void GetIconSize(guint* puiWidth, guint* puiHeight);
-		virtual gulong GetNumItems();
-		virtual void SetIsRunning(bool bIsRunning);
-		virtual void SetCacheSize(guint uiCacheSize);
-
-
-	private:
-		ViewerImpl* m_pViewerImpl;
-
 	};
 
 	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
@@ -1598,13 +1594,14 @@ Viewer::ViewerImpl::~ViewerImpl()
 Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_ImageListPtr(new ImageList()),
 	m_ThumbnailCache(100),
+    m_pPipeline(NULL),
+    m_pVideoWidget(NULL),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_pCssProvider(gtk_css_provider_new()),
 	m_bIsPlaying(false),
 	m_bWasPlayingBeforeSeek(false),
-	m_ThumbnailLoader(this,2),
-    m_pPipeline(NULL), m_pVideoWidget(NULL)
+	m_ThumbnailLoader(this,2)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -1940,6 +1937,11 @@ GtkWidget *Viewer::GetWidget()
 void Viewer::SetImageList(ImageListPtr imgList)
 {
 	m_ViewerImplPtr->SetImageList(imgList);
+}
+
+ImageListPtr Viewer::GetImageList()
+{
+	return m_ViewerImplPtr->m_ImageListPtr;
 }
 
 bool Viewer::ResetViewMode()

@@ -169,6 +169,10 @@ ImageList::ImageList(bool bEnableMonitor) : m_ImageListImplPtr( new ImageListImp
 	m_ImageListImplPtr->m_bEnableMonitor = bEnableMonitor;
 }
 
+ImageList::~ImageList()
+{
+}
+
 unsigned int
 ImageList::GetSize()  const
 {
@@ -1409,7 +1413,7 @@ public:
 	}
 };
 
-class SortByDate
+class SortByDateModified
 {
 public:
 

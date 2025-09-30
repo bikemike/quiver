@@ -25,6 +25,7 @@ public:
 
 	ImageList();
 	ImageList(bool bEnableMonitor);
+	virtual ~ImageList();
 
 	void SetImageList(std::string file, bool bRecursive = false);
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);

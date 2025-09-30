@@ -212,6 +212,8 @@ void quiver_icon_view_invalidate_window(QuiverIconView *iconview);
 
 void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,gulong cell);
 
+void quiver_icon_view_select_all_cells(QuiverIconView *iconview, gboolean select);
+
 void quiver_icon_view_set_n_items_func (QuiverIconView *iconview, 
          QuiverIconViewGetNItemsFunc func,gpointer data,GDestroyNotify destroy);
 
@@ -231,4 +233,3 @@ G_END_DECLS
 
 
 #endif
-

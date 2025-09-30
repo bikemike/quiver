@@ -4,7 +4,7 @@
 #include "IEventHandler.h"
 #include "ViewerEvent.h"
 
-class IViewerEventHandler : public IEventHandler
+class IViewerEventHandler : public virtual IEventHandler
 {
 public:
 	virtual void HandleItemClicked(ViewerEventPtr event) = 0;

@@ -493,7 +493,7 @@ void notebook_page_removed_cb  (GtkNotebook *notebook,
 }
 
 
-Browser::BrowserImpl::BrowserImpl(Browser *parent) : 
+Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_FolderTreePtr(new FolderTree()),
 	m_ImageListPtr(new ImageList()),
 	m_ThumbnailCache(100),

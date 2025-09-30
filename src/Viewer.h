@@ -22,6 +22,7 @@ public:
 	GtkWidget *GetWidget();
 
 	void SetImageList(ImageListPtr imgList);
+	ImageListPtr GetImageList();
 	int GetCurrentOrientation();
 
 	void SlideShowStart();
