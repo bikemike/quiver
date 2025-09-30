@@ -26,6 +26,10 @@
 #include <gst/gst.h>
 #endif
 
+#include "libquiver/quiver-icon-view.h"
+#include "libquiver/quiver-image-view.h"
+#include "libquiver/quiver-navigation-control.h"
+
 gchar g_szConfigFilePath[1024];
 
 // No class definition here
@@ -122,6 +126,9 @@ int main (int argc, char *argv[])
 #if !GLIB_CHECK_VERSION(2,35,0)
     g_type_init();
 #endif
+    quiver_icon_view_get_type();
+    quiver_image_view_get_type();
+    quiver_navigation_control_get_type();
 
     GtkApplication* app = gtk_application_new("org.quiver.quiver", G_APPLICATION_HANDLES_OPEN);
 
