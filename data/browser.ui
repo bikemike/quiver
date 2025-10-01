@@ -34,7 +34,7 @@
                 <property name="popover">
                   <object class="GtkPopoverMenu">
                     <property name="menu-model">
-                      <object class="GMenu">
+                      <menu>
                         <section>
                           <item>
                             <attribute name="label" translatable="yes">Sidebar</attribute>
@@ -45,7 +45,7 @@
                             <attribute name="action">browser.BrowserViewPreview</attribute>
                           </item>
                         </section>
-                      </object>
+                      </menu>
                     </property>
                   </object>
                 </property>

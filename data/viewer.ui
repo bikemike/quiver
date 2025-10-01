@@ -91,7 +91,7 @@
                   <property name="popover">
                     <object class="GtkPopoverMenu">
                       <property name="menu-model">
-                        <object class="GMenu">
+                        <menu>
                           <section>
                             <item>
                               <attribute name="label" translatable="yes">Filmstrip</attribute>
@@ -124,7 +124,7 @@
                               <attribute name="target" type="i">3</attribute>
                             </item>
                           </section>
-                        </object>
+                        </menu>
                       </property>
                     </object>
                   </property>
@@ -179,7 +179,7 @@
   </object>
   <object class="GtkPopoverMenu" id="viewer_context_menu">
     <property name="menu-model">
-      <object class="GMenu">
+      <menu>
         <section>
           <item>
             <attribute name="label" translatable="yes">Rotate Clockwise</attribute>
@@ -212,7 +212,7 @@
             <attribute name="action">viewer.ViewerTrash</attribute>
           </item>
         </section>
-      </object>
+      </menu>
     </property>
   </object>
 </interface>
