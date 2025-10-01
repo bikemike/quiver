@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.0"/>
+  <menu id="browser_view_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Sidebar</attribute>
+        <attribute name="action">browser.BrowserViewSidebar</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Preview</attribute>
+        <attribute name="action">browser.BrowserViewPreview</attribute>
+      </item>
+    </section>
+  </menu>
   <object class="GtkPaned" id="browser_hpaned">
     <property name="orientation">horizontal</property>
     <property name="wide-handle">1</property>
@@ -31,24 +43,7 @@
             <child>
               <object class="GtkMenuButton" id="browser_view_menubutton">
                 <property name="icon-name">open-menu-symbolic</property>
-                <property name="popover">
-                  <object class="GtkPopoverMenu">
-                    <property name="menu-model">
-                      <menu>
-                        <section>
-                          <item>
-                            <attribute name="label" translatable="yes">Sidebar</attribute>
-                            <attribute name="action">browser.BrowserViewSidebar</attribute>
-                          </item>
-                          <item>
-                            <attribute name="label" translatable="yes">Preview</attribute>
-                            <attribute name="action">browser.BrowserViewPreview</attribute>
-                          </item>
-                        </section>
-                      </menu>
-                    </property>
-                  </object>
-                </property>
+                <property name="menu-model" translatable="no">browser_view_menu</property>
               </object>
             </child>
             <child>

@@ -1,6 +1,74 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
   <requires lib="gtk" version="4.0"/>
+  <menu id="viewer_view_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Filmstrip</attribute>
+        <attribute name="action">viewer.ViewFilmStrip</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Rotate for Best Fit</attribute>
+        <attribute name="action">viewer.MaximizeForDisplay</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Zoom Fit</attribute>
+        <attribute name="action">viewer.zoom</attribute>
+        <attribute name="target" type="i">0</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Zoom Fit Stretch</attribute>
+        <attribute name="action">viewer.zoom</attribute>
+        <attribute name="target" type="i">1</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Actual Size</attribute>
+        <attribute name="action">viewer.zoom</attribute>
+        <attribute name="target" type="i">2</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Fill Screen</attribute>
+        <attribute name="action">viewer.zoom</attribute>
+        <attribute name="target" type="i">3</attribute>
+      </item>
+    </section>
+  </menu>
+  <menu id="viewer_context_menu_model">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Rotate Clockwise</attribute>
+        <attribute name="action">viewer.RotateCW</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Rotate Counter-Clockwise</attribute>
+        <attribute name="action">viewer.RotateCCW</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Flip Horizontally</attribute>
+        <attribute name="action">viewer.FlipH</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Flip Vertically</attribute>
+        <attribute name="action">viewer.FlipV</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Cut</attribute>
+        <attribute name="action">viewer.ViewerCut</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Copy</attribute>
+        <attribute name="action">viewer.ViewerCopy</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Move to Trash</attribute>
+        <attribute name="action">viewer.ViewerTrash</attribute>
+      </item>
+    </section>
+  </menu>
   <object class="GtkBox" id="viewer_hbox">
     <property name="orientation">horizontal</property>
     <child>
@@ -66,10 +134,10 @@
                        <child>
                          <object class="GtkScaleButton" id="viewer_volume_button">
                            <property name="icons">
-                              <item>audio-volume-muted-symbolic</item>
-                              <item>audio-volume-low-symbolic</item>
-                              <item>audio-volume-medium-symbolic</item>
-                              <item>audio-volume-high-symbolic</item>
+                              <string>audio-volume-muted-symbolic</string>
+                              <string>audio-volume-low-symbolic</string>
+                              <string>audio-volume-medium-symbolic</string>
+                              <string>audio-volume-high-symbolic</string>
                            </property>
                          </object>
                        </child>
@@ -88,46 +156,7 @@
                   <property name="valign">start</property>
                   <property name="margin-top">10</property>
                   <property name="margin-end">10</property>
-                  <property name="popover">
-                    <object class="GtkPopoverMenu">
-                      <property name="menu-model">
-                        <menu>
-                          <section>
-                            <item>
-                              <attribute name="label" translatable="yes">Filmstrip</attribute>
-                              <attribute name="action">viewer.ViewFilmStrip</attribute>
-                            </item>
-                            <item>
-                              <attribute name="label" translatable="yes">Rotate for Best Fit</attribute>
-                              <attribute name="action">viewer.MaximizeForDisplay</attribute>
-                            </item>
-                          </section>
-                          <section>
-                            <item>
-                              <attribute name="label" translatable="yes">Zoom Fit</attribute>
-                              <attribute name="action">viewer.zoom</attribute>
-                              <attribute name="target" type="i">0</attribute>
-                            </item>
-                            <item>
-                              <attribute name="label" translatable="yes">Zoom Fit Stretch</attribute>
-                              <attribute name="action">viewer.zoom</attribute>
-                              <attribute name="target" type="i">1</attribute>
-                            </item>
-                            <item>
-                              <attribute name="label" translatable="yes">Actual Size</attribute>
-                              <attribute name="action">viewer.zoom</attribute>
-                              <attribute name="target" type="i">2</attribute>
-                            </item>
-                            <item>
-                              <attribute name="label" translatable="yes">Fill Screen</attribute>
-                              <attribute name="action">viewer.zoom</attribute>
-                              <attribute name="target" type="i">3</attribute>
-                            </item>
-                          </section>
-                        </menu>
-                      </property>
-                    </object>
-                  </property>
+                  <property name="menu-model" translatable="no">viewer_view_menu</property>
                 </object>
                 <layout>
                   <property name="column">0</property>
@@ -178,41 +207,6 @@
     </child>
   </object>
   <object class="GtkPopoverMenu" id="viewer_context_menu">
-    <property name="menu-model">
-      <menu>
-        <section>
-          <item>
-            <attribute name="label" translatable="yes">Rotate Clockwise</attribute>
-            <attribute name="action">viewer.RotateCW</attribute>
-          </item>
-          <item>
-            <attribute name="label" translatable="yes">Rotate Counter-Clockwise</attribute>
-            <attribute name="action">viewer.RotateCCW</attribute>
-          </item>
-          <item>
-            <attribute name="label" translatable="yes">Flip Horizontally</attribute>
-            <attribute name="action">viewer.FlipH</attribute>
-          </item>
-          <item>
-            <attribute name="label" translatable="yes">Flip Vertically</attribute>
-            <attribute name="action">viewer.FlipV</attribute>
-          </item>
-        </section>
-        <section>
-          <item>
-            <attribute name="label" translatable="yes">Cut</attribute>
-            <attribute name="action">viewer.ViewerCut</attribute>
-          </item>
-          <item>
-            <attribute name="label" translatable="yes">Copy</attribute>
-            <attribute name="action">viewer.ViewerCopy</attribute>
-          </item>
-          <item>
-            <attribute name="label" translatable="yes">Move to Trash</attribute>
-            <attribute name="action">viewer.ViewerTrash</attribute>
-          </item>
-        </section>
-      </menu>
-    </property>
+    <property name="menu-model" translatable="no">viewer_context_menu_model</property>
   </object>
 </interface>
