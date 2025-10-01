@@ -132,14 +132,7 @@
                           </object>
                        </child>
                        <child>
-                         <object class="GtkScaleButton" id="viewer_volume_button">
-                           <property name="icons">
-                              <string>audio-volume-muted-symbolic</string>
-                              <string>audio-volume-low-symbolic</string>
-                              <string>audio-volume-medium-symbolic</string>
-                              <string>audio-volume-high-symbolic</string>
-                           </property>
-                         </object>
+                         <object class="GtkScaleButton" id="viewer_volume_button"/>
                        </child>
                     </object>
                  </child>
