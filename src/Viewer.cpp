@@ -1630,6 +1630,15 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     gtk_widget_set_parent(m_pContextMenu, m_pHBox);
     g_object_unref(builder);
 
+    const char* icons[] = {
+        "audio-volume-muted-symbolic",
+        "audio-volume-low-symbolic",
+        "audio-volume-medium-symbolic",
+        "audio-volume-high-symbolic",
+        NULL
+    };
+    gtk_scale_button_set_icons(GTK_SCALE_BUTTON(m_pVolumeButton), icons);
+
 	gtk_widget_set_size_request(m_pImageView, 100, 100);
 
     string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);

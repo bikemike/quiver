@@ -130,6 +130,19 @@ int main (int argc, char *argv[])
     quiver_image_view_get_type();
     quiver_navigation_control_get_type();
 
+    /*
+     * Make sure the custom widget types are registered with the GObject
+     * type system before we load any UI files that might use them.
+     *
+     * We store the result in a volatile variable to prevent the compiler
+     * from optimizing away these calls, which have the important
+     * side-effect of registering the types.
+     */
+    volatile GType type;
+    type = quiver_icon_view_get_type();
+    type = quiver_image_view_get_type();
+    type = quiver_navigation_control_get_type();
+
     GtkApplication* app = gtk_application_new("org.quiver.quiver", G_APPLICATION_HANDLES_OPEN);
 
     Quiver quiver(app);
