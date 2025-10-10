@@ -484,3 +484,17 @@ void quiver_navigation_control_set_pixbuf (QuiverNavigationControl *navcontrol, 
     gtk_widget_queue_resize(GTK_WIDGET(navcontrol));
 	quiver_navigation_control_update_view_area_rect(navcontrol);
 }
+
+GtkAdjustment * quiver_navigation_control_get_hadjustment(QuiverNavigationControl *navcontrol)
+{
+	g_return_val_if_fail (QUIVER_IS_NAVIGATION_CONTROL (navcontrol), NULL);
+	QuiverNavigationControlPrivate *priv = quiver_navigation_control_get_instance_private(navcontrol);
+	return priv->hadjustment;
+}
+
+GtkAdjustment * quiver_navigation_control_get_vadjustment(QuiverNavigationControl *navcontrol)
+{
+	g_return_val_if_fail (QUIVER_IS_NAVIGATION_CONTROL (navcontrol), NULL);
+	QuiverNavigationControlPrivate *priv = quiver_navigation_control_get_instance_private(navcontrol);
+	return priv->vadjustment;
+}

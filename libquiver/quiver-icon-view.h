@@ -181,6 +181,11 @@ struct _QuiverIconViewClass
 GType	   quiver_icon_view_get_type (void) G_GNUC_CONST;
 GtkWidget *quiver_icon_view_new ();
 
+GtkAdjustment * quiver_icon_view_get_hadjustment(QuiverIconView *iconview);
+GtkAdjustment * quiver_icon_view_get_vadjustment(QuiverIconView *iconview);
+void quiver_icon_view_set_hadjustment(QuiverIconView *iconview, GtkAdjustment *hadjustment);
+void quiver_icon_view_set_vadjustment(QuiverIconView *iconview, GtkAdjustment *vadjustment);
+
 void quiver_icon_view_set_n_columns(QuiverIconView *iconview,guint n_columns);
 void quiver_icon_view_set_n_rows(QuiverIconView *iconview,guint n_rows);
 void quiver_icon_view_set_scroll_type(QuiverIconView *iconview, QuiverIconViewScrollType scroll_type);
