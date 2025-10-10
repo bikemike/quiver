@@ -1993,11 +1993,13 @@ void quiver_image_view_connect_pixbuf_size_prepared_signal(QuiverImageView *imag
 
 GtkAdjustment * quiver_image_view_get_hadjustment(QuiverImageView *imageview)
 {
+	g_return_val_if_fail (QUIVER_IS_IMAGE_VIEW (imageview), NULL);
 	QuiverImageViewPrivate *priv = quiver_image_view_get_instance_private(imageview);
 	return priv->hadjustment;
 }
 GtkAdjustment * quiver_image_view_get_vadjustment(QuiverImageView *imageview)
 {
+	g_return_val_if_fail (QUIVER_IS_IMAGE_VIEW (imageview), NULL);
 	QuiverImageViewPrivate *priv = quiver_image_view_get_instance_private(imageview);
 	return priv->vadjustment;
 }

@@ -19,7 +19,9 @@
 
 
 
-G_DEFINE_TYPE_WITH_CODE(QuiverIconView,quiver_icon_view,GTK_TYPE_WIDGET,G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE,NULL) G_ADD_PRIVATE(QuiverIconView))
+static void quiver_icon_view_scrollable_interface_init(GtkScrollableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE(QuiverIconView,quiver_icon_view,GTK_TYPE_WIDGET,G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, quiver_icon_view_scrollable_interface_init) G_ADD_PRIVATE(QuiverIconView))
 
 enum {
 	SIGNAL_CELL_CLICKED,
@@ -69,7 +71,74 @@ static gulong quiver_icon_view_get_n_items_internal(QuiverIconView* iconview);
 static void quiver_icon_view_draw_cell_contents(QuiverIconView *iconview, cairo_t *cr, gulong cell_idx, cairo_rectangle_int_t *cell_rect, GtkStateFlags cell_state);
 
 
-static void quiver_icon_view_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {}
+static void
+quiver_icon_view_get_property (GObject    *object,
+                               guint       prop_id,
+                               GValue     *value,
+                               GParamSpec *pspec)
+{
+  QuiverIconView *iconview = QUIVER_ICON_VIEW (object);
+  QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+
+  switch (prop_id)
+    {
+    case PROP_HADJUSTMENT:
+      g_value_set_object (value, priv->hadjustment);
+      break;
+    case PROP_VADJUSTMENT:
+      g_value_set_object (value, priv->vadjustment);
+      break;
+    case PROP_HSCROLL_POLICY:
+        g_value_set_enum(value, priv->hscroll_policy);
+        break;
+    case PROP_VSCROLL_POLICY:
+        g_value_set_enum(value, priv->vscroll_policy);
+        break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+    }
+}
+
+static void
+quiver_icon_view_set_property (GObject      *object,
+                               guint         prop_id,
+                               const GValue *value,
+                               GParamSpec   *pspec)
+{
+  QuiverIconView *iconview = QUIVER_ICON_VIEW (object);
+  QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+
+  switch (prop_id)
+    {
+    case PROP_HADJUSTMENT:
+      quiver_icon_view_set_hadjustment (iconview, g_value_get_object (value));
+      break;
+    case PROP_VADJUSTMENT:
+      quiver_icon_view_set_vadjustment (iconview, g_value_get_object (value));
+      break;
+    case PROP_HSCROLL_POLICY:
+        priv->hscroll_policy = g_value_get_enum(value);
+        gtk_widget_queue_resize(GTK_WIDGET(iconview));
+        break;
+    case PROP_VSCROLL_POLICY:
+        priv->vscroll_policy = g_value_get_enum(value);
+        gtk_widget_queue_resize(GTK_WIDGET(iconview));
+        break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+    }
+}
+
+static void quiver_icon_view_scrollable_interface_init(GtkScrollableInterface *iface)
+{
+    /*
+     * In GTK4, GtkScrollable properties are used instead of interface methods.
+     * This function is kept for G_IMPLEMENT_INTERFACE, but it's empty.
+     */
+}
+
 static void quiver_icon_view_class_init(QuiverIconViewClass *klass) {
 	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 	GObjectClass *obj_class = G_OBJECT_CLASS(klass);
@@ -84,6 +153,8 @@ static void quiver_icon_view_class_init(QuiverIconViewClass *klass) {
 
     obj_class->dispose = quiver_icon_view_dispose;
 	obj_class->finalize = quiver_icon_view_finalize;
+    obj_class->set_property = quiver_icon_view_set_property;
+    obj_class->get_property = quiver_icon_view_get_property;
 
 	g_object_class_override_property(obj_class, PROP_HADJUSTMENT, "hadjustment");
 	g_object_class_override_property(obj_class, PROP_VADJUSTMENT, "vadjustment");
@@ -457,3 +528,62 @@ void quiver_icon_view_set_text_func (QuiverIconView *iconview, QuiverIconViewGet
 void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview, QuiverIconViewGetOverlayPixbufFunc func,gpointer data,GDestroyNotify destroy){ QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview); if(priv->callback_get_overlay_pixbuf_data && priv->callback_get_overlay_pixbuf_data_destroy) priv->callback_get_overlay_pixbuf_data_destroy(priv->callback_get_overlay_pixbuf_data); priv->callback_get_overlay_pixbuf = func; priv->callback_get_overlay_pixbuf_data = data; priv->callback_get_overlay_pixbuf_data_destroy = destroy; gtk_widget_queue_draw(GTK_WIDGET(iconview));}
 
 static void quiver_icon_view_unrealize(GtkWidget *widget) {}
+
+GtkAdjustment * quiver_icon_view_get_hadjustment(QuiverIconView *iconview)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), NULL);
+	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+	return priv->hadjustment;
+}
+GtkAdjustment * quiver_icon_view_get_vadjustment(QuiverIconView *iconview)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), NULL);
+	QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+	return priv->vadjustment;
+}
+void quiver_icon_view_set_hadjustment(QuiverIconView *iconview, GtkAdjustment *adjustment)
+{
+    g_return_if_fail(QUIVER_IS_ICON_VIEW(iconview));
+    QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+
+    if (priv->hadjustment == adjustment)
+        return;
+
+    if (priv->hadjustment) {
+        g_signal_handlers_disconnect_by_func(priv->hadjustment, quiver_icon_view_adjustment_value_changed, iconview);
+        g_object_unref(priv->hadjustment);
+    }
+
+    priv->hadjustment = adjustment;
+
+    if (priv->hadjustment) {
+        g_object_ref_sink(priv->hadjustment);
+        g_signal_connect(priv->hadjustment, "value-changed", G_CALLBACK(quiver_icon_view_adjustment_value_changed), iconview);
+        quiver_icon_view_recalculate_adjustments(iconview);
+    }
+
+    g_object_notify(G_OBJECT(iconview), "hadjustment");
+}
+
+void quiver_icon_view_set_vadjustment(QuiverIconView *iconview, GtkAdjustment *adjustment)
+{
+    g_return_if_fail(QUIVER_IS_ICON_VIEW(iconview));
+    QuiverIconViewPrivate *priv = quiver_icon_view_get_instance_private(iconview);
+
+    if (priv->vadjustment == adjustment)
+        return;
+
+    if (priv->vadjustment) {
+        g_signal_handlers_disconnect_by_func(priv->vadjustment, quiver_icon_view_adjustment_value_changed, iconview);
+        g_object_unref(priv->vadjustment);
+    }
+
+    priv->vadjustment = adjustment;
+
+    if (priv->vadjustment) {
+        g_object_ref_sink(priv->vadjustment);
+        g_signal_connect(priv->vadjustment, "value-changed", G_CALLBACK(quiver_icon_view_adjustment_value_changed), iconview);
+        quiver_icon_view_recalculate_adjustments(iconview);
+    }
+    g_object_notify(G_OBJECT(iconview), "vadjustment");
+}
