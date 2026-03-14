@@ -1,6 +1,6 @@
 #include <config.h>
 
-#include "quiver-i18n.h"
+#include <gst/gst.h>
 
 #include "Quiver.h"
 
@@ -18,8 +18,6 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
-#include <libgnomevfs/gnome-vfs.h>
-#include <boost/algorithm/string.hpp>
 
 #include <errno.h>
 
@@ -62,6 +60,12 @@
 #include "ExternalToolsDlg.h"
 #include "IExternalToolsEventHandler.h"
 
+#include "ImageSaveManager.h"
+
+#include <boost/algorithm/string.hpp>
+#include "quiver-i18n.h"
+
+
 // globals needed for preferences
 
 gchar g_szConfigDir[256]      = "";
@@ -83,8 +87,8 @@ static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *
 // gtk_ui_manager signals
 static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
 static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
-static void signal_item_select (GtkItem *proxy,gpointer data);
-static void signal_item_deselect (GtkItem *proxy,gpointer data);
+static void signal_item_select (GtkMenuItem *proxy,gpointer data);
+static void signal_item_deselect (GtkMenuItem *proxy,gpointer data);
 
 #ifdef QUIVER_MAEMO
 static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1, gpointer user_data);
@@ -263,7 +267,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
           m_BrowserPtr(new Browser()),
           m_ViewerPtr(new Viewer()),
           m_StatusbarPtr(new Statusbar()),
-          m_ImageListPtr(new ImageList()),
+          m_ImageListPtr(new ImageList(true)),
 		  m_BrowserEventHandler(new BrowserEventHandler(this)),
 		  m_ViewerEventHandler(new ViewerEventHandler(this)),
 		  m_PreferencesEventHandler( new PreferencesEventHandler(this) ),
@@ -282,12 +286,32 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_ImageListPtr->AddEventHandler(m_ImageListEventHandler);	
 	m_iMergedExternalToolsUI = 0;
 	m_iMergedBookmarksUI = 0;
+
+	// add ignored extensions
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	std::list<std::string> exts = prefsPtr->GetStringList(QUIVER_PREFS_APP, QUIVER_PREFS_APP_IGNORED_EXTENSIONS);
+	for (std::list<std::string>::iterator itr = exts.begin();
+			exts.end() != itr; ++itr)
+	{
+		printf("ignoring extension : %s\n", itr->c_str());
+		m_ImageListPtr->AddIgnoredExtension(*itr);
+	}
 }
 
 QuiverImpl::~QuiverImpl()
 {
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandler);	
+
+	m_ImageListPtr.reset();
+	m_BrowserPtr.reset();
+	m_ViewerPtr.reset();
+	m_StatusbarPtr.reset();
+
+	if (NULL != m_pUIManager)
+		g_object_unref(m_pUIManager);
+
+	gtk_widget_destroy(m_pQuiverWindow);
 }
 
 void QuiverImpl::LoadBookmarks()
@@ -330,6 +354,8 @@ void QuiverImpl::LoadBookmarks()
 			}
 	
 			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
+
+			g_object_unref(actions2);
 			
 			string str_ui =
 				"<ui>"
@@ -369,6 +395,7 @@ void QuiverImpl::LoadBookmarks()
 			if (NULL != error)
 			{
 				printf("error: %s\n",error->message);
+				g_error_free(error);
 			}
 		}
 	}
@@ -413,6 +440,8 @@ void QuiverImpl::LoadExternalTools()
 			}
 	
 			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
+
+			g_object_unref(actions2);
 			
 			string str_ui =
 				"<ui>"
@@ -457,6 +486,7 @@ void QuiverImpl::LoadExternalTools()
 			if (NULL != error)
 			{
 				printf("error: %s\n",error->message);
+				g_error_free(error);
 			}
 		}
 	}
@@ -531,9 +561,13 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_VIEW_TOOLBAR_MAIN                      "ViewToolbarMain"
 #define ACTION_QUIVER_VIEW_PROPERTIES                        "ViewProperties"
 #define ACTION_QUIVER_VIEW_STATUSBAR                         "ViewStatusbar"
+#define ACTION_QUIVER_GO_FOLDER_PARENT                       "GoFolderParent"
+#define ACTION_QUIVER_GO_FOLDER_NEXT                         "GoFolderNext"
+#define ACTION_QUIVER_GO_FOLDER_PREV                         "GoFolderPrev"
 #define ACTION_QUIVER_SORT_BY_NAME                           "SortByName"
 #define ACTION_QUIVER_SORT_BY_NAME_NATURAL                   "SortByNameNatural"
 #define ACTION_QUIVER_SORT_BY_DATE                           "SortByDate"
+#define ACTION_QUIVER_SORT_BY_DATE_MODIFIED                  "SortByDateModified"
 #define ACTION_QUIVER_SORT_BY_RANDOM                         "SortByRandom"
 #define ACTION_QUIVER_SORT_DESCENDING                        "SortDescending"
 #define ACTION_QUIVER_FULLSCREEN                             "FullScreen"
@@ -611,6 +645,7 @@ static const char * quiver_ui_main =
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_NAME"'/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_NAME_NATURAL"'/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_DATE"'/>"
+"				<menuitem action='"ACTION_QUIVER_SORT_BY_DATE_MODIFIED"'/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_BY_RANDOM"'/>"
 "				<separator/>"
 "				<menuitem action='"ACTION_QUIVER_SORT_DESCENDING"'/>"
@@ -626,7 +661,12 @@ static const char * quiver_ui_main =
 "		<menu action='MenuGo'>"
 "			<placeholder name='ImageNavigation'/>"
 "			<separator/>"
+"			<placeholder name='HistoryNavigation'/>"
+"			<separator/>"
 "			<placeholder name='FolderNavigation'/>"
+"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_PARENT"'/>"
+"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_NEXT"'/>"
+"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_PREV"'/>"
 "			<separator/>"
 "		</menu>"
 "		<menu action='MenuBookmarks'>"
@@ -769,6 +809,7 @@ GtkRadioActionEntry QuiverImpl::sort_radio_action_entries[] = {
 	{ ACTION_QUIVER_SORT_BY_NAME, "","By Name", "", "Sort by file name", ImageList::SORT_BY_FILENAME},
 	{ ACTION_QUIVER_SORT_BY_NAME_NATURAL, "","By Name (natural order)", "", "Sort by file name (natural order)", ImageList::SORT_BY_FILENAME_NATURAL},
 	{ ACTION_QUIVER_SORT_BY_DATE, "","By Date", "", "Sort by date", ImageList::SORT_BY_DATE},
+	{ ACTION_QUIVER_SORT_BY_DATE_MODIFIED, "","By Date Modified", "", "Sort by date modified", ImageList::SORT_BY_DATE_MODIFIED},
 	{ ACTION_QUIVER_SORT_BY_RANDOM, "","Randomize", "", "Randomize", ImageList::SORT_BY_RANDOM},
 };
 
@@ -782,12 +823,15 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 	{ "MenuSort", NULL, N_("_Arrange Items") },
 	{ "MenuImage", NULL, N_("_Image") },
 	{ "MenuGo", NULL, N_("_Go") },
+	{ ACTION_QUIVER_GO_FOLDER_PARENT, QUIVER_STOCK_GO_UP, "Open Parent", "<Alt>Up", "Open parent folder", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_GO_FOLDER_NEXT, QUIVER_STOCK_GO_FORWARD, "Open _Next Folder", "<Shift><Alt>Right", "Open next folder", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_GO_FOLDER_PREV, QUIVER_STOCK_GO_BACK, "Open _Previous Folder", "<Shift><Alt>Left", "Open previous folder", G_CALLBACK(quiver_action_handler_cb)},
 	{ "MenuTools", NULL, N_("_Tools") },
 	{ "MenuWindow", NULL, N_("_Window") },
 	{ "MenuHelp", NULL, N_("_Help") },
 
 	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "<Control>b", "View Image", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "", "View Image", G_CALLBACK(quiver_action_handler_cb)},
 #ifdef QUIVER_MAEMO
 	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, "" , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
 #endif
@@ -809,7 +853,7 @@ GtkActionEntry QuiverImpl::action_entries[] = {
 
 	{ "MenuBookmarks", NULL, "_Bookmarks" },
 	{ ACTION_QUIVER_BOOKMARKS_ADD, QUIVER_STOCK_ADD, "_Add Bookmark", "<Control>d", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_BOOKMARKS_EDIT, QUIVER_STOCK_EDIT, "_Edit Bookmarks...", "<Control>b", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
+	{ ACTION_QUIVER_BOOKMARKS_EDIT, QUIVER_STOCK_EDIT, "_Edit Bookmarks...", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
 
 	{ ACTION_QUIVER_RENAME, QUIVER_STOCK_EDIT, "Rename...", "", "Rename image(s)", G_CALLBACK(quiver_action_handler_cb)},
 	{ ACTION_QUIVER_ORGANIZE, QUIVER_STOCK_EDIT, "Organize...", "", "Organize photos", G_CALLBACK(quiver_action_handler_cb)},
@@ -1033,7 +1077,6 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
 	gboolean bFullscreen = FALSE;
-	cout << "window state event" << endl;
 	pQuiverImpl->m_WindowState = event->new_window_state;
 	//cout << event->new_window_state << " FS: " << GDK_WINDOW_STATE_FULLSCREEN <<endl;
 	//
@@ -1074,15 +1117,6 @@ gboolean Quiver::event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   da
 	return ((Quiver*)data)->EventDelete(widget,event,data);
 }
 
-void Quiver::event_destroy( GtkWidget *widget, gpointer   data )
-{
-	((Quiver*)data)->EventDestroy(widget,data);
-}
-
-void Quiver::EventDestroy( GtkWidget *widget, gpointer   data )
-{
-	Close();
-}
 
 void Quiver::Close()
 {
@@ -1093,57 +1127,32 @@ void Quiver::Close()
 	
 	PreferencesPtr prefs = Preferences::GetInstance();
 	prefs->RemoveEventHandler(m_QuiverImplPtr->m_PreferencesEventHandler);
+	prefs.reset();
 	
-	QuiverImplPtr quiverImplPtr;
-	m_QuiverImplPtr = quiverImplPtr;
+	m_QuiverImplPtr.reset();
+
+	// reset global smart pointers
+	Bookmarks::Reset();
+	ExternalTools::Reset();
+	ImageSaveManager::Reset();
+	TaskManagerDlg::Reset();
+	TaskManager::Reset();
+	Preferences::Reset();
+	QuiverFile::ClearThumbnailCache();
 	
-	gtk_main_quit ();	
+	gtk_main_quit ();
+	delete this;
 }
 
 gboolean Quiver::EventDelete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
 {
-	    /* If you return FALSE in the "delete_event" signal handler,
-     * GTK will emit the "destroy" signal. Returning TRUE means
-     * you don't want the window to be destroyed.
-     * This is useful for popping up 'are you sure you want to quit?'
-     * type dialogs. */
-
-    /* Change TRUE to FALSE and the main window will be destroyed with
-     * a "delete_event". */
-
-	// are you sure you want to quit
-
-	gboolean return_value = FALSE;
-	
-	if (!m_QuiverImplPtr->CanClose())
+	if (m_QuiverImplPtr->CanClose())
 	{
-		return_value = TRUE;
-	}
-
-	/*
-	string s("Are you sure you want to quit?");
-	GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(widget),GTK_DIALOG_MODAL,
-							GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,s.c_str());
-	gint rval = gtk_dialog_run(GTK_DIALOG(dialog));
-
-	switch (rval)
-	{
-		case GTK_RESPONSE_YES:
-			return_value= FALSE;
-			SaveSettings();
-			break;
-		case GTK_RESPONSE_NO:
-			return_value = TRUE;
-			break;
-		default:
-			return_value = TRUE;
-		
+		Close();
 	}
 	
-	gtk_widget_destroy(dialog);
-	*/
-	
-    return return_value;
+	// don't send destroy signal
+    return TRUE;
 }
  
 
@@ -1246,9 +1255,6 @@ void Quiver::Init()
 #endif
 
 	}
-
-	GError *tmp_error;
-	tmp_error = NULL;
 	
 	gtk_window_set_default_icon_name (QUIVER_STOCK_APP);	
 
@@ -1260,8 +1266,7 @@ void Quiver::Init()
 	gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_main,
 			strlen(quiver_ui_main),
-			&tmp_error);
-	
+			NULL);
 
 	guint n_entries = G_N_ELEMENTS (m_QuiverImplPtr->action_entries);
 
@@ -1283,6 +1288,8 @@ void Quiver::Init()
 										m_QuiverImplPtr.get());										
 
 	gtk_ui_manager_insert_action_group (m_QuiverImplPtr->m_pUIManager,actions,0);
+
+	g_object_unref(actions);
 
 	GtkWidget* toolbar = gtk_ui_manager_get_widget(m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain/");
 	if (NULL != toolbar)
@@ -1323,8 +1330,6 @@ void Quiver::Init()
     g_signal_connect (G_OBJECT (m_pQuiverWindow), "scroll_event",
     			G_CALLBACK (Quiver::event_scroll), this);
     	*/
-	g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "destroy",
-				G_CALLBACK (Quiver::event_destroy), this);
 	g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "button_press_event",
 				G_CALLBACK (quiver_window_button_press), m_QuiverImplPtr.get());
 
@@ -1696,8 +1701,7 @@ static gboolean CreateQuiver (gpointer data)
 	QuiverStockIcons::Load();
 	
 	Quiver *pQuiver = new Quiver(*(cqd->pFiles), cqd->bRecursive);
-	gtk_quit_add (0,DestroyQuiver, pQuiver);
-	return TRUE;
+	return FALSE; // run once
 }
 
 int main (int argc, char **argv)
@@ -1707,13 +1711,18 @@ int main (int argc, char **argv)
 	textdomain (GETTEXT_PACKAGE);
 
  	/* init threads */
-	g_thread_init (NULL);
+	//g_type_init ();
 	gdk_threads_init ();
 	gdk_threads_enter ();
 
 	
 	/* Initialize the widget set */
 	gtk_init (&argc, &argv);
+
+	// set dark theme
+	g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", TRUE, NULL);
+
+	gst_init(&argc, &argv);
 
 	ThreadUtil::Init();
 
@@ -1752,13 +1761,6 @@ int main (int argc, char **argv)
 	CreateQuiverData cqd = {0};
 	cqd.bRecursive = false;
 	
-	//init gnome-vfs
-	if (!gnome_vfs_init ()) 
-	{
-		printf ("Could not initialize GnomeVFS\n");
-		return 1;
-	}
-
 	if (argc == 1)
 	{	
 		const gchar* dir;
@@ -1770,20 +1772,37 @@ int main (int argc, char **argv)
 #else
 		dir = g_get_home_dir();
 #endif
-		string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
-		files.push_back(photo_library);
-		if (!gnome_vfs_uris_match("file:///",photo_library.c_str())
-			 && !gnome_vfs_uris_match(dir, photo_library.c_str()))
+		if (prefsPtr->HasKey(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY))
 		{
-			// just in case the users sets the root
-			// as the photo library
-			cqd.bRecursive = true;
+			string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
+			if (!photo_library.empty())
+				files.push_back(photo_library);
+			GFile* file = g_file_new_for_path("/");
+			GFile* homedir = g_file_new_for_path(dir);
+			GFile* photoLib = g_file_new_for_uri(photo_library.c_str());
+
+			if (!g_file_equal(file, photoLib) && !g_file_equal(photoLib, homedir))
+			{
+				// just in case the users sets the root
+				// as the photo library
+				cqd.bRecursive = true;
+			}
+			g_object_unref(photoLib);
+			g_object_unref(homedir);
+			g_object_unref(file);
 		}
+		else
+		{
+			files.push_back(dir);
+		}
+
 	}
 	//pthread_setconcurrency(4);
 
 	cqd.pFiles = &files;
-	gtk_init_add (CreateQuiver,&cqd);
+	// FIXME: will not create a window
+	//gtk_init_add (CreateQuiver,&cqd);
+	g_idle_add(CreateQuiver, &cqd);
 	
 	// FIX FOR BUG: http://bugzilla.gnome.org/show_bug.cgi?id=65041
 	// race condition when registering types
@@ -1803,6 +1822,8 @@ int main (int argc, char **argv)
 	// END BUG FIX items
                                              
 	gtk_main ();
+
+	gst_deinit();
 	
 
 	gdk_threads_leave();
@@ -1852,6 +1873,8 @@ static gboolean timeout_event_motion_notify (gpointer data)
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
 	{
+		// FIXME:
+		/*
 		gdk_threads_enter();
 		
 		GdkCursor *empty_cursor;
@@ -1871,6 +1894,7 @@ static gboolean timeout_event_motion_notify (gpointer data)
 		
 		//remove the mouse cursor		
 		gdk_threads_leave();
+		*/
 	}
 	pQuiverImpl->m_iTimeoutMouseMotionNotify = 0;
 	return FALSE;
@@ -1887,7 +1911,7 @@ static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, g
 	}
 
 #ifndef QUIVER_MAEMO	
-	gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
+	gdk_window_set_cursor (gtk_widget_get_window(pQuiverImpl->m_pQuiverWindow), NULL);
 #endif
 
 	pQuiverImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pQuiverImpl);
@@ -1904,7 +1928,7 @@ static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, g
 	// gtk_ui_manager signals
 static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
 {
-	if (GTK_IS_ITEM(proxy))
+	if (GTK_IS_MENU_ITEM(proxy))
 	{
 		g_signal_connect (proxy, "select",G_CALLBACK (signal_item_select), data);
 		g_signal_connect (proxy, "deselect",G_CALLBACK (signal_item_deselect), data);
@@ -1918,7 +1942,7 @@ static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,Gtk
 	*/
 }
 
-static void signal_item_select (GtkItem *proxy,gpointer data)
+static void signal_item_select (GtkMenuItem *proxy,gpointer data)
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	GtkAction* action;
@@ -1936,7 +1960,7 @@ static void signal_item_select (GtkItem *proxy,gpointer data)
 
 }
 
-static void signal_item_deselect (GtkItem *proxy,gpointer data)
+static void signal_item_deselect (GtkMenuItem *proxy,gpointer data)
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	GtkAction* action;
@@ -1957,9 +1981,6 @@ static void signal_item_deselect (GtkItem *proxy,gpointer data)
 
 void Quiver::ShowViewer()
 {
-	GError *tmp_error;
-	tmp_error = NULL;
-
 	m_QuiverImplPtr->m_BrowserPtr->Hide();
 
 	if (0 != m_QuiverImplPtr->m_iMergedBrowserUI)
@@ -1974,7 +1995,7 @@ void Quiver::ShowViewer()
 		m_QuiverImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_viewer,
 			strlen(quiver_ui_viewer),
-			&tmp_error);
+			NULL);
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 
@@ -1984,9 +2005,6 @@ void Quiver::ShowViewer()
 
 void Quiver::ShowBrowser()
 {
-	GError *tmp_error;
-	tmp_error = NULL;
-
 	m_QuiverImplPtr->m_ViewerPtr->Hide();
 	gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 
@@ -2002,7 +2020,7 @@ void Quiver::ShowBrowser()
 		m_QuiverImplPtr->m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
 			quiver_ui_browser,
 			strlen(quiver_ui_browser),
-			&tmp_error);
+			NULL);
 		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
 	}
 	m_QuiverImplPtr->m_BrowserPtr->Show();
@@ -2155,7 +2173,18 @@ void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr eve
 
 void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_ptr)
 {
-	parent->m_pQuiver->ShowViewer();
+	if (0 != parent->m_ImageListPtr->GetSize() && parent->m_ImageListPtr->GetCurrent().IsFolder())
+	{
+	    list<string> file_list;
+		string currentItem = parent->m_BrowserPtr->GetCurrentFolderChild();
+	    file_list.push_back(parent->m_ImageListPtr->GetCurrent().GetURI());
+		parent->m_ImageListPtr->SetImageList(&file_list);
+		parent->m_ImageListPtr->SetCurrentFile(currentItem);
+	}
+	else
+	{
+		parent->m_pQuiver->ShowViewer();
+	}
 }
 
 void QuiverImpl::BrowserEventHandler::HandleCursorChanged(BrowserEventPtr event_ptr)
@@ -2668,17 +2697,117 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		bool bDec = ( TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_REVERSED,bDec);
 	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PARENT))
+	{
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+		if (!folders.empty())
+		{
+			std::string lastFolder = folders.back();
+
+			GFile* dir = g_file_new_for_uri(lastFolder.c_str());
+			GFile* parent = g_file_get_parent(dir);
+			if (NULL != parent)
+			{
+				char* uri = g_file_get_uri(parent);
+				pQuiverImpl->m_ImageListPtr->SetImageList(uri);
+				pQuiverImpl->m_ImageListPtr->SetCurrentFile(lastFolder);
+				g_free(uri);
+				g_object_unref(parent);
+			}
+			g_object_unref(dir);
+		}
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_NEXT))
+	{
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+		if (!folders.empty())
+		{
+			GFile* folder = g_file_new_for_uri(folders.back().c_str());
+			GFile* parent = g_file_get_parent(folder);
+			std::string lastFolder = folders.back();
+			ImageListPtr tmpListPtr(new ImageList());
+			char* uri = g_file_get_uri(parent);
+			tmpListPtr->SetImageList(uri);
+			g_free(uri);
+			g_object_unref(parent);
+			g_object_unref(folder);
+
+			bool bFoundCurrent = false;
+			bool bFoundNext  = false;
+			string newFolder;
+			for (int i = 0; i < tmpListPtr->GetSize(); ++i)
+			{
+				QuiverFile f = (*tmpListPtr)[i];
+				if (f.IsFolder())
+				{
+					newFolder = f.GetURI();
+					if (newFolder == lastFolder)
+						bFoundCurrent = true;
+					else if (bFoundCurrent)
+					{
+						bFoundNext = true;
+						break;
+					}
+
+				}
+			}
+
+			if (bFoundNext)
+				pQuiverImpl->m_ImageListPtr->SetImageList(newFolder);
+		}
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PREV))
+	{
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+		if (!folders.empty())
+		{
+			GFile* folder = g_file_new_for_uri(folders.front().c_str());
+			GFile* parent = g_file_get_parent(folder);
+			std::string lastFolder = folders.back();
+			ImageListPtr tmpListPtr(new ImageList());
+			char* uri = g_file_get_uri(parent);
+			tmpListPtr->SetImageList(uri);
+			g_free(uri);
+			g_object_unref(parent);
+			g_object_unref(folder);
+
+			string newFolder;
+			for (int i = 0; i < tmpListPtr->GetSize(); ++i)
+			{
+				QuiverFile f = (*tmpListPtr)[i];
+				if (f.IsFolder())
+				{
+					string tmp = f.GetURI();
+					if (tmp == lastFolder)
+						break;
+					newFolder = tmp;
+				}
+			}
+
+			if (!newFolder.empty())
+				pQuiverImpl->m_ImageListPtr->SetImageList(newFolder);
+		}
+	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
 	{
 		RenameDlg dlg;
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+
+		if (!folders.empty())
+		{
+			dlg.SetInputFolder(folders.front());
+		}
+
 		if (dlg.Run())
 		{
 			// organize pictures dialog
 			RenameTaskPtr renameTaskPtr(new RenameTask());
 			renameTaskPtr->SetInputFolder( dlg.GetInputFolder() );
-			renameTaskPtr->SetOutputFolder( dlg.GetOutputFolder() );
 			renameTaskPtr->SetTemplate( dlg.GetTemplate() );
-			renameTaskPtr->SetIncludeSubfolders( dlg.GetIncludeSubfolders() );
 
 			/*
 			std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
@@ -2697,13 +2826,24 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	else if(0 == strcmp(szAction,ACTION_QUIVER_ORGANIZE))
 	{
 		OrganizeDlg dlg;
+
+		list<string> folders;
+		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+
+		if (!folders.empty())
+		{
+			dlg.SetInputFolder(folders.front());
+		}
+
 		if (dlg.Run())
 		{
 			// organize pictures dialog
 			OrganizeTaskPtr organizeTaskPtr(new OrganizeTask());
 			organizeTaskPtr->SetInputFolder( dlg.GetInputFolder() );
 			organizeTaskPtr->SetOutputFolder( dlg.GetOutputFolder() );
-			organizeTaskPtr->SetDateTemplate( dlg.GetDateTemplate() );
+			organizeTaskPtr->SetFolderTemplate( dlg.GetFolderTemplate() );
+			organizeTaskPtr->SetFileTemplate( dlg.GetFileTemplate() );
+			organizeTaskPtr->SetRenameFiles( dlg.GetRenameFiles() );
 			organizeTaskPtr->SetAppendedText( dlg.GetAppendedText() );
 			organizeTaskPtr->SetDayExtension( dlg.GetDayExtention() );
 			organizeTaskPtr->SetIncludeSubfolders( dlg.GetIncludeSubfolders() );
@@ -2734,6 +2874,11 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 								dlg.GetAdjustmentHours(),
 								dlg.GetAdjustmentMinutes(),
 								dlg.GetAdjustmentSeconds()));
+
+				if (dlg.ModifyModificationTime())
+				{
+					adjustDateTaskPtr->AddAdjustDateFields(AdjustDateTask::DATE_FIELD_MODIFICATION_TIME);
+				}
 
 				if (dlg.ModifyExifDate())
 				{
@@ -2874,6 +3019,11 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 				printf("Running external command: %s\n", cmd.c_str());
 				GError *error = NULL;
 				g_spawn_command_line_async (cmd.c_str(), &error);
+				if (NULL != error)
+				{
+					g_warning("%s\n", error->message);
+					g_error_free(error);
+				}
 			}
 		}
 	}

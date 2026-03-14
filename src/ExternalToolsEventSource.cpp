@@ -6,7 +6,7 @@ void ExternalToolsEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 	IExternalToolsEventHandlerPtr h = boost::static_pointer_cast<IExternalToolsEventHandler>(handler);
 	
-	boost::signals::connection c = m_sigExternalToolChangedPtr->connect( boost::bind(&IExternalToolsEventHandler::HandleExternalToolChanged,h,_1) );
+	boost::signals2::connection c = m_sigExternalToolChangedPtr->connect( boost::bind(&IExternalToolsEventHandler::HandleExternalToolChanged,h,_1) );
 	MapConnection(handler,c);
 	
 }

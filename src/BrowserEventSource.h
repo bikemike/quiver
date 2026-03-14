@@ -9,7 +9,7 @@ class BrowserEventSource : public virtual AbstractEventSource
 public:
 	virtual ~BrowserEventSource(){};
 
-	typedef boost::signal<void (BrowserEventPtr)> BrowserSignal;
+	typedef boost::signals2::signal<void (BrowserEventPtr)> BrowserSignal;
 	/*
 	typedef boost::signal<void (BrowserEventPtr)> BrowserSelectionChangedSignal;
 	typedef boost::signal<void (BrowserEventPtr)> BrowserCursorChangedSignal;

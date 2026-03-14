@@ -10,6 +10,8 @@
 
 #include <gdk/gdkkeysyms.h>
 
+#include <gio/gio.h>
+
 #include <libquiver/quiver-icon-view.h>
 #include <libquiver/quiver-image-view.h>
 #include <libquiver/quiver-pixbuf-utils.h>
@@ -114,7 +116,7 @@ public:
 	
 	void SetImageIndex(int index, bool bDirectionForward, bool bFromIconView = false);
 
-	void QueueIconViewUpdate(int timeout = 100 /* ms */);
+	void QueueIconViewUpdate(int timeout = 50 /* ms */);
 
 /* member variables */
 	FolderTreePtr m_FolderTreePtr;
@@ -148,14 +150,19 @@ public:
 	QuiverFile m_QuiverFileCurrent;
 	ImageCache m_ThumbnailCache;
 	ImageCache m_IconCache;
+	ImageCache m_IconOverlayCache;
 	
 	guint m_iTimeoutUpdateListID;
 	guint m_iTimeoutHideLocationID;
 
 	Browser *m_BrowserParent;
 
+	GtkCssProvider* m_pCssProvider;
+
 	ImageLoader m_ImageLoader;
 	IPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
+
+	map<string, string> m_mapFolderToFile;
 	
 /* nested classes */
 	//class ViewerEventHandler;
@@ -288,6 +295,13 @@ static const char *ui_browser =
 "			</placeholder>"
 "			<menuitem action='"ACTION_BROWSER_RELOAD"'/>"
 "		</menu>"
+"		<menu action='MenuGo'>"
+"			<placeholder name='HistoryNavigation'>"
+"				<menuitem action='"ACTION_BROWSER_HISTORY_BACK"'/>"
+"				<menuitem action='"ACTION_BROWSER_HISTORY_FORWARD"'/>"
+"			</placeholder>"
+"		</menu>"
+
 #ifdef QUIVER_MAEMO
 "	</popup>"
 #else
@@ -326,8 +340,8 @@ static  GtkToggleActionEntry action_entries_toggle[] = {
 
 static GtkActionEntry action_entries[] = {
 	{ ACTION_BROWSER_OPEN_LOCATION, "", "Open _Location", "<Control>l", "Open a Location", G_CALLBACK( browser_action_handler_cb )},
-	{ ACTION_BROWSER_HISTORY_BACK, QUIVER_STOCK_GO_BACK, "Go Back", "", "Go Back", G_CALLBACK( browser_action_handler_cb )},
-	{ ACTION_BROWSER_HISTORY_FORWARD, QUIVER_STOCK_GO_FORWARD, "Go Forward", "", "Go Forward", G_CALLBACK( browser_action_handler_cb )},
+	{ ACTION_BROWSER_HISTORY_BACK, QUIVER_STOCK_GO_BACK, "Go Back", "<Alt>Left", "Go Back", G_CALLBACK( browser_action_handler_cb )},
+	{ ACTION_BROWSER_HISTORY_FORWARD, QUIVER_STOCK_GO_FORWARD, "Go Forward", "<Alt>Right", "Go Forward", G_CALLBACK( browser_action_handler_cb )},
 	
 	{ ACTION_BROWSER_CUT, QUIVER_STOCK_CUT, "_Cut", "<Control>X", "Cut image", G_CALLBACK(browser_action_handler_cb)},
 	{ ACTION_BROWSER_COPY, QUIVER_STOCK_COPY, "Copy", "<Control>C", "Copy image", G_CALLBACK(browser_action_handler_cb)},
@@ -372,6 +386,21 @@ list<unsigned int> Browser::GetSelection()
 	}
 	g_list_free(selection);
 	return selection_list;
+}
+
+std::string Browser::GetCurrentFolderChild()
+{
+	string item;
+	if (0 != m_BrowserImplPtr->m_ImageListPtr->GetSize())
+	{
+		QuiverFile f = m_BrowserImplPtr->m_ImageListPtr->GetCurrent();
+		map<string,string>::iterator itr = m_BrowserImplPtr->m_mapFolderToFile.find(f.GetURI());
+		if (m_BrowserImplPtr->m_mapFolderToFile.end() != itr)
+		{
+			item = itr->second;
+		}
+	}
+	return item;
 }
 
 void 
@@ -442,12 +471,15 @@ Browser::GetWidget()
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell, gint* actual_width, gint* actual_height, gpointer user_data);
+static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, guint cell, QuiverIconOverlayType type, gpointer user_data);
 static guint n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
 
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
+static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
+
 static gboolean browser_popup_menu_cb (GtkWidget *treeview, gpointer userdata);
 static gboolean browser_button_press_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
 static void browser_show_context_menu(GdkEventButton *event, gpointer userdata);
@@ -555,7 +587,7 @@ void notebook_page_removed  (GtkNotebook *notebook,
 	if (0 == gtk_notebook_get_n_pages(notebook))
 	{
 		gtk_widget_hide(GTK_WIDGET(notebook));
-		if (!GTK_WIDGET_VISIBLE(pBrowserImpl->m_pImageView))
+		if (!gtk_widget_get_visible(pBrowserImpl->m_pImageView))
 		{
 			gtk_widget_hide(pBrowserImpl->vpaned);
 		}
@@ -568,6 +600,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ImageListPtr(new ImageList()),
 	m_ThumbnailCache(100),
 	m_IconCache(100),
+	m_IconOverlayCache(100),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
 	m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
@@ -606,6 +639,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	GtkWidget *scrolled_window;
 	GtkWidget *hbox,*vbox;
 	
+	m_pCssProvider = gtk_css_provider_new();
 
 #ifndef QUIVER_MAEMO
 	hscale = gtk_hscale_new_with_range(20,256,1);
@@ -696,9 +730,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	      G_CALLBACK (pane_size_allocate), this);
 	
 	m_pBrowserWidget = hpaned;
+	g_object_ref(hpaned);
 	
 	m_pSWFolderTree = gtk_scrolled_window_new(NULL,NULL);
-	g_object_ref_sink(m_pSWFolderTree);
+	g_object_ref(m_pSWFolderTree);
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pSWFolderTree),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	GtkWidget *pFolderTree = m_FolderTreePtr->GetWidget();
 	
@@ -759,6 +794,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	// popup menu stuff
 	g_signal_connect(G_OBJECT(m_pIconView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
 	g_signal_connect(G_OBJECT(m_pIconView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);	
+	g_signal_connect(G_OBJECT(m_pIconView), "motion-notify-event", G_CALLBACK(iconview_motion_notify), this);
 #ifdef QUIVER_MAEMO
 	g_signal_connect (G_OBJECT (m_pIconView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), this);
 	gtk_widget_tap_and_hold_setup (m_pIconView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
@@ -782,23 +818,13 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
 #endif
 	{
-		if (!strBGColorImg.empty())
-		{
-			GdkColor color;
-			gdk_color_parse(strBGColorImg.c_str(),&color);
-			gtk_widget_modify_bg (m_pImageView, GTK_STATE_NORMAL, &color );
-		}
-		
-		if (!strBGColorThumb.empty())
-		{
-			GdkColor color;
-			gdk_color_parse(strBGColorThumb.c_str(),&color);
-			gtk_widget_modify_bg (m_pIconView, GTK_STATE_NORMAL, &color );
-		}
+		std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
+		strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
+		gtk_css_provider_load_from_data(m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
+		gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 	}
-/*
-	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(real_iconview),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,user_data,NULL);
-*/
+
+	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,this,NULL);
 
 	IPixbufLoaderObserverPtr tmp ( new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView)) );
 	m_ImageViewPixbufLoaderObserverPtr = tmp;
@@ -845,19 +871,33 @@ Browser::BrowserImpl::~BrowserImpl()
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandlerPtr);
 	
+	g_object_unref(m_pBrowserWidget);
+	g_object_unref(m_pToolItemThumbSizer);
 
 	if (m_pUIManager)
 	{
 		g_object_unref(m_pUIManager);
 	}
+
 	g_object_unref(m_pSWFolderTree);
+
+	g_signal_handlers_disconnect_matched(
+		m_pNotebook,
+		G_SIGNAL_MATCH_DATA,
+		0,
+		0,
+		NULL,
+		NULL,
+		this);
+
+	gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(),GTK_STYLE_PROVIDER(m_pCssProvider));
+	g_object_unref(m_pCssProvider);
+
 }
 
 void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	GError *tmp_error;
-	tmp_error = NULL;
 	
 	if (m_pUIManager)
 	{
@@ -878,6 +918,8 @@ void Browser::BrowserImpl::SetUIManager(GtkUIManager *ui_manager)
 										G_N_ELEMENTS (action_entries_toggle),
 										this);
 	gtk_ui_manager_insert_action_group (m_pUIManager,actions,0);	
+
+	g_object_unref(actions);
 
 		
 	GtkAction* action = QuiverUtils::GetAction(m_pUIManager,ACTION_BROWSER_VIEW_PREVIEW);
@@ -967,6 +1009,7 @@ void Browser::BrowserImpl::Show()
 		if (NULL != tmp_error)
 		{
 			g_warning("Browser::Show() Error: %s\n",tmp_error->message);
+			g_error_free(tmp_error);
 		}
 	}
 
@@ -1045,7 +1088,12 @@ void Browser::BrowserImpl::SetImageList(ImageListPtr imglist)
 	list<string> files = m_ImageListPtr->GetFileList();
 	dirs.insert(dirs.end(), files.begin(), files.end());
 	
-	m_BrowserHistory.Add(dirs);
+	std::string selected;
+	if (0 != m_ImageListPtr->GetSize())
+	{
+		selected = m_ImageListPtr->GetCurrent().GetURI();
+	}
+	m_BrowserHistory.Add(dirs, selected);
 	
 	UpdateUI();
 }
@@ -1057,17 +1105,21 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 
 	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
 	
-	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(m_pImageView))
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(m_pImageView))
 	{
 
-		width = m_pImageView->allocation.width;
-		height = m_pImageView->allocation.height;
+		width = gtk_widget_get_allocated_width(m_pImageView);
+		height = gtk_widget_get_allocated_height(m_pImageView);
 	}
 
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
-	
 	if (m_ImageListPtr->SetCurrentIndex(index))
 	{
+		QuiverFile f;
+		f = m_ImageListPtr->GetCurrent();
+
+		m_BrowserHistory.SetCurrentSelected(f.GetURI());
+
 		if (!bFromIconView)
 		{
 			g_signal_handlers_block_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
@@ -1078,11 +1130,9 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 			g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)iconview_cursor_changed_cb, this);
 		}
 		
-		if (GTK_WIDGET_MAPPED(m_pImageView))
+		if (gtk_widget_get_mapped(m_pImageView))
 		{
 			
-			QuiverFile f;
-			f = m_ImageListPtr->GetCurrent();
 			m_ImageLoader.LoadImageAtSize(f,width,height);
 			
 			if (bDirectionForward)
@@ -1190,7 +1240,10 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 		if (NULL == pixbuf)
 		{
 			pixbuf = f.GetIcon(width,height);
-			b->m_IconCache.AddPixbuf(cache_icon_name,pixbuf);
+			if (NULL != pixbuf)
+			{
+				b->m_IconCache.AddPixbuf(cache_icon_name,pixbuf);
+			}
 		}
 		g_free(icon_name);
 	}
@@ -1201,7 +1254,6 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, guint cell,gpoi
 static gboolean thumbnail_loader_update_list (gpointer data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)data;
-	// FIXME: do we need threads enter/leave
 	gdk_threads_enter();
 	b->m_ThumbnailLoader.UpdateList();
 	b->m_iTimeoutUpdateListID = 0;
@@ -1226,33 +1278,65 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	gboolean need_new_thumb = TRUE;
 	
 	guint width, height;
-	guint thumb_width, thumb_height;
-	guint bound_width, bound_height;
 	quiver_icon_view_get_icon_size(iconview,&width,&height);
-	
 
-	pixbuf = b->m_ThumbnailCache.GetPixbuf((*b->m_ImageListPtr)[cell].GetURI());
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
 
-	if (pixbuf)
+	if (f.IsFolder())
 	{
-		*actual_width = (*b->m_ImageListPtr)[cell].GetWidth();
-		*actual_height = (*b->m_ImageListPtr)[cell].GetHeight();
+		gint x = 0, y = 0;
+		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
 
-		if (4 < (*b->m_ImageListPtr)[cell].GetOrientation())
+		if (0 <= x && 0 <= y && x < gint(width) && y < gint(height))
 		{
-			swap(*actual_width,*actual_height);
+			double percent = double(x) / width;
+			// FIXME: this should be optimized. creating a new list
+			// every time the mouse moves can be quite slow.
+			ImageListPtr lstPtr(new ImageList());
+			lstPtr->SetImageList(f.GetURI());
+			unsigned int listSize = lstPtr->GetSize();
+			if (0 != listSize)
+			{
+				unsigned int index = (unsigned int)(listSize * percent);
+				std::min(index, listSize - 1);
+				pixbuf = (*lstPtr)[index].GetThumbnail(std::max(width, height));
+				*actual_width = (*lstPtr)[index].GetWidth();
+				*actual_height = (*lstPtr)[index].GetHeight();
+				if (4 < (*lstPtr)[index].GetOrientation())
+				{
+					swap(*actual_width,*actual_height);
+				}
+				need_new_thumb = FALSE;
+			}
 		}
+	}
+	else
+	{
+		pixbuf = b->m_ThumbnailCache.GetPixbuf(f.GetURI());
 
-		thumb_width = gdk_pixbuf_get_width(pixbuf);
-		thumb_height = gdk_pixbuf_get_height(pixbuf);
-
-		bound_width = *actual_width;
-		bound_height = *actual_height;
-		quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
-
-		if (bound_width == thumb_width && bound_height == thumb_height)
+		if (pixbuf)
 		{
-			need_new_thumb = FALSE;
+			*actual_width = f.GetWidth();
+			*actual_height = f.GetHeight();
+
+			if (4 < f.GetOrientation())
+			{
+				swap(*actual_width,*actual_height);
+			}
+
+			guint thumb_width, thumb_height;
+			thumb_width = gdk_pixbuf_get_width(pixbuf);
+			thumb_height = gdk_pixbuf_get_height(pixbuf);
+
+			guint bound_width, bound_height;
+			bound_width = *actual_width;
+			bound_height = *actual_height;
+			quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
+
+			if (bound_width == thumb_width && bound_height == thumb_height)
+			{
+				need_new_thumb = FALSE;
+			}
 		}
 	}
 	
@@ -1265,6 +1349,32 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	return pixbuf;
 }
 
+static GdkPixbuf*
+overlay_pixbuf_callback(QuiverIconView* iconview, guint cell, QuiverIconOverlayType type, gpointer user_data)
+{
+	GdkPixbuf* pixbuf = NULL;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+	if (type == QUIVER_ICON_OVERLAY_ICON && f.IsFolder())
+	{
+		gchar* icon_name = f.GetIconName();
+		if (icon_name)
+		{
+			pixbuf = b->m_IconOverlayCache.GetPixbuf(icon_name);
+			if (NULL == pixbuf)
+			{
+				pixbuf = f.GetIcon(32,32);
+				if (NULL != pixbuf)
+				{
+					b->m_IconOverlayCache.AddPixbuf(icon_name,pixbuf);
+				}
+			}
+			g_free(icon_name);
+		}
+	}
+
+	return pixbuf;
+}
 
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data)
 {
@@ -1301,13 +1411,71 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 	b->m_BrowserParent->EmitSelectionChangedEvent();
 }
 
+static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+{
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
+
+	gint x, y;
+	gtk_widget_get_pointer(GTK_WIDGET(iconview), &x, &y);
+
+	gulong cell =  quiver_icon_view_get_cell_for_xy(iconview, x, y);
+
+	if (G_MAXULONG == cell)
+		return FALSE;
+
+	guint width, height;
+	quiver_icon_view_get_icon_size(iconview,&width,&height);
+
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+
+	bool bClearMap = true;
+	if (f.IsFolder())
+	{
+		gint x = 0, y = 0;
+		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
+
+		if (0 <= x && 0 <= y && x < width && y < height)
+		{
+			double percent = double(x) / width;
+			ImageListPtr lstPtr(new ImageList());
+			lstPtr->SetImageList(f.GetURI());
+			unsigned int listSize = lstPtr->GetSize();
+			if (0 != listSize)
+			{
+				unsigned int index = (unsigned int)(listSize * percent);
+				std::min(index, listSize - 1);
+
+				QuiverFile child = (*lstPtr)[index];
+
+				std::string uri_old = b->m_mapFolderToFile[f.GetURI()];
+				std::string uri_new = child.GetURI();
+
+				if (uri_new != uri_old)
+				{
+					quiver_icon_view_invalidate_cell(iconview,cell);
+					b->m_mapFolderToFile[f.GetURI()] = uri_new;
+				}
+				bClearMap = false;
+			}
+		}
+	}
+
+	if (bClearMap)
+	{
+		b->m_mapFolderToFile.clear();
+	}
+
+	return FALSE;
+}
+
 
 static gboolean
 entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data)
 {
 	switch(event->keyval)
 	{
-		case GDK_Escape:
+		case GDK_KEY_Escape:
 			gtk_widget_hide(widget);
 			break;
 	}
@@ -1458,8 +1626,10 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		if (pBrowserImpl->m_BrowserHistory.GoBack())
 		{
 			pBrowserImpl->m_bBrowserHistoryEvent = true;
-			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrent();
+			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrentFiles();
+			string selected = pBrowserImpl->m_BrowserHistory.GetCurrentSelected();
 			pBrowserImpl->m_ImageListPtr->SetImageList(&files);
+			pBrowserImpl->m_ImageListPtr->SetCurrentFile(selected);
 			pBrowserImpl->m_bBrowserHistoryEvent = false;
 		}
 	}
@@ -1469,8 +1639,10 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 		if (pBrowserImpl->m_BrowserHistory.GoForward())
 		{
 			pBrowserImpl->m_bBrowserHistoryEvent = true;
-			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrent();
+			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrentFiles();
+			string selected = pBrowserImpl->m_BrowserHistory.GetCurrentSelected();
 			pBrowserImpl->m_ImageListPtr->SetImageList(&files);
+			pBrowserImpl->m_ImageListPtr->SetCurrentFile(selected);
 			pBrowserImpl->m_bBrowserHistoryEvent = false;
 		}
 		pBrowserImpl->m_bBrowserHistoryEvent = false;
@@ -1609,29 +1781,42 @@ static void browser_action_handler_cb(GtkAction *action, gpointer data)
 //=============================================================================
 void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 {
-	// refresh the list
-	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
-			
-	parent->m_ThumbnailLoader.UpdateList(true);	
-	
 	// get the list of files and folders in the image list
 	list<string> dirs  = parent->m_ImageListPtr->GetFolderList();
 	list<string> files = parent->m_ImageListPtr->GetFileList();
+
+	// add new history event
+	if (!parent->m_bBrowserHistoryEvent)
+	{
+		std::string selected;
+		if (0 != parent->m_ImageListPtr->GetSize())
+		{
+			selected = parent->m_ImageListPtr->GetCurrent().GetURI();
+		}
+		dirs.insert(dirs.end(), files.begin(), files.end());
+		parent->m_BrowserHistory.Add(dirs, selected);
+	}
+
+	// refresh the list
+	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
+			
+	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
+	parent->m_ThumbnailLoader.UpdateList(true);	
+	
 	if (1 == dirs.size() && 0 == files.size())
 	{
-		
-		GnomeVFSURI* vfs_uri = gnome_vfs_uri_new(dirs.front().c_str());
-		if (gnome_vfs_uri_is_local(vfs_uri))
+		GFile* file = g_file_new_for_uri(dirs.front().c_str());
+		char* local_path = g_file_get_path(file);
+		if (NULL != local_path)
 		{
-			char* uri = gnome_vfs_get_local_path_from_uri (dirs.front().c_str());
-			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),uri);
-			g_free(uri);
+			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),local_path);
+			g_free(local_path);
 		}
 		else
 		{
 			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),dirs.front().c_str());
 		}
-		gnome_vfs_uri_unref(vfs_uri);
+		g_object_unref(file);
 	}
 	else if (0 == dirs.size() && 1 == files.size())
 	{
@@ -1665,11 +1850,6 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 		parent->m_FolderTreePtr->SetSelectedFolders(dirs);
 	}
 	
-	if (!parent->m_bBrowserHistoryEvent)
-	{
-		dirs.insert(dirs.end(), files.begin(), files.end());
-		parent->m_BrowserHistory.Add(dirs);
-	}
 	parent->UpdateUI();
 }
 
@@ -1678,10 +1858,10 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(Imag
 	gint width=0, height=0;
 	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(parent->m_pImageView));
 	
-	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && GTK_WIDGET_REALIZED(parent->m_pImageView))
+	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(parent->m_pImageView))
 	{
-		width = parent->m_pImageView->allocation.width;
-		height = parent->m_pImageView->allocation.height;
+		width = gtk_widget_get_allocated_width(parent->m_pImageView);
+		height = gtk_widget_get_allocated_height(parent->m_pImageView);
 	}
 	
 	parent->SetImageIndex(event->GetIndex(),true);
@@ -1725,46 +1905,30 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 			if (event->GetNewBoolean())
 			{
 				// use theme color
-				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, NULL );
-				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, NULL );
+				gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider));
 			}
 			else
 			{
-				GdkColor color;
-				
-				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
-						
-				gdk_color_parse(strBGColorThumb.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
-				
-				gdk_color_parse(strBGColorImg.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color);
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
+				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
+				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
+				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 				
 			}
 		}
-		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() )
+		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() || QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
 		{
 			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
 			{
-				GdkColor color;
-				
-				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
-				
-				gdk_color_parse(strBGColorImg.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pImageView, GTK_STATE_NORMAL, &color );
-			}			
-		}
-		else if (QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
-		{
-			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
-			{
-				GdkColor color;
 				
 				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
-
-				gdk_color_parse(strBGColorThumb.c_str(),&color);
-				gtk_widget_modify_bg (parent->m_pIconView, GTK_STATE_NORMAL, &color );
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
+				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
+				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
+				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 			}
 		}
 		else if (QUIVER_PREFS_APP_WINDOW_FULLSCREEN == event->GetKey() )
@@ -1790,7 +1954,7 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
 
-	if (GTK_WIDGET_MAPPED(m_pBrowserImpl->m_pIconView) && 
+	if (gtk_widget_get_mapped(m_pBrowserImpl->m_pIconView) &&
 		item.m_ulIndex < m_pBrowserImpl->m_ImageListPtr->GetSize())
 	{
 		QuiverFile f(item.m_QuiverFile);
@@ -1826,7 +1990,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 
 		if (NULL == pixbuf)
 		{
-			pixbuf = f.GetThumbnail(MAX(uiWidth,uiHeight));
+			pixbuf = f.GetThumbnail(std::max(uiWidth,uiHeight));
 		}
 
 		if (NULL != pixbuf)
@@ -1859,9 +2023,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			g_object_unref(pixbuf);
 
 			gdk_threads_enter();
-			
 			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(m_pBrowserImpl->m_pIconView),item.m_ulIndex);
-			
 			gdk_threads_leave();
 		}
 	}

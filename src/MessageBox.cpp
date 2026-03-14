@@ -298,7 +298,7 @@ void MessageBox::AddButton(BUTTON_ICON icon, const std::string &text, ResponseTy
 		gtk_button_set_image(GTK_BUTTON(button), image);
 	}
 	gtk_widget_show(button);
-	GTK_WIDGET_SET_FLAGS (button, GTK_CAN_DEFAULT);
+	gtk_widget_set_can_default(button, TRUE);
 	gtk_dialog_add_action_widget(GTK_DIALOG(m_pPrivateImpl->m_pDlg), button, response);
 
 }

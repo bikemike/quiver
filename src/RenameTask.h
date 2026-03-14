@@ -33,10 +33,6 @@ public:
 
 
 	void                SetInputFolder(std::string strSrcURI);
-	void                SetIncludeSubfolders(bool bIncludeSubfolders);
-
-	// the output directory must be specified
-	void                SetOutputFolder(std::string strDestDirURI);
 
 	// if not set, the default format is: YYYY-MM-DD
 	// pulled from the exif data
@@ -46,21 +42,22 @@ public:
 
 	void                SetSortBy(ImageList::SortBy sortBy);
 
+	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int count);
+
 	class PrivateImpl;
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;
 protected:
 	virtual void        Run();
+	void                Cancelled();
+
 
 private:
 	PrivateImplPtr m_PrivateImplPtr;
-	std::string DoVariableSubstitution(QuiverFile f, std::string strTemplate);
 
 	unsigned int      m_iCurrentFile;
 	std::vector<QuiverFile> m_vectQuiverFiles;
 
 	std::string       m_strSrcDirURI;
-	bool              m_bIncludeSubfolders;
-	std::string       m_strDestDirURI;
 	std::string       m_strTemplate;
 	int               m_iStartNumber;
 	ImageList::SortBy m_eSortBy;

@@ -23,7 +23,7 @@ if MAEMO
 maemo_3rdparty = 3rdparty 
 endif
 
-EXTRA_DIST = ${quiverdoc_DATA} \
+EXTRA_DIST = config.rpath  ${quiverdoc_DATA} \
      intltool-extract.in \
 	 intltool-merge.in \
 	 intltool-update.in ${maemo_3rdparty}

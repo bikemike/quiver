@@ -72,6 +72,9 @@ protected:
 	// then
 	virtual void                   Run() = 0;
 
+	// Cancelled is called when Cancel() has been called
+	virtual void                   Cancelled(){}
+
 	virtual void                   SetProgressText(std::string strText);
 
 	virtual void                   SetMessage(MessageType, std::string strMsg);

@@ -4,21 +4,24 @@ dnl Created by Anjuta application wizard.
 AC_INIT([quiver], [0.2.0], [http://mike.yi.org/quiver])
 AC_CONFIG_SRCDIR([src/Quiver.cpp])
 
-AM_INIT_AUTOMAKE([subdir-objects]) 
+AC_CONFIG_MACRO_DIR([m4])
+
+AM_INIT_AUTOMAKE([subdir-objects])
 
 AC_LANG_PUSH([C++])
-AC_CHECK_HEADER([ext/hash_map],[AC_DEFINE([HAVE_EXT],[],["have ext"])],[]) 
-AC_CHECK_HEADER([tr1/unordered_map],[AC_DEFINE([HAVE_TR1],[],["have tr1"])],[]) 
-AC_CHECK_HEADER([unordered_map],[AC_DEFINE([HAVE_CXX0X],[],["have cxx0x"])],[]) 
+AC_CHECK_HEADER([ext/hash_map],[AC_DEFINE([HAVE_EXT],[],["have ext"])],[])
+AC_CHECK_HEADER([tr1/unordered_map],[AC_DEFINE([HAVE_TR1],[],["have tr1"])],[])
+AC_CHECK_HEADER([unordered_map],[AC_DEFINE([HAVE_CXX0X],[],["have cxx0x"])],[])
 AC_LANG_POP([C++])
 
 AM_CONFIG_HEADER([config.h])
 AC_PROG_LIBTOOL
 dnl AM_MAINTAINER_MODE
 
+AM_PROG_CC_C_O
 
 AC_ISC_POSIX
-AC_PROG_CC
+dnl AC_PROG_CC
 AC_HEADER_STDC
 
 AC_CHECK_FUNCS([gettimeofday])
@@ -51,21 +54,17 @@ AM_GLIB_GNU_GETTEXT
 
 AC_PROG_INTLTOOL([0.21])
 
-QUIVER_MODULES="gtk+-2.0  gnome-vfs-2.0"
-
-PKG_CHECK_MODULES([LIBGLADE], 
-	[libglade-2.0],
-	[AC_DEFINE([HAVE_LIBGLADE],[1],[libglade-2.0 is available])],
-	[have_libglade=no])
+QUIVER_MODULES="gtk+-3.0 gio-2.0"
 
 PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 
-PKG_CHECK_MODULES([CAIRO], [cairo],
-	[AC_DEFINE([HAVE_CAIRO],[1],[cairo is available])],
-	[have_cairo=no])
+PKG_CHECK_MODULES([LIBSQLITE], [sqlite3], [have_sqlite3=yes],[have_sqlite3=no])
+
+PKG_CHECK_MODULES([GSTREAMER], [gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-app-1.0])
+
 
 AC_ARG_WITH(
-	[build_config], 
+	[build_config],
 	[AS_HELP_STRING(
 		[--with-build-config=CFG],
 		[where CFG is one of the following alternate build configurations: maemo])
@@ -73,7 +72,7 @@ AC_ARG_WITH(
 	[build_config=$withval],
 	[])
 
-AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo]) 
+AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo])
 if test x$build_config = xmaemo; then
 	third_party_dir=`pwd`/${srcdir}/3rdparty
 # Hildon-libs -> libhildon1 (pkg-config name hildon-1)
@@ -106,17 +105,17 @@ if test x$build_config = xmaemo; then
 		boost_signals_static=yes
 		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
 		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/armel/libexif.a
-		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/armel/mt/release/libboost_signals-gcc-mt-1_33_1.a 
+		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/armel/mt/release/libboost_signals-gcc-mt-1_33_1.a
 	else
 		AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
-		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/x86/mt/release/libboost_signals-gcc-mt-1_33_1.a 
+		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/x86/mt/release/libboost_signals-gcc-mt-1_33_1.a
 		ac_boost_path=${third_party_dir}/boost
 		boost_signals_static=yes
 		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
 		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/x86/libexif.a
 	fi
 else
-	QUIVER_MODULES="$QUIVER_MODULES libgnomeui-2.0"
+	QUIVER_MODULES="$QUIVER_MODULES"
 fi
 
 AC_SUBST([PACKAGE_CFLAGS])
@@ -124,9 +123,6 @@ AC_SUBST([PACKAGE_CFLAGS])
 PKG_CHECK_MODULES([PACKAGE], [$QUIVER_MODULES])
 
 AX_BOOST_BASE([1.33.1])
-if test x$boost_signals_static = x; then
-AX_BOOST_SIGNALS
-fi
 
 
 AC_SUBST([PACKAGE_CFLAGS])
@@ -135,16 +131,22 @@ AC_SUBST([PACKAGE_LIBS])
 AC_SUBST([LIBEXIF_CFLAGS])
 AC_SUBST([LIBEXIF_LIBS])
 
-AC_ARG_WITH(
-	[glade-dir], 
-	[AS_HELP_STRING(
-		[--with-glade-dir=GLADE_DIR],
-		[where GLADE_DIR is the directory that quiver.glade lives])
-	],
-	[gladedir=$withval],
-	[gladedir=${datadir}/quiver/glade])
+AC_SUBST([LIBSQLITE_CFLAGS])
+AC_SUBST([LIBSQLITE_LIBS])
 
-AC_SUBST([gladedir])
+AC_SUBST([GSTREAMER_CFLAGS])
+AC_SUBST([GSTREAMER_LIBS])
+
+AC_ARG_WITH(
+	[data-dir],
+	[AS_HELP_STRING(
+		[--with-data-dir=DATA_DIR],
+		[where DATA_DIR is the directory that quiver.ui lives])
+	],
+	[quiver_datadir=$withval],
+	[quiver_datadir=${datadir}/quiver/data])
+
+AC_SUBST([quiver_datadir])
 
 AC_OUTPUT([
 Makefile

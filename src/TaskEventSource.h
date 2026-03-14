@@ -9,7 +9,7 @@ class TaskEventSource : public virtual AbstractEventSource
 public:
 	virtual ~TaskEventSource(){};
 
-	typedef boost::signal<void (TaskEventPtr)> TaskSignal;
+	typedef boost::signals2::signal<void (TaskEventPtr)> TaskSignal;
 
 	void AddEventHandler(IEventHandlerPtr handler);
 

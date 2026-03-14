@@ -1,75 +1,87 @@
 #include "QuiverFileOps.h"
-#include <libgnomevfs/gnome-vfs.h>
+
 #include <iostream>
+#include <gio/gio.h>
 
 using namespace std;
 
 namespace QuiverFileOps
 {
 
+	class StatusCallback::PrivateImpl
+	{
+	public:
+
+		PrivateImpl(StatusCallback* parent) : m_pParent(parent)
+		{
+		}
+
+
+
+
+
+		GCancellable* cancellable;
+
+		static void progress_callback(
+			goffset current_num_bytes,
+			goffset total_num_bytes,
+			gpointer user_data);
+
+		StatusCallback* m_pParent;
+
+	};
+
+	StatusCallback::StatusCallback()
+	{
+		m_PrivateImplPtr = PrivateImplPtr(new PrivateImpl(this));
+	}
+
+	double StatusCallback::GetProgress() { return 0.0; }
+	void StatusCallback::Cancel() {}
+	StatusCallback::~StatusCallback()
+	{
+	}
+
 	bool Delete(QuiverFile quiverFile)
 	{
-		bool bResult = false;
-		GnomeVFSResult result = gnome_vfs_unlink (quiverFile.GetURI());
-		if (GNOME_VFS_OK == result)
+		GFile* file = g_file_new_for_uri(quiverFile.GetURI());
+		gboolean rval = g_file_delete(file, NULL, NULL);
+		if (rval)
 		{
 			// delete the thumbnails now
 			quiverFile.RemoveCachedThumbnail(false);
 			quiverFile.RemoveCachedThumbnail(true);
-			bResult = true;
 		}
-		return bResult;
+		g_object_unref(file);
+		return rval;
 	}
 
 	bool MoveToTrash(QuiverFile quiverFile)
 	{
-		bool bResult = false;
-		//trash the file
-		//locate trash folder
-		GnomeVFSURI * trash_vfs_uri = NULL;
+		GFile* gfile = g_file_new_for_uri( quiverFile.GetURI() );
+		return g_file_trash(gfile, NULL, NULL);
+	}
 
-		GnomeVFSURI * near_vfs_uri = gnome_vfs_uri_new ( quiverFile.GetURI() );
-		GnomeVFSResult result = gnome_vfs_find_directory (near_vfs_uri, GNOME_VFS_DIRECTORY_KIND_TRASH,&trash_vfs_uri, TRUE, TRUE, 0777);
-		if (GNOME_VFS_OK != result && NULL == trash_vfs_uri)
-		{
-			result = gnome_vfs_find_directory (near_vfs_uri, GNOME_VFS_DIRECTORY_KIND_TRASH,&trash_vfs_uri, TRUE, FALSE, 0777);
-		}
-		
-		if (trash_vfs_uri != NULL) 
-		{
-			// we have trash
-			gchar * short_name = gnome_vfs_uri_extract_short_name (near_vfs_uri);
-			
+	bool RestoreFromTrash(QuiverFile quiverFile)
+	{
+		// GFileInfo
+		// G_FILE_ATTRIBUTE_TRASH_DELETION_DATE
+		// G_FILE_ATTRIBUTE_TRASH_ORIG_PATH
+		// GDateTime *
+		// g_file_info_get_deletion_date (GFileInfo *info);
+		// need to be able to undo MoveToTrash() operation
+		// search through "trash://" using gio gfileinfo for file with
+        // metadata trash::orig-path and trash::deletion-date
+	}
 
-			
-			GnomeVFSURI *trash_file_vfs_uri = gnome_vfs_uri_append_file_name (trash_vfs_uri,short_name);
-			g_free(short_name);
-			gnome_vfs_uri_unref(trash_vfs_uri);
-			gchar *trash_uri = gnome_vfs_uri_to_string (trash_file_vfs_uri,GNOME_VFS_URI_HIDE_NONE);
-			cout << "trash uri: " << trash_uri << endl;
-			g_free (trash_uri);
-			
-			GnomeVFSResult result = gnome_vfs_move_uri(near_vfs_uri,trash_file_vfs_uri,FALSE);
-			if (GNOME_VFS_OK == result)
-			{
-				// delete the thumbnails now
-				quiverFile.RemoveCachedThumbnail(false);
-				quiverFile.RemoveCachedThumbnail(true);
-				
-				bResult = true;
-			}
-			else
-			{
-				cout << "Error trashing file: " << quiverFile.GetURI() << " - " << gnome_vfs_result_to_string(result) << endl;
-			}
-		}
-		else
-		{
-			printf("Error locating trash: %s\n",gnome_vfs_result_to_string(result));
-		}
-		
-		gnome_vfs_uri_unref(near_vfs_uri);
-		return bResult;
+	bool CopyFile(QuiverFile src, QuiverFile dst)
+	{
+		// g_file_copy
+	}
+
+	bool MoveFile(QuiverFile src, QuiverFile dst)
+	{
+		// g_file_move
 	}
 
 }

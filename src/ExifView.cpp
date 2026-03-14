@@ -9,6 +9,7 @@
 #include <libexif/exif-data.h>
 #include <libexif/exif-loader.h>
 #include <libexif/exif-tag.h>
+#include <libexif/exif-utils.h>
 
 
 #include "QuiverUtils.h"
@@ -214,6 +215,8 @@ ExifView::ExifViewImpl::~ExifViewImpl()
 		g_object_unref(m_pUIManager);
 		m_pUIManager =  NULL;
 	}
+
+	g_object_unref(m_pScrolledWindow);
 }
 
 static void exif_view_map(GtkWidget *widget, gpointer user_data)
@@ -361,12 +364,15 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 
 	gtk_tree_view_column_pack_end (column,renderer,FALSE);
 
+	GtkTreeModel* numbers_model = create_numbers_model();
 	g_object_set (renderer,
-                "model", create_numbers_model(),
+                "model", numbers_model,
                 "text-column", ORIENTATION_COLUMN_TEXT_VALUE,
                 "has-entry", FALSE,
 	  			"editable",TRUE,
                 NULL);
+	g_object_unref(numbers_model);
+
 
 	gtk_tree_view_column_add_attribute(column,renderer,"text",EXIF_TREE_COLUMN_VALUE_ORIENTATION);
 	gtk_tree_view_column_add_attribute(column,renderer,"visible",EXIF_TREE_COLUMN_IS_VISIBLE_ORIENTATION);
@@ -406,6 +412,7 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 
 	m_ExifViewImplPtr->m_pTreeView = treeview;
 	m_ExifViewImplPtr->m_pScrolledWindow = scrolled_window;	
+	g_object_ref(m_ExifViewImplPtr->m_pScrolledWindow);
 	
 	g_signal_connect(scrolled_window, "map", (GCallback) exif_view_map, m_ExifViewImplPtr.get());
 }
@@ -616,7 +623,7 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 		
 	}
 
-	if (GTK_WIDGET_MAPPED(m_ExifViewImplPtr->m_pScrolledWindow))
+	if (gtk_widget_get_mapped(m_ExifViewImplPtr->m_pScrolledWindow))
 	{
 		if (0 != m_ExifViewImplPtr->m_iIdleLoadID)
 		{
@@ -637,9 +644,6 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 void 
 ExifView::SetUIManager(GtkUIManager *ui_manager)
 {
-	GError *tmp_error;
-	tmp_error = NULL;
-	
 	if (NULL != m_ExifViewImplPtr->m_pUIManager)
 	{
 		g_object_unref(m_ExifViewImplPtr->m_pUIManager);

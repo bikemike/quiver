@@ -2,7 +2,11 @@
 
 #include "ImageLoader.h"
 #include "QuiverUtils.h"
-#include <libgnomevfs/gnome-vfs.h>
+#include "QuiverVideoOps.h"
+
+#include <gio/gio.h>
+#include <gst/gst.h>
+
 #include <libquiver/quiver-pixbuf-utils.h>
 #include <string.h>
 
@@ -47,6 +51,8 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	pthread_cond_init(&m_Condition,NULL);
 	pthread_mutex_init(&m_ConditionMutex, NULL);
 	pthread_mutex_init(&m_CommandMutex, NULL);
+
+	m_csObservers = g_mutex_new();
 	
 	AddPixbufLoaderObserver(this);
 	m_iLoadOrientation = 1;
@@ -73,6 +79,8 @@ ImageLoader::~ImageLoader()
 	pthread_mutex_destroy(&m_CommandMutex);
 
 	RemovePixbufLoaderObserver(this);
+
+	g_mutex_free(m_csObservers);
 }
 
 
@@ -247,7 +255,8 @@ void ImageLoader::LoadImageAtSize(QuiverFile f, int width, int height)
 
 void ImageLoader::LoadImage(QuiverFile f,LoadParams load_params)
 {
-	pthread_mutex_lock (&m_CommandMutex);
+	if (f.IsFolder())
+		return;
 	
 	Command c;
 	
@@ -259,6 +268,7 @@ void ImageLoader::LoadImage(QuiverFile f,LoadParams load_params)
 	
 	c.params = load_params;
 	
+	pthread_mutex_lock (&m_CommandMutex);
 	m_Commands.push_back(c);
 	pthread_mutex_lock (&m_ConditionMutex);
 	pthread_cond_signal(&m_Condition);
@@ -266,14 +276,24 @@ void ImageLoader::LoadImage(QuiverFile f,LoadParams load_params)
 	pthread_mutex_unlock (&m_CommandMutex);
 }
 
+
+GdkPixbuf* ImageLoader::GetCachedPixbuf(QuiverFile f)
+{
+	return m_ImageCache.GetPixbuf(f.GetURI());
+}
+
 void ImageLoader::AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer)
 {
+	g_mutex_lock(m_csObservers);
 	m_observers.push_back(loader_observer);	
+	g_mutex_unlock(m_csObservers);
 }
 
 void ImageLoader::RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer)
 {
+	g_mutex_lock(m_csObservers);
 	m_observers.remove(loader_observer);	
+	g_mutex_unlock(m_csObservers);
 }
 
 
@@ -324,10 +344,12 @@ bool ImageLoader::LoadQuickPreview()
 			}
 			
 			list<IPixbufLoaderObserver*>::iterator itr;
+			g_mutex_lock(m_csObservers);
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
 				(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
 			}
+			g_mutex_unlock(m_csObservers);
 			g_object_unref(thumb_pixbuf);
 			
 			rval = true;
@@ -346,55 +368,55 @@ void ImageLoader::Load()
 	}
 
 	// check to see if the image should be removed from the cache
-	if (0 < m_Command.params.max_width && 0 < m_Command.params.max_height)
+	GdkPixbuf * pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
+	if (NULL != pixbuf)
 	{
-		GdkPixbuf * pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
-		if (NULL != pixbuf)
+		int real_width,real_height;
+
+		gint width,height;
+		width = gdk_pixbuf_get_width(pixbuf);
+		height = gdk_pixbuf_get_height(pixbuf);
+
+		real_width = m_Command.quiverFile.GetWidth();
+		real_height = m_Command.quiverFile.GetHeight();
+
+		const gint* pOrientation = (const gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
+		if (NULL != pOrientation)
 		{
-			int real_width,real_height;
-
-			gint width,height;
-			width = gdk_pixbuf_get_width(pixbuf);
-			height = gdk_pixbuf_get_height(pixbuf);
-			
-			real_width = m_Command.quiverFile.GetWidth();
-			real_height = m_Command.quiverFile.GetHeight();
-			
-			const gint* pOrientation = (const gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
-			if (NULL != pOrientation)
+			if(m_iLoadOrientation != *pOrientation)
 			{
-				if(m_iLoadOrientation != *pOrientation)
+				if ( (4 < m_iLoadOrientation && 4 >= *pOrientation)
+					|| (4 >= m_iLoadOrientation && 4 < *pOrientation) )
 				{
-					if ( (4 < m_iLoadOrientation && 4 >= *pOrientation)
-						|| (4 >= m_iLoadOrientation && 4 < *pOrientation) )
-					{
-						// swap because the cached image orientation has a different 
-						// ratio for width/height than the requested orientation
-						swap(width,height);
-					}
-					
+					// swap because the cached image orientation has a different
+					// ratio for width/height than the requested orientation
+					swap(width,height);
 				}
-			}
 
-			if (4 < m_iLoadOrientation)
-			{
-				// swap because the actual image has a different 
-				// ratio for width/height than the requested orientation
-				swap(real_width,real_height);
 			}
-
-			if ( width < m_Command.params.max_width && height < m_Command.params.max_height && width < real_width && height < real_height)
-			{
-				m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
-			}
-					
-			g_object_unref(pixbuf);
 		}
+
+		if (4 < m_iLoadOrientation)
+		{
+			// swap because the actual image has a different
+			// ratio for width/height than the requested orientation
+			swap(real_width,real_height);
+		}
+
+		if ((0 == m_Command.params.max_width && 0 == m_Command.params.max_height) ||
+			( width < m_Command.params.max_width &&
+			 height < m_Command.params.max_height &&
+			 width < real_width && height < real_height))
+		{
+			m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
+		}
+
+		g_object_unref(pixbuf);
 	}
 
 	if (LOAD == m_Command.params.state)
 	{
-		GdkPixbuf * pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
+		pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
 		
 		if ( NULL == pixbuf)
 		{
@@ -402,101 +424,142 @@ void ImageLoader::Load()
 			{
 				bool bLoadedQuickPreview = LoadQuickPreview();
 
-				GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();	
-				
-				list<IPixbufLoaderObserver*>::iterator itr;
-				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+				if (m_Command.quiverFile.IsVideo())
 				{
-					if (m_Command.params.reload && m_Command.params.fullsize)
+					gint n=1, d=1;
+					GdkPixbuf* video_pixbuf = NULL;
+					//video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
+					if (NULL != video_pixbuf)
 					{
-						// don't connect any signals
-						// we presume the image is already being shown
-						// and the full size is needed
+						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
+						guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
 
-					}
-					else // if ( 1 < m_Command.params.orientation )
-					{
-						(*itr)->ConnectSignalSizePrepared(loader);
-					}
-					/*
-					 * else
-					{
-						// FIXME: maybe we should show images loading
-						// if they are loading at full size or loading
-						// over the network
-						(*itr)->ConnectSignals(loader);
-					}
-					*/
-					
-				}
+						if (n > d)
+							pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
+						else
+							pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
 
-				bool rval = LoadPixbuf(loader);
-
-				if (rval)
-				{
-					GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
-					
-					if (NULL == pixbuf  )
-					{
-						if (m_Command.params.fullsize)
-							cout << "pixbuf is null! : " << m_Command.quiverFile.GetURI() << endl;
-					}
-					else
-					{
-						g_object_ref(pixbuf);
-						// set up a temp orientation as m_iLoadOrientation could 
-						// change at any time
-						int orientation = m_iLoadOrientation;
-						if (1 < orientation)
+						if (!m_Command.quiverFile.IsWidthHeightSet())
 						{
-							GdkPixbuf* pixbuf_rotated;
-							pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,orientation);
-							if (NULL != pixbuf_rotated)
-							{
-								g_object_unref(pixbuf);
-								pixbuf = pixbuf_rotated;
-							}
-						}
-						
-						list<IPixbufLoaderObserver*>::iterator itr;
-						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-						{
-
-							gint width,height;
-							width = m_Command.quiverFile.GetWidth();
-							height = m_Command.quiverFile.GetHeight();
-							if (4 < orientation)
-							{
-								swap(width,height);
-							}
-							if (m_Command.params.reload)
-							{
-								// FIXME: if the rotation changes at some point, we
-								// need to rotate this image
-								(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
-							}
-							else
-							{
-								bool bResetViewMode = !bLoadedQuickPreview;
-								(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
-							}
+							m_Command.quiverFile.SetWidth(pixbuf_width);
+							m_Command.quiverFile.SetHeight(pixbuf_height);
 						}
 
-						gint *pOrientation = g_new(int,1);
-						*pOrientation = orientation;
-						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
+						if (n != d)
+						{
+							pixbuf = gdk_pixbuf_scale_simple (
+								video_pixbuf,
+								pixbuf_width,
+								pixbuf_height,
+								GDK_INTERP_BILINEAR);
 
-						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
-						g_object_unref(pixbuf);
+							g_object_unref(video_pixbuf);
+						}
+						else
+						{
+							pixbuf = video_pixbuf;
+						}
+
 					}
 				}
 				else
 				{
-					// error loading 
+
+					GdkPixbufLoader* loader = gdk_pixbuf_loader_new ();
+
+					list<IPixbufLoaderObserver*>::iterator itr;
+					g_mutex_lock(m_csObservers);
+					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+					{
+						if (m_Command.params.reload && m_Command.params.fullsize)
+						{
+							// don't connect any signals
+							// we presume the image is already being shown
+							// and the full size is needed
+
+						}
+						else // if ( 1 < m_Command.params.orientation )
+						{
+							(*itr)->ConnectSignalSizePrepared(loader);
+						}
+						/*
+						 * else
+						{
+							// FIXME: maybe we should show images loading
+							// if they are loading at full size or loading
+							// over the network
+							(*itr)->ConnectSignals(loader);
+						}
+						*/
+
+					}
+					g_mutex_unlock(m_csObservers);
+
+					bool rval = LoadPixbuf(loader);
+
+					if (rval)
+					{
+						pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+						if (NULL != pixbuf)
+							g_object_ref(pixbuf);
+					}
+					g_object_unref(loader);
 				}
-				g_object_unref(loader);
+					
+				if (NULL != pixbuf  )
+				{
+					// set up a temp orientation as m_iLoadOrientation could
+					// change at any time
+					int orientation = m_iLoadOrientation;
+					if (1 < orientation)
+					{
+						GdkPixbuf* pixbuf_rotated;
+						pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,orientation);
+						if (NULL != pixbuf_rotated)
+						{
+							g_object_unref(pixbuf);
+							pixbuf = pixbuf_rotated;
+						}
+					}
+
+					list<IPixbufLoaderObserver*>::iterator itr;
+					g_mutex_lock(m_csObservers);
+					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+					{
+
+						gint width,height;
+						width = m_Command.quiverFile.GetWidth();
+						height = m_Command.quiverFile.GetHeight();
+						if (4 < orientation)
+						{
+							swap(width,height);
+						}
+						if (m_Command.params.reload)
+						{
+							// FIXME: if the rotation changes at some point, we
+							// need to rotate this image
+							(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
+						}
+						else
+						{
+							bool bResetViewMode = !bLoadedQuickPreview;
+							(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
+						}
+					}
+					g_mutex_unlock(m_csObservers);
+
+					gint *pOrientation = g_new(int,1);
+					*pOrientation = orientation;
+					g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
+
+					m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
+					g_object_unref(pixbuf);
+				}
 			}
-		
+			else
+			{
+				// error loading
+			}
 		}
 		else
 		{
@@ -524,6 +587,7 @@ void ImageLoader::Load()
 			}
 
 			list<IPixbufLoaderObserver*>::iterator itr;
+			g_mutex_lock(m_csObservers);
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
 				gint width,height;
@@ -536,83 +600,131 @@ void ImageLoader::Load()
 				bool bResetViewMode = !m_Command.params.loaded_quick_preview;
 				(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 			}
+			g_mutex_unlock(m_csObservers);
 			g_object_unref(pixbuf);
 		}
 	}	
 	else if (CACHE == m_Command.params.state)
 	{
-
 		if (!m_ImageCache.InCache(m_Command.quiverFile.GetURI()))
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
 				//cout << "cache : " << m_Command.filename << endl;
-				GdkPixbufLoader* ldr = gdk_pixbuf_loader_new ();	
-			
-				if (!m_Command.params.fullsize)
+				if (m_Command.quiverFile.IsVideo())
 				{
-					list<IPixbufLoaderObserver*>::iterator itr;
-					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+					gint n=1, d=1;
+					GdkPixbuf* video_pixbuf = NULL;
+					//video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
+					if (NULL != video_pixbuf)
 					{
-						(*itr)->ConnectSignalSizePrepared(ldr);
-					}
-				}
-								
-				bool rval = LoadPixbuf(ldr);
+						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
+						guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
 
-				if (rval)
-				{
-					GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(ldr);
+						if (n > d)
+							pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
+						else
+							pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
 
-					if (NULL != pixbuf)
-					{
-						g_object_ref(pixbuf);
-						if (1 < m_Command.params.orientation) // TODO: change to get rotate option
+						if (!m_Command.quiverFile.IsWidthHeightSet())
 						{
-							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
-							
-							if (NULL != pixbuf_rotated)
-							{
-								g_object_unref(pixbuf);
-								pixbuf = pixbuf_rotated;
-							}
+							m_Command.quiverFile.SetWidth(pixbuf_width);
+							m_Command.quiverFile.SetHeight(pixbuf_height);
 						}
-						
-						// save the orientation so we can find out later
-						// what orientation was performed 
-						gint *pOrientation = g_new(int,1);
-						*pOrientation = m_Command.params.orientation;
 
-						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
-
-						if (CACHE_LOAD == m_Command.params.state)
+						if (n != d)
 						{
-							list<IPixbufLoaderObserver*>::iterator itr;
-							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-							{
-								gint width,height;
-								width = m_Command.quiverFile.GetWidth();
-								height = m_Command.quiverFile.GetHeight();
-								if (4 < m_Command.params.orientation)
-								{
-									swap(width,height);
-								}
-								bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-								(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
+							pixbuf = gdk_pixbuf_scale_simple (
+								video_pixbuf,
+								pixbuf_width,
+								pixbuf_height,
+								GDK_INTERP_BILINEAR);
 
-							}
-							m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
-							//cout << "cache loaded image" << endl;
+							g_object_unref(video_pixbuf);
 						}
 						else
 						{
-							m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf,0);
+							pixbuf = video_pixbuf;
 						}
-						g_object_unref(pixbuf);
+
 					}
 				}
-				
-				g_object_unref(ldr);
+				else
+				{
+					GdkPixbufLoader* ldr = gdk_pixbuf_loader_new ();
+
+					if (!m_Command.params.fullsize)
+					{
+						list<IPixbufLoaderObserver*>::iterator itr;
+						g_mutex_lock(m_csObservers);
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							(*itr)->ConnectSignalSizePrepared(ldr);
+						}
+						g_mutex_unlock(m_csObservers);
+					}
+
+					bool rval = LoadPixbuf(ldr);
+
+					if (rval)
+					{
+						pixbuf = gdk_pixbuf_loader_get_pixbuf(ldr);
+
+						if (NULL != pixbuf)
+						{
+							g_object_ref(pixbuf);
+							if (1 < m_Command.params.orientation) // TODO: change to get rotate option
+							{
+								GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
+
+								if (NULL != pixbuf_rotated)
+								{
+									g_object_unref(pixbuf);
+									pixbuf = pixbuf_rotated;
+								}
+							}
+
+							// save the orientation so we can find out later
+							// what orientation was performed
+							gint *pOrientation = g_new(int,1);
+							*pOrientation = m_Command.params.orientation;
+
+							g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
+						}
+					}
+
+					g_object_unref(ldr);
+				}
+
+				if (NULL != pixbuf)
+				{
+					if (CACHE_LOAD == m_Command.params.state)
+					{
+						list<IPixbufLoaderObserver*>::iterator itr;
+						g_mutex_lock(m_csObservers);
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							gint width,height;
+							width = m_Command.quiverFile.GetWidth();
+							height = m_Command.quiverFile.GetHeight();
+							if (4 < m_Command.params.orientation)
+							{
+								swap(width,height);
+							}
+							bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+							(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
+
+						}
+						g_mutex_unlock(m_csObservers);
+						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
+						//cout << "cache loaded image" << endl;
+					}
+					else
+					{
+						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf,0);
+					}
+					g_object_unref(pixbuf);
+				}
 			}
 
 		}
@@ -629,7 +741,7 @@ void ImageLoader::Load()
 bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 {
 	//cout << "Loading: " <<  m_Command.quiverFile.GetURI() << endl;
-	bool retval = false; // did not load
+	bool retval = true; // did not load
 
 	GError *tmp_error;
 	tmp_error = NULL;
@@ -637,7 +749,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	if (CommandsPending())
 	{	
 		gdk_pixbuf_loader_close(loader,NULL);	
-		return retval;
+		return false;
 	}
 	Timer loadTimer; // true for quite mode
 	
@@ -649,48 +761,64 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	
 	long bytes_read_inc=0, bytes_total=0;
 
-	guchar buffer[size];
-	GnomeVFSHandle   *handle;
-	GnomeVFSResult    result;
-	GnomeVFSFileSize  bytes_read;
-
 	bytes_total = m_Command.quiverFile.GetFileSize();
 	
+	GFile* gfile = g_file_new_for_uri(m_Command.quiverFile.GetURI());
 
-	result = gnome_vfs_open (&handle, m_Command.quiverFile.GetURI(), GNOME_VFS_OPEN_READ);
-	list<IPixbufLoaderObserver*>::iterator itr;
-	while (GNOME_VFS_OK == result) 
+	GInputStream* inStream = G_INPUT_STREAM(g_file_read(gfile, NULL, NULL));
+
+	if (NULL != inStream)
 	{
-		if (CommandsPending())
+		guchar buffer[size];
+		gssize bytes_read = 0;
+		list<IPixbufLoaderObserver*>::iterator itr;
+
+		while (0 < (bytes_read = g_input_stream_read(inStream, buffer, size, NULL, NULL)))
 		{
-			gdk_pixbuf_loader_close(loader,NULL);
-			gnome_vfs_close(handle);
-			return retval;
-		}
-		result = gnome_vfs_read (handle, buffer, 
-								 size, &bytes_read);
-		
-		bytes_read_inc += bytes_read;
-		// notify others of bytes read
-		
-		for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
-		{
-			if (0 < bytes_read_inc && bytes_read_inc <= bytes_total)
+			if (CommandsPending())
 			{
-				(*itr)->SignalBytesRead(bytes_read_inc,bytes_total);
+				gdk_pixbuf_loader_close(loader,NULL);
+				g_object_unref(inStream);
+				g_object_unref(gfile);
+				return false;
 			}
+
+			bytes_read_inc += bytes_read;
+
+			// notify others of bytes read
+			g_mutex_lock(m_csObservers);
+			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+			{
+				if (0 < bytes_read_inc && bytes_read_inc <= bytes_total)
+				{
+					(*itr)->SignalBytesRead(bytes_read_inc,bytes_total);
+				}
+			}
+			g_mutex_unlock(m_csObservers);
+
+			tmp_error = NULL;
+
+			gdk_pixbuf_loader_write (loader, buffer, bytes_read, &tmp_error);
+
+			if (NULL != tmp_error)
+			{
+				retval = false;
+				g_error_free(tmp_error);
+				tmp_error = NULL;
+				break;
+			}
+			usleep(50);
 		}
-		
-		tmp_error = NULL;
 
-		gdk_pixbuf_loader_write (loader, buffer, bytes_read, &tmp_error);
-
-		if (NULL != tmp_error)
+		if (-1 == bytes_read)
 		{
-			//printf("Error loading image: %s\n",tmp_error->message);
-			break;
+			retval = false;
 		}
-		usleep(50);
+		g_object_unref(inStream);
+	}
+	else
+	{
+		retval = false;
 	}
 
 	m_Command.quiverFile.SetLoadTimeInSeconds( loadTimer.GetRunningTimeInSeconds() );
@@ -698,12 +826,13 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	tmp_error = NULL;
 	
 	gdk_pixbuf_loader_close(loader,&tmp_error);
+	if (NULL != tmp_error)
+	{
+		retval = false;
+		g_error_free(tmp_error);
+	}
 
-	if (GNOME_VFS_ERROR_EOF == result)
-		retval = true;
-	gnome_vfs_close(handle);
-
-	
+	g_object_unref(gfile);
 	
 	return retval;
 }

@@ -56,17 +56,17 @@ AC_DEFUN([AX_BOOST_SIGNALS],
         AC_CACHE_CHECK(whether the Boost::Signals library is available,
 					   ax_cv_boost_signals,
         [AC_LANG_PUSH([C++])
-		 AC_COMPILE_IFELSE(AC_LANG_PROGRAM([[@%:@include <boost/signal.hpp>
+		 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[@%:@include <boost/signal.hpp>
 											]],
                                   [[boost::signal<void ()> sig;
                                     return 0;
-                                  ]]),
+                                  ]])],
                            ax_cv_boost_signals=yes, ax_cv_boost_signals=no)
          AC_LANG_POP([C++])
 		])
 		if test "x$ax_cv_boost_signals" = "xyes"; then
 			AC_DEFINE(HAVE_BOOST_SIGNALS,,[define if the Boost::Signals library is available])
-			BN=boost_signals-mt
+			BN=boost_signals
             if test "x$ax_boost_user_signals_lib" = "x"; then
 				for ax_lib in $BN $BN-$CC $BN-$CC-mt $BN-$CC-mt-s $BN-$CC-s \
                               lib$BN lib$BN-$CC lib$BN-$CC-mt lib$BN-$CC-mt-s lib$BN-$CC-s \

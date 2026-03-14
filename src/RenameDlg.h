@@ -18,10 +18,8 @@ public:
 
 	std::string GetTemplate() const;
 
-	std::string GetOutputFolder() const;
 	std::string GetInputFolder() const;
-
-	bool        GetIncludeSubfolders() const;
+	void        SetInputFolder(std::string folder);
 
 	class       RenameDlgPriv;
 	typedef boost::shared_ptr<RenameDlgPriv> RenameDlgPrivPtr;

@@ -9,7 +9,7 @@ class ViewerEventSource : public virtual AbstractEventSource
 public:
 	virtual ~ViewerEventSource(){};
 
-	typedef boost::signal<void (ViewerEventPtr)> ViewerSignal;
+	typedef boost::signals2::signal<void (ViewerEventPtr)> ViewerSignal;
 
 	void AddEventHandler(IEventHandlerPtr handler);
 

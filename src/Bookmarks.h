@@ -59,6 +59,7 @@ class Bookmarks : public BookmarksEventSource
 {
 public:
 	static BookmarksPtr GetInstance();
+	static void Reset() { c_BookmarksPtr.reset(); }
 	~Bookmarks(){ SaveToPreferences(); };
 
 	bool AddBookmark(Bookmark bookmark);

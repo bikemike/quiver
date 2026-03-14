@@ -14,6 +14,7 @@
 #define QUIVER_PREFS_APP_WINDOW_FULLSCREEN         "window_fullscreen"
 #define QUIVER_PREFS_APP_SORT_BY                   "sort_by"
 #define QUIVER_PREFS_APP_SORT_REVERSED             "sort_reversed"
+#define QUIVER_PREFS_APP_IGNORED_EXTENSIONS        "ignored_extensions"
 
 
 #define QUIVER_PREFS_APP_HPANE_POS                 "hpane_position"

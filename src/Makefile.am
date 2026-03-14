@@ -6,7 +6,7 @@ AM_CFLAGS = \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
-	-DQUIVER_GLADEDIR=\""$(gladedir)"\" \
+	-DQUIVER_DATADIR=\""$(quiver_datadir)"\" \
 	$(PACKAGE_CFLAGS) \
 	$(HILDON_LIBS_CFLAGS) \
 	$(HILDON_1_CFLAGS) \
@@ -15,8 +15,8 @@ AM_CFLAGS = \
 	$(OSSO_MIME_CFLAGS) \
 	$(HILDON_MIME_CFLAGS) \
 	$(LIBEXIF_CFLAGS) \
-	$(LIBGLADE_CFLAGS) \
-	$(CAIRO_CFLAGS) \
+	$(LIBSQLITE_CFLAGS) \
+	$(GSTREAMER_CFLAGS) \
 	-Wall 
 
 AM_CPPFLAGS = \
@@ -24,7 +24,7 @@ AM_CPPFLAGS = \
 	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
-	-DQUIVER_GLADEDIR=\""$(gladedir)"\" \
+	-DQUIVER_DATADIR=\""$(quiver_datadir)"\" \
 	$(PACKAGE_CFLAGS) \
 	$(HILDON_LIBS_CFLAGS) \
 	$(HILDON_1_CFLAGS) \
@@ -34,8 +34,8 @@ AM_CPPFLAGS = \
 	$(HILDON_MIME_CFLAGS) \
 	$(BOOST_CPPFLAGS) \
 	$(LIBEXIF_CFLAGS) \
-	$(LIBGLADE_CFLAGS) \
-	$(CAIRO_CFLAGS) \
+	$(LIBSQLITE_CFLAGS) \
+	$(GSTREAMER_CFLAGS) \
 	-Wall 
 
 bin_PROGRAMS = quiver 
@@ -97,6 +97,8 @@ quiver_SOURCES = \
 	Quiver.h \
 	Quiver.cpp \
 	QuiverPrefs.h \
+	QuiverVideoOps.h \
+	QuiverVideoOps.cpp \
 	IEvent.h \
 	EventBase.h \
 	BrowserEvent.h \
@@ -169,12 +171,19 @@ quiver_SOURCES = \
 	RenameTask.h \
 	RenameTask.cpp \
 	SaveImageTask.h \
-	SaveImageTask.cpp 
+	SaveImageTask.cpp \
+	libjpeg/jinclude.h \
+	libjpeg/gio_jdatadst.c \
+	libjpeg/gio_jdatasrc.c \
+	libjpeg/transupp.h \
+	libjpeg/transupp.c
+
 
 
 quiver_LDFLAGS = 
 
 quiver_LDADD = \
+	../libquiver/libquiver.la \
 	$(PACKAGE_LIBS) \
 	$(HILDON_LIBS_LIBS) \
 	$(HILDON_1_LIBS) \
@@ -183,21 +192,19 @@ quiver_LDADD = \
 	$(OSSO_MIME_LIBS) \
 	$(HILDON_MIME_LIBS) \
 	$(BOOST_LDFLAGS) \
-	$(BOOST_SIGNALS_LIB) \
 	$(LIBEXIF_LIBS) \
-	$(LIBGLADE_LIBS) \
-	$(CAIRO_LIBS) \
-	-ljpeg \
-	../libquiver/libquiver.la
+	$(LIBSQLITE_LIBS) \
+	$(GSTREAMER_LIBS) \
+	-ljpeg
 
-TESTS = test_image_list test_quiver_file test_icon_view
-check_PROGRAMS = test_image_list test_quiver_file test_icon_view
+#TESTS = test_image_list test_quiver_file test_icon_view
+#check_PROGRAMS = test_image_list test_quiver_file test_icon_view
 
-test_image_list_SOURCES= test_image_list.cpp ImageList.cpp QuiverFile.cpp ImageCache.cpp Timer.cpp
-test_image_list_LDADD = $(PACKAGE_LIBS)
+#test_image_list_SOURCES= test_image_list.cpp ImageList.cpp QuiverFile.cpp ImageCache.cpp Timer.cpp
+#test_image_list_LDADD = $(PACKAGE_LIBS)
 
-test_quiver_file_SOURCES= test_quiver_file.cpp ImageCache.cpp QuiverFile.cpp Timer.cpp
-test_quiver_file_LDADD = $(PACKAGE_LIBS)
+#test_quiver_file_SOURCES= test_quiver_file.cpp ImageCache.cpp QuiverFile.cpp Timer.cpp
+#test_quiver_file_LDADD = $(PACKAGE_LIBS)
 
-test_icon_view_SOURCES= test_icon_view.cpp ImageCache.cpp QuiverFile.cpp Timer.cpp ImageList.cpp QuiverUtils.cpp
-test_icon_view_LDADD = $(PACKAGE_LIBS)
+#test_icon_view_SOURCES= test_icon_view.cpp ImageCache.cpp QuiverFile.cpp Timer.cpp ImageList.cpp QuiverUtils.cpp
+#test_icon_view_LDADD = $(PACKAGE_LIBS)

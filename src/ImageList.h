@@ -7,8 +7,6 @@
 #include "QuiverFile.h"
 #include "ImageListEventSource.h"
 
-class ImageListImpl;
-typedef boost::shared_ptr<ImageListImpl> ImageListImplPtr;
 	
 class ImageList : public virtual ImageListEventSource
 {
@@ -20,6 +18,7 @@ public:
 		SORT_BY_FILENAME_NATURAL,
 		SORT_BY_FILE_TYPE,
 		SORT_BY_DATE,
+		SORT_BY_DATE_MODIFIED,
 		SORT_BY_RANDOM,
 	} SortBy;
 
@@ -27,9 +26,13 @@ public:
 	ImageList();
 	ImageList(bool bEnableMonitor);
 
+	void SetImageList(std::string file, bool bRecursive = false);
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(const std::list<std::string> *file_list);
+
+	static void AddIgnoredExtension(std::string ext);
+	static void ClearIgnoreList(std::string ext);
 
 	std::list<std::string> GetFolderList();
 	std::list<std::string> GetFileList();
@@ -58,6 +61,7 @@ public:
 	unsigned int GetCurrentIndex() const;
 	
 	bool SetCurrentIndex(unsigned int new_index );
+	bool SetCurrentFile(std::string file);
 
 	QuiverFile GetNext() const;
 	QuiverFile GetPrevious() const;
@@ -71,8 +75,13 @@ public:
 
 	void Sort(SortBy o, bool bSortAscending = true);
 
+public:
+	class ImageListImpl;
+	typedef boost::shared_ptr<ImageListImpl> ImageListImplPtr;
+
 private:
 	ImageListImplPtr m_ImageListImplPtr;
+	static std::vector<std::string> m_vectIgnorgedExtensions;
 	
 };
 

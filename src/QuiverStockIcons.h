@@ -2,11 +2,11 @@
 #define FILE_QUIVER_STOCK_ICONS_H
 
 
-#define QUIVER_STOCK_APP            "quiver-icon-app"
-#define QUIVER_STOCK_BROWSER        "quiver-icon-browser"
-#define QUIVER_STOCK_ROTATE_CW      "quiver-icon-rotate-cw"
-#define QUIVER_STOCK_ROTATE_CCW     "quiver-icon-rotate-ccw"
-#define QUIVER_STOCK_SLIDESHOW      "quiver-icon-slideshow"
+#define QUIVER_STOCK_APP            GTK_STOCK_FILE //"quiver-icon-app"
+#define QUIVER_STOCK_BROWSER        GTK_STOCK_DIRECTORY //"quiver-icon-browser"
+#define QUIVER_STOCK_ROTATE_CW      "edit-redo" //GTK_STOCK_REDO //"quiver-icon-rotate-cw"
+#define QUIVER_STOCK_ROTATE_CCW     "edit-undo" // GTK_STOCK_UNDO //"quiver-icon-rotate-ccw"
+#define QUIVER_STOCK_SLIDESHOW      GTK_STOCK_INDEX //"quiver-icon-slideshow"
 
 #define QUIVER_STOCK_ABOUT           GTK_STOCK_ABOUT
 
@@ -31,6 +31,7 @@
 #define QUIVER_STOCK_EXECUTE         GTK_STOCK_EXECUTE
 
 #ifdef QUIVER_MAEMO
+#define QUIVER_STOCK_GO_UP           "qgn_toolb_gene_up"
 #define QUIVER_STOCK_GO_BACK         "qgn_toolb_gene_back"
 #define QUIVER_STOCK_GO_FORWARD      "qgn_toolb_gene_forward"
 #define QUIVER_STOCK_DELETE          "qgn_toolb_gene_deletebutton"
@@ -53,6 +54,7 @@
 #define QUIVER_STOCK_PASTE           "qgn_list_gene_paste"
 #else // not maemo
 #define QUIVER_STOCK_DELETE          GTK_STOCK_DELETE
+#define QUIVER_STOCK_GO_UP           GTK_STOCK_GO_UP
 #define QUIVER_STOCK_GO_BACK         GTK_STOCK_GO_BACK
 #define QUIVER_STOCK_GO_FORWARD      GTK_STOCK_GO_FORWARD
 #define QUIVER_STOCK_ZOOM_IN         GTK_STOCK_ZOOM_IN

@@ -3,10 +3,14 @@
 #include "ImageSaveManager.h"
 #include "MessageBox.h"
 #include "ImageList.h"
+#include "RenameTask.h"
 
 #include <map>
 #include <boost/algorithm/string.hpp>
+#include <boost/format.hpp>
 #include <sstream>
+
+#include <gio/gio.h>
 
 class OrganizeTask::PrivateImpl
 {
@@ -16,20 +20,30 @@ public:
 		m_iLastXFerRVal(-1),
 		m_iLastVFSErrorRVal(-1)
 	{
+		m_pCancellable = g_cancellable_new();
+	}
 
+	~PrivateImpl()
+	{
+		g_object_unref(m_pCancellable);
 	}
 
 	OrganizeTask* m_pParent;
 	int           m_iLastXFerRVal;
 	int           m_iLastVFSErrorRVal;
+	GCancellable* m_pCancellable;
 
 };
 
-OrganizeTask::OrganizeTask()
-	: m_PrivateImplPtr(new PrivateImpl(this)), m_iCurrentFile(0), m_bIncludeSubfolders(false), m_iDayExtension(0)
+OrganizeTask::OrganizeTask() :
+	m_PrivateImplPtr(new PrivateImpl(this)),
+	m_iCurrentFile(0),
+	m_bIncludeSubfolders(false),
+	m_bRenameFiles(true),
+	m_iDayExtension(0)
 {
-	SetDateTemplate("YYYY-MM-DD");
-	//SetOutputFolder("~");
+	SetFolderTemplate("YYYY-MM-DD");
+	SetFileTemplate("%Y-%m-%d %H.%M.%S-##");
 }
 OrganizeTask::~OrganizeTask()
 {
@@ -69,12 +83,12 @@ int OrganizeTask::GetCurrentIteration() const
 
 double OrganizeTask::GetProgress() const
 {
-	double progress = 0;
-	if (IsFinished() || 0 == m_vectQuiverFiles.size())
+	double progress = 0.;
+	if (IsFinished())
 	{
 		progress = 1.;
 	}
-	else 
+	else if (!m_vectQuiverFiles.empty())
 	{
 		progress =  m_iCurrentFile / (double)m_vectQuiverFiles.size();
 	}
@@ -110,9 +124,19 @@ void OrganizeTask::SetOutputFolder(std::string strDestDirURI)
 
 // if not set, the default format is: YYYY-MM-DD
 // pulled from the exif data
-void OrganizeTask::SetDateTemplate(std::string strTemplate)
+void OrganizeTask::SetFolderTemplate(std::string strTemplate)
 {
-	m_strDateTemplate = strTemplate;
+	m_strFolderTemplate = strTemplate;
+}
+
+void OrganizeTask::SetRenameFiles(bool bRenameFiles)
+{
+	m_bRenameFiles = bRenameFiles;
+}
+
+void OrganizeTask::SetFileTemplate(std::string strTemplate)
+{
+	m_strFileTemplate = strTemplate;
 }
 
 void OrganizeTask::SetAppendedText(std::string strAppend)
@@ -125,243 +149,206 @@ void OrganizeTask::SetDayExtension(int extension)
 	m_iDayExtension = extension;
 }
 
-std::string OrganizeTask::DoVariableSubstitution(QuiverFile f, std::string strTemplate)
+std::string OrganizeTask::DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int dayExtension)
 {
 	std::map<std::string, std::string> mapSubstFields;
-	ExifData *pExifData = f.GetExifData();
 
-	time_t date = 0;
-	if (NULL != pExifData)
+	if (datetime)
 	{
-		// use date_time_original
-		ExifEntry* pEntry;
-		pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME);
-		if (NULL != pEntry)
+		GDateTime* datetime_adjusted = g_date_time_add_hours (datetime, -dayExtension);
+
+		gchar szDate[20];
+
+		g_snprintf(szDate, 20, "%04d",
+			g_date_time_get_year(datetime_adjusted));
+		mapSubstFields.insert(std::pair<std::string, std::string>("YYYY", szDate));
+
+		g_snprintf(szDate, 20, "%02d",
+			(guint)g_date_time_get_month(datetime_adjusted));
+		mapSubstFields.insert(std::pair<std::string, std::string>("MM", szDate));
+
+		g_snprintf(szDate, 20, "%02d",
+			g_date_time_get_day_of_month(datetime_adjusted));
+		mapSubstFields.insert(std::pair<std::string, std::string>("DD", szDate));
+
+		g_date_time_unref(datetime_adjusted);
+
+		std::map<std::string, std::string>::iterator itr;
+		for (itr = mapSubstFields.begin(); mapSubstFields.end() != itr; ++itr)
 		{
-			char szDate[20];
-			exif_entry_get_value(pEntry,szDate,20);
-
-			tm tm_exif_time;
-			int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
-				&tm_exif_time.tm_year,
-				&tm_exif_time.tm_mon,
-				&tm_exif_time.tm_mday,
-				&tm_exif_time.tm_hour,
-				&tm_exif_time.tm_min,
-				&tm_exif_time.tm_sec);
-			tm_exif_time.tm_year -= 1900;
-			tm_exif_time.tm_hour -= m_iDayExtension;
-			tm_exif_time.tm_mon -= 1;
-			tm_exif_time.tm_isdst = -1;
-			if (6 == num_substs)
-			{
-				
-				// successfully parsed date
-				date = mktime(&tm_exif_time);
-
-				g_snprintf(szDate, 20, "%04d",
-					tm_exif_time.tm_year+1900);
-				mapSubstFields.insert(std::pair<std::string, std::string>("YYYY", szDate));
-
-				g_snprintf(szDate, 20, "%02d",
-					tm_exif_time.tm_mon+1);
-				mapSubstFields.insert(std::pair<std::string, std::string>("MM", szDate));
-
-				g_snprintf(szDate, 20, "%02d",
-					tm_exif_time.tm_mday);
-				mapSubstFields.insert(std::pair<std::string, std::string>("DD", szDate));
-				
-			}
-			
+			strTemplate = boost::replace_all_copy( strTemplate, itr->first, itr->second);
 		}
-	}
-	exif_data_unref(pExifData);
-
-	std::map<std::string, std::string>::iterator itr;
-	for (itr = mapSubstFields.begin(); mapSubstFields.end() != itr; ++itr)
-	{
-		strTemplate = boost::replace_all_copy( strTemplate, itr->first, itr->second);
 	}
 	return strTemplate;
 }
 
-
-static gint gnome_vfs_xfer_callback (GnomeVFSXferProgressInfo *info, gpointer user_data)
+void OrganizeTask::Cancelled()
 {
-	OrganizeTask::PrivateImpl* pImpl = static_cast<OrganizeTask::PrivateImpl*>(user_data);
+	g_cancellable_cancel(m_PrivateImplPtr->m_pCancellable);
+}
 
-	//printf("status: %d\n", (int)info->status);
-	//printf("vfs result: %s\n", gnome_vfs_result_to_string(info->vfs_status));
-	//printf("phase: %d\n", (int)info->phase);
-	/* do progress */
-	/*
-	gulong file_index;
-		The index of the currently processed file.
+static void
+organize_task_gfile_progress_callback(
+	goffset current_num_bytes,
+	goffset total_num_bytes,
+	gpointer user_data)
+{
+	//OrganizeTask::PrivateImpl* pImpl = static_cast<OrganizeTask::PrivateImpl*>(user_data);
 
-	gulong files_total;
-		The total number of processed files.
-
-	GnomeVFSFileSize bytes_total;
-		The total size of all files to transfer in bytes.
-
-	GnomeVFSFileSize file_size;
-		The size of the currently processed file in bytes.
-
-	GnomeVFSFileSize bytes_copied;
-		The number of bytes that has been transferred from the current file.
-
-	GnomeVFSFileSize total_bytes_copied;
-		The total number of bytes that has been transferred. 
-	*/
-
-	if (GNOME_VFS_XFER_PROGRESS_STATUS_OK == info->status)
-	{
-		return 1;
-	}
-
-	if (GNOME_VFS_XFER_PROGRESS_STATUS_OVERWRITE == info->status)
-	{
-		/*
-		GNOME_VFS_XFER_OVERWRITE_ACTION_ABORT = 0,
-		GNOME_VFS_XFER_OVERWRITE_ACTION_REPLACE = 1,
-		GNOME_VFS_XFER_OVERWRITE_ACTION_REPLACE_ALL = 2,
-		GNOME_VFS_XFER_OVERWRITE_ACTION_SKIP = 3,
-		GNOME_VFS_XFER_OVERWRITE_ACTION_SKIP_ALL = 4
-		*/
-
-		if (GNOME_VFS_XFER_OVERWRITE_ACTION_SKIP_ALL != pImpl->m_iLastXFerRVal && 
-			GNOME_VFS_XFER_OVERWRITE_ACTION_REPLACE_ALL != pImpl->m_iLastXFerRVal)
-		{
-			
-			GnomeVFSURI* vuri_dest = gnome_vfs_uri_new(info->target_name);
-			gchar* shortname = gnome_vfs_uri_extract_short_name(vuri_dest);
-			gchar* dirname = gnome_vfs_uri_extract_dirname (vuri_dest);
-			gnome_vfs_uri_unref(vuri_dest);
-
-			gchar buffer[512] = "";
-			g_snprintf(buffer, 512, "A file named \"%s\" already exists. Do you want to replace it?",shortname);
-			std::string msg(buffer);
-			g_snprintf(buffer, 512, "The file already exists in \"%s\". Replacing it will overwrite its content.",dirname);
-			std::string details(buffer);
-
-			g_free(dirname);
-			g_free(shortname);
-
-			MessageBox box(MessageBox::ICON_TYPE_INFO, MessageBox::BUTTON_TYPE_NONE, msg, details);
-			box.AddButton(MessageBox::BUTTON_ICON_CANCEL, "_Cancel", MessageBox::RESPONSE_TYPE_CUSTOM1);
-			box.AddButton(MessageBox::BUTTON_ICON_NONE, "S_kip All", MessageBox::RESPONSE_TYPE_CUSTOM5);
-			box.AddButton(MessageBox::BUTTON_ICON_NONE, "Replace _All", MessageBox::RESPONSE_TYPE_CUSTOM3);
-			box.AddButton(MessageBox::BUTTON_ICON_NONE, "_Skip", MessageBox::RESPONSE_TYPE_CUSTOM4);
-			box.AddButton(MessageBox::BUTTON_ICON_NONE, "_Replace", MessageBox::RESPONSE_TYPE_CUSTOM2);
-			box.SetDefaultResponseType(MessageBox::RESPONSE_TYPE_CUSTOM2);
-
-			MessageBox::ResponseType responseType = box.Run();
-
-			pImpl->m_iLastXFerRVal = (int)(responseType - MessageBox::RESPONSE_TYPE_CUSTOM1);
-		}
-
-		if (GNOME_VFS_XFER_OVERWRITE_ACTION_ABORT == pImpl->m_iLastXFerRVal)
-		{
-			// cancel the task
-			pImpl->m_pParent->Cancel();
-		}
-
-		return pImpl->m_iLastXFerRVal;
-	}
-	else if (GNOME_VFS_XFER_PROGRESS_STATUS_VFSERROR == info->status)
-	{
-		/*
-		return GNOME_VFS_XFER_ERROR_ACTION_ABORT;
-		GNOME_VFS_XFER_ERROR_ACTION_RETRY = 1,
-		GNOME_VFS_XFER_ERROR_ACTION_SKIP = 2
-		*/
-		if (GNOME_VFS_ERROR_FILE_EXISTS != info->vfs_status)
-		{
-			MessageBox box(
-					MessageBox::ICON_TYPE_INFO, 
-					MessageBox::BUTTON_TYPE_NONE, 
-					"Error", 
-					gnome_vfs_result_to_string(info->vfs_status));
-
-			box.AddButton(MessageBox::BUTTON_ICON_INFO, "Abort", MessageBox::RESPONSE_TYPE_CUSTOM1);
-			box.AddButton(MessageBox::BUTTON_ICON_NONE, "Retry", MessageBox::RESPONSE_TYPE_CUSTOM2);
-			box.AddButton(MessageBox::BUTTON_ICON_NONE, "Skip", MessageBox::RESPONSE_TYPE_CUSTOM3);
-
-			MessageBox::ResponseType responseType = box.Run();
-
-			return (int)(responseType - MessageBox::RESPONSE_TYPE_CUSTOM1);
-		}
-		return GNOME_VFS_XFER_ERROR_ACTION_ABORT;
-
-	}
-
-	return GNOME_VFS_XFER_ERROR_ACTION_ABORT;
 }
 
 void OrganizeTask::Run()
 {
-	char szText[256];
+	std::string strText;
+	std::map<std::string, int> mapFileCounter;
+
 	// populate list:
 	ImageListPtr imgListPtr(new ImageList(false));
 	std::list<std::string> listFiles;
 	listFiles.push_back(m_strSrcDirURI);
 	imgListPtr->SetImageList(&listFiles, m_bIncludeSubfolders);
 
-	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();	
 	// adjust exif date
+	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();
 	while (m_iCurrentFile < m_vectQuiverFiles.size() )
 	{
-		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
-		std::string strOutput = DoVariableSubstitution(f, m_strDateTemplate);
-		
-		strOutput = m_strDestDirURI + G_DIR_SEPARATOR_S + strOutput + m_strAppendedText;
+		GError* error = NULL;
+		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile++];
 
-		/*
-		MessageBox::ResponseType responseType = 
-			MessageBox::Run(MessageBox::ICON_TYPE_INFO, MessageBox::BUTTON_TYPE_OK, "title", "message");
-		*/
-		/*
-		MessageBox box(MessageBox::ICON_TYPE_INFO, MessageBox::BUTTON_TYPE_OK, "title", "message");
-		box.AddButton(MessageBox::BUTTON_ICON_INFO, "info!", MessageBox::RESPONSE_TYPE_CUSTOM1);
-		box.AddButton(MessageBox::BUTTON_ICON_NONE, "skip", MessageBox::RESPONSE_TYPE_CUSTOM2);
-		box.AddButton("skip all", MessageBox::RESPONSE_TYPE_CUSTOM3);
-		box.SetDefaultResponseType(MessageBox::RESPONSE_TYPE_CUSTOM3);
-		MessageBox::ResponseType responseType = box.Run();
-		printf("response :%d\n", (int)responseType);
-		*/
+		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
+		if (nullptr == datetime)
+		{
+			printf("ERROR: Date/Time: %s\n", f.GetURI());
+		}
+
+		std::string strFolder = DoVariableSubstitution(m_strFolderTemplate, datetime, m_iDayExtension);
+		std::string strDstDir = m_strDestDirURI + G_DIR_SEPARATOR_S + strFolder + m_strAppendedText;
+
+		GFile* dstdir = g_file_new_for_uri(strDstDir.c_str());
+		gboolean made_dir =
+			g_file_make_directory_with_parents(
+				dstdir, m_PrivateImplPtr->m_pCancellable, &error);
+
+		g_object_unref(dstdir);
+
+		if (NULL != error)
+		{
+			if (G_IO_ERROR_EXISTS != error->code)
+			{
+				printf("error creating directory %s\n", strDstDir.c_str());
+				g_error_free(error);
+				continue;
+			}
+			else
+			{
+				g_error_free(error);
+				error = NULL;
+			}
+
+		}
+
+		std::string strFilename = f.GetFileName();
+
+		if (m_bRenameFiles)
+		{
+			std::string strExtension;
+			std::string::size_type pos = strFilename.find_last_of(".");
+			if (std::string::npos != pos)
+			{
+				strExtension = strFilename.substr(pos+1);
+			}
+
+			std::string strDstNameTmp = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, 0);
+			int count = 0;
+			if (mapFileCounter.end() != mapFileCounter.find(strDstNameTmp))
+			{
+				count = mapFileCounter[strDstNameTmp];
+			}
+			strFilename = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, ++count);
+			strFilename += "." + strExtension;
+
+			mapFileCounter[strDstNameTmp] = count;
+		}
+		g_date_time_unref(datetime);
 
 
-		gnome_vfs_make_directory(strOutput.c_str(),0700);
-		strOutput += "/" + f.GetFileName();
+		std::string strDstPath = strDstDir + G_DIR_SEPARATOR_S + strFilename;
 
-		GnomeVFSURI* src = gnome_vfs_uri_new(f.GetFilePath().c_str());
-		GnomeVFSURI* dst = gnome_vfs_uri_new(strOutput.c_str());
+		GFile* src = g_file_new_for_uri(f.GetURI());
+		GFile* dst = g_file_new_for_uri(strDstPath.c_str());
 
-		gchar* shortname = gnome_vfs_uri_extract_short_name(dst);
-		gchar* dirname = gnome_vfs_uri_extract_dirname (dst);
-		g_snprintf(szText, 256, "Copying %s to %s", shortname, dirname);
-		//SetMessage(MSG_TYPE_INFO, szText);
-		SetProgressText(szText);
+		char* dstname = g_file_get_parse_name(dst);
+
+		GFileInfo* info = g_file_query_info(src,
+			G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME,
+			G_FILE_QUERY_INFO_NONE,
+			m_PrivateImplPtr->m_pCancellable,
+			NULL);
+
+		if ( NULL != info)
+		{
+			const char* display_name = g_file_info_get_display_name(info);
+			strText = boost::str(boost::format("Copying %s to %s") % display_name % dstname);
+			g_object_unref(info);
+		}
+		else
+		{
+			gchar* shortname = g_file_get_basename(src);
+			strText = boost::str(boost::format("Copying %s to %s") % shortname % dstname);
+			g_free(shortname);
+		}
+
+		SetProgressText(strText);
 		EmitTaskProgressUpdatedEvent();
+		g_free(dstname);
+
+		GFileCopyFlags flags = G_FILE_COPY_NONE;
+		// G_FILE_COPY_OVERWRITE
+		// FIXME: have an option to overwrite files
+		/*
+		gchar buffer[512] = "";
+		g_snprintf(buffer, 512, "A file named \"%s\" already exists. Do you want to replace it?",shortname);
+		std::string msg(buffer);
+		g_snprintf(buffer, 512, "The file already exists in \"%s\". Replacing it will overwrite its content.",dirname);
+		std::string details(buffer);
+
 		g_free(dirname);
 		g_free(shortname);
 
-		GnomeVFSResult res = gnome_vfs_xfer_uri (
-			src,
-			dst,
-			GNOME_VFS_XFER_DEFAULT,
-			GNOME_VFS_XFER_ERROR_MODE_QUERY,
-			GNOME_VFS_XFER_OVERWRITE_MODE_QUERY,
-			gnome_vfs_xfer_callback,
-			m_PrivateImplPtr.get());
+		MessageBox box(MessageBox::ICON_TYPE_INFO, MessageBox::BUTTON_TYPE_NONE, msg, details);
+		box.AddButton(MessageBox::BUTTON_ICON_CANCEL, "_Cancel", MessageBox::RESPONSE_TYPE_CUSTOM1);
+		box.AddButton(MessageBox::BUTTON_ICON_NONE, "S_kip All", MessageBox::RESPONSE_TYPE_CUSTOM5);
+		box.AddButton(MessageBox::BUTTON_ICON_NONE, "Replace _All", MessageBox::RESPONSE_TYPE_CUSTOM3);
+		box.AddButton(MessageBox::BUTTON_ICON_NONE, "_Skip", MessageBox::RESPONSE_TYPE_CUSTOM4);
+		box.AddButton(MessageBox::BUTTON_ICON_NONE, "_Replace", MessageBox::RESPONSE_TYPE_CUSTOM2);
+		box.SetDefaultResponseType(MessageBox::RESPONSE_TYPE_CUSTOM2);
 
-		//printf("vfs result: %s\n", gnome_vfs_result_to_string(res));
+		MessageBox::ResponseType responseType = box.Run();
 
-		gnome_vfs_uri_unref(src);
-		gnome_vfs_uri_unref(dst);
+		pImpl->m_iLastXFerRVal = (int)(responseType - MessageBox::RESPONSE_TYPE_CUSTOM1);
+		*/
+		error = NULL;
+		gboolean copied =
+			g_file_copy(src,
+				dst,
+				flags,
+				m_PrivateImplPtr->m_pCancellable,
+				organize_task_gfile_progress_callback,
+				m_PrivateImplPtr.get(),
+				&error);
+		// if there was an error,
+		if (NULL != error)
+		{
+			printf("Error copying file! %s to %s: %s\n", f.GetURI(), strDstPath.c_str(), error->message);
+			// message box asking if they want to skip, skip all, retry, cancel
+			g_error_free(error);
+			error = NULL;
+		}
+
+		g_object_unref(dst);
+		g_object_unref(src);
 
 
-		++m_iCurrentFile;
 		EmitTaskProgressUpdatedEvent();
 
 
@@ -374,7 +361,7 @@ void OrganizeTask::Run()
 		{
 			break;
 		}
-	}				
+	}
 }
 
 

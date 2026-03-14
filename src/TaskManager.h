@@ -18,6 +18,7 @@ public:
 	virtual ~TaskManager();
 
 	static TaskManagerPtr GetInstance();
+	static void Reset() { c_pTaskManagerPtr.reset(); }
 
 	void SetMaxThreads(int nThreads);
 	void AddTask(AbstractTaskPtr taskPtr);

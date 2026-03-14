@@ -15,6 +15,7 @@ public:
 
 	static void Create(GtkWindow* parent);
 	static TaskManagerDlgPtr GetInstance();
+	static void Reset() { c_pTaskManagerDlgPtr.reset(); }
 	
 	//member functions
 	GtkWidget *GetWidget() const;

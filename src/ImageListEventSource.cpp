@@ -6,7 +6,7 @@ void ImageListEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 	IImageListEventHandlerPtr h = boost::static_pointer_cast<IImageListEventHandler>(handler);
 	
-	boost::signals::connection c = m_sigContentsChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleContentsChanged,h,_1) );
+	boost::signals2::connection c = m_sigContentsChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleContentsChanged,h,_1) );
 	MapConnection(handler,c);
 	
 	c = m_sigCurrentIndexChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleCurrentIndexChanged,h,_1) );
@@ -29,9 +29,10 @@ void ImageListEventSource::EmitContentsChangedEvent()
 	
 }
 
-void ImageListEventSource::EmitCurrentIndexChangedEvent(unsigned int iIndex)
+void ImageListEventSource::EmitCurrentIndexChangedEvent(unsigned int iIndex, unsigned int iOldIndex)
 {
 	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::CURRENT_INDEX_CHANGED,iIndex) );
+	event->SetOldIndex(iOldIndex);
 	(*m_sigCurrentIndexChangedPtr)(event);
 	
 }

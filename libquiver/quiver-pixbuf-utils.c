@@ -21,7 +21,6 @@ void pixbuf_set_alpha(GdkPixbuf *src, guchar alpha)
 	has_alpha = gdk_pixbuf_get_has_alpha (src);
 	if (!has_alpha)
 	{
-		printf("added an alpha!\n");
 		GdkPixbuf *new_src = gdk_pixbuf_add_alpha(src,FALSE,0,0,0);
 		g_object_unref(src);
 		src = new_src;
@@ -101,10 +100,10 @@ void pixbuf_brighten(const GdkPixbuf *src, GdkPixbuf *dest, gint amount)
 	  
 	int i, j, t;
 	int width, height, has_alpha, src_rowstride, dest_rowstride, bytes_per_pixel;
-	guchar *src_line;
-	guchar *dest_line;
-	guchar *src_pixel;
-	guchar *dest_pixel;
+	guchar *src_line = NULL;
+	guchar *dest_line = NULL;
+	guchar *src_pixel = NULL;
+	guchar *dest_pixel = NULL;
 
 	has_alpha = gdk_pixbuf_get_has_alpha (src);
 	bytes_per_pixel = has_alpha ? 4 : 3;

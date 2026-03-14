@@ -1,13 +1,16 @@
 #include <config.h>
 #include "RenameDlg.h"
-#include <glade/glade.h>
+#include "RenameTask.h"
 
 #include "QuiverPrefs.h"
 #include "Preferences.h"
 
 #include "QuiverStockIcons.h"
 
-#include <libgnomevfs/gnome-vfs.h>
+#include <gio/gio.h>
+
+#include <algorithm>
+#include <boost/algorithm/string/classification.hpp>
 
 #ifdef QUIVER_MAEMO
 #ifdef HAVE_HILDON_FM_2
@@ -33,9 +36,7 @@ public:
 
 // variables
 	RenameDlg*         m_pRenameDlg;
-#ifdef HAVE_LIBGLADE
-	GladeXML*            m_pGladeXML;
-#endif
+	GtkBuilder*            m_pGtkBuilder;
 	bool m_bLoadedDlg;
 	
 
@@ -46,13 +47,9 @@ public:
 
 #ifdef QUIVER_MAEMO
 	GtkButton*              m_pBtnSourceFolder;
-	GtkButton*              m_pBtnDestFolder;
 #else
 	GtkFileChooserButton*   m_pFCBtnSourceFolder;
-	GtkFileChooserButton*   m_pFCBtnDestFolder;
 #endif
-	GtkToggleButton*        m_pTglBtnSubfolders;
-
 	GtkEntry*               m_pEntryTemplate;
 	GtkLabel*               m_pLabelExample;
 
@@ -73,39 +70,17 @@ GtkWidget* RenameDlg::GetWidget() const
 
 bool RenameDlg::Run()
 {
-#ifdef HAVE_LIBGLADE
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pDialogRename));
 		return (GTK_RESPONSE_OK == result);
 	}
-#endif
 	return false;
 }
 
 std::string RenameDlg::GetTemplate() const
 {
 	return gtk_entry_get_text(m_PrivPtr->m_pEntryTemplate);
-}
-
-std::string RenameDlg::GetOutputFolder() const
-{
-	std::string strDir;
-
-#ifdef QUIVER_MAEMO
-	const gchar* dir = gtk_button_get_label ( GTK_BUTTON (m_PrivPtr->m_pBtnDestFolder));
-	strDir = dir;
-#else
-	gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_PrivPtr->m_pFCBtnDestFolder));
-	if (NULL != dir)
-	{
-		strDir = dir;
-		g_free(dir);
-	}
-#endif
-
-	return strDir;
 }
 
 std::string RenameDlg::GetInputFolder() const
@@ -129,9 +104,10 @@ std::string RenameDlg::GetInputFolder() const
 
 }
 
-bool RenameDlg::GetIncludeSubfolders() const
+void RenameDlg::SetInputFolder(std::string folder)
 {
-	return (TRUE == gtk_toggle_button_get_active(m_PrivPtr->m_pTglBtnSubfolders));
+	gtk_file_chooser_set_current_folder_uri(GTK_FILE_CHOOSER(m_PrivPtr->m_pFCBtnSourceFolder), folder.c_str());
+
 }
 
 
@@ -151,21 +127,23 @@ RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent) :
         m_pRenameDlg(parent)
 {
 	m_pDialogRename = NULL;
-#ifdef HAVE_LIBGLADE
-	m_pGladeXML = glade_xml_new (QUIVER_GLADEDIR "/" "quiver.glade", "RenameDialog", NULL);
+	m_pGtkBuilder = gtk_builder_new();
+	gchar* objectids[] = {
+		"RenameDialog",
+		NULL};
+	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
-#endif
 }
 
 RenameDlg::RenameDlgPriv::~RenameDlgPriv()
 {
-	if (NULL != m_pGladeXML)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pGladeXML);
-		m_pGladeXML = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
 
 	if (NULL != m_pDialogRename)
@@ -178,49 +156,35 @@ RenameDlg::RenameDlgPriv::~RenameDlgPriv()
 
 void RenameDlg::RenameDlgPriv::LoadWidgets()
 {
-	m_pDialogRename         = GTK_DIALOG(glade_xml_get_widget (m_pGladeXML, "RenameDialog"));
+	m_pDialogRename         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "RenameDialog"));
 
 	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
 	gtk_widget_show(m_pBtnOK);
-	gtk_container_add(GTK_CONTAINER(m_pDialogRename->action_area),m_pBtnOK);
+	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogRename)),m_pBtnOK);
 
-	m_pTglBtnSubfolders       = GTK_TOGGLE_BUTTON( glade_xml_get_widget(m_pGladeXML, "rename_cb_subfolders") );
 
-	GtkContainer* src_cont = GTK_CONTAINER( glade_xml_get_widget(m_pGladeXML, "rename_align_source_folder") );
-	GtkContainer* dst_cont = GTK_CONTAINER( glade_xml_get_widget(m_pGladeXML, "rename_align_dest_folder") );
+	GtkContainer* src_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "rename_align_source_folder") );
 #ifdef QUIVER_MAEMO
 		m_pBtnSourceFolder = GTK_BUTTON( gtk_button_new() );
-		m_pBtnDestFolder = GTK_BUTTON( gtk_button_new() );
 		gtk_widget_show(GTK_WIDGET(m_pBtnSourceFolder));
-		gtk_widget_show(GTK_WIDGET(m_pBtnDestFolder));
 		gtk_container_add(src_cont, GTK_WIDGET(m_pBtnSourceFolder));
-		gtk_container_add(dst_cont, GTK_WIDGET(m_pBtnDestFolder));
 #else
 		m_pFCBtnSourceFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Source Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
-		m_pFCBtnDestFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Destination Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
+		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder), FALSE);
 		gtk_widget_show(GTK_WIDGET(m_pFCBtnSourceFolder));
-		gtk_widget_show(GTK_WIDGET(m_pFCBtnDestFolder));
 		
 		gtk_container_add(src_cont, GTK_WIDGET(m_pFCBtnSourceFolder));
-		gtk_container_add(dst_cont, GTK_WIDGET(m_pFCBtnDestFolder));
 #endif
-	m_pEntryTemplate        = GTK_ENTRY( glade_xml_get_widget(m_pGladeXML, "rename_entry_template") );
+	m_pEntryTemplate        = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "rename_entry_template") );
 
-	m_pLabelExample           = GTK_LABEL( glade_xml_get_widget(m_pGladeXML, "rename_label_example") );
+	m_pLabelExample           = GTK_LABEL( gtk_builder_get_object(m_pGtkBuilder, "rename_label_example") );
 
 	m_bLoadedDlg = (
 		NULL != m_pDialogRename        &&
-		//NULL != m_pTglBtnCurrentSelection&&
-		//NULL != m_pTglBtnFolder          &&
-		//NULL != m_pTglBtnCopy            &&
-		//NULL != m_pTglBtnMove            &&
-		NULL != m_pTglBtnSubfolders      &&
 #ifdef QUIVER_MAEMO
 		NULL != m_pBtnSourceFolder     &&
-		NULL != m_pBtnDestFolder       &&
 #else
 		NULL != m_pFCBtnSourceFolder     &&
-		NULL != m_pFCBtnDestFolder       &&
 #endif
 		NULL != m_pEntryTemplate       &&
 		NULL != m_pLabelExample         ); 
@@ -236,37 +200,11 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 
 		gtk_window_set_default_size(GTK_WINDOW(m_pDialogRename), 400,-1);
 
-
-
 #ifdef QUIVER_MAEMO
 		char* cwd = g_get_current_dir();
 		gtk_button_set_label(m_pBtnSourceFolder, cwd);
 		g_free(cwd);
 #endif
-
-		PreferencesPtr prefs = Preferences::GetInstance();
-		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
-		if (!strPhotoLibrary.empty())
-		{
-#ifdef QUIVER_MAEMO
-			GnomeVFSURI* vuri= gnome_vfs_uri_new(strPhotoLibrary.c_str());
-			if (gnome_vfs_uri_is_local(vuri))
-			{
-				char* localdir = gnome_vfs_get_local_path_from_uri (strPhotoLibrary.c_str());
-				if (NULL != localdir)
-				{
-					strPhotoLibrary = localdir;
-					g_free(localdir);
-				}
-			}
-			gnome_vfs_uri_unref(vuri);
-			gtk_button_set_label(m_pBtnDestFolder, strPhotoLibrary.c_str());
-#else
-			gtk_file_chooser_set_current_folder_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnDestFolder),
-				strPhotoLibrary.c_str());
-#endif
-		}
 	}  
 }
 
@@ -275,27 +213,15 @@ void RenameDlg::RenameDlgPriv::UpdateUI()
 	if (m_bLoadedDlg)
 	{
 #ifdef QUIVER_MAEMO
-		const gchar* dir = gtk_button_get_label ( GTK_BUTTON (m_pBtnDestFolder));
-		std::string strLabel = dir;
-		strLabel += G_DIR_SEPARATOR_S;
-		strLabel += gtk_entry_get_text(m_pEntryTemplate);
+		std::string strLabel = gtk_entry_get_text(m_pEntryTemplate);
 		gtk_label_set_text(m_pLabelExample, strLabel.c_str());
 #else
-		gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnDestFolder));
-
-		if (NULL != dir)
-		{
-			// FIXME - use proper glib functions to construct the 
-			// directory name
-			std::string strLabel = dir;
-			strLabel += G_DIR_SEPARATOR_S;
-			// template ####
-			strLabel += gtk_entry_get_text(m_pEntryTemplate);
-			strLabel += "0001.jpg";
-			gtk_label_set_text(m_pLabelExample, strLabel.c_str());
-			g_free(dir);
-		}
+		std::string strTemplate = gtk_entry_get_text(m_pEntryTemplate);
+		GDateTime* time = g_date_time_new_now_local();
+		std::string strFileName = RenameTask::DoVariableSubstitution(strTemplate, time, 1);
+		g_date_time_unref(time);
+		std::string strLabel = strFileName + ".jpg";
+		gtk_label_set_text(m_pLabelExample, strLabel.c_str());
 #endif
 	}
 }
@@ -310,12 +236,8 @@ void RenameDlg::RenameDlgPriv::ConnectSignals()
 #ifdef QUIVER_MAEMO
 		g_signal_connect(m_pBtnSourceFolder,
 			"clicked",(GCallback)on_clicked,this);
-		g_signal_connect(m_pBtnDestFolder,
-			"clicked",(GCallback)on_clicked,this);
 #else
 		g_signal_connect(m_pFCBtnSourceFolder,
-			"current-folder-changed",(GCallback)on_folder_change,this);
-		g_signal_connect(m_pFCBtnDestFolder,
 			"current-folder-changed",(GCallback)on_folder_change,this);
 #endif
 
@@ -332,6 +254,7 @@ void RenameDlg::RenameDlgPriv::ConnectSignals()
 bool RenameDlg::RenameDlgPriv::ValidateInput()
 {
 	bool bIsValid = true;
+	std::string strMsg, strTitle;
 
 	// make sure source and dest directories are 
 	// in separate locations
@@ -339,45 +262,44 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 #ifdef QUIVER_MAEMO
 	const gchar* src_uri = gtk_button_get_label (m_pBtnSourceFolder);
 
-	const gchar* dst_uri = gtk_button_get_label (m_pBtnDestFolder);
 #else
 	gchar* src_uri = gtk_file_chooser_get_uri (
 				GTK_FILE_CHOOSER (m_pFCBtnSourceFolder));
 
-	gchar* dst_uri = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnDestFolder));
 #endif
 
-	if (NULL != src_uri && NULL != dst_uri)
+	if (NULL != src_uri)
 	{
-		GnomeVFSURI* vuri_src = gnome_vfs_uri_new(src_uri);
-		GnomeVFSURI* vuri_dst = gnome_vfs_uri_new(dst_uri);
+		GFile* file_src = g_file_new_for_uri(src_uri);
 
-		gboolean source_is_parent = 
-			gnome_vfs_uri_is_parent (vuri_src, vuri_dst, TRUE);
+		// check if child file is valid
+		std::string strTemplate = gtk_entry_get_text(m_pEntryTemplate);
+		GDateTime* time = g_date_time_new_now_local();
+		std::string strFileName = RenameTask::DoVariableSubstitution(strTemplate, time, 1);
+		g_date_time_unref(time);
 
-		gboolean source_is_child = 
-			gnome_vfs_uri_is_parent (vuri_dst, vuri_src, TRUE);
+		GFile* parent_dir = g_file_get_parent(file_src);
+		GError* error = NULL;
+		GFile* file = g_file_get_child_for_display_name(parent_dir, strFileName.c_str(), &error);
+		g_object_unref(parent_dir);
+		if (NULL != file)
+		{
+			g_object_unref(file);
+		}
 
-		gboolean source_is_dst = 
-			gnome_vfs_uris_match(src_uri, dst_uri);
-
-		gnome_vfs_uri_unref(vuri_src);
-		gnome_vfs_uri_unref(vuri_dst);
-		
-		if ( (source_is_parent && m_pRenameDlg->GetIncludeSubfolders()) || source_is_child || source_is_dst)
+		if (NULL != error)
 		{
 			bIsValid =false;
- 
-			GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_pDialogRename),
-				GTK_DIALOG_DESTROY_WITH_PARENT,
-				GTK_MESSAGE_ERROR,
-				GTK_BUTTONS_CLOSE,
-				"Source and Destination folders overlap. Please choose a different destination folder.");
-			gtk_window_set_title(GTK_WINDOW(dialog), "Folder Conflict");
-			gtk_dialog_run (GTK_DIALOG (dialog));
-			gtk_widget_destroy (dialog);
+			strTitle = "File Error";
+			strMsg = error->message;
+			g_error_free(error);
 		}
+
+		g_object_unref(file_src);
+	}
+	else
+	{
+		bIsValid = false;
 	}
 
 #ifdef QUIVER_MAEMO
@@ -386,11 +308,19 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 	{
 		g_free(src_uri);
 	}
-	if (NULL != dst_uri)
-	{
-		g_free(dst_uri);
-	}
 #endif
+
+	if (!bIsValid)
+	{
+		GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_pDialogRename),
+			GTK_DIALOG_DESTROY_WITH_PARENT,
+			GTK_MESSAGE_ERROR,
+			GTK_BUTTONS_CLOSE,
+			strMsg.c_str());
+		gtk_window_set_title(GTK_WINDOW(dialog), strTitle.c_str());
+		gtk_dialog_run (GTK_DIALOG (dialog));
+		gtk_widget_destroy (dialog);
+	}
 
 	return bIsValid;
 }
@@ -407,7 +337,7 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 	}
 
 #ifdef QUIVER_MAEMO
-	if (priv->m_pBtnSourceFolder == button || priv->m_pBtnDestFolder == button)
+	if (priv->m_pBtnSourceFolder == button)
 	{ 
 		// photo library
 		GtkWidget* dlg = hildon_file_chooser_dialog_new(NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
@@ -458,17 +388,27 @@ void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
 	{
 		priv->UpdateUI();
 	}
-	else if (GTK_FILE_CHOOSER(priv->m_pFCBtnDestFolder) == chooser)
-	{
-		priv->UpdateUI();
-	}
 }
 #endif
 
 
 static void on_editable_changed (GtkEditable *editable, gpointer user_data)
 {
+	std::string invalid_chars = "\\/:*?\"<>|";
 	RenameDlg::RenameDlgPriv *priv = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
+
+	std::string strTemplate = gtk_entry_get_text(priv->m_pEntryTemplate);
+	std::string strNewTemplate = strTemplate;
+
+	std::string::iterator itr =
+		std::remove_if(strNewTemplate.begin(), strNewTemplate.end(), boost::is_any_of(invalid_chars));
+	strNewTemplate.erase(itr, strNewTemplate.end());
+
+	if (strNewTemplate != strTemplate)
+	{
+		gtk_entry_set_text(priv->m_pEntryTemplate, strNewTemplate.c_str());
+	}
+
 	priv->UpdateUI();
 }
 

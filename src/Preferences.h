@@ -19,6 +19,7 @@ class Preferences : public virtual PreferencesEventSource
 public:
 
 	static PreferencesPtr GetInstance();
+	static void Reset() { c_pPreferencesPtr.reset(); }
 
 	~Preferences();
 
