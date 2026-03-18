@@ -669,6 +669,8 @@ BOOST_LDFLAGS
 BOOST_CPPFLAGS
 PACKAGE_LIBS
 PACKAGE_CFLAGS
+MAEMO_FALSE
+MAEMO_TRUE
 GSTREAMER_LIBS
 GSTREAMER_CFLAGS
 LIBSQLITE_LIBS
@@ -868,6 +870,7 @@ with_gnu_ld
 with_sysroot
 enable_libtool_lock
 enable_nls
+with_build_config
 with_boost
 with_data_dir
 '
@@ -1547,6 +1550,9 @@ Optional Packages:
   --with-gnu-ld           assume the C compiler uses GNU ld [default=no]
   --with-sysroot[=DIR]    Search for dependent libraries within DIR (or the
                           compiler's sysroot if not specified).
+  --with-build-config=CFG where CFG is one of the following alternate build
+                          configurations: maemo
+
   --with-boost-prefix=DIR specify the root directory for boost (optional)
   --with-data-dir=DATA_DIR
                           where DATA_DIR is the directory that quiver.ui lives
@@ -19926,7 +19932,22 @@ printf "%s\n" "yes" >&6; }
 
 fi
 
-QUIVER_MODULES="$QUIVER_MODULES"
+
+# Check whether --with-build_config was given.
+if test ${with_build_config+y}
+then :
+  withval=$with_build_config; build_config=$withval
+fi
+
+
+ if test x$build_config = xmaemo; then
+  MAEMO_TRUE=
+  MAEMO_FALSE='#'
+else
+  MAEMO_TRUE='#'
+  MAEMO_FALSE=
+fi
+
 
 
 
@@ -20400,6 +20421,10 @@ fi
   ac_config_commands="$ac_config_commands po/stamp-it"
 
 
+if test -z "${MAEMO_TRUE}" && test -z "${MAEMO_FALSE}"; then
+  as_fn_error $? "conditional \"MAEMO\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
 
 : "${CONFIG_STATUS=./config.status}"
 ac_write_fail=0

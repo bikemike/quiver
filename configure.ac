@@ -55,7 +55,16 @@ PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 PKG_CHECK_MODULES([LIBSQLITE], [sqlite3], [have_sqlite3=yes],[have_sqlite3=no])
 PKG_CHECK_MODULES([GSTREAMER], [gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-app-1.0])
 
-QUIVER_MODULES="$QUIVER_MODULES"
+AC_ARG_WITH(
+	[build_config],
+	[AS_HELP_STRING(
+		[--with-build-config=CFG],
+		[where CFG is one of the following alternate build configurations: maemo])
+	],
+	[build_config=$withval],
+	[])
+
+AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo])
 
 AC_SUBST([PACKAGE_CFLAGS])
 PKG_CHECK_MODULES([PACKAGE], [$QUIVER_MODULES])

@@ -1,0 +1,22 @@
+libquiver/quiver-image-view.c: In function ‘quiver_image_view_set_property’:
+libquiver/quiver-image-view.c:197:40: warning: implicit declaration of function ‘quiver_image_view_set_hadjustment’; did you mean ‘quiver_image_view_get_hadjustment’? [-Wimplicit-function-declaration]
+  197 |                 case PROP_HADJUSTMENT: quiver_image_view_set_hadjustment(imageview, (GtkAdjustment*)g_value_get_object (value)); break;
+      |                                        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                        quiver_image_view_get_hadjustment
+libquiver/quiver-image-view.c:198:40: warning: implicit declaration of function ‘quiver_image_view_set_vadjustment’; did you mean ‘quiver_image_view_get_vadjustment’? [-Wimplicit-function-declaration]
+  198 |                 case PROP_VADJUSTMENT: quiver_image_view_set_vadjustment(imageview, (GtkAdjustment*)g_value_get_object (value)); break;
+      |                                        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                        quiver_image_view_get_vadjustment
+libquiver/quiver-image-view.c: At top level:
+libquiver/quiver-image-view.c:260:6: warning: conflicting types for ‘quiver_image_view_set_hadjustment’; have ‘void(QuiverImageView *, GtkAdjustment *)’ {aka ‘void(struct _QuiverImageView *, struct _GtkAdjustment *)’}
+  260 | void quiver_image_view_set_hadjustment (QuiverImageView *imageview, GtkAdjustment *hadj)
+      |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-image-view.c:197:40: note: previous implicit declaration of ‘quiver_image_view_set_hadjustment’ with type ‘void(QuiverImageView *, GtkAdjustment *)’ {aka ‘void(struct _QuiverImageView *, struct _GtkAdjustment *)’}
+  197 |                 case PROP_HADJUSTMENT: quiver_image_view_set_hadjustment(imageview, (GtkAdjustment*)g_value_get_object (value)); break;
+      |                                        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-image-view.c:275:6: warning: conflicting types for ‘quiver_image_view_set_vadjustment’; have ‘void(QuiverImageView *, GtkAdjustment *)’ {aka ‘void(struct _QuiverImageView *, struct _GtkAdjustment *)’}
+  275 | void quiver_image_view_set_vadjustment (QuiverImageView *imageview, GtkAdjustment *vadj)
+      |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-image-view.c:198:40: note: previous implicit declaration of ‘quiver_image_view_set_vadjustment’ with type ‘void(QuiverImageView *, GtkAdjustment *)’ {aka ‘void(struct _QuiverImageView *, struct _GtkAdjustment *)’}
+  198 |                 case PROP_VADJUSTMENT: quiver_image_view_set_vadjustment(imageview, (GtkAdjustment*)g_value_get_object (value)); break;
+      |                                        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1,0 +1,339 @@
+libquiver/quiver-navigation-control.c:66:21: error: unknown type name ‘GdkEventConfigure’
+   66 |                     GdkEventConfigure *event);
+      |                     ^~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:75:21: error: unknown type name ‘GdkEventButton’; did you mean ‘GtkMenuButton’?
+   75 |                     GdkEventButton *event);
+      |                     ^~~~~~~~~~~~~~
+      |                     GtkMenuButton
+libquiver/quiver-navigation-control.c:78:21: error: unknown type name ‘GdkEventButton’; did you mean ‘GtkMenuButton’?
+   78 |                     GdkEventButton *event);
+      |                     ^~~~~~~~~~~~~~
+      |                     GtkMenuButton
+libquiver/quiver-navigation-control.c:80:21: error: unknown type name ‘GdkEventMotion’
+   80 |                     GdkEventMotion *event);
+      |                     ^~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:109:50: warning: excess elements in array initializer
+  109 | static guint navcontrol_signals[SIGNAL_COUNT] = {0};
+      |                                                  ^
+libquiver/quiver-navigation-control.c:109:50: note: (near initialization for ‘navcontrol_signals’)
+libquiver/quiver-navigation-control.c: In function ‘quiver_navigation_control_class_init’:
+libquiver/quiver-navigation-control.c:125:44: warning: assignment to ‘void (*)(GtkWidget *, int,  int,  int)’ {aka ‘void (*)(struct _GtkWidget *, int,  int,  int)’} from incompatible pointer type ‘void (*)(GtkWidget *, GtkAllocation *)’ {aka ‘void (*)(struct _GtkWidget *, struct _cairo_rectangle_int *)’} [-Wincompatible-pointer-types]
+  125 |         widget_class->size_allocate        = quiver_navigation_control_size_allocate;
+      |                                            ^
+libquiver/quiver-navigation-control.c:126:21: error: ‘GtkWidgetClass’ {aka ‘struct _GtkWidgetClass’} has no member named ‘get_preferred_width’
+  126 |         widget_class->get_preferred_width  = quiver_navigation_control_get_preferred_width;
+      |                     ^~
+libquiver/quiver-navigation-control.c:127:21: error: ‘GtkWidgetClass’ {aka ‘struct _GtkWidgetClass’} has no member named ‘get_preferred_height’
+  127 |         widget_class->get_preferred_height = quiver_navigation_control_get_preferred_height;
+      |                     ^~
+libquiver/quiver-navigation-control.c:128:21: error: ‘GtkWidgetClass’ {aka ‘struct _GtkWidgetClass’} has no member named ‘draw’
+  128 |         widget_class->draw                 = quiver_navigation_control_draw;
+      |                     ^~
+libquiver/quiver-navigation-control.c:129:21: error: ‘GtkWidgetClass’ {aka ‘struct _GtkWidgetClass’} has no member named ‘configure_event’
+  129 |         widget_class->configure_event      = quiver_navigation_control_configure_event;
+      |                     ^~
+libquiver/quiver-navigation-control.c:129:46: error: ‘quiver_navigation_control_configure_event’ undeclared (first use in this function); did you mean ‘quiver_navigation_control_send_configure’?
+  129 |         widget_class->configure_event      = quiver_navigation_control_configure_event;
+      |                                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                              quiver_navigation_control_send_configure
+libquiver/quiver-navigation-control.c:129:46: note: each undeclared identifier is reported only once for each function it appears in
+libquiver/quiver-navigation-control.c:130:21: error: ‘GtkWidgetClass’ {aka ‘struct _GtkWidgetClass’} has no member named ‘button_press_event’
+  130 |         widget_class->button_press_event   = quiver_navigation_control_button_press_event;
+      |                     ^~
+libquiver/quiver-navigation-control.c:130:46: error: ‘quiver_navigation_control_button_press_event’ undeclared (first use in this function); did you mean ‘quiver_navigation_control_set_vadjustment’?
+  130 |         widget_class->button_press_event   = quiver_navigation_control_button_press_event;
+      |                                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                              quiver_navigation_control_set_vadjustment
+libquiver/quiver-navigation-control.c:141:21: error: ‘GtkWidgetClass’ {aka ‘struct _GtkWidgetClass’} has no member named ‘button_release_event’
+  141 |         widget_class->button_release_event = quiver_navigation_control_button_release_event;
+      |                     ^~
+libquiver/quiver-navigation-control.c:141:46: error: ‘quiver_navigation_control_button_release_event’ undeclared (first use in this function); did you mean ‘quiver_navigation_control_set_vadjustment’?
+  141 |         widget_class->button_release_event = quiver_navigation_control_button_release_event;
+      |                                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                              quiver_navigation_control_set_vadjustment
+libquiver/quiver-navigation-control.c:142:21: error: ‘GtkWidgetClass’ {aka ‘struct _GtkWidgetClass’} has no member named ‘motion_notify_event’
+  142 |         widget_class->motion_notify_event  = quiver_navigation_control_motion_notify_event;
+      |                     ^~
+libquiver/quiver-navigation-control.c:142:46: error: ‘quiver_navigation_control_motion_notify_event’ undeclared (first use in this function); did you mean ‘quiver_navigation_control_set_vadjustment’?
+  142 |         widget_class->motion_notify_event  = quiver_navigation_control_motion_notify_event;
+      |                                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                              quiver_navigation_control_set_vadjustment
+libquiver/quiver-navigation-control.c:164:9: warning: ‘g_type_class_add_private’ is deprecated [-Wdeprecated-declarations]
+  164 |         g_type_class_add_private (obj_class, sizeof (QuiverNavigationControlPrivate));
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/glib-2.0/gobject/gobject.h:26,
+                 from /usr/include/glib-2.0/gobject/gbinding.h:31,
+                 from /usr/include/glib-2.0/glib-object.h:24,
+                 from /usr/include/gtk-4.0/gtk/css/gtkcssenumtypes.h:11,
+                 from /usr/include/gtk-4.0/gtk/css/gtkcss.h:33,
+                 from /usr/include/gtk-4.0/gtk/gtk.h:29,
+                 from libquiver/quiver-navigation-control.c:2:
+/usr/include/glib-2.0/gobject/gtype.h:1497:10: note: declared here
+ 1497 | void     g_type_class_add_private       (gpointer                    g_class,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c: In function ‘quiver_navigation_control_init’:
+libquiver/quiver-navigation-control.c:170:20: warning: Deprecated pre-processor symbol: replace with "G_ADD_PRIVATE"
+  170 |         navcontrol->priv = QUIVER_NAVIGATION_CONTROL_GET_PRIVATE(navcontrol);
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:182:34: warning: passing argument 1 of ‘gtk_widget_set_can_focus’ from incompatible pointer type [-Wincompatible-pointer-types]
+  182 |         gtk_widget_set_can_focus(navcontrol,TRUE);
+      |                                  ^~~~~~~~~~
+      |                                  |
+      |                                  QuiverNavigationControl * {aka struct _QuiverNavigationControl *}
+In file included from /usr/include/gtk-4.0/gtk/gtkapplication.h:26,
+                 from /usr/include/gtk-4.0/gtk/gtkwindow.h:32,
+                 from /usr/include/gtk-4.0/gtk/gtkaboutdialog.h:29,
+                 from /usr/include/gtk-4.0/gtk/gtk.h:33:
+/usr/include/gtk-4.0/gtk/gtkwidget.h:374:65: note: expected ‘GtkWidget *’ {aka ‘struct _GtkWidget *’} but argument is of type ‘QuiverNavigationControl *’ {aka ‘struct _QuiverNavigationControl *’}
+  374 | void       gtk_widget_set_can_focus       (GtkWidget           *widget,
+      |                                            ~~~~~~~~~~~~~~~~~~~~~^~~~~~
+libquiver/quiver-navigation-control.c: In function ‘quiver_navigation_control_realize’:
+libquiver/quiver-navigation-control.c:230:9: error: unknown type name ‘GdkWindowAttr’; did you mean ‘GtkWindow’?
+  230 |         GdkWindowAttr attributes;
+      |         ^~~~~~~~~~~~~
+      |         GtkWindow
+libquiver/quiver-navigation-control.c:237:9: warning: implicit declaration of function ‘gtk_widget_set_realized’; did you mean ‘gtk_widget_get_realized’? [-Wimplicit-function-declaration]
+  237 |         gtk_widget_set_realized (widget, TRUE);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~
+      |         gtk_widget_get_realized
+libquiver/quiver-navigation-control.c:239:19: error: request for member ‘window_type’ in something not a structure or union
+  239 |         attributes.window_type = GDK_WINDOW_CHILD;
+      |                   ^
+libquiver/quiver-navigation-control.c:239:34: error: ‘GDK_WINDOW_CHILD’ undeclared (first use in this function); did you mean ‘GTK_WINDOW_CLASS’?
+  239 |         attributes.window_type = GDK_WINDOW_CHILD;
+      |                                  ^~~~~~~~~~~~~~~~
+      |                                  GTK_WINDOW_CLASS
+libquiver/quiver-navigation-control.c:240:9: warning: ‘gtk_widget_get_allocation’ is deprecated: Use 'gtk_widget_compute_bounds' instead [-Wdeprecated-declarations]
+  240 |         gtk_widget_get_allocation(widget, &allocation);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/include/gtk-4.0/gtk/gtkwidget.h:479:23: note: declared here
+  479 | void                  gtk_widget_get_allocation         (GtkWidget     *widget,
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:241:19: error: request for member ‘x’ in something not a structure or union
+  241 |         attributes.x = allocation.x;
+      |                   ^
+libquiver/quiver-navigation-control.c:242:19: error: request for member ‘y’ in something not a structure or union
+  242 |         attributes.y = allocation.y;
+      |                   ^
+libquiver/quiver-navigation-control.c:243:19: error: request for member ‘width’ in something not a structure or union
+  243 |         attributes.width = gtk_widget_get_allocated_width(widget);
+      |                   ^
+libquiver/quiver-navigation-control.c:243:9: warning: ‘gtk_widget_get_allocated_width’ is deprecated: Use 'gtk_widget_get_width' instead [-Wdeprecated-declarations]
+  243 |         attributes.width = gtk_widget_get_allocated_width(widget);
+      |         ^~~~~~~~~~
+/usr/include/gtk-4.0/gtk/gtkwidget.h:472:23: note: declared here
+  472 | int                   gtk_widget_get_allocated_width    (GtkWidget     *widget);
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:244:19: error: request for member ‘height’ in something not a structure or union
+  244 |         attributes.height = gtk_widget_get_allocated_height(widget);
+      |                   ^
+libquiver/quiver-navigation-control.c:244:9: warning: ‘gtk_widget_get_allocated_height’ is deprecated: Use 'gtk_widget_get_height' instead [-Wdeprecated-declarations]
+  244 |         attributes.height = gtk_widget_get_allocated_height(widget);
+      |         ^~~~~~~~~~
+/usr/include/gtk-4.0/gtk/gtkwidget.h:474:23: note: declared here
+  474 | int                   gtk_widget_get_allocated_height   (GtkWidget     *widget);
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:245:19: error: request for member ‘wclass’ in something not a structure or union
+  245 |         attributes.wclass = GDK_INPUT_OUTPUT;
+      |                   ^
+libquiver/quiver-navigation-control.c:245:29: error: ‘GDK_INPUT_OUTPUT’ undeclared (first use in this function)
+  245 |         attributes.wclass = GDK_INPUT_OUTPUT;
+      |                             ^~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:246:19: error: request for member ‘visual’ in something not a structure or union
+  246 |         attributes.visual = gtk_widget_get_visual (widget);
+      |                   ^
+libquiver/quiver-navigation-control.c:246:29: warning: implicit declaration of function ‘gtk_widget_get_visual’; did you mean ‘gtk_widget_get_visible’? [-Wimplicit-function-declaration]
+  246 |         attributes.visual = gtk_widget_get_visual (widget);
+      |                             ^~~~~~~~~~~~~~~~~~~~~
+      |                             gtk_widget_get_visible
+libquiver/quiver-navigation-control.c:250:19: error: request for member ‘event_mask’ in something not a structure or union
+  250 |         attributes.event_mask = gtk_widget_get_events (widget) |
+      |                   ^
+libquiver/quiver-navigation-control.c:250:33: warning: implicit declaration of function ‘gtk_widget_get_events’; did you mean ‘gtk_widget_get_parent’? [-Wimplicit-function-declaration]
+  250 |         attributes.event_mask = gtk_widget_get_events (widget) |
+      |                                 ^~~~~~~~~~~~~~~~~~~~~
+      |                                 gtk_widget_get_parent
+libquiver/quiver-navigation-control.c:251:44: error: ‘GDK_EXPOSURE_MASK’ undeclared (first use in this function); did you mean ‘GDK_HYPER_MASK’?
+  251 |                                            GDK_EXPOSURE_MASK |
+      |                                            ^~~~~~~~~~~~~~~~~
+      |                                            GDK_HYPER_MASK
+libquiver/quiver-navigation-control.c:252:44: error: ‘GDK_KEY_PRESS_MASK’ undeclared (first use in this function); did you mean ‘GDK_KEY_PRESS’?
+  252 |                                            GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK |
+      |                                            ^~~~~~~~~~~~~~~~~~
+      |                                            GDK_KEY_PRESS
+libquiver/quiver-navigation-control.c:252:65: error: ‘GDK_KEY_RELEASE_MASK’ undeclared (first use in this function); did you mean ‘GDK_KEY_RELEASE’?
+  252 |                                            GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK |
+      |                                                                 ^~~~~~~~~~~~~~~~~~~~
+      |                                                                 GDK_KEY_RELEASE
+libquiver/quiver-navigation-control.c:253:44: error: ‘GDK_BUTTON_PRESS_MASK’ undeclared (first use in this function); did you mean ‘GDK_BUTTON_PRESS’?
+  253 |                                            GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+      |                                            ^~~~~~~~~~~~~~~~~~~~~
+      |                                            GDK_BUTTON_PRESS
+libquiver/quiver-navigation-control.c:253:68: error: ‘GDK_BUTTON_RELEASE_MASK’ undeclared (first use in this function); did you mean ‘GDK_BUTTON_RELEASE’?
+  253 |                                            GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+      |                                                                    ^~~~~~~~~~~~~~~~~~~~~~~
+      |                                                                    GDK_BUTTON_RELEASE
+libquiver/quiver-navigation-control.c:254:44: error: ‘GDK_POINTER_MOTION_MASK’ undeclared (first use in this function)
+  254 |                                            GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK |
+      |                                            ^~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:254:70: error: ‘GDK_POINTER_MOTION_HINT_MASK’ undeclared (first use in this function)
+  254 |                                            GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK |
+      |                                                                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:255:44: error: ‘GDK_LEAVE_NOTIFY_MASK’ undeclared (first use in this function); did you mean ‘GDK_LEAVE_NOTIFY’?
+  255 |                                            GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK;
+      |                                            ^~~~~~~~~~~~~~~~~~~~~
+      |                                            GDK_LEAVE_NOTIFY
+libquiver/quiver-navigation-control.c:255:68: error: ‘GDK_SCROLL_MASK’ undeclared (first use in this function); did you mean ‘GDK_SCROLL_LEFT’?
+  255 |                                            GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK;
+      |                                                                    ^~~~~~~~~~~~~~~
+      |                                                                    GDK_SCROLL_LEFT
+libquiver/quiver-navigation-control.c:257:27: error: ‘GDK_WA_X’ undeclared (first use in this function); did you mean ‘GDK_AXIS_X’?
+  257 |         attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;//FIXME: | GDK_WA_COLORMAP;
+      |                           ^~~~~~~~
+      |                           GDK_AXIS_X
+libquiver/quiver-navigation-control.c:257:38: error: ‘GDK_WA_Y’ undeclared (first use in this function); did you mean ‘GDK_AXIS_Y’?
+  257 |         attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;//FIXME: | GDK_WA_COLORMAP;
+      |                                      ^~~~~~~~
+      |                                      GDK_AXIS_Y
+libquiver/quiver-navigation-control.c:257:49: error: ‘GDK_WA_VISUAL’ undeclared (first use in this function)
+  257 |         attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;//FIXME: | GDK_WA_COLORMAP;
+      |                                                 ^~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:259:9: warning: implicit declaration of function ‘gtk_widget_set_window’; did you mean ‘gtk_widget_get_width’? [-Wimplicit-function-declaration]
+  259 |         gtk_widget_set_window(widget, gdk_window_new (gtk_widget_get_parent_window (widget), &attributes, attributes_mask));
+      |         ^~~~~~~~~~~~~~~~~~~~~
+      |         gtk_widget_get_width
+libquiver/quiver-navigation-control.c:259:39: warning: implicit declaration of function ‘gdk_window_new’; did you mean ‘gtk_window_new’? [-Wimplicit-function-declaration]
+  259 |         gtk_widget_set_window(widget, gdk_window_new (gtk_widget_get_parent_window (widget), &attributes, attributes_mask));
+      |                                       ^~~~~~~~~~~~~~
+      |                                       gtk_window_new
+libquiver/quiver-navigation-control.c:259:55: warning: implicit declaration of function ‘gtk_widget_get_parent_window’; did you mean ‘gtk_widget_get_parent’? [-Wimplicit-function-declaration]
+  259 |         gtk_widget_set_window(widget, gdk_window_new (gtk_widget_get_parent_window (widget), &attributes, attributes_mask));
+      |                                                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                                       gtk_widget_get_parent
+libquiver/quiver-navigation-control.c:260:9: warning: implicit declaration of function ‘gdk_window_set_user_data’; did you mean ‘gtk_window_set_modal’? [-Wimplicit-function-declaration]
+  260 |         gdk_window_set_user_data (gtk_widget_get_window(widget), navcontrol);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+      |         gtk_window_set_modal
+libquiver/quiver-navigation-control.c:260:35: warning: implicit declaration of function ‘gtk_widget_get_window’; did you mean ‘gtk_widget_get_width’? [-Wimplicit-function-declaration]
+  260 |         gdk_window_set_user_data (gtk_widget_get_window(widget), navcontrol);
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+      |                                   gtk_widget_get_width
+libquiver/quiver-navigation-control.c:262:9: warning: implicit declaration of function ‘gtk_widget_set_style’; did you mean ‘gtk_widget_get_type’? [-Wimplicit-function-declaration]
+  262 |         gtk_widget_set_style(widget, gtk_style_attach(gtk_widget_get_style(widget), gtk_widget_get_window(widget)));
+      |         ^~~~~~~~~~~~~~~~~~~~
+      |         gtk_widget_get_type
+libquiver/quiver-navigation-control.c:262:38: warning: implicit declaration of function ‘gtk_style_attach’; did you mean ‘gtk_grid_attach’? [-Wimplicit-function-declaration]
+  262 |         gtk_widget_set_style(widget, gtk_style_attach(gtk_widget_get_style(widget), gtk_widget_get_window(widget)));
+      |                                      ^~~~~~~~~~~~~~~~
+      |                                      gtk_grid_attach
+libquiver/quiver-navigation-control.c:262:55: warning: implicit declaration of function ‘gtk_widget_get_style’; did you mean ‘gtk_widget_get_type’? [-Wimplicit-function-declaration]
+  262 |         gtk_widget_set_style(widget, gtk_style_attach(gtk_widget_get_style(widget), gtk_widget_get_window(widget)));
+      |                                                       ^~~~~~~~~~~~~~~~~~~~
+      |                                                       gtk_widget_get_type
+libquiver/quiver-navigation-control.c:263:9: warning: implicit declaration of function ‘gtk_style_set_background’; did you mean ‘gtk_render_background’? [-Wimplicit-function-declaration]
+  263 |         gtk_style_set_background (gtk_widget_get_style(widget), gtk_widget_get_window(widget), GTK_STATE_NORMAL);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+      |         gtk_render_background
+libquiver/quiver-navigation-control.c:263:96: error: ‘GTK_STATE_NORMAL’ undeclared (first use in this function); did you mean ‘GTK_STATE_FLAG_NORMAL’?
+  263 |         gtk_style_set_background (gtk_widget_get_style(widget), gtk_widget_get_window(widget), GTK_STATE_NORMAL);
+      |                                                                                                ^~~~~~~~~~~~~~~~
+      |                                                                                                GTK_STATE_FLAG_NORMAL
+libquiver/quiver-navigation-control.c: In function ‘quiver_navigation_control_size_allocate’:
+libquiver/quiver-navigation-control.c:283:9: warning: implicit declaration of function ‘gtk_widget_set_allocation’; did you mean ‘gtk_widget_get_allocation’? [-Wimplicit-function-declaration]
+  283 |         gtk_widget_set_allocation(widget, allocation);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |         gtk_widget_get_allocation
+libquiver/quiver-navigation-control.c:287:17: warning: implicit declaration of function ‘gdk_window_move_resize’; did you mean ‘gtk_window_maximize’? [-Wimplicit-function-declaration]
+  287 |                 gdk_window_move_resize (gtk_widget_get_window(widget),
+      |                 ^~~~~~~~~~~~~~~~~~~~~~
+      |                 gtk_window_maximize
+libquiver/quiver-navigation-control.c: In function ‘quiver_navigation_control_send_configure’:
+libquiver/quiver-navigation-control.c:325:27: warning: implicit declaration of function ‘gdk_event_new’; did you mean ‘gdk_event_ref’? [-Wimplicit-function-declaration]
+  325 |         GdkEvent *event = gdk_event_new (GDK_CONFIGURE);
+      |                           ^~~~~~~~~~~~~
+      |                           gdk_event_ref
+libquiver/quiver-navigation-control.c:325:42: error: ‘GDK_CONFIGURE’ undeclared (first use in this function); did you mean ‘GDK_MONITOR’?
+  325 |         GdkEvent *event = gdk_event_new (GDK_CONFIGURE);
+      |                                          ^~~~~~~~~~~~~
+      |                                          GDK_MONITOR
+libquiver/quiver-navigation-control.c:330:14: error: invalid use of incomplete typedef ‘GdkEvent’ {aka ‘struct _GdkEvent’}
+  330 |         event->configure.window = g_object_ref (gtk_widget_get_window(widget));
+      |              ^~
+libquiver/quiver-navigation-control.c:330:49: warning: passing argument 1 of ‘g_object_ref’ makes pointer from integer without a cast [-Wint-conversion]
+  330 |         event->configure.window = g_object_ref (gtk_widget_get_window(widget));
+      |                                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                                 |
+      |                                                 int
+/usr/include/glib-2.0/gobject/gobject.h:533:64: note: in definition of macro ‘g_object_ref’
+  533 | #define g_object_ref(Obj) ((glib_typeof (Obj)) (g_object_ref) (Obj))
+      |                                                                ^~~
+/usr/include/glib-2.0/gobject/gobject.h:513:64: note: expected ‘gpointer’ {aka ‘void *’} but argument is of type ‘int’
+  513 | gpointer    g_object_ref                      (gpointer        object);
+      |                                                ~~~~~~~~~~~~~~~~^~~~~~
+/usr/include/glib-2.0/gobject/gobject.h:533:28: warning: cast from pointer to integer of different size [-Wpointer-to-int-cast]
+  533 | #define g_object_ref(Obj) ((glib_typeof (Obj)) (g_object_ref) (Obj))
+      |                            ^
+libquiver/quiver-navigation-control.c:330:35: note: in expansion of macro ‘g_object_ref’
+  330 |         event->configure.window = g_object_ref (gtk_widget_get_window(widget));
+      |                                   ^~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:331:14: error: invalid use of incomplete typedef ‘GdkEvent’ {aka ‘struct _GdkEvent’}
+  331 |         event->configure.send_event = TRUE;
+      |              ^~
+libquiver/quiver-navigation-control.c:332:9: warning: ‘gtk_widget_get_allocation’ is deprecated: Use 'gtk_widget_compute_bounds' instead [-Wdeprecated-declarations]
+  332 |         gtk_widget_get_allocation(widget, &allocation);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/include/gtk-4.0/gtk/gtkwidget.h:479:23: note: declared here
+  479 | void                  gtk_widget_get_allocation         (GtkWidget     *widget,
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:333:14: error: invalid use of incomplete typedef ‘GdkEvent’ {aka ‘struct _GdkEvent’}
+  333 |         event->configure.x = allocation.x;
+      |              ^~
+libquiver/quiver-navigation-control.c:334:14: error: invalid use of incomplete typedef ‘GdkEvent’ {aka ‘struct _GdkEvent’}
+  334 |         event->configure.y = allocation.y;
+      |              ^~
+libquiver/quiver-navigation-control.c:335:14: error: invalid use of incomplete typedef ‘GdkEvent’ {aka ‘struct _GdkEvent’}
+  335 |         event->configure.width = gtk_widget_get_allocated_width(widget);
+      |              ^~
+libquiver/quiver-navigation-control.c:335:9: warning: ‘gtk_widget_get_allocated_width’ is deprecated: Use 'gtk_widget_get_width' instead [-Wdeprecated-declarations]
+  335 |         event->configure.width = gtk_widget_get_allocated_width(widget);
+      |         ^~~~~
+/usr/include/gtk-4.0/gtk/gtkwidget.h:472:23: note: declared here
+  472 | int                   gtk_widget_get_allocated_width    (GtkWidget     *widget);
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:336:14: error: invalid use of incomplete typedef ‘GdkEvent’ {aka ‘struct _GdkEvent’}
+  336 |         event->configure.height = gtk_widget_get_allocated_height(widget);
+      |              ^~
+libquiver/quiver-navigation-control.c:336:9: warning: ‘gtk_widget_get_allocated_height’ is deprecated: Use 'gtk_widget_get_height' instead [-Wdeprecated-declarations]
+  336 |         event->configure.height = gtk_widget_get_allocated_height(widget);
+      |         ^~~~~
+/usr/include/gtk-4.0/gtk/gtkwidget.h:474:23: note: declared here
+  474 | int                   gtk_widget_get_allocated_height   (GtkWidget     *widget);
+      |                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:338:9: warning: implicit declaration of function ‘gtk_widget_event’; did you mean ‘gtk_widget_pick’? [-Wimplicit-function-declaration]
+  338 |         gtk_widget_event (widget, event);
+      |         ^~~~~~~~~~~~~~~~
+      |         gtk_widget_pick
+libquiver/quiver-navigation-control.c:339:9: warning: implicit declaration of function ‘gdk_event_free’; did you mean ‘gdk_event_ref’? [-Wimplicit-function-declaration]
+  339 |         gdk_event_free (event);
+      |         ^~~~~~~~~~~~~~
+      |         gdk_event_ref
+libquiver/quiver-navigation-control.c: At top level:
+libquiver/quiver-navigation-control.c:343:63: error: unknown type name ‘GdkEventConfigure’
+  343 | quiver_navigation_control_configure_event( GtkWidget *widget, GdkEventConfigure *event )
+      |                                                               ^~~~~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c:478:67: error: unknown type name ‘GdkEventButton’; did you mean ‘GtkMenuButton’?
+  478 | quiver_navigation_control_button_press_event  (GtkWidget *widget, GdkEventButton *event)
+      |                                                                   ^~~~~~~~~~~~~~
+      |                                                                   GtkMenuButton
+libquiver/quiver-navigation-control.c:493:68: error: unknown type name ‘GdkEventButton’; did you mean ‘GtkMenuButton’?
+  493 | quiver_navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event)
+      |                                                                    ^~~~~~~~~~~~~~
+      |                                                                    GtkMenuButton
+libquiver/quiver-navigation-control.c:499:67: error: unknown type name ‘GdkEventMotion’
+  499 | quiver_navigation_control_motion_notify_event (GtkWidget *widget, GdkEventMotion *event)
+      |                                                                   ^~~~~~~~~~~~~~
+libquiver/quiver-navigation-control.c: In function ‘quiver_navigation_control_set_pixbuf’:
+libquiver/quiver-navigation-control.c:639:25: warning: implicit declaration of function ‘gdk_window_invalidate_rect’; did you mean ‘gtk_list_box_invalidate_sort’? [-Wimplicit-function-declaration]
+  639 |                         gdk_window_invalidate_rect(gtk_widget_get_window(widget),&pixbuf_rect,FALSE);
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                         gtk_list_box_invalidate_sort
