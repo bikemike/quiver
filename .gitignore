@@ -51,3 +51,5 @@ libquiver/quiver-marshallers.h
 
 # Backup files
 *~
+po/.intltool-merge-cache
+po/.intltool-merge-cache.lock
