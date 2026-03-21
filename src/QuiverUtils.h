@@ -5,12 +5,12 @@
 
 namespace QuiverUtils
 {
-	GtkAction* GetAction(GtkUIManager* ui,const char * action_name);
-	void SetActionsSensitive(GtkUIManager *pUIManager, const gchar** actions, gint n_actions, gboolean bSensitive);
+	gpointer* GetAction(gpointer* ui,const char * action_name);
+	void SetActionsSensitive(gpointer *pUIManager, const gchar** actions, gint n_actions, gboolean bSensitive);
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation);
 	
-	void DisconnectUnmodifiedAccelerators(GtkUIManager *pUIManager);
-	void ConnectUnmodifiedAccelerators(GtkUIManager *pUIManager);
+	void DisconnectUnmodifiedAccelerators(gpointer *pUIManager);
+	void ConnectUnmodifiedAccelerators(gpointer *pUIManager);
 }
 
 #endif

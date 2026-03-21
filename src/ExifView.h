@@ -17,7 +17,7 @@ public:
 	GtkWidget *GetWidget();
 	void SetQuiverFile(QuiverFile quiverFile);
 
-	void SetUIManager(GtkUIManager *ui_manager);
+	void SetUIManager(gpointer *ui_manager);
 
 	class ExifViewImpl;
 	typedef boost::shared_ptr<ExifViewImpl> ExifViewImplPtr;

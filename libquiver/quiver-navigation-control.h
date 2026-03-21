@@ -16,15 +16,7 @@ G_BEGIN_DECLS
 
 typedef struct _QuiverNavigationControl        QuiverNavigationControl;
 typedef struct _QuiverNavigationControlClass   QuiverNavigationControlClass;
-typedef struct _QuiverNavigationControlPrivate QuiverNavigationControlPrivate;
 
-struct _QuiverNavigationControl
-{
-	GtkWidget parent;
-
-	/* private */
-	QuiverNavigationControlPrivate *priv;
-};
 
 struct _QuiverNavigationControlClass
 {
@@ -36,7 +28,6 @@ struct _QuiverNavigationControlClass
 	void (*_reserved2) (void);
 	void (*_reserved3) (void);
 	void (*_reserved4) (void);
-	void (*_reserved5) (void);
 
 };
 
@@ -46,10 +37,10 @@ GType	   quiver_navigation_control_get_type (void) G_GNUC_CONST;
 GtkWidget *quiver_navigation_control_new ();
 GtkWidget *quiver_navigation_control_new_with_adjustments (GtkAdjustment *hadjust, GtkAdjustment *vadjust);
 
-void       quiver_navigation_control_set_pixbuf(QuiverNavigationControl *navcontrol, GdkPixbuf *pixbuf);
+
+void quiver_navigation_control_set_pixbuf (QuiverNavigationControl *navcontrol, GdkPixbuf *pixbuf);
 
 
 G_END_DECLS
 
 #endif
-

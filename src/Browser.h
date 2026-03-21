@@ -22,7 +22,7 @@ public:
 	
 	void SetImageList(ImageListPtr list);
 	
-	void SetUIManager(GtkUIManager *ui_manager);
+	void SetUIManager(gpointer *ui_manager);
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 	
 	void GrabFocus();

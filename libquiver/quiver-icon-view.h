@@ -16,7 +16,6 @@ G_BEGIN_DECLS
 
 typedef struct _QuiverIconView        QuiverIconView;
 typedef struct _QuiverIconViewClass   QuiverIconViewClass;
-typedef struct _QuiverIconViewPrivate QuiverIconViewPrivate;
 
 enum _QuiverIconOverlayType
 {
@@ -58,21 +57,10 @@ typedef GdkPixbuf* (*QuiverIconViewGetIconPixbufFunc) (QuiverIconView *iconview,
 typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,gulong cell,gint* actual_width, gint *actual_height, gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview,gulong cell, QuiverIconOverlayType type,gpointer user_data);
 
-struct _QuiverIconView
-{
-	GtkWidget parent;
-
-	/* private */
-	QuiverIconViewPrivate *priv;
-};
 
 struct _QuiverIconViewClass
 {
 	GtkWidgetClass parent_class;
-
-	void  (*set_scroll_adjustments)   (QuiverIconView	    *iconview,
-					 GtkAdjustment  *hadjustment,
-					 GtkAdjustment  *vadjustment);
 
 	void (*cell_clicked) (QuiverIconView *iconview,gulong cell);
 	void (*cell_activated) (QuiverIconView *iconview,gulong cell);
@@ -143,4 +131,3 @@ G_END_DECLS
 
 
 #endif
-

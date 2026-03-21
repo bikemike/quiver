@@ -16,7 +16,6 @@ G_BEGIN_DECLS
 
 typedef struct _QuiverImageView        QuiverImageView;
 typedef struct _QuiverImageViewClass   QuiverImageViewClass;
-typedef struct _QuiverImageViewPrivate QuiverImageViewPrivate;
 
 
 typedef enum _QuiverImageViewMouseMode {
@@ -41,21 +40,9 @@ typedef enum QuiverImageViewMagnificationMode{
 } QuiverImageViewMagnificationMode;
 
 
-struct _QuiverImageView
-{
-	GtkWidget parent;
-
-	/* private */
-	QuiverImageViewPrivate *priv;
-};
-
 struct _QuiverImageViewClass
 {
 	GtkWidgetClass parent_class;
-
-	void  (*set_scroll_adjustments)   (QuiverImageView	    *imageview,
-					 GtkAdjustment  *hadjustment,
-					 GtkAdjustment  *vadjustment);
 
 	void (*activated) (QuiverImageView *imageview);
 	void (*reload) (QuiverImageView *imageview);
@@ -118,4 +105,3 @@ void quiver_image_view_activate(QuiverImageView *iconview);
 G_END_DECLS
 
 #endif
-
