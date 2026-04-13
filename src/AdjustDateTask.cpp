@@ -252,18 +252,18 @@ void AdjustDateTask::Run()
 			{
 				// adjust the modification time of the file
 				g_file_info_get_modification_time(pInfo, &tv);
-
+				
 				// the adjustment is done after the exif data is modified
 				// see below
 			}
 
-
+			
 			if ((DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields) ||
 				(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
 				(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
 			{
 				ExifData *pExifData = f.GetExifData();
-
+			
 				time_t date = 0;
 				if (NULL != pExifData)
 				{
@@ -280,7 +280,7 @@ void AdjustDateTask::Run()
 					{
 						char szDate[20];
 						exif_entry_get_value(pEntry,szDate,20);
-
+			
 						tm tm_exif_time;
 						int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
 							&tm_exif_time.tm_year,
@@ -331,17 +331,17 @@ void AdjustDateTask::Run()
 									//now save the file:
 									ImageSaveManager::GetInstance()->SaveImage(f);
 								}
-							}
+							} 
 
 
-
+							
 						}
 						
 					}
 					exif_data_unref(pExifData);
 				}
 			}
-
+			
 			if (NULL != pInfo)
 			{
 				// adjust the modification time of the file

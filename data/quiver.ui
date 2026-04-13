@@ -1125,7 +1125,7 @@ see http://foldersize.sf.net
                 <property name="can_focus">False</property>
                 <property name="xalign">0</property>
                 <property name="label" translatable="yes">Template variables:
-%Y = Year, %m  = month, %d = day,
+%Y = Year, %m  = month, %d = day, 
 %H = hour, %M = minute, %S = second
 # = count (more # symbols will cause padding)</property>
                 <attributes>
@@ -1973,7 +1973,7 @@ see http://foldersize.sf.net
                     <property name="can_focus">False</property>
                     <property name="xalign">0</property>
                     <property name="label" translatable="yes">Template variables:
-%Y = Year, %m  = month, %d = day,
+%Y = Year, %m  = month, %d = day, 
 %H = hour, %M = minute, %S = second
 # = count (more # symbols will cause padding)</property>
                     <attributes>

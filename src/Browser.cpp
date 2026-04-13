@@ -794,7 +794,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	// popup menu stuff
 	g_signal_connect(G_OBJECT(m_pIconView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
 	g_signal_connect(G_OBJECT(m_pIconView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);	
-	g_signal_connect(G_OBJECT(m_pIconView), "motion-notify-event", G_CALLBACK(iconview_motion_notify), this);
+	g_signal_connect(G_OBJECT(m_pIconView), "motion-notify-event", G_CALLBACK(iconview_motion_notify), this);	
 #ifdef QUIVER_MAEMO
 	g_signal_connect (G_OBJECT (m_pIconView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), this);
 	gtk_widget_tap_and_hold_setup (m_pIconView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
@@ -1349,7 +1349,7 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, guint cell
 	return pixbuf;
 }
 
-static GdkPixbuf*
+static GdkPixbuf* 
 overlay_pixbuf_callback(QuiverIconView* iconview, guint cell, QuiverIconOverlayType type, gpointer user_data)
 {
 	GdkPixbuf* pixbuf = NULL;
@@ -1805,7 +1805,7 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	
 	if (1 == dirs.size() && 0 == files.size())
 	{
-		GFile* file = g_file_new_for_uri(dirs.front().c_str());
+		GFile* file = g_file_new_for_uri(dirs.front().c_str()); 
 		char* local_path = g_file_get_path(file);
 		if (NULL != local_path)
 		{
@@ -1909,7 +1909,7 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 			}
 			else
 			{
-				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
+				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
 				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
@@ -1954,7 +1954,7 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
 
-	if (gtk_widget_get_mapped(m_pBrowserImpl->m_pIconView) &&
+	if (gtk_widget_get_mapped(m_pBrowserImpl->m_pIconView) && 
 		item.m_ulIndex < m_pBrowserImpl->m_ImageListPtr->GetSize())
 	{
 		QuiverFile f(item.m_QuiverFile);

@@ -288,7 +288,7 @@ const char* QuiverFile::QuiverFileImpl::GetMimeType()
 	if (NULL == m_szMimeType)
 	{
 		GFileInfo *pInfo = GetFileInfo();
-
+		
 		if (NULL != pInfo)
 		{
 			const char* pContentType = g_file_info_get_content_type(pInfo);
@@ -330,7 +330,7 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 		if (NULL != gFileInfo)
 		{
 			m_pGFileInfo = gFileInfo;
-
+			
 			m_fDataExists = (QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_INFO);
 			m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_INFO);
 		}
@@ -441,9 +441,9 @@ static void get_thumbnail_embedded_size(GdkPixbuf* pixbuf, gint *width, gint *he
 
 	const gchar* str_thumb_width = gdk_pixbuf_get_option (pixbuf, "tEXt::Thumb::Image::Width");
 	const gchar* str_thumb_height = gdk_pixbuf_get_option (pixbuf, "tEXt::Thumb::Image::Height");
-
+	
 	// if we didn't get the width and height we should resave thumbnail
-	// with this information
+	// with this information 
 	if (NULL != str_thumb_width && NULL != str_thumb_height)
 	{
 		*width  = atol(str_thumb_width);
@@ -565,7 +565,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				get_thumbnail_embedded_size(thumb_pixbuf, &img_width, &img_height);
 				// if we didn't get the width and height we should resave thumbnail
 				// with this information 
-				if (-1 == img_width || -1 == img_height)
+				if (-1 == img_width || -1 == img_height) 
 				{
 					if (IsVideo())
 					{
@@ -594,7 +594,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 						// the correct orientation so regenerate it
 						g_object_unref(thumb_pixbuf);
 						thumb_pixbuf = NULL;
-						save_thumbnail_to_cache = TRUE;
+						save_thumbnail_to_cache = TRUE;	
 					}
 					else
 					{
@@ -780,19 +780,19 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 			if (NULL != inStream)
 			{
 				PixbufLoaderSizeInfo size_info = {0};
-				size_info.size_request = size;
+				size_info.size_request = size;			
 
 				GdkPixbufLoader* loader = NULL;
-				loader = gdk_pixbuf_loader_new ();
+				loader = gdk_pixbuf_loader_new ();	
 
 				if (NULL != loader)
 				{
-					g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);
-
+					g_signal_connect (loader,"size-prepared",G_CALLBACK (pixbuf_loader_size_prepared), &size_info);	
+		
 					while (0 < (bytes_read = g_input_stream_read(inStream, buffer, buffsize, NULL, NULL)))
 					{
 						tmp_error = NULL;
-
+						
 						gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
 						if (NULL != tmp_error)
 						{
@@ -803,45 +803,45 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 					}
 
 					gdk_pixbuf_loader_close(loader, NULL);
-
+									
 					thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
-
+					
 					if (NULL != thumb_pixbuf)
 						g_object_ref(thumb_pixbuf);
 					
-					g_object_unref(loader);
+					g_object_unref(loader);		
 				}
-
+				
 				g_object_unref(inStream);
-
+		
 				if (NULL != thumb_pixbuf)
 				{
 					// this is just in case we are browsing through the .thumbnail folders
 					// this way it will show the thumbnail at the correct orientation
 					//printf("checking for orientation\n");
 					const gchar* str_orientation = gdk_pixbuf_get_option (thumb_pixbuf, "tEXt::Thumb::Image::Orientation");
-
+				
 					if (NULL != str_orientation)
 					{
 						//printf("we got orientation: %s\n",str_orientation);
 						m_iOrientation = atoi(str_orientation);
-
+						
 					}
 					//printf("got thumb from file\n");
 				}
-
+				
 				if (-1 == m_iWidth || -1 == m_iHeight)
 				{
 					m_iWidth = size_info.width;
 					m_iHeight = size_info.height;
 				}
-
+				
 				if (size_info.width <= size_info.size_request && size_info.height <= size_info.size_request )
 				{
 					// size of image is smaller than size requested so
 					// we do not need to cache it
 					save_thumbnail_to_cache = FALSE;
-				}
+				}			
 			}
 			g_object_unref(gfile);
 		}
@@ -1082,16 +1082,16 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 					// successfully parsed date
 					m_cachedTimeT = mktime(&tm_exif_time);
 				}
-
+				
 			}
 		}
 	}
 	else
 	{
-		// try using exiftool, if available
+	       	// try using exiftool, if available
 		// Date/Time Original              : 2017:01:22 14:39:48
 		// Date/Time Original              : 2011:09:18 17:38:37-07:00 DST
-		// exiftool -DateTimeOriginal -MediaCreateDate FILENAME
+		// exiftool -DateTimeOriginal -MediaCreateDate FILENAME 
 		gchar* output = NULL;
 		bool success = g_spawn_command_line_sync((std::string("exiftool -s3 -DateTimeOriginal -MediaCreateDate \"") + GetFilePath() + "\"").c_str(), &output, NULL,NULL, NULL);
 		if (success)
@@ -1123,7 +1123,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 	}
 
 
-	if (0 == m_cachedTimeT) // unable to get exif date
+	if (0 == m_cachedTimeT) // unable to get exif date	
 	{
 		// use ctime or mtime
 		GFileInfo *pInfo = GetFileInfo();
@@ -1493,7 +1493,7 @@ void QuiverFile::QuiverFileImpl::GetVideoDimensions(gint *width, gint *height)
 {
 	GdkPixbuf* pixbuf = GetThumbnail();
 	if (NULL != pixbuf)
-	{
+	{	
 		get_thumbnail_embedded_size(pixbuf, width, height);
 		g_object_unref(pixbuf);
 	}
@@ -1668,7 +1668,7 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
 
 	gint size_wanted = MIN(width_desired,height_desired);
-
+		
 	GFileInfo* file_info = GetFileInfo();
 	const char* content_type = g_file_info_get_content_type(file_info);
 	GIcon* icon = g_content_type_get_icon(content_type);

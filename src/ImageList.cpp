@@ -23,13 +23,13 @@ extern "C"
 #include <unordered_set>
 typedef std::unordered_map<std::string,GFileMonitor*> PathMonitorMap;
 typedef std::unordered_set<std::string> StringSet;
-typedef std::unordered_map<std::string,GFileMonitorEvent> PathChangedMap;
+typedef std::unordered_map<std::string,GFileMonitorEvent> PathChangedMap; 
 #elif defined(HAVE_TR1)
 #include <tr1/unordered_map>
 #include <tr1/unordered_set>
 typedef std::tr1::unordered_map<std::string,GFileMonitor*> PathMonitorMap;
 typedef std::tr1::unordered_set<std::string> StringSet;
-typedef std::tr1::unordered_map<std::string,GFileMonitorEvent> PathChangedMap;
+typedef std::tr1::unordered_map<std::string,GFileMonitorEvent> PathChangedMap; 
 #elif defined(HAVE_EXT)
 #include <ext/hash_map>
 #include <ext/hash_set>
@@ -47,7 +47,7 @@ namespace __gnu_cxx {
 #endif
 typedef __gnu_cxx::hash_map<std::string,GFileMonitor*> PathMonitorMap;
 typedef __gnu_cxx::hash_set<std::string> StringSet;
-typedef __gnu_cxx::hash_map<std::string,GFileMonitorEvent> PathChangedMap;
+typedef __gnu_cxx::hash_map<std::string,GFileMonitorEvent> PathChangedMap; 
 #else
 
 #include <map>
@@ -55,7 +55,7 @@ typedef __gnu_cxx::hash_map<std::string,GFileMonitorEvent> PathChangedMap;
 
 typedef std::map<std::string,GFileMonitor*> PathMonitorMap;
 typedef std::set<std::string> StringSet;
-typedef std::map<std::string,GFileMonitorEvent> PathChangedMap;
+typedef std::map<std::string,GFileMonitorEvent> PathChangedMap; 
 
 #endif
 
@@ -617,7 +617,7 @@ void monitor_callback (
 	GFile            *file,
 	GFile            *other_file,
 	GFileMonitorEvent event_type,
-	gpointer          user_data)
+	gpointer          user_data) 
 {
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 
@@ -815,7 +815,7 @@ void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool
 						}
 						g_object_unref(parent);
 					}
-
+					
 					if (!bAdded)
 					{
 						// regular file
@@ -833,7 +833,7 @@ void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool
 							{
 								pair<PathMonitorMap::iterator,bool> p;
 
-								p = m_mapFiles.insert(PathMonitorPair(strURI,NULL));
+								p = m_mapFiles.insert(PathMonitorPair(strURI,NULL)); 
 								bAdded = p.second;
 								if (bAdded && m_bEnableMonitor)
 								{
@@ -842,7 +842,7 @@ void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool
 								}
 							}
 						}
-
+						
 						g_object_unref(parent);
 						g_free(dir_uri);
 					}
@@ -989,7 +989,7 @@ bool ImageList::ImageListImpl::AddDirectory(const gchar* uri, bool bRecursive /*
 						QuiverFileList::iterator qitr = m_QuiverFileList.end();
 						qitr = find(m_QuiverFileList.begin(),m_QuiverFileList.end(),qfile);
 						m_QuiverFileList.erase(qitr);
-
+						
 						if (NULL != itr->second)
 						{
 							g_object_unref(itr->second);
@@ -1140,7 +1140,7 @@ bool ImageList::ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
 			if (NULL != content_type)
 			{
 				gchar* mimetype = g_content_type_get_mime_type(content_type);
-
+				
 				if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype ) )
 				{
 					QuiverFile f(uri, info);

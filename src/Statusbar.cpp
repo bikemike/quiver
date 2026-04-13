@@ -282,7 +282,7 @@ void Statusbar::SetText()
 			g_snprintf(status_text,1024,"%s (%.1f%c)",display_name, bytes, unit);
 		}	
 
-		g_object_unref(info);
+		g_object_unref(info);		
 		
 		gtk_statusbar_pop(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext);
 		gtk_statusbar_push(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext,status_text);

@@ -209,7 +209,7 @@ void OrganizeTask::Run()
 	imgListPtr->SetImageList(&listFiles, m_bIncludeSubfolders);
 
 	// adjust exif date
-	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();
+	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();	
 	while (m_iCurrentFile < m_vectQuiverFiles.size() )
 	{
 		GError* error = NULL;
@@ -225,14 +225,14 @@ void OrganizeTask::Run()
 		std::string strDstDir = m_strDestDirURI + G_DIR_SEPARATOR_S + strFolder + m_strAppendedText;
 
 		GFile* dstdir = g_file_new_for_uri(strDstDir.c_str());
-		gboolean made_dir =
+		gboolean made_dir = 
 			g_file_make_directory_with_parents(
 				dstdir, m_PrivateImplPtr->m_pCancellable, &error);
 
 		g_object_unref(dstdir);
 
 		if (NULL != error)
-		{
+		{ 
 			if (G_IO_ERROR_EXISTS != error->code)
 			{
 				printf("error creating directory %s\n", strDstDir.c_str());
@@ -297,14 +297,14 @@ void OrganizeTask::Run()
 			strText = boost::str(boost::format("Copying %s to %s") % shortname % dstname);
 			g_free(shortname);
 		}
-
+		
 		SetProgressText(strText);
 		EmitTaskProgressUpdatedEvent();
 		g_free(dstname);
 
 		GFileCopyFlags flags = G_FILE_COPY_NONE;
 		// G_FILE_COPY_OVERWRITE
-		// FIXME: have an option to overwrite files
+		// FIXME: have an option to overwrite files 
 		/*
 		gchar buffer[512] = "";
 		g_snprintf(buffer, 512, "A file named \"%s\" already exists. Do you want to replace it?",shortname);
@@ -328,7 +328,7 @@ void OrganizeTask::Run()
 		pImpl->m_iLastXFerRVal = (int)(responseType - MessageBox::RESPONSE_TYPE_CUSTOM1);
 		*/
 		error = NULL;
-		gboolean copied =
+		gboolean copied = 
 			g_file_copy(src,
 				dst,
 				flags,
@@ -336,10 +336,10 @@ void OrganizeTask::Run()
 				organize_task_gfile_progress_callback,
 				m_PrivateImplPtr.get(),
 				&error);
-		// if there was an error,
+		// if there was an error, 
 		if (NULL != error)
 		{
-			printf("Error copying file! %s to %s: %s\n", f.GetURI(), strDstPath.c_str(), error->message);
+			printf("Error copying file! %s to %s: %s\n", f.GetURI(), strDstPath.c_str(), error->message); 
 			// message box asking if they want to skip, skip all, retry, cancel
 			g_error_free(error);
 			error = NULL;

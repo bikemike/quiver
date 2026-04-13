@@ -1,14 +1,12 @@
 #ifndef FILE_QUIVER_H
 #define FILE_QUIVER_H
 
-
 #define GDK_PIXBUF_ENABLE_BACKEND
 
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <gtk/gtk.h>
-#include <gdk/gdkkeysyms.h>
 
 #include "PixbufLoaderObserver.h"
 #include "Viewer.h"
@@ -30,16 +28,15 @@ public:
 	~Quiver();
 
 	// member functions
-	void Init();
+	void Init(GtkApplication *app);
 	
 	gboolean TimeoutEventMotionNotify(gpointer data);
 
 	static gboolean idle_quiver_init (gpointer data);
 	gboolean IdleQuiverInit(gpointer data);
 
-	static gboolean event_delete( GtkWidget *widget, GdkEvent  *event, gpointer   data );
-
-	gboolean EventDelete( GtkWidget *widget,GdkEvent  *event,gpointer data );
+	static gboolean window_close_request( GtkWindow *window, gpointer data );
+	gboolean WindowCloseRequest( GtkWindow *window );
 	
 	bool LoadSettings();
 	void SaveSettings();
@@ -66,6 +63,8 @@ public:
 	void OnQuit();
 	
 	void Close();
+
+    GtkApplication* GetApplication();
 		
 private:
 	QuiverImplPtr m_QuiverImplPtr;
@@ -73,4 +72,3 @@ private:
 };
 
 #endif
-

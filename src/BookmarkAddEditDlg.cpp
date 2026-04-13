@@ -127,7 +127,7 @@ BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(Bookmark b, B
 
 	m_pGtkBuilder = gtk_builder_new();
 	gchar* objectids[] = {
-		"BookmarkAddEditDialog",
+		"BookmarkAddEditDialog", 
 		NULL};
 	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 

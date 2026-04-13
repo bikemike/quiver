@@ -1004,7 +1004,7 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 	gtk_tree_model_get(model,iter_parent, FILE_TREE_COLUMN_URI, &uri, -1);
 
 	if (NULL != uri)
-	{
+	{	
 		GFile* file_parent = g_file_new_for_uri(uri);
 		GFile* file_child  = g_file_get_child(file_parent, name);
 
@@ -1035,14 +1035,14 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 		}
 		
 		if (!found_duplicate)
-		{
-
-			gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);
-
-
+		{ 
+		
+			gtk_tree_store_append (GTK_TREE_STORE(model), &iter_child, iter_parent);  
+		
+			
 			GIcon* gicon = folder_tree_get_gicon(file_child,FALSE);
 			char* uri_child = g_file_get_uri(file_child);
-
+		
 			gtk_tree_store_set (GTK_TREE_STORE(model), &iter_child,
 					FILE_TREE_COLUMN_CHECKBOX, FALSE,
 					FILE_TREE_COLUMN_GICON, gicon,
@@ -1062,10 +1062,10 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 			hildon_file_system_info_async_new(uri_child, hildon_fs_info_callback ,pAsyncStruct);
 #endif
 		}
-
+		
 		g_object_unref(file_parent);
 		g_object_unref(file_child);
-
+		
 		g_free(uri);
 	}
 
@@ -1148,11 +1148,11 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 								if (NULL != info)
 								{
 									const gchar* dir_name = g_file_info_get_name(info);
-
-
+		
+		
 									gpointer* orig_key = NULL;
 									gpointer* value    = NULL;
-
+		
 									if (g_hash_table_lookup_extended(data->hash_table, dir_name, orig_key, value))
 									{
 										// if the key exists, remove it from the hash
@@ -1207,12 +1207,12 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 
 						
 						GFileInfo* info = g_file_enumerator_next_file(data->dir_enumerator, NULL, NULL);
-
+							
 						if (NULL != info)
 						{
 
 							GFile* child = g_file_get_child(gfile, g_file_info_get_name(info));
-
+							
 							if ( !g_file_equal(gfile, child)  &&
 								G_FILE_TYPE_DIRECTORY == g_file_info_get_file_type(info) )
 							{
@@ -1227,9 +1227,9 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 							g_object_unref (data->dir_enumerator);
 							data->dir_enumerator = NULL;
 							data->state = SYNC_TREE;
-
+		
 						}
-
+		
 						g_object_unref(gfile);
 	
 						g_free(uri);

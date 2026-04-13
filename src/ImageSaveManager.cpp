@@ -37,7 +37,7 @@ std::string ImageSaverJPEG::GetMimeType()
 	return "image/jpeg";
 }
 
-static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf, ExifData *exifData,
+static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf, ExifData *exifData, 
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data);
 
 bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
@@ -315,15 +315,15 @@ int jpeg_transform_files(char *infile, char *outfile,
 	int MCU_width = src.max_h_samp_factor * DCTSIZE;
 	int MCU_height = src.max_v_samp_factor * DCTSIZE;
 
-	boolean perfect =  jtransform_perfect_transform(
+	boolean perfect =  jtransform_perfect_transform( 
 		src.image_width,
 		src.image_height,
 		MCU_width,
 		MCU_height,JXFORM_ROT_90);
+	 
+	printf("Can do perfect transform: %dx%d with mcu %dx%d   %d\n", src.image_width, src.image_height, MCU_width, MCU_height,perfect);	
 
-	printf("Can do perfect transform: %dx%d with mcu %dx%d   %d\n", src.image_width, src.image_height, MCU_width, MCU_height,perfect);
-
-
+	
 	printf("got here\n");
 
 	/* do exif updating */
@@ -343,7 +343,7 @@ int jpeg_transform_files(char *infile, char *outfile,
 	//jtransform_request_workspace(&src, &transformoption);
 	src_coef_arrays = jpeg_read_coefficients(&src);
 
-	if (NULL == pixbuf)
+	if (NULL == pixbuf)	
 	{
 		jpeg_copy_critical_parameters(&src, &dst);
 
@@ -368,7 +368,7 @@ int jpeg_transform_files(char *infile, char *outfile,
 		jpeg_set_defaults(&dst);
 		/* Make optional parameter settings here */
 		// FIXME: allow setting quality
-		// jpeg_set_quality (j_compress_ptr cinfo, int quality, boolean force_baseline)
+		// jpeg_set_quality (j_compress_ptr cinfo, int quality, boolean force_baseline)	
 
 		JSAMPROW row_pointer[1];	/* pointer to a single row */
 

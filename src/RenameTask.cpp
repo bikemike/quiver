@@ -217,7 +217,7 @@ void RenameTask::Run()
 	std::vector<std::string> m_vectSrc;
 	//for () // go through the list and make s
 	{
-		//  src =
+		//  src = 
 		//  dst = getDestName()
 
 	}
@@ -293,7 +293,7 @@ void RenameTask::Run()
 		GFileCopyFlags flags = G_FILE_COPY_NONE;
 
 		GError* error = NULL;
-		gboolean copied =
+		gboolean copied = 
 			g_file_copy(src,
 				dst,
 				flags,
@@ -301,10 +301,10 @@ void RenameTask::Run()
 				organize_task_gfile_progress_callback,
 				m_PrivateImplPtr.get(),
 				&error);
-		// if there was an error,
+		// if there was an error, 
 		if (NULL != error)
 		{
-			printf("Error renaming file! %s -> %s : %s\n", f.GetURI(), dst_display_name, error->message);
+			printf("Error renaming file! %s -> %s : %s\n", f.GetURI(), dst_display_name, error->message); 
 			g_error_free(error);
 			error = NULL;
 			// message box asking if they want to skip, skip all, retry, cancel
@@ -319,7 +319,7 @@ void RenameTask::Run()
 		g_object_unref(srcdir);
 		g_object_unref(src);
 
-
+	
 
 		/* FIXME: add msgbox for file exists prompt
 
@@ -365,4 +365,6 @@ void RenameTask::Cancelled()
 {
 	g_cancellable_cancel(m_PrivateImplPtr->m_pCancellable);
 }
+
+
 

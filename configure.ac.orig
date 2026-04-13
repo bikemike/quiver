@@ -6,12 +6,12 @@ AC_CONFIG_SRCDIR([src/Quiver.cpp])
 
 AC_CONFIG_MACRO_DIR([m4])
 
-AM_INIT_AUTOMAKE([subdir-objects])
+AM_INIT_AUTOMAKE([subdir-objects]) 
 
 AC_LANG_PUSH([C++])
-AC_CHECK_HEADER([ext/hash_map],[AC_DEFINE([HAVE_EXT],[],["have ext"])],[])
-AC_CHECK_HEADER([tr1/unordered_map],[AC_DEFINE([HAVE_TR1],[],["have tr1"])],[])
-AC_CHECK_HEADER([unordered_map],[AC_DEFINE([HAVE_CXX0X],[],["have cxx0x"])],[])
+AC_CHECK_HEADER([ext/hash_map],[AC_DEFINE([HAVE_EXT],[],["have ext"])],[]) 
+AC_CHECK_HEADER([tr1/unordered_map],[AC_DEFINE([HAVE_TR1],[],["have tr1"])],[]) 
+AC_CHECK_HEADER([unordered_map],[AC_DEFINE([HAVE_CXX0X],[],["have cxx0x"])],[]) 
 AC_LANG_POP([C++])
 
 AM_CONFIG_HEADER([config.h])
@@ -64,7 +64,7 @@ PKG_CHECK_MODULES([GSTREAMER], [gstreamer-1.0 gstreamer-plugins-base-1.0 gstream
 
 
 AC_ARG_WITH(
-	[build_config],
+	[build_config], 
 	[AS_HELP_STRING(
 		[--with-build-config=CFG],
 		[where CFG is one of the following alternate build configurations: maemo])
@@ -72,7 +72,7 @@ AC_ARG_WITH(
 	[build_config=$withval],
 	[])
 
-AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo])
+AM_CONDITIONAL(MAEMO, [test x$build_config = xmaemo]) 
 if test x$build_config = xmaemo; then
 	third_party_dir=`pwd`/${srcdir}/3rdparty
 # Hildon-libs -> libhildon1 (pkg-config name hildon-1)
@@ -105,10 +105,10 @@ if test x$build_config = xmaemo; then
 		boost_signals_static=yes
 		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
 		LIBEXIF_LIBS=${third_party_dir}/libexif/lib/armel/libexif.a
-		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/armel/mt/release/libboost_signals-gcc-mt-1_33_1.a
+		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/armel/mt/release/libboost_signals-gcc-mt-1_33_1.a 
 	else
 		AC_DEFINE(QUIVER_MAEMO,1,[quiver for maemo build configuration])
-		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/x86/mt/release/libboost_signals-gcc-mt-1_33_1.a
+		BOOST_SIGNALS_LIB=${third_party_dir}/boost/lib/x86/mt/release/libboost_signals-gcc-mt-1_33_1.a 
 		ac_boost_path=${third_party_dir}/boost
 		boost_signals_static=yes
 		LIBEXIF_CFLAGS=-I${third_party_dir}/libexif/include
@@ -138,7 +138,7 @@ AC_SUBST([GSTREAMER_CFLAGS])
 AC_SUBST([GSTREAMER_LIBS])
 
 AC_ARG_WITH(
-	[data-dir],
+	[data-dir], 
 	[AS_HELP_STRING(
 		[--with-data-dir=DATA_DIR],
 		[where DATA_DIR is the directory that quiver.ui lives])

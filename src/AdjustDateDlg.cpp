@@ -148,12 +148,12 @@ AdjustDateDlg::AdjustDateDlgPriv::AdjustDateDlgPriv(AdjustDateDlg *parent) :
 {
 	m_pGtkBuilder = gtk_builder_new();
 	gchar* objectids[] = {
-		"AdjustDateDialog",
-		"adjustment3",
-		"adjustment4",
-		"adjustment5",
-		"adjustment6",
-		"adjustment7",
+		"AdjustDateDialog", 
+		"adjustment3", 
+		"adjustment4", 
+		"adjustment5", 
+		"adjustment6", 
+		"adjustment7", 
 		NULL};
 	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 

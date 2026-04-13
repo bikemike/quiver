@@ -8,3 +8,4 @@
 	* insert-header.sin: New file, from gettext-0.18.3.
 	* quot.sed: New file, from gettext-0.18.3.
 	* remove-potcdate.sin: New file, from gettext-0.18.3.
+

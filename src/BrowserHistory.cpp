@@ -126,3 +126,4 @@ std::string BrowserHistory::GetSelectedAtIndex(unsigned int index) const
 
 	return std::string();
 }
+

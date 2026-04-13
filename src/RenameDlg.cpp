@@ -291,10 +291,10 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 		{
 			bIsValid =false;
 			strTitle = "File Error";
-			strMsg = error->message;
+ 			strMsg = error->message;
 			g_error_free(error);
 		}
-
+		
 		g_object_unref(file_src);
 	}
 	else
@@ -399,8 +399,8 @@ static void on_editable_changed (GtkEditable *editable, gpointer user_data)
 
 	std::string strTemplate = gtk_entry_get_text(priv->m_pEntryTemplate);
 	std::string strNewTemplate = strTemplate;
-
-	std::string::iterator itr =
+   
+	std::string::iterator itr = 
 		std::remove_if(strNewTemplate.begin(), strNewTemplate.end(), boost::is_any_of(invalid_chars));
 	strNewTemplate.erase(itr, strNewTemplate.end());
 

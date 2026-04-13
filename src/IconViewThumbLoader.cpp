@@ -76,7 +76,7 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 
 	GetVisibleRange(&iNewStart, &iNewEnd);
 
-	// FIXME: does this check cause thumbnails not to
+	// FIXME: does this check cause thumbnails not to 
 	// reload if the size changes but the range doesn't?
 	if (bForce || m_ulRangeStart != iNewStart || m_ulRangeEnd != iNewEnd )
 	{
