@@ -17,7 +17,7 @@ libexif-dev
 
 autoreconf -vifs
 intltoolize --force
-./configure
+./configure --with-data-dir=($pwd)/data
 make
 
 
