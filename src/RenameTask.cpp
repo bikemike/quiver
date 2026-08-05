@@ -263,7 +263,7 @@ void RenameTask::Run()
 
 		gchar* dstname = NULL;
 		if (!strExtension.empty())
-			dstname = g_strdup_printf("%s%s.%s", strDstName.c_str(), strSpecialCase, strExtension.c_str());
+			dstname = g_strdup_printf("%s%s.%s", strDstName.c_str(), strSpecialCase.c_str(), strExtension.c_str());
 		else
 			dstname = g_strdup_printf("%s", strDstName.c_str());
 
@@ -290,7 +290,7 @@ void RenameTask::Run()
 			g_free(shortname);
 		}
 
-		printf(szText);
+		printf("%s", szText);
 		printf("\n");
 
 		g_free(dst_display_name);

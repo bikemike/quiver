@@ -680,7 +680,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	{
 		int size = thumbSize->size;
 
-		if (IsVideo() && 0)
+		if (IsVideo())
 		{
 			gint n=1, d=1;
 			GdkPixbuf* video_pixbuf = QuiverVideoOps::LoadPixbuf(m_szURI, &n, &d);

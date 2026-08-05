@@ -3069,7 +3069,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			{
 				if ( 2 < folders.size() )
 				{
-					bookmark_name = g_strdup_printf("%s (and %d other folders)", strBaseName.c_str(), folders.size()-1);
+					bookmark_name = g_strdup_printf("%s (and %d other folders)", strBaseName.c_str(), (int)(folders.size()-1));
 				}
 				else
 				{

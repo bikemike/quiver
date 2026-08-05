@@ -8,9 +8,8 @@
 #include <libquiver/quiver-navigation-control.h>
 
 #include <gst/gst.h>
-#include <gdk/gdkx.h>  // for GDK_WINDOW_XID
-#include <gst/video/videooverlay.h>
-
+#include <gst/video/video.h> // For GstVideoSink
+#include <gtk/gtk.h> // For GtkSink
 
 #include "Viewer.h"
 #include "Timer.h"
@@ -123,8 +122,7 @@ static void signal_drag_data_received(GtkWidget *widget,GdkDragContext *drag_con
 static void signal_drag_begin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
 static void signal_drag_end(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
 static void signal_drag_motion (GtkWidget *widget, GdkDragContext *context, gint x, gint y, guint time, gpointer user_data);
-static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_context, gint x, gint y, guint time,  gpointer user_data);   
-static void signal_image_view_realize (GtkWidget * widget, gpointer data);
+static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_context, gint x, gint y, guint time,  gpointer user_data);
 
 
 static gboolean timeout_play_position (gpointer data);
@@ -566,9 +564,8 @@ public:
 	ImageCache m_ThumbnailCache;
 
 	// gstreamer elements for playing videos
-	//GstElement* m_pPipeline;
-	//GstElement* m_pXVImageSink;
-	//guintptr m_pVideoWindowHandle;
+	GstElement* m_pPipeline;
+	GtkWidget*  m_pVideoSinkWidget; // Changed from GstElement* to GtkWidget*
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -1258,13 +1255,11 @@ viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_dat
 			GstFormat format = GST_FORMAT_TIME;
 			gint64 clip_duration = 0;
 
-			/*
 			gboolean queried = gst_element_query_duration(GST_ELEMENT(pViewerImpl->m_pPipeline), format, &clip_duration);
 			if (queried)
 			{
 				gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), ((clip_duration * event->x) / allocation.width));
 			}
-			*/
 
 		}
 	}
@@ -1545,35 +1540,6 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 	{
 		pViewerImpl->m_ImageListPtr->Next();
 	}
-	else if (GDK_SCROLL_SMOOTH == event->direction)
-	{
-		static gdouble delta_x = 0.0;
-		static gdouble delta_y = 0.0;
-		gdouble* delta;
-		delta_x += event->delta_x;
-		delta_y += event->delta_y;
-		if (event->delta_y == 0.f)
-			delta = &delta_x;
-		else 
-			delta = &delta_y;
-
-		if (0.0 <= *delta)
-		{
-			while (*delta > 1.0)
-			{
-				pViewerImpl->m_ImageListPtr->Next();
-				*delta -= 1;
-			}
-		}
-		else
-		{
-			while (*delta < -1.0)
-			{
-				pViewerImpl->m_ImageListPtr->Previous();
-				*delta += 1;
-			}
-		}
-	}
 
 
 	return TRUE;
@@ -1782,7 +1748,7 @@ viewer_volume_value_changed (GtkScaleButton *button, gdouble value, gpointer use
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	//g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", gtk_scale_button_get_value(button), NULL);
+	g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", gtk_scale_button_get_value(button), NULL);
 	//g_object_get(G_OBJECT(m_pPipeline), "current-uri", &uri, NULL);
 }
 
@@ -1933,24 +1899,6 @@ static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_contex
 
 }
 
-static void signal_image_view_realize (GtkWidget * widget, gpointer user_data)
-{
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-#ifdef GDK_WINDOWING_X11
-	{
-		gulong xid = GDK_WINDOW_XID (gtk_widget_get_window (widget));
-		//pViewerImpl->m_pVideoWindowHandle = xid;
-	}
-#endif
-#ifdef GDK_WINDOWING_WIN32
-	{
-		HWND wnd = GDK_WINDOW_HWND (gtk_widget_get_window (widget));
-		pViewerImpl->m_pVideoWindowHandle = (guintptr) wnd;
-	}
-#endif
-}
-
 static gboolean viewer_popup_menu_cb (GtkWidget *widget, gpointer userdata)
 {
 	viewer_show_context_menu(NULL, userdata);
@@ -1989,7 +1937,6 @@ timeout_play_position (gpointer data)
 static gboolean 
 gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 {
-	/*
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	switch (GST_MESSAGE_TYPE (msg)) {
@@ -2029,39 +1976,12 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		default:
 			break;
 	}
-*/
 
 	return TRUE;
 }
 
-static GstBusSyncReply
-gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_data)
-{
-/*
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-
-	// ignore anything but 'prepare-xwindow-id' element messages
-	if (!gst_is_video_overlay_prepare_window_handle_message (message))
-		return GST_BUS_PASS;
-
-	if (NULL != pViewerImpl->m_pVideoWindowHandle)
-	{
-		GstVideoOverlay *overlay;
-		// GST_MESSAGE_SRC (message) will be the video sink element
-		overlay = GST_VIDEO_OVERLAY (GST_MESSAGE_SRC (message));
-
-		gst_video_overlay_set_window_handle (overlay, pViewerImpl->m_pVideoWindowHandle);
-	}
-
-	gst_message_unref (message);
-*/
-	return GST_BUS_DROP;
-}
-
 void Viewer::ViewerImpl::UpdateTimeline()
 {
-	/*
 	gint64 pos = 0, len = 0;
 	bool success = gst_element_query_position(m_pPipeline, GST_FORMAT_TIME, &pos);
 	success |= gst_element_query_duration(m_pPipeline, GST_FORMAT_TIME, &len);
@@ -2099,13 +2019,10 @@ void Viewer::ViewerImpl::UpdateTimeline()
 		progress = gdouble(pos)/len;
 
 	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pPlayProgress), progress);
-	*/
 }
 
 void Viewer::ViewerImpl::PlayPauseVideo()
 {
-	return;
-	/*
 	if (!IsVideo())
 		return;
 
@@ -2113,7 +2030,9 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	g_object_get(G_OBJECT(m_pPipeline), "current-uri", &uri, NULL);
 	if (0 == g_strcmp0(uri, m_ImageListPtr->GetCurrent().GetURI()))
 	{
-		gtk_widget_set_double_buffered (m_pImageView, FALSE);
+		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtksink
+		gtk_widget_hide(m_pImageView);
+		gtk_widget_show(m_pVideoSinkWidget);
 		GstState current;
 		// has the right video
 		GstStateChangeReturn rval = gst_element_get_state(GST_ELEMENT(m_pPipeline), &current, NULL, GST_SECOND);
@@ -2143,8 +2062,10 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	else
 	{
 		StopVideo(false);
-		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView), NULL);
-		gtk_widget_set_double_buffered (m_pImageView, FALSE);
+		//quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView), NULL); // Not needed, gtksink handles display
+		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtksink
+		gtk_widget_hide(m_pImageView);
+		gtk_widget_show(m_pVideoSinkWidget);
 		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
@@ -2158,12 +2079,11 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 
 		m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 	}
-*/
+	g_free(uri);
 }
 
 void Viewer::ViewerImpl::SkipForward()
 {
-	/*
 	if (IsPlaying())
 	{
 		GstFormat format = GST_FORMAT_TIME;
@@ -2185,12 +2105,10 @@ void Viewer::ViewerImpl::SkipForward()
 			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 		}
 	}
-	*/
 }
 
 void Viewer::ViewerImpl::SkipBack()
 {
-/*
 	if (IsPlaying())
 	{
 		GstFormat format = GST_FORMAT_TIME;
@@ -2212,12 +2130,10 @@ void Viewer::ViewerImpl::SkipBack()
 			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 		}
 	}
-*/
 }
 
 void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 {
-/*
 	SetIsPlaying(false);
 	if (0 != m_iTimeoutMouseMotionNotify)
 	{
@@ -2226,8 +2142,10 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	}
 
 	gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_NULL);
-	gtk_widget_set_double_buffered (m_pImageView, TRUE);
-	gst_video_overlay_set_window_handle (GST_VIDEO_OVERLAY(m_pXVImageSink), 0);
+	//gtk_widget_set_double_buffered (m_pImageView, TRUE); // Double buffering handled by gtksink
+	gtk_widget_hide(m_pVideoSinkWidget);
+	gtk_widget_show(m_pImageView);
+
 
 	UpdateTimeline();
 
@@ -2243,7 +2161,6 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 		if (0 == m_iTimeoutSlideshowID)
 			LoadImage(m_ImageListPtr->GetCurrent());
 	}
-*/
 }
 
 bool Viewer::ViewerImpl::IsVideo()
@@ -2320,8 +2237,6 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 	}
 	else if (widget == pViewerImpl->m_pPlayProgressEventBox)
 	{
-		return FALSE;
-		/*
 		printf("adjust play progress\n");
 		pViewerImpl->m_bWasPlayingBeforeSeek = pViewerImpl->IsPlaying(); 
 
@@ -2336,10 +2251,10 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 
 		gdk_pointer_grab (
 			gtk_widget_get_window(pViewerImpl->m_pPlayProgressEventBox),
-			TRUE, 
+			TRUE,
 			(GdkEventMask)
-				(GDK_BUTTON_RELEASE_MASK  | 
-				 GDK_POINTER_MOTION_HINT_MASK | 
+				(GDK_BUTTON_RELEASE_MASK  |
+				 GDK_POINTER_MOTION_HINT_MASK |
 				 GDK_BUTTON_MOTION_MASK ),
 			gtk_widget_get_window(pViewerImpl->m_pPlayProgressEventBox),
 			NULL,
@@ -2347,11 +2262,9 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 
 		if (pViewerImpl->IsPlaying())
 			pViewerImpl->PlayPauseVideo();
-		*/
 	}
 	else
 	{
-		return FALSE;
 		if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
 		{
 			// play video
@@ -2390,7 +2303,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 	g_object_unref(m_pPixbufPlay);
 	g_object_unref(m_pPixbufPlayHighlight);
 
-	//gst_object_unref(GST_OBJECT(m_pPipeline));
+	gst_object_unref(GST_OBJECT(m_pPipeline));
 
 	if (0 != m_iIdleSetIndex)
 	{
@@ -2421,8 +2334,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_ThumbnailLoader(this,2)
 #endif
 	, m_bIsPlaying(false),
-	m_bWasPlayingBeforeSeek(false)//,
-	//m_pVideoWindowHandle(NULL)
+	m_bWasPlayingBeforeSeek(false)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -2647,9 +2559,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	           
 	g_signal_connect (G_OBJECT (m_pImageView), "drag_data_received",
 				G_CALLBACK (signal_drag_data_received), this);
-
-	g_signal_connect (m_pImageView, "realize",
-		G_CALLBACK (signal_image_view_realize), this);
 	           
 	g_signal_connect (G_OBJECT (m_pImageView), "drag_data_get",
 		      G_CALLBACK (signal_drag_data_get), this);
@@ -2754,34 +2663,42 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	
 
 	// set up the gstreamer pipeline
-/*
 	m_pPipeline = gst_element_factory_make("playbin", "player");
 
-	m_pXVImageSink = gst_element_factory_make("xvimagesink", NULL);
+	GstElement* gtksink = gst_element_factory_make("gtksink", NULL);
 	GstElement* gaudio = gst_element_factory_make("gconfaudiosink",NULL);
 	//GstElement* gvideo = gst_element_factory_make("gconfvideosink",NULL);
 
-	g_object_set(G_OBJECT(m_pXVImageSink), "force-aspect-ratio", true, NULL);
+	g_object_set(G_OBJECT(gtksink), "force-aspect-ratio", true, NULL);
 
 	GstPlayFlags flags = (GstPlayFlags)0;
 	g_object_get(G_OBJECT(m_pPipeline), "flags", &flags, NULL);
 	flags = (GstPlayFlags) (GST_PLAY_FLAG_DEINTERLACE|flags);
 
-	g_object_set(G_OBJECT(m_pPipeline), 
-		"video-sink", m_pXVImageSink,
+	g_object_set(G_OBJECT(m_pPipeline),
+		"video-sink", gtksink,
 		"audio-sink", gaudio,
-		"flags", flags, 
+		"flags", flags,
 		NULL);
+
+	// Get the GTK widget from gtksink
+	g_object_get(G_OBJECT(gtksink), "widget", &m_pVideoSinkWidget, NULL);
+
+	// Add the video widget to the grid, initially hidden
+	gtk_widget_set_no_show_all(m_pVideoSinkWidget, TRUE);
+	gtk_widget_set_hexpand(m_pVideoSinkWidget, TRUE);
+	gtk_widget_set_vexpand(m_pVideoSinkWidget, TRUE);
+	gtk_grid_attach(GTK_GRID(m_pGrid), m_pVideoSinkWidget, 0, 0, 1, 1);
+
 
 	gdouble volume = 0.;
 	g_object_get(G_OBJECT(m_pPipeline), "volume", &volume, NULL);
 	gtk_scale_button_set_value(GTK_SCALE_BUTTON(m_pVolumeButton), volume);
 
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline));
-	//gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL);
-	//gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
+	//gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL); // Removed sync handler
+	gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
 	gst_object_unref (bus);
-	*/
 }
 
 
@@ -3525,7 +3442,6 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 
 			if (thumb_width != bound_width || thumb_height != bound_height)
 			{
-				std::cout << "scale simple 3" << std::endl;
 				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
 								pixbuf,
 								bound_width,

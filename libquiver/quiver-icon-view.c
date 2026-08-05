@@ -1054,7 +1054,7 @@ static gboolean quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr)
 
 		//gtk_render_background (gtk_widget_get_style_context(widget), cr, rect.x, rect.y, rect.width, rect.height);
 
-		quiver_icon_view_draw_icons (iconview, cr, rect);
+		quiver_icon_view_draw_icons (GTK_WIDGET(iconview), cr, rect);
 
 	}
 
@@ -2048,7 +2048,7 @@ quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjustment,
 	hadj = (int)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	vadj = (int)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
-	if (gtk_widget_get_realized (iconview))
+	if (gtk_widget_get_realized (GTK_WIDGET(iconview)))
 	{
 		if (iconview->priv->scroll_draw)
 		{
