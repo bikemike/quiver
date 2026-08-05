@@ -1054,7 +1054,7 @@ static gboolean quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr)
 
 		//gtk_render_background (gtk_widget_get_style_context(widget), cr, rect.x, rect.y, rect.width, rect.height);
 
-		quiver_icon_view_draw_icons (iconview, cr, rect);
+		quiver_icon_view_draw_icons (widget, cr, rect);
 
 	}
 
