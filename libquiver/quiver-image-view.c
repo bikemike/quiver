@@ -432,7 +432,7 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->timeout_id_smooth_scroll_slowdown = 0;
 	imageview->priv->velocity_time_list = NULL;
 
-	gtk_widget_set_can_focus(imageview, TRUE);
+	gtk_widget_set_can_focus(GTK_WIDGET(imageview), TRUE);
 	//GTK_WIDGET_UNSET_FLAGS(imageview,GTK_DOUBLE_BUFFERED);
 
 	gtk_widget_set_size_request(GTK_WIDGET(imageview),QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE,QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE);
