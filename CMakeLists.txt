@@ -18,8 +18,8 @@ pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-plu
 find_package(JPEG REQUIRED)
 find_package(Threads REQUIRED)
 
-# Boost (using Boost base)
-find_package(Boost REQUIRED COMPONENTS system thread)
+# Boost (using header-only components/base)
+find_package(Boost REQUIRED)
 
 # Configuration header
 # Porting AC_CHECK_HEADERS/AC_DEFINE from configure.ac
