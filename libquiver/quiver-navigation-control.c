@@ -179,7 +179,7 @@ quiver_navigation_control_init(QuiverNavigationControl *navcontrol)
 
 	navcontrol->priv->view_area_rect.x = -1;
 
-	gtk_widget_set_can_focus(navcontrol,TRUE);
+	gtk_widget_set_can_focus(GTK_WIDGET(navcontrol),TRUE);
 }
 
 
