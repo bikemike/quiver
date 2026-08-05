@@ -428,7 +428,7 @@ void ImageLoader::Load()
 				{
 					gint n=1, d=1;
 					GdkPixbuf* video_pixbuf = NULL;
-					//video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
+					video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
 					if (NULL != video_pixbuf)
 					{
 						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
@@ -617,7 +617,7 @@ void ImageLoader::Load()
 				{
 					gint n=1, d=1;
 					GdkPixbuf* video_pixbuf = NULL;
-					//video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
+					video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
 					if (NULL != video_pixbuf)
 					{
 						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);

@@ -566,9 +566,9 @@ public:
 	ImageCache m_ThumbnailCache;
 
 	// gstreamer elements for playing videos
-	//GstElement* m_pPipeline;
-	//GstElement* m_pXVImageSink;
-	//guintptr m_pVideoWindowHandle;
+	GstElement* m_pPipeline;
+	GstElement* m_pXVImageSink;
+	guintptr m_pVideoWindowHandle;
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -1940,7 +1940,7 @@ static void signal_image_view_realize (GtkWidget * widget, gpointer user_data)
 #ifdef GDK_WINDOWING_X11
 	{
 		gulong xid = GDK_WINDOW_XID (gtk_widget_get_window (widget));
-		//pViewerImpl->m_pVideoWindowHandle = xid;
+		pViewerImpl->m_pVideoWindowHandle = xid;
 	}
 #endif
 #ifdef GDK_WINDOWING_WIN32
@@ -1989,9 +1989,9 @@ timeout_play_position (gpointer data)
 static gboolean 
 gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 {
-	/*
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	(void)bus;
 	switch (GST_MESSAGE_TYPE (msg)) {
 
 		case GST_MESSAGE_EOS:
@@ -2006,7 +2006,7 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		case GST_MESSAGE_ASYNC_DONE:
 				pViewerImpl->UpdateTimeline();
 				break;
-		case GST_MESSAGE_DURATION:
+		case GST_MESSAGE_DURATION_CHANGED:
 				pViewerImpl->UpdateTimeline();
 				break;
 		case GST_MESSAGE_PROGRESS:
@@ -2029,7 +2029,6 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		default:
 			break;
 	}
-*/
 
 	return TRUE;
 }
@@ -2037,15 +2036,15 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 static GstBusSyncReply
 gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_data)
 {
-/*
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	(void)bus;
 
-	// ignore anything but 'prepare-xwindow-id' element messages
+	// ignore anything but 'prepare-window-handle' element messages
 	if (!gst_is_video_overlay_prepare_window_handle_message (message))
 		return GST_BUS_PASS;
 
-	if (NULL != pViewerImpl->m_pVideoWindowHandle)
+	if (0 != pViewerImpl->m_pVideoWindowHandle)
 	{
 		GstVideoOverlay *overlay;
 		// GST_MESSAGE_SRC (message) will be the video sink element
@@ -2054,14 +2053,11 @@ gstreamer_bus_sync_handler (GstBus * bus, GstMessage * message, gpointer user_da
 		gst_video_overlay_set_window_handle (overlay, pViewerImpl->m_pVideoWindowHandle);
 	}
 
-	gst_message_unref (message);
-*/
 	return GST_BUS_DROP;
 }
 
 void Viewer::ViewerImpl::UpdateTimeline()
 {
-	/*
 	gint64 pos = 0, len = 0;
 	bool success = gst_element_query_position(m_pPipeline, GST_FORMAT_TIME, &pos);
 	success |= gst_element_query_duration(m_pPipeline, GST_FORMAT_TIME, &len);
@@ -2099,13 +2095,10 @@ void Viewer::ViewerImpl::UpdateTimeline()
 		progress = gdouble(pos)/len;
 
 	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pPlayProgress), progress);
-	*/
 }
 
 void Viewer::ViewerImpl::PlayPauseVideo()
 {
-	return;
-	/*
 	if (!IsVideo())
 		return;
 
@@ -2158,12 +2151,11 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 
 		m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 	}
-*/
+	g_free(uri);
 }
 
 void Viewer::ViewerImpl::SkipForward()
 {
-	/*
 	if (IsPlaying())
 	{
 		GstFormat format = GST_FORMAT_TIME;
@@ -2175,6 +2167,7 @@ void Viewer::ViewerImpl::SkipForward()
 		if (queried)
 		{
 			gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), std::min(clip_duration, pos + GST_SECOND*10));
+			(void)seek_started;
 			gtk_widget_show(m_pMediaControls);
 			if (0 != m_iTimeoutMouseMotionNotify)
 			{
@@ -2185,12 +2178,10 @@ void Viewer::ViewerImpl::SkipForward()
 			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 		}
 	}
-	*/
 }
 
 void Viewer::ViewerImpl::SkipBack()
 {
-/*
 	if (IsPlaying())
 	{
 		GstFormat format = GST_FORMAT_TIME;
@@ -2202,6 +2193,7 @@ void Viewer::ViewerImpl::SkipBack()
 		if (queried)
 		{
 			gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), std::max((gint64)0,pos - GST_SECOND*10));
+			(void)seek_started;
 			gtk_widget_show(m_pMediaControls);
 			if (0 != m_iTimeoutMouseMotionNotify)
 			{
@@ -2212,12 +2204,10 @@ void Viewer::ViewerImpl::SkipBack()
 			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
 		}
 	}
-*/
 }
 
 void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 {
-/*
 	SetIsPlaying(false);
 	if (0 != m_iTimeoutMouseMotionNotify)
 	{
@@ -2227,7 +2217,10 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 
 	gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_NULL);
 	gtk_widget_set_double_buffered (m_pImageView, TRUE);
-	gst_video_overlay_set_window_handle (GST_VIDEO_OVERLAY(m_pXVImageSink), 0);
+	if (GST_IS_VIDEO_OVERLAY(m_pXVImageSink))
+	{
+		gst_video_overlay_set_window_handle (GST_VIDEO_OVERLAY(m_pXVImageSink), 0);
+	}
 
 	UpdateTimeline();
 
@@ -2243,7 +2236,6 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 		if (0 == m_iTimeoutSlideshowID)
 			LoadImage(m_ImageListPtr->GetCurrent());
 	}
-*/
 }
 
 bool Viewer::ViewerImpl::IsVideo()
@@ -2320,8 +2312,6 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 	}
 	else if (widget == pViewerImpl->m_pPlayProgressEventBox)
 	{
-		return FALSE;
-		/*
 		printf("adjust play progress\n");
 		pViewerImpl->m_bWasPlayingBeforeSeek = pViewerImpl->IsPlaying(); 
 
@@ -2333,6 +2323,7 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 		gst_element_query_duration(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_FORMAT_TIME, &clip_duration);
 
 		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_FORMAT_TIME, GstSeekFlags(GST_SEEK_FLAG_FLUSH), ((clip_duration * event->x) / allocation.width));
+		(void)seek_started;
 
 		gdk_pointer_grab (
 			gtk_widget_get_window(pViewerImpl->m_pPlayProgressEventBox),
@@ -2347,11 +2338,9 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 
 		if (pViewerImpl->IsPlaying())
 			pViewerImpl->PlayPauseVideo();
-		*/
 	}
 	else
 	{
-		return FALSE;
 		if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
 		{
 			// play video
@@ -2421,8 +2410,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_ThumbnailLoader(this,2)
 #endif
 	, m_bIsPlaying(false),
-	m_bWasPlayingBeforeSeek(false)//,
-	//m_pVideoWindowHandle(NULL)
+	m_bWasPlayingBeforeSeek(false),
+	m_pVideoWindowHandle(0)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -2754,14 +2743,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	
 
 	// set up the gstreamer pipeline
-/*
 	m_pPipeline = gst_element_factory_make("playbin", "player");
 
-	m_pXVImageSink = gst_element_factory_make("xvimagesink", NULL);
-	GstElement* gaudio = gst_element_factory_make("gconfaudiosink",NULL);
-	//GstElement* gvideo = gst_element_factory_make("gconfvideosink",NULL);
-
-	g_object_set(G_OBJECT(m_pXVImageSink), "force-aspect-ratio", true, NULL);
+	m_pXVImageSink = gst_element_factory_make("autovideosink", NULL);
+	GstElement* gaudio = gst_element_factory_make("autoaudiosink", NULL);
 
 	GstPlayFlags flags = (GstPlayFlags)0;
 	g_object_get(G_OBJECT(m_pPipeline), "flags", &flags, NULL);
@@ -2778,10 +2763,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_scale_button_set_value(GTK_SCALE_BUTTON(m_pVolumeButton), volume);
 
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline));
-	//gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL);
-	//gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
+	gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL);
+	gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
 	gst_object_unref (bus);
-	*/
 }
 
 
