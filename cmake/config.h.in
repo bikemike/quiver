@@ -1,0 +1,11 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#define HAVE_EXT 1
+#define HAVE_CXX0X 1
+#define GETTEXT_PACKAGE "@GETTEXT_PACKAGE@"
+#define PACKAGE_STRING "quiver 0.2.0"
+#define PACKAGE_VERSION "0.2.0"
+#define PACKAGE_BUGREPORT "http://mike.yi.org/quiver"
+
+#endif
