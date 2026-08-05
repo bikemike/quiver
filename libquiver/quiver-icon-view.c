@@ -2048,7 +2048,7 @@ quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjustment,
 	hadj = (int)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	vadj = (int)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
-	if (gtk_widget_get_realized (iconview))
+	if (gtk_widget_get_realized (widget))
 	{
 		if (iconview->priv->scroll_draw)
 		{
