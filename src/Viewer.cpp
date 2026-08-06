@@ -2277,13 +2277,13 @@ viewer_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user
 {
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	(void)event;
 	if (widget == pViewerImpl->m_pPlayProgressEventBox)
 	{
 		if (pViewerImpl->m_bWasPlayingBeforeSeek)
 		   pViewerImpl->PlayPauseVideo(); 
-
-		gdk_pointer_ungrab (event->time);
 	}
+	return TRUE;
 }
 
 static gboolean 
@@ -2339,17 +2339,6 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 
 		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_FORMAT_TIME, GstSeekFlags(GST_SEEK_FLAG_FLUSH), ((clip_duration * event->x) / allocation.width));
 		(void)seek_started;
-
-		gdk_pointer_grab (
-			gtk_widget_get_window(pViewerImpl->m_pPlayProgressEventBox),
-			TRUE, 
-			(GdkEventMask)
-				(GDK_BUTTON_RELEASE_MASK  | 
-				 GDK_POINTER_MOTION_HINT_MASK | 
-				 GDK_BUTTON_MOTION_MASK ),
-			gtk_widget_get_window(pViewerImpl->m_pPlayProgressEventBox),
-			NULL,
-			GDK_CURRENT_TIME);
 
 		if (pViewerImpl->IsPlaying())
 			pViewerImpl->PlayPauseVideo();
