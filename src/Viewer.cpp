@@ -569,6 +569,8 @@ public:
 	GstElement* m_pPipeline;
 	GstElement* m_pXVImageSink;
 	guintptr m_pVideoWindowHandle;
+	GtkWidget* m_pStack;
+	GtkWidget* m_pGstWidget;
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -2121,6 +2123,10 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 			else
 			{
 				SetIsPlaying(true);
+				if (m_pStack != NULL)
+				{
+					gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
+				}
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
 				if (0 != m_iTimeoutMouseMotionNotify)
@@ -2138,6 +2144,10 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		StopVideo(false);
 		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView), NULL);
 		gtk_widget_set_double_buffered (m_pImageView, FALSE);
+		if (m_pStack != NULL)
+		{
+			gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
+		}
 		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
@@ -2220,6 +2230,11 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	if (GST_IS_VIDEO_OVERLAY(m_pXVImageSink))
 	{
 		gst_video_overlay_set_window_handle (GST_VIDEO_OVERLAY(m_pXVImageSink), 0);
+	}
+
+	if (m_pStack != NULL)
+	{
+		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "image");
 	}
 
 	UpdateTimeline();
@@ -2564,9 +2579,15 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	gtk_grid_attach (GTK_GRID (m_pGrid), alignment, 0, 0, 1, 1);
 
+	m_pStack = gtk_stack_new();
+	gtk_widget_set_hexpand(m_pStack, TRUE);
+	gtk_widget_set_vexpand(m_pStack, TRUE);
+
 	gtk_widget_set_hexpand(m_pImageView, TRUE);
 	gtk_widget_set_vexpand(m_pImageView, TRUE);
-	gtk_grid_attach (GTK_GRID (m_pGrid), m_pImageView, 0, 0, 1, 1);
+	gtk_stack_add_named(GTK_STACK(m_pStack), m_pImageView, "image");
+
+	gtk_grid_attach (GTK_GRID (m_pGrid), m_pStack, 0, 0, 1, 1);
 
 	//gtk_widget_set_hexpand(m_pImageView, TRUE);
 	gtk_widget_set_vexpand(m_pScrollbarV, TRUE);
@@ -2745,8 +2766,20 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	// set up the gstreamer pipeline
 	m_pPipeline = gst_element_factory_make("playbin", "player");
 
-	m_pXVImageSink = gst_element_factory_make("autovideosink", NULL);
+	m_pXVImageSink = gst_element_factory_make("gtksink", NULL);
 	GstElement* gaudio = gst_element_factory_make("autoaudiosink", NULL);
+
+	if (m_pXVImageSink != NULL)
+	{
+		g_object_get(G_OBJECT(m_pXVImageSink), "widget", &m_pGstWidget, NULL);
+		if (m_pGstWidget != NULL)
+		{
+			gtk_widget_set_hexpand(m_pGstWidget, TRUE);
+			gtk_widget_set_vexpand(m_pGstWidget, TRUE);
+			gtk_stack_add_named(GTK_STACK(m_pStack), m_pGstWidget, "video");
+			gtk_widget_show(m_pGstWidget);
+		}
+	}
 
 	GstPlayFlags flags = (GstPlayFlags)0;
 	g_object_get(G_OBJECT(m_pPipeline), "flags", &flags, NULL);

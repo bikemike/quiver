@@ -121,13 +121,16 @@ int ImageLoader::Run()
 			m_Commands.pop_front();
 		}
 		
-		if (CACHE == m_Commands.front().params.state && LOAD == m_Commands.back().params.state)
+		if (!m_Commands.empty() && CACHE == m_Commands.front().params.state && LOAD == m_Commands.back().params.state)
 		{
 			m_Commands.pop_front();
 		}
 		
-		m_Command = m_Commands.front();
-		m_Commands.pop_front();
+		if (!m_Commands.empty())
+		{
+			m_Command = m_Commands.front();
+			m_Commands.pop_front();
+		}
 		
 		pthread_mutex_unlock (&m_CommandMutex);
 		
@@ -161,12 +164,12 @@ bool ImageLoader::CommandsPending()
 		m_Commands.pop_front();
 	}
 	
-	if (CACHE == m_Commands.front().params.state && LOAD == m_Commands.back().params.state)
+	if (!m_Commands.empty() && CACHE == m_Commands.front().params.state && LOAD == m_Commands.back().params.state)
 	{
 		m_Commands.pop_front();
 	}
 	
-	if (0 < m_Commands.size())
+	if (!m_Commands.empty())
 	{
 		if (LOAD == m_Commands.front().params.state || LOAD == m_Commands.back().params.state)
 		{
