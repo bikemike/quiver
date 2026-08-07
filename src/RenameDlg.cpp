@@ -316,7 +316,7 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 			GTK_DIALOG_DESTROY_WITH_PARENT,
 			GTK_MESSAGE_ERROR,
 			GTK_BUTTONS_CLOSE,
-			strMsg.c_str());
+			"%s", strMsg.c_str());
 		gtk_window_set_title(GTK_WINDOW(dialog), strTitle.c_str());
 		gtk_dialog_run (GTK_DIALOG (dialog));
 		gtk_widget_destroy (dialog);

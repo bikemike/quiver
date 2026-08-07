@@ -1690,7 +1690,7 @@ quiver_image_view_scroll(QuiverImageView *imageview)
 	hadj = floor(gtk_adjustment_get_value(imageview->priv->hadjustment));
 	vadj = floor(gtk_adjustment_get_value(imageview->priv->vadjustment));
 	
-	if (gtk_widget_get_mapped (widget))
+	if (gtk_widget_get_mapped (GTK_WIDGET(imageview)))
 	{
 		if (imageview->priv->scroll_draw)
 		{

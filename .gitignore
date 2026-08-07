@@ -69,3 +69,6 @@ cmake_install.cmake
 Makefile
 !cmake/
 !cmake/config.h.in
+*~
+*.swp
+*.bak
