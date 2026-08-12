@@ -81,7 +81,7 @@ PKG_CHECK_MODULES([LIBEXIF], [libexif],[have_libexif=yes],[have_libexif=no])
 
 PKG_CHECK_MODULES([LIBSQLITE], [sqlite3], [have_sqlite3=yes],[have_sqlite3=no])
 
-PKG_CHECK_MODULES([GSTREAMER], [gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-app-1.0])
+PKG_CHECK_MODULES([GSTREAMER], [gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-app-1.0])
 
 
 AC_ARG_WITH(

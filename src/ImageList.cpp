@@ -495,7 +495,6 @@ static gboolean timeout_path_changed(gpointer user_data)
 	// changes and sort them out.
 	
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
-	gdk_threads_enter();
 
 	impl->m_iTimeoutPathChanged = 0;
 	
@@ -607,7 +606,6 @@ static gboolean timeout_path_changed(gpointer user_data)
 	
 	impl->m_mapPathChanged.clear();
 	
-	gdk_threads_leave();
 	return FALSE;
 }
 
@@ -620,8 +618,6 @@ void monitor_callback (
 	gpointer          user_data) 
 {
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
-
-	gdk_threads_enter();
 
 	char* uri = g_file_get_uri(file);
 	
@@ -653,7 +649,6 @@ void monitor_callback (
 
 	g_free(uri);
 
-	gdk_threads_leave();
 }
 
 
@@ -1351,7 +1346,7 @@ void ImageList::ImageListImpl::Sort(bool bUpdateCurrentIndex)
 }
 
 
-class SortByFilename : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByFilename
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
@@ -1365,7 +1360,7 @@ public:
 	}
 };
 
-class SortByFilenameNatural : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByFilenameNatural
 {
 public:
 	bool operator()(const QuiverFile &a, const QuiverFile &b) const
@@ -1411,7 +1406,7 @@ public:
 	}
 };
 
-class SortByDateModified : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByDateModified
 {
 public:
 
@@ -1433,7 +1428,7 @@ public:
 	}
 };
 
-class SortByDate : public std::binary_function<QuiverFile,QuiverFile,bool>
+class SortByDate
 {
 public:
 

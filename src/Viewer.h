@@ -34,7 +34,7 @@ public:
 	void Show();
 	void Hide();
 	
-	void SetUIManager(GtkUIManager *ui_manager);
+	void RegisterActions();
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 
 	double GetMagnification() const;

@@ -80,15 +80,9 @@ using namespace std;
 // helper functions
 
 
-static void quiver_action_handler_cb(GtkAction *action, gpointer data);
-static void quiver_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data);
+static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data);
+static void quiver_escape_action(QuiverImpl *pQuiverImpl);
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data );
-
-// gtk_ui_manager signals
-static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
-static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data);
-static void signal_item_select (GtkMenuItem *proxy,gpointer data);
-static void signal_item_deselect (GtkMenuItem *proxy,gpointer data);
 
 #ifdef QUIVER_MAEMO
 static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1, gpointer user_data);
@@ -97,11 +91,6 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 static gboolean timeout_event_motion_notify (gpointer data);
 static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
 
-static gboolean timeout_keep_screen_on (gpointer data);
-
-#ifdef QUIVER_MAEMO
-static void mime_open_handler (gpointer raw_data, int argc, char **argv);
-#endif
 
 class QuiverImpl
 {
@@ -120,6 +109,9 @@ public:
 
 	void UpdateUI();
 	
+	static void ShowViewerUIItems(QuiverImpl *pQuiverImpl, bool bShow);
+	static void ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow);
+
 // member variables
 	Quiver *m_pQuiver;
 
@@ -138,12 +130,6 @@ public:
 	GtkWidget *m_pToolbar;
 	GtkWidget *m_pNBProperties;
 	GtkWidget* m_pHPanedMainArea;
-	
-	guint m_iMergedViewerUI;
-	guint m_iMergedBrowserUI;
-	
-	guint m_iMergedExternalToolsUI;
-	guint m_iMergedBookmarksUI;
 	
 	bool m_bSlideShowRestoreFromFS;
 			
@@ -167,22 +153,18 @@ public:
 
 	GdkWindowState m_WindowState;
 
-	static GtkTargetEntry quiver_drag_target_table[];
+	static const GtkTargetEntry quiver_drag_target_table[];
 	// drag/drop targets
 	enum {
     	QUIVER_TARGET_STRING,
 		QUIVER_TARGET_URI
   	};
 
-	//gui actions
-	static GtkActionEntry action_entries[];
-	static GtkToggleActionEntry action_entries_toggle[];
-	static GtkRadioActionEntry sort_radio_action_entries[];
-	
-	GtkUIManager* m_pUIManager;
-	
 	bool m_bListImagesRecursive;
 	std::list<std::string> m_listImages;
+
+	GtkBuilder *m_pBuilder;
+	bool m_bViewerMode;
 
 // nested classes
 
@@ -259,7 +241,8 @@ public:
 	IBookmarksEventHandlerPtr m_BookmarksEventHandler;
 	IExternalToolsEventHandlerPtr m_ExternalToolsEventHandler;
 	
-	
+	GtkWidget *m_pMenuBookmarkItems;
+	GtkWidget *m_pMenuToolsExternal;
 };
 
 
@@ -276,6 +259,8 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 		  m_ExternalToolsEventHandler ( new ExternalToolsEventHandler(this) )
 {
 	m_pQuiver = parent;
+	m_pBuilder = NULL;
+	m_bViewerMode = false;
 	
 	m_BookmarksPtr = Bookmarks::GetInstance();
 	m_BookmarksPtr->AddEventHandler(m_BookmarksEventHandler);
@@ -284,8 +269,9 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_ExternalToolsPtr->AddEventHandler(m_ExternalToolsEventHandler);
 
 	m_ImageListPtr->AddEventHandler(m_ImageListEventHandler);	
-	m_iMergedExternalToolsUI = 0;
-	m_iMergedBookmarksUI = 0;
+
+	m_pMenuBookmarkItems = NULL;
+	m_pMenuToolsExternal = NULL;
 
 	// add ignored extensions
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -297,7 +283,6 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 		m_ImageListPtr->AddIgnoredExtension(*itr);
 	}
 }
-
 QuiverImpl::~QuiverImpl()
 {
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
@@ -308,187 +293,92 @@ QuiverImpl::~QuiverImpl()
 	m_ViewerPtr.reset();
 	m_StatusbarPtr.reset();
 
-	if (NULL != m_pUIManager)
-		g_object_unref(m_pUIManager);
-
 	gtk_widget_destroy(m_pQuiverWindow);
 }
 
 void QuiverImpl::LoadBookmarks()
 {
-	if (m_pUIManager)
+	if (NULL == m_pMenuBookmarkItems)
 	{
-		vector<Bookmark> bookmarks = m_BookmarksPtr->GetBookmarks();
+		return;
+	}
 
-		if (0 != m_iMergedBookmarksUI)
+	// remove previously added bookmark menu items (anything after the separator)
+	GList *children = gtk_container_get_children(GTK_CONTAINER(m_pMenuBookmarkItems));
+	gboolean bPastSeparator = FALSE;
+	for (GList *itr = children; NULL != itr; itr = g_list_next(itr))
+	{
+		GtkWidget *child = GTK_WIDGET(itr->data);
+		if (bPastSeparator)
 		{
-			gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedBookmarksUI);
-			gtk_ui_manager_ensure_update(m_pUIManager);
+			gtk_widget_destroy(child);
 		}
-		
-		if (0 < bookmarks.size())
+		else if (GTK_IS_SEPARATOR_MENU_ITEM(child))
 		{
-			GtkActionGroup* actions2 = gtk_action_group_new ("BookmarkActions");		
-
-			list<string>::iterator itr;
-			list<string> ui_commands;
-			
-			for (unsigned int i = 0; i < bookmarks.size(); ++i)
-			{
-				GtkActionEntry action_entry = {0};
-				action_entry.stock_id = bookmarks[i].GetIcon().c_str();
-				// this should be unique, something like Bookmark_category_name
-				stringstream ss;
-				ss << "Bookmark_" << bookmarks[i].GetID();
-				string name = ss.str();
-				action_entry.name = name.c_str();
-				action_entry.label = bookmarks[i].GetName().c_str();
-				action_entry.accelerator = "";
-				action_entry.tooltip = bookmarks[i].GetDescription().c_str();
-				action_entry.callback = G_CALLBACK(quiver_action_handler_cb);
-							
-
-				gtk_action_group_add_actions    (actions2, &action_entry, 1, this);
-				// this should be unique, something like Bookmark_category_name
-				ui_commands.push_back(name.c_str());
-			}
-	
-			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
-
-			g_object_unref(actions2);
-			
-			string str_ui =
-				"<ui>"
-#ifdef QUIVER_MAEMO
-				"	<popup name='MenubarMain'>"
-#else
-				"	<menubar name='MenubarMain'>"
-#endif
-				"		<menu action='MenuBookmarks'>"
-				"			<placeholder name='BookmarkItems'>";
-			for (itr = ui_commands.begin(); ui_commands.end() != itr; ++itr)
-			{
-				str_ui += "<menuitem action='" + (*itr) + "'/>";
-
-			}
-			
-			str_ui +=
-				"			</placeholder>"
-				"		</menu>"
-#ifdef QUIVER_MAEMO
-				"	</popup>"
-#else
-				"	</menubar>"
-#endif
-				"</ui>";
-
-
-			GError *error = NULL;
-			m_iMergedBookmarksUI = gtk_ui_manager_add_ui_from_string
-                (m_pUIManager,
-                 str_ui.c_str(),
-                 str_ui.length(),
-                 &error);
-
-			gtk_ui_manager_ensure_update(m_pUIManager);
-
-			if (NULL != error)
-			{
-				printf("error: %s\n",error->message);
-				g_error_free(error);
-			}
+			bPastSeparator = TRUE;
 		}
+	}
+	g_list_free(children);
+
+	vector<Bookmark> bookmarks = m_BookmarksPtr->GetBookmarks();
+	for (unsigned int i = 0; i < bookmarks.size(); ++i)
+	{
+		// this should be unique, something like Bookmark_category_name
+		stringstream ss;
+		ss << "Bookmark_" << bookmarks[i].GetID();
+		string name = ss.str();
+
+		QuiverUtils::RemoveAction(name.c_str());
+		QuiverUtils::AddSimpleAction(name.c_str(), "", quiver_new_action_handler_cb, this);
+
+		string full_name = "quiver." + name;
+		GtkWidget *item = gtk_menu_item_new_with_label(bookmarks[i].GetName().c_str());
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), full_name.c_str());
+		gtk_widget_show(item);
+		gtk_menu_shell_append(GTK_MENU_SHELL(m_pMenuBookmarkItems), item);
 	}
 }
 
 void QuiverImpl::LoadExternalTools()
 {
-	if (m_pUIManager)
+	if (NULL == m_pMenuToolsExternal)
 	{
-		vector<ExternalTool> externaltools = m_ExternalToolsPtr->GetExternalTools();
+		return;
+	}
 
-		if (0 != m_iMergedExternalToolsUI)
+	// remove previously added external tool menu items (anything after the separator)
+	GList *children = gtk_container_get_children(GTK_CONTAINER(m_pMenuToolsExternal));
+	gboolean bPastSeparator = FALSE;
+	for (GList *itr = children; NULL != itr; itr = g_list_next(itr))
+	{
+		GtkWidget *child = GTK_WIDGET(itr->data);
+		if (bPastSeparator)
 		{
-			gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedExternalToolsUI);
-			gtk_ui_manager_ensure_update(m_pUIManager);
+			gtk_widget_destroy(child);
 		}
-		
-		if (0 < externaltools.size())
+		else if (GTK_IS_SEPARATOR_MENU_ITEM(child))
 		{
-			GtkActionGroup* actions2 = gtk_action_group_new ("ExternalToolActions");		
-
-			list<string>::iterator itr;
-			list<string> ui_commands;
-			
-			for (unsigned int i = 0; i < externaltools.size(); ++i)
-			{
-				GtkActionEntry action_entry = {0};
-				action_entry.stock_id = externaltools[i].GetIcon().c_str();
-				// this should be unique, something like Bookmark_category_name
-				stringstream ss;
-				ss << "ExternalTool_" << externaltools[i].GetID();
-				string name = ss.str();
-				action_entry.name = name.c_str();
-				action_entry.label = externaltools[i].GetName().c_str();
-				action_entry.accelerator = "";
-				action_entry.tooltip = externaltools[i].GetTooltip().c_str();
-				action_entry.callback = G_CALLBACK(quiver_action_handler_cb);
-
-				gtk_action_group_add_actions    (actions2, &action_entry, 1, this);
-				// this should be unique, something like Bookmark_category_name
-				ui_commands.push_back(name.c_str());
-			}
-	
-			gtk_ui_manager_insert_action_group (m_pUIManager,actions2,0);
-
-			g_object_unref(actions2);
-			
-			string str_ui =
-				"<ui>"
-#ifdef QUIVER_MAEMO
-				"	<popup name='MenubarMain'>"
-#else
-				"	<menubar name='MenubarMain'>"
-#endif
-				"		<menu action='MenuTools'>"
-				"			<placeholder name='ToolsExternal'>";
-			for (itr = ui_commands.begin(); ui_commands.end() != itr; ++itr)
-			{
-				str_ui += "<menuitem action='" + (*itr) + "'/>";
-
-			}
-			
-			str_ui +=
-				"			</placeholder>"
-				"		</menu>"
-#ifdef QUIVER_MAEMO
-				"	</popup>"
-#else
-				"	</menubar>"
-#endif
-				"</ui>";
-
-			if (0 != m_iMergedExternalToolsUI)
-			{
-				gtk_ui_manager_remove_ui(m_pUIManager,m_iMergedExternalToolsUI);
-				gtk_ui_manager_ensure_update(m_pUIManager);
-			}
-
-			GError *error = NULL;
-			m_iMergedExternalToolsUI = gtk_ui_manager_add_ui_from_string
-                (m_pUIManager,
-                 str_ui.c_str(),
-                 str_ui.length(),
-                 &error);
-
-			gtk_ui_manager_ensure_update(m_pUIManager);
-
-			if (NULL != error)
-			{
-				printf("error: %s\n",error->message);
-				g_error_free(error);
-			}
+			bPastSeparator = TRUE;
 		}
+	}
+	g_list_free(children);
+
+	vector<ExternalTool> externaltools = m_ExternalToolsPtr->GetExternalTools();
+	for (unsigned int i = 0; i < externaltools.size(); ++i)
+	{
+		// this should be unique, something like ExternalTool_category_name
+		stringstream ss;
+		ss << "ExternalTool_" << externaltools[i].GetID();
+		string name = ss.str();
+
+		QuiverUtils::RemoveAction(name.c_str());
+		QuiverUtils::AddSimpleAction(name.c_str(), "", quiver_new_action_handler_cb, this);
+
+		string full_name = "quiver." + name;
+		GtkWidget *item = gtk_menu_item_new_with_label(externaltools[i].GetName().c_str());
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), full_name.c_str());
+		gtk_widget_show(item);
+		gtk_menu_shell_append(GTK_MENU_SHELL(m_pMenuToolsExternal), item);
 	}
 }
 
@@ -594,282 +484,666 @@ bool QuiverImpl::CanClose()
 #endif
 
 static const char * quiver_ui_main =
-"<ui>"
-#ifdef QUIVER_MAEMO
-"	<popup name='MenubarMain'>"
-#else
-"	<menubar name='MenubarMain'>"
-#endif
-"		<menu action='MenuFile'>"
-#ifdef FIXME_DISABLED
-"			<menuitem action='"ACTION_QUIVER_OPEN"'/>"
-"			<menuitem action='"ACTION_QUIVER_OPEN_FOLDER"'/>"
-#endif
-"			<placeholder action='FileOpenItems' />"
-"			<separator/>"
-#ifndef QUIVER_MAEMO // FIXME - fix saving for maemo
-"			<menuitem action='"ACTION_QUIVER_SAVE"'/>"
-#endif
-#ifdef FIXME_DISABLED
-"			<menuitem action='"ACTION_QUIVER_SAVE_AS"'/>"
-#endif
-"			<separator/>"
-"			<placeholder action='FileMenuAdditions' />"
-"			<separator/>"
-#ifndef QUIVER_MAEMO
-"			<menuitem action='"ACTION_QUIVER_CLOSE"'/>"
-#endif
-"		</menu>"
-"		<menu action='MenuEdit'>"
-"			<placeholder name='UndoRedo'/>"
-"			<separator/>"
-"			<placeholder name='CopyPaste'/>"
-"			<separator/>"
-"			<placeholder name='Selection'/>"
-"			<separator/>"
-"			<placeholder name='Trash'/>"
-"			<separator/>"
-"			<menuitem action='"ACTION_QUIVER_PREFERENCES"'/>"
-"		</menu>"
-"		<menu action='MenuView'>"
-"			<placeholder name='UIModeItems'/>"
-#ifndef QUIVER_MAEMO
-"			<menuitem action='"ACTION_QUIVER_VIEW_MENUBAR"'/>"
-#endif
-"			<menuitem action='"ACTION_QUIVER_VIEW_TOOLBAR_MAIN"'/>"
-"			<menuitem action='"ACTION_QUIVER_VIEW_PROPERTIES"'/>"
-"		 	<menuitem action='"ACTION_QUIVER_VIEW_STATUSBAR"'/>"
-"			<placeholder name='UIItems'/>"
-"			<separator/>"
-"			<menu action='MenuSort'>"
-"				<menuitem action='"ACTION_QUIVER_SORT_BY_NAME"'/>"
-"				<menuitem action='"ACTION_QUIVER_SORT_BY_NAME_NATURAL"'/>"
-"				<menuitem action='"ACTION_QUIVER_SORT_BY_DATE"'/>"
-"				<menuitem action='"ACTION_QUIVER_SORT_BY_DATE_MODIFIED"'/>"
-"				<menuitem action='"ACTION_QUIVER_SORT_BY_RANDOM"'/>"
-"				<separator/>"
-"				<menuitem action='"ACTION_QUIVER_SORT_DESCENDING"'/>"
-"			</menu>"
-"			<separator/>"
-"			<menuitem action='"ACTION_QUIVER_FULLSCREEN"'/>"
-"			<menuitem action='"ACTION_QUIVER_SLIDESHOW"'/>"
-"			<separator/>"
-"			<placeholder name='Zoom'/>"
-"			<separator/>"
-"		</menu>"
-"		<placeholder name='MenuImage'/>"
-"		<menu action='MenuGo'>"
-"			<placeholder name='ImageNavigation'/>"
-"			<separator/>"
-"			<placeholder name='HistoryNavigation'/>"
-"			<separator/>"
-"			<placeholder name='FolderNavigation'/>"
-"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_PARENT"'/>"
-"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_NEXT"'/>"
-"			<menuitem action='"ACTION_QUIVER_GO_FOLDER_PREV"'/>"
-"			<separator/>"
-"		</menu>"
-"		<menu action='MenuBookmarks'>"
-"			<menuitem action='"ACTION_QUIVER_BOOKMARKS_ADD"'/>"
-"			<menuitem action='"ACTION_QUIVER_BOOKMARKS_EDIT"'/>"
-"			<separator/>"
-"			<placeholder name='BookmarkItems'/>"
-"		</menu>"
-"		<menu action='MenuTools'>"
-"			<menuitem action='"ACTION_QUIVER_ADJUST_DATE"'/>"
-"			<menuitem action='"ACTION_QUIVER_RENAME"'/>"
-"			<menuitem action='"ACTION_QUIVER_ORGANIZE"'/>"
-"			<menuitem action='"ACTION_QUIVER_EXTERNAL_TOOLS"'/>"
-"			<separator/>"
-"			<placeholder name='ToolsExternal'/>"
-"		</menu>"
-"		<menu action='MenuWindow'>"
-"		</menu>"
-"		<menu action='MenuHelp'>"
-"			<menuitem action='"ACTION_QUIVER_DONATE"'/>"
-"			<separator/>"
-"			<menuitem action='"ACTION_QUIVER_ABOUT"'/>"
-"		</menu>"
-#ifdef QUIVER_MAEMO
-"		<menuitem action='"ACTION_QUIVER_CLOSE"'/>"
-"	</popup>"
-#else
-"	</menubar>"
-#endif
-"	<toolbar name='ToolbarMain'>"
-"		<placeholder name='UIModeItems'/>"
-"		<separator/>"
-"		<placeholder name='NavToolItems'/>"
-"		<separator/>"
-"		<placeholder name='UIItems'/>"
-"		<separator/>"
-"		<toolitem action='"ACTION_QUIVER_FULLSCREEN"'/>"
-"		<separator/>"
-"		<toolitem action='"ACTION_QUIVER_SLIDESHOW"'/>"
-"		<separator/>"
-"		<placeholder name='ZoomToolItems'/>"
-"		<separator/>"
-"		<placeholder name='TransformToolItems'/>"
-"		<separator/>"
-"		<placeholder name='Trash'/>"
-"		<separator/>"
-"	</toolbar>"
-"	<popup name='ContextMenuMain'>"
-"	</popup>"
-"	<accelerator action='"ACTION_QUIVER_CLOSE_2"'/>"
-"	<accelerator action='"ACTION_QUIVER_CLOSE_3"'/>"
-"	<accelerator action='"ACTION_QUIVER_CLOSE_4"'/>"
-"	<accelerator action='"ACTION_QUIVER_ESCAPE"'/>"
-#ifdef QUIVER_MAEMO
-"	<accelerator action='"ACTION_QUIVER_FULLSCREEN_MAEMO"'/>"
-"	<accelerator action='"ACTION_QUIVER_UI_MODE_SWITCH_MAEMO"'/>"
-#endif
-"</ui>";
+"<interface>"
+"	<object class='GtkMenuBar' id='MenubarMain'>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuFile'>"
+"				<property name='label' translatable='yes'>_File</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemOpen'>"
+"								<property name='label' translatable='yes'>_Open</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.FileOpen</property>"
+"								<property name='tooltip-text' translatable='yes'>Open an image</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemOpenFolder'>"
+"								<property name='label' translatable='yes'>Open _Folder</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.FileOpenFolder</property>"
+"								<property name='tooltip-text' translatable='yes'>Open a Folder</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemBrowserOpenLocation'>"
+"								<property name='label' translatable='yes'>Open _Location</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.BrowserOpenLocation</property>"
+"								<property name='tooltip-text' translatable='yes'>Open a Location</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemSave'>"
+"								<property name='label' translatable='yes'>_Save</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.Save</property>"
+"								<property name='tooltip-text' translatable='yes'>Save the Image</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemSaveAs'>"
+"								<property name='label' translatable='yes'>Save _As</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.SaveAs</property>"
+"								<property name='tooltip-text' translatable='yes'>Save the Image As</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemClose'>"
+"								<property name='label' translatable='yes'>_Close</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.Close</property>"
+"								<property name='tooltip-text' translatable='yes'>Close quiver</property>"
+"							</object>"
+"						</child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuEdit'>"
+"				<property name='label' translatable='yes'>_Edit</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemBrowserCopy'>"
+"								<property name='label' translatable='yes'>_Copy</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.BrowserCopy</property>"
+"								<property name='tooltip-text' translatable='yes'>Copy image</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemViewerCopy'>"
+"								<property name='label' translatable='yes'>_Copy</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.ViewerCopy</property>"
+"								<property name='tooltip-text' translatable='yes'>Copy image</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemBrowserTrash'>"
+"								<property name='label' translatable='yes'>_Move To Trash</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.BrowserTrash</property>"
+"								<property name='tooltip-text' translatable='yes'>Move selected image(s) to the Trash</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemViewerTrash'>"
+"								<property name='label' translatable='yes'>_Move To Trash</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.ViewerTrash</property>"
+"								<property name='tooltip-text' translatable='yes'>Move image to the Trash</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemPreferences'>"
+"								<property name='label' translatable='yes'>_Preferences</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.Preferences</property>"
+"								<property name='tooltip-text' translatable='yes'>Edit quiver preferences</property>"
+"							</object>"
+"						</child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuView'>"
+"				<property name='label' translatable='yes'>_View</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemUIModeViewer'>"
+"								<property name='label' translatable='yes'>_Viewer</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.UIModeViewer</property>"
+"								<property name='tooltip-text' translatable='yes'>View Image</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemUIModeBrowser'>"
+"								<property name='label' translatable='yes'>_Browser</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.UIModeBrowser</property>"
+"								<property name='tooltip-text' translatable='yes'>Browse Images</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemMenubar'>"
+"								<property name='label' translatable='yes'>Menubar</property>"
+"								<property name='tooltip-text' translatable='yes'>Show/Hide the Menubar</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemToolbar'>"
+"								<property name='label' translatable='yes'>Toolbar</property>"
+"								<property name='tooltip-text' translatable='yes'>Show/Hide the Toolbar</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemProperties'>"
+"								<property name='label' translatable='yes'>Properties</property>"
+"								<property name='tooltip-text' translatable='yes'>Show/Hide Image Properties</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemStatusbar'>"
+"								<property name='label' translatable='yes'>Statusbar</property>"
+"								<property name='tooltip-text' translatable='yes'>Show/Hide the Statusbar</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemBrowserSidebar'>"
+"								<property name='label' translatable='yes'>Sidebar</property>"
+"								<property name='tooltip-text' translatable='yes'>Show/Hide Sidebar (Folder Tree, Preview Window, etc)</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemBrowserPreview'>"
+"								<property name='label' translatable='yes'>Preview</property>"
+"								<property name='tooltip-text' translatable='yes'>Show/Hide Image Preview</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemViewFilmStrip'>"
+"								<property name='label' translatable='yes'>Film Strip</property>"
+"								<property name='tooltip-text' translatable='yes'>Show/Hide Film Strip</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuSort'>"
+"								<property name='label' translatable='yes'>_Arrange Items</property>"
+"								<property name='use_underline'>True</property>"
+"								<child type='submenu'>"
+"									<object class='GtkMenu'>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemSortByName'>"
+"												<property name='label' translatable='yes'>By _Name</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='tooltip-text' translatable='yes'>Sort by file name</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemSortByNameNatural'>"
+"												<property name='label' translatable='yes'>By _Name (natural order)</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='group'>RadioMenuItemSortByName</property>"
+"												<property name='tooltip-text' translatable='yes'>Sort by file name (natural order)</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemSortByDate'>"
+"												<property name='label' translatable='yes'>By _Date</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='group'>RadioMenuItemSortByName</property>"
+"												<property name='tooltip-text' translatable='yes'>Sort by date</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemSortByDateModified'>"
+"												<property name='label' translatable='yes'>By Date _Modified</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='group'>RadioMenuItemSortByName</property>"
+"												<property name='tooltip-text' translatable='yes'>Sort by date modified</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemSortByRandom'>"
+"												<property name='label' translatable='yes'>_Randomize</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='group'>RadioMenuItemSortByName</property>"
+"												<property name='tooltip-text' translatable='yes'>Randomize</property>"
+"											</object>"
+"										</child>"
+"										<child><object class='GtkSeparatorMenuItem'/></child>"
+"										<child>"
+"											<object class='GtkCheckMenuItem' id='CheckMenuItemSortDescending'>"
+"												<property name='label' translatable='yes'>In _Descending Order</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='tooltip-text' translatable='yes'>Arrange the items in descending order</property>"
+"											</object>"
+"										</child>"
+"									</object>"
+"								</child>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemFullScreen'>"
+"								<property name='label' translatable='yes'>_Full Screen</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='tooltip-text' translatable='yes'>Toggle Full Screen Mode</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkCheckMenuItem' id='CheckMenuItemSlideShow'>"
+"								<property name='label' translatable='yes'>_Slide Show</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='tooltip-text' translatable='yes'>Toggle Slide Show</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuZoom'>"
+"								<property name='label' translatable='yes'>Zoom</property>"
+"								<child type='submenu'>"
+"									<object class='GtkMenu'>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemZoomFit'>"
+"												<property name='label' translatable='yes'>Zoom _Fit</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='tooltip-text' translatable='yes'>Fit to Window</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemZoomFitStretch'>"
+"												<property name='label' translatable='yes'>Zoom Fit _Stretch</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='group'>RadioMenuItemZoomFit</property>"
+"												<property name='tooltip-text' translatable='yes'>Fit to Window Stretch</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemZoom100'>"
+"												<property name='label' translatable='yes'>_Actual Size</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='group'>RadioMenuItemZoomFit</property>"
+"												<property name='tooltip-text' translatable='yes'>Actual Size</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='RadioMenuItemZoomFillScreen'>"
+"												<property name='label' translatable='yes'>_Fill Screen</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='group'>RadioMenuItemZoomFit</property>"
+"												<property name='tooltip-text' translatable='yes'>Fill the screen with the image</property>"
+"											</object>"
+"										</child>"
+"										<child><object class='GtkSeparatorMenuItem'/></child>"
+"										<child>"
+"											<object class='GtkCheckMenuItem' id='CheckMenuItemMaximizeForDisplay'>"
+"												<property name='label' translatable='yes'>Rotate to _Maximize View</property>"
+"												<property name='use_underline'>True</property>"
+"												<property name='tooltip-text' translatable='yes'>Rotate Images to Maximize Display Area</property>"
+"											</object>"
+"										</child>"
+"									</object>"
+"								</child>"
+"							</object>"
+"						</child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuImage'>"
+"				<property name='label' translatable='yes'>_Image</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemRotateCW'>"
+"								<property name='label' translatable='yes'>_Rotate Clockwise</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.RotateCW</property>"
+"								<property name='tooltip-text' translatable='yes'>Rotate Clockwise</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemRotateCCW'>"
+"								<property name='label' translatable='yes'>Rotate _Counterclockwise</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.RotateCCW</property>"
+"								<property name='tooltip-text' translatable='yes'>Rotate Counterclockwise</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemFlipH'>"
+"								<property name='label' translatable='yes'>Flip _Horizontally</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.FlipH</property>"
+"								<property name='tooltip-text' translatable='yes'>Flip Horizontally</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemFlipV'>"
+"								<property name='label' translatable='yes'>Flip _Vertically</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.FlipV</property>"
+"								<property name='tooltip-text' translatable='yes'>Flip Vertically</property>"
+"							</object>"
+"						</child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuGo'>"
+"				<property name='label' translatable='yes'>_Go</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemImageFirst'>"
+"								<property name='label' translatable='yes'>_First Image</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.ImageFirst</property>"
+"								<property name='tooltip-text' translatable='yes'>Go to first image</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemImagePrevious'>"
+"								<property name='label' translatable='yes'>_Previous Image</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.ImagePrevious</property>"
+"								<property name='tooltip-text' translatable='yes'>Go to previous image</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemImageNext'>"
+"								<property name='label' translatable='yes'>_Next Image</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.ImageNext</property>"
+"								<property name='tooltip-text' translatable='yes'>Go to next image</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemImageLast'>"
+"								<property name='label' translatable='yes'>_Last Image</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.ImageLast</property>"
+"								<property name='tooltip-text' translatable='yes'>Go to last image</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemBrowserHistoryBack'>"
+"								<property name='label' translatable='yes'>Go _Back</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.BrowserHistoryBack</property>"
+"								<property name='tooltip-text' translatable='yes'>Go Back</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemBrowserHistoryForward'>"
+"								<property name='label' translatable='yes'>Go _Forward</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.BrowserHistoryForward</property>"
+"								<property name='tooltip-text' translatable='yes'>Go Forward</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemGoFolderParent'>"
+"								<property name='label' translatable='yes'>Open _Parent</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.GoFolderParent</property>"
+"								<property name='tooltip-text' translatable='yes'>Open parent folder</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemGoFolderNext'>"
+"								<property name='label' translatable='yes'>Open _Next Folder</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.GoFolderNext</property>"
+"								<property name='tooltip-text' translatable='yes'>Open next folder</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemGoFolderPrev'>"
+"								<property name='label' translatable='yes'>Open _Previous Folder</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.GoFolderPrev</property>"
+"								<property name='tooltip-text' translatable='yes'>Open previous folder</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuBookmarks'>"
+"				<property name='label' translatable='yes'>_Bookmarks</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu' id='MenuBookmarkItems'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemBookmarksAdd'>"
+"								<property name='label' translatable='yes'>_Add Bookmark</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.BookmarksAdd</property>"
+"								<property name='tooltip-text' translatable='yes'>Add a bookmark</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemBookmarksEdit'>"
+"								<property name='label' translatable='yes'>_Edit Bookmarks...</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.BookmarksEdit</property>"
+"								<property name='tooltip-text' translatable='yes'>Edit the bookmarks</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem' id='BookmarkItemsSeparator'/></child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuTools'>"
+"				<property name='label' translatable='yes'>_Tools</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu' id='MenuToolsExternal'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemAdjustDate'>"
+"								<property name='label' translatable='yes'>Adjust Date...</property>"
+"								<property name='action_name'>quiver.AdjustDate</property>"
+"								<property name='tooltip-text' translatable='yes'>Adjust Exif Dates</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemRename'>"
+"								<property name='label' translatable='yes'>Rename...</property>"
+"								<property name='action_name'>quiver.Rename</property>"
+"								<property name='tooltip-text' translatable='yes'>Rename image(s)</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemOrganize'>"
+"								<property name='label' translatable='yes'>Organize...</property>"
+"								<property name='action_name'>quiver.Organize</property>"
+"								<property name='tooltip-text' translatable='yes'>Organize photos</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemExternalTools'>"
+"								<property name='label' translatable='yes'>External Tools...</property>"
+"								<property name='action_name'>quiver.ExternalTools</property>"
+"								<property name='tooltip-text' translatable='yes'>Add / edit external tools</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem' id='ExternalToolsSeparator'/></child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkMenuItem' id='MenuHelp'>"
+"				<property name='label' translatable='yes'>_Help</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemDonate'>"
+"								<property name='label' translatable='yes'>_Donate...</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.Donate</property>"
+"								<property name='tooltip-text' translatable='yes'>Help support quiver by donating...</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemAbout'>"
+"								<property name='label' translatable='yes'>_About</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.About</property>"
+"								<property name='tooltip-text' translatable='yes'>About quiver</property>"
+"							</object>"
+"						</child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"	</object>"
+"	<object class='GtkToolbar' id='ToolbarMain'>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonUIModeViewer'>"
+"				<property name='icon_name'>gtk-file</property>"
+"				<property name='action_name'>quiver.UIModeViewer</property>"
+"				<property name='tooltip-text' translatable='yes'>View Image</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonUIModeBrowser'>"
+"				<property name='icon_name'>gtk-directory</property>"
+"				<property name='action_name'>quiver.UIModeBrowser</property>"
+"				<property name='tooltip-text' translatable='yes'>Browse Images</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonBrowserHistoryBack'>"
+"				<property name='icon_name'>gtk-go-back</property>"
+"				<property name='action_name'>quiver.BrowserHistoryBack</property>"
+"				<property name='tooltip-text' translatable='yes'>Go Back</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonBrowserHistoryForward'>"
+"				<property name='icon_name'>gtk-go-forward</property>"
+"				<property name='action_name'>quiver.BrowserHistoryForward</property>"
+"				<property name='tooltip-text' translatable='yes'>Go Forward</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonImagePrevious'>"
+"				<property name='icon_name'>gtk-go-back</property>"
+"				<property name='action_name'>quiver.ImagePrevious</property>"
+"				<property name='tooltip-text' translatable='yes'>Go to previous image</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonImageNext'>"
+"				<property name='icon_name'>gtk-go-forward</property>"
+"				<property name='action_name'>quiver.ImageNext</property>"
+"				<property name='tooltip-text' translatable='yes'>Go to next image</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"		<child>"
+"			<object class='GtkToggleToolButton' id='ToolButtonBrowserSidebar'>"
+"				<property name='icon_name'>gtk-directory</property>"
+"				<property name='tooltip-text' translatable='yes'>Show/Hide Sidebar (Folder Tree, Preview Window, etc)</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"		<child>"
+"			<object class='GtkToggleToolButton' id='ToolButtonFullScreen'>"
+"				<property name='icon_name'>gtk-fullscreen</property>"
+"				<property name='tooltip-text' translatable='yes'>Toggle Full Screen Mode</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"		<child>"
+"			<object class='GtkToggleToolButton' id='ToolButtonSlideShow'>"
+"				<property name='icon_name'>gtk-index</property>"
+"				<property name='tooltip-text' translatable='yes'>Toggle Slide Show</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonZoomIn'>"
+"				<property name='icon_name'>gtk-zoom-in</property>"
+"				<property name='action_name'>quiver.ZoomIn</property>"
+"				<property name='tooltip-text' translatable='yes'>Zoom In</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonZoomOut'>"
+"				<property name='icon_name'>gtk-zoom-out</property>"
+"				<property name='action_name'>quiver.ZoomOut</property>"
+"				<property name='tooltip-text' translatable='yes'>Zoom Out</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonZoom100'>"
+"				<property name='icon_name'>gtk-zoom-100</property>"
+"				<property name='action_name'>quiver.Zoom100</property>"
+"				<property name='tooltip-text' translatable='yes'>Actual Size</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonZoomFit'>"
+"				<property name='icon_name'>gtk-zoom-fit</property>"
+"				<property name='action_name'>quiver.ZoomFit</property>"
+"				<property name='tooltip-text' translatable='yes'>Fit to Window</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonRotateCCW'>"
+"				<property name='icon_name'>edit-undo</property>"
+"				<property name='action_name'>quiver.RotateCCW</property>"
+"				<property name='tooltip-text' translatable='yes'>Rotate Counterclockwise</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonRotateCW'>"
+"				<property name='icon_name'>edit-redo</property>"
+"				<property name='action_name'>quiver.RotateCW</property>"
+"				<property name='tooltip-text' translatable='yes'>Rotate Clockwise</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonBrowserTrash'>"
+"				<property name='icon_name'>gtk-delete</property>"
+"				<property name='action_name'>quiver.BrowserTrash</property>"
+"				<property name='tooltip-text' translatable='yes'>Move selected image(s) to the Trash</property>"
+"			</object>"
+"		</child>"
+"		<child>"
+"			<object class='GtkToolButton' id='ToolButtonViewerTrash'>"
+"				<property name='icon_name'>gtk-delete</property>"
+"				<property name='action_name'>quiver.ViewerTrash</property>"
+"				<property name='tooltip-text' translatable='yes'>Move image to the Trash</property>"
+"			</object>"
+"		</child>"
+"		<child><object class='GtkSeparatorToolItem'/></child>"
+"	</object>"
+"</interface>";
 
-
-static const char *quiver_ui_browser =
-"<ui>"
-#ifdef QUIVER_MAEMO
-"	<popup name='MenubarMain'>"
-#else
-"	<menubar name='MenubarMain'>"
-#endif
-"		<menu action='MenuView'>"
-"			<placeholder name='UIModeItems'>"
-"				<separator/>"
-"				<menuitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
-"				<separator/>"
-"			</placeholder>"
-"		</menu>"
-#ifdef QUIVER_MAEMO
-"	</popup>"
-#else
-"	</menubar>"
-#endif
-"	<toolbar name='ToolbarMain'>"
-"		<placeholder name='UIModeItems'>"
-"			<separator/>"
-"			<toolitem action='"ACTION_QUIVER_UI_MODE_VIEWER"'/>"
-"			<separator/>"
-"		</placeholder>"
-"		<placeholder name='NavToolItems'>"
-"			<separator/>"
-"		</placeholder>"
-"	</toolbar>"
-"	<popup name='ContextMenuMain'>"
-"	</popup>"
-"</ui>";
-
-
-static const char *quiver_ui_viewer =
-"<ui>"
-#ifdef QUIVER_MAEMO
-"	<popup name='MenubarMain'>"
-#else
-"	<menubar name='MenubarMain'>"
-#endif
-"		<menu action='MenuView'>"
-"			<placeholder name='UIModeItems'>"
-"				<separator/>"
-"				<menuitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
-"				<separator/>"
-"			</placeholder>"
-"		</menu>"
-#ifdef QUIVER_MAEMO
-"	</popup>"
-#else
-"	</menubar>"
-#endif
-"	<toolbar name='ToolbarMain'>"
-"		<placeholder name='UIModeItems'>"
-"			<separator/>"
-"			<toolitem action='"ACTION_QUIVER_UI_MODE_BROWSER"'/>"
-"			<separator/>"
-"		</placeholder>"
-"	</toolbar>"
-"	<popup name='ContextMenuMain'>"
-"	</popup>"
-"</ui>";
-
-GtkToggleActionEntry QuiverImpl::action_entries_toggle[] = {
-	{ ACTION_QUIVER_FULLSCREEN, QUIVER_STOCK_FULLSCREEN , N_("_Full Screen"), "f", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
-
-#ifdef QUIVER_MAEMO
-	{ ACTION_QUIVER_FULLSCREEN_MAEMO, "", N_("_Full Screen"), "F6", N_("Toggle Full Screen Mode"), G_CALLBACK(quiver_action_handler_cb),FALSE},
-#endif
-	{ ACTION_QUIVER_SLIDESHOW,QUIVER_STOCK_SLIDESHOW, N_("_Slide Show"), "s", N_("Toggle Slide Show"), G_CALLBACK(quiver_action_handler_cb),FALSE},	
-	{ ACTION_QUIVER_VIEW_MENUBAR, QUIVER_STOCK_ZOOM_IN,"Menubar", "<Control><Shift>M", "Show/Hide the Menubar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ ACTION_QUIVER_VIEW_TOOLBAR_MAIN, QUIVER_STOCK_ZOOM_IN,"Toolbar", "<Control><Shift>T", "Show/Hide the Toolbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ ACTION_QUIVER_VIEW_STATUSBAR, QUIVER_STOCK_ZOOM_IN,"Statusbar", "<Control><Shift>S", "Show/Hide the Statusbar", G_CALLBACK(quiver_action_handler_cb),TRUE},
-	{ ACTION_QUIVER_VIEW_PROPERTIES, QUIVER_STOCK_PROPERTIES,"Properties", "<Alt>Return", "Show/Hide Image Properties", G_CALLBACK(quiver_action_handler_cb),FALSE},
-	{ ACTION_QUIVER_SORT_DESCENDING, QUIVER_STOCK_SORT_DESCENDING, "In Descending Order", "", "Arrange the items in descending order", G_CALLBACK(quiver_action_handler_cb),FALSE},
-};
-
-GtkRadioActionEntry QuiverImpl::sort_radio_action_entries[] = {
-	{ ACTION_QUIVER_SORT_BY_NAME, "","By Name", "", "Sort by file name", ImageList::SORT_BY_FILENAME},
-	{ ACTION_QUIVER_SORT_BY_NAME_NATURAL, "","By Name (natural order)", "", "Sort by file name (natural order)", ImageList::SORT_BY_FILENAME_NATURAL},
-	{ ACTION_QUIVER_SORT_BY_DATE, "","By Date", "", "Sort by date", ImageList::SORT_BY_DATE},
-	{ ACTION_QUIVER_SORT_BY_DATE_MODIFIED, "","By Date Modified", "", "Sort by date modified", ImageList::SORT_BY_DATE_MODIFIED},
-	{ ACTION_QUIVER_SORT_BY_RANDOM, "","Randomize", "", "Randomize", ImageList::SORT_BY_RANDOM},
-};
-
-GtkActionEntry QuiverImpl::action_entries[] = {
-	
-	{ "MenuFile", NULL, N_("_File") },
-	{ "MenuZoom", NULL, N_("Zoom")},
-	{ "MenuTransform", NULL, N_("Transform")},
-	{ "MenuEdit", NULL, N_("_Edit") },
-	{ "MenuView", NULL, N_("_View") },
-	{ "MenuSort", NULL, N_("_Arrange Items") },
-	{ "MenuImage", NULL, N_("_Image") },
-	{ "MenuGo", NULL, N_("_Go") },
-	{ ACTION_QUIVER_GO_FOLDER_PARENT, QUIVER_STOCK_GO_UP, "Open Parent", "<Alt>Up", "Open parent folder", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_GO_FOLDER_NEXT, QUIVER_STOCK_GO_FORWARD, "Open _Next Folder", "<Shift><Alt>Right", "Open next folder", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_GO_FOLDER_PREV, QUIVER_STOCK_GO_BACK, "Open _Previous Folder", "<Shift><Alt>Left", "Open previous folder", G_CALLBACK(quiver_action_handler_cb)},
-	{ "MenuTools", NULL, N_("_Tools") },
-	{ "MenuWindow", NULL, N_("_Window") },
-	{ "MenuHelp", NULL, N_("_Help") },
-
-	{ ACTION_QUIVER_UI_MODE_BROWSER,QUIVER_STOCK_BROWSER , "_Browser", "", "Browse Images", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_UI_MODE_VIEWER, QUIVER_STOCK_APP, "_Viewer", "", "View Image", G_CALLBACK(quiver_action_handler_cb)},
-#ifdef QUIVER_MAEMO
-	{ ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, "" , NULL, "Return", NULL, G_CALLBACK(quiver_action_handler_cb)},
-#endif
-
-	{ ACTION_QUIVER_OPEN, QUIVER_STOCK_OPEN, "_Open", "<Control>o", "Open an image", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_OPEN_FOLDER, QUIVER_STOCK_OPEN, "Open _Folder", "<Control>f", "Open a Folder", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_SAVE, QUIVER_STOCK_SAVE, "_Save", "<Control>s", "Save the Image", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_SAVE_AS, QUIVER_STOCK_SAVE, "Save _As", "", "Save the Image As", G_CALLBACK(quiver_action_handler_cb)},
-	
-	{ ACTION_QUIVER_CLOSE, QUIVER_STOCK_QUIT, "_Close", "<Alt>F4", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_CLOSE_2, QUIVER_STOCK_QUIT, "_Close", "q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_CLOSE_3, QUIVER_STOCK_QUIT, "_Close", "<Control>q", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
-	{ ACTION_QUIVER_CLOSE_4, QUIVER_STOCK_QUIT, "_Close", "<Control>w", "Close quiver", G_CALLBACK( quiver_action_handler_cb )},	
-	{ ACTION_QUIVER_ESCAPE, "", NULL, "Escape", NULL, G_CALLBACK( quiver_action_handler_cb )},	
-
-	{ ACTION_QUIVER_PREFERENCES, QUIVER_STOCK_PREFERENCES, "_Preferences", "<Control>p", "Edit quiver preferences", G_CALLBACK(quiver_action_handler_cb)},
-
-
-
-	{ "MenuBookmarks", NULL, "_Bookmarks" },
-	{ ACTION_QUIVER_BOOKMARKS_ADD, QUIVER_STOCK_ADD, "_Add Bookmark", "<Control>d", "Add a bookmark", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_BOOKMARKS_EDIT, QUIVER_STOCK_EDIT, "_Edit Bookmarks...", "", "Edit the bookmarks", G_CALLBACK(quiver_action_handler_cb)},
-
-	{ ACTION_QUIVER_RENAME, QUIVER_STOCK_EDIT, "Rename...", "", "Rename image(s)", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_ORGANIZE, QUIVER_STOCK_EDIT, "Organize...", "", "Organize photos", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_ADJUST_DATE, QUIVER_STOCK_EDIT, "Adjust Date...", "", "Adjust Exif Dates", G_CALLBACK(quiver_action_handler_cb)},
-	{ ACTION_QUIVER_EXTERNAL_TOOLS, QUIVER_STOCK_EDIT, "External Tools...", "", "Add / edit external tools", G_CALLBACK(quiver_action_handler_cb)},
-
-	{ ACTION_QUIVER_DONATE, "", "_Donate...", "", "Help support quiver by donating...", G_CALLBACK( quiver_action_handler_cb )},
-	{ ACTION_QUIVER_ABOUT, QUIVER_STOCK_ABOUT, "_About", "", "About quiver", G_CALLBACK( quiver_action_handler_cb )},
-
-};
-
-
-GtkTargetEntry QuiverImpl::quiver_drag_target_table[] = {
-		{ "STRING",     0, QUIVER_TARGET_STRING }, // STRING is used for legacy motif apps
-		{ "text/plain", 0, QUIVER_TARGET_STRING },  // the real mime types to support
-		 { "text/uri-list", 0, QUIVER_TARGET_URI },
+const GtkTargetEntry QuiverImpl::quiver_drag_target_table[] = {
+		{ (gchar*)"STRING",     0, QUIVER_TARGET_STRING }, // STRING is used for legacy motif apps
+		{ (gchar*)"text/plain", 0, QUIVER_TARGET_STRING },  // the real mime types to support
+		 { (gchar*)"text/uri-list", 0, QUIVER_TARGET_URI },
 	};
 
 /*
@@ -1100,14 +1374,7 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 #endif
 	}
 	
-	GtkAction * action = QuiverUtils::GetAction(pQuiverImpl->m_pUIManager,ACTION_QUIVER_FULLSCREEN);
-	if (NULL != action)
-	{
-		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,pQuiverImpl);
-		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),bFullscreen);
-		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,pQuiverImpl);
-
-	}
+	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_FULLSCREEN, bFullscreen);
 
 	return FALSE;
 }
@@ -1194,10 +1461,10 @@ Quiver::Quiver(std::list<std::string> &images, bool bRecursive/* = false*/)
 
 void Quiver::Init()
 {
-	m_QuiverImplPtr->m_pUIManager = NULL;
+	m_QuiverImplPtr->m_pMenuBookmarkItems = NULL;
+	m_QuiverImplPtr->m_pMenuToolsExternal = NULL;
 
-	m_QuiverImplPtr->m_iMergedViewerUI = 0;
-	m_QuiverImplPtr->m_iMergedBrowserUI = 0;	
+	m_QuiverImplPtr->m_bViewerMode = false;
 
 	m_QuiverImplPtr->m_bSlideShowRestoreFromFS = false;
 	
@@ -1260,63 +1527,167 @@ void Quiver::Init()
 
 	/* Set up GUI elements */
 
-	m_QuiverImplPtr->m_pUIManager = gtk_ui_manager_new();
-	gtk_ui_manager_set_add_tearoffs (m_QuiverImplPtr->m_pUIManager,TRUE);
-
-	gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
-			quiver_ui_main,
-			strlen(quiver_ui_main),
-			NULL);
-
-	guint n_entries = G_N_ELEMENTS (m_QuiverImplPtr->action_entries);
-
-	
-	GtkActionGroup* actions = gtk_action_group_new ("GlobalActions");
-	
-	gtk_action_group_add_actions(actions, m_QuiverImplPtr->action_entries, n_entries, m_QuiverImplPtr.get());
-                                 
-	gtk_action_group_add_toggle_actions(actions,
-										m_QuiverImplPtr->action_entries_toggle, 
-										G_N_ELEMENTS (m_QuiverImplPtr->action_entries_toggle),
-										m_QuiverImplPtr.get());
-
-	gtk_action_group_add_radio_actions(actions,
-										m_QuiverImplPtr->sort_radio_action_entries, 
-										G_N_ELEMENTS (m_QuiverImplPtr->sort_radio_action_entries),
-										ImageList::SORT_BY_FILENAME_NATURAL,
-										G_CALLBACK(quiver_radio_action_handler_cb),
-										m_QuiverImplPtr.get());										
-
-	gtk_ui_manager_insert_action_group (m_QuiverImplPtr->m_pUIManager,actions,0);
-
-	g_object_unref(actions);
-
-	GtkWidget* toolbar = gtk_ui_manager_get_widget(m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain/");
-	if (NULL != toolbar)
+	GtkBuilder *builder = gtk_builder_new();
+	GError *error = NULL;
+	gtk_builder_add_from_string(builder, quiver_ui_main, -1, &error);
+	if (NULL != error)
 	{
-		gtk_toolbar_set_style(GTK_TOOLBAR(toolbar),GTK_TOOLBAR_ICONS);
-#ifdef QUIVER_MAEMO
-		gtk_toolbar_set_tooltips(GTK_TOOLBAR(toolbar),FALSE);
-#endif
+		g_critical("%s", error->message);
+		g_error_free(error);
 	}
-                                             
-	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "connect_proxy",
-		G_CALLBACK (signal_connect_proxy), m_QuiverImplPtr.get());
-	g_signal_connect (m_QuiverImplPtr->m_pUIManager, "disconnect_proxy",
-		G_CALLBACK (signal_disconnect_proxy), m_QuiverImplPtr.get());
 
-                                             
-	gtk_window_add_accel_group (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
-								gtk_ui_manager_get_accel_group(m_QuiverImplPtr->m_pUIManager));
-	
+	m_QuiverImplPtr->m_pMenubar = GTK_WIDGET(gtk_builder_get_object(builder, "MenubarMain"));
+	m_QuiverImplPtr->m_pToolbar = GTK_WIDGET(gtk_builder_get_object(builder, "ToolbarMain"));
+	m_QuiverImplPtr->m_pMenuBookmarkItems = GTK_WIDGET(gtk_builder_get_object(builder, "MenuBookmarkItems"));
+	m_QuiverImplPtr->m_pMenuToolsExternal = GTK_WIDGET(gtk_builder_get_object(builder, "MenuToolsExternal"));
 
-	m_QuiverImplPtr->m_BrowserPtr->SetUIManager(m_QuiverImplPtr->m_pUIManager);
-	m_QuiverImplPtr->m_ViewerPtr->SetUIManager(m_QuiverImplPtr->m_pUIManager);
-	
+	gtk_toolbar_set_style(GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar), GTK_TOOLBAR_ICONS);
+#ifdef QUIVER_MAEMO
+	gtk_toolbar_set_tooltips(GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar), FALSE);
+#endif
+
+	/* GSimpleAction based action system (replaces GtkUIManager/GtkAction).
+	 * Actions are registered here and their widgets bound with
+	 * QuiverUtils::BindWidget() / BindToggleWidget() / BindRadioWidget(). */
+	QuiverUtils::InitActions();
+	gtk_widget_insert_action_group(m_QuiverImplPtr->m_pQuiverWindow, "quiver",
+		G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
+	QuiverUtils::AddAccelGroup(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
+
+	/* Global simple actions */
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_OPEN, "<Control>o", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_OPEN_FOLDER, "<Control>f", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_SAVE, "<Control>s", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_SAVE_AS, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE, "<Alt>F4", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE_2, "q", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE_3, "<Control>q", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE_4, "<Control>w", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ESCAPE, "Escape", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_PREFERENCES, "<Control>p", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UI_MODE_BROWSER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UI_MODE_VIEWER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_GO_FOLDER_PARENT, "<Alt>Up", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_GO_FOLDER_NEXT, "<Shift><Alt>Right", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_GO_FOLDER_PREV, "<Shift><Alt>Left", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_BOOKMARKS_ADD, "<Control>d", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_BOOKMARKS_EDIT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ADJUST_DATE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ORGANIZE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_RENAME, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_EXTERNAL_TOOLS, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_DONATE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ABOUT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+#ifdef QUIVER_MAEMO
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, "Return", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+#endif
+
+	/* Global toggle actions */
+	QuiverUtils::AddToggleAction(ACTION_QUIVER_FULLSCREEN, "f", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddToggleAction(ACTION_QUIVER_SLIDESHOW, "s", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddToggleAction(ACTION_QUIVER_VIEW_MENUBAR, "<Control><Shift>M",
+		prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_MENUBAR_SHOW, true), quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddToggleAction(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, "<Control><Shift>T",
+		prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_TOOLBAR_SHOW, true), quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddToggleAction(ACTION_QUIVER_VIEW_STATUSBAR, "<Control><Shift>S",
+		prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_STATUSBAR_SHOW, true), quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddToggleAction(ACTION_QUIVER_VIEW_PROPERTIES, "<Alt>Return", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddToggleAction(ACTION_QUIVER_SORT_DESCENDING, "",
+		prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, false), quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+
+	/* Sort order radio actions */
+	const gchar *sort_names[] = {
+		ACTION_QUIVER_SORT_BY_NAME,
+		ACTION_QUIVER_SORT_BY_NAME_NATURAL,
+		ACTION_QUIVER_SORT_BY_DATE,
+		ACTION_QUIVER_SORT_BY_DATE_MODIFIED,
+		ACTION_QUIVER_SORT_BY_RANDOM };
+	gint sort_values[] = {
+		ImageList::SORT_BY_FILENAME,
+		ImageList::SORT_BY_FILENAME_NATURAL,
+		ImageList::SORT_BY_DATE,
+		ImageList::SORT_BY_DATE_MODIFIED,
+		ImageList::SORT_BY_RANDOM };
+	QuiverUtils::AddRadioActions(sort_names, sort_values, G_N_ELEMENTS(sort_names),
+		prefsPtr->GetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, ImageList::SORT_BY_FILENAME_NATURAL),
+		quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+
+	/* Register the browser and viewer actions */
+	m_QuiverImplPtr->m_BrowserPtr->RegisterActions();
+	m_QuiverImplPtr->m_ViewerPtr->RegisterActions();
+
+	/* Give the browser the shared toolbar so it can insert its thumb-size widget */
+	m_QuiverImplPtr->m_BrowserPtr->SetToolbar(GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar));
+
+	/* Bind global toggle widgets */
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemFullScreen")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_FULLSCREEN);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemSlideShow")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SLIDESHOW);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemMenubar")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_VIEW_MENUBAR);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemToolbar")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemStatusbar")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_VIEW_STATUSBAR);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemProperties")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_VIEW_PROPERTIES);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemSortDescending")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_DESCENDING);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonFullScreen")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_FULLSCREEN);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonSlideShow")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SLIDESHOW);
+
+	/* Bind sort radio widgets */
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByName")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_NAME);
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByNameNatural")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_NAME_NATURAL);
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByDate")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_DATE);
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByDateModified")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_DATE_MODIFIED);
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByRandom")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_RANDOM);
+
+	/* Bind browser toggle widgets */
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemBrowserSidebar")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserViewSidebar");
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemBrowserPreview")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserViewPreview");
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonBrowserSidebar")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserViewSidebar");
+
+	/* Bind viewer toggle widgets */
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemViewFilmStrip")), m_QuiverImplPtr->m_pQuiverWindow, "ViewFilmStrip");
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemMaximizeForDisplay")), m_QuiverImplPtr->m_pQuiverWindow, "MaximizeForDisplay");
+
+	/* Bind viewer zoom radio widgets */
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemZoomFit")), m_QuiverImplPtr->m_pQuiverWindow, "ZoomFit");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemZoomFitStretch")), m_QuiverImplPtr->m_pQuiverWindow, "ZoomFitStretch");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemZoom100")), m_QuiverImplPtr->m_pQuiverWindow, "Zoom100");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemZoomFillScreen")), m_QuiverImplPtr->m_pQuiverWindow, "ZoomFillScreen");
+
+	/* Bind the browser simple-action widgets */
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemBrowserOpenLocation")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserOpenLocation");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemBrowserCopy")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserCopy");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemBrowserTrash")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserTrash");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemBrowserHistoryBack")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserHistoryBack");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemBrowserHistoryForward")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserHistoryForward");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonBrowserHistoryBack")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserHistoryBack");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonBrowserHistoryForward")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserHistoryForward");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonBrowserTrash")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserTrash");
+
+	/* Bind the viewer simple-action widgets */
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemViewerCopy")), m_QuiverImplPtr->m_pQuiverWindow, "ViewerCopy");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemViewerTrash")), m_QuiverImplPtr->m_pQuiverWindow, "ViewerTrash");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonViewerTrash")), m_QuiverImplPtr->m_pQuiverWindow, "ViewerTrash");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemImageFirst")), m_QuiverImplPtr->m_pQuiverWindow, "ImageFirst");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemImagePrevious")), m_QuiverImplPtr->m_pQuiverWindow, "ImagePrevious");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemImageNext")), m_QuiverImplPtr->m_pQuiverWindow, "ImageNext");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemImageLast")), m_QuiverImplPtr->m_pQuiverWindow, "ImageLast");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonImagePrevious")), m_QuiverImplPtr->m_pQuiverWindow, "ImagePrevious");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonImageNext")), m_QuiverImplPtr->m_pQuiverWindow, "ImageNext");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonZoomIn")), m_QuiverImplPtr->m_pQuiverWindow, "ZoomIn");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonZoomOut")), m_QuiverImplPtr->m_pQuiverWindow, "ZoomOut");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonZoom100")), m_QuiverImplPtr->m_pQuiverWindow, "Zoom100");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonZoomFit")), m_QuiverImplPtr->m_pQuiverWindow, "ZoomFit");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemRotateCW")), m_QuiverImplPtr->m_pQuiverWindow, "RotateCW");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemRotateCCW")), m_QuiverImplPtr->m_pQuiverWindow, "RotateCCW");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemFlipH")), m_QuiverImplPtr->m_pQuiverWindow, "FlipH");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemFlipV")), m_QuiverImplPtr->m_pQuiverWindow, "FlipV");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonRotateCCW")), m_QuiverImplPtr->m_pQuiverWindow, "RotateCCW");
+	QuiverUtils::BindWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonRotateCW")), m_QuiverImplPtr->m_pQuiverWindow, "RotateCW");
+
 	m_QuiverImplPtr->m_BrowserPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
 	m_QuiverImplPtr->m_ViewerPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
-	
-	m_QuiverImplPtr->m_ExifView.SetUIManager(m_QuiverImplPtr->m_pUIManager);
+
+	/* keep the builder alive so the mode-dependent widgets can be looked up */
+	m_QuiverImplPtr->m_pBuilder = builder;
 	//GTK_WIDGET_UNSET_FLAGS(toolbar,GTK_CAN_FOCUS);
 
  	//gtk_widget_add_events (m_pQuiverWindow, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);
@@ -1357,11 +1728,11 @@ void Quiver::Init()
 
 	GtkWidget* hbox_browser_viewer_container;
 	
-	vbox = gtk_vbox_new(FALSE,0);
-	m_QuiverImplPtr->m_pHPanedMainArea = gtk_hpaned_new();
+	vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
+	m_QuiverImplPtr->m_pHPanedMainArea = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pHPanedMainArea,"Quiver hpaned");
 	
-	hbox_browser_viewer_container = gtk_hbox_new(FALSE,0);
+	hbox_browser_viewer_container = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	gtk_widget_set_name(hbox_browser_viewer_container,"Quiver hbox 1");
 	m_QuiverImplPtr->m_pNBProperties = gtk_notebook_new();
 	gtk_widget_set_name(m_QuiverImplPtr->m_pNBProperties ,"Quiver notebook 1");
@@ -1370,26 +1741,20 @@ void Quiver::Init()
 	
 	bool prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 
-	GtkAction *action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
 	if (prefs_show)
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_pNBProperties);
 	}
-	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
+	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_PROPERTIES, prefs_show);
 
-	
-	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_SORT_BY_NAME_NATURAL);
-	if (action)
 	{
 		int sortby = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_BY,ImageList::SORT_BY_FILENAME_NATURAL);
-		gtk_radio_action_set_current_value (GTK_RADIO_ACTION(action), sortby);
+		QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, sortby);
 	}
 
-	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_SORT_DESCENDING);
-	if (action)
 	{
 		bool bDec = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_REVERSED,false);
-		gtk_toggle_action_set_active (GTK_TOGGLE_ACTION(action), bDec ? TRUE : FALSE );
+		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_SORT_DESCENDING, bDec);
 	}
 
 	//FIXME: temp notebook stuff
@@ -1417,23 +1782,34 @@ void Quiver::Init()
 	{
 		gtk_widget_show(statusbar);
 	}
-	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_STATUSBAR);
-	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
+	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, prefs_show);
 
 	// menubar
-	m_QuiverImplPtr->m_pMenubar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/MenubarMain");
 	gtk_widget_set_no_show_all(m_QuiverImplPtr->m_pMenubar,TRUE);
 
 	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW, true);
 	if (prefs_show)
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_pMenubar);
+
+		// GtkBuilder does not show menu items the way GtkUIManager used to,
+		// so explicitly show the top-level items and their submenu contents.
+		GList *items = gtk_container_get_children(GTK_CONTAINER(m_QuiverImplPtr->m_pMenubar));
+		for (GList *itr = items; NULL != itr; itr = g_list_next(itr))
+		{
+			GtkWidget *item = GTK_WIDGET(itr->data);
+			gtk_widget_show(item);
+			GtkWidget *submenu = gtk_menu_item_get_submenu(GTK_MENU_ITEM(item));
+			if (NULL != submenu)
+			{
+				gtk_widget_show_all(submenu);
+			}
+		}
+		g_list_free(items);
 	}
-	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_MENUBAR);
-	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
+	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_MENUBAR, prefs_show);
 	
 	// toolbar
-	m_QuiverImplPtr->m_pToolbar = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ToolbarMain");
 	gtk_widget_set_no_show_all(m_QuiverImplPtr->m_pToolbar,TRUE);
 
 	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW, true);
@@ -1441,8 +1817,7 @@ void Quiver::Init()
 	{
 		gtk_widget_show(m_QuiverImplPtr->m_pToolbar);
 	}
-	action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
-	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), prefs_show ? TRUE : FALSE);
+	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, prefs_show);
 
 	// FIXME: context menu
 	// GtkWidget *context_menu = gtk_ui_manager_get_widget (m_QuiverImplPtr->m_pUIManager,"/ui/ContextMenu");
@@ -1561,7 +1936,22 @@ bool Quiver::LoadSettings()
 {
 	string gtk_rc = g_szConfigDir + string("/gtkrc");
 	
-	gtk_rc_parse (gtk_rc.c_str());
+	// load the user's theme overrides (gtk_rc_parse is deprecated, so use a CSS provider)
+	if (g_file_test (gtk_rc.c_str(), G_FILE_TEST_EXISTS))
+	{
+		GtkCssProvider* cssProvider = gtk_css_provider_new();
+		GError* cssError = NULL;
+		if (gtk_css_provider_load_from_path (cssProvider, gtk_rc.c_str(), &cssError))
+		{
+			gtk_style_context_add_provider_for_screen (gdk_screen_get_default (),
+				GTK_STYLE_PROVIDER (cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
+		}
+		else if (NULL != cssError)
+		{
+			g_error_free (cssError);
+		}
+		g_object_unref (cssProvider);
+	}
 
 	string strAccelMap = g_szConfigDir + string("/quiver_keys.map");	
 	
@@ -1569,10 +1959,14 @@ bool Quiver::LoadSettings()
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
-	m_QuiverImplPtr->m_iAppX      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_LEFT, gdk_screen_width()/4);
-	m_QuiverImplPtr->m_iAppY      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP, gdk_screen_height()/4);
-	m_QuiverImplPtr->m_iAppWidth  = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH, gdk_screen_width()/2);
-	m_QuiverImplPtr->m_iAppHeight = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT, gdk_screen_height()/2);
+	GdkMonitor* monitor = gdk_display_get_primary_monitor(gdk_display_get_default());
+	GdkRectangle screen_geom;
+	gdk_monitor_get_geometry(monitor, &screen_geom);
+
+	m_QuiverImplPtr->m_iAppX      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_LEFT, screen_geom.width/4);
+	m_QuiverImplPtr->m_iAppY      = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP, screen_geom.height/4);
+	m_QuiverImplPtr->m_iAppWidth  = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH, screen_geom.width/2);
+	m_QuiverImplPtr->m_iAppHeight = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT, screen_geom.height/2);
 	
 	return (m_QuiverImplPtr->m_iAppWidth && m_QuiverImplPtr->m_iAppHeight);
 }
@@ -1639,12 +2033,6 @@ void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
 }
 
 
-static gboolean DestroyQuiver (gpointer data)
-{
-	Quiver *pQuiver = (Quiver*)data;
-	delete pQuiver;
-	return TRUE;
-}
 
 #ifdef QUIVER_MAEMO
 
@@ -1652,7 +2040,6 @@ static void
 mime_open_handler (gpointer raw_data, int argc, char **argv)
 {
 	QuiverImpl* pQuiverImpl = static_cast<QuiverImpl*>(raw_data);
-	gdk_threads_enter();
 	if (argc > 0)
 	{
 		list<string> files;
@@ -1684,7 +2071,6 @@ mime_open_handler (gpointer raw_data, int argc, char **argv)
 			pQuiverImpl->m_listImages = files;
 		}
 	}
-	gdk_threads_leave();
 }
 
 
@@ -1712,8 +2098,6 @@ int main (int argc, char **argv)
 
  	/* init threads */
 	//g_type_init ();
-	gdk_threads_init ();
-	gdk_threads_enter ();
 
 	
 	/* Initialize the widget set */
@@ -1810,9 +2194,8 @@ int main (int argc, char **argv)
 	// so must do the following:
 	
 	//GdkPixbufNonAnim
-	GdkPixbufAnimation* anim;
-	anim = gdk_pixbuf_non_anim_new (NULL);
-	g_object_unref(anim);
+	// ensure the GdkPixbufAnimation type is registered to avoid races with pixbuf loaders
+	g_type_ensure (gdk_pixbuf_animation_get_type ());
 	
 
 	GdkPixbufLoader* loader = gdk_pixbuf_loader_new();
@@ -1826,8 +2209,6 @@ int main (int argc, char **argv)
 	gst_deinit();
 	
 
-	gdk_threads_leave();
-	
 	return 0;
 }
 
@@ -1837,7 +2218,6 @@ gboolean Quiver::idle_quiver_init (gpointer data)
 }
 gboolean Quiver::IdleQuiverInit(gpointer data)
 {
-	gdk_threads_enter();
 	// put process intenstive startup code in here 
 	// (loading image list, setting first image)
 
@@ -1849,7 +2229,7 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	m_QuiverImplPtr->m_ViewerPtr->SetImageList(m_QuiverImplPtr->m_ImageListPtr);
 
 	// call this a second time to make sure the list is updated
-	if (0 == m_QuiverImplPtr->m_iMergedBrowserUI)
+	if (m_QuiverImplPtr->m_bViewerMode)
 	{
 		ShowViewer();
 	}
@@ -1861,8 +2241,6 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	TaskManagerDlg::Create(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
 
 	m_QuiverImplPtr->m_bInitialized = true;
-
-	gdk_threads_leave();
 
 	return FALSE; // return false so it is never called again
 }
@@ -1922,110 +2300,87 @@ static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, g
 
 
 //==============================================================================
-//== gtk_ui_manager signals ====================================================
+//== ShowViewer / ShowBrowser ===================================================
 //==============================================================================
 
-	// gtk_ui_manager signals
-static void signal_connect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
+static void show_ui_items(GtkBuilder *builder, const char **ids, guint n, bool bShow)
 {
-	if (GTK_IS_MENU_ITEM(proxy))
+	for (guint i = 0; i < n; i++)
 	{
-		g_signal_connect (proxy, "select",G_CALLBACK (signal_item_select), data);
-		g_signal_connect (proxy, "deselect",G_CALLBACK (signal_item_deselect), data);
+		GtkWidget *widget = GTK_WIDGET(gtk_builder_get_object(builder, ids[i]));
+		if (NULL != widget)
+		{
+			if (bShow)
+			{
+				gtk_widget_show(widget);
+			}
+			else
+			{
+				gtk_widget_hide(widget);
+			}
+		}
 	}
 }
-static void signal_disconnect_proxy (GtkUIManager *manager,GtkAction *action,GtkWidget*proxy, gpointer data)
-{
-	/*
-	g_signal_handlers_disconnect_by_func (proxy, G_CALLBACK (signal_item_select), data);
-	g_signal_handlers_disconnect_by_func (proxy, G_CALLBACK (signal_item_deselect), data);
-	*/
-}
 
-static void signal_item_select (GtkMenuItem *proxy,gpointer data)
+void QuiverImpl::ShowViewerUIItems(QuiverImpl *pQuiverImpl, bool bShow)
 {
-	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
-	GtkAction* action;
-	char*      message;
-	
-	action = (GtkAction*)g_object_get_data (G_OBJECT (proxy),  "gtk-action");
-	g_return_if_fail (action != NULL);
-	
-	g_object_get (G_OBJECT (action), "tooltip", &message, NULL);
-	if (message)
+	static const char *viewer_items[] = {
+		"MenuItemSave", "MenuItemSaveAs", "MenuItemClose",
+		"MenuItemViewerCopy", "MenuItemViewerTrash",
+		"MenuItemImageFirst", "MenuItemImagePrevious", "MenuItemImageNext", "MenuItemImageLast",
+		"MenuItemRotateCW", "MenuItemRotateCCW", "MenuItemFlipH", "MenuItemFlipV",
+		"CheckMenuItemViewFilmStrip",
+		"ToolButtonImagePrevious", "ToolButtonImageNext",
+		"ToolButtonZoomIn", "ToolButtonZoomOut", "ToolButtonZoom100", "ToolButtonZoomFit",
+		"ToolButtonRotateCCW", "ToolButtonRotateCW", "ToolButtonViewerTrash",
+		"ToolButtonUIModeBrowser" };
+	if (NULL != pQuiverImpl && NULL != pQuiverImpl->m_pBuilder)
 	{
-		pQuiverImpl->m_StatusbarPtr->PushText(message);
-		g_free (message);
+		show_ui_items(pQuiverImpl->m_pBuilder, viewer_items, G_N_ELEMENTS(viewer_items), bShow);
 	}
-
 }
 
-static void signal_item_deselect (GtkMenuItem *proxy,gpointer data)
+void QuiverImpl::ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow)
 {
-	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
-	GtkAction* action;
-	char*      message;
-	
-	action = (GtkAction*)g_object_get_data (G_OBJECT (proxy),  "gtk-action");
-	g_return_if_fail (action != NULL);
-	
-	g_object_get (G_OBJECT (action), "tooltip", &message, NULL);
-	if (message)
+	static const char *browser_items[] = {
+		"MenuItemBrowserOpenLocation", "MenuItemBrowserCopy", "MenuItemBrowserTrash",
+		"MenuItemBrowserHistoryBack", "MenuItemBrowserHistoryForward",
+		"MenuItemGoFolderParent", "MenuItemGoFolderNext", "MenuItemGoFolderPrev",
+		"CheckMenuItemBrowserSidebar", "CheckMenuItemBrowserPreview",
+		"CheckMenuItemSortDescending",
+		"ToolButtonBrowserHistoryBack", "ToolButtonBrowserHistoryForward",
+		"ToolButtonBrowserSidebar", "ToolButtonBrowserTrash",
+		"ToolButtonUIModeViewer" };
+	if (NULL != pQuiverImpl && NULL != pQuiverImpl->m_pBuilder)
 	{
-		pQuiverImpl->m_StatusbarPtr->PopText();
-		g_free (message);
+		show_ui_items(pQuiverImpl->m_pBuilder, browser_items, G_N_ELEMENTS(browser_items), bShow);
 	}
-
 }
-
 
 void Quiver::ShowViewer()
 {
 	m_QuiverImplPtr->m_BrowserPtr->Hide();
-
-	if (0 != m_QuiverImplPtr->m_iMergedBrowserUI)
-	{
-		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedBrowserUI);
-		m_QuiverImplPtr->m_iMergedBrowserUI = 0;
-		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
-	}
-
-	if (0 == m_QuiverImplPtr->m_iMergedViewerUI)
-	{
-		m_QuiverImplPtr->m_iMergedViewerUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
-			quiver_ui_viewer,
-			strlen(quiver_ui_viewer),
-			NULL);
-		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
-	}
-
 	m_QuiverImplPtr->m_ViewerPtr->Show();
+
+	m_QuiverImplPtr->m_bViewerMode = true;
+	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), true);
+	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), false);
+
 	m_QuiverImplPtr->m_ViewerPtr->GrabFocus();
 }
 
 void Quiver::ShowBrowser()
 {
 	m_QuiverImplPtr->m_ViewerPtr->Hide();
-	gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
-
-	if (0 != m_QuiverImplPtr->m_iMergedViewerUI)
-	{
-		gtk_ui_manager_remove_ui(m_QuiverImplPtr->m_pUIManager,m_QuiverImplPtr->m_iMergedViewerUI);
-		m_QuiverImplPtr->m_iMergedViewerUI = 0;
-		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
-	}
-
-	if (0 == m_QuiverImplPtr->m_iMergedBrowserUI)
-	{
-		m_QuiverImplPtr->m_iMergedBrowserUI = gtk_ui_manager_add_ui_from_string(m_QuiverImplPtr->m_pUIManager,
-			quiver_ui_browser,
-			strlen(quiver_ui_browser),
-			NULL);
-		gtk_ui_manager_ensure_update(m_QuiverImplPtr->m_pUIManager);
-	}
 	m_QuiverImplPtr->m_BrowserPtr->Show();
+
+	m_QuiverImplPtr->m_bViewerMode = false;
+	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), false);
+	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), true);
+
 	m_QuiverImplPtr->m_BrowserPtr->GrabFocus();
 }
+
 
 
 void Quiver::OnAbout()
@@ -2063,66 +2418,34 @@ void Quiver::OnFullScreen()
 void QuiverImpl::UpdateUI()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	GtkAction * action = QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_SLIDESHOW);
-	bool bInSlideShow = false;
 
-	if (NULL != action)
-	{
-		bInSlideShow =
-			(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
-	}
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW);
 
 	if (bInSlideShow)
 	{
-		action 
-			= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_MENUBAR);
-		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), FALSE);
-
-		action 
-			= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
-		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), FALSE);
-
-		action 
-			= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_STATUSBAR);
-		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), FALSE);
-
-		action 
-			= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
-		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), FALSE);
-
-		/*
-		gtk_widget_hide(m_pToolbar);
-		gtk_widget_hide(m_pMenubar);
-		gtk_widget_hide(m_StatusbarPtr->GetWidget());
-		gtk_widget_hide(m_pNBProperties);
-		*/
+		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_MENUBAR, FALSE);
+		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, FALSE);
+		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, FALSE);
+		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_PROPERTIES, FALSE);
 	}
 	else
 	{
 		bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 		if (bShow)
 		{
-			action 
-				= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_PROPERTIES);
-			gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), TRUE);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_PROPERTIES, TRUE);
 		}
 
 		if (GDK_WINDOW_STATE_FULLSCREEN & m_WindowState)
 		{
 			bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW_FS, false);
-			action 
-				= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
-			gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShow ? TRUE : FALSE);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, bShow);
 
 			bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW_FS, false);
-			action 
-				= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_MENUBAR);
-			gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShow ? TRUE : FALSE);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_MENUBAR, bShow);
 			
 			bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW_FS, false);
-			action 
-				= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_STATUSBAR);
-			gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShow ? TRUE : FALSE);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, bShow);
 		}
 		else
 		{
@@ -2130,19 +2453,13 @@ void QuiverImpl::UpdateUI()
 			m_bSlideShowRestoreFromFS = false;
 			// show widgets
 			bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW);
-			action 
-				= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
-			gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShow ? TRUE : FALSE);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, bShow);
 			
 			bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW);
-			action 
-				= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_MENUBAR);
-			gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShow ? TRUE : FALSE);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_MENUBAR, bShow);
 			
 			bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW);
-			action 
-				= QuiverUtils::GetAction(m_pUIManager,ACTION_QUIVER_VIEW_STATUSBAR);
-			gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action), bShow ? TRUE : FALSE);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, bShow);
 		}
 	}
 }
@@ -2166,7 +2483,7 @@ void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr eve
 	}
 	
 	char status_text[256];
-	g_snprintf(status_text, 256, "%d items selected (%qd bytes)",selection.size(), total_size);
+	g_snprintf(status_text, 256, "%lu items selected (%llu bytes)",(unsigned long)selection.size(), (unsigned long long)total_size);
 
 	//parent->m_StatusbarPtr->SetText(status_text);
 }
@@ -2207,16 +2524,6 @@ void QuiverImpl::ViewerEventHandler::HandleCursorChanged(ViewerEventPtr event_pt
 	parent->m_pQuiver->ImageChanged();
 }
 
-static gboolean timeout_keep_screen_on (gpointer data)
-{
-#ifdef QUIVER_MAEMO 
-	if (NULL != osso_context)
-	{
-		osso_display_blanking_pause(osso_context);
-	}
-#endif
-	return TRUE;
-}
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event_ptr)
 {
@@ -2251,13 +2558,7 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 		parent->m_pQuiver->OnFullScreen();
 	}
 
-	GtkAction * action = QuiverUtils::GetAction(parent->m_pUIManager,ACTION_QUIVER_SLIDESHOW);
-	if (NULL != action)
-	{
-		g_signal_handlers_block_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
-		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(action),FALSE);
-		g_signal_handlers_unblock_matched (action,G_SIGNAL_MATCH_DATA,0,0,NULL,NULL,this);
-	}
+	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_SLIDESHOW, FALSE);
 
 	parent->UpdateUI();
 
@@ -2373,13 +2674,8 @@ void Quiver::OnSlideShow(bool bStart)
 
 		if (bRandomOrder)
 		{
-			GtkAction* action = 
-				QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_SORT_BY_NAME_NATURAL);
-			if (action)
-			{
-				gtk_radio_action_set_current_value (GTK_RADIO_ACTION(action), ImageList::SORT_BY_RANDOM);
-				m_QuiverImplPtr->m_ImageListPtr->SetCurrentIndex(0);
-			}
+			QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, ImageList::SORT_BY_RANDOM);
+			m_QuiverImplPtr->m_ImageListPtr->SetCurrentIndex(0);
 		}
 
 		ShowViewer();
@@ -2388,11 +2684,9 @@ void Quiver::OnSlideShow(bool bStart)
 	else
 	{
 		PreferencesPtr prefsPtr = Preferences::GetInstance();
-		GtkAction* action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_SORT_BY_NAME_NATURAL);
-		if (action)
 		{
 			int sortby = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_BY,ImageList::SORT_BY_FILENAME_NATURAL);
-			gtk_radio_action_set_current_value (GTK_RADIO_ACTION(action), sortby);
+			QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, sortby);
 		}
 
 		m_QuiverImplPtr->m_ViewerPtr->SlideShowStop();
@@ -2403,13 +2697,7 @@ void Quiver::OnShowToolbar(bool bShow)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
-	GtkAction * action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_SLIDESHOW);
-	bool bInSlideShow = false;
-	if (NULL != action)
-	{
-		bInSlideShow =
-			(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
-	}
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW);
 
 	if (!bInSlideShow)
 	{
@@ -2436,13 +2724,7 @@ void Quiver::OnShowToolbar(bool bShow)
 void Quiver::OnShowStatusbar(bool bShow)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	GtkAction * action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_SLIDESHOW);
-	bool bInSlideShow = false;
-	if (NULL != action)
-	{
-		bInSlideShow =
-			(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
-	}
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW);
 
 	if (!bInSlideShow)
 	{
@@ -2470,13 +2752,7 @@ void Quiver::OnShowMenubar(bool bShow)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
-	GtkAction * action = QuiverUtils::GetAction(m_QuiverImplPtr->m_pUIManager,ACTION_QUIVER_SLIDESHOW);
-	bool bInSlideShow = false;
-	if (NULL != action)
-	{
-		bInSlideShow =
-			(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
-	}
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW);
 
 	if (!bInSlideShow)
 	{
@@ -2500,22 +2776,43 @@ void Quiver::OnShowMenubar(bool bShow)
 	}
 }
 
-static void
-quiver_radio_action_handler_cb(GtkRadioAction *action, GtkRadioAction *current, gpointer user_data)
+static void quiver_escape_action(QuiverImpl *pQuiverImpl)
 {
-//	printf("%s: %s\n",gtk_action_get_name(GTK_ACTION(action)),gtk_action_get_name(GTK_ACTION(current)));
-	quiver_action_handler_cb(GTK_ACTION(action), user_data);
+	// this action will do one of the following
+
+	Quiver *pQuiver = pQuiverImpl->m_pQuiver;
+	bool bDoneSomething = false;
+
+	if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
+	{
+		// 3. if in browser and fullscreen, return to unfullscreen mode
+		pQuiver->OnFullScreen();
+		bDoneSomething = true;
+	}
+
+	if (!bDoneSomething && pQuiverImpl->m_bViewerMode)
+	{
+		// 1. if in viewer and zoomed return to zoom fit
+		bDoneSomething = pQuiverImpl->m_ViewerPtr->ResetViewMode();
+
+		if (!bDoneSomething)
+		{
+			// 2. if in viewer and zoom fit return to browser
+			pQuiver->ShowBrowser();
+			bDoneSomething = true;
+		}
+	}
 }
 
-static void quiver_action_handler_cb(GtkAction *action, gpointer data)
+static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data)
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	Quiver *pQuiver;
 	pQuiver = pQuiverImpl->m_pQuiver;
 	
-	const gchar * szAction = gtk_action_get_name(action);
+	const gchar * szAction = g_action_get_name(G_ACTION(action));
 
-	//printf("quiver_action_handler_cb: %s\n",szAction);
+	//printf("quiver_new_action_handler_cb: %s\n",szAction);
 
 	if (0 == strcmp(szAction,ACTION_QUIVER_CLOSE) 
 	    || 0 == strcmp(szAction,ACTION_QUIVER_CLOSE_2) 
@@ -2526,31 +2823,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_ESCAPE) )
 	{
-		// this action will do one of the following
-
-		bool bDoneSomething = false;
-
-		if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
-		{
-			// 3. if in browser and fullscreen, return to unfullscreen mode
-			pQuiver->OnFullScreen();
-			bDoneSomething = true;
-		}
-
-		if (!bDoneSomething && 0 != pQuiverImpl->m_iMergedViewerUI)
-		{
-			// 1. if in viewer and zoomed return to zoom fit
-			bDoneSomething = pQuiverImpl->m_ViewerPtr->ResetViewMode();
-
-			if (!bDoneSomething)
-			{
-				// 2. if in viewer and zoom fit return to browser
-				pQuiver->ShowBrowser();
-				bDoneSomething = true;
-			}
-		}
-
-
+		quiver_escape_action(pQuiverImpl);
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_OPEN))
 	{
@@ -2562,47 +2835,19 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_VIEW_PROPERTIES))
 	{
-		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
-		{
-			pQuiver->OnShowProperties(true);	
-		}
-		else
-		{
-			pQuiver->OnShowProperties(false);
-		}
+		pQuiver->OnShowProperties(QuiverUtils::ToggleActionGetActive(szAction));
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_VIEW_TOOLBAR_MAIN))
 	{
-		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
-		{
-			pQuiver->OnShowToolbar(true);	
-		}
-		else
-		{
-			pQuiver->OnShowToolbar(false);
-		}
+		pQuiver->OnShowToolbar(QuiverUtils::ToggleActionGetActive(szAction));
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_VIEW_MENUBAR))
 	{
-		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
-		{
-			pQuiver->OnShowMenubar(true);	
-		}
-		else
-		{
-			pQuiver->OnShowMenubar(false);
-		}
+		pQuiver->OnShowMenubar(QuiverUtils::ToggleActionGetActive(szAction));
 	}
 	else if (0 == strcmp(szAction, ACTION_QUIVER_VIEW_STATUSBAR))
 	{
-		if( gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)) )
-		{
-			pQuiver->OnShowStatusbar(true);	
-		}
-		else
-		{
-			pQuiver->OnShowStatusbar(false);
-		}
+		pQuiver->OnShowStatusbar(QuiverUtils::ToggleActionGetActive(szAction));
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_FULLSCREEN)
 #ifdef QUIVER_MAEMO
@@ -2623,7 +2868,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 #ifdef QUIVER_MAEMO
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_SWITCH_MAEMO))
 	{
-		if (0 == pQuiverImpl->m_iMergedViewerUI)
+		if (!pQuiverImpl->m_bViewerMode)
 		{
 			pQuiver->ShowViewer();
 		}
@@ -2647,7 +2892,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_SLIDESHOW))
 	{
-		pQuiver->OnSlideShow(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(action)));
+		pQuiver->OnSlideShow(QuiverUtils::ToggleActionGetActive(szAction));
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_PREFERENCES))
 	{
@@ -2663,21 +2908,18 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 	{
 		pQuiverImpl->SaveAs();	
 	}
-	else if(0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_NAME))
+	else if(0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_NAME)
+	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_NAME_NATURAL)
+	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_DATE)
+	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_DATE_MODIFIED)
+	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_RANDOM))
 	{
-		GtkAction *sort_desc_action = QuiverUtils::GetAction(pQuiverImpl->m_pUIManager,ACTION_QUIVER_SORT_DESCENDING);
-		bool bAsc = ( FALSE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
-		
-		gint sortby = gtk_radio_action_get_current_value(GTK_RADIO_ACTION(action));
+		bool bAsc = ( FALSE == QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SORT_DESCENDING) );
+
+		gint sortby = QuiverUtils::GetRadioActionCurrent(szAction);
 		pQuiverImpl->m_ImageListPtr->Sort((ImageList::SortBy)sortby,bAsc);
 
-		GtkAction * slideshow_action = QuiverUtils::GetAction(pQuiverImpl->m_pUIManager,ACTION_QUIVER_SLIDESHOW);
-		bool bInSlideShow = false;
-		if (NULL != slideshow_action)
-		{
-			bInSlideShow =
-				(TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(slideshow_action)));
-		}
+		bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW);
 
 		if (!bInSlideShow)
 		{
@@ -2692,9 +2934,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 		pQuiverImpl->m_ImageListPtr->Reverse();
 		PreferencesPtr prefsPtr = Preferences::GetInstance();
 
-		GtkAction *sort_desc_action = QuiverUtils::GetAction(pQuiverImpl->m_pUIManager,ACTION_QUIVER_SORT_DESCENDING);
-
-		bool bDec = ( TRUE == gtk_toggle_action_get_active(GTK_TOGGLE_ACTION(sort_desc_action)) );
+		bool bDec = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SORT_DESCENDING);
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_REVERSED,bDec);
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PARENT))
@@ -2737,7 +2977,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			bool bFoundCurrent = false;
 			bool bFoundNext  = false;
 			string newFolder;
-			for (int i = 0; i < tmpListPtr->GetSize(); ++i)
+			for (guint i = 0; i < tmpListPtr->GetSize(); ++i)
 			{
 				QuiverFile f = (*tmpListPtr)[i];
 				if (f.IsFolder())
@@ -2775,7 +3015,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			g_object_unref(folder);
 
 			string newFolder;
-			for (int i = 0; i < tmpListPtr->GetSize(); ++i)
+			for (guint i = 0; i < tmpListPtr->GetSize(); ++i)
 			{
 				QuiverFile f = (*tmpListPtr)[i];
 				if (f.IsFolder())
@@ -2944,7 +3184,7 @@ static void quiver_action_handler_cb(GtkAction *action, gpointer data)
 			list<unsigned int> selection = pQuiverImpl->m_BrowserPtr->GetSelection();
 			list<string> files;
 
-			bool bInViewer = (0 != pQuiverImpl->m_iMergedViewerUI);
+			bool bInViewer = pQuiverImpl->m_bViewerMode;
 			if (bInViewer || 1 == selection.size())
 			{
 				QuiverFile f;

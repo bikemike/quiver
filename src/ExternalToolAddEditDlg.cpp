@@ -113,10 +113,10 @@ ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ExternalToolAddEditDlgPriv(E
 
 
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const gchar* objectids[] = {
 		"ExternalToolAddEditDialog",
 		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
@@ -139,8 +139,10 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 	{
 		m_pWidget                = GTK_WIDGET( gtk_builder_get_object (m_pGtkBuilder, "ExternalToolAddEditDialog"));
 
-		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CANCEL) );
-		m_pButtonOk              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_OK) );
+		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_with_mnemonic("_Cancel") );
+		gtk_button_set_image(GTK_BUTTON(m_pButtonCancel), gtk_image_new_from_icon_name(GTK_STOCK_CANCEL, GTK_ICON_SIZE_BUTTON));
+		m_pButtonOk              = GTK_BUTTON( gtk_button_new_with_mnemonic("_OK") );
+		gtk_button_set_image(GTK_BUTTON(m_pButtonOk), gtk_image_new_from_icon_name(GTK_STOCK_OK, GTK_ICON_SIZE_BUTTON));
 
 
 		gtk_widget_show(GTK_WIDGET(m_pButtonCancel));
@@ -148,8 +150,8 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 
 		if (m_pWidget)
 		{
-			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonCancel),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonOk),FALSE,TRUE,5);
+			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonCancel),GTK_RESPONSE_NONE);
+			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonOk),GTK_RESPONSE_NONE);
 		}
 
 		m_pToggleMultiple       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_multiple"));
@@ -189,10 +191,21 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::UpdateUI()
 }
 
 
+static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
+{
+	if (GTK_RESPONSE_NONE == response)
+	{
+		g_signal_stop_emission_by_name (dlg, "response");
+	}
+}
+
 void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
+		g_signal_connect(m_pWidget,
+			"response",(GCallback)on_dialog_response,this);
+
 		/*
 		g_signal_connect(m_pToggleMultiple,
 			"toggled",(GCallback)on_toggled,this);

@@ -80,7 +80,7 @@ private:
 	pthread_mutex_t m_ConditionMutex;
 	pthread_mutex_t m_CommandMutex;
 
-	GMutex* m_csObservers;
+	GMutex m_csObservers;
 		
 	std::list<IPixbufLoaderObserver*> m_observers;
 

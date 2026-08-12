@@ -74,10 +74,10 @@ DonateDlg::DonateDlgPriv::DonateDlgPriv(DonateDlg *parent) :
 	m_bLoadedDlg = false;
 
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const gchar* objectids[] = {
 		"DonateDialog",
 		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
@@ -101,7 +101,8 @@ void DonateDlg::DonateDlgPriv::LoadWidgets()
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "DonateDialog"));
 
 		m_pButtonDonate          = GTK_BUTTON( gtk_button_new_with_label("Donate to Quiver"));
-		m_pButtonClose              = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
+		m_pButtonClose              = GTK_BUTTON( gtk_button_new_with_mnemonic("_Close") );
+		gtk_button_set_image(GTK_BUTTON(m_pButtonClose), gtk_image_new_from_icon_name(GTK_STOCK_CLOSE, GTK_ICON_SIZE_BUTTON));
 
 
 		gtk_widget_show(GTK_WIDGET(m_pButtonDonate));
@@ -109,9 +110,9 @@ void DonateDlg::DonateDlgPriv::LoadWidgets()
 
 		if (m_pWidget)
 		{
-			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonDonate),TRUE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose),FALSE,TRUE,5);
-			gtk_button_box_set_layout  (GTK_BUTTON_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))), GTK_BUTTONBOX_EDGE);
+			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonDonate),GTK_RESPONSE_NONE);
+			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonClose),GTK_RESPONSE_NONE);
+			gtk_button_box_set_layout  (GTK_BUTTON_BOX(gtk_builder_get_object(m_pGtkBuilder, "dialog-action_area7")), GTK_BUTTONBOX_EDGE);
 		}
 
 		m_bLoadedDlg = (
@@ -130,10 +131,21 @@ void DonateDlg::DonateDlgPriv::UpdateUI()
 }
 
 
+static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
+{
+	if (GTK_RESPONSE_NONE == response)
+	{
+		g_signal_stop_emission_by_name (dlg, "response");
+	}
+}
+
 void DonateDlg::DonateDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
+		g_signal_connect(m_pWidget,
+			"response",(GCallback)on_dialog_response,this);
+
 		g_signal_connect(m_pButtonClose,
 			"clicked",(GCallback)on_clicked,this);
 		g_signal_connect(m_pButtonDonate,

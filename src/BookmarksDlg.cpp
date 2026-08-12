@@ -104,9 +104,9 @@ BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
 	m_bLoadedDlg = false;
 
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const gchar* objectids[] = {
 		"BookmarksDialog", NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
@@ -131,7 +131,8 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "BookmarksDialog"));
 		m_pTreeViewBookmarks     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "treeview_bookmarks") );
 
-		m_pButtonClose           = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_CLOSE) );
+		m_pButtonClose           = GTK_BUTTON( gtk_button_new_with_mnemonic("_Close") );
+		gtk_button_set_image(GTK_BUTTON(m_pButtonClose), gtk_image_new_from_icon_name(GTK_STOCK_CLOSE, GTK_ICON_SIZE_BUTTON));
 		/*
 		m_pButtonAdd             = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_ADD) );
 		m_pButtonEdit            = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_EDIT) );
@@ -151,7 +152,7 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonEdit),FALSE,TRUE,5);
 			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonRemove),FALSE,TRUE,5);
 			*/
-			gtk_box_pack_start(GTK_BOX(gtk_dialog_get_action_area(GTK_DIALOG(m_pWidget))),GTK_WIDGET(m_pButtonClose),FALSE,TRUE,5);
+			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonClose),GTK_RESPONSE_NONE);
 		}
 		if (m_pTreeViewBookmarks)
 		{
@@ -340,10 +341,21 @@ void BookmarksDlg::BookmarksDlgPriv::UpdateUI()
 }
 
 
+static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
+{
+	if (GTK_RESPONSE_NONE == response)
+	{
+		g_signal_stop_emission_by_name (dlg, "response");
+	}
+}
+
 void BookmarksDlg::BookmarksDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
+		g_signal_connect(m_pWidget,
+			"response",(GCallback)on_dialog_response,this);
+
 		g_signal_connect(m_pButtonMoveUp,
 			"clicked",(GCallback)on_clicked,this);
 		g_signal_connect(m_pButtonMoveDown,

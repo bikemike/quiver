@@ -247,11 +247,11 @@ void AdjustDateTask::Run()
 			QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
 
 			GFileInfo* pInfo = f.GetFileInfo();
-			GTimeVal tv = {0};
+			GDateTime* pModTime = NULL;
 			if (NULL != pInfo)
 			{
 				// adjust the modification time of the file
-				g_file_info_get_modification_time(pInfo, &tv);
+				pModTime = g_file_info_get_modification_date_time(pInfo);
 				
 				// the adjustment is done after the exif data is modified
 				// see below
@@ -345,11 +345,9 @@ void AdjustDateTask::Run()
 			if (NULL != pInfo)
 			{
 				// adjust the modification time of the file
-				if (DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields)
+				if ((DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields) && (NULL != pModTime))
 				{
-					GDateTime* pDateTime = g_date_time_new_from_timeval_local(&tv);
-
-					GDateTime* pDateTimeNew = g_date_time_add_full(pDateTime,
+					GDateTime* pDateTimeNew = g_date_time_add_full(pModTime,
 					                                               m_iAdjYears,
 																   0,
 					                                               m_iAdjDays,
@@ -357,22 +355,14 @@ void AdjustDateTask::Run()
 					                                               m_iAdjMins,
 					                                               m_iAdjSecs);
 
-					// gchar* olddate = g_date_time_format(pDateTime, "%F %T");
-					// gchar* newdate = g_date_time_format(pDateTimeNew, "%F %T");
-					// printf("old date: %s\n", olddate);
-					// printf("new date: %s\n", newdate);
-					// g_free(newdate);
-					// g_free(olddate);
-
-					g_date_time_to_timeval(pDateTimeNew, &tv);
-					g_file_info_set_modification_time(pInfo, &tv);
+					g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
 
 					GFile* file = g_file_new_for_uri(f.GetURI());
 					g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
 					g_object_unref(file);
 					
 					g_date_time_unref(pDateTimeNew);
-					g_date_time_unref(pDateTime);
+					g_date_time_unref(pModTime);
 				}
 
 				g_object_unref(pInfo);

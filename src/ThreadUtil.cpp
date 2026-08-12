@@ -1,6 +1,6 @@
 #include <glib.h>
 
-static GStaticPrivate gui_thread_key = G_STATIC_PRIVATE_INIT;
+static GPrivate gui_thread_key = G_PRIVATE_INIT(NULL);
 
 namespace ThreadUtil
 {
@@ -10,12 +10,12 @@ void Init()
 	if (!initialized)
 	{
 		initialized = true;
-		g_static_private_set(&gui_thread_key, GUINT_TO_POINTER(1),NULL);
+		g_private_set(&gui_thread_key, GUINT_TO_POINTER(1));
 	}
 }
 
 bool IsGUIThread()
 {
-	return 1 == GPOINTER_TO_UINT(g_static_private_get(&gui_thread_key));
+	return 1 == GPOINTER_TO_UINT(g_private_get(&gui_thread_key));
 }
 }

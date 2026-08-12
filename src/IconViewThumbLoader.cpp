@@ -1,4 +1,5 @@
 #include "IconViewThumbLoader.h"
+#include <sched.h>
 
 IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 {
@@ -39,11 +40,6 @@ IconViewThumbLoader::~IconViewThumbLoader()
 	int i;
 	for (i = 0 ; i < m_iThreads; ++i)
 	{
-		// this call to gdk_threads_leave is made to make sure we dont get into
-		// a deadlock between this thread(gui) and the IconViewThumbLoader thread which calls
-		// gdk_threads_enter 
-		gdk_threads_leave();
-
 		pthread_mutex_lock (&m_pConditionMutexes[i]);
 		pthread_cond_signal(&m_pConditions[i]);
 		pthread_mutex_unlock (&m_pConditionMutexes[i]);
@@ -245,7 +241,7 @@ void IconViewThumbLoader::Run(int iThreadID)
 				break;
 			}
 
-			pthread_yield();
+			sched_yield();
 		}
 
 		if (m_bStopThreads)

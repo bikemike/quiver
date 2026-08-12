@@ -6,16 +6,16 @@ TaskManagerPtr TaskManager::c_pTaskManagerPtr;
 
 TaskManager::TaskManager()
 {
-	m_pAllTasksMutex  = g_mutex_new();
-	m_pRunningTasksMutex  = g_mutex_new();
+	g_mutex_init(&m_pAllTasksMutex);
+	g_mutex_init(&m_pRunningTasksMutex);
 	m_pThreadPool = g_thread_pool_new(run_task, this, 2, FALSE, NULL);
 }
 
 TaskManager::~TaskManager()
 {
 	g_thread_pool_free(m_pThreadPool, TRUE, TRUE);
-	g_mutex_free(m_pAllTasksMutex);
-	g_mutex_free(m_pRunningTasksMutex);
+	g_mutex_clear(&m_pAllTasksMutex);
+	g_mutex_clear(&m_pRunningTasksMutex);
 }
 
 TaskManagerPtr TaskManager::GetInstance()
@@ -36,15 +36,15 @@ void TaskManager::SetMaxThreads(int nThreads)
 void TaskManager::AddTask(AbstractTaskPtr taskPtr)
 {
 	// lock
-	g_mutex_lock(m_pAllTasksMutex);
+	g_mutex_lock(&m_pAllTasksMutex);
 
 	m_vectTasks.push_back(taskPtr);
 	// unlock
-	g_mutex_unlock(m_pAllTasksMutex);
+	g_mutex_unlock(&m_pAllTasksMutex);
 
 	taskPtr->AddEventHandler(c_pTaskManagerPtr);
 
-	g_mutex_lock(m_pRunningTasksMutex);
+	g_mutex_lock(&m_pRunningTasksMutex);
 
 	std::pair<std::set<AbstractTaskPtr>::iterator , bool> rval = m_setRunningTasks.insert(taskPtr);
 	if (rval.second)
@@ -52,7 +52,7 @@ void TaskManager::AddTask(AbstractTaskPtr taskPtr)
 		EmitTaskAddedEvent(taskPtr);
 		g_thread_pool_push(m_pThreadPool, taskPtr.get(), NULL);
 	}
-	g_mutex_unlock(m_pRunningTasksMutex);
+	g_mutex_unlock(&m_pRunningTasksMutex);
 
 }
 
@@ -60,9 +60,9 @@ void TaskManager::RunTask(AbstractTaskPtr taskPtr)
 {
 	taskPtr->RunTask();
 
-	g_mutex_lock(m_pRunningTasksMutex);
+	g_mutex_lock(&m_pRunningTasksMutex);
 	m_setRunningTasks.erase(taskPtr);
-	g_mutex_unlock(m_pRunningTasksMutex);
+	g_mutex_unlock(&m_pRunningTasksMutex);
 }
 
 void TaskManager::run_task(gpointer data, gpointer user_data)
@@ -76,7 +76,7 @@ void TaskManager::run_task(gpointer data, gpointer user_data)
 void TaskManager::RemoveTask(AbstractTaskPtr taskPtr)
 {
 	// lock
-	g_mutex_lock(m_pAllTasksMutex);
+	g_mutex_lock(&m_pAllTasksMutex);
 
 	std::vector<AbstractTaskPtr>::iterator itr;
 	for (itr = m_vectTasks.begin(); m_vectTasks.end() != itr; ++itr)
@@ -91,7 +91,7 @@ void TaskManager::RemoveTask(AbstractTaskPtr taskPtr)
 	}
 
 	// unlock
-	g_mutex_unlock(m_pAllTasksMutex);
+	g_mutex_unlock(&m_pAllTasksMutex);
 
 }
 
@@ -111,7 +111,7 @@ void TaskManager::HandleTaskUnpaused(TaskEventPtr taskEventPtr)
 {
 	AbstractTaskPtr taskPtr = boost::dynamic_pointer_cast<AbstractTask>(taskEventPtr->GetSource());
 
-	g_mutex_lock(m_pRunningTasksMutex);
+	g_mutex_lock(&m_pRunningTasksMutex);
 	std::pair<std::set<AbstractTaskPtr>::iterator , bool> rval = m_setRunningTasks.insert(taskPtr);
 	if (rval.second)
 	{
@@ -121,7 +121,7 @@ void TaskManager::HandleTaskUnpaused(TaskEventPtr taskEventPtr)
 		}
 	}
 
-	g_mutex_unlock(m_pRunningTasksMutex);
+	g_mutex_unlock(&m_pRunningTasksMutex);
 }
 
 void TaskManager::HandleTaskFinished(TaskEventPtr taskEventPtr)
