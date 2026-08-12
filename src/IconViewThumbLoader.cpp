@@ -10,18 +10,16 @@ IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 	
 	m_iThreads = iThreads;
 	
-	m_pConditions       = new pthread_cond_t[m_iThreads];
-	m_pConditionMutexes = new pthread_mutex_t[m_iThreads];
-	m_pThreadIDs        = new pthread_t[m_iThreads];
+	m_pConditions = new pthread_cond_t[m_iThreads];
+	m_pThreadIDs  = new pthread_t[m_iThreads];
 	
-	m_pThreadData       = new ThreadData[m_iThreads];
+	m_pThreadData = new ThreadData[m_iThreads];
 	
 	
 	int i;
 	for (i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_cond_init(&m_pConditions[i],NULL);
-		pthread_mutex_init(&m_pConditionMutexes[i], NULL);
 		m_pThreadData[i].parent = this;
 		m_pThreadData[i].id = i;
 		
@@ -35,25 +33,26 @@ IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 }
 IconViewThumbLoader::~IconViewThumbLoader()
 {
+	pthread_mutex_lock (&m_ListMutex);
 	m_bStopThreads = true;
-	
+
 	int i;
 	for (i = 0 ; i < m_iThreads; ++i)
 	{
-		pthread_mutex_lock (&m_pConditionMutexes[i]);
 		pthread_cond_signal(&m_pConditions[i]);
-		pthread_mutex_unlock (&m_pConditionMutexes[i]);
+	}
+	pthread_mutex_unlock (&m_ListMutex);
 
+	for (i = 0 ; i < m_iThreads; ++i)
+	{
 		pthread_join(m_pThreadIDs[i], NULL);
 	}
 	
 	for (i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_cond_destroy(&m_pConditions[i]);
-		pthread_mutex_destroy(&m_pConditionMutexes[i]);
 	}
 	delete [] m_pConditions;
-	delete [] m_pConditionMutexes;
 	delete [] m_pThreadIDs;
 	delete [] m_pThreadData;
 
@@ -133,10 +132,8 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 		int k;
 		for (k = 0; k < m_iThreads; k++)
 		{
-			pthread_mutex_lock (&m_pConditionMutexes[k]);
 			// signal the threads to start working
 			pthread_cond_signal(&m_pConditions[k]);
-			pthread_mutex_unlock (&m_pConditionMutexes[k]);
 		}
 		pthread_mutex_unlock (&m_ListMutex);
 	}
@@ -145,7 +142,7 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 
 
 void IconViewThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeigh)
-{
+{ (void)uiHeigh;  (void)uiWidth;  (void)item; 
 	// load the thumbnail
 }
 
@@ -158,8 +155,8 @@ void IconViewThumbLoader::GetVisibleRange(gulong* ulStart, gulong* ulEnd)
 
 void IconViewThumbLoader::GetIconSize(guint* uiWidth, guint* uiHeight) 
 {
-	uiWidth  = 0;
-	uiHeight = 0;
+	if (uiWidth) *uiWidth  = 0;
+	if (uiHeight) *uiHeight = 0;
 }
 
 gulong IconViewThumbLoader::GetNumItems() 
@@ -168,17 +165,17 @@ gulong IconViewThumbLoader::GetNumItems()
 }
 
 QuiverFile IconViewThumbLoader::GetQuiverFile(gulong index) 
-{
+{ (void)index; 
 	return QuiverFile();
 }
 
 void IconViewThumbLoader::SetIsRunning(bool bIsRunning)
-{
+{ (void)bIsRunning; 
 
 }
 
 void IconViewThumbLoader::SetCacheSize(guint uiCacheSize)
-{
+{ (void)uiCacheSize; 
 
 }
 
@@ -186,70 +183,45 @@ void IconViewThumbLoader::Run(int iThreadID)
 {
 	while (true)
 	{
-
 		pthread_mutex_lock (&m_ListMutex);
 
-		if (0 == m_listThumbItems.size() && !m_bStopThreads)
+		// wait for work.  the predicate and the wait share m_ListMutex so
+		// that UpdateList() cannot lose a wakeup to a thread that is
+		// between the empty check and cond_wait
+		while (0 == m_listThumbItems.size() && !m_bStopThreads)
 		{
-			// unlock mutex
-			pthread_mutex_unlock (&m_ListMutex);
-			
 			SetIsRunning(false);
-			
-			pthread_mutex_lock (&m_pConditionMutexes[iThreadID]);
-			pthread_cond_wait(&m_pConditions[iThreadID],&m_pConditionMutexes[iThreadID]);
-			pthread_mutex_unlock (&m_pConditionMutexes[iThreadID]);
-			
+			pthread_cond_wait(&m_pConditions[iThreadID], &m_ListMutex);
 			SetIsRunning(true);
+		}
 
-		}
-		else
-		{
-			pthread_mutex_unlock (&m_ListMutex);
-		}
-		
 		if (m_bStopThreads)
 		{
+			pthread_mutex_unlock (&m_ListMutex);
 			break;
 		}
-		
-		while (true)
+
+		while (0 != m_listThumbItems.size() && !m_bStopThreads)
 		{
-			if (m_bStopThreads)
-			{
-				break;
-			}
-
-			pthread_mutex_lock (&m_ListMutex);
-
-			if (0 == m_listThumbItems.size())
-			{
-				pthread_mutex_unlock (&m_ListMutex);
-				break;
-			}
-			
 			ThumbLoaderItem item = m_listThumbItems.front();
 			m_listThumbItems.pop_front();
 			pthread_mutex_unlock (&m_ListMutex);
-			
+
 			guint width, height;
 			GetIconSize(&width, &height);
 			LoadThumbnail(item, width, height);
-			
-			if (m_bStopThreads)
-			{
-				break;
-			}
 
-			sched_yield();
+			pthread_mutex_lock (&m_ListMutex);
 		}
+
+		pthread_mutex_unlock (&m_ListMutex);
 
 		if (m_bStopThreads)
 		{
 			break;
 		}
-		
 
+		sched_yield();
 	}
 }
 

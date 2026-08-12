@@ -168,6 +168,7 @@ std::string  RenameTask::DoVariableSubstitution(std::string strTemplate, GDateTi
 	return strTemplate;
 }
 
+#if 0
 static std::string
 get_display_name(GFile* file)
 {
@@ -180,6 +181,7 @@ get_display_name(GFile* file)
 	}
 	return strDisplayName;
 }
+#endif
 
 
 static void
@@ -187,7 +189,7 @@ organize_task_gfile_progress_callback(
 	goffset current_num_bytes,
 	goffset total_num_bytes,
 	gpointer user_data)
-{
+{ (void)current_num_bytes;  (void)total_num_bytes;  (void)user_data; 
 	//RenameTask::PrivateImpl* pImpl = static_cast<RenameTask::PrivateImpl*>(user_data);
 
 }
@@ -309,6 +311,7 @@ void RenameTask::Run()
 				organize_task_gfile_progress_callback,
 				m_PrivateImplPtr.get(),
 				&error);
+		(void)copied;
 		// if there was an error, 
 		if (NULL != error)
 		{

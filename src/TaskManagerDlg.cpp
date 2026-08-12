@@ -38,7 +38,25 @@ public:
 		GtkWidget*    m_labelProgDetails;
 
 
-		class TaskHandler :
+				static gboolean idle_task_finished(gpointer data) {
+			TaskProgressGUI* pParent = (TaskProgressGUI*)data;
+			gtk_widget_set_sensitive(pParent->m_btnCancel, TRUE);
+			gtk_button_set_image(GTK_BUTTON(pParent->m_btnCancel), 
+				gtk_image_new_from_icon_name("edit-clear", GTK_ICON_SIZE_BUTTON));
+			gtk_widget_set_sensitive(pParent->m_btnPause, FALSE);
+			gtk_widget_set_sensitive(pParent->m_labelDetails, FALSE);
+			gtk_widget_set_sensitive(pParent->m_labelProgDetails, FALSE);
+			gtk_widget_set_sensitive(pParent->m_pbarProgress, FALSE);
+			return G_SOURCE_REMOVE;
+		}
+
+		static gboolean idle_task_progress(gpointer data) {
+			TaskProgressGUI* pParent = (TaskProgressGUI*)data;
+			pParent->UpdateTaskGUI();
+			return G_SOURCE_REMOVE;
+		}
+
+class TaskHandler :
 			public ITaskEventHandler
 		{
 		public:
@@ -50,54 +68,38 @@ public:
 			}
 			// ITaskEventHandler methods
 			void HandleTaskStarted(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskResumed(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskMessage(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskPaused(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskUnpaused(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskFinished(TaskEventPtr event) 
-			{
-				gtk_widget_set_sensitive(m_pParent->m_btnCancel, TRUE);
-				gtk_button_set_image(GTK_BUTTON(m_pParent->m_btnCancel), 
-					gtk_image_new_from_icon_name("edit-clear", GTK_ICON_SIZE_BUTTON));
-				gtk_widget_set_sensitive(m_pParent->m_btnPause, FALSE);
-				//gtk_widget_set_sensitive(m_pParent->m_labelTitle, FALSE);
-				gtk_widget_set_sensitive(m_pParent->m_labelDetails, FALSE);
-				gtk_widget_set_sensitive(m_pParent->m_labelProgDetails, FALSE);
-				gtk_widget_set_sensitive(m_pParent->m_pbarProgress, FALSE);
+			{ (void)event; 
+				g_idle_add(idle_task_finished, m_pParent);
 			}
 
 			void HandleTaskCancelled(TaskEventPtr event) 
-			{
-				gtk_widget_set_sensitive(m_pParent->m_btnCancel, TRUE);
-				gtk_button_set_image(GTK_BUTTON(m_pParent->m_btnCancel), 
-					gtk_image_new_from_icon_name("edit-clear", GTK_ICON_SIZE_BUTTON));
-				gtk_widget_set_sensitive(m_pParent->m_btnPause, FALSE);
-				//gtk_widget_set_sensitive(m_pParent->m_labelTitle, FALSE);
-				gtk_widget_set_sensitive(m_pParent->m_labelDetails, FALSE);
-				gtk_widget_set_sensitive(m_pParent->m_labelProgDetails, FALSE);
-				gtk_widget_set_sensitive(m_pParent->m_pbarProgress, FALSE);
+			{ (void)event; 
+				g_idle_add(idle_task_finished, m_pParent);
 			}
 
 			void HandleTaskProgressUpdated(TaskEventPtr event) 
-			{
-				
-				m_pParent->UpdateTaskGUI();
-
+			{ (void)event; 
+				g_idle_add(idle_task_progress, m_pParent);
 			}
 
 		};
@@ -310,7 +312,7 @@ public:
 public:
 	TaskManagerDlgPriv(TaskManagerDlg* parent, GtkWindow* parent_window) :
 		m_pParent(parent), m_TaskMgrPtr(TaskManager::GetInstance())
-	{
+	{ (void)parent_window; 
 		m_pWidget = gtk_dialog_new();
 		//FIXME: function gone?
 		//gtk_dialog_set_has_separator(GTK_DIALOG(m_pWidget),FALSE);
@@ -346,7 +348,7 @@ public:
 	}
 
 	static gboolean event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
-	{
+	{ (void)data;  (void)event; 
 		//TaskManagerDlgPriv* dlgPriv = static_cast<TaskManagerDlgPriv*>(user_data);
 		gtk_widget_hide(widget);
 
@@ -354,7 +356,7 @@ public:
 	}
 
 	static void signal_response( GtkDialog *dlg, gint arg1, gpointer user_data )
-	{
+	{ (void)user_data;  (void)arg1; 
 		gtk_widget_hide(GTK_WIDGET(dlg));
 	}
 
@@ -404,7 +406,7 @@ public:
 	}
 
 	void HandleTaskRemoved(TaskManagerEventPtr event) 
-	{
+	{ (void)event; 
 		// TaskManagerPtr mgrPtr = TaskManager::GetInstance();
 	}
 

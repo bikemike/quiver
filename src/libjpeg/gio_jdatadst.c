@@ -111,7 +111,7 @@ term_destination (j_compress_ptr cinfo)
 
 	/* Write any data remaining in the buffer */
 	if (datacount > 0) {
-		if (g_output_stream_write(dest->outfile, dest->buffer, datacount, NULL, NULL) != datacount)
+		if ((size_t)g_output_stream_write(dest->outfile, dest->buffer, datacount, NULL, NULL) != datacount)
 			// FIXME: handle error
 			printf("error in term_destination !\n");
 	}

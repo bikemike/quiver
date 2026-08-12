@@ -4,6 +4,29 @@
 
 #include "ThreadUtil.h"
 
+static gboolean idle_destroy_dialog(gpointer user_data) {
+	gtk_widget_destroy(GTK_WIDGET(user_data));
+	return G_SOURCE_REMOVE;
+}
+
+struct RunData {
+	GtkWidget* dlg;
+	gint response;
+	bool done;
+	GMutex mutex;
+	GCond cond;
+};
+
+static gboolean idle_run_dialog(gpointer user_data) {
+	RunData* data = (RunData*)user_data;
+	data->response = gtk_dialog_run(GTK_DIALOG(data->dlg));
+	g_mutex_lock(&data->mutex);
+	data->done = true;
+	g_cond_signal(&data->cond);
+	g_mutex_unlock(&data->mutex);
+	return G_SOURCE_REMOVE;
+}
+
 class MessageBox::PrivateImpl
 {
 public:
@@ -77,12 +100,37 @@ public:
 
 	~PrivateImpl()
 	{
-		gtk_widget_destroy (m_pDlg);
+		if (!ThreadUtil::IsGUIThread()) {
+			g_idle_add(idle_destroy_dialog, m_pDlg);
+		} else {
+			gtk_widget_destroy (m_pDlg);
+		}
 	}
 
 	ResponseType Run()
 	{
-		gint response = gtk_dialog_run (GTK_DIALOG (m_pDlg));
+		gint response;
+		if (!ThreadUtil::IsGUIThread()) {
+			RunData data;
+			data.dlg = m_pDlg;
+			data.done = false;
+			g_mutex_init(&data.mutex);
+			g_cond_init(&data.cond);
+			
+			g_idle_add(idle_run_dialog, &data);
+			
+			g_mutex_lock(&data.mutex);
+			while (!data.done) {
+				g_cond_wait(&data.cond, &data.mutex);
+			}
+			g_mutex_unlock(&data.mutex);
+			response = data.response;
+			
+			g_mutex_clear(&data.mutex);
+			g_cond_clear(&data.cond);
+		} else {
+			response = gtk_dialog_run (GTK_DIALOG (m_pDlg));
+		}
 
 		ResponseType responseType;
 		switch (response)

@@ -106,7 +106,7 @@ static void      quiver_navigation_control_adjustment_changed (GtkAdjustment *ad
 
 /* start private globals */
 
-static guint navcontrol_signals[SIGNAL_COUNT];
+// static guint navcontrol_signals[SIGNAL_COUNT];
 
 /* end private globals */
 
@@ -143,23 +143,6 @@ quiver_navigation_control_class_init (QuiverNavigationControlClass *klass)
 
 	obj_class->finalize                = quiver_navigation_control_finalize;
 
-#define GTK_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
-
-	g_object_class_install_property (obj_class,
-		PROP_HADJUSTMENT,
-		g_param_spec_object ("hadjustment",
-		/*P_*/("Horizontal Adjustment"),
-		/*P_*/("The Horizontal GtkAdjustment connected to the Navigation Control"),
-		GTK_TYPE_ADJUSTMENT,
-		GTK_PARAM_READWRITE));
-	
-	g_object_class_install_property (obj_class,
-		PROP_VADJUSTMENT,
-		g_param_spec_object ("vadjustment",
-		/*P_*/("Vertical Adjustment"),
-		/*P_*/("The Vertical GtkAdjustment connected to the Navigation Control"),
-		GTK_TYPE_ADJUSTMENT,
-		GTK_PARAM_READWRITE));
 }
 
 static void 
@@ -178,6 +161,7 @@ quiver_navigation_control_init(QuiverNavigationControl *navcontrol)
 	navcontrol->priv->view_area_rect.x = -1;
 
 	gtk_widget_set_can_focus(GTK_WIDGET(navcontrol),TRUE);
+	gtk_widget_set_has_window(GTK_WIDGET(navcontrol), TRUE);
 }
 
 
@@ -186,6 +170,7 @@ static void
 quiver_navigation_control_finalize(GObject *object)
 {
 	GObjectClass *parent,*obj_class;
+ (void)obj_class;
 	QuiverNavigationControlClass *klass; 
 	QuiverNavigationControl *navcontrol;
 
@@ -292,8 +277,9 @@ quiver_navigation_control_size_allocate (GtkWidget     *widget,
 
 static void
 quiver_navigation_control_size_request (GtkWidget *widget, GtkRequisition *requisition)
-{
+{ (void)requisition; 
 	QuiverNavigationControl *navcontrol;
+ (void)navcontrol;
 	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
 }
 
@@ -336,7 +322,7 @@ quiver_navigation_control_send_configure (QuiverNavigationControl *navcontrol)
 
 static gboolean
 quiver_navigation_control_configure_event( GtkWidget *widget, GdkEventConfigure *event )
-{
+{ (void)event; 
 	QuiverNavigationControl *navcontrol;
 	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
 	
@@ -431,8 +417,8 @@ quiver_navigation_control_expose_event (GtkWidget *widget, GdkEventExpose *event
 
 static gboolean
 quiver_navigation_control_draw(GtkWidget* navcontrol, cairo_t* cr)
-{
-// FIXME: implement
+{ (void)cr;  (void)navcontrol; 
+	return FALSE;
 }
 
 void quiver_navigation_control_update_adjustments(QuiverNavigationControl *navcontrol, gint x, gint y)
@@ -486,7 +472,7 @@ quiver_navigation_control_button_press_event  (GtkWidget *widget, GdkEventButton
 
 static gboolean
 quiver_navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event)
-{
+{ (void)event;  (void)widget; 
 	return TRUE;
 }
                    
@@ -688,7 +674,7 @@ quiver_navigation_control_set_vadjustment (QuiverNavigationControl *navcontrol, 
 
 static void
 quiver_navigation_control_adjustment_changed (GtkAdjustment *adjustment, gpointer userdata)
-{
+{ (void)adjustment; 
 	QuiverNavigationControl *navcontrol;
 	navcontrol = QUIVER_NAVIGATION_CONTROL(userdata);
 

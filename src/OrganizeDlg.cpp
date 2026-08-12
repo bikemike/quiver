@@ -1,4 +1,5 @@
 #include <config.h>
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "OrganizeDlg.h"
 #include "OrganizeTask.h"
 #include "RenameTask.h"
@@ -178,7 +179,7 @@ static void  on_clicked (GtkButton *button, gpointer   user_data);
 #ifndef QUIVER_MAEMO
 static void on_folder_change (GtkFileChooser *chooser, gpointer user_data);
 #endif
-static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
+static void __attribute__((unused))  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
 static void on_editable_changed (GtkEditable *editable, gpointer user_data);
 static void combo_changed (GtkComboBox *widget, gpointer user_data);
 
@@ -189,9 +190,9 @@ OrganizeDlg::OrganizeDlgPriv::OrganizeDlgPriv(OrganizeDlg *parent) :
 	m_pDialogOrganize = NULL;
 	m_pGtkBuilder = gtk_builder_new();
 	gchar* objectids[] = {
-		"OrganizeDialog",
-		"adjustment8",
-		"liststore3",
+		(gchar*)"OrganizeDialog",
+		(gchar*)"adjustment8",
+		(gchar*)"liststore3",
 		NULL};
 	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 
@@ -220,9 +221,7 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 {
 	m_pDialogOrganize         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "OrganizeDialog"));
 
-	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
-	gtk_widget_show(m_pBtnOK);
-	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogOrganize)),m_pBtnOK);
+	m_pBtnOK = gtk_dialog_add_button(m_pDialogOrganize, "_OK", GTK_RESPONSE_OK);
 
 	m_pComboTemplateFolder       = GTK_COMBO_BOX_TEXT( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
 	m_pEntryTemplateFile       = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "organize_entry_filename_template") );
@@ -559,7 +558,7 @@ void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
 #endif
 
 
-static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+static void __attribute__((unused))  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 {
 	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
 	priv->UpdateUI();

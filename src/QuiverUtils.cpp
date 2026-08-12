@@ -1,43 +1,12 @@
 #include <config.h>
 #include "QuiverUtils.h"
 
-static bool g_bAcceleratorsDisabled = false;
+
 
 #define N_LOOPS 10
 
 namespace QuiverUtils
 {
-	
-	GtkAction* GetAction(GtkUIManager* ui,const char * action_name)
-	{
-		GList * action_groups = gtk_ui_manager_get_action_groups(ui);
-		GtkAction * action = NULL;
-		while (NULL != action_groups)
-		{
-			action = gtk_action_group_get_action (GTK_ACTION_GROUP(action_groups->data),action_name);
-			if (NULL != action)
-			{
-				break;
-			}                      
-			action_groups = g_list_next(action_groups);
-		}
-	
-		return action;
-	}
-	
-	
-	void SetActionsSensitive(GtkUIManager *pUIManager, const gchar** actions, gint n_actions, gboolean bSensitive)
-	{
-		gint i;
-		for ( i = 0; i < n_actions; i++)
-		{
-			GtkAction* action = QuiverUtils::GetAction(pUIManager, actions[i]);
-			if (NULL != action)
-			{
-				gtk_action_set_sensitive(action,bSensitive);
-			}
-		}
-	}
 	
 	
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
@@ -112,106 +81,6 @@ namespace QuiverUtils
 	}
 
 
-	void DisconnectUnmodifiedAccelerators(GtkUIManager *pUIManager)
-	{
-		GList * action_groups = gtk_ui_manager_get_action_groups(pUIManager);
-		GtkAction * action = NULL;
-
-		if (!g_bAcceleratorsDisabled)
-		{		
-			while (NULL != action_groups)
-			{
-				GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
-				GList *actions = actions_list;
-				while (NULL != actions)
-				{
-					action = (GtkAction*)actions->data;
-					GtkAccelKey accel_key = {0};
-					
-					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
-					{
-						// list of modifiers to check
-						guint mask = 0;
-						
-						mask |= GDK_CONTROL_MASK;
-						mask |= GDK_MOD1_MASK;    // normally alt
-						mask |= GDK_MOD2_MASK;
-						mask |= GDK_MOD3_MASK;
-						mask |= GDK_MOD4_MASK;
-						mask |= GDK_MOD5_MASK;
-	
-						gchar *accel_label;
-						accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
-						//printf("disable  accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
-						//printf("disable accel key: %s - %d\n",accel_label, accel_key.accel_key);
-	
-						if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
-						{
-							for (int i = 0; i < N_LOOPS; i++)
-								gtk_action_disconnect_accelerator(action);
-						}
-						//printf("disabled accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
-						g_free(accel_label);
-					}
-					actions = g_list_next(actions);
-				}
-				
-				g_list_free(actions_list);
-				
-				action_groups = g_list_next(action_groups);
-			}
-			g_bAcceleratorsDisabled = true;
-		}
-	}
-	
-	void ConnectUnmodifiedAccelerators(GtkUIManager *pUIManager)
-	{
-		GList * action_groups = gtk_ui_manager_get_action_groups(pUIManager);
-		GtkAction * action = NULL;
-		if (g_bAcceleratorsDisabled)
-		{
-			while (NULL != action_groups)
-			{
-				GList *actions_list = gtk_action_group_list_actions((GtkActionGroup*)action_groups->data);
-				GList *actions = actions_list;
-				while (NULL != actions)
-				{
-					action = (GtkAction*)actions->data;
-					GtkAccelKey accel_key = {0};
-					
-					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
-					{
-						// list of modifiers to check
-						guint mask = 0;
-						
-						mask |= GDK_CONTROL_MASK;
-						mask |= GDK_MOD1_MASK;    // normally alt
-						mask |= GDK_MOD2_MASK;
-						mask |= GDK_MOD3_MASK;
-						mask |= GDK_MOD4_MASK;
-						mask |= GDK_MOD5_MASK;
-	
-						if (0 == (mask & accel_key.accel_mods) && 0 != accel_key.accel_key)
-						{
-							gchar *accel_label;
-							accel_label = gtk_accelerator_get_label(accel_key.accel_key,accel_key.accel_mods);
-							//printf("enable accel key(%d): %s - %d\n",action->private_data->accel_count, accel_label, accel_key.accel_key);
-							//printf("enable accel key: %s - %d\n",accel_label, accel_key.accel_key);
-							for (int i = 0; i < N_LOOPS; i++)
-								gtk_action_connect_accelerator(action);
-							g_free(accel_label);
-						}
-					}
-					actions = g_list_next(actions);
-				}
-				
-				g_list_free(actions_list);
-				
-				action_groups = g_list_next(action_groups);
-			}
-			g_bAcceleratorsDisabled = false;
-		}
-	}
 }
 
 #include "QuiverUtils.h"
@@ -273,23 +142,23 @@ namespace QuiverUtils
 		g_free(group);
 	}
 
-	static gboolean accel_activate_cb(gpointer data1, gpointer arg1, guint arg2, guint arg3, gpointer data2) {
-		GAction *action = G_ACTION(data2);
-		if (NULL == action || !G_IS_ACTION(action)) return TRUE;
-		const GVariantType *ptype = g_action_get_parameter_type(action);
-		if (NULL != ptype && g_variant_type_equal(ptype, G_VARIANT_TYPE_BOOLEAN))
-		{
-			GVariant *state = g_action_get_state(action);
-			gboolean active = (NULL != state) ? g_variant_get_boolean(state) : FALSE;
-			if (NULL != state) g_variant_unref(state);
-			g_action_activate(action, g_variant_new_boolean(!active));
-		}
-		else
-		{
-			g_action_activate(action, NULL);
-		}
-		return TRUE;
+	static gboolean accel_activate_cb(gpointer data1, gpointer arg1, guint arg2, guint arg3, gpointer data2) { (void)arg3;  (void)arg2;  (void)arg1;  (void)data1; 
+	GAction *action = G_ACTION(data2);
+	if (NULL == action || !G_IS_ACTION(action)) return FALSE;
+	const GVariantType *ptype = g_action_get_parameter_type(action);
+	if (NULL != ptype && g_variant_type_equal(ptype, G_VARIANT_TYPE_BOOLEAN))
+	{
+		GVariant *state = g_action_get_state(action);
+		gboolean active = (NULL != state) ? g_variant_get_boolean(state) : FALSE;
+		if (NULL != state) g_variant_unref(state);
+		g_action_activate(action, g_variant_new_boolean(!active));
 	}
+	else
+	{
+		g_action_activate(action, NULL);
+	}
+	return FALSE;
+}
 
 	static void connect_accel_entry(AccelEntry *entry) {
 		if (NULL == g_pAccelGroup || entry->connected || entry->suppressed) return;
@@ -318,7 +187,7 @@ namespace QuiverUtils
 		connect_accel_entry(entry);
 	}
 
-	static gboolean accel_has_modifier(guint keyval, GdkModifierType mods) {
+	static gboolean accel_has_modifier(guint keyval, GdkModifierType mods) { (void)keyval; 
 		guint mask = GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_MOD2_MASK | GDK_MOD3_MASK | GDK_MOD4_MASK | GDK_MOD5_MASK;
 		return 0 != (mask & mods);
 	}
@@ -469,6 +338,19 @@ namespace QuiverUtils
 	void ToggleActionSetActive(const char *action_name, gboolean active) {
 		GAction *action = GetAction(action_name);
 		if (NULL == action) return;
+		GVariant *state = g_action_get_state(action);
+		gboolean current = (NULL != state) ? g_variant_get_boolean(state) : FALSE;
+		if (NULL != state) g_variant_unref(state);
+		if (current == active) return;
+	// mirrors the old gtk_toggle_action_set_active(): activate also runs
+	// the action callback that actually shows/hides the associated widgets
+	g_action_activate(action, g_variant_new_boolean(active));
+	}
+
+	void ToggleActionSetState(const char *action_name, gboolean active) {
+		// set the toggle state without running the activate callback
+		GAction *action = GetAction(action_name);
+		if (NULL == action) return;
 		g_action_change_state(action, g_variant_new_boolean(active));
 	}
 
@@ -550,7 +432,7 @@ namespace QuiverUtils
 		gtk_widget_insert_action_group(ancestor, "quiver", G_ACTION_GROUP(g_pActionGroup));
 	}
 
-	static void toggle_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) {
+	static void toggle_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) { (void)pspec; 
 		GtkWidget *widget = GTK_WIDGET(user_data);
 		GAction *action = G_ACTION(object);
 		GVariant *state = g_action_get_state(action);
@@ -583,7 +465,7 @@ namespace QuiverUtils
 		toggle_action_state_changed_cb(G_OBJECT(action), NULL, widget);
 	}
 
-	static void radio_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) {
+	static void radio_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) { (void)pspec; 
 		GtkWidget *widget = GTK_WIDGET(user_data);
 		GAction *action = G_ACTION(object);
 		GVariant *state = g_action_get_state(action);

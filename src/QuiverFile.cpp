@@ -431,7 +431,7 @@ bool QuiverFile::QuiverFileImpl::HasThumbnail(int iSize)
 		gchar * thumb_path ;
 		thumb_path = quiver_thumbnail_path_for_uri(m_szURI,thumbSize->name);
 		
-		struct stat s = {0};
+		struct stat s = {};
 		if (0 == g_stat(thumb_path,&s))
 		{
 			bExists = true;
@@ -510,7 +510,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	if (NULL != inStream)
 	{
 		GdkPixbufLoader* loader = NULL;
-		loader = gdk_pixbuf_loader_new_with_mime_type (GetMimeType(), NULL);
+		loader = gdk_pixbuf_loader_new();
 		
 		if (NULL != loader)
 		{
@@ -554,10 +554,15 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				time_t mtime;
 				mtime = atol (thumb_mtime_str);
 				
-				GTimeVal tv;
-				g_file_info_get_modification_time(gFileInfo, &tv);
+				gint64 tv_sec = 0;
+				GDateTime* datetime = g_file_info_get_modification_date_time(gFileInfo);
+				if (NULL != datetime)
+				{
+					tv_sec = g_date_time_to_unix(datetime);
+					g_date_time_unref(datetime);
+				}
 
-				if (tv.tv_sec != mtime)
+				if (tv_sec != mtime)
 				{
 					// they dont match.. we should load a new version
 					//printf("m-times do not match! %lu  != %lu\n", tv.tv_sec, mtime);
@@ -698,7 +703,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 				m_iWidth = pixbuf_width;
 				m_iHeight = pixbuf_height;
 
-				if (pixbuf_width > size || pixbuf_height > size)
+				if (pixbuf_width > (guint)size || pixbuf_height > (guint)size)
 				{
 					quiver_rect_get_bound_size(size,size, &pixbuf_width,&pixbuf_height,FALSE);
 				std::cout << "scale simple 2" << std::endl;
@@ -731,9 +736,9 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 						int dest_y = 0;
 
 						//left
-						while (dest_y < pixbuf_height)
+						while ((guint)dest_y < pixbuf_height)
 						{
-							if (dest_y + h > pixbuf_height)
+							if ((guint)(dest_y + h) > pixbuf_height)
 								h = pixbuf_height - dest_y;
 
 							gdk_pixbuf_composite(
@@ -755,9 +760,9 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 						//right
 						dest_y = 0;
 						h = gdk_pixbuf_get_height(filmholes);
-						while (dest_y < pixbuf_height)
+						while ((guint)dest_y < pixbuf_height)
 						{
-							if (dest_y + h > pixbuf_height)
+							if ((guint)(dest_y + h) > pixbuf_height)
 								h = pixbuf_height - dest_y;
 
 							gdk_pixbuf_composite(
@@ -795,7 +800,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 			GInputStream* inStream = G_INPUT_STREAM(g_file_read(gfile, NULL,NULL));
 			if (NULL != inStream)
 			{
-				PixbufLoaderSizeInfo size_info = {0};
+				PixbufLoaderSizeInfo size_info = {};
 				size_info.size_request = size;			
 
 				GdkPixbufLoader* loader = NULL;
@@ -813,7 +818,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 						gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
 						if (NULL != tmp_error)
 						{
-							printf("error with %s: %s\n",tmp_error->message);
+							printf("error with %s: %s\n", m_szURI, tmp_error->message);
 							g_error_free(tmp_error);
 							break;
 						}
@@ -888,14 +893,19 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 	// save the thumbnail to the cache directory (~/.thumbnails)
 	if (NULL != thumb_pixbuf && save_thumbnail_to_cache && gFileInfo)
 	{
-		GTimeVal tv;
-		g_file_info_get_modification_time(gFileInfo, &tv);
+		gint64 tv_sec = 0;
+		GDateTime* datetime = g_file_info_get_modification_date_time(gFileInfo);
+		if (NULL != datetime)
+		{
+			tv_sec = g_date_time_to_unix(datetime);
+			g_date_time_unref(datetime);
+		}
 		gchar text_buff[20];
 		g_sprintf(text_buff, "%d", GetWidth());
 		gdk_pixbuf_set_option (thumb_pixbuf, "tEXt::Thumb::Image::Width", text_buff);
 		g_sprintf(text_buff, "%d", GetHeight());
 		gdk_pixbuf_set_option (thumb_pixbuf, "tEXt::Thumb::Image::Height", text_buff);
-		SaveThumbnail(thumb_pixbuf, m_szURI, thumb_path, tv.tv_sec, GetWidth(), GetHeight(), GetOrientation());
+		SaveThumbnail(thumb_pixbuf, m_szURI, thumb_path, tv_sec, GetWidth(), GetHeight(), GetOrientation());
 	}
 	
 	g_free (thumb_path);
@@ -932,8 +942,8 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 
 void QuiverFile::QuiverFileImpl::SaveThumbnail(GdkPixbuf* pixbuf, const char* uri, const char* path, time_t mtime, int width, int height, int orientation)
 {
-	static GStaticMutex mutex = G_STATIC_MUTEX_INIT;
-	g_static_mutex_lock (&mutex);
+	static GMutex mutex = { 0 };
+	g_mutex_lock (&mutex);
 	if (NULL == c_ThreadPoolPtr.get())
 	{
 		c_ThreadPoolPtr = boost::shared_ptr<GThreadPool> (
@@ -945,7 +955,7 @@ void QuiverFile::QuiverFileImpl::SaveThumbnail(GdkPixbuf* pixbuf, const char* ur
 	ThumbnailSaveThreadData *thread_data = new ThumbnailSaveThreadData(pixbuf, uri, path, mtime, width, height, orientation);
 
 	g_thread_pool_push(c_ThreadPoolPtr.get(), thread_data, NULL);
-	g_static_mutex_unlock (&mutex);
+	g_mutex_unlock (&mutex);
 }
 
 void QuiverFile::QuiverFileImpl::Reload()
@@ -1083,7 +1093,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 				char szDate[20];
 				exif_entry_get_value(pEntry,szDate,20);
 
-				struct tm tm_exif_time = {0};
+				struct tm tm_exif_time = {};
 				printf("szDate: %s\n", szDate);
 
 				int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
@@ -1125,7 +1135,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 			{
 				gmt = true;
 			}
-			struct tm tm_exif_time = {0};
+			struct tm tm_exif_time = {};
 
 			int num_substs = sscanf(output,"%04d:%02d:%02d %02d:%02d:%02d",
 				&tm_exif_time.tm_year,
@@ -1146,14 +1156,14 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 				if (gmt)
 				{
 					GDateTime* datetime = g_date_time_new_utc(tm_exif_time.tm_year + 1900, tm_exif_time.tm_mon + 1, tm_exif_time.tm_mday, tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
-					printf("IS GMT %d - local %d - orig %d\n", m_cachedTimeT, g_date_time_to_unix(datetime));
+					printf("IS GMT %ld - local %lld - orig %ld\n", (long)m_cachedTimeT, (long long)g_date_time_to_unix(datetime), (long)m_cachedTimeT);
 					m_cachedTimeT = g_date_time_to_unix(datetime);
 					g_date_time_unref(datetime);
 		
 				}
 			}
 			
-			printf(output);
+			printf("%s", output);
 			printf("\n");
 			g_free(output);
 		}
@@ -1167,14 +1177,17 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 		
 		if (NULL != pInfo)
 		{
-			GTimeVal tv;
-			g_file_info_get_modification_time(pInfo, &tv);
-			m_cachedTimeT = tv.tv_sec;
+			GDateTime* datetime = g_file_info_get_modification_date_time(pInfo);
+			if (NULL != datetime)
+			{
+				m_cachedTimeT = g_date_time_to_unix(datetime);
+				g_date_time_unref(datetime);
+			}
 		}
 	}
 
-	printf(GetFilePath().c_str());
-	printf(": %d\n", m_cachedTimeT);
+	printf("%s", GetFilePath().c_str());
+	printf(": %ld\n", (long)m_cachedTimeT);
 	
 	return m_cachedTimeT;
 }	
@@ -1563,7 +1576,7 @@ static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *wi
 	
 	if (NULL != inStream)
 	{
-		PixbufLoaderSizeInfo size_info = {0};
+		PixbufLoaderSizeInfo size_info = {};
 		
 		GdkPixbufLoader* loader = NULL;
 		loader = gdk_pixbuf_loader_new_with_mime_type (mimetype, NULL);	
@@ -1574,8 +1587,8 @@ static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *wi
 			
 			while (0 < (bytes_read = g_input_stream_read(inStream, buffer, buffsize, NULL, NULL)))
 			{
-				gboolean success
-					= gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+				gboolean success = gdk_pixbuf_loader_write (loader,(guchar*)buffer, bytes_read, &tmp_error);
+				(void)success;
 
 				if (NULL != tmp_error)
 				{
@@ -1725,7 +1738,7 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 		if (NULL != icon_info)
 		{
 			pixbuf = gtk_icon_info_load_icon(icon_info, NULL);
-			gtk_icon_info_free(icon_info);
+			g_object_unref(icon_info);
 		}
 		g_object_unref(icon);
 	}
@@ -1819,7 +1832,7 @@ gchar* quiver_thumbnail_path_for_uri(const char* uri, const char* szSize)
 
 
 static void thread_save_thumbnail(gpointer data, gpointer user_data)
-{
+{ (void)user_data; 
 	ThumbnailSaveThreadData* thumb_data = (ThumbnailSaveThreadData*)data;
 	// make the directory if it does not already exist:
 	gchar *thumb_dir = g_path_get_dirname(thumb_data->m_strPath.c_str());

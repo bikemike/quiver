@@ -203,7 +203,7 @@ std::list<std::string> Preferences::GetStringList(std::string section, std::stri
 }
 
 std::list<std::string> Preferences::GetLocaleStringList(std::string section, std::string key, std::string locale)
-{
+{ (void)locale;  (void)key;  (void)section; 
 	list<string> string_list;
 	return string_list;
 }
@@ -377,7 +377,7 @@ void Preferences::SetStringList(std::string section, std::string key, std::list<
 }
 
 void Preferences::SetStringLocaleList(std::string section, std::string key, std::string locale, std::list<std::string> value_list)
-{
+{ (void)value_list;  (void)locale;  (void)key;  (void)section; 
 	//m_bModified = true;
 }
 

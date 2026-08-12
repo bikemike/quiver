@@ -239,6 +239,8 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::SelectionChanged()
 	selection = gtk_tree_view_get_selection(m_pTreeViewLocations);
 
 	bool bTop = false, bBottom = false;
+ (void)bTop;
+ (void)bBottom;
 	GtkTreeIter iter2;
 	GtkTreePath *path_top = NULL;
 	GtkTreePath *path_bottom = NULL;
@@ -272,8 +274,7 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::SelectionChanged()
 		++selection_count;
 	}
 
-	g_list_foreach (paths, (GFunc)gtk_tree_path_free, NULL);
-	g_list_free (paths);
+	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
 
 	if (n_children)
 	{
@@ -304,7 +305,7 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::UpdateUI()
 
 		for (itr = m_vectURIs.begin(); m_vectURIs.end() != itr; ++itr)
 		{
-			GtkTreeIter iter1 = {0};
+			GtkTreeIter iter1 = {};
 			gtk_tree_store_append (store, &iter1, NULL);  
 			gtk_tree_store_set (store, &iter1,
 				COLUMN_ID, itr - m_vectURIs.begin(), 
@@ -321,7 +322,7 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::UpdateUI()
 
 
 static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{
+{ (void)data; 
 	if (GTK_RESPONSE_NONE == response)
 	{
 		g_signal_stop_emission_by_name (dlg, "response");
@@ -360,6 +361,7 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	if (priv->m_pToggleRecursive == togglebutton)
 	{ 
 		gboolean bRecursive = gtk_toggle_button_get_active(togglebutton);
+ (void)bRecursive;
 	}
 }
 
@@ -393,8 +395,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 		values.push_back(value);
 		path_itr = g_list_next(path_itr);
 	}	
-	g_list_foreach (paths, (GFunc)gtk_tree_path_free, NULL);
-	g_list_free (paths);
+	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
 	// have to remove after iterating the model because
 	// removing modifiees the model
 	if (button == priv->m_pButtonAdd)
@@ -448,19 +449,19 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 }
 
 static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
-{
+{ (void)treeselection; 
 	BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv = static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
 	priv->SelectionChanged();
 }
 
 static void
 cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data)
-{
+{ (void)cell; 
 	BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv = static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
 
 	GtkTreePath *path;
-	GtkTreeIter child = {0};
-	GtkTreeIter parent = {0};
+	GtkTreeIter child = {};
+	GtkTreeIter parent = {};
 
 	unsigned int value;
 

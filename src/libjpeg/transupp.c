@@ -1519,7 +1519,7 @@ jtransform_perfect_transform(JDIMENSION image_width, JDIMENSION image_height,
 
 GLOBAL(void)
 jcopy_markers_setup (j_decompress_ptr srcinfo, JCOPY_OPTION option)
-{
+{ (void)option;  (void)srcinfo; 
 #ifdef SAVE_MARKERS_SUPPORTED
   int m;
 

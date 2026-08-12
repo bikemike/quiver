@@ -109,7 +109,7 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 		return;
 	}
 
-	CacheItem c = {0};
+	CacheItem c = {};
 	c.pPixbuf = pb;
 	c.time = time;
 	g_object_ref(c.pPixbuf);

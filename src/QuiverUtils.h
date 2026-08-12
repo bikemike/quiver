@@ -30,6 +30,7 @@ namespace QuiverUtils
 
 	gboolean ToggleActionGetActive(const char *action_name);
 	void ToggleActionSetActive(const char *action_name, gboolean active);
+	void ToggleActionSetState(const char *action_name, gboolean active);
 	gint GetRadioActionCurrent(const char *action_name);
 	void SetRadioActionCurrent(const char *action_name, gint value);
 

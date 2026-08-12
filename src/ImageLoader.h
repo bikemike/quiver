@@ -77,7 +77,6 @@ private:
 	pthread_t m_pthread_id;
 
 	pthread_cond_t m_Condition;
-	pthread_mutex_t m_ConditionMutex;
 	pthread_mutex_t m_CommandMutex;
 
 	GMutex m_csObservers;

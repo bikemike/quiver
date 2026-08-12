@@ -57,7 +57,7 @@ bool ImageSaverJPEG::SaveImageAs(QuiverFile quiverFile, std::string strFileName,
 			GdkPixbuf *pixbuf /* = NULL */,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
-{
+{ (void)strFileName;  (void)pixbuf;  (void)cb;  (void)user_data; 
 	printf("save JPEG image as! %s\n", quiverFile.GetURI());
 	return true;
 }
@@ -95,7 +95,7 @@ bool ImageSaveManager::SaveImage(QuiverFile quiverFile,
 			GdkPixbuf *pixbuf /* = NULL */,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
-{
+{ (void)cb;  (void)user_data; 
 	bool bRetVal = false;
 	ImageSaverMap::iterator itr;
 	itr = m_mapImageSavers.find(quiverFile.GetMimeType());
@@ -111,7 +111,7 @@ bool ImageSaveManager::SaveImageAs(QuiverFile quiverFile, std::string strFileNam
 			GdkPixbuf *pixbuf /* = NULL */,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
-{
+{ (void)cb;  (void)user_data; 
 	bool bRetVal = false;
 	ImageSaverMap::iterator itr;
 	itr = m_mapImageSavers.find(quiverFile.GetMimeType());

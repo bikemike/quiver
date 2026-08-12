@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <algorithm>
+#include <random>
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
@@ -187,7 +188,7 @@ bool ImageList::SetCurrentFile(std::string file)
 
 	m_ImageListImplPtr->SetCurrentImage(file);
 
-	if (old_index != m_ImageListImplPtr->m_iCurrentIndex)
+	if ((unsigned int)old_index != m_ImageListImplPtr->m_iCurrentIndex)
 	{
 		rval = true;
 		EmitCurrentIndexChangedEvent(m_ImageListImplPtr->m_iCurrentIndex, old_index);
@@ -400,7 +401,7 @@ void ImageList::AddIgnoredExtension(std::string ext)
 }
 
 void ImageList::ClearIgnoreList(std::string ext)
-{
+{ (void)ext; 
 	m_vectIgnorgedExtensions.clear();
 }
 
@@ -616,7 +617,7 @@ void monitor_callback (
 	GFile            *other_file,
 	GFileMonitorEvent event_type,
 	gpointer          user_data) 
-{
+{ (void)monitor;  (void)other_file; 
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 
 	char* uri = g_file_get_uri(file);
@@ -1494,7 +1495,9 @@ void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool b
 		}
 		case ImageList::SORT_BY_RANDOM:
 		{
-			std::random_shuffle(m_QuiverFileList.begin(), m_QuiverFileList.end());
+			std::random_device rd;
+			std::mt19937 g(rd());
+			std::shuffle(m_QuiverFileList.begin(), m_QuiverFileList.end(), g);
 			break;
 		}
 		default:

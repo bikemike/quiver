@@ -1,4 +1,5 @@
 #include <config.h>
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "RenameDlg.h"
 #include "RenameTask.h"
 
@@ -115,12 +116,12 @@ void RenameDlg::SetInputFolder(std::string folder)
 
 
 // prototypes
-static void  on_clicked (GtkButton *button, gpointer   user_data);
+static void __attribute__((unused))  on_clicked (GtkButton *button, gpointer   user_data);
 #ifndef QUIVER_MAEMO
 static void on_folder_change (GtkFileChooser *chooser, gpointer user_data);
 #endif
 static void on_editable_changed (GtkEditable *editable, gpointer user_data);
-static void combo_changed (GtkComboBox *widget, gpointer user_data);
+[[maybe_unused]] static void __attribute__((unused)) combo_changed (GtkComboBox *widget, gpointer user_data);
 
 
 RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent) :
@@ -129,7 +130,7 @@ RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent) :
 	m_pDialogRename = NULL;
 	m_pGtkBuilder = gtk_builder_new();
 	gchar* objectids[] = {
-		"RenameDialog",
+		(gchar*)"RenameDialog",
 		NULL};
 	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 
@@ -156,11 +157,9 @@ RenameDlg::RenameDlgPriv::~RenameDlgPriv()
 
 void RenameDlg::RenameDlgPriv::LoadWidgets()
 {
-	m_pDialogRename         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "RenameDialog"));
+	m_pDialogRename         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, (gchar*)"RenameDialog"));
 
-	m_pBtnOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
-	gtk_widget_show(m_pBtnOK);
-	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogRename)),m_pBtnOK);
+	m_pBtnOK = gtk_dialog_add_button(m_pDialogRename, "_OK", GTK_RESPONSE_OK);
 
 
 	GtkContainer* src_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "rename_align_source_folder") );
@@ -325,7 +324,7 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 	return bIsValid;
 }
 
-static void  on_clicked (GtkButton *button, gpointer   user_data)
+static void __attribute__((unused))  on_clicked (GtkButton *button, gpointer   user_data)
 {
 	RenameDlg::RenameDlgPriv *priv = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
 	if (GTK_BUTTON(priv->m_pBtnOK) == button)
@@ -412,7 +411,7 @@ static void on_editable_changed (GtkEditable *editable, gpointer user_data)
 	priv->UpdateUI();
 }
 
-void combo_changed (GtkComboBox *widget, gpointer user_data)
+void __attribute__((unused)) combo_changed (GtkComboBox *widget, gpointer user_data)
 {
 	RenameDlg::RenameDlgPriv *priv = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
 	priv->UpdateUI();

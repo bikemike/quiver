@@ -50,7 +50,6 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 {
 	//Timer t("ImageLoader::ImageLoader()");
 	pthread_cond_init(&m_Condition,NULL);
-	pthread_mutex_init(&m_ConditionMutex, NULL);
 	pthread_mutex_init(&m_CommandMutex, NULL);
 
 	g_mutex_init(&m_csObservers);
@@ -67,16 +66,14 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 
 ImageLoader::~ImageLoader()
 {
+	pthread_mutex_lock (&m_CommandMutex);
 	m_bStopThread = true;
-	
-	pthread_mutex_lock (&m_ConditionMutex);
 	pthread_cond_signal(&m_Condition);
-	pthread_mutex_unlock (&m_ConditionMutex);
+	pthread_mutex_unlock (&m_CommandMutex);
 
 	pthread_join(m_pthread_id,NULL);
 	
 	pthread_cond_destroy(&m_Condition);
-	pthread_mutex_destroy(&m_ConditionMutex);
 	pthread_mutex_destroy(&m_CommandMutex);
 
 	RemovePixbufLoaderObserver(this);
@@ -91,32 +88,22 @@ int ImageLoader::Run()
 	{
 		pthread_mutex_lock (&m_CommandMutex);
 
-		if (0 == m_Commands.size() && !m_bStopThread)
+		// wait for work.  the predicate and the wait share m_CommandMutex
+		// so that LoadImage() cannot lose a wakeup to a thread that is
+		// between the empty check and cond_wait
+		while (0 == m_Commands.size() && !m_bStopThread)
 		{
 			m_bWorking = false;
-			// unlock mutex
-			pthread_mutex_unlock (&m_CommandMutex);
-			
-			pthread_mutex_lock (&m_ConditionMutex);
-			pthread_cond_wait(&m_Condition,&m_ConditionMutex);
-
+			pthread_cond_wait(&m_Condition, &m_CommandMutex);
 			m_bWorking = true;
-
-			pthread_mutex_unlock (&m_ConditionMutex);
-
 		}
-		else
-		{
-			pthread_mutex_unlock (&m_CommandMutex);
-		}
-		
+
 		if (m_bStopThread)
 		{
+			pthread_mutex_unlock (&m_CommandMutex);
 			break;
 		}
 
-		pthread_mutex_lock (&m_CommandMutex);
-		
 		while (2 < m_Commands.size())
 		{
 			m_Commands.pop_front();
@@ -208,7 +195,7 @@ bool ImageLoader::CommandsPending()
 
 void ImageLoader::ReCacheImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = CACHE;
 	p.reload = true;
 	LoadImage(f,p);
@@ -216,14 +203,14 @@ void ImageLoader::ReCacheImage(QuiverFile f)
 
 void ImageLoader::CacheImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = CACHE;
 	LoadImage(f,p);
 }
 
 void ImageLoader::CacheImageAtSize(QuiverFile f, int width, int height)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = CACHE;
 	p.max_width = width;
 	p.max_height = height;
@@ -232,7 +219,7 @@ void ImageLoader::CacheImageAtSize(QuiverFile f, int width, int height)
 
 void ImageLoader::ReloadImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = LOAD;
 	p.reload = true;
 
@@ -242,7 +229,7 @@ void ImageLoader::ReloadImage(QuiverFile f)
 
 void ImageLoader::LoadImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = LOAD;
 
 	LoadImage(f,p);
@@ -250,7 +237,7 @@ void ImageLoader::LoadImage(QuiverFile f)
 
 void ImageLoader::LoadImageAtSize(QuiverFile f, int width, int height)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = LOAD;
 	p.max_width = width;
 	p.max_height = height;
@@ -274,9 +261,7 @@ void ImageLoader::LoadImage(QuiverFile f,LoadParams load_params)
 	
 	pthread_mutex_lock (&m_CommandMutex);
 	m_Commands.push_back(c);
-	pthread_mutex_lock (&m_ConditionMutex);
 	pthread_cond_signal(&m_Condition);
-	pthread_mutex_unlock (&m_ConditionMutex);
 	pthread_mutex_unlock (&m_CommandMutex);
 }
 
@@ -315,9 +300,14 @@ bool ImageLoader::LoadQuickPreview()
 		{
 			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(256);
 		}
-		else if (m_Command.quiverFile.HasThumbnail(128))
+		if (NULL == thumb_pixbuf && m_Command.quiverFile.HasThumbnail(128))
 		{
 			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(128);
+		}
+		if (NULL == thumb_pixbuf)
+		{
+			printf("DEBUG: LoadQuickPreview failed to get thumbnail! Has256=%d Has128=%d\n",
+				m_Command.quiverFile.HasThumbnail(256), m_Command.quiverFile.HasThumbnail(128));
 		}
 	
 	

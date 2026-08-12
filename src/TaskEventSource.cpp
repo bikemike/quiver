@@ -1,5 +1,6 @@
 #include "TaskEventSource.h"
 #include "ITaskEventHandler.h"
+using namespace boost::placeholders;
 
 void TaskEventSource::AddEventHandler(IEventHandlerPtr handler)
 {

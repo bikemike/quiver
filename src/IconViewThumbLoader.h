@@ -53,7 +53,6 @@ private:
 
 	pthread_t*          m_pThreadIDs;
 	pthread_cond_t*     m_pConditions;
-	pthread_mutex_t*    m_pConditionMutexes;
 	pthread_mutex_t     m_ListMutex;
 	
 	std::list<ThumbLoaderItem>    m_listThumbItems;

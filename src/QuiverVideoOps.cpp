@@ -115,12 +115,13 @@ namespace QuiverVideoOps
 
 							if (major < 0)
 								have_plugin_version = false;
-							else if (0 == major)
+							else if (0 == major) {
 								if (minor < 10)
 									have_plugin_version = false;
 								else if (10 == minor)
 									if (micro < 31)
 										have_plugin_version = false;
+							}
 						}
 						else
 						{

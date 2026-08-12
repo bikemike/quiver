@@ -96,15 +96,15 @@ void TaskManager::RemoveTask(AbstractTaskPtr taskPtr)
 }
 
 void TaskManager::HandleTaskStarted(TaskEventPtr taskEventPtr)
-{
+{ (void)taskEventPtr; 
 }
 
 void TaskManager::HandleTaskResumed(TaskEventPtr taskEventPtr)
-{
+{ (void)taskEventPtr; 
 }
 
 void TaskManager::HandleTaskPaused(TaskEventPtr taskEventPtr)
-{
+{ (void)taskEventPtr; 
 }
 
 void TaskManager::HandleTaskUnpaused(TaskEventPtr taskEventPtr)
@@ -137,7 +137,7 @@ void TaskManager::HandleTaskCancelled(TaskEventPtr taskEventPtr)
 }
 
 void TaskManager::HandleTaskProgressUpdated(TaskEventPtr taskEventPtr)
-{
+{ (void)taskEventPtr; 
 	//AbstractTask* pTask = dynamic_cast<AbstractTask*>(taskEventPtr->GetSource());
 }
 

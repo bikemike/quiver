@@ -4,24 +4,7 @@
 
 #include <gdk-pixbuf/gdk-pixdata.h>
 
-static const char* icons[] = 
-{
-	QUIVER_STOCK_APP,
-	QUIVER_STOCK_BROWSER,
-	QUIVER_STOCK_ROTATE_CW,
-	QUIVER_STOCK_ROTATE_CCW,
-	QUIVER_STOCK_SLIDESHOW,
-#ifdef QUIVER_MAEMO
-	QUIVER_STOCK_GO_BACK,
-	QUIVER_STOCK_GO_FORWARD,
-	QUIVER_STOCK_DELETE,
-	QUIVER_STOCK_FULLSCREEN,
-	QUIVER_STOCK_DIRECTORY,
-	QUIVER_STOCK_CUT,
-	QUIVER_STOCK_COPY,
-	QUIVER_STOCK_PASTE,
-#endif
-};
+
 
 
 #ifdef QUIVER_MAEMO
@@ -144,26 +127,8 @@ static void create_maemo_icons()
 
 void QuiverStockIcons::Load()
 {
-	GtkIconFactory* factory = gtk_icon_factory_new();	
-	
 #ifdef QUIVER_MAEMO
 	create_maemo_icons();
 #endif
-	for (unsigned int i=0;i < G_N_ELEMENTS(icons); ++i)
-	{
-		GtkIconSource* source = gtk_icon_source_new();
-		gtk_icon_source_set_icon_name(source, icons[i]);
-		
-		GtkIconSet* icon_set;
-		icon_set = gtk_icon_set_new ();
-		gtk_icon_set_add_source(icon_set, source);
-
-		gtk_icon_factory_add(factory,icons[i],icon_set);
-		
-		gtk_icon_set_unref(icon_set);
-		gtk_icon_source_free(source);
-	}
-	gtk_icon_factory_add_default (factory);
-	g_object_unref(factory);
 }
 

@@ -3,6 +3,7 @@
 #include <pthread.h>
 
 #include "FolderTree.h"
+#include "ThreadUtil.h"
 
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
@@ -166,7 +167,7 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 }
 
 static gboolean folder_tree_add_checked_to_list (GtkTreeModel* model, GtkTreePath* path, GtkTreeIter *iter, gpointer user_data)
-{
+{ (void)path; 
 	std::list<std::string>* pListSelectedFolders = (std::list<std::string>*)user_data ;
 	gboolean value;
 	gtk_tree_model_get (model,iter,FILE_TREE_COLUMN_CHECKBOX,&value,-1);
@@ -254,7 +255,6 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)data;
 	gboolean rval = FALSE;
 	
-	gdk_threads_enter();
 	// wait untill all the thread subdir check functions have finished
 	int n_running = g_thread_pool_get_num_threads(pFolderTreeImpl->m_pGThreadPool);
 	if (0 != n_running || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
@@ -286,7 +286,6 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 		
 		rval =  FALSE;
 	}
-	gdk_threads_leave();
 	return rval;
 }
 
@@ -294,8 +293,8 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 {
 	GtkTreeModel *model;
 	
-	GtkTreeIter iter_child = {0};
-	GtkTreeIter iter_match = {0};
+	GtkTreeIter iter_child = {};
+	GtkTreeIter iter_match = {};
 
 	model = gtk_tree_view_get_model (GTK_TREE_VIEW(m_pWidget));
 	
@@ -449,8 +448,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	//gtk_widget_show(m_pWidget);
 	
 	
-	GdkColor highlight_color;
-	gdk_color_parse("#ccc",&highlight_color);
+	GdkRGBA highlight_color;
+	gdk_rgba_parse(&highlight_color, "#ccc");
 	/* = m_pWidget->style->bg[GTK_STATE_SELECTED];*/
 
 	/*
@@ -465,7 +464,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	
 	renderer = gtk_cell_renderer_toggle_new ();
 	g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-	g_object_set (G_OBJECT (renderer),  "cell-background-gdk", &highlight_color,  NULL);    
+	g_object_set (G_OBJECT (renderer),  "cell-background-rgba", &highlight_color,  NULL);    
 	column = gtk_tree_view_column_new_with_attributes (QUIVER_TREE_COLUMN_TOGGLE,
 	  renderer,
 	  "active", FILE_TREE_COLUMN_CHECKBOX,
@@ -479,7 +478,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 	m_pCellRendererPixbuf = gtk_cell_renderer_pixbuf_new ();
 	g_object_set (G_OBJECT (m_pCellRendererPixbuf),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-	g_object_set (G_OBJECT (m_pCellRendererPixbuf),  "cell-background-gdk", &highlight_color,  NULL);    
+	g_object_set (G_OBJECT (m_pCellRendererPixbuf),  "cell-background-rgba", &highlight_color,  NULL);    
 
 	gtk_tree_view_column_pack_start (column,m_pCellRendererPixbuf,FALSE);
 	gtk_tree_view_column_set_attributes(column,
@@ -491,7 +490,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 	renderer = gtk_cell_renderer_text_new ();
 	g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-	g_object_set (G_OBJECT (renderer),  "cell-background-gdk", &highlight_color,  NULL);    	
+	g_object_set (G_OBJECT (renderer),  "cell-background-rgba", &highlight_color,  NULL);    	
 	gtk_tree_view_column_pack_end (column,renderer,TRUE);
 
 	gtk_tree_view_column_add_attribute(column,renderer,"text",FILE_TREE_COLUMN_DISPLAY_NAME);
@@ -530,7 +529,7 @@ static gboolean from_mouse = FALSE;
 
 
 static gboolean folder_tree_clear_checkbox(GtkTreeModel* model, GtkTreePath* path, GtkTreeIter *iter, gpointer user_data)
-{
+{ (void)user_data;  (void)path; 
 	gtk_tree_store_set (GTK_TREE_STORE(model),iter,FILE_TREE_COLUMN_CHECKBOX,FALSE,-1);
 	return FALSE;
 }
@@ -587,15 +586,14 @@ static void folder_tree_set_selected_checkbox_value(GtkTreeView* treeview,gboole
 		
 		path_itr = g_list_next(path_itr);
 	}	
-	g_list_foreach (paths, (GFunc)gtk_tree_path_free, NULL);
-	g_list_free (paths);
+	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
 	
 	//FIXME: emit event
 }
 
 static void
 signal_check_selected (GtkWidget *menuitem, gpointer userdata)
-{
+{ (void)menuitem; 
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
 	GtkTreeView *treeview = GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget);
 	folder_tree_set_selected_checkbox_value(treeview,TRUE);
@@ -606,7 +604,7 @@ signal_check_selected (GtkWidget *menuitem, gpointer userdata)
 
 static void
 signal_uncheck_selected (GtkWidget *menuitem, gpointer userdata)
-{
+{ (void)menuitem; 
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
 	GtkTreeView *treeview = GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget);
 	folder_tree_set_selected_checkbox_value(treeview,FALSE);
@@ -615,7 +613,7 @@ signal_uncheck_selected (GtkWidget *menuitem, gpointer userdata)
 }
 
 void view_popup_menu (GtkWidget *treeview, GdkEventButton *event, gpointer userdata)
-{
+{ (void)treeview; 
 	GtkWidget *menu, *menuitem;
 	
 	menu = gtk_menu_new();
@@ -634,9 +632,7 @@ void view_popup_menu (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 
 	gtk_widget_show_all(menu);
 	
-	gtk_menu_popup(GTK_MENU(menu), NULL, NULL, NULL, NULL,
-	                  (event != NULL) ? event->button : 0,
-	                  gdk_event_get_time((GdkEvent*)event));
+	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
 
 }
 
@@ -646,7 +642,7 @@ view_onRowActivated (GtkTreeView        *treeview,
                        GtkTreePath        *path,
                        GtkTreeViewColumn  *col,
                        gpointer            userdata)
-{
+{ (void)col;  (void)userdata; 
 	if ( gtk_tree_view_row_expanded(GTK_TREE_VIEW(treeview),path) )
 	{
 		gtk_tree_view_collapse_row(GTK_TREE_VIEW(treeview),path);
@@ -884,7 +880,7 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 			else if ( gtk_tree_view_column_cell_get_position(column,
 				pFolderTreeImpl->m_pCellRendererPixbuf,&start_pos, &width) )
 			{
-				GdkRectangle rect = {0};
+				GdkRectangle rect = {};
 				gtk_tree_view_get_cell_area         (GTK_TREE_VIEW(treeview),
                                                          path,
                                                          column,
@@ -893,7 +889,7 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 				if (cell_x >= start_pos && cell_x <= start_pos + width)
 				{
 					// if expandable , expand or collapse it
-					GtkTreeIter iter = {0};
+					GtkTreeIter iter = {};
 					if ( gtk_tree_model_get_iter (model, &iter, path) )
 					{
 						if (0 < gtk_tree_model_iter_n_children  (model, &iter) )
@@ -951,14 +947,14 @@ static gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata)
 }
 
 static gboolean folder_tree_is_separator (GtkTreeModel *model,GtkTreeIter *iter,gpointer data)
-{
+{ (void)data; 
 	gboolean value;
 	gtk_tree_model_get (model,iter,FILE_TREE_COLUMN_SEPARATOR,&value,-1);
 	return value;
 }
 
 static void folder_tree_selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
-{
+{ (void)user_data;  (void)treeselection; 
 	//printf("changed\n");
 }
 
@@ -991,7 +987,7 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 	g_return_val_if_fail(NULL != iter_parent,NULL);
 	g_return_val_if_fail(NULL != model,NULL);
 	
-	GtkTreeIter iter_child = {0};
+	GtkTreeIter iter_child = {};
 
 	gboolean found_duplicate = FALSE;	
 	
@@ -1072,8 +1068,85 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 
 
 
+
+struct FolderTreeSyncData {
+	GtkTreeModel* model;
+	GtkTreeIter iter;
+	GtkTreeIter parent;
+	GtkTreeIter child;
+	gint index;
+	gboolean result_bool;
+	gchar* uri;
+	gboolean permanent;
+	gchar* folder_name;
+	FolderTree::FolderTreeImpl* impl;
+	GMutex mutex;
+	GCond cond;
+	bool done;
+};
+
+static gboolean idle_tree_remove(gpointer data) {
+	FolderTreeSyncData* pData = (FolderTreeSyncData*)data;
+	gtk_tree_store_remove(GTK_TREE_STORE(pData->model), &pData->iter);
+	g_mutex_lock(&pData->mutex);
+	pData->done = true;
+	g_cond_signal(&pData->cond);
+	g_mutex_unlock(&pData->mutex);
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean idle_tree_get_uri_perm(gpointer data) {
+	FolderTreeSyncData* pData = (FolderTreeSyncData*)data;
+	gtk_tree_model_get(pData->model, &pData->iter, FILE_TREE_COLUMN_URI, &pData->uri, FILE_TREE_COLUMN_PERMANENT, &pData->permanent, -1);
+	g_mutex_lock(&pData->mutex);
+	pData->done = true;
+	g_cond_signal(&pData->cond);
+	g_mutex_unlock(&pData->mutex);
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean idle_tree_get_uri(gpointer data) {
+	FolderTreeSyncData* pData = (FolderTreeSyncData*)data;
+	gtk_tree_model_get(pData->model, &pData->iter, FILE_TREE_COLUMN_URI, &pData->uri, -1);
+	g_mutex_lock(&pData->mutex);
+	pData->done = true;
+	g_cond_signal(&pData->cond);
+	g_mutex_unlock(&pData->mutex);
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean idle_add_subdir(gpointer data) {
+	FolderTreeSyncData* pData = (FolderTreeSyncData*)data;
+	GtkTreeIter* pIter = pData->parent.stamp == 0 ? NULL : &pData->parent;
+	folder_tree_add_subdir(pData->model, pIter, pData->folder_name, FALSE);
+	g_mutex_lock(&pData->mutex);
+	pData->done = true;
+	g_cond_signal(&pData->cond);
+	g_mutex_unlock(&pData->mutex);
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean idle_set_icon(gpointer data) {
+	FolderTreeSyncData* pData = (FolderTreeSyncData*)data;
+	folder_tree_iter_set_icon(GTK_TREE_VIEW(pData->impl->m_pWidget), &pData->iter);
+	g_mutex_lock(&pData->mutex);
+	pData->done = true;
+	g_cond_signal(&pData->cond);
+	g_mutex_unlock(&pData->mutex);
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean idle_nth_child(gpointer data) {
+	FolderTreeSyncData* pData = (FolderTreeSyncData*)data;
+	pData->result_bool = gtk_tree_model_iter_nth_child(pData->model, &pData->child, pData->parent.stamp == 0 ? NULL : &pData->parent, pData->index);
+	g_mutex_lock(&pData->mutex);
+	pData->done = true;
+	g_cond_signal(&pData->cond);
+	g_mutex_unlock(&pData->mutex);
+	return G_SOURCE_REMOVE;
+}
 static void hash_foreach_sync_add(gpointer key, gpointer value, gpointer user_data)
-{
+{ (void)value; 
 	gchar* folder_name = (gchar*)key;
 
 	if (NULL != folder_name && '.' != folder_name[0])
@@ -1082,12 +1155,25 @@ static void hash_foreach_sync_add(gpointer key, gpointer value, gpointer user_da
 		MyDataStruct* data = (MyDataStruct*)user_data;
 		GtkTreeModel *model = data->model;
 
-		folder_tree_add_subdir(model, data->iter_child, folder_name, FALSE);
+		FolderTreeSyncData syncData;
+		syncData.model = model;
+		syncData.parent = data->iter_child ? *data->iter_child : GtkTreeIter();
+		if (!data->iter_child) syncData.parent.stamp = 0;
+		syncData.folder_name = folder_name;
+		syncData.done = false;
+		g_mutex_init(&syncData.mutex);
+		g_cond_init(&syncData.cond);
+		if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_add_subdir, &syncData, NULL);
+		g_mutex_lock(&syncData.mutex);
+		while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
+		g_mutex_unlock(&syncData.mutex); } else { idle_add_subdir(&syncData); }
+		g_mutex_clear(&syncData.mutex);
+		g_cond_clear(&syncData.cond);
 	}
 }
 
 static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
-{
+{ (void)user_data; 
 	MyDataStruct* data = (MyDataStruct*)thread_data;
 	GtkTreeModel *model = data->model;
 	GtkTreeIter* iter_parent = NULL;
@@ -1103,36 +1189,92 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 		{
 			case SYNC_TREE:
 				{
-					gdk_threads_enter();
 					if ( 0 == g_hash_table_size(data->hash_table) )
 					{
 						// dir has no children so remove any existing ones
-						GtkTreeIter iter =  {0};
+						GtkTreeIter iter = {};
 						gint n_nodes = gtk_tree_model_iter_n_children  (model, data->iter_child);
 						gint i;
 						for (i = 0 ; i < n_nodes ; i++)
 						{
-							if ( gtk_tree_model_iter_nth_child(model, &iter, NULL, i) )
+							FolderTreeSyncData syncData;
+syncData.model = model;
+syncData.parent = data->iter_child ? *data->iter_child : GtkTreeIter();
+if (!data->iter_child) syncData.parent.stamp = 0;
+syncData.index = i;
+syncData.done = false;
+g_mutex_init(&syncData.mutex);
+g_cond_init(&syncData.cond);
+if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_nth_child, &syncData, NULL);
+g_mutex_lock(&syncData.mutex);
+while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
+g_mutex_unlock(&syncData.mutex); } else { idle_nth_child(&syncData); }
+bool res = syncData.result_bool;
+if (res) iter = syncData.child;
+g_mutex_clear(&syncData.mutex);
+g_cond_clear(&syncData.cond);
+if (res)
 							{
-								gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
+								{
+	FolderTreeSyncData syncData;
+	syncData.model = model;
+	syncData.iter = iter;
+	syncData.done = false;
+	g_mutex_init(&syncData.mutex);
+	g_cond_init(&syncData.cond);
+	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_tree_remove, &syncData, NULL);
+	g_mutex_lock(&syncData.mutex);
+	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
+	g_mutex_unlock(&syncData.mutex); } else { idle_tree_remove(&syncData); }
+	g_mutex_clear(&syncData.mutex);
+	g_cond_clear(&syncData.cond);
+}
 							}
 						}
 					}
 					else
 					{
 						// sync the directories
-						GtkTreeIter iter =  {0};
+						GtkTreeIter iter = {};
 						gint n_nodes = gtk_tree_model_iter_n_children  (model, data->iter_child);
 						gint i;
 						// remove items no longer in the tree
 						for (i = 0 ; i < n_nodes ; i++)
 						{
-							if ( gtk_tree_model_iter_nth_child(model, &iter, data->iter_child, i) )
+							FolderTreeSyncData syncData;
+syncData.model = model;
+syncData.parent = data->iter_child ? *data->iter_child : GtkTreeIter();
+if (!data->iter_child) syncData.parent.stamp = 0;
+syncData.index = i;
+syncData.done = false;
+g_mutex_init(&syncData.mutex);
+g_cond_init(&syncData.cond);
+if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_nth_child, &syncData, NULL);
+g_mutex_lock(&syncData.mutex);
+while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
+g_mutex_unlock(&syncData.mutex); } else { idle_nth_child(&syncData); }
+bool res = syncData.result_bool;
+if (res) iter = syncData.child;
+g_mutex_clear(&syncData.mutex);
+g_cond_clear(&syncData.cond);
+if (res)
 							{
 								gchar* uri2 = NULL;
 								gboolean permanent = FALSE;
-								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_URI, &uri2, -1);
-								gtk_tree_model_get(model, &iter, FILE_TREE_COLUMN_PERMANENT, &permanent, -1);
+								FolderTreeSyncData getSync;
+								getSync.model = model;
+								getSync.iter = iter;
+								getSync.done = false;
+								g_mutex_init(&getSync.mutex);
+								g_cond_init(&getSync.cond);
+								if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_tree_get_uri_perm, &getSync, NULL);
+								g_mutex_lock(&getSync.mutex);
+								while(!getSync.done) g_cond_wait(&getSync.cond, &getSync.mutex);
+								g_mutex_unlock(&getSync.mutex); } else { idle_tree_get_uri_perm(&getSync); }
+								uri2 = getSync.uri;
+								permanent = getSync.permanent;
+								g_mutex_clear(&getSync.mutex);
+								g_cond_clear(&getSync.cond);
 	
 								GFile* gfile = g_file_new_for_uri(uri2);
 
@@ -1158,7 +1300,20 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 									else if (!permanent)
 									{
 										// if the key does not exist, remove the iterator
-										gtk_tree_store_remove(GTK_TREE_STORE(model),&iter);
+										{
+	FolderTreeSyncData syncData;
+	syncData.model = model;
+	syncData.iter = iter;
+	syncData.done = false;
+	g_mutex_init(&syncData.mutex);
+	g_cond_init(&syncData.cond);
+	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_tree_remove, &syncData, NULL);
+	g_mutex_lock(&syncData.mutex);
+	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
+	g_mutex_unlock(&syncData.mutex); } else { idle_tree_remove(&syncData); }
+	g_mutex_clear(&syncData.mutex);
+	g_cond_clear(&syncData.cond);
+}
 										// one less item now so i much be adjusted
 										i--;
 									}
@@ -1175,10 +1330,20 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 					}
 
 					// update the icon for this entry
-					folder_tree_iter_set_icon(GTK_TREE_VIEW(data->pFolderTreeImpl->m_pWidget),data->iter_child);
+					FolderTreeSyncData iconSync;
+					iconSync.impl = data->pFolderTreeImpl;
+					iconSync.iter = data->iter_child ? *data->iter_child : GtkTreeIter();
+					iconSync.done = false;
+					g_mutex_init(&iconSync.mutex);
+					g_cond_init(&iconSync.cond);
+					if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_set_icon, &iconSync, NULL);
+					g_mutex_lock(&iconSync.mutex);
+					while(!iconSync.done) g_cond_wait(&iconSync.cond, &iconSync.mutex);
+					g_mutex_unlock(&iconSync.mutex); } else { idle_set_icon(&iconSync); }
+					g_mutex_clear(&iconSync.mutex);
+					g_cond_clear(&iconSync.cond);
 
 					gtk_tree_iter_free(data->iter_child);
-					gdk_threads_leave();
 					data->iter_child = NULL;
 					data->state = TRAVERSE_TREE;
 	
@@ -1192,11 +1357,21 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 				break;
 			case TRAVERSE_DIR:
 				{
-					gdk_threads_enter();
 					
-					gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
+					FolderTreeSyncData getSync;
+					getSync.model = model;
+					getSync.iter = data->iter_child ? *data->iter_child : GtkTreeIter();
+					getSync.done = false;
+					g_mutex_init(&getSync.mutex);
+					g_cond_init(&getSync.cond);
+					if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_tree_get_uri, &getSync, NULL);
+					g_mutex_lock(&getSync.mutex);
+					while(!getSync.done) g_cond_wait(&getSync.cond, &getSync.mutex);
+					g_mutex_unlock(&getSync.mutex); } else { idle_tree_get_uri(&getSync); }
+					uri = getSync.uri;
+					g_mutex_clear(&getSync.mutex);
+					g_cond_clear(&getSync.cond);
 
-					gdk_threads_leave();
 
 					if (NULL != uri)
 					{
@@ -1235,9 +1410,19 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 				break;
 			case OPEN_DIR:
 				{
-					gdk_threads_enter();
-					gtk_tree_model_get(model,data->iter_child, FILE_TREE_COLUMN_URI, &uri, -1);
-					gdk_threads_leave();
+					FolderTreeSyncData getSync;
+					getSync.model = model;
+					getSync.iter = data->iter_child ? *data->iter_child : GtkTreeIter();
+					getSync.done = false;
+					g_mutex_init(&getSync.mutex);
+					g_cond_init(&getSync.cond);
+					if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_tree_get_uri, &getSync, NULL);
+					g_mutex_lock(&getSync.mutex);
+					while(!getSync.done) g_cond_wait(&getSync.cond, &getSync.mutex);
+					g_mutex_unlock(&getSync.mutex); } else { idle_tree_get_uri(&getSync); }
+					uri = getSync.uri;
+					g_mutex_clear(&getSync.mutex);
+					g_cond_clear(&getSync.cond);
 					
 					GFile* file = g_file_new_for_uri(uri);
 					GFileEnumerator* enumerator = g_file_enumerate_children(
@@ -1260,10 +1445,8 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 					{
 						data->state = TRAVERSE_TREE;
 	
-						gdk_threads_enter();
 						gtk_tree_iter_free(data->iter_child);
 						data->iter_child = NULL;
-						gdk_threads_leave();
 	
 					}
 					if (NULL != uri)
@@ -1274,9 +1457,24 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 				break;
 			case TRAVERSE_TREE:
 				{
-					GtkTreeIter iter_child =  {0};
-					gdk_threads_enter();
-					if ( gtk_tree_model_iter_nth_child (model,&iter_child, iter_parent, data->i) )
+					GtkTreeIter iter_child = {};
+					FolderTreeSyncData syncData;
+syncData.model = model;
+syncData.parent = iter_parent ? *iter_parent : GtkTreeIter();
+if (!iter_parent) syncData.parent.stamp = 0;
+syncData.index = data->i;
+syncData.done = false;
+g_mutex_init(&syncData.mutex);
+g_cond_init(&syncData.cond);
+if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_nth_child, &syncData, NULL);
+g_mutex_lock(&syncData.mutex);
+while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
+g_mutex_unlock(&syncData.mutex); } else { idle_nth_child(&syncData); }
+bool res = syncData.result_bool;
+if (res) iter_child = syncData.child;
+g_mutex_clear(&syncData.mutex);
+g_cond_clear(&syncData.cond);
+if (res)
 					{
 						data->iter_child = gtk_tree_iter_copy(&iter_child);
 						data->state = OPEN_DIR;
@@ -1285,7 +1483,6 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 					{
 						finished = TRUE;
 					}
-					gdk_threads_leave();
 					data->i++;
 				}
 				break;
@@ -1304,18 +1501,14 @@ static void thread_check_for_subdirs(gpointer thread_data, gpointer user_data)
 	
 	if (NULL != data->iter_parent)
 	{
-		gdk_threads_enter();
 		gtk_tree_iter_free(data->iter_parent);
 		data->iter_parent = NULL;
-		gdk_threads_leave();
 	}
 
 	if (NULL != data->iter_child)
 	{
-		gdk_threads_enter();
 		gtk_tree_iter_free(data->iter_child);
 		data->iter_child = NULL;
-		gdk_threads_leave();
 	}
 
 	if (NULL != data->hash_table)
@@ -1376,23 +1569,23 @@ static void signal_folder_tree_row_collapsed(GtkTreeView *treeview,
 						GtkTreeIter *iter,
 						GtkTreePath *treepath,
 						gpointer data)
-{
+{ (void)treepath;  (void)data; 
 	folder_tree_iter_set_icon(treeview,iter);
 }
 
 static void folder_tree_thread_pool_add(GThreadPool* pool, MyDataStruct* mydata)
 {
-    static GStaticMutex mutex = G_STATIC_MUTEX_INIT;
-	g_static_mutex_lock (&mutex);
+    static GMutex mutex = { 0 };
+	g_mutex_lock (&mutex);
 	g_thread_pool_push(pool, mydata, NULL);
-	g_static_mutex_unlock (&mutex);
+	g_mutex_unlock (&mutex);
 }
 
 static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 						GtkTreeIter *iter,
 						GtkTreePath *treepath,
 						gpointer data)
-{
+{ (void)treepath; 
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)data;
 	
 	GtkTreeModel *model = gtk_tree_view_get_model(treeview);
@@ -1411,10 +1604,12 @@ static void signal_folder_tree_row_expanded(GtkTreeView *treeview,
 
 
 GIcon* folder_tree_get_gicon(GFile* gfile, gboolean expanded)
-{
+{ (void)expanded; 
 	const char* preferred_icon_name = NULL;
+ (void)preferred_icon_name;
 #ifndef QUIVER_MAEMO
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
+ (void)icon_theme;
 
 	GFileInfo* info = g_file_query_info(
 		gfile,
@@ -1646,7 +1841,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 {
 	int iNodeOrder = 0;
 
-	GtkTreeIter iter1 = {0};  /* Parent iter */
+	GtkTreeIter iter1 = {};  /* Parent iter */
 
 	GFile* file_home = g_file_new_for_path(g_get_home_dir());
 	GFile* file_desktop = g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP));
@@ -1665,7 +1860,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	 * trash
 	 */
 #ifdef QUIVER_MAEMO
-	GtkTreeIter iter2 = {0};  /* Child iter  */
+	GtkTreeIter iter2 = {};  /* Child iter  */
 	for (int i = 0; i < FOLDER_ID_COUNT; i++)
 	{
 		gchar* folder_uri = folder_tree_get_folder_uri_from_id((FolderID)i);
@@ -1693,7 +1888,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 					FILE_TREE_COLUMN_USE_DEFAULT_ORDER,TRUE,
 					-1);
 
-			g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(child),(gpointer)iNodeOrder++);
+			g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(child),GINT_TO_POINTER(iNodeOrder++));
 
 			HildonFSAsyncStruct* pAsyncStruct = (HildonFSAsyncStruct*)g_malloc0(sizeof(HildonFSAsyncStruct));
 			pAsyncStruct->pTreeModel = GTK_TREE_MODEL(store);
@@ -1740,7 +1935,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	g_free(uri);
 	uri = NULL;
 
-	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 
 	// desktop
 	gicon = folder_tree_get_gicon(file_desktop,FALSE);
@@ -1760,7 +1955,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	uri = NULL;
 
 
-	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 
 
 	// documents
@@ -1776,7 +1971,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
             FILE_TREE_COLUMN_URI,uri,
             -1);
             
-	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 
 	g_object_unref(gicon);
 	gicon = NULL;
@@ -1802,7 +1997,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	g_free(uri);
 	uri = NULL;
 
-	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 
 #endif
 
@@ -1825,7 +2020,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 		g_free(root_uri);
 		g_object_unref(root_icon);
 
-		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+		g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 		g_object_unref(root_mount);
 	}
 
@@ -1875,7 +2070,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 				g_free(uri);
 
-				g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),(gpointer)iNodeOrder++);
+				g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 
 				g_object_unref(icon2);
 

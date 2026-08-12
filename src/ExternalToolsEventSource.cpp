@@ -1,5 +1,6 @@
 #include "ExternalToolsEventSource.h"
 #include "IExternalToolsEventHandler.h"
+using namespace boost::placeholders;
 
 void ExternalToolsEventSource::AddEventHandler(IEventHandlerPtr handler)
 {
