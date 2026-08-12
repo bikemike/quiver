@@ -73,10 +73,12 @@ public:
 		return i;
 	}
 
-	class SortBySortOrder : public std::binary_function<ExternalTool,ExternalTool,bool>,
-		public std::binary_function<int,int,bool>
+	class SortBySortOrder
 	{
 	public:
+		typedef int first_argument_type;
+		typedef int second_argument_type;
+		typedef bool result_type;
 
 		SortBySortOrder(ExternalToolsImpl *parent):m_pParent(parent){};
 		bool operator()(const int &a, const int &b) const

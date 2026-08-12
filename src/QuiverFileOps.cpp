@@ -72,16 +72,19 @@ namespace QuiverFileOps
 		// need to be able to undo MoveToTrash() operation
 		// search through "trash://" using gio gfileinfo for file with
         // metadata trash::orig-path and trash::deletion-date
+		return false;
 	}
 
 	bool CopyFile(QuiverFile src, QuiverFile dst)
 	{
 		// g_file_copy
+		return false;
 	}
 
 	bool MoveFile(QuiverFile src, QuiverFile dst)
 	{
 		// g_file_move
+		return false;
 	}
 
 }

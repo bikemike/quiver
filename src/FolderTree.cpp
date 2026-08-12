@@ -127,9 +127,6 @@ GtkWidget* FolderTree::GetWidget() const
 	return m_FolderTreeImplPtr->m_pWidget;
 }
 
-void FolderTree::SetUIManager(GtkUIManager* pUIManager)
-{
-}
 
 std::list<std::string> FolderTree::GetSelectedFolders() const
 {

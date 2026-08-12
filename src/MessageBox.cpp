@@ -67,42 +67,22 @@ public:
 			  GTK_DIALOG_DESTROY_WITH_PARENT,
 			  messageType,
 			  button_type,
+			  "%s",
 			  m_strMsg.c_str());
 
 		gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(m_pDlg),
-				m_strDetails.c_str());
+				"%s", m_strDetails.c_str());
 
 	}
 
 	~PrivateImpl()
 	{
-		if (!ThreadUtil::IsGUIThread())
-		{
-			gdk_threads_enter();
-		}
-
 		gtk_widget_destroy (m_pDlg);
-
-		if (!ThreadUtil::IsGUIThread())
-		{
-			gdk_threads_leave();
-		}
-
 	}
 
 	ResponseType Run()
 	{
-		if (!ThreadUtil::IsGUIThread())
-		{
-			gdk_threads_enter();
-		}
-
 		gint response = gtk_dialog_run (GTK_DIALOG (m_pDlg));
-
-		if (!ThreadUtil::IsGUIThread())
-		{
-			gdk_threads_leave();
-		}
 
 		ResponseType responseType;
 		switch (response)
@@ -157,7 +137,7 @@ MessageBox::~MessageBox()
 
 MessageBox::ResponseType MessageBox::Run()
 {
-	m_pPrivateImpl->Run();
+	return m_pPrivateImpl->Run();
 }
 
 MessageBox::ResponseType  MessageBox::Run(IconType iconType, ButtonType buttonType, std::string msg, std::string details)
@@ -294,7 +274,7 @@ void MessageBox::AddButton(BUTTON_ICON icon, const std::string &text, ResponseTy
 	GtkWidget* button = gtk_button_new_with_mnemonic(text.c_str());
 	if ( NULL != stock_icon)
 	{
-		GtkWidget* image  = gtk_image_new_from_stock(stock_icon, GTK_ICON_SIZE_BUTTON);
+		GtkWidget* image  = gtk_image_new_from_icon_name(stock_icon, GTK_ICON_SIZE_BUTTON);
 		gtk_button_set_image(GTK_BUTTON(button), image);
 	}
 	gtk_widget_show(button);

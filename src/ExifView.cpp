@@ -81,7 +81,6 @@ public:
 	ExifData*     m_pExifData;
 	GtkWidget*    m_pTreeView;
 	GtkWidget*    m_pScrolledWindow;
-	GtkUIManager* m_pUIManager;
 	guint         m_iIdleLoadID;
 	
 	gboolean      m_bLoaded;
@@ -210,11 +209,6 @@ ExifView::ExifViewImpl::~ExifViewImpl()
 		exif_data_unref(m_pExifData);
 	}
 	
-	if (NULL != m_pUIManager)
-	{
-		g_object_unref(m_pUIManager);
-		m_pUIManager =  NULL;
-	}
 
 	g_object_unref(m_pScrolledWindow);
 }
@@ -241,7 +235,6 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 	m_ExifViewImplPtr->m_bLoaded     = FALSE;
 	m_ExifViewImplPtr->m_pTreeView   = NULL;
 	m_ExifViewImplPtr->m_pExifData   = NULL;
-	m_ExifViewImplPtr->m_pUIManager  = NULL;
 
 	GtkWidget *treeview;
 
@@ -641,33 +634,6 @@ ExifView::SetQuiverFile(QuiverFile quiverFile)
 
 }
 
-void 
-ExifView::SetUIManager(GtkUIManager *ui_manager)
-{
-	if (NULL != m_ExifViewImplPtr->m_pUIManager)
-	{
-		g_object_unref(m_ExifViewImplPtr->m_pUIManager);
-	}
-
-	m_ExifViewImplPtr->m_pUIManager = ui_manager;
-	
-	g_object_ref(m_ExifViewImplPtr->m_pUIManager);
-
-/*
-	guint n_entries = G_N_ELEMENTS (action_entries);
-	
-	GtkActionGroup* actions = gtk_action_group_new ("BrowserActions");
-	
-	gtk_action_group_add_actions(actions, action_entries, n_entries, m_ViewerImplPtr.get());
-                                 
-	gtk_action_group_add_toggle_actions(actions,
-										action_entries_toggle, 
-										G_N_ELEMENTS (action_entries_toggle),
-										m_ViewerImplPtr.get());
-	gtk_ui_manager_insert_action_group (m_ViewerImplPtr->m_pUIManager,actions,0);
-*/	
-}
-
 /* misc functions */
 
 static GtkTreeModel *
@@ -830,10 +796,7 @@ static void exif_value_editing_started_callback (GtkCellRenderer *renderer,
 	
 	//printf("Editing started\n");
 	
-	if (NULL != pExifViewImpl->m_pUIManager)
-	{
-		QuiverUtils::DisconnectUnmodifiedAccelerators(pExifViewImpl->m_pUIManager);
-	}
+	QuiverUtils::DisconnectUnmodifiedAccelerators();
 	
 	g_signal_connect (G_OBJECT (editable), "focus-out-event",
     			G_CALLBACK (entry_focus_out), renderer);
@@ -861,10 +824,7 @@ static void exif_value_editing_canceled_callback (GtkCellRenderer *renderer,
 	
 	//printf("Editing canceled\n");
 	
-	if (NULL != pExifViewImpl->m_pUIManager)
-	{
-		QuiverUtils::ConnectUnmodifiedAccelerators(pExifViewImpl->m_pUIManager);
-	}
+	QuiverUtils::ConnectUnmodifiedAccelerators();
 }
 
 static gboolean exif_tree_event_popup_menu (GtkWidget *treeview, gpointer userdata)
@@ -1044,10 +1004,7 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
 
 	ExifView::ExifViewImpl *pExifViewImpl = (ExifView::ExifViewImpl*)user_data;
 
-	if (NULL != pExifViewImpl->m_pUIManager)
-	{
-		QuiverUtils::ConnectUnmodifiedAccelerators(pExifViewImpl->m_pUIManager);
-	}
+	QuiverUtils::ConnectUnmodifiedAccelerators();
 
 	GtkTreeModel *pTreeModel = gtk_tree_view_get_model(GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
 

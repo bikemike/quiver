@@ -147,7 +147,7 @@ AdjustDateDlg::AdjustDateDlgPriv::AdjustDateDlgPriv(AdjustDateDlg *parent) :
         m_pAdjustDateDlg(parent)
 {
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const gchar* objectids[] = {
 		"AdjustDateDialog", 
 		"adjustment3", 
 		"adjustment4", 
@@ -155,7 +155,7 @@ AdjustDateDlg::AdjustDateDlgPriv::AdjustDateDlgPriv(AdjustDateDlg *parent) :
 		"adjustment6", 
 		"adjustment7", 
 		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();
@@ -176,9 +176,10 @@ void AdjustDateDlg::AdjustDateDlgPriv::LoadWidgets()
 {
 	m_pDialogAdjustDate       = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "AdjustDateDialog"));
 
-	m_pButtonOK               = gtk_button_new_from_stock(QUIVER_STOCK_OK);
+	m_pButtonOK               = gtk_button_new_with_mnemonic("_OK");
+	gtk_button_set_image(GTK_BUTTON(m_pButtonOK), gtk_image_new_from_icon_name(GTK_STOCK_OK, GTK_ICON_SIZE_BUTTON));
 	gtk_widget_show(m_pButtonOK);
-	gtk_container_add(GTK_CONTAINER(gtk_dialog_get_action_area(m_pDialogAdjustDate)),m_pButtonOK);
+	gtk_dialog_add_action_widget(m_pDialogAdjustDate, m_pButtonOK, GTK_RESPONSE_NONE);
 
 	m_pToggleAdjustDate    = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_adjust_date") );
 	m_pToggleSetDate       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_set_date") );
@@ -205,8 +206,19 @@ void AdjustDateDlg::AdjustDateDlgPriv::UpdateUI()
 
 
 
+static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
+{
+	if (GTK_RESPONSE_NONE == response)
+	{
+		g_signal_stop_emission_by_name (dlg, "response");
+	}
+}
+
 void AdjustDateDlg::AdjustDateDlgPriv::ConnectSignals()
 {
+	g_signal_connect(m_pDialogAdjustDate,
+		"response",(GCallback)on_dialog_response,this);
+
 	g_signal_connect(GTK_BUTTON(m_pButtonOK),
 		"clicked",(GCallback)on_clicked,this);	
 

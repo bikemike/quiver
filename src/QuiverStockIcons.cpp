@@ -4,7 +4,7 @@
 
 #include <gdk-pixbuf/gdk-pixdata.h>
 
-static char* icons[] = 
+static const char* icons[] = 
 {
 	QUIVER_STOCK_APP,
 	QUIVER_STOCK_BROWSER,

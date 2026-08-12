@@ -119,7 +119,7 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
 {
 	m_bLoadedDlg = false;
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
+	const gchar* objectids[] = {
 		"QuiverPreferencesDialog",
 		"adjustment1",
 		"adjustment2",
@@ -127,7 +127,7 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
 		"liststore2",
 		NULL
 	};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();
@@ -292,13 +292,13 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 #endif
 		}  
 
-		GdkColor clrBrowser = {0};
-		gdk_color_parse(strClrBrowser.c_str(), &clrBrowser);
-		gtk_color_button_set_color(m_pClrBtnBrowser,&clrBrowser);
+		GdkRGBA clrBrowser;
+		gdk_rgba_parse(&clrBrowser, strClrBrowser.c_str());
+		gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(m_pClrBtnBrowser), &clrBrowser);
 
-		GdkColor clrViewer = {0};
-		gdk_color_parse(strClrViewer.c_str(), &clrViewer);
-		gtk_color_button_set_color(m_pClrBtnViewer,&clrViewer);
+		GdkRGBA clrViewer;
+		gdk_rgba_parse(&clrViewer, strClrViewer.c_str());
+		gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(m_pClrBtnViewer), &clrViewer);
 
 		gdouble value;
 		value = prefs->GetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION, 2000);	
@@ -527,10 +527,10 @@ static void  on_color_set(GtkWidget* widget, gpointer user_data)
 	if (GTK_IS_COLOR_BUTTON(widget))
 	{
 		GtkColorButton *button = GTK_COLOR_BUTTON(widget);
-		GdkColor color;
-		gtk_color_button_get_color (button, &color); 
+		GdkRGBA color;
+		gtk_color_chooser_get_rgba (GTK_COLOR_CHOOSER(button), &color); 
 		char szColor[10];
-		g_snprintf (szColor,10,"#%02x%02x%02x",color.red/256,color.green/256,color.blue/256);
+		g_snprintf (szColor,10,"#%02x%02x%02x",(guint)(color.red*255.999),(guint)(color.green*255.999),(guint)(color.blue*255.999));
 		// update preferences
 		
 		if (button == priv->m_pClrBtnBrowser)

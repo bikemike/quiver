@@ -8,8 +8,6 @@
 #include "FolderTreeEventSource.h"
 
 typedef struct _GtkWidget GtkWidget;
-typedef struct _GtkUIManager GtkUIManager;
-
 class FolderTree : public virtual FolderTreeEventSource
 {
 
@@ -19,7 +17,6 @@ public:
 
 	GtkWidget* GetWidget() const;
 
-	void SetUIManager(GtkUIManager *ui_manager);
 	
 	void SetSelectedFolders(std::list<std::string> &uris);
 

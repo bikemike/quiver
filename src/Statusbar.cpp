@@ -363,11 +363,9 @@ public:
 
 static gboolean idle_update_progress(gpointer data)
 {
-	gdk_threads_enter();
 	IdleBytesReadData* pData = static_cast<IdleBytesReadData*>(data);
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(pData->pStatusBarImpl->m_pProgressbar), pData->progress);
 	pData->pStatusBarImpl->m_uiIdleSourceID = 0;
-	gdk_threads_leave();
 	return FALSE;
 }
 
@@ -454,8 +452,6 @@ void Statusbar::SetQuiverFile(QuiverFile quiverFile)
 gboolean progress_bar_pulse (gpointer data)
 {
 	Statusbar::StatusbarImpl* pStatusbarImpl = (Statusbar::StatusbarImpl*)data;
-	gdk_threads_enter();
 	gtk_progress_bar_pulse(GTK_PROGRESS_BAR(pStatusbarImpl->m_pProgressbar));
-	gdk_threads_leave();
 	return TRUE;
 }

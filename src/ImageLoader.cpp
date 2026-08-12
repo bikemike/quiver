@@ -9,6 +9,7 @@
 
 #include <libquiver/quiver-pixbuf-utils.h>
 #include <string.h>
+#include <sched.h>
 
 using namespace std;
 
@@ -52,7 +53,7 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	pthread_mutex_init(&m_ConditionMutex, NULL);
 	pthread_mutex_init(&m_CommandMutex, NULL);
 
-	m_csObservers = g_mutex_new();
+	g_mutex_init(&m_csObservers);
 	
 	AddPixbufLoaderObserver(this);
 	m_iLoadOrientation = 1;
@@ -80,7 +81,7 @@ ImageLoader::~ImageLoader()
 
 	RemovePixbufLoaderObserver(this);
 
-	g_mutex_free(m_csObservers);
+	g_mutex_clear(&m_csObservers);
 }
 
 
@@ -136,7 +137,7 @@ int ImageLoader::Run()
 		
 		Load();
 		
-		pthread_yield();
+		sched_yield();
 	}
 	
 	return 0;
@@ -287,16 +288,16 @@ GdkPixbuf* ImageLoader::GetCachedPixbuf(QuiverFile f)
 
 void ImageLoader::AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer)
 {
-	g_mutex_lock(m_csObservers);
+	g_mutex_lock(&m_csObservers);
 	m_observers.push_back(loader_observer);	
-	g_mutex_unlock(m_csObservers);
+	g_mutex_unlock(&m_csObservers);
 }
 
 void ImageLoader::RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer)
 {
-	g_mutex_lock(m_csObservers);
+	g_mutex_lock(&m_csObservers);
 	m_observers.remove(loader_observer);	
-	g_mutex_unlock(m_csObservers);
+	g_mutex_unlock(&m_csObservers);
 }
 
 
@@ -347,12 +348,12 @@ bool ImageLoader::LoadQuickPreview()
 			}
 			
 			list<IPixbufLoaderObserver*>::iterator itr;
-			g_mutex_lock(m_csObservers);
+			g_mutex_lock(&m_csObservers);
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
 				(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
 			}
-			g_mutex_unlock(m_csObservers);
+			g_mutex_unlock(&m_csObservers);
 			g_object_unref(thumb_pixbuf);
 			
 			rval = true;
@@ -472,7 +473,7 @@ void ImageLoader::Load()
 					GdkPixbufLoader* loader = gdk_pixbuf_loader_new_with_mime_type (m_Command.quiverFile.GetMimeType(), NULL);	
 					
 					list<IPixbufLoaderObserver*>::iterator itr;
-					g_mutex_lock(m_csObservers);
+					g_mutex_lock(&m_csObservers);
 					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 					{
 						if (m_Command.params.reload && m_Command.params.fullsize)
@@ -497,7 +498,7 @@ void ImageLoader::Load()
 						*/
 						
 					}
-					g_mutex_unlock(m_csObservers);
+					g_mutex_unlock(&m_csObservers);
 
 					bool rval = LoadPixbuf(loader);
 
@@ -527,7 +528,7 @@ void ImageLoader::Load()
 					}
 					
 					list<IPixbufLoaderObserver*>::iterator itr;
-					g_mutex_lock(m_csObservers);
+					g_mutex_lock(&m_csObservers);
 					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 					{
 
@@ -551,7 +552,7 @@ void ImageLoader::Load()
 							(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 						}
 					}
-					g_mutex_unlock(m_csObservers);
+					g_mutex_unlock(&m_csObservers);
 
 					gint *pOrientation = g_new(int,1);
 					*pOrientation = orientation;
@@ -592,7 +593,7 @@ void ImageLoader::Load()
 			}
 
 			list<IPixbufLoaderObserver*>::iterator itr;
-			g_mutex_lock(m_csObservers);
+			g_mutex_lock(&m_csObservers);
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
 				gint width,height;
@@ -605,7 +606,7 @@ void ImageLoader::Load()
 				bool bResetViewMode = !m_Command.params.loaded_quick_preview;
 				(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 			}
-			g_mutex_unlock(m_csObservers);
+			g_mutex_unlock(&m_csObservers);
 			g_object_unref(pixbuf);
 		}
 	}	
@@ -662,12 +663,12 @@ void ImageLoader::Load()
 					if (!m_Command.params.fullsize)
 					{
 						list<IPixbufLoaderObserver*>::iterator itr;
-						g_mutex_lock(m_csObservers);
+						g_mutex_lock(&m_csObservers);
 						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 						{
 							(*itr)->ConnectSignalSizePrepared(ldr);
 						}
-						g_mutex_unlock(m_csObservers);
+						g_mutex_unlock(&m_csObservers);
 					}
 									
 					bool rval = LoadPixbuf(ldr);
@@ -707,7 +708,7 @@ void ImageLoader::Load()
 					if (CACHE_LOAD == m_Command.params.state)
 					{
 						list<IPixbufLoaderObserver*>::iterator itr;
-						g_mutex_lock(m_csObservers);
+						g_mutex_lock(&m_csObservers);
 						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 						{
 							gint width,height;
@@ -721,7 +722,7 @@ void ImageLoader::Load()
 							(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
 
 						}
-						g_mutex_unlock(m_csObservers);
+						g_mutex_unlock(&m_csObservers);
 						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
 						//cout << "cache loaded image" << endl;
 					}
@@ -792,7 +793,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 			bytes_read_inc += bytes_read;
 
 			// notify others of bytes read
-			g_mutex_lock(m_csObservers);
+			g_mutex_lock(&m_csObservers);
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
 				if (0 < bytes_read_inc && bytes_read_inc <= bytes_total)
@@ -800,7 +801,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 					(*itr)->SignalBytesRead(bytes_read_inc,bytes_total);
 				}
 			}
-			g_mutex_unlock(m_csObservers);
+			g_mutex_unlock(&m_csObservers);
 			
 			tmp_error = NULL;
 

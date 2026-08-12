@@ -70,10 +70,12 @@ public:
 		return i;
 	}
 
-	class SortBySortOrder : public std::binary_function<Bookmark,Bookmark,bool>,
-		public std::binary_function<int,int,bool>
+	class SortBySortOrder
 	{
 	public:
+		typedef int first_argument_type;
+		typedef int second_argument_type;
+		typedef bool result_type;
 
 		SortBySortOrder(BookmarksImpl *parent):m_pParent(parent){};
 		bool operator()(const int &a, const int &b) const

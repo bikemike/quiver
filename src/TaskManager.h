@@ -48,8 +48,8 @@ private:
 	std::set<AbstractTaskPtr> m_setRunningTasks;
 
 	GThreadPool* m_pThreadPool;
-	GMutex*     m_pAllTasksMutex;
-	GMutex*     m_pRunningTasksMutex;
+	GMutex      m_pAllTasksMutex;
+	GMutex      m_pRunningTasksMutex;
 
 };
 

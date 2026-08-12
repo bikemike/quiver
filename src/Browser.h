@@ -22,7 +22,8 @@ public:
 	
 	void SetImageList(ImageListPtr list);
 	
-	void SetUIManager(GtkUIManager *ui_manager);
+	void RegisterActions();
+	void SetToolbar(GtkToolbar *toolbar);
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 	
 	void GrabFocus();

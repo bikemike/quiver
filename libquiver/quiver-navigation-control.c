@@ -10,13 +10,25 @@
 //#include "gtkintl.h"
 
 
-#define QUIVER_NAVIGATION_CONTROL_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), QUIVER_TYPE_NAVIGATION_CONTROL, QuiverNavigationControlPrivate))
+#define QUIVER_NAVIGATION_CONTROL_GET_PRIVATE(obj) (quiver_navigation_control_get_instance_private (QUIVER_NAVIGATION_CONTROL (obj)))
 
 /* set up some defaults */
 
 #define QUIVER_PARAM_READWRITE G_PARAM_READWRITE|G_PARAM_STATIC_NAME|G_PARAM_STATIC_NICK|G_PARAM_STATIC_BLURB
 
-G_DEFINE_TYPE_WITH_CODE(QuiverNavigationControl,quiver_navigation_control,GTK_TYPE_WIDGET, G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL));
+struct _QuiverNavigationControlPrivate
+{
+	GtkAdjustment *hadjustment;
+	GtkAdjustment *vadjustment;
+	guint hscroll_policy : 1;
+	guint vscroll_policy : 1;
+
+	GdkPixbuf *pixbuf;
+
+	cairo_rectangle_int_t view_area_rect;
+
+};
+G_DEFINE_TYPE_WITH_CODE(QuiverNavigationControl,quiver_navigation_control,GTK_TYPE_WIDGET, G_ADD_PRIVATE(QuiverNavigationControl) G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL));
 
 /* signals */
 enum {
@@ -33,18 +45,6 @@ enum {
 };
 
 
-struct _QuiverNavigationControlPrivate
-{
-	GtkAdjustment *hadjustment;
-	GtkAdjustment *vadjustment;
-	guint hscroll_policy : 1;
-	guint vscroll_policy : 1;
-
-	GdkPixbuf *pixbuf;
-
-	cairo_rectangle_int_t view_area_rect;
-
-};
 /* end private data structures */
 
 
@@ -106,7 +106,7 @@ static void      quiver_navigation_control_adjustment_changed (GtkAdjustment *ad
 
 /* start private globals */
 
-static guint navcontrol_signals[SIGNAL_COUNT] = {0};
+static guint navcontrol_signals[SIGNAL_COUNT];
 
 /* end private globals */
 
@@ -160,8 +160,6 @@ quiver_navigation_control_class_init (QuiverNavigationControlClass *klass)
 		/*P_*/("The Vertical GtkAdjustment connected to the Navigation Control"),
 		GTK_TYPE_ADJUSTMENT,
 		GTK_PARAM_READWRITE));
-
-	g_type_class_add_private (obj_class, sizeof (QuiverNavigationControlPrivate));
 }
 
 static void 
@@ -258,9 +256,6 @@ quiver_navigation_control_realize (GtkWidget *widget)
 
 	gtk_widget_set_window(widget, gdk_window_new (gtk_widget_get_parent_window (widget), &attributes, attributes_mask));
 	gdk_window_set_user_data (gtk_widget_get_window(widget), navcontrol);
-
-	gtk_widget_set_style(widget, gtk_style_attach(gtk_widget_get_style(widget), gtk_widget_get_window(widget)));
-	gtk_style_set_background (gtk_widget_get_style(widget), gtk_widget_get_window(widget), GTK_STATE_NORMAL);
 
 	quiver_navigation_control_send_configure (QUIVER_NAVIGATION_CONTROL (widget));
 }
@@ -511,7 +506,8 @@ quiver_navigation_control_motion_notify_event (GtkWidget *widget, GdkEventMotion
 	
 	if (event->is_hint)
 	{
-		gdk_window_get_pointer (gtk_widget_get_window(widget), &x, &y, &state);
+		GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gtk_widget_get_window(widget))));
+		gdk_window_get_device_position(gtk_widget_get_window(widget), device, &x, &y, &state);
 	}		
 	else
 	{
