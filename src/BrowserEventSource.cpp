@@ -1,5 +1,6 @@
 #include "BrowserEventSource.h"
 #include "IBrowserEventHandler.h"
+using namespace boost::placeholders;
 
 void BrowserEventSource::AddEventHandler(IEventHandlerPtr handler)
 {

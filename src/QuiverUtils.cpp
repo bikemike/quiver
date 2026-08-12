@@ -126,7 +126,7 @@ namespace QuiverUtils
 				while (NULL != actions)
 				{
 					action = (GtkAction*)actions->data;
-					GtkAccelKey accel_key = {0};
+					GtkAccelKey accel_key = {};
 					
 					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
 					{
@@ -177,7 +177,7 @@ namespace QuiverUtils
 				while (NULL != actions)
 				{
 					action = (GtkAction*)actions->data;
-					GtkAccelKey accel_key = {0};
+					GtkAccelKey accel_key = {};
 					
 					if (gtk_accel_map_lookup_entry(gtk_action_get_accel_path(action),&accel_key))
 					{
@@ -273,7 +273,7 @@ namespace QuiverUtils
 		g_free(group);
 	}
 
-	static gboolean accel_activate_cb(gpointer data1, gpointer arg1, guint arg2, guint arg3, gpointer data2) {
+	static gboolean accel_activate_cb(gpointer data1, gpointer arg1, guint arg2, guint arg3, gpointer data2) { (void)arg3;  (void)arg2;  (void)arg1;  (void)data1; 
 		GAction *action = G_ACTION(data2);
 		if (NULL == action || !G_IS_ACTION(action)) return TRUE;
 		const GVariantType *ptype = g_action_get_parameter_type(action);
@@ -318,7 +318,7 @@ namespace QuiverUtils
 		connect_accel_entry(entry);
 	}
 
-	static gboolean accel_has_modifier(guint keyval, GdkModifierType mods) {
+	static gboolean accel_has_modifier(guint keyval, GdkModifierType mods) { (void)keyval; 
 		guint mask = GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_MOD2_MASK | GDK_MOD3_MASK | GDK_MOD4_MASK | GDK_MOD5_MASK;
 		return 0 != (mask & mods);
 	}
@@ -550,7 +550,7 @@ namespace QuiverUtils
 		gtk_widget_insert_action_group(ancestor, "quiver", G_ACTION_GROUP(g_pActionGroup));
 	}
 
-	static void toggle_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) {
+	static void toggle_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) { (void)pspec; 
 		GtkWidget *widget = GTK_WIDGET(user_data);
 		GAction *action = G_ACTION(object);
 		GVariant *state = g_action_get_state(action);
@@ -583,7 +583,7 @@ namespace QuiverUtils
 		toggle_action_state_changed_cb(G_OBJECT(action), NULL, widget);
 	}
 
-	static void radio_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) {
+	static void radio_action_state_changed_cb(GObject *object, GParamSpec *pspec, gpointer user_data) { (void)pspec; 
 		GtkWidget *widget = GTK_WIDGET(user_data);
 		GAction *action = G_ACTION(object);
 		GVariant *state = g_action_get_state(action);

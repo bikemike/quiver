@@ -192,7 +192,7 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::UpdateUI()
 
 
 static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{
+{ (void)data; 
 	if (GTK_RESPONSE_NONE == response)
 	{
 		g_signal_stop_emission_by_name (dlg, "response");

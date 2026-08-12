@@ -207,7 +207,7 @@ void AdjustDateDlg::AdjustDateDlgPriv::UpdateUI()
 
 
 static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{
+{ (void)data; 
 	if (GTK_RESPONSE_NONE == response)
 	{
 		g_signal_stop_emission_by_name (dlg, "response");
@@ -302,7 +302,7 @@ bool AdjustDateDlg::AdjustDateDlgPriv::ValidateInput()
 }
 
 static void  on_clicked (GtkButton *button, gpointer   user_data)
-{
+{ (void)button; 
 	AdjustDateDlg::AdjustDateDlgPriv *priv = static_cast<AdjustDateDlg::AdjustDateDlgPriv*>(user_data);
 	if (priv->ValidateInput())
 	{
@@ -311,7 +311,7 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 }
 
 static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
-{
+{ (void)togglebutton; 
 	AdjustDateDlg::AdjustDateDlgPriv *priv = static_cast<AdjustDateDlg::AdjustDateDlgPriv*>(user_data);
 	
 	priv->UpdateUI();

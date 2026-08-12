@@ -1,5 +1,6 @@
 #include "PreferencesEventSource.h"
 #include "IPreferencesEventHandler.h"
+using namespace boost::placeholders;
 
 void PreferencesEventSource::AddEventHandler(IEventHandlerPtr handler)
 {

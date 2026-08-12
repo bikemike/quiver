@@ -63,7 +63,7 @@ namespace QuiverFileOps
 	}
 
 	bool RestoreFromTrash(QuiverFile quiverFile)
-	{
+	{ (void)quiverFile; 
 		// GFileInfo
 		// G_FILE_ATTRIBUTE_TRASH_DELETION_DATE
 		// G_FILE_ATTRIBUTE_TRASH_ORIG_PATH
@@ -76,13 +76,13 @@ namespace QuiverFileOps
 	}
 
 	bool CopyFile(QuiverFile src, QuiverFile dst)
-	{
+	{ (void)dst;  (void)src; 
 		// g_file_copy
 		return false;
 	}
 
 	bool MoveFile(QuiverFile src, QuiverFile dst)
-	{
+	{ (void)dst;  (void)src; 
 		// g_file_move
 		return false;
 	}

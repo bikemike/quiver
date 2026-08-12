@@ -132,7 +132,7 @@ void DonateDlg::DonateDlgPriv::UpdateUI()
 
 
 static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{
+{ (void)data; 
 	if (GTK_RESPONSE_NONE == response)
 	{
 		g_signal_stop_emission_by_name (dlg, "response");
@@ -180,6 +180,7 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	gchar* contentType =
 			g_content_type_from_mime_type("text/html");
 	gboolean launched = g_app_info_launch_default_for_uri(DONATION_URL, NULL, NULL);
+ (void)launched;
 	g_free(contentType);
 
 #endif

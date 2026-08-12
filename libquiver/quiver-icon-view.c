@@ -646,7 +646,7 @@ quiver_icon_view_send_configure (QuiverIconView *iconview)
 
 static gboolean
 quiver_icon_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
-{
+{ (void)event;  (void)widget; 
 	/* icon_view_update_size(widget); */
 	return TRUE;
 }
@@ -1612,7 +1612,7 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 	}
 	*/
 
-	if (0 <= new_cursor_cell && new_cursor_cell < n_cells)
+	if (new_cursor_cell < n_cells)
 	{
 		if (new_cursor_cell != iconview->priv->cursor_cell)
 		{
@@ -1636,7 +1636,7 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 static gboolean
 quiver_icon_view_leave_notify_event (GtkWidget *widget,
        GdkEventCrossing *event)
-{
+{ (void)event; 
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
 	if (G_MAXULONG != iconview->priv->prelight_cell)
@@ -2021,15 +2021,16 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 
 static void
 quiver_icon_view_style_set(GtkWidget *widget, GtkStyle *prev_style, gpointer data)
-{
+{ (void)data;  (void)prev_style; 
 	QuiverIconView* iconview = QUIVER_ICON_VIEW(widget);
+ (void)iconview;
 }
 
 /* start callbacks */
 static void
 quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjustment,
            QuiverIconView *iconview)
-{
+{ (void)adjustment; 
 	GtkWidget *widget = GTK_WIDGET(iconview);
 
 	gdouble hadj,vadj;
@@ -2757,7 +2758,7 @@ static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulo
 
 
 static void quiver_icon_view_draw_drop_shadow(QuiverIconView *iconview, cairo_t* cr, GtkStateFlags state_flags, int rect_x,int rect_y, int rect_w, int rect_h)
-{
+{ (void)state_flags;  (void)iconview; 
 	int shadow_width = QUIVER_ICON_VIEW_ICON_SHADOW_SIZE - 1; // one pixel blank
 
 	cairo_save(cr);
@@ -3034,7 +3035,7 @@ quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
 	}
 	
 	gulong n_cells = quiver_icon_view_get_n_items(iconview);
-	if (0 > cell || cell >= n_cells)
+	if (cell >= n_cells)
 		return;
 	
 	guint cell_width = quiver_icon_view_get_cell_width(iconview);

@@ -1,5 +1,6 @@
 #include "ImageListEventSource.h"
 #include "IImageListEventHandler.h"
+using namespace boost::placeholders;
 
 void ImageListEventSource::AddEventHandler(IEventHandlerPtr handler)
 {

@@ -214,7 +214,7 @@ ExifView::ExifViewImpl::~ExifViewImpl()
 }
 
 static void exif_view_map(GtkWidget *widget, gpointer user_data)
-{
+{ (void)widget; 
 	ExifView::ExifViewImpl *pExifViewImpl = static_cast<ExifView::ExifViewImpl*>(user_data);
 	if (!pExifViewImpl->m_bLoaded)
 	{
@@ -249,12 +249,12 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 	//g_object_set(G_OBJECT(treeview),"show-expanders",FALSE,NULL);
 	
 	
-	GdkColor highlight_color1;
-	GdkColor highlight_color2;
-	GdkColor editable_color;
-	gdk_color_parse("#00f",&editable_color);
-	gdk_color_parse("#fa1",&highlight_color1);
-	gdk_color_parse("#f90",&highlight_color2);
+	GdkRGBA highlight_color1;
+	GdkRGBA highlight_color2;
+	GdkRGBA editable_color;
+	gdk_rgba_parse(&editable_color, "#00f");
+	gdk_rgba_parse(&highlight_color1, "#fa1");
+	gdk_rgba_parse(&highlight_color2, "#f90");
 	/* = treeview->style->bg[GTK_STATE_SELECTED];*/
 
 /*
@@ -270,9 +270,9 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 	// Name
 	renderer = gtk_cell_renderer_text_new ();
 	g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-	g_object_set (G_OBJECT (renderer),  "cell-background-gdk", &highlight_color2,  NULL);
-	g_object_set (G_OBJECT (renderer),  "background-gdk", &highlight_color1,  NULL);
-	g_object_set (G_OBJECT (renderer),  "foreground-gdk", &editable_color,  NULL);
+	g_object_set (G_OBJECT (renderer),  "cell-background-rgba", &highlight_color2,  NULL);
+	g_object_set (G_OBJECT (renderer),  "background-rgba", &highlight_color1,  NULL);
+	g_object_set (G_OBJECT (renderer),  "foreground-rgba", &editable_color,  NULL);
 	g_object_set (G_OBJECT (renderer),  "weight", PANGO_WEIGHT_BOLD,  NULL);
 	//g_object_set (G_OBJECT (renderer),  "scale", 1.1,  NULL);
 	g_object_set (G_OBJECT (renderer),  "yalign", 0.0,  NULL);
@@ -332,8 +332,8 @@ ExifView::ExifView() : m_ExifViewImplPtr (new ExifViewImpl() )
 	g_signal_connect(renderer, "editing-canceled", (GCallback) exif_value_editing_canceled_callback, m_ExifViewImplPtr.get());
 
 	g_object_set (G_OBJECT (renderer),  "mode",GTK_CELL_RENDERER_MODE_EDITABLE,  NULL);
-	g_object_set (G_OBJECT (renderer),  "cell-background-gdk", &highlight_color2,  NULL);
-	g_object_set (G_OBJECT (renderer),  "background-gdk", &highlight_color1,  NULL);
+	g_object_set (G_OBJECT (renderer),  "cell-background-rgba", &highlight_color2,  NULL);
+	g_object_set (G_OBJECT (renderer),  "background-rgba", &highlight_color1,  NULL);
 
 
 #if GTK_MAJOR_VERSION > 2 || GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION >= 8
@@ -427,8 +427,8 @@ static gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 	
 	GtkTreeStore *store;
 
-	GtkTreeIter iter1 = {0};  /* Parent iter */
-	GtkTreeIter iter2 = {0};  /* Child iter  */
+	GtkTreeIter iter1 = {};  /* Parent iter */
+	GtkTreeIter iter2 = {};  /* Child iter  */
 
 	/* Create a model.  We are using the store model for now, though we
 	* could use any other GtkTreeModel */
@@ -515,7 +515,7 @@ static gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 					EXIF_TREE_COLUMN_IS_VISIBLE_TEXT, TRUE,
 					-1);
 
-				ForEachEntryData entry_data = {0};
+				ForEachEntryData entry_data = {};
 				entry_data.pExifViewImpl = pExifViewImpl;
 				entry_data.store = store;
 				entry_data.parent = &iter1;
@@ -575,7 +575,6 @@ static gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 		exif_data_unref(pExifData);
 	}
 
-	gdk_threads_enter();
 
 	/*
 	GtkAdjustment *h = gtk_tree_view_get_hadjustment(GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
@@ -598,7 +597,6 @@ static gboolean exif_view_idle_load_exif_tree_view(gpointer data)
 	pExifViewImpl->m_iIdleLoadID = 0;
 	g_object_unref (G_OBJECT (store));
 
-	gdk_threads_leave();
 
 
 
@@ -667,7 +665,7 @@ exif_orientation_to_text (GtkTreeViewColumn *tree_column,
                     GtkTreeModel      *tree_model,
 	                GtkTreeIter       *iter, 
                     gpointer           data)
-{
+{ (void)tree_column;  (void)data; 
 	//GtkCellRendererText *cell_text = (GtkCellRendererText *)cell;
 	gint value;
 
@@ -682,7 +680,7 @@ static void exif_content_foreach_entry_func (ExifEntry *entry, void *user_data)
 {
 	ForEachEntryData *entry_data = (ForEachEntryData*)user_data;
 	
-	GtkTreeIter new_child = {0};  /* Child iter  */
+	GtkTreeIter new_child = {};  /* Child iter  */
 	exif_tree_store_add_entry(entry_data->pExifViewImpl,entry_data->store,entry_data->parent,&new_child,entry);
 }
 
@@ -694,13 +692,15 @@ static void exif_tree_store_add_entry (ExifView::ExifViewImpl *pExifViewImpl, Gt
 
 
 static void exif_tree_store_update_iter_entry (ExifView::ExifViewImpl *pExifViewImpl, GtkTreeStore *store, GtkTreeIter *iter, ExifEntry *entry)
-{
+{ (void)pExifViewImpl; 
 	gboolean editable = FALSE;
 
 	int i,j;
 	const char *name;
+ (void)name;
 	const char *title;
 	const char *description;
+ (void)description;
 	const char *value;
 	const guint size_max = 2048;
 	char val[size_max];
@@ -774,7 +774,7 @@ static void exif_tree_store_update_iter_entry (ExifView::ExifViewImpl *pExifView
 
 
 static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
-{
+{ (void)user_data;  (void)event; 
 	//GtkCellRenderer* renderer = (GtkCellRenderer*)user_data;
 	
 	//printf("losing focus\n");
@@ -791,8 +791,9 @@ static void exif_value_editing_started_callback (GtkCellRenderer *renderer,
                                             GtkCellEditable *editable,
                                             gchar *path,
                                             gpointer user_data)
-{
+{ (void)path; 
 	ExifView::ExifViewImpl* pExifViewImpl = (ExifView::ExifViewImpl*)user_data;
+ (void)pExifViewImpl;
 	
 	//printf("Editing started\n");
 	
@@ -819,8 +820,9 @@ static void exif_value_editing_started_callback (GtkCellRenderer *renderer,
 
 static void exif_value_editing_canceled_callback (GtkCellRenderer *renderer,
                                             gpointer user_data)
-{
+{ (void)renderer; 
 	ExifView::ExifViewImpl* pExifViewImpl = (ExifView::ExifViewImpl*)user_data;
+ (void)pExifViewImpl;
 	
 	//printf("Editing canceled\n");
 	
@@ -879,7 +881,7 @@ exif_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpoint
 }
 
 static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, GtkWidget *treeview, guint button, guint32 activate_time)
-{
+{ (void)activate_time;  (void)button; 
 	int j;
 	GtkWidget *menu, *submenu=NULL, *menuitem;
 	
@@ -932,11 +934,14 @@ static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, Gt
 						if (!show_menu)
 						{
 							show_menu = TRUE;
-							image = gtk_image_new_from_stock (QUIVER_STOCK_ADD,GTK_ICON_SIZE_MENU);
-	
-							menuitem = gtk_image_menu_item_new_with_label("Add Tag");
-							gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);
-	
+							image = gtk_image_new_from_icon_name ("list-add", GTK_ICON_SIZE_MENU);
+
+							menuitem = gtk_menu_item_new();
+							GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+							gtk_box_pack_start(GTK_BOX(hbox), image, FALSE, FALSE, 0);
+							gtk_box_pack_start(GTK_BOX(hbox), gtk_label_new("Add Tag"), FALSE, FALSE, 0);
+							gtk_container_add(GTK_CONTAINER(menuitem), hbox);
+
 							gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
 							submenu = gtk_menu_new();
 							gtk_menu_item_set_submenu       (GTK_MENU_ITEM(menuitem),submenu);
@@ -958,11 +963,13 @@ static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, Gt
 			if (has_parent)
 			{
 				show_menu = TRUE;
-				image = gtk_image_new_from_stock (QUIVER_STOCK_REMOVE,GTK_ICON_SIZE_MENU);
-				menuitem = gtk_image_menu_item_new_with_label("Remove Tag");
-	
-				gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menuitem),image);
-	
+				image = gtk_image_new_from_icon_name ("list-remove", GTK_ICON_SIZE_MENU);
+				menuitem = gtk_menu_item_new();
+				GtkWidget* hbox2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+				gtk_box_pack_start(GTK_BOX(hbox2), image, FALSE, FALSE, 0);
+				gtk_box_pack_start(GTK_BOX(hbox2), gtk_label_new("Remove Tag"), FALSE, FALSE, 0);
+				gtk_container_add(GTK_CONTAINER(menuitem), hbox2);
+
 				ExifTagAddRemoveStruct *data = g_new(ExifTagAddRemoveStruct,1);
 				data->pExifViewImpl = pExifViewImpl;
 				data->tag = tag_id;
@@ -982,8 +989,7 @@ static void exif_tree_show_popup_menu (ExifView::ExifViewImpl *pExifViewImpl, Gt
 	
 			gtk_widget_show_all(menu);
 			
-			gtk_menu_popup(GTK_MENU(menu), NULL, NULL, NULL, NULL,
-							  button, activate_time);
+			gtk_menu_popup_at_pointer(GTK_MENU(menu), NULL);
 		}
 	}
 }
@@ -992,10 +998,10 @@ static void exif_value_cell_edited_callback (GtkCellRendererText *cell,
                                   gchar               *path_string,
                                   gchar               *new_text,
                                   gpointer             user_data)
-{
+{ (void)cell; 
 	GtkTreePath *path;
-	GtkTreeIter child = {0};
-	GtkTreeIter parent = {0};
+	GtkTreeIter child = {};
+	GtkTreeIter parent = {};
 	gboolean updated = FALSE;
 	ExifTag tag_id;
 	ExifIfd ifd_id;
@@ -1306,7 +1312,7 @@ static gboolean exif_date_format_is_valid(const char *date)
 
 static void
 exif_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data)
-{
+{ (void)menuitem; 
 	int i,j;
 	ExifTagAddRemoveStruct *data = (ExifTagAddRemoveStruct*)user_data;
 	ExifData *pExifData = data->pExifViewImpl->m_pExifData;
@@ -1351,7 +1357,7 @@ exif_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data)
 							if (tag_id == i)
 							{
 								/* add the entry */
-								GtkTreeIter new_child = {0};
+								GtkTreeIter new_child = {};
 								exif_tree_store_add_entry(data->pExifViewImpl,GTK_TREE_STORE(model), &iter, &new_child, entry);
 
 								/* update the selection */
@@ -1381,7 +1387,7 @@ exif_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data)
 
 static void
 exif_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data)
-{
+{ (void)menuitem; 
 	ExifTagAddRemoveStruct *data = (ExifTagAddRemoveStruct*)user_data;
 	ExifData *pExifData = data->pExifViewImpl->m_pExifData;
 	ExifEntry *entry = exif_content_get_entry(pExifData->ifd[data->ifd],data->tag);
@@ -1392,7 +1398,7 @@ exif_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data)
 
 		/* now remove the entry from the tree */
 		int tag_id;
-		GtkTreeIter iter = {0};
+		GtkTreeIter iter = {};
 		GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(data->pExifViewImpl->m_pTreeView));
 		if ( gtk_tree_model_get_iter_first(model,&iter) )
 		{
@@ -1401,7 +1407,7 @@ exif_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data)
 				gtk_tree_model_get (model,&iter,EXIF_TREE_COLUMN_TAG_ID,&tag_id,-1);
 				if (tag_id == data->ifd)
 				{
-					GtkTreeIter child = {0};
+					GtkTreeIter child = {};
 					if ( gtk_tree_model_iter_children(model,&child,&iter) )
 					{
 						do 
@@ -1426,14 +1432,14 @@ exif_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data)
 static void
 exif_tree_update_thumbnail(ExifView::ExifViewImpl *pExifViewImpl, GtkTreeStore *store)
 {
-	GtkTreeIter iter = {0};
+	GtkTreeIter iter = {};
 	GtkTreeModel *model = GTK_TREE_MODEL(store);
 	GdkPixbuf *pixbuf;
 	if ( gtk_tree_model_get_iter_first(model,&iter) )
 	{
 		do 
 		{
-			GtkTreeIter child = {0};
+			GtkTreeIter child = {};
 			if ( gtk_tree_model_iter_children(model,&child,&iter) )
 			{
 				do 
@@ -1469,8 +1475,10 @@ static void exif_tree_update_iter_entry (ExifView::ExifViewImpl *pExifViewImpl, 
 
 	int i,j;
 	const char *name;
+ (void)name;
 	const char *title;
 	const char *description;
+ (void)description;
 	const char *value;
 	const unsigned int size_max = 2048;
 	char val[size_max];
@@ -1551,7 +1559,7 @@ static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifI
 	if (NULL != entry)
 	{
 		int tag_id;
-		GtkTreeIter iter = {0};
+		GtkTreeIter iter = {};
 		GtkTreeModel *model = gtk_tree_view_get_model (GTK_TREE_VIEW(pExifViewImpl->m_pTreeView));
 		if ( gtk_tree_model_get_iter_first(model,&iter) )
 		{
@@ -1560,7 +1568,7 @@ static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifI
 				gtk_tree_model_get (model,&iter,EXIF_TREE_COLUMN_TAG_ID,&tag_id,-1);
 				if (tag_id == ifd)
 				{
-					GtkTreeIter child = {0};
+					GtkTreeIter child = {};
 					if ( gtk_tree_model_iter_children(model,&child,&iter) )
 					{
 						do 
@@ -1585,7 +1593,7 @@ static void exif_tree_update_entry (ExifView::ExifViewImpl *pExifViewImpl, ExifI
 // nested class methods
 
 void ExifView::ExifViewImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
-{
+{ (void)event; 
 
 }
 

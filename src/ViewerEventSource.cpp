@@ -1,5 +1,6 @@
 #include "ViewerEventSource.h"
 #include "IViewerEventHandler.h"
+using namespace boost::placeholders;
 
 void ViewerEventSource::AddEventHandler(IEventHandlerPtr handler)
 {

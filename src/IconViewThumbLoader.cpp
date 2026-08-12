@@ -145,7 +145,7 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 
 
 void IconViewThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeigh)
-{
+{ (void)uiHeigh;  (void)uiWidth;  (void)item; 
 	// load the thumbnail
 }
 
@@ -158,8 +158,8 @@ void IconViewThumbLoader::GetVisibleRange(gulong* ulStart, gulong* ulEnd)
 
 void IconViewThumbLoader::GetIconSize(guint* uiWidth, guint* uiHeight) 
 {
-	uiWidth  = 0;
-	uiHeight = 0;
+	if (uiWidth) *uiWidth  = 0;
+	if (uiHeight) *uiHeight = 0;
 }
 
 gulong IconViewThumbLoader::GetNumItems() 
@@ -168,17 +168,17 @@ gulong IconViewThumbLoader::GetNumItems()
 }
 
 QuiverFile IconViewThumbLoader::GetQuiverFile(gulong index) 
-{
+{ (void)index; 
 	return QuiverFile();
 }
 
 void IconViewThumbLoader::SetIsRunning(bool bIsRunning)
-{
+{ (void)bIsRunning; 
 
 }
 
 void IconViewThumbLoader::SetCacheSize(guint uiCacheSize)
-{
+{ (void)uiCacheSize; 
 
 }
 

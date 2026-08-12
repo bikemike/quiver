@@ -106,7 +106,7 @@ static gboolean exif_date_format_is_valid(const char *date)
 	{
 		int year, month, day, hour, min, sec;
 		sscanf(date,"%d:%d:%d %d:%d:%d",&year, &month, &day, &hour, &min, &sec);
-		struct tm tm_date = {0};
+		struct tm tm_date = {};
 		tm_date.tm_sec = sec;
 		tm_date.tm_min = min;
 		tm_date.tm_hour = hour;
@@ -241,7 +241,7 @@ void AdjustDateTask::Run()
 	if (m_bAdjustDate)
 	{
 		// adjust exif date
-		while (m_iCurrentFile < m_vectQuiverFiles.size() )
+		while ((size_t)m_iCurrentFile < m_vectQuiverFiles.size() )
 		{
 
 			QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
@@ -265,6 +265,7 @@ void AdjustDateTask::Run()
 				ExifData *pExifData = f.GetExifData();
 			
 				time_t date = 0;
+ (void)date;
 				if (NULL != pExifData)
 				{
 					// use date_time_original

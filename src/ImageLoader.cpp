@@ -208,7 +208,7 @@ bool ImageLoader::CommandsPending()
 
 void ImageLoader::ReCacheImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = CACHE;
 	p.reload = true;
 	LoadImage(f,p);
@@ -216,14 +216,14 @@ void ImageLoader::ReCacheImage(QuiverFile f)
 
 void ImageLoader::CacheImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = CACHE;
 	LoadImage(f,p);
 }
 
 void ImageLoader::CacheImageAtSize(QuiverFile f, int width, int height)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = CACHE;
 	p.max_width = width;
 	p.max_height = height;
@@ -232,7 +232,7 @@ void ImageLoader::CacheImageAtSize(QuiverFile f, int width, int height)
 
 void ImageLoader::ReloadImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = LOAD;
 	p.reload = true;
 
@@ -242,7 +242,7 @@ void ImageLoader::ReloadImage(QuiverFile f)
 
 void ImageLoader::LoadImage(QuiverFile f)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = LOAD;
 
 	LoadImage(f,p);
@@ -250,7 +250,7 @@ void ImageLoader::LoadImage(QuiverFile f)
 
 void ImageLoader::LoadImageAtSize(QuiverFile f, int width, int height)
 {
-	LoadParams p = {0};
+	LoadParams p = {};
 	p.state = LOAD;
 	p.max_width = width;
 	p.max_height = height;

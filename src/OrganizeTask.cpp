@@ -192,7 +192,7 @@ organize_task_gfile_progress_callback(
 	goffset current_num_bytes,
 	goffset total_num_bytes,
 	gpointer user_data)
-{
+{ (void)current_num_bytes;  (void)total_num_bytes;  (void)user_data; 
 	//OrganizeTask::PrivateImpl* pImpl = static_cast<OrganizeTask::PrivateImpl*>(user_data);
 
 }
@@ -210,7 +210,7 @@ void OrganizeTask::Run()
 
 	// adjust exif date
 	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();	
-	while (m_iCurrentFile < m_vectQuiverFiles.size() )
+	while ((size_t)m_iCurrentFile < m_vectQuiverFiles.size() )
 	{
 		GError* error = NULL;
 		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile++];
@@ -228,6 +228,7 @@ void OrganizeTask::Run()
 		gboolean made_dir = 
 			g_file_make_directory_with_parents(
 				dstdir, m_PrivateImplPtr->m_pCancellable, &error);
+		(void)made_dir;
 
 		g_object_unref(dstdir);
 
@@ -345,6 +346,7 @@ void OrganizeTask::Run()
 				organize_task_gfile_progress_callback,
 				m_PrivateImplPtr.get(),
 				&error);
+		(void)copied;
 		// if there was an error, 
 		if (NULL != error)
 		{

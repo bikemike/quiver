@@ -1,5 +1,6 @@
 #include "FolderTreeEventSource.h"
 #include "IFolderTreeEventHandler.h"
+using namespace boost::placeholders;
 
 void FolderTreeEventSource::AddEventHandler(IEventHandlerPtr handler)
 {

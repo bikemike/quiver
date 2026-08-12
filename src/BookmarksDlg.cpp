@@ -322,7 +322,7 @@ void BookmarksDlg::BookmarksDlgPriv::UpdateUI()
 
 		for (itr = bookmarks.begin(); bookmarks.end() != itr; ++itr)
 		{
-			GtkTreeIter iter1 = {0};
+			GtkTreeIter iter1 = {};
 			gtk_tree_store_append (store, &iter1, NULL);  
 			gtk_tree_store_set (store, &iter1,
 				COLUMN_ID, itr->GetID(),
@@ -342,7 +342,7 @@ void BookmarksDlg::BookmarksDlgPriv::UpdateUI()
 
 
 static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{
+{ (void)data; 
 	if (GTK_RESPONSE_NONE == response)
 	{
 		g_signal_stop_emission_by_name (dlg, "response");
@@ -502,19 +502,19 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 }
 
 static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
-{
+{ (void)treeselection; 
 	BookmarksDlg::BookmarksDlgPriv *priv = static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
 	priv->SelectionChanged();
 }
 
 static void
 cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data)
-{
+{ (void)cell; 
 	BookmarksDlg::BookmarksDlgPriv *priv = static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
 
 	GtkTreePath *path;
-	GtkTreeIter child = {0};
-	GtkTreeIter parent = {0};
+	GtkTreeIter child = {};
+	GtkTreeIter parent = {};
 
 	int value;
 
@@ -539,7 +539,7 @@ cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_
 // nested class
 
 void BookmarksDlg::BookmarksDlgPriv::BookmarksEventHandler::HandleBookmarkChanged(BookmarksEventPtr event)
-{
+{ (void)event; 
 	if (parent->m_bLoadedDlg)
 	{
 		parent->UpdateUI();

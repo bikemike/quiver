@@ -567,6 +567,7 @@ static void
 quiver_image_view_finalize(GObject *object)
 {
 	GObjectClass *parent,*obj_class;
+ (void)obj_class;
 	QuiverImageViewClass *klass; 
 	QuiverImageView *imageview;
 
@@ -611,6 +612,7 @@ static void
 quiver_image_view_size_request (GtkWidget *widget, GtkRequisition *requisition)
 {
 	QuiverImageView *imageview;
+ (void)imageview;
 		
 	imageview = QUIVER_IMAGE_VIEW(widget);
 	requisition->width = 20;
@@ -660,7 +662,7 @@ quiver_image_view_send_configure (QuiverImageView *imageview)
 
 static gboolean
 quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
-{
+{ (void)event; 
 	QuiverImageView *imageview;
 	
 	gdouble old_mag;
@@ -894,8 +896,10 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 	GdkPixbuf *pixbuf;
 	gint actual_width,actual_height;
 	gint width,height;
+ (void)height;
 	gint new_width,new_height;
 	gboolean stretch;
+ (void)stretch;
 
 	stretch = FALSE;
 
@@ -950,7 +954,7 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 			{
 				break;
 			}
-
+			/* fall through */
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
 		{
@@ -1068,6 +1072,8 @@ static void draw_pixbuf(QuiverImageView *imageview, cairo_t *cr)
 	widget = GTK_WIDGET(imageview);
 
 	gint hadj,vadj;
+ (void)vadj;
+ (void)hadj;
 	hadj = (gint)gtk_adjustment_get_value(imageview->priv->hadjustment);
 	vadj = (gint)gtk_adjustment_get_value(imageview->priv->vadjustment);
 
@@ -1499,6 +1505,7 @@ gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
 
 
 	int adjustment = 5;
+ (void)adjustment;
 	if (event->state & GDK_SHIFT_MASK)
 	{
 		adjustment = 1;
@@ -1770,7 +1777,7 @@ static void quiver_image_view_add_scroll_timeout(QuiverImageView *imageview)
 static void
 quiver_image_view_adjustment_value_changed (GtkAdjustment *adjustment,
            QuiverImageView *imageview)
-{
+{ (void)adjustment; 
 	if (imageview->priv->scroll_draw)
 	{
 		quiver_image_view_add_scroll_timeout(imageview);
@@ -1850,13 +1857,13 @@ quiver_image_view_get_property (GObject    *object,
 /* start utility functions*/
 static guint
 quiver_image_view_get_width(QuiverImageView *imageview)
-{
+{ (void)imageview; 
 	return 1;
 }
 
 static guint
 quiver_image_view_get_height(QuiverImageView *imageview)
-{
+{ (void)imageview; 
 	return 1;
 }
 
@@ -2006,6 +2013,7 @@ quiver_image_view_idle_transition_create(gpointer data)
 {
 	gboolean rval = TRUE;
 	GtkWidget *widget;
+ (void)widget;
 	QuiverImageView* imageview;
 	imageview = (QuiverImageView*)data;
 	
@@ -2047,6 +2055,7 @@ static void quiver_image_view_transition_start(QuiverImageView *imageview)
 static void quiver_image_view_transition_stop(QuiverImageView *imageview)
 {
 	GtkWidget *widget;
+ (void)widget;
 	widget = GTK_WIDGET(imageview);
 
 	if (0 != imageview->priv->idle_transition_create_id)
@@ -2087,6 +2096,8 @@ static void quiver_image_view_transition_stop(QuiverImageView *imageview)
 
 		
 		gint width, height;
+ (void)height;
+ (void)width;
 		width = 0;
 		height = 0;	
 		if (NULL != imageview->priv->pixbuf_scaled)
@@ -2261,7 +2272,7 @@ static void quiver_image_view_set_default_adjustment_values(QuiverImageView *ima
 }
 
 void quiver_image_view_get_pixbuf_display_size_for_mode(QuiverImageView *imageview, QuiverImageViewMode mode, gint *width, gint *height)
-{
+{ (void)mode; 
 	*width = imageview->priv->pixbuf_width;
 	*height = imageview->priv->pixbuf_height;
 	quiver_image_view_get_pixbuf_display_size_for_mode_alt(imageview,imageview->priv->view_mode,*width, *height,width,height);
@@ -2340,6 +2351,7 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 	cairo_region_t *old_region,*new_region;
 
 	GdkPixbuf *old_pixbuf;
+ (void)old_pixbuf;
 	
 	widget = GTK_WIDGET(imageview);
 	old_pixbuf = imageview->priv->pixbuf;
@@ -2701,6 +2713,7 @@ gboolean quiver_image_view_is_in_transition(QuiverImageView *imageview)
 gdouble quiver_image_view_get_magnification(QuiverImageView *imageview)
 {
 	GtkWidget *widget;
+ (void)widget;
 	gdouble magnification;
 
 	gint display_width,display_height;
@@ -3095,7 +3108,7 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 }
 
 static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint height,gpointer userdata)
-{
+{ (void)loader; 
 	GtkWidget *widget;
 	QuiverImageView *imageview;
 
@@ -3157,8 +3170,9 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 
 }
 static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, gint width,gint height,gpointer userdata)
-{
+{ (void)loader; 
 	GtkWidget *widget;
+ (void)widget;
 	QuiverImageView *imageview;
 	cairo_rectangle_int_t rect;
 	GdkPixbufAnimation* pixbuf_animation;
@@ -3217,8 +3231,9 @@ static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, 
 
 }
 static void pixbuf_loader_closed(GdkPixbufLoader *loader,gpointer userdata)
-{	
+{ (void)loader; 	
 	GtkWidget *widget;
+ (void)widget;
 	QuiverImageView *imageview;
 	GdkPixbufAnimation* pixbuf_animation;
 

@@ -4,8 +4,9 @@ if (POLICY CMP0167)
 endif()
 project(quiver VERSION 0.2.0 LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_compile_options(-Wall -Wextra)
 
 # Find pkg-config
 find_package(PkgConfig REQUIRED)

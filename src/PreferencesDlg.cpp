@@ -510,7 +510,7 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 
 
 static void  on_viewer_film_strip_pos_changed  (GtkComboBox *widget, gpointer user_data)
-{
+{ (void)user_data; 
 	//PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
 
 	PreferencesPtr prefs = Preferences::GetInstance();
@@ -568,7 +568,7 @@ static void  on_value_changed(GtkRange *range, gpointer user_data)
 // nested class
 
 void PreferencesDlg::PreferencesDlgPriv::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
-{
+{ (void)event; 
 	parent->UpdateUI();
 }
 

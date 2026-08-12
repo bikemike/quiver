@@ -50,27 +50,27 @@ public:
 			}
 			// ITaskEventHandler methods
 			void HandleTaskStarted(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskResumed(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskMessage(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskPaused(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskUnpaused(TaskEventPtr event) 
-			{
+			{ (void)event; 
 			}
 
 			void HandleTaskFinished(TaskEventPtr event) 
-			{
+			{ (void)event; 
 				gtk_widget_set_sensitive(m_pParent->m_btnCancel, TRUE);
 				gtk_button_set_image(GTK_BUTTON(m_pParent->m_btnCancel), 
 					gtk_image_new_from_icon_name("edit-clear", GTK_ICON_SIZE_BUTTON));
@@ -82,7 +82,7 @@ public:
 			}
 
 			void HandleTaskCancelled(TaskEventPtr event) 
-			{
+			{ (void)event; 
 				gtk_widget_set_sensitive(m_pParent->m_btnCancel, TRUE);
 				gtk_button_set_image(GTK_BUTTON(m_pParent->m_btnCancel), 
 					gtk_image_new_from_icon_name("edit-clear", GTK_ICON_SIZE_BUTTON));
@@ -94,7 +94,7 @@ public:
 			}
 
 			void HandleTaskProgressUpdated(TaskEventPtr event) 
-			{
+			{ (void)event; 
 				
 				m_pParent->UpdateTaskGUI();
 
@@ -310,7 +310,7 @@ public:
 public:
 	TaskManagerDlgPriv(TaskManagerDlg* parent, GtkWindow* parent_window) :
 		m_pParent(parent), m_TaskMgrPtr(TaskManager::GetInstance())
-	{
+	{ (void)parent_window; 
 		m_pWidget = gtk_dialog_new();
 		//FIXME: function gone?
 		//gtk_dialog_set_has_separator(GTK_DIALOG(m_pWidget),FALSE);
@@ -346,7 +346,7 @@ public:
 	}
 
 	static gboolean event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
-	{
+	{ (void)data;  (void)event; 
 		//TaskManagerDlgPriv* dlgPriv = static_cast<TaskManagerDlgPriv*>(user_data);
 		gtk_widget_hide(widget);
 
@@ -354,7 +354,7 @@ public:
 	}
 
 	static void signal_response( GtkDialog *dlg, gint arg1, gpointer user_data )
-	{
+	{ (void)user_data;  (void)arg1; 
 		gtk_widget_hide(GTK_WIDGET(dlg));
 	}
 
@@ -404,7 +404,7 @@ public:
 	}
 
 	void HandleTaskRemoved(TaskManagerEventPtr event) 
-	{
+	{ (void)event; 
 		// TaskManagerPtr mgrPtr = TaskManager::GetInstance();
 	}
 

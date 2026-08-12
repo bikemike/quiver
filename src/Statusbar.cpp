@@ -341,11 +341,11 @@ void Statusbar::StopProgressPulse()
 
 
 void Statusbar::SignalAreaPrepared(GdkPixbufLoader *loader)
-{
+{ (void)loader; 
 
 }
 void Statusbar::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height)
-{
+{ (void)height;  (void)width;  (void)y;  (void)x;  (void)loader; 
 
 }
 
@@ -389,7 +389,7 @@ void Statusbar::SignalBytesRead(long bytes_read,long total)
 	//gdk_threads_leave();
 }
 void Statusbar::SignalClosed(GdkPixbufLoader *loader)
-{
+{ (void)loader; 
 	IdleBytesReadData* data = new IdleBytesReadData();
 	data->pStatusBarImpl = m_StatusbarImplPtr.get();
 	data->progress =  1.;
@@ -402,12 +402,12 @@ void Statusbar::SignalClosed(GdkPixbufLoader *loader)
 	m_StatusbarImplPtr->m_uiIdleSourceID = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_update_progress, data, idle_deleter);
 }
 void Statusbar::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
-{
+{ (void)height;  (void)width;  (void)loader; 
 	
 	//gtk_box_pack_start (GTK_BOX (m_pStatusbar), m_pProgressbar, FALSE, FALSE, 3);	
 }
 void Statusbar::SetPixbuf(GdkPixbuf * pixbuf)
-{
+{ (void)pixbuf; 
 	IdleBytesReadData* data = new IdleBytesReadData();
 	data->pStatusBarImpl = m_StatusbarImplPtr.get();
 	data->progress =  1.;
@@ -420,7 +420,7 @@ void Statusbar::SetPixbuf(GdkPixbuf * pixbuf)
 }
 
 void Statusbar::SetPixbufAtSize(GdkPixbuf * pixbuf,gint width, gint height, bool bResetViewMode/* = true*/)
-{
+{ (void)bResetViewMode;  (void)height;  (void)width;  (void)pixbuf; 
 	IdleBytesReadData* data = new IdleBytesReadData();
 	data->pStatusBarImpl = m_StatusbarImplPtr.get();
 	data->progress =  1.;

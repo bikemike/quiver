@@ -106,7 +106,7 @@ static void      quiver_navigation_control_adjustment_changed (GtkAdjustment *ad
 
 /* start private globals */
 
-static guint navcontrol_signals[SIGNAL_COUNT];
+// static guint navcontrol_signals[SIGNAL_COUNT];
 
 /* end private globals */
 
@@ -186,6 +186,7 @@ static void
 quiver_navigation_control_finalize(GObject *object)
 {
 	GObjectClass *parent,*obj_class;
+ (void)obj_class;
 	QuiverNavigationControlClass *klass; 
 	QuiverNavigationControl *navcontrol;
 
@@ -292,8 +293,9 @@ quiver_navigation_control_size_allocate (GtkWidget     *widget,
 
 static void
 quiver_navigation_control_size_request (GtkWidget *widget, GtkRequisition *requisition)
-{
+{ (void)requisition; 
 	QuiverNavigationControl *navcontrol;
+ (void)navcontrol;
 	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
 }
 
@@ -336,7 +338,7 @@ quiver_navigation_control_send_configure (QuiverNavigationControl *navcontrol)
 
 static gboolean
 quiver_navigation_control_configure_event( GtkWidget *widget, GdkEventConfigure *event )
-{
+{ (void)event; 
 	QuiverNavigationControl *navcontrol;
 	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
 	
@@ -431,8 +433,8 @@ quiver_navigation_control_expose_event (GtkWidget *widget, GdkEventExpose *event
 
 static gboolean
 quiver_navigation_control_draw(GtkWidget* navcontrol, cairo_t* cr)
-{
-// FIXME: implement
+{ (void)cr;  (void)navcontrol; 
+	return FALSE;
 }
 
 void quiver_navigation_control_update_adjustments(QuiverNavigationControl *navcontrol, gint x, gint y)
@@ -486,7 +488,7 @@ quiver_navigation_control_button_press_event  (GtkWidget *widget, GdkEventButton
 
 static gboolean
 quiver_navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event)
-{
+{ (void)event;  (void)widget; 
 	return TRUE;
 }
                    
@@ -688,7 +690,7 @@ quiver_navigation_control_set_vadjustment (QuiverNavigationControl *navcontrol, 
 
 static void
 quiver_navigation_control_adjustment_changed (GtkAdjustment *adjustment, gpointer userdata)
-{
+{ (void)adjustment; 
 	QuiverNavigationControl *navcontrol;
 	navcontrol = QUIVER_NAVIGATION_CONTROL(userdata);
 

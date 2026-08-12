@@ -1346,7 +1346,7 @@ static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1
 #endif
 
 static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
-{
+{ (void)widget; 
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
@@ -1412,7 +1412,7 @@ void Quiver::Close()
 }
 
 gboolean Quiver::EventDelete( GtkWidget *widget,GdkEvent  *event, gpointer   data )
-{
+{ (void)data;  (void)event;  (void)widget; 
 	if (m_QuiverImplPtr->CanClose())
 	{
 		Close();
@@ -2001,7 +2001,7 @@ void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
 	if (1 == files.size())
 	{
 		bShowViewer = true;
-		struct stat stat_struct = {0};
+		struct stat stat_struct = {};
 		if (0 == g_stat(files.front().c_str(),&stat_struct))
 		{
 			if (stat_struct.st_mode & S_IFDIR)
@@ -2087,6 +2087,7 @@ static gboolean CreateQuiver (gpointer data)
 	QuiverStockIcons::Load();
 	
 	Quiver *pQuiver = new Quiver(*(cqd->pFiles), cqd->bRecursive);
+ (void)pQuiver;
 	return FALSE; // run once
 }
 
@@ -2142,7 +2143,7 @@ int main (int argc, char **argv)
 		}
 	}
 
-	CreateQuiverData cqd = {0};
+	CreateQuiverData cqd = {};
 	cqd.bRecursive = false;
 	
 	if (argc == 1)
@@ -2217,7 +2218,7 @@ gboolean Quiver::idle_quiver_init (gpointer data)
 	return ((Quiver*)data)->IdleQuiverInit(data);
 }
 gboolean Quiver::IdleQuiverInit(gpointer data)
-{
+{ (void)data; 
 	// put process intenstive startup code in here 
 	// (loading image list, setting first image)
 
@@ -2280,7 +2281,7 @@ static gboolean timeout_event_motion_notify (gpointer data)
 
 
 static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data )
-{
+{ (void)event;  (void)widget; 
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	if (0 != pQuiverImpl->m_iTimeoutMouseMotionNotify)
 	{
@@ -2466,7 +2467,7 @@ void QuiverImpl::UpdateUI()
 
 
 void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	list<unsigned int> selection = parent->m_BrowserPtr->GetSelection();
 	list<unsigned int>::iterator itr;
 	
@@ -2489,7 +2490,7 @@ void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr eve
 }
 
 void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	if (0 != parent->m_ImageListPtr->GetSize() && parent->m_ImageListPtr->GetCurrent().IsFolder())
 	{
 	    list<string> file_list;
@@ -2505,28 +2506,28 @@ void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_
 }
 
 void QuiverImpl::BrowserEventHandler::HandleCursorChanged(BrowserEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	parent->m_pQuiver->ImageChanged();
 }
 
 void QuiverImpl::ViewerEventHandler::HandleItemActivated(ViewerEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	parent->m_pQuiver->ShowBrowser();
 }
 
 void QuiverImpl::ViewerEventHandler::HandleItemClicked(ViewerEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	parent->m_pQuiver->OnFullScreen();
 }
 
 void QuiverImpl::ViewerEventHandler::HandleCursorChanged(ViewerEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	parent->m_pQuiver->ImageChanged();
 }
 
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	PreferencesPtr prefs = Preferences::GetInstance();
 	
 	bool bFS = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, TRUE);
@@ -2551,7 +2552,7 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event
 }
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event_ptr)
-{
+{ (void)event_ptr; 
 	// return from FS if necessary
 	if (parent->m_bSlideShowRestoreFromFS)
 	{
@@ -2572,17 +2573,17 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 
 
 void QuiverImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
-{
+{ (void)event; 
 
 }
 
 void QuiverImpl::BookmarksEventHandler::HandleBookmarkChanged(BookmarksEventPtr event)
-{
+{ (void)event; 
 	parent->LoadBookmarks();
 }
 
 void QuiverImpl::ExternalToolsEventHandler::HandleExternalToolChanged(ExternalToolsEventPtr event)
-{
+{ (void)event; 
 	parent->LoadExternalTools();
 }
 
@@ -2805,7 +2806,7 @@ static void quiver_escape_action(QuiverImpl *pQuiverImpl)
 }
 
 static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data)
-{
+{ (void)parameter; 
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 	Quiver *pQuiver;
 	pQuiver = pQuiverImpl->m_pQuiver;
@@ -3345,7 +3346,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 
 
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data )
-{
+{ (void)widget; 
 	// don't do anything for MAEMO because of weirdness in HildonControlbar
 #ifndef QUIVER_MAEMO
 	if (2 == event->button)
@@ -3363,23 +3364,23 @@ static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *
 
 
 void QuiverImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
-{
+{ (void)event; 
 	parent->m_pQuiver->ImageChanged();
 }
 void QuiverImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
-{
+{ (void)event; 
 	parent->m_pQuiver->ImageChanged();
 }
 void QuiverImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
-{
+{ (void)event; 
 	parent->m_pQuiver->ImageChanged();
 }
 void QuiverImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
-{
+{ (void)event; 
 	parent->m_pQuiver->ImageChanged();
 }
 void QuiverImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
-{
+{ (void)event; 
 	parent->m_pQuiver->ImageChanged();
 }
 

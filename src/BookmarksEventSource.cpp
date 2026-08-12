@@ -1,5 +1,6 @@
 #include "BookmarksEventSource.h"
 #include "IBookmarksEventHandler.h"
+using namespace boost::placeholders;
 
 void BookmarksEventSource::AddEventHandler(IEventHandlerPtr handler)
 {
