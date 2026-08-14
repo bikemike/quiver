@@ -304,11 +304,6 @@ bool ImageLoader::LoadQuickPreview()
 		{
 			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(128);
 		}
-		if (NULL == thumb_pixbuf)
-		{
-			printf("DEBUG: LoadQuickPreview failed to get thumbnail! Has256=%d Has128=%d\n",
-				m_Command.quiverFile.HasThumbnail(256), m_Command.quiverFile.HasThumbnail(128));
-		}
 	
 	
 		if (NULL != thumb_pixbuf)
@@ -441,7 +436,6 @@ void ImageLoader::Load()
 						
 						if (n != d)
 						{
-							std::cout << "scale simple 5" << std::endl;
 							pixbuf = gdk_pixbuf_scale_simple (
 								video_pixbuf,
 								pixbuf_width,
@@ -525,7 +519,6 @@ void ImageLoader::Load()
 						gint width,height;
 						width = m_Command.quiverFile.GetWidth();
 						height = m_Command.quiverFile.GetHeight();
-						std::cout << "wxh: " << width << "x" << height << std::endl;
 						if (4 < orientation)
 						{
 							swap(width,height);
@@ -630,7 +623,6 @@ void ImageLoader::Load()
 						
 						if (n != d)
 						{
-							std::cout << "scale simple 4" << std::endl;
 							pixbuf = gdk_pixbuf_scale_simple (
 								video_pixbuf,
 								pixbuf_width,
@@ -857,7 +849,6 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 {
 	if (0 == width || 0 == height)
 		return;
-	std::cout << "ImageLoader::SignalSizePrepared: " << width << " x " << height << std::endl;
 	m_Command.quiverFile.SetWidth(width);
 	m_Command.quiverFile.SetHeight(height);
 	

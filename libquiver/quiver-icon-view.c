@@ -1538,9 +1538,13 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 		case GDK_KEY_space:
 			if (event->state & GDK_CONTROL_MASK)
 			{
-				iconview->priv->cell_items[iconview->priv->cursor_cell].selected = !iconview->priv->cell_items[iconview->priv->cursor_cell].selected;
-				g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
-				quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
+				if (G_MAXULONG != iconview->priv->cursor_cell &&
+					iconview->priv->cursor_cell < n_cells)
+				{
+					iconview->priv->cell_items[iconview->priv->cursor_cell].selected = !iconview->priv->cell_items[iconview->priv->cursor_cell].selected;
+					g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
+					quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
+				}
 			}
 			break;
 
@@ -1617,8 +1621,13 @@ quiver_icon_view_key_press_event  (GtkWidget *widget,
 	}
 	else
 	{
-		new_cursor_cell = iconview->priv->cursor_cell;
-		quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)event->state,FALSE);
+		// no valid cursor cell (eg. empty list or cursor not set), so
+		// only redraw the current cell if it is actually valid
+		if (G_MAXULONG != iconview->priv->cursor_cell &&
+			iconview->priv->cursor_cell < n_cells)
+		{
+			quiver_icon_view_set_cursor_cell_full(iconview,iconview->priv->cursor_cell,(GdkModifierType)event->state,FALSE);
+		}
 	}
 	
 	//iconview->priv->redraw_needed = TRUE;

@@ -252,14 +252,8 @@ struct AsyncPixbufData {
 static gboolean idle_set_pixbuf_v(gpointer data) {
     AsyncPixbufData *p = (AsyncPixbufData*)data;
     if (p->bAtSize) {
-        if (p->bReset) {
-            printf("[%" G_GINT64_FORMAT "] DEBUG: Quick preview (thumbnail) set in image viewer\n", g_get_real_time());
-        } else {
-            printf("[%" G_GINT64_FORMAT "] DEBUG: Full size image set in image viewer (at size)\n", g_get_real_time());
-        }
         quiver_image_view_set_pixbuf_at_size_ex(p->pImageView, p->pixbuf, p->width, p->height, p->bReset);
     } else {
-        printf("[%" G_GINT64_FORMAT "] DEBUG: Full size image set in image viewer\n", g_get_real_time());
         quiver_image_view_set_pixbuf(p->pImageView, p->pixbuf);
     }
     if (p->pixbuf) g_object_unref(p->pixbuf);
@@ -283,7 +277,6 @@ public:
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
 		if (ThreadUtil::IsGUIThread()) {
-			printf("[%" G_GINT64_FORMAT "] DEBUG: Full size image set in image viewer (GUI thread)\n", g_get_real_time());
 			quiver_image_view_set_pixbuf(m_pImageView,pixbuf);
 		} else {
 			if (pixbuf) g_object_ref(pixbuf);
@@ -294,11 +287,6 @@ public:
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
 		gboolean bReset = bResetViewMode ? TRUE : FALSE;
 		if (ThreadUtil::IsGUIThread()) {
-            if (bReset) {
-                printf("[%" G_GINT64_FORMAT "] DEBUG: Quick preview (thumbnail) set in image viewer (GUI thread)\n", g_get_real_time());
-            } else {
-                printf("[%" G_GINT64_FORMAT "] DEBUG: Full size image set in image viewer (at size, GUI thread)\n", g_get_real_time());
-            }
 			quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
 		} else {
 			if (pixbuf) g_object_ref(pixbuf);
@@ -985,9 +973,6 @@ void Viewer::ViewerImpl::CacheNext(bool bDirectionForward)
 
 void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool bCacheNext)
 {
-	printf("[%" G_GINT64_FORMAT "] DEBUG: ImageList current item changed to index %d\n", g_get_real_time(), index);
-
-
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
 	
 	if (m_ImageListPtr->SetCurrentIndex(index))
@@ -2154,8 +2139,9 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 
 				gst_message_parse_error (msg, &error, &debug);
 
-				g_printerr ("error: %s\n", error->message);
-				g_printerr ("error debug: %s\n", debug ? debug : "(null)");
+				g_warning("Video playback error: %s", error->message);
+				if (debug && *debug)
+					g_warning("Video playback error debug: %s", debug);
 				g_free (debug);
 
 				g_error_free (error);
@@ -2514,7 +2500,6 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 	}
 	else if (widget == pViewerImpl->m_pPlayProgressEventBox)
 	{
-		printf("adjust play progress\n");
 		pViewerImpl->m_bWasPlayingBeforeSeek = pViewerImpl->IsPlaying(); 
 
 		viewer_scrub_seek(pViewerImpl, widget, event->x, TRUE);

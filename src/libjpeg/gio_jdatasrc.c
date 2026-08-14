@@ -98,7 +98,7 @@ fill_input_buffer (j_decompress_ptr cinfo)
 
 	if (nbytes <= 0) {
 		if (src->start_of_file) {	/* Treat empty input file as fatal error */
-			printf("jpeg_gio_src fill_input_buffer: input is empty\n");
+			fprintf(stderr, "jpeg_gio_src fill_input_buffer: input is empty\n");
 			// FIXME: error
 			//ERREXIT(cinfo, JERR_INPUT_EMPTY);
 			WARNMS(cinfo, JWRN_JPEG_EOF);

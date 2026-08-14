@@ -75,6 +75,7 @@ static gboolean folder_tree_is_separator (GtkTreeModel *model,GtkTreeIter *iter,
 static void folder_tree_selection_changed (GtkTreeSelection *treeselection, gpointer user_data);
 static void folder_tree_cursor_changed (GtkTreeView *treeview, gpointer user_data);
 static gboolean view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userdata);
+static gboolean view_onButtonReleased (GtkWidget *treeview, GdkEventButton *event, gpointer userdata);
 static gboolean view_on_key_press(GtkWidget *treeview, GdkEventKey *event, gpointer userdata);
 static gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata);
 static void view_onRowActivated (GtkTreeView *treeview, GtkTreePath *path, GtkTreeViewColumn *col, gpointer userdata);
@@ -111,6 +112,7 @@ public:
 	guint            m_iTimeoutScrollToCell;
 	GThreadPool*     m_pGThreadPool;
 	bool             m_bStopThreads;
+	bool             m_bButtonDown;
 };
 
 
@@ -142,7 +144,7 @@ void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
 
 
 FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent) :
-	m_iTimeoutScrollToCell(0), m_bStopThreads(false)
+	m_iTimeoutScrollToCell(0), m_bStopThreads(false), m_bButtonDown(false)
 {
 	m_pFolderTree = parent;
 	
@@ -274,8 +276,13 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 		GtkTreeSelection* selection;
 		selection = gtk_tree_view_get_selection(treeview);
 		
-		gtk_tree_selection_unselect_all(selection);
-		gtk_tree_selection_select_iter(selection, pFolderTreeImpl->m_pTreeIterScrollTo);
+		// don't stomp on a selection the user is making (rubber band lasso)
+		if (!pFolderTreeImpl->m_bButtonDown &&
+			gtk_tree_selection_count_selected_rows(selection) <= 1)
+		{
+			gtk_tree_selection_unselect_all(selection);
+			gtk_tree_selection_select_iter(selection, pFolderTreeImpl->m_pTreeIterScrollTo);
+		}
 				
 		gtk_tree_path_free(path);
 		
@@ -513,6 +520,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	g_signal_connect(G_OBJECT(selection),"changed",G_CALLBACK(folder_tree_selection_changed),this);
 	g_signal_connect(m_pWidget, "cursor-changed",G_CALLBACK(folder_tree_cursor_changed),this);
 	g_signal_connect(m_pWidget, "button-press-event", (GCallback) view_onButtonPressed, this);
+	g_signal_connect(m_pWidget, "button-release-event", (GCallback) view_onButtonReleased, this);
 	g_signal_connect(m_pWidget, "key-press-event", (GCallback) view_on_key_press, this);
 	g_signal_connect(m_pWidget, "popup-menu", (GCallback) view_onPopupMenu, this);
 	g_signal_connect(m_pWidget, "row-activated", (GCallback) view_onRowActivated, this);
@@ -850,6 +858,8 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 	}
 	else if (event->button == 1)
 	{
+		pFolderTreeImpl->m_bButtonDown = TRUE;
+
 		GtkTreePath *path;
 		GtkTreeViewColumn *column;
 		if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(treeview),
@@ -865,6 +875,7 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 #endif
 			if (0 == strcmp(QUIVER_TREE_COLUMN_TOGGLE,column_name))
 			{
+				pFolderTreeImpl->m_bButtonDown = FALSE;
 				if (event->type != GDK_2BUTTON_PRESS && event->type != GDK_3BUTTON_PRESS)
 				{
 					GtkTreeIter iter;
@@ -938,6 +949,43 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 	}
 
 	return FALSE; 
+}
+
+static gboolean view_onButtonReleased (GtkWidget *treeview, GdkEventButton *event, gpointer userdata)
+{
+	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
+
+	if (1 != event->button || !pFolderTreeImpl->m_bButtonDown)
+	{
+		return FALSE;
+	}
+	pFolderTreeImpl->m_bButtonDown = FALSE;
+
+	// a lasso/rubber band drag selected multiple rows: check them all
+	GtkTreeSelection* selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(treeview));
+	if (gtk_tree_selection_count_selected_rows(selection) > 1)
+	{
+		GtkTreeModel *model;
+		GList* rows = gtk_tree_selection_get_selected_rows(selection, &model);
+
+		folder_tree_clear_all_checkboxes(model);
+
+		GList* itr;
+		for (itr = rows; NULL != itr; itr = itr->next)
+		{
+			GtkTreeIter iter;
+			if (gtk_tree_model_get_iter(model, &iter, (GtkTreePath*)itr->data))
+			{
+				gtk_tree_store_set (GTK_TREE_STORE(model), &iter, FILE_TREE_COLUMN_CHECKBOX, TRUE, -1);
+			}
+		}
+
+		g_list_free_full(rows, (GDestroyNotify)gtk_tree_path_free);
+
+		pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+	}
+
+	return FALSE;
 }
 
 static gboolean view_onPopupMenu (GtkWidget *treeview, gpointer userdata)
@@ -1045,7 +1093,10 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 					-1);
 
 			g_free(uri_child);
-			g_object_unref(gicon);
+			if (NULL != gicon)
+			{
+				g_object_unref(gicon);
+			}
 
 #ifdef QUIVER_MAEMO
 			// fetch the maemo name
@@ -1424,6 +1475,14 @@ if (res)
 					g_mutex_clear(&getSync.mutex);
 					g_cond_clear(&getSync.cond);
 					
+					if (NULL == uri)
+					{
+						data->state = TRAVERSE_TREE;
+						gtk_tree_iter_free(data->iter_child);
+						data->iter_child = NULL;
+						break;
+					}
+
 					GFile* file = g_file_new_for_uri(uri);
 					GFileEnumerator* enumerator = g_file_enumerate_children(
 							file,
@@ -1551,7 +1610,10 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 			GFile* gfile = g_file_new_for_uri(uri);
 			GIcon* gicon = folder_tree_get_gicon(gfile, expanded);
 			gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_GICON, gicon, -1);
-			g_object_unref(gicon);
+			if (NULL != gicon)
+			{
+				g_object_unref(gicon);
+			}
 			g_object_unref(gfile);
 		}
 		g_free(uri);
@@ -1622,7 +1684,10 @@ GIcon* folder_tree_get_gicon(GFile* gfile, gboolean expanded)
 	if (NULL != info)
 	{
 		icon = g_file_info_get_icon(info);
-		g_object_ref(icon);
+		if (NULL != icon)
+		{
+			g_object_ref(icon);
+		}
 		g_object_unref(info);
 	}
 	return icon;
@@ -1808,7 +1873,7 @@ static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
 {
 	if (NULL != error)
 	{
-		printf("FolderTree: hildon_fs_info_callback error: %s\n", error->message);
+		g_warning("FolderTree: hildon_fs_info_callback error: %s", error->message);
 	}
 
 	HildonFSAsyncStruct* asyncStruct = (HildonFSAsyncStruct*)data;
@@ -1843,10 +1908,14 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 	GtkTreeIter iter1 = {};  /* Parent iter */
 
-	GFile* file_home = g_file_new_for_path(g_get_home_dir());
-	GFile* file_desktop = g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP));
-	GFile* file_pictures = g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_PICTURES));
-	GFile* file_docs = g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS));
+	const char* home_dir = g_get_home_dir();
+	GFile* file_home = g_file_new_for_path(home_dir);
+	const char* desktop_dir = g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP);
+	const char* pictures_dir = g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
+	const char* docs_dir = g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS);
+	GFile* file_desktop = g_file_new_for_path(desktop_dir && desktop_dir[0] ? desktop_dir : home_dir);
+	GFile* file_pictures = g_file_new_for_path(pictures_dir && pictures_dir[0] ? pictures_dir : home_dir);
+	GFile* file_docs = g_file_new_for_path(docs_dir && docs_dir[0] ? docs_dir : home_dir);
 	GFile* file_root = g_file_new_for_uri("file:///");
 
 	/*
@@ -1930,7 +1999,10 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
             FILE_TREE_COLUMN_URI,uri,
             -1);
 
-	g_object_unref(gicon);
+	if (NULL != gicon)
+	{
+		g_object_unref(gicon);
+	}
 	gicon = NULL;
 	g_free(uri);
 	uri = NULL;
@@ -1949,7 +2021,10 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 			FILE_TREE_COLUMN_SEPARATOR,FALSE,
 			FILE_TREE_COLUMN_URI,uri,
 			-1);
-	g_object_unref(gicon);
+	if (NULL != gicon)
+	{
+		g_object_unref(gicon);
+	}
 	gicon = NULL;
 	g_free(uri);
 	uri = NULL;
@@ -1973,7 +2048,10 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
             
 	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 
-	g_object_unref(gicon);
+	if (NULL != gicon)
+	{
+		g_object_unref(gicon);
+	}
 	gicon = NULL;
 	g_free(uri);
 	uri = NULL;
@@ -1992,7 +2070,10 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
             -1);
             
 
-	g_object_unref(gicon);
+	if (NULL != gicon)
+	{
+		g_object_unref(gicon);
+	}
 	gicon = NULL;
 	g_free(uri);
 	uri = NULL;

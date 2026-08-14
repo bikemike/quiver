@@ -1124,8 +1124,6 @@ quiver_image_view_draw(GtkWidget* widget, cairo_t* cr)
 		draw_pixbuf(imageview, cr);
 	}
 
-	printf("[%" G_GINT64_FORMAT "] DEBUG: quiver_image_view_draw complete for %dx%d image\n", g_get_real_time(), imageview->priv->pixbuf_width, imageview->priv->pixbuf_height);
-
 	return TRUE;
 }
 

@@ -85,7 +85,7 @@ empty_output_buffer (j_compress_ptr cinfo)
 	if (g_output_stream_write(dest->outfile, dest->buffer, OUTPUT_BUF_SIZE, NULL, NULL) !=
 			(gssize) OUTPUT_BUF_SIZE)
 		// FIXME : error
-		printf("error\n");
+		fprintf(stderr, "error writing to output stream\n");
 
 	dest->pub.next_output_byte = dest->buffer;
 	dest->pub.free_in_buffer = OUTPUT_BUF_SIZE;
@@ -113,14 +113,14 @@ term_destination (j_compress_ptr cinfo)
 	if (datacount > 0) {
 		if ((size_t)g_output_stream_write(dest->outfile, dest->buffer, datacount, NULL, NULL) != datacount)
 			// FIXME: handle error
-			printf("error in term_destination !\n");
+			fprintf(stderr, "error writing remaining data in term_destination\n");
 	}
 	gboolean result = g_output_stream_flush(dest->outfile, NULL, NULL);
 	/* Make sure we wrote the output file OK */
 	//if (ferror(dest->outfile))
 	if (!result)
 		// FIXME: handle error
-		printf("error in term_destination flush !\n");
+		fprintf(stderr, "error flushing output stream in term_destination\n");
 }
 
 

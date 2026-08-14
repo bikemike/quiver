@@ -844,7 +844,6 @@ exif_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpoint
 	/* single click with the right mouse button? */
 	if (event->type == GDK_BUTTON_PRESS  &&  event->button == 3)
 	{
-		g_print ("Single right click on the tree view.\n");
 	
 		/* optional: select row if no row is selected or only
 		 *  one other row is selected (will only do something

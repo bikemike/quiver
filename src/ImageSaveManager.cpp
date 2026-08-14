@@ -45,7 +45,6 @@ bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
 {
-	printf("save JPEG image! %s\n", quiverFile.GetURI());
 	ExifData* exifData = quiverFile.GetExifData();
 	int rval = save_jpeg_file(quiverFile.GetURI(), pixbuf, exifData, cb, user_data);
 	exif_data_unref(exifData);
@@ -57,8 +56,7 @@ bool ImageSaverJPEG::SaveImageAs(QuiverFile quiverFile, std::string strFileName,
 			GdkPixbuf *pixbuf /* = NULL */,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
-{ (void)strFileName;  (void)pixbuf;  (void)cb;  (void)user_data; 
-	printf("save JPEG image as! %s\n", quiverFile.GetURI());
+{ (void)quiverFile; (void)strFileName;  (void)pixbuf;  (void)cb;  (void)user_data; 
 	return true;
 }
 
@@ -172,7 +170,6 @@ static void jpeg_progress_cb(j_common_ptr cinfo)
 	{
 		prog->callback(dProgress, prog->user_data);
 	}
-	printf("progress : %f\n", dProgress);
 }
 
 extern "C"
@@ -228,7 +225,6 @@ int jpeg_transform_files(char *infile, char *outfile,
 	goutfile = g_file_new_for_path(outfile);
 
 	in = G_INPUT_STREAM(g_file_read(ginfile, NULL, NULL));
-	printf("opening infile: %s\n",infile);
 	if (NULL == in)
 	{
 		//fprintf(stderr,"open %s: %s\n",infile,strerror(errno));
@@ -321,10 +317,7 @@ int jpeg_transform_files(char *infile, char *outfile,
 		MCU_width,
 		MCU_height,JXFORM_ROT_90);
 	 
-	printf("Can do perfect transform: %dx%d with mcu %dx%d   %d\n", src.image_width, src.image_height, MCU_width, MCU_height,perfect);	
-
-	
-	printf("got here\n");
+	(void)perfect;
 
 	/* do exif updating */
 	//ExifData *ed = NULL;
@@ -392,7 +385,6 @@ int jpeg_transform_files(char *infile, char *outfile,
 		if (gdk_pixbuf_get_has_alpha(pixbuf))
 		{
 			//FIXME implement alpha code
-			printf("has alpha chan!!\n");
 		}
 		else
 		{

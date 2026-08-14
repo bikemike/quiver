@@ -52,6 +52,7 @@ public:
 	void ImageChanged();
 	
 	void SetImageList(std::list<std::string> &list, bool bRecursive = false);
+	void SetViewerOrBrowser(std::list<std::string> &list);
 
 
 	void OnAbout();
@@ -66,9 +67,13 @@ public:
 	void OnQuit();
 	
 	void Close();
-		
+
+	static gboolean close_idle_cb(gpointer data);
+	void CloseReal();
+
 private:
 	QuiverImplPtr m_QuiverImplPtr;
+	bool m_bClosing;
 
 };
 

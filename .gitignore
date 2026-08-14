@@ -17,6 +17,13 @@ ar-lib
 aclocal.m4
 autom4te.cache/
 stamp-h1
+config.guess
+config.sub
+INSTALL
+intltool-extract.in
+intltool-merge.in
+intltool-update.in
+*.dirstamp
 .deps/
 .libs/
 *.o
@@ -63,12 +70,18 @@ m4/intltool.m4
 
 # CMake build artifacts
 build/
+Testing/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
 !cmake/
 !cmake/config.h.in
+
+# dev leftovers
+scratch/
+.vscode/
+
 *~
 *.swp
 *.bak

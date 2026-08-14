@@ -30,6 +30,7 @@ public:
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(const std::list<std::string> *file_list);
+	void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false);
 
 	static void AddIgnoredExtension(std::string ext);
 	static void ClearIgnoreList(std::string ext);

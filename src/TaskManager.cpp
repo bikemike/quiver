@@ -149,20 +149,19 @@ void TaskManager::HandleTaskMessage(TaskEventPtr taskEventPtr)
 
 	switch (type)
 	{
-		case AbstractTask::MSG_TYPE_INFO:
-			printf("INFO: ");
-			break;
 		case AbstractTask::MSG_TYPE_DEBUG:
-			printf("DBG : ");
+			g_debug("%s", msg.c_str());
+			break;
+		case AbstractTask::MSG_TYPE_INFO:
+			g_message("%s", msg.c_str());
 			break;
 		case AbstractTask::MSG_TYPE_WARNING:
-			printf("WARN: ");
+			g_warning("%s", msg.c_str());
 			break;
 		case AbstractTask::MSG_TYPE_ERROR:
-			printf("ERR : ");
+			g_critical("%s", msg.c_str());
 			break;
 	}
-	printf("%s\n", msg.c_str());
 }
 
 

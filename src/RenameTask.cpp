@@ -292,9 +292,6 @@ void RenameTask::Run()
 			g_free(shortname);
 		}
 
-		printf("%s", szText);
-		printf("\n");
-
 		g_free(dst_display_name);
 
 		SetProgressText(szText);
@@ -315,7 +312,7 @@ void RenameTask::Run()
 		// if there was an error, 
 		if (NULL != error)
 		{
-			printf("Error renaming file! %s -> %s : %s\n", f.GetURI(), dst_display_name, error->message); 
+			g_warning("Error renaming file! %s -> %s : %s", f.GetURI(), dst_display_name, error->message); 
 			g_error_free(error);
 			error = NULL;
 			// message box asking if they want to skip, skip all, retry, cancel

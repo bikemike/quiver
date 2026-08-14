@@ -279,7 +279,6 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	for (std::list<std::string>::iterator itr = exts.begin();
 			exts.end() != itr; ++itr)
 	{
-		printf("ignoring extension : %s\n", itr->c_str());
 		m_ImageListPtr->AddIgnoredExtension(*itr);
 	}
 }
@@ -540,6 +539,15 @@ static const char * quiver_ui_main =
 "								<property name='use_underline'>True</property>"
 "								<property name='action_name'>quiver.Close</property>"
 "								<property name='tooltip-text' translatable='yes'>Close quiver</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemQuit'>"
+"								<property name='label' translatable='yes'>_Quit</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.Close_3</property>"
+"								<property name='tooltip-text' translatable='yes'>Exit quiver</property>"
 "							</object>"
 "						</child>"
 "					</object>"
@@ -1251,14 +1259,13 @@ void Quiver::signal_drag_data_received(GtkWidget *widget,GdkDragContext *drag_co
 
 void  Quiver::SignalDragDataDelete  (GtkWidget *widget,GdkDragContext *context,gpointer data)
 {
-  g_print ("Delete the data!\n");
+  (void)widget; (void)context; (void)data;
 }
 void Quiver::SignalDragDataGet (GtkWidget *widget, GdkDragContext *context, 
 	GtkSelectionData *selection_data, guint info, guint time,gpointer data)
 {
 	if (info == QUIVER_TARGET_STRING)
     {
-		g_print ("drop the image uri as text/plain\n");
 		if (m_QuiverImplPtr->m_ImageListPtr->GetSize())
 		{
     		gtk_selection_data_set (selection_data,
@@ -1268,7 +1275,6 @@ void Quiver::SignalDragDataGet (GtkWidget *widget, GdkDragContext *context,
 	}
 	else if (info == QUIVER_TARGET_URI)
 	{
-		g_print ("drop the image uri as text/uri\n");
 		if (m_QuiverImplPtr->m_ImageListPtr->GetSize())
 		{
 			//selection data set
@@ -1389,6 +1395,26 @@ gboolean Quiver::event_delete( GtkWidget *widget,GdkEvent  *event, gpointer   da
 
 void Quiver::Close()
 {
+	if (m_bClosing)
+	{
+		return;
+	}
+	m_bClosing = true;
+	// Defer the teardown to an idle callback: Close() is often reached from a
+	// keyboard accelerator (e.g. "q" via gtk_accel_groups_activate), and
+	// destroying the window inside the accel-group dispatch would leave GTK
+	// walking freed accel-group state (SIGSEGV in gtk_accel_groups_activate).
+	g_idle_add(close_idle_cb, this);
+}
+
+gboolean Quiver::close_idle_cb(gpointer data)
+{
+	((Quiver*)data)->CloseReal();
+	return FALSE;
+}
+
+void Quiver::CloseReal()
+{
 	SaveSettings();
 	// force reference count to 0 for the quiverimplptr
 	m_QuiverImplPtr->m_BrowserPtr->RemoveEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
@@ -1438,7 +1464,8 @@ gboolean Quiver::quiver_event_callback( GtkWidget *widget, GdkEvent *event, gpoi
  * 
  */
 Quiver::Quiver(std::list<std::string> &images, bool bRecursive/* = false*/)
-	: 	m_QuiverImplPtr(new QuiverImpl(this) )
+	: 	m_QuiverImplPtr(new QuiverImpl(this) ),
+		m_bClosing(false)
 {
 	m_QuiverImplPtr->m_bListImagesRecursive = bRecursive;
 	m_QuiverImplPtr->m_listImages = images;
@@ -2002,7 +2029,7 @@ void Quiver::SaveSettings()
 }
 
 
-void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
+void Quiver::SetViewerOrBrowser(std::list<std::string> &files)
 {
 	bool bShowViewer = false;
 	if (1 == files.size())
@@ -2035,6 +2062,11 @@ void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
 
 		m_QuiverImplPtr->m_BrowserPtr->GrabFocus();
 	}
+}
+
+void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
+{
+	SetViewerOrBrowser(files);
 
 	m_QuiverImplPtr->m_ImageListPtr->SetImageList(&files, bRecursive);
 }
@@ -2231,7 +2263,9 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 
 	// set up the stock icons
 
-	SetImageList(m_QuiverImplPtr->m_listImages, m_QuiverImplPtr->m_bListImagesRecursive);
+	SetViewerOrBrowser(m_QuiverImplPtr->m_listImages);
+	m_QuiverImplPtr->m_ImageListPtr->UpdateImageListAsync(&m_QuiverImplPtr->m_listImages,
+		m_QuiverImplPtr->m_bListImagesRecursive);
 
 	m_QuiverImplPtr->m_BrowserPtr->SetImageList(m_QuiverImplPtr->m_ImageListPtr);
 	m_QuiverImplPtr->m_ViewerPtr->SetImageList(m_QuiverImplPtr->m_ImageListPtr);
@@ -3264,7 +3298,6 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 			for (itr = commands.begin(); commands.end() != itr; ++itr)
 			{
 				string cmd = *itr; 
-				printf("Running external command: %s\n", cmd.c_str());
 				GError *error = NULL;
 				g_spawn_command_line_async (cmd.c_str(), &error);
 				if (NULL != error)

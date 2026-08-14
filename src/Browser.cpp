@@ -1847,7 +1847,7 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	list<string>::iterator itr;
 
 	parent->m_bFolderTreeEvent = true;
-	parent->m_ImageListPtr->UpdateImageList(&listFolders);
+	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders);
 	parent->m_bFolderTreeEvent = false;
 }
 

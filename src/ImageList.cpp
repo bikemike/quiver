@@ -77,6 +77,36 @@ using namespace std;
 
 typedef std::vector<QuiverFile> QuiverFileList;
 
+struct AsyncFolderLoadData
+{
+	ImageList::ImageListImpl* impl;
+	gint uiGeneration;
+	std::list<std::string> folders;
+	std::list<std::string> dirs;
+	std::list<std::string> files;
+	std::list<QuiverFile> quiverFiles;
+	std::string strCurrentURI;
+	bool bRecursive;
+};
+
+const char* const szFileInfoAttributes =
+	G_FILE_ATTRIBUTE_STANDARD_NAME ","
+	G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+	G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
+	G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN ","
+	G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
+	G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
+	G_FILE_ATTRIBUTE_STANDARD_SIZE ","
+	G_FILE_ATTRIBUTE_STANDARD_ICON ","
+	G_FILE_ATTRIBUTE_ACCESS_CAN_READ ","
+	G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE ","
+	G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE ","
+	G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH ","
+	G_FILE_ATTRIBUTE_TIME_MODIFIED ","
+	G_FILE_ATTRIBUTE_TIME_CREATED;
+
+static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncFolderLoadData* pData);
+
 std::vector<std::string> ImageList::m_vectIgnorgedExtensions;
 
 class ImageList::ImageListImpl
@@ -101,6 +131,11 @@ public:
 	bool AddDirectory(const gchar* uri, bool bRecursive = false);
 	bool AddFile(const gchar*  uri);
 	bool AddFile(const gchar* uri,GFileInfo *info);
+	
+	static bool ShouldAddFile(const gchar* uri, GFileInfo *info);
+	static gpointer AsyncFolderLoadThread(gpointer data);
+	static gboolean AsyncFolderLoadCommit(gpointer data);
+	void CommitFolderLoad(AsyncFolderLoadData* pData);
 	
 	bool RemoveMonitor(string uri);
 	void Reload();
@@ -139,6 +174,8 @@ public:
 	
 	
 	unsigned int m_iCurrentIndex;
+
+	gint m_uiAsyncLoadGeneration;
 
 	ImageList::SortBy m_SortBy;
 	bool m_bSortAscend;
@@ -519,7 +556,6 @@ static gboolean timeout_path_changed(gpointer user_data)
 		switch (event_type)
 		{
 			case G_FILE_MONITOR_EVENT_DELETED:
-				printf("MONITOR IDLE DEL!\n");
 				if (impl->RemoveMonitor(itr->first))
 				{
 					unsigned int iOldSize = impl->m_QuiverFileList.size();
@@ -640,7 +676,6 @@ void monitor_callback (
 
 			impl->m_mapPathChanged[uri] = event_type;
 
-			printf("MONITOR CALLBACK! %d\n", event_type);
 			impl->m_iTimeoutPathChanged = g_timeout_add(50, timeout_path_changed,impl);
 
 			break;
@@ -662,6 +697,7 @@ ImageList::ImageListImpl::ImageListImpl(ImageList *pImageList)
 
 	m_bSortAscend = true;
 	m_iCurrentIndex = 0;
+	m_uiAsyncLoadGeneration = 0;
 }
 
 ImageList::ImageListImpl::~ImageListImpl()
@@ -674,37 +710,21 @@ void ImageList::ImageListImpl::LoadMimeTypes()
 {
 	if ( c_setSupportedMimeTypes.empty())
 	{
-		cout << "Supported file types: " << endl;
 		GSList *formats = gdk_pixbuf_get_formats ();
-		//GSList *writable_formats = NULL;
 		GdkPixbufFormat * fmt;
 		while ( NULL != formats )
 		{
 			fmt = (GdkPixbufFormat*)formats->data;
-			//cout << gdk_pixbuf_format_get_name(fmt) <<": " << endl;
-			//cout << gdk_pixbuf_format_get_description(fmt) << endl;
-			gchar ** ext_ptr_head = gdk_pixbuf_format_get_extensions(fmt);
+			gchar ** ext_ptr_head = gdk_pixbuf_format_get_mime_types(fmt);
 			gchar ** ext_ptr = ext_ptr_head;
 			while (NULL != *ext_ptr)
 			{
-				//cout << *ext_ptr << "," ;
-				ext_ptr++;
-			}
-			g_strfreev(ext_ptr_head);
-			//cout << endl;
-			ext_ptr_head = gdk_pixbuf_format_get_mime_types(fmt);
-			ext_ptr = ext_ptr_head;
-			while (NULL != *ext_ptr)
-			{
 				c_setSupportedMimeTypes.insert(*ext_ptr);
-				cout << *ext_ptr << "," ;
 				ext_ptr++;
 			}
 			g_strfreev(ext_ptr_head);
 			formats = g_slist_next(formats);
 		}
-		cout << endl;
-		//g_slist_foreach (formats, add_if_writable, &writable_formats);
 		g_slist_free (formats);
 #ifdef QUIVER_MAEMO
 		c_setSupportedMimeTypes.insert("sketch/png");
@@ -1100,64 +1120,353 @@ bool ImageList::ImageListImpl::AddFile(const gchar*  uri)
 	return bAdded;
 }
 
+bool ImageList::ImageListImpl::ShouldAddFile(const gchar* uri, GFileInfo *info)
+{
+	// don't add hidden files
+	if (g_file_info_get_is_hidden(info))
+		return false;
+
+	GFileType type = g_file_info_get_file_type(info);
+	if (G_FILE_TYPE_DIRECTORY == type)
+		return true;
+
+	std::string strURI = uri;
+
+	bool ignore = false;
+	for (std::vector<std::string>::iterator itr = ImageList::m_vectIgnorgedExtensions.begin();
+			ImageList::m_vectIgnorgedExtensions.end() != itr; ++itr)
+	{
+		if (boost::iends_with(strURI, *itr))
+		{
+			ignore = true;
+			break;
+		}
+	}
+
+	if (ignore)
+		return false;
+
+	const char* content_type = g_file_info_get_content_type(info);
+	if (NULL != content_type)
+	{
+		gchar* mimetype = g_content_type_get_mime_type(content_type);
+		bool bSupported = (c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype))
+			|| (g_strstr_len(mimetype, 5, "video") == mimetype);
+		g_free(mimetype);
+		return bSupported;
+	}
+
+	return false;
+}
+
 bool ImageList::ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
 {
 	bool bAdded = false;
 
-	// don't add hidden files
-	if (g_file_info_get_is_hidden(info))
+	if (!ShouldAddFile(uri, info))
 		return bAdded;
 
-	GFileType type = g_file_info_get_file_type(info);
-	if (G_FILE_TYPE_DIRECTORY == type)
-	{
-		QuiverFile f(uri, info);
-		m_QuiverFileList.push_back(f);
-		bAdded = true;
-	}
-	else
-	{
-		std::string strURI = uri;
+	QuiverFile f(uri, info);
+	m_QuiverFileList.push_back(f);
+	bAdded = true;
 
-		bool ignore = false;
-		for (std::vector<std::string>::iterator itr = ImageList::m_vectIgnorgedExtensions.begin();
-				ImageList::m_vectIgnorgedExtensions.end() != itr; ++itr)
-		{
-			if (boost::iends_with(strURI, *itr))
-			{
-				ignore = true;
-				break;
-			}
-		}
-
-		if (!ignore)
-		{
-			const char* content_type = g_file_info_get_content_type(info);
-			if (NULL != content_type)
-			{
-				gchar* mimetype = g_content_type_get_mime_type(content_type);
-				
-				if ( c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype ) )
-				{
-					QuiverFile f(uri, info);
-					m_QuiverFileList.push_back(f);
-					bAdded = true;
-				}
-				else if (g_strstr_len(mimetype, 5, "video") == mimetype) // video
-				{
-					QuiverFile f(uri, info);
-					m_QuiverFileList.push_back(f);
-					bAdded = true;
-				}
-				else
-				{
-					//printf("Unsupported mime_type: %s\n",mimetype);
-				}
-				g_free(mimetype);
-			}
-		}
-	}
 	return bAdded;
+}
+
+static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncFolderLoadData* pData)
+{
+	GFileEnumerator* enumerator = g_file_enumerate_children(dir, szFileInfoAttributes,
+			G_FILE_QUERY_INFO_NONE, NULL, NULL);
+
+	if (NULL == enumerator)
+		return;
+
+	GFileInfo* info = NULL;
+	while (NULL != (info = g_file_enumerator_next_file(enumerator, NULL, NULL)))
+	{
+		// a newer load has been started, so stop enumerating
+		if (g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
+		{
+			g_object_unref(info);
+			break;
+		}
+
+		const char* name = g_file_info_get_name(info);
+		GFile* child = g_file_get_child(dir, name);
+		GFileType type = g_file_info_get_file_type(info);
+		char* child_uri = g_file_get_uri(child);
+
+		if (G_FILE_TYPE_DIRECTORY == type
+			&& (0 == strcmp(".", name) || 0 == strcmp("..", name)))
+		{
+			g_object_unref(info);
+			g_object_unref(child);
+			g_free(child_uri);
+			continue;
+		}
+
+		if (G_FILE_TYPE_DIRECTORY == type)
+		{
+			if (pData->bRecursive)
+			{
+				pData->dirs.push_back(child_uri);
+				EnumerateChildren(impl, child, pData);
+			}
+			else if (ImageList::ImageListImpl::ShouldAddFile(child_uri, info))
+			{
+				pData->quiverFiles.push_back(QuiverFile(child_uri, info));
+			}
+		}
+		else if (ImageList::ImageListImpl::ShouldAddFile(child_uri, info))
+		{
+			pData->quiverFiles.push_back(QuiverFile(child_uri, info));
+		}
+
+		g_object_unref(info);
+		g_object_unref(child);
+		g_free(child_uri);
+	}
+	g_object_unref(enumerator);
+}
+
+gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
+{
+	AsyncFolderLoadData* pData = (AsyncFolderLoadData*)data;
+	ImageListImpl* impl = pData->impl;
+
+	// a single file argument means load the whole parent directory
+	// and select the file, mirroring the synchronous Add() behavior
+	bool bSingleFile = false;
+	if (1 == pData->folders.size())
+	{
+		GFile* file = g_file_new_for_commandline_arg(pData->folders.front().c_str());
+		GFileInfo* fileInfo = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_TYPE,
+				G_FILE_QUERY_INFO_NONE, NULL, NULL);
+		if (NULL != fileInfo && G_FILE_TYPE_REGULAR == g_file_info_get_file_type(fileInfo))
+		{
+			bSingleFile = true;
+		}
+		if (NULL != fileInfo)
+		{
+			g_object_unref(fileInfo);
+		}
+		g_object_unref(file);
+	}
+
+	std::list<std::string>::const_iterator itr;
+	for (itr = pData->folders.begin(); pData->folders.end() != itr; ++itr)
+	{
+		// a newer load has been started, so stop enumerating
+		if (g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
+			break;
+
+		GFile* entry = g_file_new_for_commandline_arg(itr->c_str());
+		GFileInfo* entryInfo = g_file_query_info(entry, szFileInfoAttributes,
+				G_FILE_QUERY_INFO_NONE, NULL, NULL);
+
+		if (NULL != entryInfo)
+		{
+			GFileType entryType = g_file_info_get_file_type(entryInfo);
+
+			if (G_FILE_TYPE_DIRECTORY == entryType)
+			{
+				EnumerateChildren(impl, entry, pData);
+			}
+			else if (G_FILE_TYPE_REGULAR == entryType && bSingleFile)
+			{
+				// load the whole parent directory and select this file
+				GFile* parent = g_file_get_parent(entry);
+				if (NULL != parent)
+				{
+					char* file_uri = g_file_get_uri(entry);
+					pData->strCurrentURI = file_uri;
+					g_free(file_uri);
+
+					EnumerateChildren(impl, parent, pData);
+
+					char* parent_uri = g_file_get_uri(parent);
+					pData->dirs.push_back(parent_uri);
+					g_free(parent_uri);
+				}
+				g_object_unref(parent);
+			}
+			else if (G_FILE_TYPE_REGULAR == entryType)
+			{
+				char* entry_uri = g_file_get_uri(entry);
+				if (ShouldAddFile(entry_uri, entryInfo))
+				{
+					pData->quiverFiles.push_back(QuiverFile(entry_uri, entryInfo));
+					pData->files.push_back(entry_uri);
+				}
+				g_free(entry_uri);
+			}
+		}
+
+		if (NULL != entryInfo)
+		{
+			g_object_unref(entryInfo);
+		}
+		g_object_unref(entry);
+	}
+
+	g_idle_add(AsyncFolderLoadCommit, pData);
+
+	return NULL;
+}
+
+gboolean ImageList::ImageListImpl::AsyncFolderLoadCommit(gpointer data)
+{
+	AsyncFolderLoadData* pData = (AsyncFolderLoadData*)data;
+
+	if (g_atomic_int_get(&pData->impl->m_uiAsyncLoadGeneration) == pData->uiGeneration)
+	{
+		ImageListImpl* impl = pData->impl;
+		size_t iOldSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
+		impl->CommitFolderLoad(pData);
+		size_t iNewSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
+		if (!(0 == iOldSize && 0 == iNewSize))
+		{
+			impl->m_pImageList->EmitContentsChangedEvent();
+		}
+	}
+
+	delete pData;
+
+	return FALSE;
+}
+
+void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
+{
+	Clear();
+
+	std::list<std::string>::const_iterator itr;
+	for (itr = pData->folders.begin(); pData->folders.end() != itr; ++itr)
+	{
+		pair<PathMonitorMap::iterator,bool> p = m_mapDirs.insert(PathMonitorPair(*itr,NULL));
+		if (p.second && m_bEnableMonitor)
+		{
+			GFile* dir = g_file_new_for_uri(itr->c_str());
+			p.first->second = g_file_monitor(dir, G_FILE_MONITOR_NONE, NULL, NULL);
+			if (NULL != p.first->second)
+			{
+				g_signal_connect(G_OBJECT(p.first->second), "changed", G_CALLBACK(monitor_callback), this);
+			}
+			g_object_unref(dir);
+		}
+	}
+	for (itr = pData->dirs.begin(); pData->dirs.end() != itr; ++itr)
+	{
+		pair<PathMonitorMap::iterator,bool> p = m_mapDirs.insert(PathMonitorPair(*itr,NULL));
+		if (p.second && m_bEnableMonitor)
+		{
+			GFile* dir = g_file_new_for_uri(itr->c_str());
+			p.first->second = g_file_monitor(dir, G_FILE_MONITOR_NONE, NULL, NULL);
+			if (NULL != p.first->second)
+			{
+				g_signal_connect(G_OBJECT(p.first->second), "changed", G_CALLBACK(monitor_callback), this);
+			}
+			g_object_unref(dir);
+		}
+	}
+	for (itr = pData->files.begin(); pData->files.end() != itr; ++itr)
+	{
+		pair<PathMonitorMap::iterator,bool> p = m_mapFiles.insert(PathMonitorPair(*itr,NULL));
+		if (p.second && m_bEnableMonitor)
+		{
+			GFile* file = g_file_new_for_uri(itr->c_str());
+			p.first->second = g_file_monitor(file, G_FILE_MONITOR_NONE, NULL, NULL);
+			if (NULL != p.first->second)
+			{
+				g_signal_connect(G_OBJECT(p.first->second), "changed", G_CALLBACK(monitor_callback), this);
+			}
+			g_object_unref(file);
+		}
+	}
+
+	m_QuiverFileList.assign(pData->quiverFiles.begin(), pData->quiverFiles.end());
+
+	if (!pData->strCurrentURI.empty())
+	{
+		SetCurrentImage(pData->strCurrentURI);
+	}
+	if (0 < m_QuiverFileList.size() && m_iCurrentIndex >= m_QuiverFileList.size())
+	{
+		m_iCurrentIndex = 0;
+	}
+	if (0 == m_QuiverFileList.size())
+	{
+		m_iCurrentIndex = 0;
+	}
+
+	Sort(!pData->strCurrentURI.empty());
+}
+
+void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive)
+{
+	ImageListImpl* impl = m_ImageListImplPtr.get();
+
+	if (0 == file_list->size())
+	{
+		// discard any in-flight loads
+		g_atomic_int_inc(&impl->m_uiAsyncLoadGeneration);
+
+		int iOldSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
+		impl->Clear();
+		if (0 != iOldSize)
+		{
+			EmitContentsChangedEvent();
+		}
+		return;
+	}
+
+	// skip the load if the folder set hasn't actually changed
+	{
+		StringSet setNewFolders;
+		list<string>::const_iterator itr;
+		for (itr = file_list->begin(); file_list->end() != itr; ++itr)
+		{
+			GFile* file = g_file_new_for_commandline_arg(itr->c_str());
+			char* uri = g_file_get_uri(file);
+			setNewFolders.insert(uri);
+			g_free(uri);
+			g_object_unref(file);
+		}
+
+		StringSet setOldFolders;
+		PathMonitorMap::iterator itr2;
+		for (itr2 = impl->m_mapDirs.begin(); impl->m_mapDirs.end() != itr2; ++itr2)
+		{
+			setOldFolders.insert(itr2->first);
+		}
+		for (itr2 = impl->m_mapFiles.begin(); impl->m_mapFiles.end() != itr2; ++itr2)
+		{
+			setOldFolders.insert(itr2->first);
+		}
+
+		if (setOldFolders == setNewFolders && 0 < impl->m_QuiverFileList.size())
+		{
+			return;
+		}
+	}
+
+	// snapshot the current image so it can be reselected after the load
+	string strCurrentURI;
+	if (0 < impl->m_QuiverFileList.size())
+	{
+		strCurrentURI = impl->m_QuiverFileList[impl->m_iCurrentIndex].GetURI();
+	}
+
+	gint uiGeneration = g_atomic_int_add(&impl->m_uiAsyncLoadGeneration, 1) + 1;
+
+	AsyncFolderLoadData* pData = new AsyncFolderLoadData();
+	pData->impl = impl;
+	pData->uiGeneration = uiGeneration;
+	pData->strCurrentURI = strCurrentURI;
+	pData->folders = *file_list;
+	pData->bRecursive = bRecursive;
+
+	GThread* thread = g_thread_new("quiver-folder-load", ImageList::ImageListImpl::AsyncFolderLoadThread, pData);
+	g_thread_unref(thread);
 }
 
 

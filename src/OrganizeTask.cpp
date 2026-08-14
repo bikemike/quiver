@@ -218,7 +218,7 @@ void OrganizeTask::Run()
 		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
 		if (nullptr == datetime)
 		{
-			printf("ERROR: Date/Time: %s\n", f.GetURI());
+			g_warning("Invalid date/time for %s", f.GetURI());
 		}
 
 		std::string strFolder = DoVariableSubstitution(m_strFolderTemplate, datetime, m_iDayExtension);
@@ -236,7 +236,7 @@ void OrganizeTask::Run()
 		{ 
 			if (G_IO_ERROR_EXISTS != error->code)
 			{
-				printf("error creating directory %s\n", strDstDir.c_str());
+				g_warning("error creating directory %s", strDstDir.c_str());
 				g_error_free(error);
 				continue;
 			}
@@ -350,7 +350,7 @@ void OrganizeTask::Run()
 		// if there was an error, 
 		if (NULL != error)
 		{
-			printf("Error moving file! %s to %s: %s\n", f.GetURI(), strDstPath.c_str(), error->message); 
+			g_warning("Error moving file! %s to %s: %s", f.GetURI(), strDstPath.c_str(), error->message); 
 			// message box asking if they want to skip, skip all, retry, cancel
 			g_error_free(error);
 			error = NULL;
