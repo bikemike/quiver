@@ -12,7 +12,7 @@ SUBDIRS =      \
 quiverdocdir = ${datadir}/doc/quiver
 
 quiverdoc_DATA = \
-	README\
+	README.md\
 	COPYING\
 	AUTHORS\
 	ChangeLog\

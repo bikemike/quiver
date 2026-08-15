@@ -107,7 +107,7 @@ public:
 	GtkCellRenderer* m_pCellRendererPixbuf;
 	FolderTree*      m_pFolderTree;
 	GHashTable*      m_pHashRootNodeOrder;
-	GtkTreeIter*     m_pTreeIterScrollTo;
+	gchar*           m_pScrollToURI;
 	std::set<guint>  m_setFolderThreads;
 	guint            m_iTimeoutScrollToCell;
 	GThreadPool*     m_pGThreadPool;
@@ -148,7 +148,7 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent) :
 {
 	m_pFolderTree = parent;
 	
-	m_pTreeIterScrollTo = NULL;
+	m_pScrollToURI = NULL;
 	m_pGThreadPool = g_thread_pool_new(thread_check_for_subdirs, this, 4, FALSE, NULL);
 	
 	CreateWidget();
@@ -159,6 +159,18 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 	m_bStopThreads = true;
 
 	g_thread_pool_free(m_pGThreadPool, TRUE, TRUE);
+
+	if (0 != m_iTimeoutScrollToCell)
+	{
+		g_source_remove(m_iTimeoutScrollToCell);
+		m_iTimeoutScrollToCell = 0;
+	}
+
+	if (NULL != m_pScrollToURI)
+	{
+		g_free(m_pScrollToURI);
+		m_pScrollToURI = NULL;
+	}
 
 	g_object_unref(m_pWidget);
 
@@ -252,6 +264,30 @@ GtkTreeIter* add_uri_to_tree(GtkTreeView *treeview, GtkTreeIter* iter, const gch
 	return iter_added;
 }
 
+struct FolderTreeFindURIData
+{
+	const gchar* uri;
+	GtkTreeIter iter;
+	gboolean found;
+};
+
+static gboolean folder_tree_find_uri_foreach(GtkTreeModel* model, GtkTreePath* path, GtkTreeIter* iter, gpointer user_data)
+{ (void)path;
+	FolderTreeFindURIData* data = (FolderTreeFindURIData*)user_data;
+
+	gchar* uri = NULL;
+	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_URI, &uri, -1);
+	if (NULL != uri && 0 == g_strcmp0(uri, data->uri))
+	{
+		data->iter = *iter;
+		data->found = TRUE;
+		g_free(uri);
+		return TRUE;
+	}
+	g_free(uri);
+	return FALSE;
+}
+
 static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 {
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)data;
@@ -259,7 +295,7 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 	
 	// wait untill all the thread subdir check functions have finished
 	int n_running = g_thread_pool_get_num_threads(pFolderTreeImpl->m_pGThreadPool);
-	if (0 != n_running || NULL == pFolderTreeImpl->m_pTreeIterScrollTo)
+	if (0 != n_running || NULL == pFolderTreeImpl->m_pScrollToURI)
 	{
 		rval = TRUE;
 	}
@@ -268,28 +304,41 @@ static gboolean timeout_folder_tree_scroll_to_cell(gpointer data)
 		// do processing
 		GtkTreeView* treeview = GTK_TREE_VIEW(pFolderTreeImpl->m_pWidget);
 		GtkTreeModel* model = gtk_tree_view_get_model (treeview);
-		GtkTreePath* path =  gtk_tree_model_get_path(model, pFolderTreeImpl->m_pTreeIterScrollTo);
 
-		gtk_tree_view_expand_to_path(treeview, path);
-		gtk_tree_view_scroll_to_cell(treeview, path, NULL, TRUE, .125, 0.);
+		// resolve the folder to scroll to by uri; a saved iter could point to
+		// a row that was removed from the tree while the threads were running
+		FolderTreeFindURIData find;
+		find.uri = pFolderTreeImpl->m_pScrollToURI;
+		find.found = FALSE;
+		gtk_tree_model_foreach(model, folder_tree_find_uri_foreach, &find);
 
-		GtkTreeSelection* selection;
-		selection = gtk_tree_view_get_selection(treeview);
-		
-		// don't stomp on a selection the user is making (rubber band lasso)
-		if (!pFolderTreeImpl->m_bButtonDown &&
-			gtk_tree_selection_count_selected_rows(selection) <= 1)
+		if (find.found)
 		{
-			gtk_tree_selection_unselect_all(selection);
-			gtk_tree_selection_select_iter(selection, pFolderTreeImpl->m_pTreeIterScrollTo);
+			GtkTreePath* path = gtk_tree_model_get_path(model, &find.iter);
+			if (NULL != path)
+			{
+				gtk_tree_view_expand_to_path(treeview, path);
+				gtk_tree_view_scroll_to_cell(treeview, path, NULL, TRUE, .125, 0.);
+
+				GtkTreeSelection* selection;
+				selection = gtk_tree_view_get_selection(treeview);
+
+				// don't stomp on a selection the user is making (rubber band lasso)
+				if (!pFolderTreeImpl->m_bButtonDown &&
+					gtk_tree_selection_count_selected_rows(selection) <= 1)
+				{
+					gtk_tree_selection_unselect_all(selection);
+					gtk_tree_selection_select_iter(selection, &find.iter);
+				}
+
+				gtk_tree_path_free(path);
+			}
 		}
-				
-		gtk_tree_path_free(path);
-		
+
 		pFolderTreeImpl->m_iTimeoutScrollToCell = 0;
 
-		gtk_tree_iter_free(pFolderTreeImpl->m_pTreeIterScrollTo);
-		pFolderTreeImpl->m_pTreeIterScrollTo = NULL;
+		g_free(pFolderTreeImpl->m_pScrollToURI);
+		pFolderTreeImpl->m_pScrollToURI = NULL;
 		
 		rval =  FALSE;
 	}
@@ -358,25 +407,32 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 		{
 			GtkTreeIter* iter = add_uri_to_tree(GTK_TREE_VIEW(m_pWidget), &iter_match, itr->c_str());
 
-			// we need a timeout here because if the list is still changing we need to wait
-			// before we scroll to the cell
-			if (NULL != m_pTreeIterScrollTo)
+			// expand the tree to the folder immediately; scrolling is deferred
+			// because the list may still be changing
+			if (NULL != iter)
 			{
-				gtk_tree_iter_free(m_pTreeIterScrollTo);
+				GtkTreePath* path = gtk_tree_model_get_path(model, iter);
+				if (NULL != path)
+				{
+					gtk_tree_view_expand_to_path(GTK_TREE_VIEW(m_pWidget), path);
+					gtk_tree_path_free(path);
+				}
+				gtk_tree_iter_free(iter);
 			}
-			m_pTreeIterScrollTo = iter;
-			
+
+			// remember which folder to scroll to by uri; a saved iter would
+			// become stale if the tree changes before the timeout fires
+			if (NULL != m_pScrollToURI)
+			{
+				g_free(m_pScrollToURI);
+			}
+			m_pScrollToURI = g_strdup(itr->c_str());
+
 			if (0 != m_iTimeoutScrollToCell)
 			{
 				g_source_remove(m_iTimeoutScrollToCell);
 			}
-			
-			GtkTreePath* path =  gtk_tree_model_get_path(model, iter);
-	
-			gtk_tree_view_expand_to_path(GTK_TREE_VIEW(m_pWidget), path);
-			
-			gtk_tree_path_free(path);	
-		
+
 			m_iTimeoutScrollToCell = g_timeout_add(50, timeout_folder_tree_scroll_to_cell, this);
 		}
 

@@ -796,10 +796,19 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 				gtk_style_context_save(context);
 				gtk_style_context_set_state(context, state);
 
-				cairo_set_source_rgba (cr, 1., 1., .7, .1);
-				gtk_render_background(context, cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
-				gtk_render_frame(context,cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				GdkRGBA sel_color = { .21, .52, .89, 1. };
+				gtk_style_context_lookup_color(context,"theme_selected_bg_color",&sel_color);
+
+				gdouble alpha = gtk_widget_has_focus(widget) ? .4 : .25;
+				cairo_set_source_rgba (cr, sel_color.red, sel_color.green, sel_color.blue, alpha);
+				cairo_rectangle(cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				cairo_fill(cr);
+
+				cairo_set_source_rgba (cr, sel_color.red, sel_color.green, sel_color.blue, 1.);
+				cairo_set_line_width(cr, 1.);
+				cairo_rectangle(cr, x_cell_offset+padding/2+.5, y_cell_offset+padding/2+.5, bound_width-1, bound_height-1);
 				cairo_stroke(cr);
+
 				gtk_style_context_restore(context);
 			}
 			else if (current_cell == iconview->priv->prelight_cell)

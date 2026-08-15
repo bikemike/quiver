@@ -19,7 +19,7 @@
 #define QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE       32
 #define QUIVER_IMAGE_VIEW_SCALE_HQ_TIMEOUT     200
 
-#define TRANSITION_FPS           30.
+#define TRANSITION_FPS           40.
 #define TRANSITION_MIN_TIMEOUT   5.
 #define TRANSITION_TIME          .5   //seconds
 
@@ -386,7 +386,7 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->view_mode_last = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
 	
 	imageview->priv->transitions_enabled = FALSE;
-	imageview->priv->transition_n_frames = 10;
+	imageview->priv->transition_n_frames = (gint)(TRANSITION_TIME * TRANSITION_FPS);
 	imageview->priv->transition_pixbuf_old = NULL;
 	imageview->priv->transition_pixbuf_new = NULL;
 	imageview->priv->transition_pixbufs_intermediate = NULL;
@@ -774,7 +774,7 @@ static void quiver_image_view_prepare_transition_pixbufs(QuiverImageView *imagev
 	for (i = 0 ; i < imageview->priv->transition_n_frames; ++i)
 	{
 		GdkPixbuf* pixbuf = 
-		pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, w, h);
+		pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, w, h);
 		imageview->priv->transition_pixbufs_intermediate = 
 			g_list_append(imageview->priv->transition_pixbufs_intermediate, pixbuf);
 	}
@@ -807,7 +807,11 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 		= g_list_position(first, imageview->priv->transition_pixbufs_intermediate);
 	gint size = g_list_length(first);
 
-	gint alpha = (gint)(255 * (gdouble)(pos+1)/(size+1));
+	gdouble t = (gdouble)pos / (gdouble)(size - 1);
+	t = CLAMP(t, 0., 1.);
+	t = t * t * (3. - 2. * t);
+
+	gint alpha = (gint)(255. * t);
 
 
 	GdkPixbuf* pixbuf = 
@@ -841,13 +845,9 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 	new_offset_w = MAX(0, new_offset_w - combined_offset_w);
 	new_offset_h = MAX(0, new_offset_h - combined_offset_h);
 	
-	GtkStyleContext *context = gtk_widget_get_style_context(GTK_WIDGET(imageview));
-	GdkRGBA c;
-	GValue value = G_VALUE_INIT;
-	gtk_style_context_get_property(context, "background-color", GTK_STATE_FLAG_NORMAL, &value);
-	c = *(GdkRGBA*)g_value_get_boxed(&value);
-	g_value_unset(&value);
-	gdk_pixbuf_fill(pixbuf, ((guint32)0xFF000000) | ((guint32)(c.red*255.999) << 16) | ((guint32)(c.green*255.999) << 8) | (guint32)(c.blue*255.999));
+	// leave the space between the two images transparent so the widget's
+	// own background shows through while the cross fade is in progress
+	gdk_pixbuf_fill(pixbuf, 0x00000000);
 	
 	// composite the old image
 	if (NULL != imageview->priv->transition_pixbuf_old)
@@ -1093,8 +1093,8 @@ static void draw_pixbuf(QuiverImageView *imageview, cairo_t *cr)
 
 
 	cairo_rectangle_int_t pixbuf_rect;
-	pixbuf_rect.x = MAX(0,(gint)((gtk_widget_get_allocated_width(widget) - width)/2. ));
-	pixbuf_rect.y = MAX(0,(gint)((gtk_widget_get_allocated_height(widget) - height)/2.));
+	pixbuf_rect.x = (gint)((gtk_widget_get_allocated_width(widget) - width)/2. );
+	pixbuf_rect.y = (gint)((gtk_widget_get_allocated_height(widget) - height)/2.);
 	pixbuf_rect.width = MIN(width,gtk_widget_get_allocated_width(widget));
 	pixbuf_rect.height = MIN(height,gtk_widget_get_allocated_height(widget));
 
@@ -2122,7 +2122,7 @@ static void quiver_image_view_transition_stop(QuiverImageView *imageview)
 static void quiver_image_view_add_transition_timeout(QuiverImageView *imageview)
 {
 	imageview->priv->transition_timeout_id 
-		= g_timeout_add(35,quiver_image_view_timeout_transition,imageview);
+		= g_timeout_add((guint)(1000. / TRANSITION_FPS),quiver_image_view_timeout_transition,imageview);
 }
 
 static gboolean quiver_image_view_timeout_transition(gpointer data)
@@ -2131,10 +2131,6 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 	QuiverImageView *imageview = (QuiverImageView*)data;
 	GtkWidget *widget;
 	widget = GTK_WIDGET(imageview);
-	
-	gint width, height;
-	width = 0;
-	height = 0;
 
 	if (NULL != imageview->priv->transition_pixbufs_intermediate)
 	{
@@ -2152,8 +2148,6 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 		{
 			if (NULL != imageview->priv->pixbuf_scaled)
 			{
-				width = gdk_pixbuf_get_width(imageview->priv->pixbuf_scaled);
-				height = gdk_pixbuf_get_height(imageview->priv->pixbuf_scaled);	
 				g_object_unref(imageview->priv->pixbuf_scaled);
 				imageview->priv->pixbuf_scaled = NULL;
 			}
@@ -2174,12 +2168,6 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 			g_object_ref(pixbuf);
 			imageview->priv->pixbuf_scaled = pixbuf;
 
-			if (NULL != imageview->priv->pixbuf_scaled)
-			{
-				width = gdk_pixbuf_get_width(imageview->priv->pixbuf_scaled);
-				height = gdk_pixbuf_get_height(imageview->priv->pixbuf_scaled);
-			}
-
 			GList* next = 
 				g_list_next(imageview->priv->transition_pixbufs_intermediate);
 			if (NULL != next)
@@ -2191,15 +2179,8 @@ static gboolean quiver_image_view_timeout_transition(gpointer data)
 			//rval = TRUE;
 		}
 		
-		cairo_rectangle_int_t pixbuf_rect;
-		pixbuf_rect.x = MAX(0,((gtk_widget_get_allocated_width(widget) - width)/2));
-		pixbuf_rect.y = MAX(0,((gtk_widget_get_allocated_height(widget) - height)/2));
-		pixbuf_rect.width = MIN(width,gtk_widget_get_allocated_width(widget));
-		pixbuf_rect.height = MIN(height,gtk_widget_get_allocated_height(widget));
-
 		if (gtk_widget_get_mapped (widget))
 		{
-			gdk_window_invalidate_rect(gtk_widget_get_window(widget),&pixbuf_rect,FALSE);
 			gtk_widget_queue_draw(widget);
 		}
 	}
