@@ -768,8 +768,8 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 			gulong current_cell = j * num_cols + i + num_adj_cells_y + num_adj_cols;
 
 
-			guint x_cell_offset = i * cell_width;
-			guint y_cell_offset = j * cell_height;
+			gint x_cell_offset = i * cell_width;
+			gint y_cell_offset = j * cell_height;
 
 			x_cell_offset -= adj_offset_x;
 			y_cell_offset -= adj_offset_y;
@@ -801,12 +801,12 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 
 				gdouble alpha = gtk_widget_has_focus(widget) ? .4 : .25;
 				cairo_set_source_rgba (cr, sel_color.red, sel_color.green, sel_color.blue, alpha);
-				cairo_rectangle(cr, x_cell_offset+padding/2, y_cell_offset+padding/2, bound_width, bound_height);
+				cairo_rectangle(cr, x_cell_offset+(gint)padding/2, y_cell_offset+(gint)padding/2, bound_width, bound_height);
 				cairo_fill(cr);
 
 				cairo_set_source_rgba (cr, sel_color.red, sel_color.green, sel_color.blue, 1.);
 				cairo_set_line_width(cr, 1.);
-				cairo_rectangle(cr, x_cell_offset+padding/2+.5, y_cell_offset+padding/2+.5, bound_width-1, bound_height-1);
+				cairo_rectangle(cr, x_cell_offset+(gint)padding/2+.5, y_cell_offset+(gint)padding/2+.5, bound_width-1, bound_height-1);
 				cairo_stroke(cr);
 
 				gtk_style_context_restore(context);
@@ -827,8 +827,8 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 				gtk_render_focus(
 					gtk_widget_get_style_context(widget),
 					cr,
-					x_cell_offset-1 + padding/2,
-					y_cell_offset-1 + padding/2,
+					x_cell_offset-1 + (gint)padding/2,
+					y_cell_offset-1 + (gint)padding/2,
 					bound_width+2,
 					bound_height +2);//x_cell_offset, y_cell_offset, bound_width, bound_height);
 
@@ -913,8 +913,8 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 #ifndef QUIVER_MAEMO // FIXME: drop shadow algorithm is too slow for maemo
 					GtkStateFlags state_flags = gtk_widget_get_state_flags(widget);
 					quiver_icon_view_draw_drop_shadow(iconview, cr, state_flags, 
-							x_cell_offset + x_icon_offset - border, 
-							y_cell_offset + y_icon_offset - border, 
+							x_cell_offset + x_icon_offset - (gint)border, 
+							y_cell_offset + y_icon_offset - (gint)border, 
 							pixbuf_width + border*2, 
 							pixbuf_height + border *2);
 #endif
@@ -964,10 +964,10 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 
 						cairo_save(cr);
 
-						cairo_rectangle(cr,x_cell_offset + padding/2 + 2 + 16*k ,y_cell_offset + padding/2 +2, pixbuf_width, pixbuf_height);
+						cairo_rectangle(cr,x_cell_offset + (gint)padding/2 + 2 + 16*k ,y_cell_offset + (gint)padding/2 +2, pixbuf_width, pixbuf_height);
 						cairo_clip(cr);
 
-						gdk_cairo_set_source_pixbuf(cr, overlay, x_cell_offset + padding/2 + 2 + 16*k ,y_cell_offset + padding/2 +2);
+						gdk_cairo_set_source_pixbuf(cr, overlay, x_cell_offset + (gint)padding/2 + 2 + 16*k ,y_cell_offset + (gint)padding/2 +2);
 						cairo_pattern_t* src = cairo_get_source(cr);
 						cairo_pattern_set_extend(src, CAIRO_EXTEND_REPEAT);
 						cairo_paint(cr);
