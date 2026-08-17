@@ -162,7 +162,9 @@ static gboolean timeout_event_motion_notify (gpointer user_data);
 static gchar* gst_time_format(gint64 time);
 static void viewer_scrub_seek(Viewer::ViewerImpl *pViewerImpl, GtkWidget *widget, gdouble x, gboolean final);
 
+#if VIDEO_ZOOM_SMOOTH_ANIMATION
 static gboolean video_zoom_timeout(gpointer data);
+#endif
 static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *py);
 static void video_zoom_resize_cb(GtkWidget *widget, GdkRectangle *allocation, gpointer user_data);
 static void video_zoom_raise_media_windows(Viewer::ViewerImpl *p);
@@ -509,7 +511,7 @@ public:
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline;
 	GtkWidget*  m_pVideoSinkWidget; // Changed from GstElement* to GtkWidget*
-	GtkWidget*  m_pVideoFixed;      // fixed container (fills the viewer area) holding the video sink widget
+	GtkWidget*  m_pVideoFixed;      // GtkLayout canvas (fills the viewer area, clips the video sink widget)
 	// how the digital zoom crop+scale chain is implemented, chosen at build time
 	// from the GPU acceleration actually available on the platform
 	typedef enum
@@ -526,20 +528,21 @@ public:
 	GstElement* m_pVideoZoomScaler; // scaler (HW-accelerated if available, else videoscale)
 	GstElement* m_pVideoZoomCaps;   // capsfilter forcing the scaled output frame size
 	GstElement* m_pVideoZoomInputCaps; // widens the chain's sink template to the decoder's memory type
-	gdouble     m_dVideoZoom;       // current video zoom factor (1.0 = fit)
+	gdouble     m_dVideoZoom;       // current video zoom factor (1.0 = actual size, like the image view)
 	gdouble     m_dVideoZoomFinal;  // target video zoom factor for the smooth animation
+	gdouble     m_dVideoZoomMin;    // lowest zoom allowed: the fit level seen so far (1.0 when actual size)
 	guint       m_iVideoZoomTimeoutID; // timer driving the smooth video zoom animation
-	gdouble     m_dVideoPanX;       // crop window left edge, in source pixels
-	gdouble     m_dVideoPanY;       // crop window top edge, in source pixels
+	gdouble     m_dVideoPanX;       // viewport (visible part of the frame) left edge, in source px
+	gdouble     m_dVideoPanY;       // viewport top edge, in source pixels
 	gdouble     m_dVideoLastWidgetW; // last applied video widget width (for zoom anchoring)
 	gdouble     m_dVideoLastWidgetH; // last applied video widget height
-	gdouble     m_dVideoLastOffX;    // last applied video widget x offset
-	gdouble     m_dVideoLastOffY;    // last applied video widget y offset
 	gdouble     m_dVideoLastZc;      // last applied pipeline crop factor
 	gboolean    m_bVideoZoomCropActive; // zoomcaps is forcing the scaled output size
+	gboolean    m_bVideoZoomInputCropActive; // zoominputcaps is forcing system-memory input for the crop
 	gboolean    m_bVideoPanning;    // left-button pan drag in progress
-	gdouble     m_dVideoPanStartX;  // pan drag start point (area coords)
-	gdouble     m_dVideoPanStartY;
+	gboolean    m_bVideoZoomToCursor; // zoom toward cursor position (set by scroll-wheel only)
+	gdouble     m_dVideoPanStartRootX; // pan drag start point, root (screen) coords
+	gdouble     m_dVideoPanStartRootY;
 	gdouble     m_dVideoPanStartPX; // crop window left/top at drag start
 	gdouble     m_dVideoPanStartPY;
 	gdouble     m_dVideoScrollAccum; // accumulated smooth-scroll delta for video zoom
@@ -659,13 +662,14 @@ void Viewer::ViewerImpl::UpdateUI()
 	}
 	
 	{
-		/* For videos the zoom factor is applied in the pipeline (1.0..8.0);
-		 * for stills it comes from the image view's magnification. */
+		/* For videos the zoom factor is applied in the pipeline (from the fit
+		 * level up to 8x of the actual size); for stills it comes from the
+		 * image view's magnification. */
 		gboolean bCanZoomIn, bCanZoomOut;
 		if (IsVideo())
 		{
 			bCanZoomIn = (m_dVideoZoomFinal < 8.0);
-			bCanZoomOut = (m_dVideoZoomFinal > 1.0);
+			bCanZoomOut = (m_dVideoZoomFinal > m_dVideoZoomMin);
 		}
 		else
 		{
@@ -992,11 +996,6 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		{
 			// show media controls
 			gtk_widget_show(m_pMediaControls);
-			// keep the video preview clean: the poster frame always shows
-			// fit-to-window (no magnification, no scrollbars); the video
-			// sink widget handles the actual display
-			quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
-			QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
 		}
 		else
 		{
@@ -1292,23 +1291,27 @@ viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_dat
 	if ((widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
 		&& pViewerImpl->m_bVideoPanning)
 	{
-		/* drag-to-pan: move the crop window so it follows the pointer */
+		/* drag-to-pan: move the viewport so the video follows the pointer.
+		 * The delta uses root coords because the widget slides against the
+		 * window while it overflows, so widget-relative motion is unreliable.
+		 * 1 screen px is (crop width)/(widget width) source px - or, since the
+		 * display keeps the frame's aspect, 1/(fit-to-area scale * zoom). */
 		gdouble srcPerPxX = 1., srcPerPxY = 1.;
 		if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
 		{
 			GtkAllocation allocation = {};
-			gtk_widget_get_allocation(widget, &allocation);
-			gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
+			gtk_widget_get_allocation(pViewerImpl->m_pVideoFixed, &allocation);
 			gdouble scale = MIN((gdouble)allocation.width / pViewerImpl->m_iVideoWidth,
 				(gdouble)allocation.height / pViewerImpl->m_iVideoHeight);
-			if (scale > 0.)
+			gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
+			if (scale * zoom > 0.)
 			{
-				srcPerPxX = pViewerImpl->m_iVideoWidth / (pViewerImpl->m_iVideoWidth * scale * zoom);
-				srcPerPxY = pViewerImpl->m_iVideoHeight / (pViewerImpl->m_iVideoHeight * scale * zoom);
+				srcPerPxX = 1. / (scale * zoom);
+				srcPerPxY = srcPerPxX;
 			}
 		}
-		pViewerImpl->m_dVideoPanX = pViewerImpl->m_dVideoPanStartPX - (event->x - pViewerImpl->m_dVideoPanStartX) * srcPerPxX;
-		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (event->y - pViewerImpl->m_dVideoPanStartY) * srcPerPxY;
+		pViewerImpl->m_dVideoPanX = pViewerImpl->m_dVideoPanStartPX - (event->x_root - pViewerImpl->m_dVideoPanStartRootX) * srcPerPxX;
+		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (event->y_root - pViewerImpl->m_dVideoPanStartRootY) * srcPerPxY;
 		pViewerImpl->ApplyVideoZoom();
 		pViewerImpl->RefreshAutoHideTimer();
 		return TRUE;
@@ -1366,7 +1369,32 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		|| 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_FILL_SCREEN))
 	{
 		QuiverImageViewMode zoom_mode = (QuiverImageViewMode)QuiverUtils::GetRadioActionCurrent(szAction);
-		quiver_image_view_set_view_mode(imageview,zoom_mode);		
+		if (pViewerImpl->IsVideo())
+		{
+			g_printerr("[DBG] menu zoom action: %s -> mode=%d\n", szAction, zoom_mode);
+			/* update the image view first so ApplyVideoZoom reads the new mode */
+			quiver_image_view_set_view_mode(imageview, zoom_mode);
+			/* re-center the visible viewport when changing modes during
+			 * playback, just like the first ApplyVideoZoom after a reset */
+			pViewerImpl->m_dVideoLastWidgetW = 0.;
+			pViewerImpl->ApplyVideoZoom();
+			pViewerImpl->UpdateUI();
+			if (!pViewerImpl->IsPlaying())
+			{
+				gint64 pos = 0;
+				if (gst_element_query_position(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_FORMAT_TIME, &pos))
+				{
+					gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline),
+						GST_FORMAT_TIME,
+						GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
+						pos);
+				}
+			}
+		}
+		else
+		{
+			quiver_image_view_set_view_mode(imageview, zoom_mode);
+		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_IN)
 #ifdef QUIVER_MAEMO
@@ -1376,7 +1404,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	{
 		if (pViewerImpl->IsVideo())
 		{
-			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom * 2.0);
+			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom * 1.25);
 			return;
 		}
 
@@ -1384,7 +1412,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
 				
 		quiver_image_view_set_magnification(imageview,
-						quiver_image_view_get_magnification(imageview)*2);
+						quiver_image_view_get_magnification(imageview)*1.25);
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_OUT)
 #ifdef QUIVER_MAEMO
@@ -1394,7 +1422,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	{
 		if (pViewerImpl->IsVideo())
 		{
-			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom / 2.0);
+			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom / 1.25);
 			return;
 		}
 
@@ -1402,7 +1430,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
 				
 		quiver_image_view_set_magnification(imageview,
-			quiver_image_view_get_magnification(imageview)/2);
+			quiver_image_view_get_magnification(imageview)/1.25);
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CW) || 0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CW_2))
 	{
@@ -1599,6 +1627,7 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 		(event->state & GDK_CONTROL_MASK || event->state & GDK_SHIFT_MASK))
 	{
 		const gdouble zoom_step = 1.25;
+		pViewerImpl->m_bVideoZoomToCursor = TRUE;
 
 		switch (event->direction)
 		{
@@ -1625,13 +1654,15 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 				pViewerImpl->m_dVideoScrollAccum += delta;
 				if (pViewerImpl->m_dVideoScrollAccum >= 1.0)
 				{
+					/* positive delta scrolls down, which zooms out, matching
+					 * the image view's smooth-scroll zoom direction */
 					pViewerImpl->m_dVideoScrollAccum = 0.;
-					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom * zoom_step);
+					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom / zoom_step);
 				}
 				else if (pViewerImpl->m_dVideoScrollAccum <= -1.0)
 				{
 					pViewerImpl->m_dVideoScrollAccum = 0.;
-					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom / zoom_step);
+					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom * zoom_step);
 				}
 				break;
 			}
@@ -2201,16 +2232,24 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 {
 	if (!IsVideo())
 		return;
-
 	gchar* uri = NULL;
 	g_object_get(G_OBJECT(m_pPipeline), "current-uri", &uri, NULL);
+	const gchar* cur = m_ImageListPtr->GetCurrent().GetURI();
+	g_printerr("[DBG] PlayPauseVideo: uri_match=%d videoW=%d videoH=%d\n",
+		0 == g_strcmp0(uri, cur), m_iVideoWidth, m_iVideoHeight);
 	if (0 == g_strcmp0(uri, m_ImageListPtr->GetCurrent().GetURI()))
 	{
 		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtksink
 		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 		if (m_pVideoSinkWidget != NULL)
 		{
-			gtk_widget_show(m_pVideoSinkWidget);
+			/* The GStreamer sink auto-shows its widget on the first buffer,
+			 * overriding gtk_widget_hide, so use opacity to suppress the
+			 * default-size display until the caps probe applies the zoom. */
+			if (m_iVideoWidth > 0)
+				gtk_widget_set_opacity(m_pVideoSinkWidget, 1.0);
+			else
+				gtk_widget_set_opacity(m_pVideoSinkWidget, 0.0);
 		}
 		GstState current;
 		// has the right video
@@ -2241,13 +2280,18 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	}
 	else
 	{
+		g_printerr("[DBG] PlayPauseVideo: DIFFERENT URI, starting new pipeline\n");
 		StopVideo(false);
 		//quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView), NULL); // Not needed, gtksink handles display
 		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtksink
 		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 		if (m_pVideoSinkWidget != NULL)
 		{
-			gtk_widget_show(m_pVideoSinkWidget);
+			/* hide until the caps probe applies the correct zoom for the
+			 * new video; stale m_iVideoWidth from a different video would
+			 * compute the wrong zoom anyway */
+			gtk_widget_set_opacity(m_pVideoSinkWidget, 0.0);
+			g_printerr("[DBG] PlayPauseVideo: DIFF URI -> opacity=0\n");
 		}
 		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
@@ -2334,6 +2378,7 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	 * dimensions until the caps probe reports them */
 	m_dVideoZoom = 1.0;
 	m_dVideoZoomFinal = 1.0;
+	m_dVideoZoomMin = 1.0;
 	m_dVideoScrollAccum = 0.;
 	if (m_iVideoZoomTimeoutID != 0)
 	{
@@ -2344,17 +2389,30 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_dVideoPanY = 0.;
 	m_dVideoLastWidgetW = 0.;
 	m_dVideoLastWidgetH = 0.;
-	m_dVideoLastOffX = 0.;
 	m_dVideoLastZc = 1.0;
 	/* reset the zoom chain to its full-frame passthrough state while the
 	 * source frame size is still known */
 	ApplyVideoZoom();
-	m_iVideoWidth = 0;
-	m_iVideoHeight = 0;
+	/* keep m_iVideoWidth/Height so the resize callback can re-apply the
+	 * view mode immediately when the video page becomes visible again;
+	 * the caps probe overwrites them for the new video on the first frame */
 	m_bVideoZoomCropActive = FALSE;
+	m_bVideoZoomInputCropActive = FALSE;
 	if (m_pVideoZoomCaps != NULL)
 	{
 		g_object_set(G_OBJECT(m_pVideoZoomCaps), "caps", NULL, NULL);
+	}
+	/* undo the crop's forced system-memory conversion so the next video
+	 * negotiates the fast VAMemory passthrough again */
+	if (m_pVideoZoomInputCaps != NULL)
+	{
+		GstCaps* input = gst_caps_new_empty();
+		GstCaps* va = gst_caps_new_empty_simple("video/x-raw");
+		gst_caps_set_features(va, 0, gst_caps_features_from_string("memory:VAMemory"));
+		gst_caps_append(input, va);
+		gst_caps_append(input, gst_caps_new_empty_simple("video/x-raw"));
+		g_object_set(G_OBJECT(m_pVideoZoomInputCaps), "caps", input, NULL);
+		gst_caps_unref(input);
 	}
 
 
@@ -2419,8 +2477,8 @@ viewer_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user
 		gdk_seat_ungrab(gdk_display_get_default_seat(pan_display));
 
 		/* a click (no meaningful drag) toggles play/pause */
-		if (ABS(event->x - pViewerImpl->m_dVideoPanStartX) < 5.
-			&& ABS(event->y - pViewerImpl->m_dVideoPanStartY) < 5.)
+		if (ABS(event->x_root - pViewerImpl->m_dVideoPanStartRootX) < 5.
+			&& ABS(event->y_root - pViewerImpl->m_dVideoPanStartRootY) < 5.)
 		{
 			if (pViewerImpl->IsVideo())
 				pViewerImpl->PlayPauseVideo();
@@ -2480,8 +2538,8 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 			if (pViewerImpl->IsVideo())
 			{
 				pViewerImpl->m_bVideoPanning = TRUE;
-				pViewerImpl->m_dVideoPanStartX = event->x;
-				pViewerImpl->m_dVideoPanStartY = event->y;
+				pViewerImpl->m_dVideoPanStartRootX = event->x_root;
+				pViewerImpl->m_dVideoPanStartRootY = event->y_root;
 				pViewerImpl->m_dVideoPanStartPX = pViewerImpl->m_dVideoPanX;
 				pViewerImpl->m_dVideoPanStartPY = pViewerImpl->m_dVideoPanY;
 				if (pViewerImpl->m_pVideoSinkWidget != NULL)
@@ -2589,10 +2647,27 @@ Viewer::ViewerImpl::~ViewerImpl()
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 }
 
-static gboolean video_zoom_apply_idle(gpointer user_data)
+static gboolean video_apply_zoom_idle(gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	static int lastMode = -1, lastW = -1, lastH = -1;
+	static gboolean lastZc = FALSE;
+	QuiverImageViewMode curMode =
+		quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+	if (curMode != lastMode || pViewerImpl->m_iVideoWidth != lastW
+		|| pViewerImpl->m_iVideoHeight != lastH || pViewerImpl->m_bVideoZoomToCursor != lastZc)
+	{
+		g_printerr("[DBG] zoom state: mode=%d %dx%d zcCursor=%d\n",
+			curMode, pViewerImpl->m_iVideoWidth, pViewerImpl->m_iVideoHeight,
+			pViewerImpl->m_bVideoZoomToCursor);
+		lastMode = curMode;
+		lastW = pViewerImpl->m_iVideoWidth;
+		lastH = pViewerImpl->m_iVideoHeight;
+		lastZc = pViewerImpl->m_bVideoZoomToCursor;
+	}
 	pViewerImpl->ApplyVideoZoom();
+	if (pViewerImpl->m_pVideoSinkWidget != NULL)
+		gtk_widget_set_opacity(pViewerImpl->m_pVideoSinkWidget, 1.0);
 	return FALSE;
 }
 
@@ -2649,13 +2724,11 @@ static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data)
 
 static void video_zoom_resize_cb(GtkWidget *widget, GdkRectangle *allocation, gpointer user_data)
 {
-	/* re-fit the video display when the viewer area changes; defer to idle so
-	 * the widget size request does not re-enter the layout pass */
 	(void)widget;
 	(void)allocation;
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
-		g_idle_add_full(G_PRIORITY_HIGH, video_zoom_apply_idle, pViewerImpl, NULL);
+		g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, pViewerImpl, NULL);
 	video_zoom_raise_media_windows(pViewerImpl);
 }
 
@@ -2680,9 +2753,10 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 				{
 					pViewerImpl->m_iVideoWidth = w;
 					pViewerImpl->m_iVideoHeight = h;
+					g_printerr("[DBG] caps_probe: got %dx%d\n", w, h);
 					/* element properties must not be touched from the streaming
 					 * thread, so re-apply the zoom on the main thread */
-					g_idle_add_full(G_PRIORITY_HIGH, video_zoom_apply_idle, pViewerImpl, NULL);
+					g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, pViewerImpl, NULL);
 				}
 			}
 		}
@@ -2690,15 +2764,63 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 	return GST_PAD_PROBE_OK;
 }
 
+static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+{ (void)pad; (void)user_data;
+
+	/* gtkglsink pushes an upstream reconfigure event whenever its widget is
+	 * resized, and the crop/caps changes from zooming do too.  If that event
+	 * reaches decodebin, the hardware decoder must renegotiate its output
+	 * mid-stream, which fails and aborts playback with "Internal data stream
+	 * error" (qtdemux not-negotiated).  The zoom bin is self-contained: its
+	 * first element accepts whatever caps the decoder provides, so swallow
+	 * the reconfigure here instead of letting it disturb the decode chain. */
+	if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_EVENT_UPSTREAM)
+	{
+		GstEvent *event = GST_PAD_PROBE_INFO_EVENT(info);
+		if (GST_EVENT_TYPE(event) == GST_EVENT_RECONFIGURE)
+			return GST_PAD_PROBE_DROP;
+	}
+	return GST_PAD_PROBE_OK;
+}
+
+/* Probe on zoomcaps' src pad: the bin-internal crop/scaler changes push
+ * downstream CAPS and RECONFIGURE events every time the user zooms, but
+ * zoomcaps always forces full-frame DMABuf output so glupload's input caps
+ * never actually change.  Without this probe each crop change triggers a
+ * glupload re-negotiation (upload-method selection + buffer-pool allocation)
+ * that can stall the streaming thread for seconds while the main thread
+ * piles up more reconfigure events.  Drop redundant downstream events so
+ * glupload negotiates once at startup and is left alone afterwards. */
+/* Smooth zoom animation is opt-in: a smooth animation changes the crop on
+ * every tick, and the VA scaler re-negotiates its output on every crop
+ * change, so the scaler lags behind the state and the displayed zoom appears
+ * stuck / range-limited until the pipeline catches up (waiting for the next
+ * key frame to resync).  Instant zoom applies the crop once per gesture and
+ * tracks the state exactly; flip this to 1 to re-enable the animation. */
+#define VIDEO_ZOOM_SMOOTH_ANIMATION 0
+
 void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 {
-	/* clamp to [1.0, 8.0]: 1.0 shows the whole frame, higher values crop it */
-	if (zoom < 1.0)
-		zoom = 1.0;
+	/* zooming with +/- or the wheel leaves the view modes and pins the
+	 * factor: the zoom is relative to the actual size (1.0 = 100%), clamped
+	 * from the fit level (the smallest scale the video has been seen at) up
+	 * to 8x of the actual size, so the same image-like zoom is available no
+	 * matter how small the window is */
+	quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView),
+		QUIVER_IMAGE_VIEW_MODE_ZOOM);
+	if (zoom < m_dVideoZoomMin)
+		zoom = m_dVideoZoomMin;
 	else if (zoom > 8.0)
 		zoom = 8.0;
+	QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_ZOOM);
 
-	/* animate toward the target so the video eases in like the image view */
+#if VIDEO_ZOOM_SMOOTH_ANIMATION
+	/* animate toward the target so the video eases in like the image view.
+	 * The animation only moves the crop inside the zoom bin and resizes the
+	 * sink widget; the reconfigure probe swallows the resize's upstream
+	 * reconfigure at the bin boundary and the always-on capsfilter keeps the
+	 * GL upload's input caps fixed, so the per-tick changes no longer storm
+	 * the decode chain (the failures that forced the instant version). */
 	if (zoom != m_dVideoZoomFinal)
 	{
 		m_dVideoZoomFinal = zoom;
@@ -2707,6 +2829,21 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 			m_iVideoZoomTimeoutID = g_timeout_add(30, video_zoom_timeout, this);
 		}
 	}
+#else
+	/* apply the zoom immediately instead of animating it: a smooth animation
+	 * changes the crop every 30 ms and the VA scaler re-negotiates its output
+	 * on every change, so the scaler lags and the displayed zoom looks stuck
+	 * until the pipeline resyncs on the next key frame.  One crop change per
+	 * gesture renegotiates once, the same as a window resize, which is safe. */
+	if (m_iVideoZoomTimeoutID != 0)
+	{
+		g_source_remove(m_iVideoZoomTimeoutID);
+		m_iVideoZoomTimeoutID = 0;
+	}
+	m_dVideoZoom = zoom;
+	m_dVideoZoomFinal = zoom;
+	ApplyVideoZoom();
+#endif
 	UpdateUI();
 }
 
@@ -2751,9 +2888,8 @@ static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *
 	gint h = gtk_widget_get_allocated_height(area);
 	if (w <= 0 || h <= 0)
 		return;
-	/* the fixed is a no-window container, so gtk_widget_get_window() only
-	 * gives the nearest ancestor window; use the toplevel window for the
-	 * pointer lookup and translate the result back into the area's coords */
+	/* use the toplevel window for the pointer lookup and translate the
+	 * result back into the area's coords */
 	GtkWidget *toplevel = gtk_widget_get_toplevel(area);
 	if (toplevel == NULL || !gtk_widget_get_realized(toplevel))
 		return;
@@ -2775,6 +2911,7 @@ static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *
 	}
 }
 
+#if VIDEO_ZOOM_SMOOTH_ANIMATION
 static gboolean video_zoom_timeout(gpointer data)
 {
 	/* ease the zoom toward its target the way the image view does: halve the
@@ -2801,6 +2938,7 @@ static gboolean video_zoom_timeout(gpointer data)
 	p->ApplyVideoZoom();
 	return TRUE;
 }
+#endif
 
 void Viewer::ViewerImpl::ApplyVideoZoom()
 {
@@ -2818,37 +2956,78 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 
 	gdouble srcW = m_iVideoWidth;
 	gdouble srcH = m_iVideoHeight;
-	gdouble zoom = MAX(m_dVideoZoom, 1.0);
 
-	/* the whole frame scaled to fit the viewer area (zoom 1.0) */
-	gdouble scale = MIN((gdouble)areaW / srcW, (gdouble)areaH / srcH);
-	if (scale <= 0.)
-		scale = 1.;
-	gdouble fitW = srcW * scale;
-	gdouble fitH = srcH * scale;
+	/* the zoom is the magnification relative to the video's actual size
+	 * (1.0 = 100%), exactly like the image view: FIT never upscales a small
+	 * video past its actual size, FIT_STRETCH upscales it to fill the window,
+	 * ACTUAL_SIZE pins 100%, FILL_SCREEN covers the whole window, and ZOOM
+	 * keeps the factor the user zoomed to with +/- or the wheel.  The FIT
+	 * variants are recomputed here on every window resize so the video
+	 * re-fits; the others keep their fixed zoom. */
+	gdouble fitScale = MIN((gdouble)areaW / srcW, (gdouble)areaH / srcH);
+	if (fitScale <= 0.)
+		fitScale = 1.;
+	gdouble fillScale = MAX((gdouble)areaW / srcW, (gdouble)areaH / srcH);
+	gdouble fitZoom = MIN(fitScale, 1.0);
 
-	/* the video display grows with the zoom until it fills the viewer area,
-	 * so it fills more of the window as you zoom in, like an image */
-	gdouble widgetW = MIN(fitW * zoom, (gdouble)areaW);
-	gdouble widgetH = fitH * widgetW / fitW;
+	m_dVideoZoomMin = MIN(m_dVideoZoomMin, fitZoom);
+
+	gdouble zoom;
+	QuiverImageViewMode videoViewMode =
+		quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
+	switch (videoViewMode)
+	{
+		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
+			zoom = fitZoom;
+			break;
+		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
+			zoom = fitScale;
+			break;
+		case QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE:
+			zoom = 1.0;
+			break;
+		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
+			zoom = fillScale;
+			break;
+		default:
+			zoom = CLAMP(m_dVideoZoom, m_dVideoZoomMin, 8.0);
+			break;
+	}
+	m_dVideoZoom = zoom;
+
+	/* the video display grows with the zoom until it covers the viewer area,
+	 * like an image; zooming beyond that is covered by the crop + upscale
+	 * below.  The widget is also capped so gtkglsink's GL surface stays
+	 * within limits on huge windows; past the cap the crop covers the extra
+	 * zoom. */
+	gdouble effZoom = MIN(zoom, MIN(fillScale, 4096. / MAX(srcW, srcH)));
+	gdouble widgetW = srcW * effZoom;
+	gdouble widgetH = srcH * effZoom;
 
 	/* the part of the zoom the display cannot cover is a crop + upscale in
 	 * the pipeline (crop the source region and scale it back to full frame) */
-	gdouble zc = (fitW * zoom) / widgetW;
+	gdouble zc = zoom / effZoom;
 	if (zc < 1.0)
 		zc = 1.0;
 	gdouble cropW = srcW / zc;
 	gdouble cropH = srcH / zc;
 
-	gdouble offX = (areaW - widgetW) / 2.;
-	gdouble offY = (areaH - widgetH) / 2.;
+	gboolean cropping = (zc > 1.01);
+
+	/* the visible region in source pixels: what the window actually shows of
+	 * the (up-scaled) crop.  Computed before the pan so the centering below
+	 * aligns the viewport — not the larger crop — with the window center. */
+	gdouble vw = areaW * cropW / widgetW;
+	gdouble vh = areaH * cropH / widgetH;
 
 	/* keep the source pixel under the pointer fixed while the zoom changes,
 	 * so the video zooms in on the cursor; when the pointer is not over the
 	 * area (e.g. a toolbar zoom button) zoom about the center instead of the
-	 * crop's corner (skipped while dragging so the user's pan is not overridden) */
-	if (!m_bVideoPanning && m_dVideoLastWidgetW > 0.)
+	 * crop's corner (skipped while dragging so the user's pan is not overridden,
+	 * and skipped for menu/toolbar zooms which should center) */
+	if (!m_bVideoPanning && m_bVideoZoomToCursor && m_dVideoLastWidgetW > 0.)
 	{
+		m_bVideoZoomToCursor = FALSE;
 		gdouble px = -1., py = -1.;
 		video_zoom_get_pointer(this, &px, &py);
 		if (px < 0. || py < 0.)
@@ -2856,33 +3035,65 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			px = areaW / 2.;
 			py = areaH / 2.;
 		}
+		/* the source pixel under screen point (px,py) is pan + px*crop/widget */
 		{
-			gdouble srcX = m_dVideoPanX + (px - m_dVideoLastOffX) * (srcW / m_dVideoLastZc) / m_dVideoLastWidgetW;
-			gdouble srcY = m_dVideoPanY + (py - m_dVideoLastOffY) * (srcH / m_dVideoLastZc) / m_dVideoLastWidgetH;
-			m_dVideoPanX = srcX - (px - offX) * (srcW / zc) / widgetW;
-			m_dVideoPanY = srcY - (py - offY) * (srcH / zc) / widgetH;
+			gdouble srcX = m_dVideoPanX + px * (srcW / m_dVideoLastZc) / m_dVideoLastWidgetW;
+			gdouble srcY = m_dVideoPanY + py * (srcH / m_dVideoLastZc) / m_dVideoLastWidgetH;
+			m_dVideoPanX = srcX - px * (srcW / zc) / widgetW;
+			m_dVideoPanY = srcY - py * (srcH / zc) / widgetH;
 		}
 	}
-
-	gboolean cropping = (zc > 1.01);
-	if (!cropping)
+	else if (!m_bVideoPanning && m_dVideoLastWidgetW == 0.)
 	{
-		/* passthrough: no crop, no pan */
-		m_dVideoPanX = 0.;
-		m_dVideoPanY = 0.;
+		/* first ApplyVideoZoom after a reset (StopVideo / init): center the
+		 * visible viewport in the source, matching the image view's
+		 * set_default_adjustment_values centering */
+		m_dVideoPanX = MAX(0., (srcW - vw) / 2.);
+		m_dVideoPanY = MAX(0., (srcH - vh) / 2.);
 	}
 
-	/* keep the panning window within the frame */
-	m_dVideoPanX = CLAMP(m_dVideoPanX, 0., srcW - cropW);
-	m_dVideoPanY = CLAMP(m_dVideoPanY, 0., srcH - cropH);
+	/* The window shows a viewport of the (up-scaled) crop, and the pan is the
+	 * viewport's left/top in source pixels.  When the widget overflows the
+	 * window, it is slid so the viewport can reach the very edges of the frame
+	 * (otherwise the clip keeps the corners - e.g. a security camera's OSD
+	 * timestamp - out of reach); when it fits, the whole crop is visible and
+	 * panning moves the crop itself. */
+	gdouble cropLeftD = 0., cropTopD = 0., offX, offY;
+
+	if (widgetW > areaW)
+	{
+		m_dVideoPanX = CLAMP(m_dVideoPanX, 0., srcW - vw);
+		gdouble d = cropW - vw;   /* crop margin the window cannot show */
+		cropLeftD = CLAMP(m_dVideoPanX - d / 2., 0., srcW - cropW);
+		offX = (cropLeftD - m_dVideoPanX) * widgetW / cropW;
+	}
+	else
+	{
+		m_dVideoPanX = CLAMP(m_dVideoPanX, 0., srcW - cropW);
+		cropLeftD = m_dVideoPanX;
+		offX = (areaW - widgetW) / 2.;
+	}
+	if (widgetH > areaH)
+	{
+		m_dVideoPanY = CLAMP(m_dVideoPanY, 0., srcH - vh);
+		gdouble d = cropH - vh;
+		cropTopD = CLAMP(m_dVideoPanY - d / 2., 0., srcH - cropH);
+		offY = (cropTopD - m_dVideoPanY) * widgetH / cropH;
+	}
+	else
+	{
+		m_dVideoPanY = CLAMP(m_dVideoPanY, 0., srcH - cropH);
+		cropTopD = m_dVideoPanY;
+		offY = (areaH - widgetH) / 2.;
+	}
 
 	gint cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0;
 	if (cropping)
 	{
 		gint cropWidth = MAX(1, (gint)(cropW + 0.5));
 		gint cropHeight = MAX(1, (gint)(cropH + 0.5));
-		cropLeft = (gint)(m_dVideoPanX + 0.5);
-		cropTop = (gint)(m_dVideoPanY + 0.5);
+		cropLeft = (gint)(cropLeftD + 0.5);
+		cropTop = (gint)(cropTopD + 0.5);
 		cropRight = (gint)srcW - cropWidth - cropLeft;
 		cropBottom = (gint)srcH - cropHeight - cropTop;
 	}
@@ -2922,7 +3133,70 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	 * keeps negotiating directly with the GL sink (the known-good reference) */
 	if (m_pVideoZoomCaps != NULL)
 	{
-		if (cropping && !m_bVideoZoomCropActive)
+		if (m_VideoZoomType == VIDEO_ZOOM_SOFTWARE)
+		{
+			/* software scaler: force the output to system-memory full-frame
+			 * video permanently instead of flipping the caps with the crop.
+			 * glupload's zero-copy DMABuf EGLImage import path cannot be
+			 * re-negotiated when the videoscale output changes size/format
+			 * mid-playback ("Failed to upload buffer"), while the CPU upload
+			 * path it selects for system memory is stable.  The caps are set
+			 * once, so nothing downstream re-negotiates on later zooms. */
+			if (!m_bVideoZoomCropActive)
+			{
+				GstCaps *caps = gst_caps_new_simple("video/x-raw",
+					"width", G_TYPE_INT, (gint)srcW,
+					"height", G_TYPE_INT, (gint)srcH,
+					NULL);
+				gst_caps_set_features(caps, 0,
+					gst_caps_features_from_string("memory:SystemMemory"));
+				g_object_set(G_OBJECT(m_pVideoZoomCaps), "caps", caps, NULL);
+				gst_caps_unref(caps);
+				m_bVideoZoomCropActive = TRUE;
+			}
+		}
+		else if (m_VideoZoomType == VIDEO_ZOOM_MEDIA_SDK)
+		{
+			/* the va scaler (vapostproc) can only emit VAMemory/DMABuf, and
+			 * glupload's zero-copy DMABuf EGLImage import cannot be
+			 * re-negotiated mid-playback: glupload responds to a caps change
+			 * by sending a caps event upstream, which makes decodebin
+			 * re-negotiate the hardware decoder and aborts playback with
+			 * qtdemux "not-negotiated" or glupload "Failed to upload buffer".
+			 * Force the scaler to always emit full-frame DMABuf instead of
+			 * flipping the caps with the crop: the output caps never change
+			 * while zooming, so glupload negotiates once at startup, and a
+			 * crop change only touches the videocrop -> scaler link inside
+			 * the bin.  The videocrop itself only crops system memory, so
+			 * the first time the crop actually engages the zoominput caps
+			 * also force a VAMemory -> system-memory conversion; the reconfigure
+			 * probe on the bin's input swallows the re-negotiation so the
+			 * hardware decoder is never disturbed.  Until then the chain stays
+			 * in the fast VAMemory passthrough (no full-frame copy). */
+			if (!m_bVideoZoomCropActive)
+			{
+				GstCaps *caps = gst_caps_new_simple("video/x-raw",
+					"width", G_TYPE_INT, (gint)srcW,
+					"height", G_TYPE_INT, (gint)srcH,
+					NULL);
+				gst_caps_set_features(caps, 0,
+					gst_caps_features_from_string("memory:DMABuf"));
+				g_object_set(G_OBJECT(m_pVideoZoomCaps), "caps", caps, NULL);
+				gst_caps_unref(caps);
+				m_bVideoZoomCropActive = TRUE;
+			}
+			if (cropping && m_pVideoZoomInputCaps != NULL &&
+				!m_bVideoZoomInputCropActive)
+			{
+				GstCaps *in_caps = gst_caps_new_empty_simple("video/x-raw");
+				gst_caps_set_features(in_caps, 0,
+					gst_caps_features_from_string("memory:SystemMemory"));
+				g_object_set(G_OBJECT(m_pVideoZoomInputCaps), "caps", in_caps, NULL);
+				gst_caps_unref(in_caps);
+				m_bVideoZoomInputCropActive = TRUE;
+			}
+		}
+		else if (cropping && !m_bVideoZoomCropActive)
 		{
 			GstCaps *caps;
 			if (m_VideoZoomType == VIDEO_ZOOM_NVIDIA)
@@ -2943,17 +3217,22 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 		}
 	}
 
-	/* the widget is never larger than the viewer area, so the visible region
-	 * is exactly the crop window; center it and let the fixed clip it */
+	/* size the video widget to the display and move it: centered when it fits,
+	 * slid against the viewport pan when it overflows (offX/offY are negative
+	 * then, and the fixed clips the part outside the window) */
 	gtk_widget_set_size_request(m_pVideoSinkWidget,
 		MAX(1, (gint)(widgetW + 0.5)), MAX(1, (gint)(widgetH + 0.5)));
-	gtk_fixed_move(GTK_FIXED(m_pVideoFixed), m_pVideoSinkWidget,
+	gtk_layout_move(GTK_LAYOUT(m_pVideoFixed), m_pVideoSinkWidget,
 		(gint)(offX + 0.5), (gint)(offY + 0.5));
+
+	/* report the zoom percentage in the statusbar, like the image view does
+	 * (only while the video is actually shown, so a resize idle while viewing
+	 * an image does not clobber the image's percentage) */
+	if (gtk_widget_get_visible(m_pVideoSinkWidget))
+		m_StatusbarPtr->SetMagnification((int)(m_dVideoZoom * 100. + 0.5));
 
 	m_dVideoLastWidgetW = widgetW;
 	m_dVideoLastWidgetH = widgetH;
-	m_dVideoLastOffX = offX;
-	m_dVideoLastOffY = offY;
 	m_dVideoLastZc = zc;
 }
 
@@ -3086,16 +3365,18 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_VideoZoomType = VIDEO_ZOOM_SOFTWARE;
 	m_dVideoZoom = 1.0;
 	m_dVideoZoomFinal = 1.0;
+	m_dVideoZoomMin = 1.0;
 	m_dVideoScrollAccum = 0.;
 	m_dVideoPanX = 0.;
 	m_dVideoPanY = 0.;
 	m_dVideoLastWidgetW = 0.;
 	m_dVideoLastWidgetH = 0.;
-	m_dVideoLastOffX = 0.;
 	m_dVideoLastZc = 1.0;
 	m_iVideoZoomTimeoutID = 0;
 	m_bVideoZoomCropActive = FALSE;
+	m_bVideoZoomInputCropActive = FALSE;
 	m_bVideoPanning = FALSE;
+	m_bVideoZoomToCursor = FALSE;
 	m_iVideoWidth = 0;
 	m_iVideoHeight = 0;
 	m_iTimeoutPlayProgress = 0;
@@ -3323,15 +3604,17 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	m_pVideoSinkWidget = NULL;
 	m_pVideoFixed = NULL;
 	m_dVideoZoomFinal = 1.0;
+	m_dVideoZoomMin = 1.0;
 	m_iVideoZoomTimeoutID = 0;
 	m_dVideoPanX = 0.;
 	m_dVideoPanY = 0.;
 	m_dVideoLastWidgetW = 0.;
 	m_dVideoLastWidgetH = 0.;
-	m_dVideoLastOffX = 0.;
 	m_dVideoLastZc = 1.0;
 	m_bVideoZoomCropActive = FALSE;
+	m_bVideoZoomInputCropActive = FALSE;
 	m_bVideoPanning = FALSE;
+	m_bVideoZoomToCursor = FALSE;
 	GstElement* video_sink = NULL;
 	GstElement* gtkglsink = gst_element_factory_make("gtkglsink", NULL);
 	GstElement* glupload = NULL;
@@ -3576,6 +3859,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 				if (crop_sinkpad != NULL)
 				{
 					gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, video_crop_pad_probe, this, NULL);
+					gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, video_zoom_reconfigure_probe, this, NULL);
 
 					/* expose this pad as the bin's sink so playbin can
 					 * link to the zoombin; the capsfilter's ANY template
@@ -3649,19 +3933,25 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 
 	if (m_pVideoSinkWidget != NULL)
 	{
-		// A fixed container fills the viewer area above the image view; the
-		// GL video widget lives inside it so its size/position can be driven
-		// by the zoom geometry (grows to fill the window, then the pipeline
-		// crop pans).  The stack clips the fixed to the viewer area.
-		m_pVideoFixed = gtk_fixed_new();
+		// A GtkLayout (a scrolling canvas whose size request is always 0,
+		// independent of its children) is the video container.  GtkFixed and
+		// GtkScrolledWindow both report the child's minimum size in their own
+		// request, so the zoomed-up sink widget's size request propagated to
+		// the stack and pinned the window minimum -- the window could no
+		// longer be resized smaller (and grew as you zoomed in).  GtkLayout
+		// never contributes its children's requests to the window minimum,
+		// fills the viewer area via hexpand/vexpand (its allocation is the
+		// zoom math's "area" size), and clips the oversized sink widget to
+		// its own allocation via its bin window.
+		m_pVideoFixed = gtk_layout_new(NULL, NULL);
 		gtk_widget_set_no_show_all(m_pVideoFixed, TRUE);
 		gtk_widget_set_hexpand(m_pVideoFixed, TRUE);
 		gtk_widget_set_vexpand(m_pVideoFixed, TRUE);
 		gtk_stack_add_named(GTK_STACK(m_pStack), m_pVideoFixed, "video");
+		gtk_widget_show(m_pVideoFixed);
 
 		gtk_widget_set_size_request(m_pVideoSinkWidget, 1, 1);
-		gtk_fixed_put(GTK_FIXED(m_pVideoFixed), m_pVideoSinkWidget, 0, 0);
-		gtk_widget_show(m_pVideoFixed);
+		gtk_layout_put(GTK_LAYOUT(m_pVideoFixed), m_pVideoSinkWidget, 0, 0);
 		gtk_widget_show(m_pVideoSinkWidget);
 
 		gtk_widget_add_events(m_pVideoFixed, GDK_POINTER_MOTION_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
@@ -4176,7 +4466,8 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleContentsChanged(ImageListE
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
 {
-	parent->SetImageIndex(event->GetIndex(),true);
+	bool bDirectionForward = (event->GetIndex() >= event->GetOldIndex());
+	parent->SetImageIndex(event->GetIndex(), bDirectionForward);
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
 { (void)event; 

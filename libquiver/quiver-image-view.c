@@ -100,6 +100,8 @@ struct _QuiverImageViewPrivate
 	
 	gboolean reload_event_sent;
 
+	gboolean needs_recenter;
+
 };
 G_DEFINE_TYPE_WITH_CODE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET, G_ADD_PRIVATE(QuiverImageView) G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL));
 
@@ -678,6 +680,14 @@ quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 	
 	GdkInterpType interptype = GDK_INTERP_NEAREST;
 	quiver_image_view_update_size(imageview);
+
+	if (imageview->priv->needs_recenter
+	    && gtk_adjustment_get_page_size(imageview->priv->hadjustment) > 1.)
+	{
+		quiver_image_view_set_default_adjustment_values(imageview);
+		imageview->priv->needs_recenter = FALSE;
+	}
+
 	quiver_image_view_send_reload_event(imageview);
 
 	quiver_image_view_transition_stop(imageview);
@@ -941,15 +951,17 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 			break;
 
 		case QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE:
-			// no need for scaled image because we are showing the actual size;
+			// no need for scaled image if we are showing the actual size and
+			// it fits the window; an image larger than the window falls
+			// through so a window-sized sub-pixbuf is built and the
+			// scrollbars can pan across the whole image
 			if (new_width != actual_width || new_height != actual_height)
 			{
-				// except in this case. in this case the actual size is
-				// not the same as the size we want to display the image at
 				// this is for quickview to blow up a thumbnail to the size of
 				// the actual image 
 			}
-			else
+			else if (new_width <= gtk_widget_get_allocated_width(widget)
+				&& new_height <= gtk_widget_get_allocated_height(widget))
 			{
 				break;
 			}
@@ -957,8 +969,12 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
 		{
+			gint wnd_width,wnd_height;
+			wnd_width = gtk_widget_get_allocated_width(widget);
+			wnd_height = gtk_widget_get_allocated_height(widget);
 
-			if (new_width == actual_width && new_height == actual_height)
+			if (new_width == actual_width && new_height == actual_height
+				&& new_width <= wnd_width && new_height <= wnd_height)
 				break;
 			
 			gdouble magnification = imageview->priv->magnification;
@@ -966,12 +982,13 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 			{
 				magnification = quiver_image_view_get_magnification(imageview);
 			}
+			else if (QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE == imageview->priv->view_mode)
+			{
+				/* actual size: one screen pixel maps to one source pixel */
+				magnification = 1.0;
+			}
 			gdouble hadjust  = (gint)gtk_adjustment_get_value(imageview->priv->hadjustment);
 			gdouble vadjust  = (gint)gtk_adjustment_get_value(imageview->priv->vadjustment);
-
-			gint wnd_width,wnd_height;
-			wnd_width = gtk_widget_get_allocated_width(widget);
-			wnd_height = gtk_widget_get_allocated_height(widget);
 
 			gint src_clip_x,src_clip_y;
 			gint src_clip_width, src_clip_height;
@@ -1564,7 +1581,7 @@ gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
 
 			gdouble magnification = quiver_image_view_get_magnification(imageview);
 			quiver_image_view_set_magnification(imageview,
-				bZoomIn ? magnification * 1.3 : magnification / 1.3);
+				bZoomIn ? magnification * 1.25 : magnification / 1.25);
 		}
 
 		rvalue = TRUE;
@@ -1899,8 +1916,6 @@ quiver_image_view_update_size(QuiverImageView *imageview)
 	gint width,height;
 
 	quiver_image_view_get_pixbuf_display_size(imageview,&width,&height);
-
-	//printf("updating size!\n");
 
 	GtkAdjustment *hadjustment, *vadjustment;
 
@@ -2543,6 +2558,7 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 		
 		imageview->priv->scroll_draw = TRUE;
 		imageview->priv->magnification = 0;
+		imageview->priv->needs_recenter = TRUE;
 		old_mag = 0;
 	}
 
@@ -2675,6 +2691,7 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 		quiver_image_view_update_size(imageview);
 		quiver_image_view_set_default_adjustment_values(imageview);
 		imageview->priv->scroll_draw   = TRUE;
+		imageview->priv->needs_recenter = TRUE;
 
 		rect.x = 0;
 		rect.y = 0;
@@ -3100,7 +3117,8 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 		imageview->priv->pixbuf = NULL;
 	}
 	
-	imageview->priv->reload_event_sent = FALSE;	
+	imageview->priv->reload_event_sent = FALSE;
+	imageview->priv->needs_recenter = FALSE;
 	
 }
 
@@ -3162,6 +3180,8 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	
 	imageview->priv->scroll_draw = TRUE;
 	
+	imageview->priv->needs_recenter = TRUE;
+
 	// FIXME: this makes the image not get invalidated on the close signal
 	imageview->priv->area_updated = TRUE;
 

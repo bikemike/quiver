@@ -365,6 +365,21 @@ static gboolean idle_update_progress(gpointer data)
 {
 	IdleBytesReadData* pData = static_cast<IdleBytesReadData*>(data);
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(pData->pStatusBarImpl->m_pProgressbar), pData->progress);
+	if (pData->setLoadTime)
+	{
+		pData->pStatusBarImpl->m_CurrentQuiverFile.GetLoadTimeInSeconds();
+		char loadtime[20];
+		double seconds = pData->pStatusBarImpl->m_CurrentQuiverFile.GetLoadTimeInSeconds();
+		if (0 <= seconds)
+		{
+			g_snprintf(loadtime,20,"%0.3fs",seconds);
+			gtk_label_set_text(GTK_LABEL(pData->pStatusBarImpl->m_pLabelLoadTime),loadtime);
+		}
+	}
+	if (pData->clearText)
+	{
+		gtk_label_set_text(GTK_LABEL(pData->pStatusBarImpl->m_pLabelLoadTime),"");
+	}
 	pData->pStatusBarImpl->m_uiIdleSourceID = 0;
 	return FALSE;
 }
@@ -377,16 +392,10 @@ void idle_deleter(gpointer data)
 
 void Statusbar::SignalBytesRead(long bytes_read,long total)
 {
-	//gdk_threads_enter();
 	IdleBytesReadData* data = new IdleBytesReadData();
 	data->pStatusBarImpl = m_StatusbarImplPtr.get();
 	data->progress =  (bytes_read / (double) total);
-	if (0 != m_StatusbarImplPtr->m_uiIdleSourceID)
-	{
-		g_source_remove(m_StatusbarImplPtr->m_uiIdleSourceID);
-	}
 	m_StatusbarImplPtr->m_uiIdleSourceID = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_update_progress, data, idle_deleter);
-	//gdk_threads_leave();
 }
 void Statusbar::SignalClosed(GdkPixbufLoader *loader)
 { (void)loader; 

@@ -392,7 +392,8 @@ void ImageLoader::Load()
 			swap(real_width,real_height);
 		}
 
-		if ((0 == m_Command.params.max_width && 0 == m_Command.params.max_height) ||
+		if ((0 == m_Command.params.max_width && 0 == m_Command.params.max_height &&
+			 (width < real_width || height < real_height)) ||
 			( width < m_Command.params.max_width &&
 			 height < m_Command.params.max_height &&
 			 width < real_width && height < real_height))
