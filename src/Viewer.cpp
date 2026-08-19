@@ -600,6 +600,8 @@ public:
 	gint        m_iVideoHeight;     // current video frame height
 	gint        m_iVideoFpsNum;
 	gint        m_iVideoFpsDen;
+	gint        m_iVideoParN;
+	gint        m_iVideoParD;
 	gint        m_iVideoSinkW;      // last set_size_request width  (skip if unchanged)
 	gint        m_iVideoSinkH;      // last set_size_request height
 	gint        m_iVideoSinkX;      // last layout_move x
@@ -2505,6 +2507,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_iVideoHeight = 0;
 	m_iVideoFpsNum = 0;
 	m_iVideoFpsDen = 1;
+	m_iVideoParN = 1;
+	m_iVideoParD = 1;
 	m_iVideoSinkW = 0;
 	m_iVideoSinkH = 0;
 	m_iVideoSinkX = 0;
@@ -2967,7 +2971,11 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 				gst_structure_get_int(structure, "height", &h);
 				if (w > 0 && h > 0)
 				{
-					g_print("[VP] caps_probe: w=%d h=%d\n", w, h);
+					if (gst_structure_has_field(structure, "pixel-aspect-ratio"))
+						gst_structure_get_fraction(structure, "pixel-aspect-ratio", &pViewerImpl->m_iVideoParN, &pViewerImpl->m_iVideoParD);
+					else { pViewerImpl->m_iVideoParN = 1; pViewerImpl->m_iVideoParD = 1; }
+					
+					g_print("[VP] caps_probe: w=%d h=%d PAR=%d/%d\n", w, h, pViewerImpl->m_iVideoParN, pViewerImpl->m_iVideoParD);
 					pViewerImpl->m_iVideoWidth = w;
 					pViewerImpl->m_iVideoHeight = h;
 					/* element properties must not be touched from the streaming
@@ -3181,7 +3189,13 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 
 	gdouble srcW = m_iVideoWidth;
 	gdouble srcH = m_iVideoHeight;
-
+	gdouble dispW = srcW;
+	gdouble dispH = srcH;
+	if (m_iVideoParD > 0 && m_iVideoParN > m_iVideoParD)
+		dispW = srcW * ((gdouble)m_iVideoParN / m_iVideoParD);
+	else if (m_iVideoParN > 0 && m_iVideoParD > m_iVideoParN)
+		dispH = srcH * ((gdouble)m_iVideoParD / m_iVideoParN);
+	g_print("[VP] ApplyVideoZoom: src=%dx%d PAR=%d/%d disp=%fx%f\n", (int)srcW, (int)srcH, m_iVideoParN, m_iVideoParD, dispW, dispH);
 	/* the zoom is the magnification relative to the video's actual size
 	 * (1.0 = 100%), exactly like the image view: FIT never upscales a small
 	 * video past its actual size, FIT_STRETCH upscales it to fill the window,
@@ -3189,10 +3203,10 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	 * keeps the factor the user zoomed to with +/- or the wheel.  The FIT
 	 * variants are recomputed here on every window resize so the video
 	 * re-fits; the others keep their fixed zoom. */
-	gdouble fitScale = MIN((gdouble)areaW / srcW, (gdouble)areaH / srcH);
+	gdouble fitScale = MIN((gdouble)areaW / dispW, (gdouble)areaH / dispH);
 	if (fitScale <= 0.)
 		fitScale = 1.;
-	gdouble fillScale = MAX((gdouble)areaW / srcW, (gdouble)areaH / srcH);
+	gdouble fillScale = MAX((gdouble)areaW / dispW, (gdouble)areaH / dispH);
 	gdouble fitZoom = MIN(fitScale, 1.0);
 
 	m_dVideoZoomMin = MIN(m_dVideoZoomMin, fitZoom);
@@ -3225,9 +3239,9 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	 * below.  The widget is also capped so gtkglsink's GL surface stays
 	 * within limits on huge windows; past the cap the crop covers the extra
 	 * zoom. */
-	gdouble effZoom = MIN(zoom, MIN(fillScale, 4096. / MAX(srcW, srcH)));
-	gdouble widgetW = srcW * effZoom;
-	gdouble widgetH = srcH * effZoom;
+	gdouble effZoom = MIN(zoom, MIN(fillScale, 4096. / MAX(dispW, dispH)));
+	gdouble widgetW = dispW * effZoom;
+	gdouble widgetH = dispH * effZoom;
 
 	/* the part of the zoom the display cannot cover is a crop + upscale in
 	 * the pipeline (crop the source region and scale it back to full frame) */
@@ -3823,6 +3837,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iVideoHeight = 0;
 	m_iVideoFpsNum = 0;
 	m_iVideoFpsDen = 1;
+	m_iVideoParN = 1;
+	m_iVideoParD = 1;
 	m_iVideoSinkW = 0;
 	m_iVideoSinkH = 0;
 	m_iVideoSinkX = 0;

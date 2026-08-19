@@ -113,40 +113,21 @@ namespace QuiverVideoOps
 					if ( 0 == g_strcmp0(name, "preroll-pixbuf") ||
 					 0 == g_strcmp0(name, "pixbuf") )
 					{
-						const GValue* fraction =  gst_structure_get_value(structure, "pixel-aspect-ratio");
-						gint n, d;
-						n = gst_value_get_fraction_numerator(fraction);
-						d = gst_value_get_fraction_denominator(fraction);
-
-						bool have_plugin_version = true;
-						GstPlugin* plugin = gst_registry_find_plugin(gst_registry_get(), "gdkpixbuf");
-						if (NULL != plugin)
+						gint n = 1, d = 1;
+						GstPad* pad = gst_element_get_static_pad(pixbuf_sink, "sink");
+						if (pad != NULL)
 						{
-							const gchar* ver = gst_plugin_get_version(plugin);
-							int major, minor, micro;
-							major = 0; minor = 0; micro = 0;
-							sscanf(ver, "%d.%d.%d", &major, &minor, &micro);
-
-							if (major < 0)
-								have_plugin_version = false;
-							else if (0 == major) {
-								if (minor < 10)
-									have_plugin_version = false;
-								else if (10 == minor)
-									if (micro < 31)
-										have_plugin_version = false;
+							GstCaps* caps = gst_pad_get_current_caps(pad);
+							if (caps != NULL)
+							{
+								GstStructure* caps_struct = gst_caps_get_structure(caps, 0);
+								if (caps_struct != NULL && gst_structure_has_field(caps_struct, "pixel-aspect-ratio"))
+								{
+									gst_structure_get_fraction(caps_struct, "pixel-aspect-ratio", &n, &d);
+								}
+								gst_caps_unref(caps);
 							}
-						}
-						else
-						{
-							have_plugin_version = false;
-						}
-
-						if (!have_plugin_version)
-						{
-							// bug in gstreamer has n / d reversed
-							// https://bugzilla.gnome.org/show_bug.cgi?id=665882
-							std::swap(n,d);
+							gst_object_unref(pad);
 						}
 
 						if (NULL != numerator)
