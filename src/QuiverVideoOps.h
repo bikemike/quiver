@@ -20,7 +20,7 @@ typedef enum {
 
 namespace QuiverVideoOps
 {
-	GdkPixbuf* LoadPixbuf(const gchar *uri, gint* pixel_aspect_ratio_numerator = NULL, gint* pixel_aspect_ratio_denominator = NULL);
+	GdkPixbuf* LoadPixbuf(const gchar *uri, gint* pixel_aspect_ratio_numerator = NULL, gint* pixel_aspect_ratio_denominator = NULL, gint64 position_ns = -1);
 }
 
 

@@ -9,9 +9,8 @@
 
 namespace QuiverVideoOps
 {
-	GdkPixbuf* LoadPixbuf(const gchar *uri, gint* numerator /*= NULL*/, gint* denominator /*= NULL*/)
+	GdkPixbuf* LoadPixbuf(const gchar *uri, gint* numerator /*= NULL*/, gint* denominator /*= NULL*/, gint64 position_ns /*= -1*/)
 	{
-		// FIXME: maybe make this not seek to the middle of the video??
 		Timer t("Load Video Pixbuf");
 
 		GdkPixbuf* pixbuf = NULL;
@@ -20,7 +19,24 @@ namespace QuiverVideoOps
 
 		GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
 
-		GstElement* pixbuf_sink = gst_element_factory_make("gdkpixbufsink", NULL);
+		GstElement* bin = gst_bin_new("pixbuf_bin");
+		GstElement* convert = gst_element_factory_make("videoconvert", "convert");
+		GstElement* capsfilter = gst_element_factory_make("capsfilter", "snapshot_caps");
+		GstElement* pixbuf_sink = gst_element_factory_make("gdkpixbufsink", "pixbuf_sink");
+		gst_bin_add_many(GST_BIN(bin), convert, capsfilter, pixbuf_sink, NULL);
+		g_object_set(G_OBJECT(capsfilter), "caps",
+			gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGB", NULL), NULL);
+		if (!gst_element_link_many(convert, capsfilter, pixbuf_sink, NULL))
+		{
+			gst_element_unlink(convert, capsfilter);
+			gst_bin_remove(GST_BIN(bin), capsfilter);
+			gst_object_unref(capsfilter);
+			gst_element_link(convert, pixbuf_sink);
+		}
+		GstPad* pad = gst_element_get_static_pad(convert, "sink");
+		gst_element_add_pad(bin, gst_ghost_pad_new("sink", pad));
+		gst_object_unref(pad);
+
 		GstElement* fakesink    = gst_element_factory_make("fakesink", NULL);
 
 		GstPlayFlags flags = (GstPlayFlags)0;
@@ -29,7 +45,7 @@ namespace QuiverVideoOps
 
 		g_object_set(G_OBJECT(pipeline), 
 			"uri", uri, 
-			"video-sink", pixbuf_sink, 
+			"video-sink", bin, 
 			"audio-sink", fakesink, 
 			"flags", flags, 
 			NULL);
@@ -68,7 +84,8 @@ namespace QuiverVideoOps
 		gint64 clip_duration = 0;
 		gst_element_query_duration(GST_ELEMENT(pipeline), GST_FORMAT_TIME, &clip_duration);
 
-		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pipeline), GST_FORMAT_TIME, GstSeekFlags(GST_SEEK_FLAG_FLUSH|GST_SEEK_FLAG_KEY_UNIT), (gint64)(clip_duration / 2));
+		gint64 seek_target = (position_ns >= 0) ? position_ns : (gint64)(clip_duration / 2);
+		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pipeline), GST_FORMAT_TIME, GstSeekFlags(GST_SEEK_FLAG_FLUSH|GST_SEEK_FLAG_KEY_UNIT), seek_target);
 
 		// wait for message from bus
 		bool gotAspectRatio = false;

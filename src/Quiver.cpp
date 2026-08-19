@@ -132,6 +132,7 @@ public:
 	GtkWidget* m_pHPanedMainArea;
 	
 	bool m_bSlideShowRestoreFromFS;
+	bool m_bFilmStripVisibleBeforeFS;
 			
 	ImageListPtr m_ImageListPtr;
 	
@@ -472,6 +473,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
 #define ACTION_QUIVER_ESCAPE                                 "QuiverEscape"
+#define ACTION_VIEWER_VIEW_FILM_STRIP                        "ViewFilmStrip"
 #define ACTION_QUIVER_CLOSE_2                                ACTION_QUIVER_CLOSE"_2"
 #define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
 #define ACTION_QUIVER_CLOSE_4                                ACTION_QUIVER_CLOSE"_4"
@@ -1368,6 +1370,15 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 
 		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
 		g_timeout_add(1500, timeout_event_motion_notify,pQuiverImpl);
+
+		/* hide the filmstrip on fullscreen, remember whether it was visible */
+		if (pQuiverImpl->m_bViewerMode)
+		{
+			pQuiverImpl->m_bFilmStripVisibleBeforeFS =
+				QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP);
+			if (pQuiverImpl->m_bFilmStripVisibleBeforeFS)
+				QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, FALSE);
+		}
 		
 		bFullscreen = TRUE;
 	}
@@ -1375,6 +1386,11 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 	{
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
+
+		/* restore the filmstrip if it was visible before fullscreen */
+		if (pQuiverImpl->m_bViewerMode && pQuiverImpl->m_bFilmStripVisibleBeforeFS)
+			QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, TRUE);
+
 #ifdef QUIVER_MAEMO
 		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
 #endif
@@ -1496,6 +1512,7 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_bViewerMode = false;
 
 	m_QuiverImplPtr->m_bSlideShowRestoreFromFS = false;
+	m_QuiverImplPtr->m_bFilmStripVisibleBeforeFS = false;
 	
 	m_QuiverImplPtr->m_bInitialized = false;
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyRunning = false;
