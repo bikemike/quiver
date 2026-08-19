@@ -1268,6 +1268,20 @@ static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, gulong cell,
 			g_free(icon_name);
 		}
 	}
+	else if (type == QUIVER_ICON_OVERLAY_LINK && f.IsVideo())
+	{
+		const gchar* icon_name = "media-playback-start";
+		pixbuf = b->m_IconOverlayCache.GetPixbuf(icon_name);
+		if (NULL == pixbuf)
+		{
+			GtkIconTheme *icon_theme = gtk_icon_theme_get_default();
+			pixbuf = gtk_icon_theme_load_icon(icon_theme, icon_name, 32, (GtkIconLookupFlags)0, NULL);
+			if (NULL != pixbuf)
+			{
+				b->m_IconOverlayCache.AddPixbuf(icon_name, pixbuf);
+			}
+		}
+	}
 
 	return pixbuf;
 }

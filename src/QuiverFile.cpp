@@ -769,74 +769,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 
 					g_object_unref(video_pixbuf);
 
-					// add filmstrip to sides of thumbnail
-					GdkPixbuf* filmholes = NULL;
-					if (size < 256)
-					{
-						// FIXME: shouldn't load this every time
-						filmholes = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes.png", NULL);
-					}
-					else
-					{
-						// FIXME: shouldn't load this every time
-						filmholes = gdk_pixbuf_new_from_file(QUIVER_DATADIR "/filmholes-big.png", NULL);
-					}
-
-					if (NULL != filmholes)
-					{
-						int w = gdk_pixbuf_get_width(filmholes);
-						int h = gdk_pixbuf_get_height(filmholes);
-
-						int dest_y = 0;
-
-						//left
-						while ((guint)dest_y < pixbuf_height)
-						{
-							if ((guint)(dest_y + h) > pixbuf_height)
-								h = pixbuf_height - dest_y;
-
-							gdk_pixbuf_composite(
-								filmholes,
-								thumb_pixbuf,
-								0, // dest x
-								dest_y, // dest y
-								w, // dest w
-								h, // dest h
-								0., // offset x
-								dest_y, // offset y
-								1., // scale x
-								1., // scale y
-								GDK_INTERP_NEAREST,
-								128);//alpha
-							dest_y += h;
-						}
-
-						//right
-						dest_y = 0;
-						h = gdk_pixbuf_get_height(filmholes);
-						while ((guint)dest_y < pixbuf_height)
-						{
-							if ((guint)(dest_y + h) > pixbuf_height)
-								h = pixbuf_height - dest_y;
-
-							gdk_pixbuf_composite(
-								filmholes,
-								thumb_pixbuf,
-								pixbuf_width - w, // dest x
-								dest_y, // dest y
-								w, // dest w
-								h, // dest h
-								pixbuf_width - w, // offset x
-								dest_y, // offset y
-								1., // scale x
-								1., // scale y
-								GDK_INTERP_NEAREST,
-								128);//alpha
-							dest_y += h;
-						}
-
-						g_object_unref(filmholes);
-					}
+					
 				}
 				else
 				{

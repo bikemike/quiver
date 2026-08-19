@@ -76,6 +76,12 @@ namespace QuiverVideoOps
 		gst_element_query_duration(GST_ELEMENT(pipeline), GST_FORMAT_TIME, &clip_duration);
 
 		gint64 seek_target = (position_ns >= 0) ? position_ns : (gint64)(clip_duration / 2);
+		
+		// Clear bus of old preroll-pixbuf messages before seeking
+		while (GstMessage* msg = gst_bus_pop(bus)) {
+			gst_message_unref(msg);
+		}
+
 		gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(pipeline), GST_FORMAT_TIME, GstSeekFlags(GST_SEEK_FLAG_FLUSH|GST_SEEK_FLAG_ACCURATE), seek_target);
 
 		// wait for message from bus

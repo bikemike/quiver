@@ -598,6 +598,8 @@ public:
 	gdouble     m_dVideoScrollAccum; // accumulated smooth-scroll delta for video zoom
 	gint        m_iVideoWidth;      // current video frame width (from caps probe)
 	gint        m_iVideoHeight;     // current video frame height
+	gint        m_iVideoFpsNum;
+	gint        m_iVideoFpsDen;
 	gint        m_iVideoSinkW;      // last set_size_request width  (skip if unchanged)
 	gint        m_iVideoSinkH;      // last set_size_request height
 	gint        m_iVideoSinkX;      // last layout_move x
@@ -2235,7 +2237,10 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		case GST_MESSAGE_STATE_CHANGED:
 				break;
 		case GST_MESSAGE_ASYNC_DONE:
-				if (pViewerImpl->m_pVideoSinkWidget != NULL)
+				if (pViewerImpl->m_pVideoFixed != NULL)
+					gtk_widget_show(pViewerImpl->m_pVideoFixed);
+				gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
+				if (pViewerImpl->m_pVideoSinkWidget != NULL && gtk_widget_get_visible(pViewerImpl->m_pVideoFixed))
 					gtk_widget_set_opacity(pViewerImpl->m_pVideoSinkWidget, 1.0);
 				pViewerImpl->UpdateTimeline();
 				break;
@@ -2324,9 +2329,9 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	if (same)
 	{
 		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtksink
-		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 		if (m_pVideoFixed != NULL)
 			gtk_widget_show(m_pVideoFixed);
+		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 		if (m_pVideoSinkWidget != NULL)
 		{
 			/* The GStreamer sink auto-shows its widget on the first buffer,
@@ -2378,9 +2383,6 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	{
 		g_print("[VP]   -> NEW URI: %s\n", m_ImageListPtr->GetCurrent().GetURI());
 		StopVideo(false);
-		if (m_pVideoFixed != NULL)
-			gtk_widget_show(m_pVideoFixed);
-		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 		if (m_pVideoSinkWidget != NULL)
 		{
 			/* hide until the caps probe applies the correct zoom for the
@@ -2501,6 +2503,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 		gtk_label_set_text(GTK_LABEL(m_pSpeedLabel), "1x");
 	m_iVideoWidth = 0;
 	m_iVideoHeight = 0;
+	m_iVideoFpsNum = 0;
+	m_iVideoFpsDen = 1;
 	m_iVideoSinkW = 0;
 	m_iVideoSinkH = 0;
 	m_iVideoSinkX = 0;
@@ -3639,17 +3643,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pPlayProgressEventBox = row1;
 	m_pPlayProgress = gtk_progress_bar_new();
 	{
-		GtkWidget *tmpBtn = gtk_button_new();
-		GtkRequisition btnReq;
-		gtk_widget_get_preferred_size(tmpBtn, NULL, &btnReq);
-		gtk_widget_destroy(tmpBtn);
-		GtkRequisition barReq;
-		gtk_widget_get_preferred_size(m_pPlayProgress, NULL, &barReq);
-		gint pad = (btnReq.height - barReq.height) / 2;
-		if (pad < 0) pad = 0;
-		gtk_widget_set_size_request(row1, -1, btnReq.height);
-		gtk_widget_set_margin_top(m_pPlayProgress, pad);
-		gtk_widget_set_margin_bottom(m_pPlayProgress, pad);
+		gtk_widget_set_size_request(row1, -1, 36);
+		gtk_widget_set_valign(m_pPlayProgress, GTK_ALIGN_CENTER);
 	}
 	gtk_widget_add_events(row1, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_BUTTON_MOTION_MASK | GDK_POINTER_MOTION_MASK);
 	gtk_container_add(GTK_CONTAINER(row1), m_pPlayProgress);
@@ -3826,6 +3821,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_bVideoZoomToCursor = FALSE;
 	m_iVideoWidth = 0;
 	m_iVideoHeight = 0;
+	m_iVideoFpsNum = 0;
+	m_iVideoFpsDen = 1;
 	m_iVideoSinkW = 0;
 	m_iVideoSinkH = 0;
 	m_iVideoSinkX = 0;
