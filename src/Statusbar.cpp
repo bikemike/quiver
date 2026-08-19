@@ -107,12 +107,9 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 	gtk_box_pack_start (GTK_BOX (m_pStatusbar), frame, FALSE, FALSE, 0);
 
 	m_pProgressbar = gtk_progress_bar_new ();
-	gtk_widget_set_size_request (m_pProgressbar, 75, 0);
-	
-	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
-	gtk_container_add(GTK_CONTAINER(frame),m_pProgressbar);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), frame, FALSE, FALSE, 0);
+	gtk_widget_set_size_request (m_pProgressbar, 75, -1);
+	gtk_widget_set_valign(m_pProgressbar, GTK_ALIGN_CENTER);
+	gtk_box_pack_start (GTK_BOX (m_pStatusbar), m_pProgressbar, FALSE, FALSE, 0);
 	
 	
 	m_iDefaultContext = gtk_statusbar_get_context_id (GTK_STATUSBAR(m_pStatusbar),"default");

@@ -1134,7 +1134,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 			tm_exif_time.tm_mon -= 1;
 			tm_exif_time.tm_isdst = -1;
 
-			if (6 == num_substs)
+			if (6 == num_substs && tm_exif_time.tm_year >= 70 && tm_exif_time.tm_year < 200)
 			{
 				// successfully parsed date
 				m_cachedTimeT = mktime(&tm_exif_time);
