@@ -2235,6 +2235,8 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		case GST_MESSAGE_STATE_CHANGED:
 				break;
 		case GST_MESSAGE_ASYNC_DONE:
+				if (pViewerImpl->m_pVideoSinkWidget != NULL)
+					gtk_widget_set_opacity(pViewerImpl->m_pVideoSinkWidget, 1.0);
 				pViewerImpl->UpdateTimeline();
 				break;
 		case GST_MESSAGE_DURATION:
@@ -2376,11 +2378,9 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	{
 		g_print("[VP]   -> NEW URI: %s\n", m_ImageListPtr->GetCurrent().GetURI());
 		StopVideo(false);
-		//quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView), NULL); // Not needed, gtksink handles display
-		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtksink
-		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 		if (m_pVideoFixed != NULL)
 			gtk_widget_show(m_pVideoFixed);
+		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 		if (m_pVideoSinkWidget != NULL)
 		{
 			/* hide until the caps probe applies the correct zoom for the
@@ -2865,23 +2865,12 @@ static gboolean video_apply_zoom_idle(gpointer user_data)
 	 * the sink widget.  Without a mapped sink the GL surface does not exist
 	 * and the video cannot render.  Keep retrying until the sink is mapped
 	 * (which means the overlay has allocated the stack -> layout -> sink). */
-	gboolean sinkMapped = pViewerImpl->m_pVideoSinkWidget
-		? gtk_widget_get_mapped(pViewerImpl->m_pVideoSinkWidget) : FALSE;
-	if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0
-		&& !sinkMapped)
-	{
-		g_print("[VP] idle: sink not mapped, retry scheduled\n");
-		g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, pViewerImpl, NULL);
-		return FALSE;
-	}
-
 	pViewerImpl->ApplyVideoZoom();
 	if (pViewerImpl->m_pVideoFixed != NULL)
 		gtk_widget_show(pViewerImpl->m_pVideoFixed);
 	if (pViewerImpl->m_pVideoSinkWidget != NULL)
 	{
 		gtk_widget_show(pViewerImpl->m_pVideoSinkWidget);
-		gtk_widget_set_opacity(pViewerImpl->m_pVideoSinkWidget, 1.0);
 	}
 	g_print("[VP] idle: DONE fixed_show=%d sink_mapped=%d sink_opa=%.1f\n",
 		pViewerImpl->m_pVideoFixed ? gtk_widget_get_visible(pViewerImpl->m_pVideoFixed) : -1,
@@ -3176,13 +3165,7 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 		return;
 	}
 
-	/* restore opacity as soon as we have valid frame dimensions, even
-	 * before the widget has a real allocation: the first caps event
-	 * means the decoder is producing frames, so the video should be
-	 * visible.  Without this the widget stays transparent until
-	 * areaW/areaH become > 0, causing audio-only playback. */
-	if (gtk_widget_get_visible(m_pVideoFixed))
-		gtk_widget_set_opacity(m_pVideoSinkWidget, 1.0);
+	/* Wait for ASYNC_DONE to restore opacity to prevent old frame flash */
 
 	gint areaW = gtk_widget_get_allocated_width(m_pVideoFixed);
 	gint areaH = gtk_widget_get_allocated_height(m_pVideoFixed);
