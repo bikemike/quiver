@@ -99,6 +99,12 @@ cmake -B build -DQUIVER_DATADIR=/usr/share/quiver
 
 ## Testing
 
+> [!NOTE]
+> When testing the binary manually under Xvfb, you must force the GTK backend to X11 to prevent GTK3 from bypassing Xvfb and launching on your active Wayland session:
+> ```sh
+> GDK_BACKEND=x11 xvfb-run -a build/src/quiver
+> ```
+
 The test suite launches the binary under Xvfb and drives it with synthetic
 input via XTest (`tests/scrollsim.c` → `quiver-inputsim`), asserting on
 screenshots and process liveness:

@@ -39,6 +39,7 @@ namespace QuiverUtils
 	void ConnectUnmodifiedAccelerators();            // overload
 
 	void BindWidget(GtkWidget *widget, GtkWidget *ancestor, const char *action_name);
+	void BindBuilderAccelerators(GtkBuilder *builder);
 
 	/* Bind a toggle or radio widget (GtkCheckMenuItem / GtkToggleToolButton /
 	 * GtkRadioMenuItem) to a toggle/radio action. Unlike BindWidget these

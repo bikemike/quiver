@@ -844,6 +844,134 @@ static const char * quiver_ui_main =
 "			</object>"
 "		</child>"
 "		<child>"
+"			<object class='GtkMenuItem' id='MenuVideo'>"
+"				<property name='label' translatable='yes'>V_ideo</property>"
+"				<property name='use_underline'>True</property>"
+"				<child type='submenu'>"
+"					<object class='GtkMenu'>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoPlay'>"
+"								<property name='label' translatable='yes'>_Play / Pause</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoPlay</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoSeekBack5'>"
+"								<property name='label' translatable='yes'>Seek _Back 5s</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoSeekBack5</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoSeekFwd5'>"
+"								<property name='label' translatable='yes'>Seek _Forward 5s</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoSeekFwd5</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoSkipBack'>"
+"								<property name='label' translatable='yes'>Skip Back _10s</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoSkipBack</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoSkipForward'>"
+"								<property name='label' translatable='yes'>Skip Forward 1_0s</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoSkipForward</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoFrameBack'>"
+"								<property name='label' translatable='yes'>Previous Frame</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoFrameBack</property>"
+"							</object>"
+"						</child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoFrameFwd'>"
+"								<property name='label' translatable='yes'>Next Frame</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoFrameFwd</property>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuVideoSpeed'>"
+"								<property name='label' translatable='yes'>Playback _Speed</property>"
+"								<property name='use_underline'>True</property>"
+"								<child type='submenu'>"
+"									<object class='GtkMenu'>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed025'>"
+"												<property name='label'>0.25x</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed05'>"
+"												<property name='label'>0.5x</property>"
+"												<property name=\'group\'>MenuItemSpeed025</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed10'>"
+"												<property name='label'>1.0x (Normal)</property>"
+"												<property name=\'group\'>MenuItemSpeed025</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed15'>"
+"												<property name='label'>1.5x</property>"
+"												<property name=\'group\'>MenuItemSpeed025</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed20'>"
+"												<property name='label'>2.0x</property>"
+"												<property name=\'group\'>MenuItemSpeed025</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed40'>"
+"												<property name='label'>4.0x</property>"
+"												<property name=\'group\'>MenuItemSpeed025</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed80'>"
+"												<property name='label'>8.0x</property>"
+"												<property name=\'group\'>MenuItemSpeed025</property>"
+"											</object>"
+"										</child>"
+"										<child>"
+"											<object class='GtkRadioMenuItem' id='MenuItemSpeed160'>"
+"												<property name='label'>16.0x</property>"
+"												<property name=\'group\'>MenuItemSpeed025</property>"
+"											</object>"
+"										</child>"
+"									</object>"
+"								</child>"
+"							</object>"
+"						</child>"
+"						<child><object class='GtkSeparatorMenuItem'/></child>"
+"						<child>"
+"							<object class='GtkMenuItem' id='MenuItemVideoSnapshot'>"
+"								<property name='label' translatable='yes'>_Take Snapshot</property>"
+"								<property name='use_underline'>True</property>"
+"								<property name='action_name'>quiver.VideoSnapshot</property>"
+"							</object>"
+"						</child>"
+"					</object>"
+"				</child>"
+"			</object>"
+"		</child>"
+"		<child>"
 "			<object class='GtkMenuItem' id='MenuGo'>"
 "				<property name='label' translatable='yes'>_Go</property>"
 "				<property name='use_underline'>True</property>"
@@ -1586,6 +1714,8 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_pToolbar = GTK_WIDGET(gtk_builder_get_object(builder, "ToolbarMain"));
 	m_QuiverImplPtr->m_pMenuBookmarkItems = GTK_WIDGET(gtk_builder_get_object(builder, "MenuBookmarkItems"));
 	m_QuiverImplPtr->m_pMenuToolsExternal = GTK_WIDGET(gtk_builder_get_object(builder, "MenuToolsExternal"));
+	GObject *mv = gtk_builder_get_object(builder, "MenuVideo");
+	g_printerr("MenuVideo found: %p\n", mv);
 
 	gtk_toolbar_set_style(GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar), GTK_TOOLBAR_ICONS);
 #ifdef QUIVER_MAEMO
@@ -1672,7 +1802,8 @@ void Quiver::Init()
 	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemToolbar")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
 	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemStatusbar")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_VIEW_STATUSBAR);
 	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemProperties")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_VIEW_PROPERTIES);
-	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemSortDescending")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_DESCENDING);
+	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemSortDescending"
+)), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_DESCENDING);
 	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonFullScreen")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_FULLSCREEN);
 	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "ToolButtonSlideShow")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SLIDESHOW);
 
@@ -1682,6 +1813,15 @@ void Quiver::Init()
 	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByDate")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_DATE);
 	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByDateModified")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_DATE_MODIFIED);
 	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "RadioMenuItemSortByRandom")), m_QuiverImplPtr->m_pQuiverWindow, ACTION_QUIVER_SORT_BY_RANDOM);
+
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed025")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed025");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed05")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed05");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed10")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed10");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed15")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed15");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed20")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed20");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed40")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed40");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed80")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed80");
+	QuiverUtils::BindRadioWidget(GTK_WIDGET(gtk_builder_get_object(builder, "MenuItemSpeed160")), m_QuiverImplPtr->m_pQuiverWindow, "VideoSpeed160");
 
 	/* Bind browser toggle widgets */
 	QuiverUtils::BindToggleWidget(GTK_WIDGET(gtk_builder_get_object(builder, "CheckMenuItemBrowserSidebar")), m_QuiverImplPtr->m_pQuiverWindow, "BrowserViewSidebar");
@@ -1731,6 +1871,8 @@ void Quiver::Init()
 
 	m_QuiverImplPtr->m_BrowserPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
 	m_QuiverImplPtr->m_ViewerPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
+
+	QuiverUtils::BindBuilderAccelerators(builder);
 
 	/* keep the builder alive so the mode-dependent widgets can be looked up */
 	m_QuiverImplPtr->m_pBuilder = builder;

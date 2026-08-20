@@ -141,11 +141,9 @@ static void viewer_skip_fwd_cb(gpointer user_data);
 static void viewer_frame_step_back_cb(gpointer user_data);
 static void viewer_frame_step_fwd_cb(gpointer user_data);
 
-
-
-// drag/drop targets
-enum {
-	QUIVER_TARGET_STRING,
+enum
+{
+	QUIVER_TARGET_STRING = 0,
 	QUIVER_TARGET_URI
 };
 
@@ -209,6 +207,11 @@ static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_VIEWER_VIDEO_SKIP_FORWARD "VideoSkipForward"
 #define ACTION_VIEWER_VIDEO_SKIP_BACK    "VideoSkipBack"
 #define ACTION_VIEWER_VIDEO_PLAY_2       ACTION_VIEWER_VIDEO_PLAY"_2"
+#define ACTION_VIEWER_VIDEO_SEEK_FWD_5   "VideoSeekFwd5"
+#define ACTION_VIEWER_VIDEO_SEEK_BACK_5  "VideoSeekBack5"
+#define ACTION_VIEWER_VIDEO_FRAME_FWD    "VideoFrameFwd"
+#define ACTION_VIEWER_VIDEO_FRAME_BACK   "VideoFrameBack"
+#define ACTION_VIEWER_VIDEO_SNAPSHOT     "VideoSnapshot"
 
 #ifdef QUIVER_MAEMO
 #define ACTION_VIEWER_ZOOM_IN_MAEMO     ACTION_VIEWER_ZOOM_IN"_MAEMO"
@@ -247,6 +250,27 @@ static const gchar* pszActionsImage[] =
 	ACTION_VIEWER_ZOOM_OUT,
 	ACTION_VIEWER_COPY,
 	ACTION_VIEWER_TRASH,
+};
+
+static const gchar* pszActionsVideo[] =
+{
+	ACTION_VIEWER_VIDEO_PLAY,
+	ACTION_VIEWER_VIDEO_PLAY_2,
+	ACTION_VIEWER_VIDEO_SKIP_FORWARD,
+	ACTION_VIEWER_VIDEO_SKIP_BACK,
+	ACTION_VIEWER_VIDEO_SEEK_FWD_5,
+	ACTION_VIEWER_VIDEO_SEEK_BACK_5,
+	ACTION_VIEWER_VIDEO_FRAME_FWD,
+	ACTION_VIEWER_VIDEO_FRAME_BACK,
+	ACTION_VIEWER_VIDEO_SNAPSHOT,
+	"VideoSpeed025",
+	"VideoSpeed05",
+	"VideoSpeed10",
+	"VideoSpeed15",
+	"VideoSpeed20",
+	"VideoSpeed40",
+	"VideoSpeed80",
+	"VideoSpeed160",
 };
 
 
@@ -718,6 +742,9 @@ void Viewer::ViewerImpl::UpdateUI()
 		QuiverUtils::SetActionsSensitive(pszActionsImage, G_N_ELEMENTS(pszActionsImage), FALSE);
 		
 	}
+	QuiverUtils::SetActionsSensitive(pszActionsVideo, G_N_ELEMENTS(pszActionsVideo), IsVideo());
+	GAction *a = QuiverUtils::GetAction("VideoSpeed025");
+	g_print("VideoSpeed025 action enabled: %d\n", a ? g_action_get_enabled(a) : -1);
 	
 	{
 		/* For videos the zoom factor is applied in the pipeline (from the fit
@@ -1546,6 +1573,47 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SKIP_BACK))
 	{
 		pViewerImpl->SkipBack();
+	}
+	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SEEK_FWD_5))
+	{
+		viewer_skip_fwd_cb(pViewerImpl);
+	}
+	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SEEK_BACK_5))
+	{
+		viewer_skip_back_cb(pViewerImpl);
+	}
+	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_FRAME_FWD))
+	{
+		viewer_frame_step_fwd_cb(pViewerImpl);
+	}
+	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_FRAME_BACK))
+	{
+		viewer_frame_step_back_cb(pViewerImpl);
+	}
+	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SNAPSHOT))
+	{
+		pViewerImpl->Snapshot();
+	}
+	else if (g_str_has_prefix(szAction, "VideoSpeed"))
+	{
+		int idx = QuiverUtils::GetRadioActionCurrent(szAction);
+		double speeds[] = { 0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0 };
+		if (idx >= 0 && idx < 8)
+		{
+			pViewerImpl->m_dPlaybackSpeed = speeds[idx];
+			gchar* label = g_strdup_printf("%gx", speeds[idx]);
+			if (pViewerImpl->m_pSpeedLabel) gtk_label_set_text(GTK_LABEL(pViewerImpl->m_pSpeedLabel), label);
+			g_free(label);
+			if (pViewerImpl->m_pPipeline)
+			{
+				// We need to seek to apply speed
+				gint64 pos = 0;
+				gst_element_query_position(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_FORMAT_TIME, &pos);
+				gst_element_seek(GST_ELEMENT(pViewerImpl->m_pPipeline), pViewerImpl->m_dPlaybackSpeed, GST_FORMAT_TIME,
+					(GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+					GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+			}
+		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_FIRST))
 	{
@@ -2503,6 +2571,7 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_dPlaybackSpeed = 1.0;
 	if (m_pSpeedLabel)
 		gtk_label_set_text(GTK_LABEL(m_pSpeedLabel), "1x");
+	QuiverUtils::SetRadioActionCurrent("VideoSpeed10", 2);
 	m_iVideoWidth = 0;
 	m_iVideoHeight = 0;
 	m_iVideoFpsNum = 0;
@@ -2575,7 +2644,7 @@ void Viewer::ViewerImpl::SetPlaybackSpeed(double speed)
 {
 	if (speed <= 0.0) speed = 1.0;
 	m_dPlaybackSpeed = speed;
-	gchar* label = g_strdup_printf("%.4g", speed);
+	gchar* label = g_strdup_printf("%gx", speed);
 	gtk_label_set_text(GTK_LABEL(m_pSpeedLabel), label);
 	g_free(label);
 
@@ -3502,7 +3571,36 @@ static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	int val = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "speed-value"));
 	gdouble speed = val / 1000.0;
-	p->SetPlaybackSpeed(speed);
+	
+	int idx = -1;
+	if (speed == 0.25) idx = 0;
+	else if (speed == 0.5) idx = 1;
+	else if (speed == 1.0) idx = 2;
+	else if (speed == 1.5) idx = 3;
+	else if (speed == 2.0) idx = 4;
+	else if (speed == 4.0) idx = 5;
+	else if (speed == 8.0) idx = 6;
+	else if (speed == 16.0) idx = 7;
+
+	if (idx >= 0)
+	{
+		const gchar* speed_names[] = {
+			"VideoSpeed025", "VideoSpeed05", "VideoSpeed10", "VideoSpeed15",
+			"VideoSpeed20", "VideoSpeed40", "VideoSpeed80", "VideoSpeed160"
+		};
+		const gchar *action_name = speed_names[idx];
+		
+		GAction *action = QuiverUtils::GetAction(action_name);
+		if (action)
+		{
+			g_action_activate(action, NULL); // radio actions are activated with NULL to just select them
+		}
+	}
+	else
+	{
+		p->SetPlaybackSpeed(speed);
+	}
+
 	/* close the popover */
 	GtkWidget *speedBtn = p->m_pSpeedButton;
 	if (speedBtn != NULL)
@@ -3728,12 +3826,12 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_dPlaybackSpeed = 1.0;
 	GtkWidget* speedPopover = gtk_popover_new(NULL);
 	g_object_ref_sink(speedPopover);
-	gtk_popover_set_modal(GTK_POPOVER(speedPopover), FALSE);
+	gtk_popover_set_modal(GTK_POPOVER(speedPopover), TRUE);
 	gtk_widget_set_size_request(speedPopover, 120, -1);
 	GtkWidget* speedBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
 	g_object_set_data(G_OBJECT(speedPopover), "speed-box", speedBox);
 
-	const double speeds[] = { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0 };
+	const double speeds[] = { 0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0 };
 	const int nSpeeds = sizeof(speeds) / sizeof(speeds[0]);
 	for (int i = 0; i < nSpeeds; i++)
 	{
@@ -4584,6 +4682,11 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY_2, "<Control>space", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_FORWARD, "period", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_BACK, "comma", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SEEK_FWD_5, "<Shift>period", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SEEK_BACK_5, "<Shift>comma", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_FWD, "", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_BACK, "", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SNAPSHOT, "", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	/* Viewer toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_VIEWER_VIEW_FILM_STRIP, "f", FALSE, viewer_action_handler_cb, m_ViewerImplPtr.get());
@@ -4607,6 +4710,20 @@ void Viewer::RegisterActions()
 	};
 	QuiverUtils::AddRadioActions(zoom_names, zoom_values, G_N_ELEMENTS(zoom_names),
 		mode, viewer_radio_action_handler_cb, m_ViewerImplPtr.get());
+
+	const gchar *speed_names[] = {
+		"VideoSpeed025",
+		"VideoSpeed05",
+		"VideoSpeed10",
+		"VideoSpeed15",
+		"VideoSpeed20",
+		"VideoSpeed40",
+		"VideoSpeed80",
+		"VideoSpeed160",
+	};
+	gint speed_values[] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+	QuiverUtils::AddRadioActions(speed_names, speed_values, G_N_ELEMENTS(speed_names),
+		2, viewer_radio_action_handler_cb, m_ViewerImplPtr.get());
 
 	/* initial toggle state from preferences */
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
