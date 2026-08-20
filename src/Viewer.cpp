@@ -213,10 +213,7 @@ static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_VIEWER_VIDEO_FRAME_BACK   "VideoFrameBack"
 #define ACTION_VIEWER_VIDEO_SNAPSHOT     "VideoSnapshot"
 
-#ifdef QUIVER_MAEMO
-#define ACTION_VIEWER_ZOOM_IN_MAEMO     ACTION_VIEWER_ZOOM_IN"_MAEMO"
-#define ACTION_VIEWER_ZOOM_OUT_MAEMO    ACTION_VIEWER_ZOOM_OUT"_MAEMO"
-#endif
+
 
 
 
@@ -766,19 +763,9 @@ void Viewer::ViewerImpl::UpdateUI()
 		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_IN);
 		if (NULL != action)
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomIn);
-#ifdef QUIVER_MAEMO
-		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_IN_MAEMO);
-		if (NULL != action)
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomIn);
-#endif
 		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_OUT);
 		if (NULL != action)
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomOut);
-#ifdef QUIVER_MAEMO
-		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_OUT_MAEMO);
-		if (NULL != action)
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomOut);
-#endif
 	}
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -1507,9 +1494,6 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_IN)
-#ifdef QUIVER_MAEMO
-	        || 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_IN_MAEMO)
-#endif
 	)
 	{
 		if (pViewerImpl->IsVideo())
@@ -1525,9 +1509,6 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 						quiver_image_view_get_magnification(imageview)*1.25);
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_OUT)
-#ifdef QUIVER_MAEMO
-	        || 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_OUT_MAEMO)
-#endif
 	)
 	{
 		if (pViewerImpl->IsVideo())
@@ -1662,11 +1643,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 
 /*
 		string strDlgText;
-#ifdef QUIVER_MAEMO
-		strDlgText = "Delete the selected image?";
-#else
 		strDlgText = "Move the selected image to the trash?";
-#endif
 		GtkWidget* dialog = gtk_message_dialog_new (NULL,GTK_DIALOG_MODAL,
 								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,strDlgText.c_str());
 		rval = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -1679,11 +1656,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			case GTK_RESPONSE_YES:
 			{
 				// delete the items!
-#ifdef QUIVER_MAEMO
-				if (QuiverFileOps::Delete(f))
-#else
 				if (QuiverFileOps::MoveToTrash(f))
-#endif
 				{
 					pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
 					pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex(),true);
@@ -2713,19 +2686,6 @@ void Viewer::ViewerImpl::Snapshot()
 	}
 }
 
-#ifdef QUIVER_MAEMO
-static gboolean timeout_click (gpointer data)
-{
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)data;
-
-	pViewerImpl->m_pViewer->EmitItemClickedEvent();
-
-	pViewerImpl->m_iTimeoutClickID  = 0;
-	return FALSE;
-}
-#endif
-
 static gboolean 
 viewer_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
@@ -2770,31 +2730,6 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 
-#ifdef QUIVER_MAEMO
-	/* FIXME - one click to fullscreen
-	 * 2 problems:  too slow and 
-	 * when zoomsed in the scroll dragging triggers it
-	if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
-	{
-		gint double_click_time = 0;
-		GtkSettings* settings = gtk_settings_get_default();
-		g_object_get(settings, "gtk-double-click-time",&double_click_time,NULL);
-		printf("double click time! %d\n", double_click_time);
-		double_click_time += 5; // add another 10ms to make sure
-		
-		if (0 == pViewerImpl->m_iTimeoutClickID )
-		{
-			pViewerImpl->m_iTimeoutClickID 
-				= g_timeout_add(double_click_time, timeout_click, pViewerImpl);
-		}
-		else 
-		{
-			g_source_remove(pViewerImpl->m_iTimeoutClickID );
-			pViewerImpl->m_iTimeoutClickID  = 0;
-		}
-	}
-	*/
-#endif
 	if (widget == pViewerImpl->m_pImageView || widget == pViewerImpl->m_pVideoFixed
 		|| widget == pViewerImpl->m_pVideoSinkWidget) 
 	{
@@ -3718,11 +3653,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pRightControls(NULL),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
-#ifdef QUIVER_MAEMO
-	m_ThumbnailLoader(this,1)
-#else
 	m_ThumbnailLoader(this,2)
-#endif
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -4011,11 +3942,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW,"#000");
 	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW, "#444");
 
-#ifdef QUIVER_MAEMO
-	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,false))
-#else
 	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
-#endif
 	{
 		if (!strBGColorImg.empty())
 		{
@@ -4095,12 +4022,6 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	//popup menu stuff
 	g_signal_connect(G_OBJECT(m_pImageView), "button-press-event", G_CALLBACK(viewer_button_press_cb), this);
 	g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(viewer_popup_menu_cb), this);
-#ifdef QUIVER_MAEMO
-	g_signal_connect (G_OBJECT (m_pImageView), "tap-and-hold", G_CALLBACK (viewer_popup_menu_cb), this);
-	gtk_widget_tap_and_hold_setup (m_pImageView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
-#endif
-	
-	
     g_signal_connect (G_OBJECT (m_pImageView), "scroll_event",
     			G_CALLBACK (viewer_scrollwheel_event), this);
 
@@ -4660,10 +4581,6 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS_2, "<Shift>space", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT, "space", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT_2, "<Shift>BackSpace", viewer_action_handler_cb, m_ViewerImplPtr.get());
-#ifdef QUIVER_MAEMO
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ZOOM_IN_MAEMO, "F7", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ZOOM_OUT_MAEMO, "F8", viewer_action_handler_cb, m_ViewerImplPtr.get());
-#endif
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FIRST, "Home", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_LAST, "End", viewer_action_handler_cb, m_ViewerImplPtr.get());
 

@@ -5,14 +5,6 @@
 #include "QuiverPrefs.h"
 #include "IPreferencesEventHandler.h"
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_FM_2
-#include <hildon/hildon-file-chooser-dialog.h>
-#else
-#include <hildon-widgets/hildon-file-chooser-dialog.h>
-#endif
-#endif
-
 class PreferencesDlg::PreferencesDlgPriv
 {
 public:
@@ -31,12 +23,8 @@ public:
 	bool m_bLoadedDlg;
 	
 	// dlg widgets
-#ifdef QUIVER_MAEMO
-	GtkButton*             m_pBtnPhotoLibrary;
-#else
 	GtkFileChooserButton*  m_pFCBtnPhotoLibrary;
-#endif
-	
+
 	GtkComboBox*           m_pComboFilmstripPos;
 	GtkComboBox*           m_pComboDefaultViewMode;
 	
@@ -104,9 +92,6 @@ void PreferencesDlg::Run()
 
 
 // prototypes
-#ifdef QUIVER_MAEMO
-static void  on_clicked (GtkButton *button, gpointer user_data);
-#endif
 static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
 static void  on_viewer_film_strip_pos_changed  (GtkComboBox *widget, gpointer user_data);
 static void  on_value_changed(GtkRange *range, gpointer user_data);
@@ -150,17 +135,10 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 	if (NULL != m_pGtkBuilder)
 	{
 		GtkBox* hbox_photo_library = GTK_BOX( gtk_builder_get_object (m_pGtkBuilder, "hbox_photo_library") );
-#ifdef QUIVER_MAEMO
-		m_pBtnPhotoLibrary = GTK_BUTTON( gtk_button_new() );
-		gtk_widget_show(GTK_WIDGET(m_pBtnPhotoLibrary));
-		
-		gtk_box_pack_start(hbox_photo_library, GTK_WIDGET(m_pBtnPhotoLibrary), TRUE, TRUE, 5);
-#else
 		m_pFCBtnPhotoLibrary = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Photo Library Directory", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
 		gtk_widget_show(GTK_WIDGET(m_pFCBtnPhotoLibrary));
 		
 		gtk_box_pack_start(hbox_photo_library, GTK_WIDGET(m_pFCBtnPhotoLibrary), TRUE, TRUE, 0);
-#endif
 
 
 		//m_pFCBtnPhotoLibrary     = GTK_FILE_CHOOSER_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "fcb_general_photo_library") );
@@ -199,11 +177,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		m_pLblViewerColor        = GTK_LABEL ( gtk_builder_get_object(m_pGtkBuilder,"label_general_bg_viewer") );
 
 		m_bLoadedDlg = (
-#ifdef QUIVER_MAEMO
-			NULL != m_pBtnPhotoLibrary &&
-#else
 			NULL != m_pFCBtnPhotoLibrary &&
-#endif
 			NULL != m_pComboFilmstripPos && 
 			NULL != m_pComboDefaultViewMode && 
 			NULL != m_pToggleAskBeforeDelete && 
@@ -283,13 +257,9 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
 		if (!strPhotoLibrary.empty())
 		{
-#ifdef QUIVER_MAEMO
-			gtk_button_set_label(m_pBtnPhotoLibrary, strPhotoLibrary.c_str());
-#else
 			gtk_file_chooser_set_current_folder_uri (
 				GTK_FILE_CHOOSER (m_pFCBtnPhotoLibrary),
 				strPhotoLibrary.c_str());
-#endif
 		}  
 
 		GdkRGBA clrBrowser;
@@ -310,47 +280,6 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 	}
 
 }
-#ifdef QUIVER_MAEMO
-static void  on_clicked (GtkButton *button, gpointer user_data)
-{
-	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
-	PreferencesPtr prefs = Preferences::GetInstance();
-
-	if (priv->m_pBtnPhotoLibrary == button)
-	{ 
-		// photo library
-		GtkWidget* dlg = hildon_file_chooser_dialog_new(NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
-
-		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
-		gtk_file_chooser_set_current_folder_uri (
-			GTK_FILE_CHOOSER (dlg),
-			strPhotoLibrary.c_str());
-
-		gint response = gtk_dialog_run(GTK_DIALOG(dlg));
-		
-		if (GTK_RESPONSE_OK == response)
-		{
-			gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (dlg));
-			if (NULL == dir)
-			{
-				if (!strPhotoLibrary.empty())
-				{
-					gtk_button_set_label(button, strPhotoLibrary.c_str());
-				}
-			}
-			else
-			{
-				prefs->SetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY, dir);
-				gtk_button_set_label(button, dir);
-				g_free(dir);
-			}
-		}
-
-		gtk_widget_destroy(dlg);
-	}
-}
-#else
 void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
 {
 	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
@@ -381,20 +310,14 @@ void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
 	
 	g_signal_handlers_unblock_by_func(chooser, (gpointer)on_folder_change, user_data);
 }
-#endif
 
 
 void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
-#ifdef QUIVER_MAEMO
-		g_signal_connect(m_pBtnPhotoLibrary,
-			"clicked",(GCallback)on_clicked,this);
-#else
 		g_signal_connect(m_pFCBtnPhotoLibrary,
 			"current-folder-changed",(GCallback)on_folder_change,this);
-#endif
 		g_signal_connect(m_pComboFilmstripPos,
 			"changed",(GCallback)on_viewer_film_strip_pos_changed,this);
 

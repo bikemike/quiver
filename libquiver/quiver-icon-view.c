@@ -910,14 +910,12 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 				if (!stock)
 				{
 					guint border = iconview->priv->icon_border_size;
-#ifndef QUIVER_MAEMO // FIXME: drop shadow algorithm is too slow for maemo
 					GtkStateFlags state_flags = gtk_widget_get_state_flags(widget);
 					quiver_icon_view_draw_drop_shadow(iconview, cr, state_flags, 
 							x_cell_offset + x_icon_offset - (gint)border, 
 							y_cell_offset + y_icon_offset - (gint)border, 
 							pixbuf_width + border*2, 
 							pixbuf_height + border *2);
-#endif
 					// draw a border around the thumbnail
 					if (0 < border)
 					{
@@ -1163,22 +1161,6 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 		{
 			if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
 			{
-#ifdef QUIVER_MAEMO
-				cairo_region_t *invalid_region;
-				cairo_region_t *tmp_region;
-		
-				tmp_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
-				gdk_region_shrink(tmp_region,1,1);
-		
-				invalid_region = gdk_region_rectangle(&iconview->priv->rubberband_rect);
-		
-				gdk_region_subtract(invalid_region,tmp_region);
-				gdk_region_shrink(invalid_region,-1,-1);
-		
-				gtk_widget_get_window(gdk_window_invalidate_region(widget),invalid_region,FALSE);
-				gdk_region_destroy(invalid_region);
-				gdk_region_destroy(tmp_region);
-#else
 				cairo_rectangle_int_t invalid_rect = iconview->priv->rubberband_rect;
 				invalid_rect.x -= 1;
 				invalid_rect.y -= 1;
@@ -1189,8 +1171,7 @@ quiver_icon_view_button_release_event (GtkWidget *widget,
 				cairo_region_translate(invalid_region,-hadjust,-vadjust);
 	
 				gdk_window_invalidate_region(gtk_widget_get_window(widget),invalid_region,FALSE);
-				cairo_region_destroy(invalid_region);
-#endif			
+				cairo_region_destroy(invalid_region);			
 				if (iconview->priv->timeout_id_rubberband_scroll != 0)
 				{
 					g_source_remove (iconview->priv->timeout_id_rubberband_scroll);

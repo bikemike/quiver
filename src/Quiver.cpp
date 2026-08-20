@@ -4,15 +4,6 @@
 
 #include "Quiver.h"
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_1
-#include <hildon/hildon-program.h>
-#else
-#include <hildon-widgets/hildon-program.h>
-#endif
-#include <libosso.h>
-#endif
-
 #include <gdk-pixbuf/gdk-pixbuf-animation.h>
 //#include "QuiverUI.h"
 
@@ -71,10 +62,6 @@
 gchar g_szConfigDir[256]      = "";
 gchar g_szConfigFilePath[256] = "";
 
-#ifdef QUIVER_MAEMO
-osso_context_t* osso_context  = NULL;
-#endif
-
 using namespace std;
 
 // helper functions
@@ -84,9 +71,6 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 static void quiver_escape_action(QuiverImpl *pQuiverImpl);
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data );
 
-#ifdef QUIVER_MAEMO
-static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1, gpointer user_data);
-#endif
 static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data );
 static gboolean timeout_event_motion_notify (gpointer data);
 static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, gpointer data );
@@ -434,10 +418,8 @@ void QuiverImpl::SaveAs()
 
 bool QuiverImpl::CanClose()
 {
-#ifndef QUIVER_MAEMO
 	gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
 	gtk_window_get_size(GTK_WINDOW(m_pQuiverWindow),&m_iAppWidth,&m_iAppHeight);
-#endif
 	return true;
 }
 
@@ -477,12 +459,6 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_CLOSE_2                                ACTION_QUIVER_CLOSE"_2"
 #define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
 #define ACTION_QUIVER_CLOSE_4                                ACTION_QUIVER_CLOSE"_4"
-
-#ifdef QUIVER_MAEMO
-#define ACTION_QUIVER_UI_MODE_SWITCH_MAEMO                   "UIModeSwitch_MAEMO"
-#define ACTION_QUIVER_UI_MODE_VIEWER_MAEMO                   ACTION_QUIVER_UI_MODE_VIEWER"_MAEMO"
-#define ACTION_QUIVER_FULLSCREEN_MAEMO                       ACTION_QUIVER_FULLSCREEN"_MAEMO"
-#endif
 
 static const char * quiver_ui_main =
 "<interface>"
@@ -1439,9 +1415,7 @@ void  Quiver::signal_drag_data_delete  (GtkWidget *widget,GdkDragContext *contex
 void Quiver::SetWindowTitle(string s)
 {
 	string title = "quiver - " + s;
-#ifndef QUIVER_MAEMO
 	gtk_window_set_title (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow), title.c_str());
-#endif	
 }
 
 void Quiver::ImageChanged()
@@ -1468,18 +1442,6 @@ void Quiver::ImageChanged()
 		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
 	}
 }
-
-#ifdef QUIVER_MAEMO
-static void notify_gtk_enable_accels_changed (GObject *gobject, GParamSpec *arg1, gpointer user_data)
-{
-	gboolean value = FALSE;
-	g_object_get(gobject, arg1->name, &value,NULL);
-	if (FALSE == value)
-	{
-		g_object_set(gobject, arg1->name,TRUE,NULL);
-	}
-}
-#endif
 
 static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *event, gpointer data )
 { (void)widget; 
@@ -1518,10 +1480,6 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		/* restore the filmstrip if it was visible before fullscreen */
 		if (pQuiverImpl->m_bViewerMode && pQuiverImpl->m_bFilmStripVisibleBeforeFS)
 			QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, TRUE);
-
-#ifdef QUIVER_MAEMO
-		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, NULL);
-#endif
 	}
 	
 	// update the fullscreen toggle state without running the activate
@@ -1615,21 +1573,6 @@ Quiver::Quiver(std::list<std::string> &images, bool bRecursive/* = false*/)
 	m_QuiverImplPtr->m_listImages = images;
 	Init();
 
-#ifdef QUIVER_MAEMO
-	/* Initialize maemo application */
-	osso_context = osso_initialize("org.yi.mike.quiver", PACKAGE_VERSION, TRUE, NULL);
-    
-	/* Check that initialization was ok */
-	if (osso_context == NULL)
-	{
-		//return OSSO_ERROR;
-	}
-	else
-	{
-		osso_mime_set_cb (osso_context, mime_open_handler, m_QuiverImplPtr.get());
-	}
-#endif
-
 }
 
 void Quiver::Init()
@@ -1659,41 +1602,16 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_ViewerPtr->AddEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
 
 	/* Create the main window */
-#ifdef QUIVER_MAEMO
-	HildonProgram* program;
-	program = HILDON_PROGRAM(hildon_program_get_instance());
-
-	g_set_application_name("quiver");
-
-	m_QuiverImplPtr->m_pQuiverWindow = hildon_window_new();
-	hildon_program_add_window(program, HILDON_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
-	
-#ifdef HAVE_HILDON_1
-	// add a callback here
-	// the following is to work around a bug in maemo gtk 
-	// which causes accelerators not to work
-	// https://bugs.maemo.org/show_bug.cgi?id=2278
-	// (only in OS2008)
-
-	GtkSettings* settings = gtk_settings_get_default();
-	g_object_set(settings, "gtk-enable-accels",TRUE,NULL);
-	g_signal_connect (G_OBJECT(settings), "notify::gtk-enable-accels",
-		G_CALLBACK (notify_gtk_enable_accels_changed), NULL);
-#endif // HAVE_HILDON_1
-#else
 	m_QuiverImplPtr->m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");
-#endif
 
 
 	if (LoadSettings())
 	{	
 		//set the size and position of the window
 		//gtk_widget_set_uposition(quiver_window,m_iAppX,m_iAppY);
-#ifndef QUIVER_MAEMO
 		gtk_window_move(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppX,m_QuiverImplPtr->m_iAppY);
 		gtk_window_set_default_size (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppWidth,m_QuiverImplPtr->m_iAppHeight);
-#endif
 
 	}
 	
@@ -1718,9 +1636,6 @@ void Quiver::Init()
 	g_printerr("MenuVideo found: %p\n", mv);
 
 	gtk_toolbar_set_style(GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar), GTK_TOOLBAR_ICONS);
-#ifdef QUIVER_MAEMO
-	gtk_toolbar_set_tooltips(GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar), FALSE);
-#endif
 
 	/* GSimpleAction based action system (replaces GtkUIManager/GtkAction).
 	 * Actions are registered here and their widgets bound with
@@ -1754,9 +1669,6 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_EXTERNAL_TOOLS, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_DONATE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ABOUT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-#ifdef QUIVER_MAEMO
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UI_MODE_SWITCH_MAEMO, "Return", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-#endif
 
 	/* Global toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_QUIVER_FULLSCREEN, "f", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
@@ -1961,11 +1873,7 @@ void Quiver::Init()
 	gtk_widget_set_no_show_all(statusbar,TRUE);
 	
 
-#ifdef QUIVER_MAEMO 
-	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW, false);
-#else
 	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW, true);
-#endif
 	if (prefs_show)
 	{
 		gtk_widget_show(statusbar);
@@ -2026,15 +1934,8 @@ void Quiver::Init()
 
 	// pack the main gui ara with the rest of the gui compoents
 	//gtk_container_add (GTK_CONTAINER (vbox),menubar);
-#ifdef QUIVER_MAEMO
-	hildon_program_set_common_menu (program, GTK_MENU(m_QuiverImplPtr->m_pMenubar));
-	hildon_program_set_common_toolbar (program, GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar));
-
-	//gtk_widget_tap_and_hold_setup(m_QuiverImplPtr->m_pQuiverWindow, context_menu, NULL, GTK_TAP_AND_HOLD_NONE  ); 
-#else
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pMenubar, FALSE, FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pToolbar, FALSE, FALSE, 0);
-#endif
 
 	gtk_box_pack_start (GTK_BOX (vbox), m_QuiverImplPtr->m_pHPanedMainArea, TRUE, TRUE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox),statusbar , FALSE, FALSE, 0);
@@ -2112,12 +2013,6 @@ void Quiver::Init()
 Quiver::~Quiver()
 {
 	//destructor
-#ifdef QUIVER_MAEMO
-	if (NULL != osso_context)
-	{
-		osso_deinitialize(osso_context);
-	}
-#endif
 }
 
 bool Quiver::LoadSettings()
@@ -2232,47 +2127,6 @@ void Quiver::SetImageList(list<string> &files, bool bRecursive /* = false */)
 
 
 
-#ifdef QUIVER_MAEMO
-
-static void
-mime_open_handler (gpointer raw_data, int argc, char **argv)
-{
-	QuiverImpl* pQuiverImpl = static_cast<QuiverImpl*>(raw_data);
-	if (argc > 0)
-	{
-		list<string> files;
-		for (int i = 0;i<argc;i++)
-		{	
-			gchar* filename = g_filename_from_uri(argv[i],NULL,NULL);
-			if (NULL != filename)
-			{
-				files.push_back(filename);
-				g_free(filename);
-			}
-			else
-			{
-				files.push_back(argv[i]);
-			}
-		}
-
-		if (pQuiverImpl->m_bInitialized)
-		{
-			// just set the image list
-			pQuiverImpl->m_pQuiver->SetImageList(files);
-
-			// and present the window (bring it to the front)
-			gtk_window_present(GTK_WINDOW(pQuiverImpl->m_pQuiverWindow));
-		}
-		else
-		{
-			// not initialized yet, set the file list
-			pQuiverImpl->m_listImages = files;
-		}
-	}
-}
-
-
-#endif
 typedef struct _CreateQuiverData
 {
 	list<string> *pFiles;
@@ -2350,11 +2204,7 @@ int main (int argc, char **argv)
 		// default to a directory
 		// specified in preferences
 		PreferencesPtr prefsPtr = Preferences::GetInstance();
-#ifdef QUIVER_MAEMO
-		dir = "~/MyDocs/.images";
-#else
 		dir = g_get_home_dir();
-#endif
 		if (prefsPtr->HasKey(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY))
 		{	
 			string photo_library = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY,dir);
@@ -2464,9 +2314,7 @@ static gboolean timeout_event_motion_notify (gpointer data)
 		empty_bitmap = gdk_bitmap_create_from_data (NULL,zero,1,1);
 		empty_cursor = gdk_cursor_new_from_pixmap (empty_bitmap,empty_bitmap,&blank,&blank,0,0);
 
-#ifndef QUIVER_MAEMO
 		gdk_window_set_cursor (pQuiverImpl->m_pQuiverWindow->window, empty_cursor);
-#endif
 		
 		g_object_unref(empty_bitmap);
 		gdk_cursor_unref (empty_cursor);
@@ -2489,9 +2337,7 @@ static gboolean event_motion_notify( GtkWidget *widget, GdkEventMotion *event, g
 		pQuiverImpl->m_iTimeoutMouseMotionNotify = 0;
 	}
 
-#ifndef QUIVER_MAEMO	
 	gdk_window_set_cursor (gtk_widget_get_window(pQuiverImpl->m_pQuiverWindow), NULL);
-#endif
 
 	pQuiverImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pQuiverImpl);
 
@@ -2741,14 +2587,6 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event
 	}
 
 	parent->UpdateUI();
-	
-	// start a timer to keep the display on
-	if (0 == parent->m_iTimeoutKeepScreenOn)
-	{
-#ifdef QUIVER_MAEMO 
-		parent->m_iTimeoutKeepScreenOn = g_timeout_add(5000, timeout_keep_screen_on, parent);
-#endif
-	}
 }
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event_ptr)
@@ -2812,7 +2650,6 @@ void Quiver::OnQuit()
 
 void Quiver::OnOpenFile()
 {
-#ifndef QUIVER_MAEMO
 	GtkWidget *dialog;
 	
 	dialog = gtk_file_chooser_dialog_new ("Open File",
@@ -2835,13 +2672,11 @@ void Quiver::OnOpenFile()
 	  }
 	
 	gtk_widget_destroy (dialog);
-#endif
 }
 
 void Quiver::OnOpenFolder()
 {
 	
-#ifndef QUIVER_MAEMO
 	GtkWidget *dialog;
 	dialog = gtk_file_chooser_dialog_new ("Open Folder",
 					      GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
@@ -2862,7 +2697,6 @@ void Quiver::OnOpenFolder()
 	  }
 	
 	gtk_widget_destroy (dialog);
-#endif
 }
 
 void Quiver::OnSlideShow(bool bStart)
@@ -3051,9 +2885,6 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 		pQuiver->OnShowStatusbar(QuiverUtils::ToggleActionGetActive(szAction));
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_FULLSCREEN)
-#ifdef QUIVER_MAEMO
-	 || 0 == strcmp(szAction,ACTION_QUIVER_FULLSCREEN_MAEMO)
-#endif
 	)
 	{
 		pQuiver->OnFullScreen();
@@ -3066,22 +2897,6 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	{
 		pQuiver->ShowViewer();
 	}
-#ifdef QUIVER_MAEMO
-	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_SWITCH_MAEMO))
-	{
-		if (!pQuiverImpl->m_bViewerMode)
-		{
-			pQuiver->ShowViewer();
-		}
-		else
-		{
-			if (! pQuiverImpl->m_ViewerPtr->ResetViewMode() )
-			{
-				pQuiver->ShowBrowser();
-			}
-		}
-	}
-#endif
 	else if (0 == strcmp(szAction, ACTION_QUIVER_DONATE))
 	{
 		DonateDlg dlg;
@@ -3547,14 +3362,12 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 static gboolean quiver_window_button_press ( GtkWidget *widget, GdkEventButton *event, gpointer data )
 { (void)widget; 
 	// don't do anything for MAEMO because of weirdness in HildonControlbar
-#ifndef QUIVER_MAEMO
 	if (2 == event->button)
 	{
 		QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
 		pQuiverImpl->m_pQuiver->OnFullScreen();
 		return TRUE;
 	}
-#endif
 
 	return FALSE;
 }

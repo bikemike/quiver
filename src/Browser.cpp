@@ -35,15 +35,6 @@
 #include "IFolderTreeEventHandler.h"
 #include "IconViewThumbLoader.h"
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_1
-#include <hildon/hildon-controlbar.h>
-#else
-#include <hildon-widgets/hildon-controlbar.h>
-#endif
-#include <math.h>
-#endif
-
 #include "QuiverStockIcons.h"
 
 using namespace std;
@@ -281,11 +272,6 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 #define ACTION_BROWSER_ZOOM_IN                            "BrowserZoomIn"
 #define ACTION_BROWSER_ZOOM_OUT                           "BrowserZoomOut"
 
-#ifdef QUIVER_MAEMO
-#define ACTION_BROWSER_ZOOM_IN_MAEMO                      ACTION_BROWSER_ZOOM_IN"_MAEMO"
-#define ACTION_BROWSER_ZOOM_OUT_MAEMO                     ACTION_BROWSER_ZOOM_OUT"_MAEMO"
-#endif
-
 
 
 
@@ -426,11 +412,6 @@ static gboolean entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpoint
 static void browser_imageview_magnification_changed(QuiverImageView *imageview,gpointer data);
 static void browser_imageview_reload(QuiverImageView *imageview,gpointer data);
 
-#ifdef QUIVER_MAEMO
-static int get_interpreted_thumb_size(gdouble value);
-static gdouble get_range_val_from_thumb_size(gint thumbsize);
-#endif
-
 static gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
 { (void)event;  (void)widget; 
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
@@ -552,11 +533,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
 	m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
-#ifdef QUIVER_MAEMO
-	m_ThumbnailLoader(this,2)
-#else
 	m_ThumbnailLoader(this,4)
-#endif
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -588,23 +565,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	
 	m_pCssProvider = gtk_css_provider_new();
 
-#ifndef QUIVER_MAEMO
 	hscale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,20,256,1);
 	gtk_range_set_value(GTK_RANGE(hscale),128);
 	gtk_scale_set_value_pos (GTK_SCALE(hscale),GTK_POS_LEFT);
 	gtk_scale_set_draw_value(GTK_SCALE(hscale),FALSE);
 
 	gtk_widget_set_size_request(hscale,100,-1);
-#else
-	hscale = hildon_controlbar_new();
-	hildon_controlbar_set_range(HILDON_CONTROLBAR(hscale),0,11);
-	hildon_controlbar_set_value(HILDON_CONTROLBAR(hscale),5);
-	/*
-	GtkRequisition requisition = {};
-	gtk_widget_size_request(hscale,&requisition);
-	gtk_widget_set_size_request(hscale, 200, requisition.height);
-	*/
-#endif
 	m_pToolItemThumbSizer = gtk_tool_item_new();
 	gtk_tool_item_set_expand(m_pToolItemThumbSizer, TRUE);
 
@@ -635,11 +601,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 
 	gtk_widget_set_no_show_all(m_pImageView, TRUE);
 
-#ifdef QUIVER_MAEMO
-	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
-#else
 	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
-#endif
 	if (bShowPreview)
 	{
 		gtk_widget_show(m_pImageView);
@@ -714,14 +676,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	//popup menu stuff
 	g_signal_connect(G_OBJECT(m_pImageView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);
 	g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
-#ifdef QUIVER_MAEMO
-	g_signal_connect (G_OBJECT (m_pImageView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), this);
-	gtk_widget_tap_and_hold_setup (m_pImageView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
-#endif
-
-#ifdef QUIVER_MAEMO
-	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
-#endif
 
 	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH);
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
@@ -731,10 +685,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	g_signal_connect (G_OBJECT (hscale), "value_changed",
 	      G_CALLBACK (icon_size_value_changed), this);
 
-#ifdef QUIVER_MAEMO
-	// a single click on a selected thumbnail will trigger this signal
-	g_signal_connect(G_OBJECT(m_pIconView),"cell_clicked",G_CALLBACK(iconview_cell_activated_cb),this);
-#endif
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(iconview_cell_activated_cb),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(iconview_cursor_changed_cb),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);
@@ -743,11 +693,6 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	g_signal_connect(G_OBJECT(m_pIconView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
 	g_signal_connect(G_OBJECT(m_pIconView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);	
 	g_signal_connect(G_OBJECT(m_pIconView), "motion-notify-event", G_CALLBACK(iconview_motion_notify), this);	
-#ifdef QUIVER_MAEMO
-	g_signal_connect (G_OBJECT (m_pIconView), "tap-and-hold", G_CALLBACK (browser_popup_menu_cb), this);
-	gtk_widget_tap_and_hold_setup (m_pIconView, NULL, NULL, (GtkWidgetTapAndHoldFlags)0);
-#endif
-	
 	g_signal_connect(G_OBJECT(m_pLocationEntry),"activate",G_CALLBACK(entry_activate),this);
 	g_signal_connect(G_OBJECT(m_pLocationEntry),"key-press-event",G_CALLBACK(entry_key_press),this);
 
@@ -760,11 +705,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW, "#000");
 	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW, "#444");
 
-#ifdef QUIVER_MAEMO
-	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,false))
-#else
 	if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
-#endif
 	{
 		std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 		strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
@@ -789,11 +730,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	{
 		thumb_size = 128.;
 	}
-#ifndef QUIVER_MAEMO
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
-#else
-	gtk_range_set_value(GTK_RANGE(hscale),get_range_val_from_thumb_size((gint)thumb_size));
-#endif
 
 }
 
@@ -807,12 +744,7 @@ Browser::BrowserImpl::~BrowserImpl()
 
 	gint val;
 
-#ifdef QUIVER_MAEMO
-	g_object_unref(m_pToolItemThumbSizer);
-	val = get_interpreted_thumb_size(value);
-#else
 	val = (int)value;
-#endif
 
 	prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE,val);
 
@@ -853,11 +785,6 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_SELECT_ALL, "<Control>A", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH, "Delete", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RELOAD, "<Control>R", browser_action_handler_cb, this);
-#ifdef QUIVER_MAEMO
-	QuiverUtils::AddSimpleAction(ACTION_BROWSER_ZOOM_IN_MAEMO, "F7", browser_action_handler_cb, this);
-	QuiverUtils::AddSimpleAction(ACTION_BROWSER_ZOOM_OUT_MAEMO, "F8", browser_action_handler_cb, this);
-#endif
-
 	/* Browser toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_BROWSER_VIEW_SIDEBAR, "<Control><Shift>F", TRUE, browser_action_handler_cb, this);
 	QuiverUtils::AddToggleAction(ACTION_BROWSER_VIEW_PREVIEW, "<Control><Shift>p", TRUE, browser_action_handler_cb, this);
@@ -1087,32 +1014,11 @@ ImageListPtr Browser::BrowserImpl::GetImageList()
 // BrowswerImpl Callbacks
 //=============================================================================
 
-#ifdef QUIVER_MAEMO
-static int get_interpreted_thumb_size(gdouble value)
-{
-	gint val;
-	value = 20. + value * 21.51;
-	val = (gint)ceil(value);
-	val = min(val,256);
-	return val;
-}
-static gdouble get_range_val_from_thumb_size(gint thumbsize)
-{
-	gdouble value = floor( ((thumbsize - 20) / 21.51) + .5);
-	return value;
-}
-#endif
-
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	gdouble value = gtk_range_get_value (range);
-#ifndef QUIVER_MAEMO
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), (gint)value,(gint)value);
-#else
-	gint val = get_interpreted_thumb_size(value);
-	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), val,val);
-#endif
 }
 
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data)
@@ -1521,16 +1427,6 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
 		}
 	}
-#ifdef QUIVER_MAEMO
-	else if (0 == strcmp(szAction,ACTION_BROWSER_ZOOM_IN_MAEMO))
-	{
-		gtk_range_set_value (GTK_RANGE(pBrowserImpl->hscale), gtk_range_get_value (GTK_RANGE(pBrowserImpl->hscale)) + 1.);
-	}
-	else if (0 == strcmp(szAction,ACTION_BROWSER_ZOOM_OUT_MAEMO))
-	{
-		gtk_range_set_value (GTK_RANGE(pBrowserImpl->hscale), gtk_range_get_value (GTK_RANGE(pBrowserImpl->hscale)) - 1.);
-	}
-#endif
 	else if (0 == strcmp(szAction,ACTION_BROWSER_OPEN_LOCATION))
 	{
 		gtk_widget_grab_focus(pBrowserImpl->m_pLocationEntry);
@@ -1625,19 +1521,11 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			string strDlgText;
 			if (1 == items.size())
 			{
-#ifdef QUIVER_MAEMO
-				strDlgText = "Delete the selected image?";
-#else
-				strDlgText = "Move the selected image to the trash?";
-#endif
+			strDlgText = "Move the selected image to the trash?";
 			}
 			else
 			{
-#ifdef QUIVER_MAEMO
-				strDlgText = "Delete the selected images?";
-#else
-				strDlgText = "Move the selected images to the trash?";
-#endif
+			strDlgText = "Move the selected images to the trash?";
 			}
 			GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
 									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,"%s",strDlgText.c_str());
@@ -1660,11 +1548,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 					
 					
 					
-#ifdef QUIVER_MAEMO
-					if (QuiverFileOps::Delete(f))
-#else
 					if (QuiverFileOps::MoveToTrash(f))
-#endif
 					{
 						pBrowserImpl->m_ImageListPtr->Remove(*ritr);
 					}

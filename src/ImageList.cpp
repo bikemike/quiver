@@ -726,9 +726,7 @@ void ImageList::ImageListImpl::LoadMimeTypes()
 			formats = g_slist_next(formats);
 		}
 		g_slist_free (formats);
-#ifdef QUIVER_MAEMO
-		c_setSupportedMimeTypes.insert("sketch/png");
-#endif
+
 	}
 }
 

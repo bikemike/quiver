@@ -53,9 +53,7 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 	m_pStatusbar = gtk_statusbar_new();
 	//gtk_frame_set_shadow_type(GTK_FRAME(m_pStatusbar),GTK_SHADOW_OUT);
 	
-#ifdef QUIVER_MAEMO
-	gtk_statusbar_set_has_resize_grip(GTK_STATUSBAR(m_pStatusbar),FALSE);
-#endif
+
 	 
 	/*
 	m_pLabelStatus = gtk_label_new ("");

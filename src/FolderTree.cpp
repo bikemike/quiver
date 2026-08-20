@@ -9,14 +9,6 @@
 #include <gdk/gdkkeysyms.h>
 #include <stdint.h>
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_FM_2
-#include <hildon/hildon-file-system-info.h>
-#else
-#include <hildon-widgets/hildon-file-system-info.h>
-#endif
-#endif
-
 #include <set>
 
 #define QUIVER_TREE_COLUMN_TOGGLE      "column_toggle"
@@ -25,20 +17,6 @@
 #include "QuiverStockIcons.h"
 
 /*GtkTreeStore *store;*/
-
-#ifdef QUIVER_MAEMO
-class FolderTree::FolderTreeImpl;
-typedef struct _HildonFSAsyncStruct
-{
-	GtkTreeModel*               pTreeModel;
-	GtkTreeIter*                pIter;
-} HildonFSAsyncStruct;
-
-static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
-                                             HildonFileSystemInfo *info,
-                                             const GError *error,
-                                             gpointer data);
-#endif
 
 enum
 {
@@ -51,24 +29,6 @@ enum
 	FILE_TREE_COLUMN_USE_DEFAULT_ORDER,
 	FILE_TREE_COLUMN_COUNT,
 };
-
-#ifdef QUIVER_MAEMO
-typedef enum _FolderID
-{
-	MAEMO_FOLDER_DEVICE,
-	MAEMO_FOLDER_AUDIO,
-	MAEMO_FOLDER_DOCUMENTS,
-	MAEMO_FOLDER_GAMES,
-	MAEMO_FOLDER_IMAGES,
-	MAEMO_FOLDER_VIDEOS,
-	MAEMO_FOLDER_MMC1,
-	MAEMO_FOLDER_MMC2,
-	FOLDER_ID_COUNT,
-} FolderID;
-
-gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id);
-
-#endif
 
 static gint sort_func (GtkTreeModel *model,GtkTreeIter *a, GtkTreeIter *b, gpointer user_data);
 static gboolean folder_tree_is_separator (GtkTreeModel *model,GtkTreeIter *iter,gpointer data);
@@ -925,10 +885,6 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 		{
 			const gchar *column_name;
 			column_name = gtk_tree_view_column_get_title(column);
-#ifdef QUIVER_MAEMO
-			gint start_pos = 0;
-			gint width = 0;
-#endif
 			if (0 == strcmp(QUIVER_TREE_COLUMN_TOGGLE,column_name))
 			{
 				pFolderTreeImpl->m_bButtonDown = FALSE;
@@ -943,38 +899,6 @@ view_onButtonPressed (GtkWidget *treeview, GdkEventButton *event, gpointer userd
 					return TRUE;
 				}
 			}
-#ifdef QUIVER_MAEMO
-			else if ( gtk_tree_view_column_cell_get_position(column,
-				pFolderTreeImpl->m_pCellRendererPixbuf,&start_pos, &width) )
-			{
-				GdkRectangle rect = {};
-				gtk_tree_view_get_cell_area         (GTK_TREE_VIEW(treeview),
-                                                         path,
-                                                         column,
-                                                         &rect);
-				gint cell_x = (gint)(event->x - rect.x);
-				if (cell_x >= start_pos && cell_x <= start_pos + width)
-				{
-					// if expandable , expand or collapse it
-					GtkTreeIter iter = {};
-					if ( gtk_tree_model_get_iter (model, &iter, path) )
-					{
-						if (0 < gtk_tree_model_iter_n_children  (model, &iter) )
-						{
-							if ( gtk_tree_view_row_expanded(GTK_TREE_VIEW(treeview),path) )
-							{
-								gtk_tree_view_collapse_row(GTK_TREE_VIEW(treeview),path);
-							}
-							else
-							{
-								gtk_tree_view_expand_row(GTK_TREE_VIEW(treeview),path,FALSE);
-							}
-							return TRUE;
-						}
-					}
-				} 
-			}
-#endif
 		}
 	}
 
@@ -1153,14 +1077,6 @@ static GtkTreeIter* folder_tree_add_subdir(GtkTreeModel* model, GtkTreeIter *ite
 			{
 				g_object_unref(gicon);
 			}
-
-#ifdef QUIVER_MAEMO
-			// fetch the maemo name
-			HildonFSAsyncStruct* pAsyncStruct = (HildonFSAsyncStruct*)g_malloc0(sizeof(HildonFSAsyncStruct));
-			pAsyncStruct->pTreeModel = model;
-			pAsyncStruct->pIter = gtk_tree_iter_copy(&iter_child);
-			hildon_file_system_info_async_new(uri_child, hildon_fs_info_callback ,pAsyncStruct);
-#endif
 		}
 		
 		g_object_unref(file_parent);
@@ -1643,19 +1559,6 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 
 
 
-#ifdef QUIVER_MAEMO
-	gint n_nodes = gtk_tree_model_iter_n_children  (model, iter);
-	if (0 == n_nodes)
-	{
-		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_GICON, icon_name, -1);
-	}
-	else
-	{
-		gchar* icon_name_full = g_strconcat(icon_name,expanded ? MAEMO_EXPANDED : MAEMO_COLLAPSED,NULL);
-		gtk_tree_store_set(GTK_TREE_STORE(model), iter, FILE_TREE_COLUMN_ICON, icon_name_full , -1);
-		g_free(icon_name_full);
-	}
-#else
 	GIcon* icon = NULL;
 	gtk_tree_model_get(model, iter, FILE_TREE_COLUMN_GICON, &icon, -1);
 	if (NULL == icon)
@@ -1678,7 +1581,6 @@ static void folder_tree_iter_set_icon(GtkTreeView* treeview, GtkTreeIter* iter)
 	{
 		g_object_unref(icon);
 	}
-#endif
 
 	gtk_tree_path_free(path);
 }
@@ -1725,7 +1627,6 @@ GIcon* folder_tree_get_gicon(GFile* gfile, gboolean expanded)
 { (void)expanded; 
 	const char* preferred_icon_name = NULL;
  (void)preferred_icon_name;
-#ifndef QUIVER_MAEMO
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
  (void)icon_theme;
 
@@ -1747,207 +1648,9 @@ GIcon* folder_tree_get_gicon(GFile* gfile, gboolean expanded)
 		g_object_unref(info);
 	}
 	return icon;
-#else
-	if (expanded)
-	{
-		preferred_icon_name = ICON_MAEMO_FOLDER_OPEN;
-	}
-	else
-	{
-		preferred_icon_name = ICON_MAEMO_FOLDER_CLOSED;
-	}
-
-	if (NULL != uri)
-	{
-		// Device icon
-		gchar* device_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_DEVICE);
-		// Audio clips
-		gchar* audio_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_AUDIO);
-		//docs
-		gchar* docs_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_DOCUMENTS);
-		// Games
-		gchar* games_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_GAMES);
-		// Images
-		gchar* images_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_IMAGES);
-		// Video clips
-		gchar* video_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_VIDEOS);
-		// MMC 1
-		gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
-		// MMC 2
-		gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
-
-		if (NULL != device_uri && gnome_vfs_uris_match (uri,device_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_DEVICE;
-		}
-		else if (NULL != audio_uri && gnome_vfs_uris_match (uri,audio_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_AUDIO;
-		}
-		else if (NULL != docs_uri && gnome_vfs_uris_match (uri,docs_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_DOCUMENTS;
-		}
-		else if (NULL != games_uri && gnome_vfs_uris_match (uri,games_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_GAMES;
-		}
-		else if (NULL != video_uri && gnome_vfs_uris_match (uri,video_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_VIDEOS;
-		}
-		else if (NULL != images_uri && gnome_vfs_uris_match (uri,images_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_IMAGES;
-		}
-		else if (NULL != mmc1_uri && gnome_vfs_uris_match (uri,mmc1_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_MMC;
-		}
-		else if (NULL != mmc2_uri && gnome_vfs_uris_match (uri,mmc2_uri))
-		{
-			preferred_icon_name = ICON_MAEMO_MMC;
-		}
-
-		if (NULL != device_uri)
-			g_free(device_uri);
-		if (NULL != audio_uri)
-			g_free(audio_uri);
-		if (NULL != docs_uri)
-			g_free(docs_uri);
-		if (NULL != video_uri)
-			g_free(video_uri);
-		if (NULL != images_uri)
-			g_free(images_uri);
-		if (NULL != games_uri)
-			g_free(games_uri);
-		if (NULL != mmc1_uri)
-			g_free(mmc1_uri);
-		if (NULL != mmc2_uri)
-			g_free(mmc2_uri);
-	}
-
-#endif
 
 }
 
-#ifdef QUIVER_MAEMO
-gchar* folder_tree_get_folder_uri_from_id(FolderID folder_id)
-{
-	gchar* folder_uri = NULL;
-
-	gchar* docs_dir = NULL;
-	const gchar *env;
-	env = g_getenv("MYDOCSDIR");
-
-	if (env && env[0])
-	{
-		docs_dir = g_strdup(env);
-	}
-	else
-	{
-		env = g_getenv("HOME");
-		docs_dir = g_build_filename((env && env[0]) ? env : g_get_home_dir(), "MyDocs", NULL);
-	}
-
-	switch (folder_id)
-	{
-		case MAEMO_FOLDER_DEVICE:
-			folder_uri = g_filename_to_uri(docs_dir, NULL, NULL);
-			break;
-		case MAEMO_FOLDER_AUDIO:
-			{
-				gchar* subpath = g_build_filename(docs_dir,".sounds", NULL);
-				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
-				g_free(subpath);
-			}
-			break;
-		case MAEMO_FOLDER_DOCUMENTS:
-			{
-				gchar* subpath = g_build_filename(docs_dir,".documents", NULL);
-				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
-				g_free(subpath);
-			}
-			break;
-		case MAEMO_FOLDER_GAMES:
-			{
-				gchar* subpath = g_build_filename(docs_dir,".games", NULL);
-				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
-				g_free(subpath);
-			}
-			break;
-		case MAEMO_FOLDER_IMAGES:
-			{
-				gchar* subpath = g_build_filename(docs_dir,".images", NULL);
-				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
-				g_free(subpath);
-			}
-			break;
-		case MAEMO_FOLDER_VIDEOS:
-			{
-				gchar* subpath = g_build_filename(docs_dir,".videos", NULL);
-				folder_uri = g_filename_to_uri(subpath, NULL, NULL);
-				g_free(subpath);
-			}
-			break;
-		case MAEMO_FOLDER_MMC1:
-			{
-				// MMC 1
-				const gchar* mmc_dir = g_getenv("INTERNAL_MMC_MOUNTPOINT");
-				if (NULL != mmc_dir)
-				{
-					folder_uri = g_filename_to_uri(mmc_dir, NULL, NULL);
-				}
-			}
-			break;
-		case MAEMO_FOLDER_MMC2:
-			{
-				// MMC 2
-				const gchar* mmc_dir = g_getenv("MMC_MOUNTPOINT");
-				if (NULL != mmc_dir)
-				{
-					folder_uri = g_filename_to_uri(mmc_dir, NULL, NULL);
-				}
-			}
-			break;
-		default:
-			break;
-	}
-
-	g_free(docs_dir);
-
-	return folder_uri;
-}
-
-#endif
-
-#ifdef QUIVER_MAEMO
-static void hildon_fs_info_callback (HildonFileSystemInfoHandle *handle,
-                                             HildonFileSystemInfo *info,
-                                             const GError *error,
-                                             gpointer data)
-{
-	if (NULL != error)
-	{
-		g_warning("FolderTree: hildon_fs_info_callback error: %s", error->message);
-	}
-
-	HildonFSAsyncStruct* asyncStruct = (HildonFSAsyncStruct*)data;
-	if (NULL != asyncStruct)
-	{
-		if (NULL != info)
-		{
-			const char* display_name = hildon_file_system_info_get_display_name(info);
-			// FIXME why does adding gdk_threads_enter cause a deadlock?
-			gtk_tree_store_set(GTK_TREE_STORE(asyncStruct->pTreeModel), asyncStruct->pIter, FILE_TREE_COLUMN_DISPLAY_NAME, display_name, -1);
-		}
-		gtk_tree_iter_free(asyncStruct->pIter);
-		g_free(asyncStruct);
-	}
-}
-
-
-#endif
 
 static gboolean timeout_folder_tree_thread_pool_add(gpointer user_data)
 {
@@ -1984,49 +1687,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 	 * usb...
 	 * trash
 	 */
-#ifdef QUIVER_MAEMO
-	GtkTreeIter iter2 = {};  /* Child iter  */
-	for (int i = 0; i < FOLDER_ID_COUNT; i++)
-	{
-		gchar* folder_uri = folder_tree_get_folder_uri_from_id((FolderID)i);
-
-		if (NULL != folder_uri)
-		{
-			icon_name  = folder_tree_get_icon_name(folder_uri,FALSE);
-
-			GtkTreeIter* parent = &iter1;
-			GtkTreeIter* child  = &iter2;
-			if (0 == i || MAEMO_FOLDER_MMC1 == i || MAEMO_FOLDER_MMC2 == i)
-			{
-				parent = NULL;
-				child = &iter1;
-			}
-
-			gtk_tree_store_append (store, child, parent);  
-			gtk_tree_store_set (store, child,
-				FILE_TREE_COLUMN_CHECKBOX, FALSE,
-				FILE_TREE_COLUMN_ICON, icon_name,
-					FILE_TREE_COLUMN_DISPLAY_NAME, "loading ...",
-					FILE_TREE_COLUMN_SEPARATOR,FALSE,
-					FILE_TREE_COLUMN_URI,folder_uri,
-					FILE_TREE_COLUMN_PERMANENT,TRUE,
-					FILE_TREE_COLUMN_USE_DEFAULT_ORDER,TRUE,
-					-1);
-
-			g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(child),GINT_TO_POINTER(iNodeOrder++));
-
-			HildonFSAsyncStruct* pAsyncStruct = (HildonFSAsyncStruct*)g_malloc0(sizeof(HildonFSAsyncStruct));
-			pAsyncStruct->pTreeModel = GTK_TREE_MODEL(store);
-			pAsyncStruct->pIter = gtk_tree_iter_copy(child);
-			hildon_file_system_info_async_new(folder_uri, hildon_fs_info_callback ,pAsyncStruct);
-
-			g_free(icon_name);
-			g_free(folder_uri);
-		}
-		
-	}
-	
-#else
 
 	// home folder
 	const char* name = g_get_real_name();
@@ -2136,8 +1796,6 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 
 	g_hash_table_insert(m_pHashRootNodeOrder,gtk_tree_iter_copy(&iter1),GINT_TO_POINTER(iNodeOrder++));
 
-#endif
-
 	// other mounts
 	GMount* root_mount = g_file_find_enclosing_mount(file_root, NULL, NULL);
 	if (NULL != root_mount)
@@ -2175,20 +1833,7 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GtkTreeStore *store)
 			GFile* mount_root = g_mount_get_root(mount);
 			
 			gboolean skip = FALSE;
-#ifdef QUIVER_MAEMO
-			gchar* mmc1_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC1);
-			gchar* mmc2_uri = folder_tree_get_folder_uri_from_id(MAEMO_FOLDER_MMC2);
-			if (NULL != mmc1_uri)
-			{
-				skip = gnome_vfs_uris_match (mmc1_uri,uri);
-				g_free(mmc1_uri);
-			}
-			if (NULL != mmc2_uri)
-			{
-				skip = skip || gnome_vfs_uris_match (mmc2_uri,uri);
-				g_free(mmc2_uri);
-			}
-#endif
+
 			if (!skip)
 			{
 				char* name = g_mount_get_name(mount);

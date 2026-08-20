@@ -3,15 +3,7 @@
 #include "DonateDlg.h"
 #include "QuiverStockIcons.h"
 
-#ifdef QUIVER_MAEMO
-#include <libosso.h>
-#ifdef HAVE_HILDON_MIME
-#include <hildon-mime.h>
-#else
-#include <osso-mime.h>
-#endif
-extern osso_context_t* osso_context;
-#endif
+
 
 #define DONATION_URL_MIME "text/html"
 #define DONATION_URL "http://mike.yi.org/donations/quiver/redirect/"
@@ -165,25 +157,12 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonDonate)
 	{
-#ifdef QUIVER_MAEMO
-		DBusConnection *con = (DBusConnection*)osso_get_dbus_connection(osso_context);
-#ifdef HAVE_HILDON_MIME
-		hildon_mime_open_file_with_mime_type (con,
-			DONATION_URL,
-			DONATION_URL_MIME);
-#else
-		osso_mime_open_file_with_mime_type (con,
-			DONATION_URL,
-			DONATION_URL_MIME);
-#endif
-#else
 	gchar* contentType =
 			g_content_type_from_mime_type("text/html");
 	gboolean launched = g_app_info_launch_default_for_uri(DONATION_URL, NULL, NULL);
  (void)launched;
 	g_free(contentType);
 
-#endif
 	}
 }
 

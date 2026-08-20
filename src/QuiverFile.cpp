@@ -6,14 +6,6 @@
 #include <gdk-pixbuf/gdk-pixbuf-io.h>
 
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_MIME
-#include <hildon-mime.h>
-#else
-#include <osso-mime.h>
-#endif
-#endif
-
 #include <libexif/exif-utils.h>
 #include <glib/gstdio.h>
 
@@ -52,9 +44,6 @@ typedef struct _ThumbnailSize
 ThumbnailSize ThumbnailSizes[] =
 {
 	// these must be in order from smallest to largest
-#ifdef QUIVER_MAEMO
-		{80,"osso"},
-#endif
 		{128,"normal"},
 		{256,"large"},
 		{512,"x-large"},
@@ -1652,27 +1641,6 @@ gchar* QuiverFile::GetIconName()
 	if (NULL == file_info)
 		return NULL;
 	
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_MIME
-	gchar** icon_names = hildon_mime_get_icon_names(file_info->mime_type, file_info);
-#else
-	gchar** icon_names = osso_mime_get_icon_names(file_info->mime_type, file_info);
-#endif
-	
-	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
-
-	gint i = 0;
-	for (i = 0; NULL != icon_names[i]; i++)
-	{
-		if (gtk_icon_theme_has_icon(icon_theme, icon_names[i]))
-		{
-			break;
-		}
-	}
-	icon_name = g_strdup(icon_names[i]);
-	g_strfreev(icon_names);
-
-#else
 	const char* content_type = g_file_info_get_content_type(file_info);
 	GIcon* icon = g_content_type_get_icon(content_type);
 	if (NULL != icon)
@@ -1680,7 +1648,6 @@ gchar* QuiverFile::GetIconName()
 		icon_name = g_icon_to_string(icon);
 		g_object_unref(icon);
 	}
-#endif
 	g_object_unref(file_info);
 	return icon_name;
 }

@@ -11,14 +11,6 @@
 
 #include <gio/gio.h>
 
-#ifdef QUIVER_MAEMO
-#ifdef HAVE_HILDON_FM_2
-#include <hildon/hildon-file-chooser-dialog.h>
-#else
-#include <hildon-widgets/hildon-file-chooser-dialog.h>
-#endif
-#endif
-
 class OrganizeDlg::OrganizeDlgPriv
 {
 public:
@@ -48,13 +40,8 @@ public:
 
 	GtkComboBoxText*        m_pComboTemplateFolder;
 	GtkEntry*               m_pEntryTemplateFile;
-#ifdef QUIVER_MAEMO
-	GtkButton*              m_pBtnSourceFolder;
-	GtkButton*              m_pBtnDestFolder;
-#else
 	GtkFileChooserButton*   m_pFCBtnSourceFolder;
 	GtkFileChooserButton*   m_pFCBtnDestFolder;
-#endif
 	GtkToggleButton*        m_pTglBtnSubfolders;
 	GtkToggleButton*        m_pTglBtnRenameFiles;
 	//GtkToggleButton*        m_pTglBtnCurrentSelection;
@@ -106,10 +93,6 @@ std::string OrganizeDlg::GetOutputFolder() const
 {
 	std::string strDir;
 
-#ifdef QUIVER_MAEMO
-	const gchar* dir = gtk_button_get_label ( GTK_BUTTON (m_PrivPtr->m_pBtnDestFolder));
-	strDir = dir;
-#else
 	gchar* dir = gtk_file_chooser_get_uri (
 				GTK_FILE_CHOOSER (m_PrivPtr->m_pFCBtnDestFolder));
 	if (NULL != dir)
@@ -117,7 +100,6 @@ std::string OrganizeDlg::GetOutputFolder() const
 		strDir = dir;
 		g_free(dir);
 	}
-#endif
 
 	return strDir;
 }
@@ -131,10 +113,6 @@ std::string OrganizeDlg::GetInputFolder() const
 {
 	std::string strDir;
 
-#ifdef QUIVER_MAEMO
-	const gchar* dir = gtk_button_get_label ( GTK_BUTTON (m_PrivPtr->m_pBtnSourceFolder));
-	strDir = dir;
-#else
 	gchar* dir = gtk_file_chooser_get_uri (
 				GTK_FILE_CHOOSER (m_PrivPtr->m_pFCBtnSourceFolder));
 	if (NULL != dir)
@@ -142,7 +120,6 @@ std::string OrganizeDlg::GetInputFolder() const
 		strDir = dir;
 		g_free(dir);
 	}
-#endif
 
 	return strDir;
 
@@ -176,9 +153,7 @@ bool OrganizeDlg::GetRenameFiles() const
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer   user_data);
-#ifndef QUIVER_MAEMO
 static void on_folder_change (GtkFileChooser *chooser, gpointer user_data);
-#endif
 static void __attribute__((unused))  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
 static void on_editable_changed (GtkEditable *editable, gpointer user_data);
 static void combo_changed (GtkComboBox *widget, gpointer user_data);
@@ -236,14 +211,6 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 
 	GtkContainer* src_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "organize_align_source_folder") );
 	GtkContainer* dst_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "organize_align_dest_folder") );
-#ifdef QUIVER_MAEMO
-		m_pBtnSourceFolder = GTK_BUTTON( gtk_button_new() );
-		m_pBtnDestFolder = GTK_BUTTON( gtk_button_new() );
-		gtk_widget_show(GTK_WIDGET(m_pBtnSourceFolder));
-		gtk_widget_show(GTK_WIDGET(m_pBtnDestFolder));
-		gtk_container_add(src_cont, GTK_WIDGET(m_pBtnSourceFolder));
-		gtk_container_add(dst_cont, GTK_WIDGET(m_pBtnDestFolder));
-#else
 		m_pFCBtnSourceFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Source Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
 		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder), FALSE);
 		m_pFCBtnDestFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Destination Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
@@ -253,7 +220,6 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		
 		gtk_container_add(src_cont, GTK_WIDGET(m_pFCBtnSourceFolder));
 		gtk_container_add(dst_cont, GTK_WIDGET(m_pFCBtnDestFolder));
-#endif
 	m_pEntryFolderName        = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "organize_entry_folder_name") );
 
 	m_pLabelExample           = GTK_LABEL( gtk_builder_get_object(m_pGtkBuilder, "organize_label_example_output") );
@@ -269,13 +235,8 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		NULL != m_pSpinExtension         &&
 		NULL != m_pTglBtnSubfolders      &&
 		NULL != m_pTglBtnRenameFiles     &&
-#ifdef QUIVER_MAEMO
-		NULL != m_pBtnSourceFolder     &&
-		NULL != m_pBtnDestFolder       &&
-#else
 		NULL != m_pFCBtnSourceFolder     &&
 		NULL != m_pFCBtnDestFolder       &&
-#endif
 		NULL != m_pEntryFolderName       &&
 		NULL != m_pLabelExample         ); 
 
@@ -293,34 +254,13 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		gtk_combo_box_set_active(GTK_COMBO_BOX(m_pComboTemplateFolder), 0);
 
 
-#ifdef QUIVER_MAEMO
-		char* cwd = g_get_current_dir();
-		gtk_button_set_label(m_pBtnSourceFolder, cwd);
-		g_free(cwd);
-#endif
-
 		PreferencesPtr prefs = Preferences::GetInstance();
 		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
 		if (!strPhotoLibrary.empty())
 		{
-#ifdef QUIVER_MAEMO
-			GnomeVFSURI* vuri= gnome_vfs_uri_new(strPhotoLibrary.c_str());
-			if (gnome_vfs_uri_is_local(vuri))
-			{
-				char* localdir = gnome_vfs_get_local_path_from_uri (strPhotoLibrary.c_str());
-				if (NULL != localdir)
-				{
-					strPhotoLibrary = localdir;
-					g_free(localdir);
-				}
-			}
-			gnome_vfs_uri_unref(vuri);
-			gtk_button_set_label(m_pBtnDestFolder, strPhotoLibrary.c_str());
-#else
 			gtk_file_chooser_set_current_folder_uri (
 				GTK_FILE_CHOOSER (m_pFCBtnDestFolder),
 				strPhotoLibrary.c_str());
-#endif
 		}
 	}  
 }
@@ -330,10 +270,6 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 	if (m_bLoadedDlg)
 	{
 		std::string strLabel;
-#ifdef QUIVER_MAEMO
-		const gchar* dir = gtk_button_get_label ( GTK_BUTTON (m_pBtnDestFolder));
-		strLabel = dir;
-#else
 		gchar* dir = gtk_file_chooser_get_uri (
 				GTK_FILE_CHOOSER (m_pFCBtnDestFolder));
 
@@ -343,7 +279,6 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 			strLabel = dir;
 			g_free(dir);
 		}
-#endif
 		GDateTime* time = g_date_time_new_now_local();
 
 		strLabel += G_DIR_SEPARATOR_S;
@@ -373,17 +308,10 @@ void OrganizeDlg::OrganizeDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
-#ifdef QUIVER_MAEMO
-		g_signal_connect(m_pBtnSourceFolder,
-			"clicked",(GCallback)on_clicked,this);
-		g_signal_connect(m_pBtnDestFolder,
-			"clicked",(GCallback)on_clicked,this);
-#else
 		g_signal_connect(m_pFCBtnSourceFolder,
 			"current-folder-changed",(GCallback)on_folder_change,this);
 		g_signal_connect(m_pFCBtnDestFolder,
 			"current-folder-changed",(GCallback)on_folder_change,this);
-#endif
 
 		g_signal_connect(m_pBtnOK,
 			"clicked",(GCallback)on_clicked,this);
@@ -419,17 +347,11 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 	// make sure source and dest directories are 
 	// in separate locations
 	
-#ifdef QUIVER_MAEMO
-	const gchar* src_uri = gtk_button_get_label (m_pBtnSourceFolder);
-
-	const gchar* dst_uri = gtk_button_get_label (m_pBtnDestFolder);
-#else
 	gchar* src_uri = gtk_file_chooser_get_uri (
 				GTK_FILE_CHOOSER (m_pFCBtnSourceFolder));
 
 	gchar* dst_uri = gtk_file_chooser_get_uri (
 				GTK_FILE_CHOOSER (m_pFCBtnDestFolder));
-#endif
 
 	if (NULL != src_uri && NULL != dst_uri)
 	{
@@ -463,8 +385,6 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 		}
 	}
 
-#ifdef QUIVER_MAEMO
-#else
 	if (NULL != src_uri)
 	{
 		g_free(src_uri);
@@ -473,7 +393,6 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 	{
 		g_free(dst_uri);
 	}
-#endif
 
 	return bIsValid;
 }
@@ -481,6 +400,20 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 bool OrganizeDlg::OrganizeDlgPriv::GetRenameFiles() const
 {
 	return (TRUE == gtk_toggle_button_get_active(m_pTglBtnRenameFiles));
+}
+
+void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
+{
+	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
+	
+	if (GTK_FILE_CHOOSER(priv->m_pFCBtnSourceFolder) == chooser)
+	{
+		priv->UpdateUI();
+	}
+	else if (GTK_FILE_CHOOSER(priv->m_pFCBtnDestFolder) == chooser)
+	{
+		priv->UpdateUI();
+	}
 }
 
 static void  on_clicked (GtkButton *button, gpointer   user_data)
@@ -497,65 +430,7 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 	{
 		priv->UpdateUI();
 	}
-
-#ifdef QUIVER_MAEMO
-	if (priv->m_pBtnSourceFolder == button || priv->m_pBtnDestFolder == button)
-	{ 
-		// photo library
-		GtkWidget* dlg = hildon_file_chooser_dialog_new(NULL, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
-		gchar* uri = gnome_vfs_make_uri_from_input(
-			gtk_button_get_label(button));
-		gtk_file_chooser_set_current_folder_uri (
-			GTK_FILE_CHOOSER (dlg),
-			uri);
-		g_free(uri);
-
-		gint response = gtk_dialog_run(GTK_DIALOG(dlg));
-		
-		if (GTK_RESPONSE_OK == response)
-		{
-			gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (dlg));
-			if (NULL != dir)
-			{
-				GnomeVFSURI* vuri= gnome_vfs_uri_new(dir);
-				if (gnome_vfs_uri_is_local(vuri))
-				{
-					char* localdir = gnome_vfs_get_local_path_from_uri (dir);
-					if (NULL != localdir)
-					{
-						g_free(dir);
-						dir = localdir;
-					}
-				}
-				
-				gtk_button_set_label(button, dir);
-
-				gnome_vfs_uri_unref(vuri);
-				g_free(dir);
-			}
-		}
-
-		gtk_widget_destroy(dlg);
-	}
-#endif
 }
-
-#ifndef QUIVER_MAEMO
-void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
-{
-	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
-	
-	if (GTK_FILE_CHOOSER(priv->m_pFCBtnSourceFolder) == chooser)
-	{
-		priv->UpdateUI();
-	}
-	else if (GTK_FILE_CHOOSER(priv->m_pFCBtnDestFolder) == chooser)
-	{
-		priv->UpdateUI();
-	}
-}
-#endif
 
 
 static void __attribute__((unused))  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
