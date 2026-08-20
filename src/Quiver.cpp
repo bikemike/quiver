@@ -1461,12 +1461,13 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
 		g_timeout_add(1500, timeout_event_motion_notify,pQuiverImpl);
 
-		/* hide the filmstrip on fullscreen, remember whether it was visible */
+		/* hide the filmstrip on fullscreen (docked mode only; overlay stays) */
 		if (pQuiverImpl->m_bViewerMode)
 		{
+			bool bOverlay = pQuiverImpl->m_ViewerPtr->IsFilmstripOverlay();
 			pQuiverImpl->m_bFilmStripVisibleBeforeFS =
 				QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP);
-			if (pQuiverImpl->m_bFilmStripVisibleBeforeFS)
+			if (pQuiverImpl->m_bFilmStripVisibleBeforeFS && !bOverlay)
 				QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, FALSE);
 		}
 		
@@ -1477,8 +1478,9 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 
-		/* restore the filmstrip if it was visible before fullscreen */
-		if (pQuiverImpl->m_bViewerMode && pQuiverImpl->m_bFilmStripVisibleBeforeFS)
+		/* restore the filmstrip if it was visible before fullscreen (docked only) */
+		if (pQuiverImpl->m_bViewerMode && pQuiverImpl->m_bFilmStripVisibleBeforeFS
+			&& !pQuiverImpl->m_ViewerPtr->IsFilmstripOverlay())
 			QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, TRUE);
 	}
 	

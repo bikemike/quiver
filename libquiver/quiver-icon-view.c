@@ -1038,8 +1038,12 @@ static gboolean quiver_icon_view_draw(GtkWidget* widget, cairo_t* cr)
 	QuiverIconView *iconview;
 	iconview = QUIVER_ICON_VIEW(widget);
 
-	cairo_set_source_rgb(cr,0.3,0.3,0.3);
-	cairo_paint(cr);
+	{
+		GtkStyleContext *context = gtk_widget_get_style_context(widget);
+		gtk_render_background(context, cr, 0, 0,
+			gtk_widget_get_allocated_width(widget),
+			gtk_widget_get_allocated_height(widget));
+	}
 
 	cairo_rectangle_list_t* rectangles = cairo_copy_clip_rectangle_list(cr);
 

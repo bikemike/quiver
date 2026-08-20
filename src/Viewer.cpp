@@ -451,6 +451,8 @@ public:
 			}
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start", GTK_ICON_SIZE_DIALOG);
 		}
+
+		UpdateFilmstripForPlayback();
 	}
 
 	/* every interaction (click, pan, seek, play/pause) must reset the
@@ -627,6 +629,21 @@ public:
 	gint        m_iVideoSinkH;      // last set_size_request height
 	gint        m_iVideoSinkX;      // last layout_move x
 	gint        m_iVideoSinkY;      // last layout_move y (from caps probe)
+
+	/* filmstrip overlay mode */
+	bool        m_bFilmstripOverlay;   // true when filmstrip floats over the image
+	GtkWidget*  m_pFilmstripEdge;      // invisible event box along the edge for hover-reveal
+	GtkWidget*  m_pFilmstripOverlayContainer; // the GtkOverlay or alignment that holds the filmstrip in overlay mode
+	guint       m_iTimeoutFilmstripHide; // auto-hide timer ID (0 = not running)
+
+	bool IsFilmstripOverlay() const { return m_bFilmstripOverlay; }
+	bool IsPointerOverFilmstrip() const;
+	bool IsPointerOverMediaControls() const;
+	void ShowFilmstripOverlay();
+	void HideFilmstripOverlay();
+	void UpdateFilmstripForPlayback();
+	void ScheduleFilmstripHide();
+	void CancelFilmstripHide();
 
 /* nested classes */
 	//class ViewerEventHandler;
@@ -1057,6 +1074,16 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 
 		m_pViewer->EmitCursorChangedEvent();
 
+		/* in overlay mode, briefly show the filmstrip on navigation */
+		if (m_bFilmstripOverlay)
+		{
+			if (!IsPointerOverFilmstrip())
+			{
+				ShowFilmstripOverlay();
+				ScheduleFilmstripHide();
+			}
+		}
+
 		g_signal_handlers_block_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
 
 		// a new current item: show only the play button; the timeline appears
@@ -1228,57 +1255,367 @@ void Viewer::ViewerImpl::SetCurrentOrientation(int iOrientation, bool bUpdateExi
 	m_ImageLoader.SetLoadOrientation(GetCurrentOrientation(true));
 }
 
+static gboolean
+on_filmstrip_overlay_leave(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+{
+	(void)widget;
+	if (event->detail == GDK_NOTIFY_INFERIOR) return FALSE;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->ScheduleFilmstripHide();
+	return FALSE;
+}
+
+static gboolean
+on_filmstrip_overlay_enter(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+{
+	(void)widget;
+	(void)event;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->CancelFilmstripHide();
+	p->ShowFilmstripOverlay();
+	return FALSE;
+}
+
+static gboolean
+on_filmstrip_edge_enter(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+{
+	(void)widget;
+	(void)event;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	g_print("[EDGE ENTER] IsPointerOverMediaControls=%d\n", p->IsPointerOverMediaControls());
+	if (p->IsPointerOverMediaControls()) return FALSE;
+	p->CancelFilmstripHide();
+	p->ShowFilmstripOverlay();
+	return FALSE;
+}
+
+static gboolean
+on_filmstrip_edge_leave(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+{
+	(void)widget;
+	(void)event;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->ScheduleFilmstripHide();
+	return FALSE;
+}
+
+static gboolean filmstrip_hide_timeout_cb(gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->m_iTimeoutFilmstripHide = 0;
+	p->HideFilmstripOverlay();
+	return G_SOURCE_REMOVE;
+}
+
+void Viewer::ViewerImpl::ShowFilmstripOverlay()
+{
+	if (!m_bFilmstripOverlay) return;
+	if (IsVideo() && IsPlaying()) return;
+	gtk_widget_show(m_pIconView);
+}
+
+void Viewer::ViewerImpl::HideFilmstripOverlay()
+{
+	if (!m_bFilmstripOverlay) return;
+	if (IsPointerOverFilmstrip()) return;
+	gtk_widget_hide(m_pIconView);
+}
+
+void Viewer::ViewerImpl::UpdateFilmstripForPlayback()
+{
+	if (!m_bFilmstripOverlay || !m_pFilmstripEdge) return;
+
+	if (IsVideo() && IsPlaying())
+	{
+		/* hide edge and filmstrip so they don't interfere with video controls */
+		HideFilmstripOverlay();
+		gtk_widget_hide(m_pFilmstripEdge);
+	}
+	else
+	{
+		/* restore the hover edge */
+		gtk_widget_show(m_pFilmstripEdge);
+	}
+}
+
+bool Viewer::ViewerImpl::IsPointerOverFilmstrip() const
+{
+	if (!m_bFilmstripOverlay || !m_pFilmstripOverlayContainer) return false;
+	GtkWidget *toplevel = gtk_widget_get_toplevel(m_pFilmstripOverlayContainer);
+	if (!toplevel || !gtk_widget_is_visible(toplevel)) return false;
+	GdkWindow *gdk_win = gtk_widget_get_window(m_pFilmstripOverlayContainer);
+	if (!gdk_win) return false;
+
+	/* get pointer position in root-window coordinates */
+	GdkDisplay *display = gdk_window_get_display(gdk_win);
+	GdkSeat *seat = gdk_display_get_default_seat(display);
+	GdkDevice *device = gdk_seat_get_pointer(seat);
+	gint root_x, root_y;
+	gdk_device_get_position(device, NULL, &root_x, &root_y);
+
+	/* convert to widget-local coordinates */
+	gint win_x, win_y;
+	gdk_window_get_origin(gdk_win, &win_x, &win_y);
+	gint local_x = root_x - win_x;
+	gint local_y = root_y - win_y;
+
+	GtkAllocation alloc;
+	gtk_widget_get_allocation(m_pFilmstripOverlayContainer, &alloc);
+	return local_x >= alloc.x && local_x < alloc.x + alloc.width
+		&& local_y >= alloc.y && local_y < alloc.y + alloc.height;
+}
+
+bool Viewer::ViewerImpl::IsPointerOverMediaControls() const
+{
+	if (!m_pPlayButton || !m_pMediaControls) return false;
+	GdkWindow *play_win = gtk_widget_get_window(m_pPlayButton);
+	if (!play_win) return false;
+
+	GdkDisplay *display = gdk_window_get_display(play_win);
+	GdkSeat *seat = gdk_display_get_default_seat(display);
+	GdkDevice *device = gdk_seat_get_pointer(seat);
+	gint root_x, root_y;
+	gdk_device_get_position(device, NULL, &root_x, &root_y);
+
+	gint win_x, win_y;
+	gdk_window_get_origin(play_win, &win_x, &win_y);
+	gint local_x = root_x - win_x;
+	gint local_y = root_y - win_y;
+
+	GtkAllocation play_alloc;
+	gtk_widget_get_allocation(m_pPlayButton, &play_alloc);
+
+	GtkAllocation mc_alloc;
+	gtk_widget_get_allocation(m_pMediaControls, &mc_alloc);
+
+	/* X: within the play button (with small margin for gap to window edge) */
+	bool in_x = local_x >= play_alloc.x - 4
+		&& local_x < play_alloc.x + play_alloc.width + 4;
+
+	/* Y: at or below the play button top, extending down to the media
+	 * controls bottom (covers the gap between play button and screen edge) */
+	bool in_y = local_y >= play_alloc.y
+		&& local_y <= mc_alloc.y + mc_alloc.height;
+
+	g_print("[PMC] local=(%d,%d) play=(%d,%d %dx%d) mc=(%d,%d %dx%d) -> %s\n",
+		local_x, local_y,
+		play_alloc.x, play_alloc.y, play_alloc.width, play_alloc.height,
+		mc_alloc.x, mc_alloc.y, mc_alloc.width, mc_alloc.height,
+		(in_x && in_y) ? "BLOCKED" : "ok");
+	return in_x && in_y;
+}
+
+void Viewer::ViewerImpl::ScheduleFilmstripHide()
+{
+	if (!m_bFilmstripOverlay) return;
+	if (IsPointerOverFilmstrip()) return;
+	CancelFilmstripHide();
+	m_iTimeoutFilmstripHide = g_timeout_add(800, filmstrip_hide_timeout_cb, this);
+}
+
+void Viewer::ViewerImpl::CancelFilmstripHide()
+{
+	if (0 != m_iTimeoutFilmstripHide)
+	{
+		g_source_remove(m_iTimeoutFilmstripHide);
+		m_iTimeoutFilmstripHide = 0;
+	}
+}
+
 void Viewer::ViewerImpl::AddFilmstrip()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	int iFilmstripPos = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
+	bool bOverlay = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
 
-	GtkBox* box = NULL;
-	
+	/* remove filmstrip from its current parent (if any) */
 	GtkWidget *current_parent = gtk_widget_get_parent(m_pIconView);
 	if (current_parent != NULL) {
 		g_object_ref(m_pIconView);
 		gtk_container_remove(GTK_CONTAINER(current_parent), m_pIconView);
 	}
 
-	switch (iFilmstripPos)
+	/* clean up any previous overlay edge widget */
+	if (NULL != m_pFilmstripEdge)
 	{
-		case FSTRIP_POS_TOP:
-		case FSTRIP_POS_BOTTOM:
-			box = GTK_BOX(m_pVBox);
-			quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView),1);
-			gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
-			
-			break;
-		case FSTRIP_POS_LEFT:
-		case FSTRIP_POS_RIGHT:
-			box = GTK_BOX(m_pHBox);
-			quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
-			gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
-			break;		
+		GtkWidget *edge_parent = gtk_widget_get_parent(m_pFilmstripEdge);
+		if (edge_parent)
+			gtk_container_remove(GTK_CONTAINER(edge_parent), m_pFilmstripEdge);
+		m_pFilmstripEdge = NULL;
 	}
 
-	if (NULL != box)
+	/* clean up any previous overlay container */
+	if (NULL != m_pFilmstripOverlayContainer)
 	{
+		GtkWidget *container_parent = gtk_widget_get_parent(m_pFilmstripOverlayContainer);
+		if (container_parent)
+			gtk_container_remove(GTK_CONTAINER(container_parent), m_pFilmstripOverlayContainer);
+		m_pFilmstripOverlayContainer = NULL;
+	}
+
+	if (bOverlay)
+	{
+		/* ---- overlay mode: float the filmstrip on top of the image ---- */
+		m_bFilmstripOverlay = true;
+
+		/* single row or single column inside the overlay */
+		if (iFilmstripPos == FSTRIP_POS_TOP || iFilmstripPos == FSTRIP_POS_BOTTOM)
+			quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView), 1);
+		else
+			quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView), 1);
+
+		/* wrap in an event box to position it within the overlay;
+		 * EventBox has its own GdkWindow so crossing events fire based
+		 * on the widget allocation, not the overlay's GdkWindow */
+		m_pFilmstripOverlayContainer = gtk_event_box_new();
+		gtk_widget_set_vexpand(m_pFilmstripOverlayContainer, FALSE);
+
+		switch (iFilmstripPos)
+		{
+			case FSTRIP_POS_LEFT:
+				gtk_widget_set_halign(m_pFilmstripOverlayContainer, GTK_ALIGN_START);
+				gtk_widget_set_valign(m_pFilmstripOverlayContainer, GTK_ALIGN_FILL);
+				break;
+			case FSTRIP_POS_RIGHT:
+				gtk_widget_set_halign(m_pFilmstripOverlayContainer, GTK_ALIGN_END);
+				gtk_widget_set_valign(m_pFilmstripOverlayContainer, GTK_ALIGN_FILL);
+				break;
+			case FSTRIP_POS_TOP:
+				gtk_widget_set_halign(m_pFilmstripOverlayContainer, GTK_ALIGN_FILL);
+				gtk_widget_set_valign(m_pFilmstripOverlayContainer, GTK_ALIGN_START);
+				break;
+			case FSTRIP_POS_BOTTOM:
+				gtk_widget_set_halign(m_pFilmstripOverlayContainer, GTK_ALIGN_FILL);
+				gtk_widget_set_valign(m_pFilmstripOverlayContainer, GTK_ALIGN_END);
+				break;
+		}
+
+		gtk_container_add(GTK_CONTAINER(m_pFilmstripOverlayContainer), m_pIconView);
+
+		/* for top/bottom, the container and icon view fill the full width */
+		if (iFilmstripPos == FSTRIP_POS_TOP || iFilmstripPos == FSTRIP_POS_BOTTOM)
+		{
+			gtk_widget_set_hexpand(m_pFilmstripOverlayContainer, TRUE);
+			gtk_widget_set_hexpand(m_pIconView, TRUE);
+		}
+		else
+		{
+			gtk_widget_set_hexpand(m_pFilmstripOverlayContainer, FALSE);
+		}
+		gtk_widget_set_vexpand(m_pFilmstripOverlayContainer, FALSE);
+
+		gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pFilmstripOverlayContainer);
+		gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(m_pOverlay), m_pFilmstripOverlayContainer, TRUE);
+		gtk_widget_show(m_pFilmstripOverlayContainer);
+
+		/* add a transparent CSS class (clear any per-widget bg first) */
+		set_widget_bg_color(m_pIconView, NULL);
+		GtkStyleContext *ctx = gtk_widget_get_style_context(m_pIconView);
+		gtk_style_context_add_class(ctx, "filmstrip-overlay");
+
+		/* create a hover edge along the relevant screen edge */
+		m_pFilmstripEdge = gtk_event_box_new();
+		gtk_widget_set_events(m_pFilmstripEdge, GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK);
+		g_signal_connect(m_pFilmstripEdge, "enter-notify-event",
+			G_CALLBACK(on_filmstrip_edge_enter), this);
+		g_signal_connect(m_pFilmstripEdge, "leave-notify-event",
+			G_CALLBACK(on_filmstrip_edge_leave), this);
+
+		/* the filmstrip container tracks leave/enter so the strip stays
+		 * visible while the mouse is anywhere over the filmstrip */
+		gtk_widget_add_events(m_pFilmstripOverlayContainer,
+			GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK);
+		g_signal_connect(m_pFilmstripOverlayContainer, "leave-notify-event",
+			G_CALLBACK(on_filmstrip_overlay_leave), this);
+		g_signal_connect(m_pFilmstripOverlayContainer, "enter-notify-event",
+			G_CALLBACK(on_filmstrip_overlay_enter), this);
+
+		/* size the edge: thin strip along the relevant edge */
+		switch (iFilmstripPos)
+		{
+			case FSTRIP_POS_LEFT:
+				gtk_widget_set_size_request(m_pFilmstripEdge, 20, -1);
+				gtk_widget_set_halign(m_pFilmstripEdge, GTK_ALIGN_START);
+				gtk_widget_set_valign(m_pFilmstripEdge, GTK_ALIGN_FILL);
+				break;
+			case FSTRIP_POS_RIGHT:
+				gtk_widget_set_size_request(m_pFilmstripEdge, 20, -1);
+				gtk_widget_set_halign(m_pFilmstripEdge, GTK_ALIGN_END);
+				gtk_widget_set_valign(m_pFilmstripEdge, GTK_ALIGN_FILL);
+				break;
+			case FSTRIP_POS_TOP:
+				gtk_widget_set_size_request(m_pFilmstripEdge, -1, 20);
+				gtk_widget_set_halign(m_pFilmstripEdge, GTK_ALIGN_FILL);
+				gtk_widget_set_valign(m_pFilmstripEdge, GTK_ALIGN_START);
+				break;
+			case FSTRIP_POS_BOTTOM:
+				gtk_widget_set_size_request(m_pFilmstripEdge, -1, 20);
+				gtk_widget_set_halign(m_pFilmstripEdge, GTK_ALIGN_FILL);
+				gtk_widget_set_valign(m_pFilmstripEdge, GTK_ALIGN_END);
+				break;
+		}
+
+		gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pFilmstripEdge);
+		gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(m_pOverlay), m_pFilmstripEdge, TRUE);
+		gtk_widget_show_all(m_pFilmstripEdge);
+
+		/* start hidden; the hover edge reveals it */
+		gtk_widget_hide(m_pIconView);
+	}
+	else
+	{
+		/* ---- docked mode: pack into the box as before ---- */
+		m_bFilmstripOverlay = false;
+
+		GtkBox* box = NULL;
+
 		switch (iFilmstripPos)
 		{
 			case FSTRIP_POS_TOP:
-			case FSTRIP_POS_LEFT:
-				gtk_box_reorder_child (box, m_pIconView,0);
-				break;
 			case FSTRIP_POS_BOTTOM:
+				box = GTK_BOX(m_pVBox);
+				quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView),1);
+				gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+				break;
+			case FSTRIP_POS_LEFT:
 			case FSTRIP_POS_RIGHT:
-				gtk_box_reorder_child (box, m_pIconView,-1);
-				break;		
+				box = GTK_BOX(m_pHBox);
+				quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
+				gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+				break;
 		}
+
+		if (NULL != box)
+		{
+			switch (iFilmstripPos)
+			{
+				case FSTRIP_POS_TOP:
+				case FSTRIP_POS_LEFT:
+					gtk_box_reorder_child (box, m_pIconView,0);
+					break;
+				case FSTRIP_POS_BOTTOM:
+				case FSTRIP_POS_RIGHT:
+					gtk_box_reorder_child (box, m_pIconView,-1);
+					break;
+			}
+		}
+
+		/* remove the overlay CSS class */
+		GtkStyleContext *ctx = gtk_widget_get_style_context(m_pIconView);
+		gtk_style_context_remove_class(ctx, "filmstrip-overlay");
+
+		CancelFilmstripHide();
+
+		/* icon view may have been hidden in overlay mode; show it for docked */
+		if (!gtk_widget_get_visible(m_pIconView))
+			gtk_widget_show(m_pIconView);
 	}
 
-	// hand our reference over to the new parent container
+	/* hand our reference over to the new parent container */
 	if (NULL != current_parent)
 	{
 		g_object_unref(m_pIconView);
 	}
-
 }
 
 static gboolean 
@@ -1617,11 +1954,27 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 
 		if( QuiverUtils::ToggleActionGetActive(g_action_get_name(G_ACTION(action))) )
 		{
-			gtk_widget_show(pViewerImpl->m_pIconView);
+			if (pViewerImpl->m_bFilmstripOverlay)
+			{
+				pViewerImpl->ShowFilmstripOverlay();
+				pViewerImpl->ScheduleFilmstripHide();
+			}
+			else
+			{
+				gtk_widget_show(pViewerImpl->m_pIconView);
+			}
 		}
 		else
 		{
-			gtk_widget_hide(pViewerImpl->m_pIconView);
+			if (pViewerImpl->m_bFilmstripOverlay)
+			{
+				pViewerImpl->CancelFilmstripHide();
+				pViewerImpl->HideFilmstripOverlay();
+			}
+			else
+			{
+				gtk_widget_hide(pViewerImpl->m_pIconView);
+			}
 		}
 
 		// set preference
@@ -2845,7 +3198,9 @@ Viewer::ViewerImpl::~ViewerImpl()
 	{
 		g_source_remove(m_iIdleSetIndex);
 		m_iIdleSetIndex = 0;
-	}	
+	}
+
+	CancelFilmstripHide();
 
 	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
 	m_ImageLoader.RemovePixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
@@ -3651,6 +4006,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pSpeedLabel(NULL),
 	m_pTransportBox(NULL),
 	m_pRightControls(NULL),
+	m_bFilmstripOverlay(false),
+	m_pFilmstripEdge(NULL),
+	m_pFilmstripOverlayContainer(NULL),
+	m_iTimeoutFilmstripHide(0),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_ThumbnailLoader(this,2)
@@ -3786,12 +4145,13 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	g_signal_connect_swapped(G_OBJECT(m_pSpeedButton), "clicked", G_CALLBACK(viewer_speed_toggle_popover_cb), this);
 	gtk_box_pack_start(GTK_BOX(m_pRightControls), m_pSpeedButton, FALSE, TRUE, 0);
 
-	/* screen-wide CSS for speed-active highlight */
+	/* screen-wide CSS for speed-active highlight and filmstrip overlay */
 	GtkCssProvider *cssProvider = gtk_css_provider_new();
 	gtk_css_provider_load_from_data(cssProvider,
-		".speed-active { background-image: none; background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }", -1, NULL);
+		".speed-active { background-image: none; background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n"
+		".filmstrip-overlay { background-color: transparent; }\n", -1, NULL);
 	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
-		GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
 	g_object_unref(cssProvider);
 
 	/* Volume button */
@@ -3951,7 +4311,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 			set_widget_bg_color(m_pImageView, &color);
 		}
 		
-		if (!strBGColorThumb.empty())
+		if (!strBGColorThumb.empty() && !m_bFilmstripOverlay)
 		{
 			GdkRGBA color;
 			gdk_rgba_parse(&color, strBGColorThumb.c_str());
@@ -4664,6 +5024,11 @@ double Viewer::GetMagnification() const
 	return quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
 }
 
+bool Viewer::IsFilmstripOverlay() const
+{
+	return m_ViewerImplPtr->m_bFilmstripOverlay;
+}
+
 int Viewer::GetCurrentOrientation()
 {
 	return m_ViewerImplPtr->GetCurrentOrientation();	
@@ -5024,8 +5389,11 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
 						
-				gdk_rgba_parse(&color, strBGColorThumb.c_str());
-				set_widget_bg_color(parent->m_pIconView, &color);
+				if (!parent->m_bFilmstripOverlay)
+				{
+					gdk_rgba_parse(&color, strBGColorThumb.c_str());
+					set_widget_bg_color(parent->m_pIconView, &color);
+				}
 				
 				gdk_rgba_parse(&color, strBGColorImg.c_str());
 				set_widget_bg_color(parent->m_pImageView, &color);
@@ -5048,12 +5416,15 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		{
 			if ( !prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true) )
 			{
-				GdkRGBA color;
-				
-				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
+				if (!parent->m_bFilmstripOverlay)
+				{
+					GdkRGBA color;
+					
+					string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
 
-				gdk_rgba_parse(&color, strBGColorThumb.c_str());
-				set_widget_bg_color(parent->m_pIconView, &color);
+					gdk_rgba_parse(&color, strBGColorThumb.c_str());
+					set_widget_bg_color(parent->m_pIconView, &color);
+				}
 			}
 		}
 	}
@@ -5069,6 +5440,10 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE == event->GetKey() )
 		{
 			quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewInteger(), event->GetNewInteger());
+		}
+		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY == event->GetKey() )
+		{
+			parent->AddFilmstrip();
 		}
 		else if (QUIVER_PREFS_VIEWER_QUICK_PREVIEW == event->GetKey() )
 		{

@@ -43,6 +43,7 @@
 #define QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW         "filmstrip_show"
 #define QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION     "filmstrip_position"
 #define QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE         "filmstrip_size"
+#define QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY      "filmstrip_overlay"
 #define QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE      "default_view_mode"
 #define QUIVER_PREFS_VIEWER_QUICK_PREVIEW          "quick_preview"
 #define QUIVER_PREFS_VIEWER_GIF_ANIMATION          "gif_animation"

@@ -38,6 +38,7 @@ public:
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 
 	double GetMagnification() const;
+	bool IsFilmstripOverlay() const;
 
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;

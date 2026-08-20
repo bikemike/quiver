@@ -42,6 +42,7 @@ public:
 	GtkToggleButton*       m_pToggleSlideShowHideFilmStrip;
 	GtkToggleButton*       m_pToggleSlideShowRotateToMaximize;
 	GtkToggleButton*       m_pToggleSlideShowRandomOrder;
+	GtkToggleButton*       m_pToggleFilmstripOverlay;
 	
 	GtkRange*              m_pRangeSlideDuration;
 	GtkRange*              m_pRangeFilmstripSize;
@@ -165,6 +166,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		m_pToggleSlideShowRotateToMaximize  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_rotate_to_maximize") );
 
 		m_pToggleSlideShowRandomOrder  = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_random_order") );
+		m_pToggleFilmstripOverlay = GTK_TOGGLE_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_filmstrip_overlay") );
 		
 		
 		m_pRangeSlideDuration    = GTK_RANGE        ( gtk_builder_get_object (m_pGtkBuilder, "hscale_slideshow_duration") );
@@ -193,6 +195,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 			NULL != m_pToggleGIFAnimation && 
 			NULL != m_pToggleSlideShowRotateToMaximize && 
 			NULL != m_pToggleSlideShowRandomOrder && 
+			NULL != m_pToggleFilmstripOverlay && 
 			NULL != m_pRangeSlideDuration && 
 			NULL != m_pRangeFilmstripSize && 
 			NULL != m_pClrBtnBrowser && 
@@ -247,6 +250,9 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 
 		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE, false);
 		gtk_toggle_button_set_active(m_pToggleViewerHideScrollbars, bValue);
+
+		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
+		gtk_toggle_button_set_active(m_pToggleFilmstripOverlay, bValue);
 
 		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, true);
 		gtk_toggle_button_set_active(m_pToggleBrowserHideFolderTreeFS, bValue);
@@ -360,6 +366,9 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 		g_signal_connect(m_pRangeFilmstripSize,
 			"value-changed",(GCallback)on_value_changed,this);
 
+		g_signal_connect(m_pToggleFilmstripOverlay,
+			"toggled",(GCallback)on_toggled,this);
+
 		g_signal_connect(m_pClrBtnBrowser,
 			"color-set",(GCallback)on_color_set,this);
 
@@ -428,6 +437,11 @@ static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 	{
 		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
 		prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_RANDOM_ORDER, bool(bBool));
+	}
+	else if (priv->m_pToggleFilmstripOverlay == togglebutton)
+	{
+		gboolean bBool = gtk_toggle_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, bool(bBool));
 	}
 }
 

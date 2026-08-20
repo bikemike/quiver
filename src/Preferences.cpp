@@ -15,7 +15,21 @@ Preferences::Preferences()
 {
 	m_bModified = false;
 	m_KeyFile = g_key_file_new();
-	g_key_file_load_from_file(m_KeyFile,g_szConfigFilePath,(GKeyFileFlags)0/*(G_KEY_FILE_KEEP_COMMENTS|G_KEY_FILE_KEEP_TRANSLATIONS)*/, NULL);
+ gboolean loaded = g_key_file_load_from_file(m_KeyFile,g_szConfigFilePath,(GKeyFileFlags)0/*(G_KEY_FILE_KEEP_COMMENTS|G_KEY_FILE_KEEP_TRANSLATIONS)*/, NULL);
+
+	/* migration: if the config file existed but doesn't have the filmstrip
+	 * overlay key, default it to true so new behaviour is on for upgrades */
+	if (loaded)
+	{
+		gboolean has_key = g_key_file_has_key(m_KeyFile,
+			"viewer", "filmstrip_overlay", NULL);
+		if (!has_key)
+		{
+			g_key_file_set_boolean(m_KeyFile,
+				"viewer", "filmstrip_overlay", TRUE);
+			m_bModified = true;
+		}
+	}
 }
 
 Preferences::~Preferences()
