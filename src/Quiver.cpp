@@ -4,6 +4,8 @@
 
 #include "Quiver.h"
 
+GtkApplication *g_pApp = NULL;
+
 #include <gdk-pixbuf/gdk-pixbuf-animation.h>
 //#include "QuiverUI.h"
 
@@ -1604,7 +1606,7 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_ViewerPtr->AddEventHandler(m_QuiverImplPtr->m_ViewerEventHandler);
 
 	/* Create the main window */
-	m_QuiverImplPtr->m_pQuiverWindow = gtk_window_new (GTK_WINDOW_TOPLEVEL);
+	m_QuiverImplPtr->m_pQuiverWindow = gtk_application_window_new (g_pApp);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");
 
 
@@ -1617,7 +1619,9 @@ void Quiver::Init()
 
 	}
 	
-	gtk_window_set_default_icon_name (QUIVER_STOCK_APP);	
+	gchar *icon_path = g_build_filename(QUIVER_DATADIR, "icons", "48x48", "quiver-icon-app.png", NULL);
+	gtk_window_set_default_icon_from_file(icon_path, NULL);
+	g_free(icon_path);	
 
 	/* Set up GUI elements */
 
@@ -2155,8 +2159,13 @@ int main (int argc, char **argv)
 	//g_type_init ();
 
 	
+
 	/* Initialize the widget set */
 	gtk_init (&argc, &argv);
+
+	g_pApp = gtk_application_new("com.github.bikemike.quiver", G_APPLICATION_NON_UNIQUE);
+	g_application_register(G_APPLICATION(g_pApp), NULL, NULL);
+
 
 	// set dark theme
 	g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", TRUE, NULL);
@@ -2257,7 +2266,11 @@ int main (int argc, char **argv)
                                              
 	gtk_main ();
 
+
 	gst_deinit();
+	
+	if (g_pApp) g_object_unref(g_pApp);
+
 	
 
 	return 0;

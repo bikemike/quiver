@@ -3946,8 +3946,7 @@ static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user
 	GAction *fs = QuiverUtils::GetAction("FullScreen");
 	if (fs != NULL)
 	{
-		gboolean active = g_variant_get_boolean(g_action_get_state(fs));
-		g_action_activate(fs, g_variant_new_boolean(!active));
+		g_action_activate(fs, NULL);
 	}
 }
 

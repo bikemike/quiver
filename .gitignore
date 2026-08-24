@@ -45,7 +45,6 @@ po/Makefile.in
 po/Makefile.in.in
 po/stamp-it
 po/*.gmo
-data/quiver.desktop
 data/Makefile
 data/Makefile.in
 src/icons/Makefile

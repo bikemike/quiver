@@ -1,6 +1,8 @@
 #include <config.h>
 #include "QuiverUtils.h"
 
+extern GtkApplication *g_pApp;
+
 
 
 #define N_LOOPS 10
@@ -84,6 +86,8 @@ namespace QuiverUtils
 }
 
 #include "QuiverUtils.h"
+
+extern GtkApplication *g_pApp;
 #include <gtk/gtk.h>
 #include <gio/gio.h>
 
@@ -160,21 +164,18 @@ namespace QuiverUtils
 	return FALSE;
 }
 
-	static void connect_accel_entry(AccelEntry *entry) {
-		if (NULL == g_pAccelGroup || entry->connected || entry->suppressed) return;
-		GAction *action = QuiverUtils::GetAction(entry->action_name);
-		if (NULL == action) return;
-		
-		GClosure *closure = g_cclosure_new(G_CALLBACK(accel_activate_cb), action, NULL);
-		gtk_accel_group_connect(g_pAccelGroup, entry->keyval, entry->mods, GTK_ACCEL_VISIBLE, closure);
-		entry->connected = TRUE;
-	}
-
-	static void register_accelerator(const char *action_name, const gchar *accel) {
+static void register_accelerator(const char *action_name, const gchar *accel) {
 		guint keyval;
 		GdkModifierType mods;
 		gtk_accelerator_parse(accel, &keyval, &mods);
 		if (keyval == 0) return;
+
+		if (g_pApp) {
+			gchar *detailed_name = g_strdup_printf("quiver.%s", action_name);
+			const gchar *accels[] = {accel, NULL};
+			gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
+			g_free(detailed_name);
+		}
 
 		AccelEntry *entry = g_new0(AccelEntry, 1);
 		entry->action_name = g_strdup(action_name);
@@ -184,7 +185,6 @@ namespace QuiverUtils
 		entry->suppressed = FALSE;
 
 		g_ptr_array_add(g_accelEntries, entry);
-		connect_accel_entry(entry);
 	}
 
 	static gboolean accel_has_modifier(guint keyval, GdkModifierType mods) { (void)keyval; 
@@ -209,13 +209,23 @@ namespace QuiverUtils
 		}
 	}
 
-	static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
 		ToggleCallbackData *data = (ToggleCallbackData*)user_data;
-		if (NULL != parameter && g_variant_is_of_type(parameter, G_VARIANT_TYPE_BOOLEAN)) {
-			g_simple_action_set_state(action, parameter);
+		
+		GVariant *state = g_action_get_state(G_ACTION(action));
+		gboolean active = state ? g_variant_get_boolean(state) : FALSE;
+		if (state) g_variant_unref(state);
+		
+		gboolean new_state = !active;
+		if (parameter != NULL && g_variant_is_of_type(parameter, G_VARIANT_TYPE_BOOLEAN)) {
+		    new_state = g_variant_get_boolean(parameter);
 		}
+		
+		GVariant *new_state_var = g_variant_new_boolean(new_state);
+		g_simple_action_set_state(action, new_state_var);
+
 		if (NULL != data->cb) {
-			data->cb(action, parameter, data->user_data);
+			data->cb(action, new_state_var, data->user_data);
 		}
 	}
 
@@ -284,7 +294,7 @@ namespace QuiverUtils
 
 	GSimpleAction* AddToggleAction(const char *name, const gchar *accel, gboolean active, QuiverActionCallback cb, gpointer user_data) {
 		InitActions();
-		GSimpleAction *action = g_simple_action_new_stateful(name, G_VARIANT_TYPE_BOOLEAN, g_variant_new_boolean(active));
+		GSimpleAction *action = g_simple_action_new_stateful(name, NULL, g_variant_new_boolean(active));
 		if (NULL != cb) {
 			ToggleCallbackData *data = g_new0(ToggleCallbackData, 1);
 			data->cb = cb;
@@ -344,7 +354,7 @@ namespace QuiverUtils
 		if (current == active) return;
 	// mirrors the old gtk_toggle_action_set_active(): activate also runs
 	// the action callback that actually shows/hides the associated widgets
-	g_action_activate(action, g_variant_new_boolean(active));
+	g_action_activate(action, NULL);
 	}
 
 	void ToggleActionSetState(const char *action_name, gboolean active) {
@@ -387,39 +397,43 @@ namespace QuiverUtils
 		}
 	}
 
-	void AddAccelGroup(GtkWindow *window) {
-		if (NULL == g_pAccelGroup) {
-			g_pAccelGroup = gtk_accel_group_new();
-			for (guint i = 0; i < g_accelEntries->len; i++) {
-				AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
-				connect_accel_entry(entry);
-			}
-		}
-		gtk_window_add_accel_group(window, g_pAccelGroup);
+void AddAccelGroup(GtkWindow* /*window*/) {
+		// Handled by GtkApplication
 	}
 
-	void DisconnectUnmodifiedAccelerators() {
-		if (NULL == g_pAccelGroup || NULL == g_accelEntries) return;
+void DisconnectUnmodifiedAccelerators() {
+		if (NULL == g_accelEntries) return;
 		if (g_bAcceleratorsSuppressed) return;
 		for (guint i = 0; i < g_accelEntries->len; i++) {
 			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
-			if (entry->connected && !accel_has_modifier(entry->keyval, entry->mods)) {
-				gtk_accel_group_disconnect_key(g_pAccelGroup, entry->keyval, entry->mods);
-				entry->connected = FALSE;
+			if (!accel_has_modifier(entry->keyval, entry->mods)) {
+				if (g_pApp) {
+					gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
+					const gchar *empty_accels[] = {NULL};
+					gtk_application_set_accels_for_action(g_pApp, detailed_name, empty_accels);
+					g_free(detailed_name);
+				}
 				entry->suppressed = TRUE;
 			}
 		}
 		g_bAcceleratorsSuppressed = true;
 	}
 
-	void ConnectUnmodifiedAccelerators() {
-		if (NULL == g_pAccelGroup || NULL == g_accelEntries) return;
+void ConnectUnmodifiedAccelerators() {
+		if (NULL == g_accelEntries) return;
 		if (!g_bAcceleratorsSuppressed) return;
 		for (guint i = 0; i < g_accelEntries->len; i++) {
 			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
 			if (entry->suppressed) {
+				if (g_pApp) {
+					gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
+					gchar *accel_name = gtk_accelerator_name(entry->keyval, entry->mods);
+					const gchar *accels[] = {accel_name, NULL};
+					gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
+					g_free(accel_name);
+					g_free(detailed_name);
+				}
 				entry->suppressed = FALSE;
-				connect_accel_entry(entry);
 			}
 		}
 		g_bAcceleratorsSuppressed = false;
@@ -477,7 +491,7 @@ namespace QuiverUtils
 		gboolean current = (NULL != state) ? g_variant_get_boolean(state) : FALSE;
 		if (NULL != state) g_variant_unref(state);
 		if (active == current) return;
-		g_action_activate(action, g_variant_new_boolean(active));
+		g_action_activate(action, NULL);
 	}
 
 	void BindToggleWidget(GtkWidget *widget, GtkWidget *ancestor, const char *action_name) {
