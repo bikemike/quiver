@@ -15,6 +15,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
 pkg_check_modules(LIBEXIF REQUIRED IMPORTED_TARGET libexif)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavutil)
 pkg_check_modules(LIBSQLITE REQUIRED IMPORTED_TARGET sqlite3)
 pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-app-1.0 gstreamer-pbutils-1.0)
 

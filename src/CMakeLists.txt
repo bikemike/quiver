@@ -79,6 +79,7 @@ target_link_libraries(quiver PRIVATE
     PkgConfig::LIBEXIF
     PkgConfig::LIBSQLITE
     PkgConfig::GSTREAMER
+    PkgConfig::FFMPEG
     JPEG::JPEG
     Threads::Threads
     Boost::boost

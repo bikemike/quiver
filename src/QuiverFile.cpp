@@ -28,9 +28,10 @@
 #include <libquiver/quiver-pixbuf-utils.h>
 
 
-#include <gst/gst.h>
-#include <gst/pbutils/pbutils.h>
-#include <gst/video/video.h>
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavutil/dict.h>
+}
 
 // =================================================================================================
 // Implementation
@@ -1053,6 +1054,33 @@ ExifData* QuiverFile::QuiverFileImpl::GetExifData()
 	return m_pExifData;
 }
 
+// Parses a container date string ("creation_time"/"date" metadata).
+// ISO-8601 strings with an explicit '+' offset are flagged as zoned;
+// plain "...Z" (mvhd-derived) and exiftool-style "YYYY-MM-DD HH:MM:SS"
+// strings come back unzoned.
+static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbExplicitTZ)
+{
+	*pbExplicitTZ = false;
+	if (NULL == szValue || '\0' == szValue[0])
+		return NULL;
+
+	GDateTime* pDate = g_date_time_new_from_iso8601(szValue, NULL);
+	if (NULL != pDate)
+	{
+		*pbExplicitTZ = (NULL != strchr(szValue, '+'));
+		return pDate;
+	}
+
+	int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+	if (6 == sscanf(szValue, "%04d-%02d-%02d %02d:%02d:%02d",
+			&y, &mo, &d, &h, &mi, &s) &&
+		y >= 1970 && y < 2100)
+	{
+		return g_date_time_new_local(y, mo, d, h, mi, s);
+	}
+	return NULL;
+}
+
 time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 {
 	if (m_cachedTimeT != 0)
@@ -1095,78 +1123,74 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 	}
 	else if (fromExif)
 	{
-		// read the container's creation date in-process via GStreamer
-		// (fast, no process spawn); fall through to mtime when the
-		// tags are unavailable.  One shared discoverer for the process:
+		// read the container's creation date in-process via libavformat
+		// (header-only open, no stream probing); fall through to mtime
+		// when unavailable.  avformat is not documented thread-safe:
 		// GetTimeT runs on the GUI thread and on worker threads.
-		static std::mutex s_discovererMutex;
-		static GstDiscoverer* s_pDiscoverer = NULL;
-		std::lock_guard<std::mutex> lock(s_discovererMutex);
-		if (NULL == s_pDiscoverer)
+		static std::mutex s_avformatMutex;
+		static std::once_flag s_avformatInitFlag;
+		std::lock_guard<std::mutex> lock(s_avformatMutex);
+		// keep ffmpeg's chatter off stderr; quiver keeps logs clean
+		std::call_once(s_avformatInitFlag,
+			[](){ av_log_set_level(AV_LOG_ERROR); });
+
+		gchar* szPath = g_filename_from_uri(m_szURI, NULL, NULL);
+		if (NULL != szPath)
 		{
-			s_pDiscoverer = gst_discoverer_new(2 * GST_SECOND, NULL);
-		}
-		if (NULL != s_pDiscoverer)
-		{
-			GstDiscovererInfo* pInfo =
-				gst_discoverer_discover_uri(s_pDiscoverer, m_szURI, NULL);
-			if (NULL != pInfo)
+			AVFormatContext* pFmt = NULL;
+			if (avformat_open_input(&pFmt, szPath, NULL, NULL) >= 0 &&
+				NULL != pFmt)
 			{
-				const GstTagList* pTags = gst_discoverer_info_get_tags(pInfo);
-				GstDateTime* pDateTime = NULL;
-				if (NULL != pTags &&
-					gst_tag_list_get_date_time((GstTagList*)pTags,
-						GST_TAG_DATE_TIME, &pDateTime) &&
-					NULL != pDateTime)
+				AVDictionaryEntry* e =
+					av_dict_get(pFmt->metadata, "creation_time", NULL, 0);
+				if (NULL == e) // some muxers store a plain "date" tag
+					e = av_dict_get(pFmt->metadata, "date", NULL, 0);
+
+				bool bExplicitTZ = false;
+				GDateTime* pGDate =
+					ParseContainerDateString(e ? e->value : NULL, &bExplicitTZ);
+				if (NULL != pGDate)
 				{
 					// container times (mvhd etc.) carry no usable zone;
 					// match the legacy exiftool behaviour by reading the
 					// fields as local wall clock.  Explicitly zoned tags
 					// are trusted as-is, and camera files whose names
 					// contain "pxl" store true UTC (as before).
-					bool bExplicitTZ =
-						gst_date_time_has_time(pDateTime) &&
-						0. != gst_date_time_get_time_zone_offset(pDateTime);
-					GDateTime* pGDate =
-						gst_date_time_to_g_date_time(pDateTime);
-					if (NULL != pGDate)
+					if (bExplicitTZ)
 					{
-						if (bExplicitTZ)
+						m_cachedTimeT = g_date_time_to_unix(pGDate);
+					}
+					else
+					{
+						const char* base = strrchr(m_szURI, '/');
+						std::string low = g_ascii_strdown(
+							(NULL != base) ? base + 1 : m_szURI, -1);
+						if (std::string::npos != low.find("pxl"))
 						{
 							m_cachedTimeT = g_date_time_to_unix(pGDate);
 						}
 						else
 						{
-							const char* base = strrchr(m_szURI, '/');
-							std::string low = g_ascii_strdown(
-								(NULL != base) ? base + 1 : m_szURI, -1);
-							if (std::string::npos != low.find("pxl"))
+							GDateTime* pLocal = g_date_time_new_local(
+								g_date_time_get_year(pGDate),
+								g_date_time_get_month(pGDate),
+								g_date_time_get_day_of_month(pGDate),
+								g_date_time_get_hour(pGDate),
+								g_date_time_get_minute(pGDate),
+								g_date_time_get_seconds(pGDate));
+							if (NULL != pLocal)
 							{
-								m_cachedTimeT = g_date_time_to_unix(pGDate);
-							}
-							else
-							{
-								GDateTime* pLocal = g_date_time_new_local(
-									g_date_time_get_year(pGDate),
-									g_date_time_get_month(pGDate),
-									g_date_time_get_day_of_month(pGDate),
-									g_date_time_get_hour(pGDate),
-									g_date_time_get_minute(pGDate),
-									g_date_time_get_seconds(pGDate));
-								if (NULL != pLocal)
-								{
-									m_cachedTimeT =
-										g_date_time_to_unix(pLocal);
-									g_date_time_unref(pLocal);
-								}
+								m_cachedTimeT =
+									g_date_time_to_unix(pLocal);
+								g_date_time_unref(pLocal);
 							}
 						}
-						g_date_time_unref(pGDate);
 					}
-					gst_date_time_unref(pDateTime);
+					g_date_time_unref(pGDate);
 				}
-				gst_discoverer_info_unref(pInfo);
+				avformat_close_input(&pFmt);
 			}
+			g_free(szPath);
 		}
 	}
 
