@@ -5,6 +5,7 @@
 #include "ImageList.h"
 
 #include <map>
+#include <string.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <sstream>
@@ -168,6 +169,124 @@ std::string  RenameTask::DoVariableSubstitution(std::string strTemplate, GDateTi
 	return strTemplate;
 }
 
+// compose the full destination file name (template + counter + extension)
+// exactly the way Run() will, so dry-run checks cannot drift from it
+static std::string
+rename_task_compute_destination_name(
+	const std::string& strTemplate,
+	QuiverFile f,
+	std::map<std::string, int>& mapFileCounter)
+{
+	std::string strBaseName = f.GetFileName();
+	std::string strBaseNameLower = boost::algorithm::to_lower_copy(strBaseName);
+	std::string strExtension;
+
+	std::string::size_type pos = strBaseName.find_last_of(".");
+	if (std::string::npos != pos)
+	{
+		strExtension = strBaseName.substr(pos+1);
+	}
+
+	std::string strSpecialCase;
+	if (f.IsVideo() && strBaseNameLower.find("pxl") != std::string::npos)
+	{
+		strSpecialCase = ".pxl";
+	}
+
+	GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
+
+	std::string strDstName;
+	if (NULL != datetime)
+	{
+		std::string strDstNameTmp = RenameTask::DoVariableSubstitution(strTemplate, datetime, 0);
+		int count = 0;
+		if (mapFileCounter.end() != mapFileCounter.find(strDstNameTmp))
+		{
+			count = mapFileCounter[strDstNameTmp];
+		}
+		strDstName = RenameTask::DoVariableSubstitution(strTemplate, datetime, ++count);
+		mapFileCounter[strDstNameTmp] = count;
+
+		g_date_time_unref(datetime);
+	}
+
+	if (!strExtension.empty())
+		return strDstName + strSpecialCase + "." + strExtension;
+	return strDstName;
+}
+
+bool RenameTask::ComputeMappings(std::string strSrcDirURI,
+	std::string strTemplate,
+	ImageList::SortBy sortBy,
+	std::vector<FileConflictCheck::Mapping>& vectMappings,
+	GCancellable* pCancellable,
+	FileConflictCheck::ProgressFn fnProgress,
+	gpointer pUserData)
+{
+	vectMappings.clear();
+
+	ImageListPtr imgListPtr(new ImageList(false));
+	std::list<std::string> listFiles;
+	listFiles.push_back(strSrcDirURI);
+
+	imgListPtr->SetImageList(&listFiles, false);
+	imgListPtr->Sort(sortBy);
+
+	std::vector<QuiverFile> vectQuiverFiles = imgListPtr->GetQuiverFiles();
+
+	std::map<std::string, int> mapFileCounter;
+	size_t nProcessed = 0;
+
+	for (size_t i = 0 ; i < vectQuiverFiles.size() ; ++i)
+	{
+		if (NULL != pCancellable && g_cancellable_is_cancelled(pCancellable))
+		{
+			return false;
+		}
+
+		QuiverFile f = vectQuiverFiles[i];
+
+		// folders are listed for browsing only; never rename them
+		if (f.IsFolder())
+		{
+			continue;
+		}
+
+		std::string strDstName =
+			rename_task_compute_destination_name(strTemplate, f, mapFileCounter);
+
+		GFile* src = g_file_new_for_uri(f.GetURI());
+		GFile* srcdir = g_file_get_parent(src);
+		GFile* dst = (strDstName.empty() || NULL == srcdir)
+			? NULL : g_file_get_child(srcdir, strDstName.c_str());
+
+		if (NULL != dst)
+		{
+			gchar* szSrcURI = g_file_get_uri(src);
+			gchar* szDstURI = g_file_get_uri(dst);
+			vectMappings.push_back(FileConflictCheck::Mapping(szSrcURI, szDstURI));
+			vectMappings.back().strContentType =
+				(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
+			g_free(szDstURI);
+			g_free(szSrcURI);
+		}
+
+		if (NULL != dst)
+			g_object_unref(dst);
+		if (NULL != srcdir)
+			g_object_unref(srcdir);
+		g_object_unref(src);
+
+		if (NULL != fnProgress && 0 < vectQuiverFiles.size())
+		{
+			fnProgress((double)(++nProcessed) / (double)vectQuiverFiles.size(),
+				pUserData);
+		}
+	}
+
+	return !vectMappings.empty();
+}
+
 #if 0
 static std::string
 get_display_name(GFile* file)
@@ -229,47 +348,21 @@ void RenameTask::Run()
 
 		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
 
+		// folders are listed for browsing only; never rename them
+		if (f.IsFolder())
+		{
+			m_iCurrentFile++;
+			continue;
+		}
+
 		GFile* src    = g_file_new_for_uri(f.GetURI());
 		GFile* srcdir = g_file_get_parent(src);
 		char* basename = g_file_get_basename(src);
 
-		std::string strBaseName(basename);
-		std::string strBaseNameLower = boost::algorithm::to_lower_copy(strBaseName);
-		std::string strExtension;
+		std::string strDstName =
+			rename_task_compute_destination_name(m_strTemplate, f, mapFileCounter);
 
-		std::string::size_type pos = strBaseName.find_last_of(".");
-		if (std::string::npos != pos)
-		{
-			strExtension = strBaseName.substr(pos+1);
-		}
-
-		std::string strSpecialCase;
-		if (f.IsVideo() && strBaseNameLower.find("pxl") != std::string::npos)
-		{
-			// add pxl to rename
-			strSpecialCase = ".pxl";
-		}
-
-		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
-
-		std::string strDstNameTmp = DoVariableSubstitution(m_strTemplate, datetime, 0);
-		int count = 0;
-		if (mapFileCounter.end() != mapFileCounter.find(strDstNameTmp))
-		{
-			count = mapFileCounter[strDstNameTmp];
-		}
-		std::string strDstName = DoVariableSubstitution(m_strTemplate, datetime, ++count);
-		mapFileCounter[strDstNameTmp] = count;
-
-		g_date_time_unref(datetime);
-
-		gchar* dstname = NULL;
-		if (!strExtension.empty())
-			dstname = g_strdup_printf("%s%s.%s", strDstName.c_str(), strSpecialCase.c_str(), strExtension.c_str());
-		else
-			dstname = g_strdup_printf("%s", strDstName.c_str());
-
-		GFile* dst = g_file_get_child(srcdir, dstname);
+		GFile* dst = g_file_get_child(srcdir, strDstName.c_str());
 
 		char* dst_display_name = g_file_get_parse_name(dst);
 
@@ -297,18 +390,20 @@ void RenameTask::Run()
 		SetProgressText(szText);
 		EmitTaskProgressUpdatedEvent();
 
-		GFileCopyFlags flags = G_FILE_COPY_NONE;
-
 		GError* error = NULL;
-		gboolean copied = 
-			g_file_copy(src,
-				dst,
-				flags,
-				m_PrivateImplPtr->m_pCancellable,
-				organize_task_gfile_progress_callback,
-				m_PrivateImplPtr.get(),
-				&error);
-		(void)copied;
+		if (0 != strcmp(basename, strDstName.c_str()))
+		{
+			if (g_file_move(src,
+					dst,
+					G_FILE_COPY_NONE,
+					m_PrivateImplPtr->m_pCancellable,
+					organize_task_gfile_progress_callback,
+					m_PrivateImplPtr.get(),
+					&error))
+			{
+				f.RemoveCachedThumbnail(-1);
+			}
+		}
 		// if there was an error, 
 		if (NULL != error)
 		{
@@ -322,7 +417,6 @@ void RenameTask::Run()
 
 		g_object_unref(dst);
 
-		g_free(dstname);
 		g_free(basename);
 		g_object_unref(srcdir);
 		g_object_unref(src);

@@ -187,6 +187,103 @@ void OrganizeTask::Cancelled()
 	g_cancellable_cancel(m_PrivateImplPtr->m_pCancellable);
 }
 
+OrganizeTask::Options::Options() :
+	bIncludeSubfolders(false),
+	bRenameFiles(false),
+	iDayExtension(0)
+{
+}
+
+bool OrganizeTask::ComputeMappings(const Options& opts,
+	std::vector<FileConflictCheck::Mapping>& vectMappings,
+	GCancellable* pCancellable,
+	FileConflictCheck::ProgressFn fnProgress,
+	gpointer pUserData)
+{
+	vectMappings.clear();
+
+	ImageListPtr imgListPtr(new ImageList(false));
+	std::list<std::string> listFiles;
+	listFiles.push_back(opts.strSrcDirURI);
+	imgListPtr->SetImageList(&listFiles, opts.bIncludeSubfolders);
+
+	std::vector<QuiverFile> vectQuiverFiles = imgListPtr->GetQuiverFiles();
+
+	std::map<std::string, int> mapFileCounter;
+	size_t nProcessed = 0;
+
+	for (size_t i = 0 ; i < vectQuiverFiles.size() ; ++i)
+	{
+		if (NULL != pCancellable && g_cancellable_is_cancelled(pCancellable))
+		{
+			return false;
+		}
+
+		QuiverFile f = vectQuiverFiles[i];
+
+		// folders are listed for browsing only; never move them
+		if (f.IsFolder())
+		{
+			continue;
+		}
+
+		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
+		if (NULL == datetime)
+		{
+			continue;
+		}
+
+		std::string strFolder = DoVariableSubstitution(opts.strFolderTemplate, datetime, opts.iDayExtension);
+		std::string strDstDir = opts.strDestDirURI + G_DIR_SEPARATOR_S + strFolder + opts.strAppendedText;
+
+		std::string strFilename = f.GetFileName();
+
+		if (opts.bRenameFiles)
+		{
+			std::string strExtension;
+			std::string strFilenameLower = boost::algorithm::to_lower_copy(strFilename);
+
+			std::string::size_type pos = strFilename.find_last_of(".");
+			if (std::string::npos != pos)
+			{
+				strExtension = strFilename.substr(pos+1);
+			}
+
+			std::string strSpecialCase;
+			if (f.IsVideo() && strFilenameLower.find("pxl") != std::string::npos)
+			{
+				strSpecialCase = ".pxl";
+			}
+
+			std::string strDstNameTmp = RenameTask::DoVariableSubstitution(opts.strFileTemplate, datetime, 0);
+			int count = 0;
+			if (mapFileCounter.end() != mapFileCounter.find(strDstNameTmp))
+			{
+				count = mapFileCounter[strDstNameTmp];
+			}
+			strFilename = RenameTask::DoVariableSubstitution(opts.strFileTemplate, datetime, ++count);
+			strFilename += strSpecialCase + "." + strExtension;
+
+			mapFileCounter[strDstNameTmp] = count;
+		}
+		g_date_time_unref(datetime);
+
+		std::string strDstPath = strDstDir + G_DIR_SEPARATOR_S + strFilename;
+
+		vectMappings.push_back(FileConflictCheck::Mapping(f.GetURI(), strDstPath));
+		vectMappings.back().strContentType =
+			(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
+
+		if (NULL != fnProgress && 0 < vectQuiverFiles.size())
+		{
+			fnProgress((double)(++nProcessed) / (double)vectQuiverFiles.size(),
+				pUserData);
+		}
+	}
+
+	return !vectMappings.empty();
+}
+
 static void
 organize_task_gfile_progress_callback(
 	goffset current_num_bytes,
@@ -214,6 +311,12 @@ void OrganizeTask::Run()
 	{
 		GError* error = NULL;
 		QuiverFile f = m_vectQuiverFiles[m_iCurrentFile++];
+
+		// folders are listed for browsing only; never move them
+		if (f.IsFolder())
+		{
+			continue;
+		}
 
 		GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
 		if (nullptr == datetime)
@@ -338,7 +441,7 @@ void OrganizeTask::Run()
 		pImpl->m_iLastXFerRVal = (int)(responseType - MessageBox::RESPONSE_TYPE_CUSTOM1);
 		*/
 		error = NULL;
-		gboolean copied = 
+		gboolean moved =
 			g_file_move(src,
 				dst,
 				flags,
@@ -346,7 +449,10 @@ void OrganizeTask::Run()
 				organize_task_gfile_progress_callback,
 				m_PrivateImplPtr.get(),
 				&error);
-		(void)copied;
+		if (moved)
+		{
+			f.RemoveCachedThumbnail(-1);
+		}
 		// if there was an error, 
 		if (NULL != error)
 		{

@@ -1329,6 +1329,13 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 		g_object_unref(entry);
 	}
 
+	// resolve lazy metadata (creation dates) here on the loader thread so
+	// the commit-time sort on the GUI thread never blocks on I/O
+	for (auto& f : pData->quiverFiles)
+	{
+		f.GetTimeT();
+	}
+
 	g_idle_add(AsyncFolderLoadCommit, pData);
 
 	return NULL;
@@ -1676,20 +1683,6 @@ void ImageList::ImageListImpl::Sort(bool bUpdateCurrentIndex)
 }
 
 
-class SortByFilename
-{
-public:
-	bool operator()(const QuiverFile &a, const QuiverFile &b) const
-	{
-		if (a.IsFolder() && !b.IsFolder())
-			return true;
-		else if (!a.IsFolder() && b.IsFolder())
-			return false;
-		else
-			return (0 > strcasecmp(a.GetURI(),b.GetURI()) );
-	}
-};
-
 class SortByFilenameNatural
 {
 public:
@@ -1733,6 +1726,18 @@ public:
 		}
 
 		return (0 > rval);
+	}
+};
+
+class SortByFilename
+{
+public:
+	bool operator()(const QuiverFile &a, const QuiverFile &b) const
+	{
+		// "sort by name" uses the same natural ordering as the explicit
+		// natural mode (name_9 before name_11)
+		SortByFilenameNatural nat;
+		return nat(a,b);
 	}
 };
 

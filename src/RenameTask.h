@@ -3,6 +3,7 @@
 
 #include "AbstractTask.h"
 #include "QuiverFile.h"
+#include "FileConflictCheck.h"
 
 #include "ImageList.h"
 
@@ -43,6 +44,18 @@ public:
 	void                SetSortBy(ImageList::SortBy sortBy);
 
 	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int count);
+
+	// dry-run of the batch rename: computes every source->destination
+	// mapping Run() would perform (identical enumeration, ordering and
+	// naming) without touching the filesystem.  Returns false when the
+	// folder yields no files.  Feed the result to FileConflictCheck::Check.
+	static bool         ComputeMappings(std::string strSrcDirURI,
+	                            std::string strTemplate,
+	                            ImageList::SortBy sortBy,
+	                            std::vector<FileConflictCheck::Mapping>& vectMappings,
+	                            GCancellable* pCancellable = NULL,
+	                            FileConflictCheck::ProgressFn fnProgress = NULL,
+	                            gpointer pUserData = NULL);
 
 	class PrivateImpl;
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;

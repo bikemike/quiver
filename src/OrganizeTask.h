@@ -3,6 +3,7 @@
 
 #include "AbstractTask.h"
 #include "QuiverFile.h"
+#include "FileConflictCheck.h"
 
 #include <string>
 #include <vector>
@@ -48,6 +49,30 @@ public:
 	void                SetDayExtension(int extension);
 
 	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int dayExtension = 0);
+
+	// all inputs of a batch organize operation
+	struct Options
+	{
+		std::string strSrcDirURI;
+		std::string strDestDirURI;
+		std::string strFolderTemplate;
+		std::string strFileTemplate;
+		std::string strAppendedText;
+		bool        bIncludeSubfolders;
+		bool        bRenameFiles;
+		int         iDayExtension;
+
+		Options();
+	};
+
+	// dry-run: computes every source->destination mapping Run() would
+	// perform without touching the filesystem.  Returns false when the
+	// source yields no files.  Feed the result to FileConflictCheck::Check.
+	static bool ComputeMappings(const Options& opts,
+			std::vector<FileConflictCheck::Mapping>& vectMappings,
+			GCancellable* pCancellable = NULL,
+			FileConflictCheck::ProgressFn fnProgress = NULL,
+			gpointer pUserData = NULL);
 
 	class PrivateImpl;
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;

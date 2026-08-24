@@ -21,6 +21,7 @@
 
 #include <map>
 #include <cmath>
+#include <mutex>
 #include <boost/algorithm/string.hpp>
 
 
@@ -28,6 +29,7 @@
 
 
 #include <gst/gst.h>
+#include <gst/pbutils/pbutils.h>
 #include <gst/video/video.h>
 
 // =================================================================================================
@@ -1093,50 +1095,78 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 	}
 	else if (fromExif)
 	{
-	       	// try using exiftool, if available
-		// Date/Time Original              : 2017:01:22 14:39:48
-		// Date/Time Original              : 2011:09:18 17:38:37-07:00 DST
-		// exiftool -DateTimeOriginal -MediaCreateDate FILENAME 
-		gchar* output = NULL;
-		bool success = g_spawn_command_line_sync((std::string("exiftool -s3 -DateTimeOriginal -MediaCreateDate \"") + GetFilePath() + "\"").c_str(), &output, NULL,NULL, NULL);
-		//bool success = g_spawn_command_line_sync((std::string("exiftool -api QuickTimeUTC -s3 -DateTimeOriginal -MediaCreateDate \"") + GetFilePath() + "\"").c_str(), &output, NULL,NULL, NULL);
-		if (success)
+		// read the container's creation date in-process via GStreamer
+		// (fast, no process spawn); fall through to mtime when the
+		// tags are unavailable.  One shared discoverer for the process:
+		// GetTimeT runs on the GUI thread and on worker threads.
+		static std::mutex s_discovererMutex;
+		static GstDiscoverer* s_pDiscoverer = NULL;
+		std::lock_guard<std::mutex> lock(s_discovererMutex);
+		if (NULL == s_pDiscoverer)
 		{
-			bool gmt = false;
-			std::string filename = GetFileName();
-			boost::algorithm::to_lower(filename);
-			if (std::string::npos != filename.find("pxl"))
+			s_pDiscoverer = gst_discoverer_new(2 * GST_SECOND, NULL);
+		}
+		if (NULL != s_pDiscoverer)
+		{
+			GstDiscovererInfo* pInfo =
+				gst_discoverer_discover_uri(s_pDiscoverer, m_szURI, NULL);
+			if (NULL != pInfo)
 			{
-				gmt = true;
-			}
-			struct tm tm_exif_time = {};
-
-			int num_substs = sscanf(output,"%04d:%02d:%02d %02d:%02d:%02d",
-				&tm_exif_time.tm_year,
-				&tm_exif_time.tm_mon,
-				&tm_exif_time.tm_mday,
-				&tm_exif_time.tm_hour,
-				&tm_exif_time.tm_min,
-				&tm_exif_time.tm_sec);
-
-			tm_exif_time.tm_year -= 1900;
-			tm_exif_time.tm_mon -= 1;
-			tm_exif_time.tm_isdst = -1;
-
-			if (6 == num_substs && tm_exif_time.tm_year >= 70 && tm_exif_time.tm_year < 200)
-			{
-				// successfully parsed date
-				m_cachedTimeT = mktime(&tm_exif_time);
-				if (gmt)
+				const GstTagList* pTags = gst_discoverer_info_get_tags(pInfo);
+				GstDateTime* pDateTime = NULL;
+				if (NULL != pTags &&
+					gst_tag_list_get_date_time((GstTagList*)pTags,
+						GST_TAG_DATE_TIME, &pDateTime) &&
+					NULL != pDateTime)
 				{
-					GDateTime* datetime = g_date_time_new_utc(tm_exif_time.tm_year + 1900, tm_exif_time.tm_mon + 1, tm_exif_time.tm_mday, tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
-					m_cachedTimeT = g_date_time_to_unix(datetime);
-					g_date_time_unref(datetime);
-		
+					// container times (mvhd etc.) carry no usable zone;
+					// match the legacy exiftool behaviour by reading the
+					// fields as local wall clock.  Explicitly zoned tags
+					// are trusted as-is, and camera files whose names
+					// contain "pxl" store true UTC (as before).
+					bool bExplicitTZ =
+						gst_date_time_has_time(pDateTime) &&
+						0. != gst_date_time_get_time_zone_offset(pDateTime);
+					GDateTime* pGDate =
+						gst_date_time_to_g_date_time(pDateTime);
+					if (NULL != pGDate)
+					{
+						if (bExplicitTZ)
+						{
+							m_cachedTimeT = g_date_time_to_unix(pGDate);
+						}
+						else
+						{
+							const char* base = strrchr(m_szURI, '/');
+							std::string low = g_ascii_strdown(
+								(NULL != base) ? base + 1 : m_szURI, -1);
+							if (std::string::npos != low.find("pxl"))
+							{
+								m_cachedTimeT = g_date_time_to_unix(pGDate);
+							}
+							else
+							{
+								GDateTime* pLocal = g_date_time_new_local(
+									g_date_time_get_year(pGDate),
+									g_date_time_get_month(pGDate),
+									g_date_time_get_day_of_month(pGDate),
+									g_date_time_get_hour(pGDate),
+									g_date_time_get_minute(pGDate),
+									g_date_time_get_seconds(pGDate));
+								if (NULL != pLocal)
+								{
+									m_cachedTimeT =
+										g_date_time_to_unix(pLocal);
+									g_date_time_unref(pLocal);
+								}
+							}
+						}
+						g_date_time_unref(pGDate);
+					}
+					gst_date_time_unref(pDateTime);
 				}
+				gst_discoverer_info_unref(pInfo);
 			}
-			
-			g_free(output);
 		}
 	}
 
