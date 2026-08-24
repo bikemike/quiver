@@ -2985,23 +2985,45 @@ void quiver_icon_view_get_visible_range(QuiverIconView *iconview,gulong *first, 
 	guint num_cols,num_rows;
 	quiver_icon_view_get_col_row_count(iconview,&num_cols,&num_rows);
 
-	/*guint cell_width = quiver_icon_view_get_cell_width(iconview);*/
-	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+	gulong cell_start, cell_end;
+	gulong n_cells = quiver_icon_view_get_n_items(iconview);
 
-	guint adj = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
+	if (num_rows <= 1 && num_cols > 1)
+	{
+		guint cell_width = quiver_icon_view_get_cell_width(iconview);
 
-	guint row_first = adj / cell_height;
-	guint row_last = (adj + gtk_widget_get_allocated_height(widget)) / cell_height;
+		if (0 == cell_width)
+		{
+			*first = 0;
+			*last = 0;
+			return;
+		}
 
-	/* so , the current view contains icons from col 0, row_first
-	 * to col num_cols -1, row_last
-	 * so that is 
-	 */
+		guint hadj = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
+		guint col_first = hadj / cell_width;
+		guint col_last = (hadj + gtk_widget_get_allocated_width(widget)) / cell_width;
 
-	gulong cell_start = row_first * num_cols;
-	gulong cell_end = row_last * num_cols + num_cols;
+		cell_start = col_first * num_rows;
+		cell_end = (col_last + 1) * num_rows;
+	}
+	else
+	{
+		guint cell_height = quiver_icon_view_get_cell_height(iconview);
 
-	gulong n_cells = quiver_icon_view_get_n_items(iconview); 
+		if (0 == cell_height)
+		{
+			*first = 0;
+			*last = 0;
+			return;
+		}
+
+		guint vadj = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
+		guint row_first = vadj / cell_height;
+		guint row_last = (vadj + gtk_widget_get_allocated_height(widget)) / cell_height;
+
+		cell_start = row_first * num_cols;
+		cell_end = row_last * num_cols + num_cols;
+	}
 
 	if ( n_cells < cell_end )
 	{

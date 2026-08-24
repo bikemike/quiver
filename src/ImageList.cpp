@@ -646,6 +646,21 @@ static gboolean timeout_path_changed(gpointer user_data)
 	return FALSE;
 }
 
+static void queue_path_changed(ImageList::ImageListImpl *impl, char* uri, GFileMonitorEvent event_type)
+{
+	if (NULL == uri)
+		return;
+
+	if (0 != impl->m_iTimeoutPathChanged)
+	{
+		g_source_remove(impl->m_iTimeoutPathChanged);
+	}
+
+	impl->m_mapPathChanged[uri] = event_type;
+
+	impl->m_iTimeoutPathChanged = g_timeout_add(50, timeout_path_changed,impl);
+}
+
 static
 void monitor_callback (
 	GFileMonitor     *monitor,
@@ -653,13 +668,30 @@ void monitor_callback (
 	GFile            *other_file,
 	GFileMonitorEvent event_type,
 	gpointer          user_data) 
-{ (void)monitor;  (void)other_file; 
+{ (void)monitor; 
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 
 	char* uri = g_file_get_uri(file);
 	
 	switch (event_type)
 	{
+		case G_FILE_MONITOR_EVENT_MOVED_IN:
+			g_free(uri);
+			uri = g_file_get_uri(other_file);
+			queue_path_changed(impl, uri, G_FILE_MONITOR_EVENT_CREATED);
+			break;
+		case G_FILE_MONITOR_EVENT_MOVED_OUT:
+			queue_path_changed(impl, uri, G_FILE_MONITOR_EVENT_DELETED);
+			break;
+		case G_FILE_MONITOR_EVENT_MOVED:
+			queue_path_changed(impl, uri, G_FILE_MONITOR_EVENT_DELETED);
+			if (NULL != other_file)
+			{
+				char* other_uri = g_file_get_uri(other_file);
+				queue_path_changed(impl, other_uri, G_FILE_MONITOR_EVENT_CREATED);
+				g_free(other_uri);
+			}
+			break;
 		case G_FILE_MONITOR_EVENT_CHANGED:
 		case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
 		case G_FILE_MONITOR_EVENT_DELETED:
@@ -667,17 +699,7 @@ void monitor_callback (
 		case G_FILE_MONITOR_EVENT_ATTRIBUTE_CHANGED:
 		case G_FILE_MONITOR_EVENT_PRE_UNMOUNT:
 		case G_FILE_MONITOR_EVENT_UNMOUNTED:
-		case G_FILE_MONITOR_EVENT_MOVED:
-
-			if (0 != impl->m_iTimeoutPathChanged)
-			{
-				g_source_remove(impl->m_iTimeoutPathChanged);
-			}
-
-			impl->m_mapPathChanged[uri] = event_type;
-
-			impl->m_iTimeoutPathChanged = g_timeout_add(50, timeout_path_changed,impl);
-
+			queue_path_changed(impl, uri, event_type);
 			break;
 		default:
 			break;

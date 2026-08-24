@@ -39,6 +39,13 @@ public:
 
 	double GetMagnification() const;
 	bool IsFilmstripOverlay() const;
+	bool IsHideFilmstripFS() const;
+	GtkWidget *GetFilmstripWidget() const;
+	void ShowFilmstripOverlay();
+	void HideFilmstripOverlay();
+	void CancelFilmstripHide();
+	void SetFilmstripHiddenByFS(bool bHidden);
+	bool IsFilmstripHiddenByFS() const;
 
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;

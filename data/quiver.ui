@@ -2695,8 +2695,8 @@ see http://foldersize.sf.net
                       </packing>
                     </child>
                     <child>
-                      <object class="GtkCheckButton" id="chkbtn_viewer_quickpreview">
-                        <property name="label" translatable='yes'>Enable quick preview</property>
+                      <object class="GtkCheckButton" id="chkbtn_viewer_filmstrip_hide_fs">
+                        <property name="label" translatable='yes'>Hide filmstrip in full screen mode</property>
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
                         <property name="receives_default">False</property>
@@ -2712,6 +2712,23 @@ see http://foldersize.sf.net
                       </packing>
                     </child>
                     <child>
+                      <object class="GtkCheckButton" id="chkbtn_viewer_quickpreview">
+                        <property name="label" translatable='yes'>Enable quick preview</property>
+                        <property name="visible">True</property>
+                        <property name="can_focus">True</property>
+                        <property name="receives_default">False</property>
+                        <property name="use_underline">True</property>
+                        <property name="xalign">0.5</property>
+                        <property name="active">True</property>
+                        <property name="draw_indicator">True</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">False</property>
+                        <property name="position">5</property>
+                      </packing>
+                    </child>
+                    <child>
                       <object class="GtkCheckButton" id="chkbtn_viewer_enable_gif_anim">
                         <property name="label" translatable="yes">Enable GIF animations</property>
                         <property name="can_focus">True</property>
@@ -2724,7 +2741,7 @@ see http://foldersize.sf.net
                       <packing>
                         <property name="expand">False</property>
                         <property name="fill">False</property>
-                        <property name="position">5</property>
+                        <property name="position">6</property>
                       </packing>
                     </child>
                     <child>
@@ -2741,7 +2758,7 @@ see http://foldersize.sf.net
                       <packing>
                         <property name="expand">False</property>
                         <property name="fill">False</property>
-                        <property name="position">6</property>
+                        <property name="position">7</property>
                       </packing>
                     </child>
                   </object>

@@ -379,49 +379,35 @@ void QuiverImpl::Save()
 
 void QuiverImpl::SaveAs()
 {
-	cout << "Supported write file types: " << endl;
-	GSList *formats = gdk_pixbuf_get_formats ();
-	//GSList *writable_formats = NULL;
-	GdkPixbufFormat * fmt;
-	while (NULL != formats)
+	GtkWidget* dialog =
+		gtk_file_chooser_dialog_new("Save As",
+					GTK_WINDOW(m_pQuiverWindow),
+					GTK_FILE_CHOOSER_ACTION_SAVE,
+					QUIVER_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+					QUIVER_STOCK_SAVE, GTK_RESPONSE_ACCEPT,
+					NULL);
+
+	gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dialog), TRUE);
+	gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog),
+			m_CurrentQuiverFile.GetFileName().c_str());
+
+	if (GTK_RESPONSE_ACCEPT == gtk_dialog_run(GTK_DIALOG(dialog)))
 	{
-		fmt = (GdkPixbufFormat*)formats->data;
-		
-		if (gdk_pixbuf_format_is_writable(fmt))
-		{
-			//cout << gdk_pixbuf_format_get_name(fmt) <<": " << endl;
-			//cout << gdk_pixbuf_format_get_description(fmt) << endl;
-			gchar ** ext_ptr_head = gdk_pixbuf_format_get_extensions(fmt);
-			gchar ** ext_ptr = ext_ptr_head;
-			while (NULL != *ext_ptr)
-			{
-				cout << *ext_ptr << "," ;
-				ext_ptr++;
-			}
-			g_strfreev(ext_ptr_head);
-			//cout << endl;
-			ext_ptr_head = gdk_pixbuf_format_get_mime_types(fmt);
-			ext_ptr = ext_ptr_head;
-			while (NULL != *ext_ptr)
-			{
-				//c_setSupportedMimeTypes.insert(*ext_ptr);
-				cout << *ext_ptr << "," ;
-				ext_ptr++;
-			}
-			g_strfreev(ext_ptr_head);
-			cout << endl;
-		}
-		
-		formats = g_slist_next(formats);
-		//g_slist_foreach (formats, add_if_writable, &writable_formats);
+		char* filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+		ImageSaveManager::GetInstance()->SaveImageAs(m_CurrentQuiverFile, filename);
+		g_free(filename);
 	}
-	g_slist_free (formats);
+
+	gtk_widget_destroy(dialog);
 }
 
 bool QuiverImpl::CanClose()
 {
-	gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
-	gtk_window_get_size(GTK_WINDOW(m_pQuiverWindow),&m_iAppWidth,&m_iAppHeight);
+	if (!(GDK_WINDOW_STATE_FULLSCREEN & m_WindowState))
+	{
+		gtk_window_get_position(GTK_WINDOW(m_pQuiverWindow),&m_iAppX,&m_iAppY);
+		gtk_window_get_size(GTK_WINDOW(m_pQuiverWindow),&m_iAppWidth,&m_iAppHeight);
+	}
 	return true;
 }
 
@@ -1463,14 +1449,19 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
 		g_timeout_add(1500, timeout_event_motion_notify,pQuiverImpl);
 
-		/* hide the filmstrip on fullscreen (docked mode only; overlay stays) */
+		/* hide the filmstrip on fullscreen (if preference says so) */
 		if (pQuiverImpl->m_bViewerMode)
 		{
-			bool bOverlay = pQuiverImpl->m_ViewerPtr->IsFilmstripOverlay();
-			pQuiverImpl->m_bFilmStripVisibleBeforeFS =
+			bool bHideFS = pQuiverImpl->m_ViewerPtr->IsHideFilmstripFS();
+			bool bFilmstripActive =
 				QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP);
-			if (pQuiverImpl->m_bFilmStripVisibleBeforeFS && !bOverlay)
-				QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, FALSE);
+			pQuiverImpl->m_bFilmStripVisibleBeforeFS = bFilmstripActive;
+			if (bFilmstripActive && bHideFS)
+			{
+				pQuiverImpl->m_ViewerPtr->SetFilmstripHiddenByFS(true);
+				pQuiverImpl->m_ViewerPtr->CancelFilmstripHide();
+				gtk_widget_hide(pQuiverImpl->m_ViewerPtr->GetFilmstripWidget());
+			}
 		}
 		
 		bFullscreen = TRUE;
@@ -1480,10 +1471,18 @@ static gboolean event_window_state( GtkWidget *widget, GdkEventWindowState *even
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 
-		/* restore the filmstrip if it was visible before fullscreen (docked only) */
-		if (pQuiverImpl->m_bViewerMode && pQuiverImpl->m_bFilmStripVisibleBeforeFS
-			&& !pQuiverImpl->m_ViewerPtr->IsFilmstripOverlay())
-			QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, TRUE);
+		/* restore the filmstrip if we hid it for fullscreen */
+		if (pQuiverImpl->m_bViewerMode && pQuiverImpl->m_bFilmStripVisibleBeforeFS)
+		{
+			pQuiverImpl->m_ViewerPtr->SetFilmstripHiddenByFS(false);
+			if (QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP))
+			{
+				if (pQuiverImpl->m_ViewerPtr->IsFilmstripOverlay())
+					pQuiverImpl->m_ViewerPtr->ShowFilmstripOverlay();
+				else
+					gtk_widget_show(pQuiverImpl->m_ViewerPtr->GetFilmstripWidget());
+			}
+		}
 	}
 	
 	// update the fullscreen toggle state without running the activate
@@ -1638,8 +1637,6 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_pToolbar = GTK_WIDGET(gtk_builder_get_object(builder, "ToolbarMain"));
 	m_QuiverImplPtr->m_pMenuBookmarkItems = GTK_WIDGET(gtk_builder_get_object(builder, "MenuBookmarkItems"));
 	m_QuiverImplPtr->m_pMenuToolsExternal = GTK_WIDGET(gtk_builder_get_object(builder, "MenuToolsExternal"));
-	GObject *mv = gtk_builder_get_object(builder, "MenuVideo");
-	g_printerr("MenuVideo found: %p\n", mv);
 
 	gtk_toolbar_set_style(GTK_TOOLBAR(m_QuiverImplPtr->m_pToolbar), GTK_TOOLBAR_ICONS);
 
@@ -2075,8 +2072,10 @@ void Quiver::SaveSettings()
 	gtk_accel_map_save(strAccelMap.c_str());
 
 
-	if (GDK_WINDOW_STATE_FULLSCREEN == m_QuiverImplPtr->m_WindowState)
+	if (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState)
 	{
+		PreferencesPtr prefsPtr = Preferences::GetInstance();
+		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
 		return;
 	}
 	

@@ -275,7 +275,7 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 			GAction *action = GetAction(actions[i]);
 			if (NULL != action && G_IS_SIMPLE_ACTION(action)) {
 				g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bSensitive);
-			} else if (g_str_has_prefix(actions[i], "VideoSpeed")) { g_print("Action %s not found in group!\n", actions[i]); }
+			}
 		}
 	}
 
@@ -442,9 +442,6 @@ void ConnectUnmodifiedAccelerators() {
 	void BindBuilderAccelerators(GtkBuilder *builder) {
 		GSList *objects = gtk_builder_get_objects(builder);
 		for (GSList *l = objects; l != NULL; l = l->next) {
-			if (GTK_IS_WIDGET(l->data)) {
-				g_printerr("[Builder] Widget %s, is_menu_item=%d, is_actionable=%d\n", G_OBJECT_TYPE_NAME(l->data), GTK_IS_MENU_ITEM(l->data), GTK_IS_ACTIONABLE(l->data));
-			}
 			if (GTK_IS_MENU_ITEM(l->data) && GTK_IS_ACTIONABLE(l->data)) {
 				const gchar *action_name = gtk_actionable_get_action_name(GTK_ACTIONABLE(l->data));
 				if (action_name && g_str_has_prefix(action_name, "quiver.")) {
@@ -525,8 +522,7 @@ void ConnectUnmodifiedAccelerators() {
 	}
 
 	void BindRadioWidget(GtkWidget *widget, GtkWidget *ancestor, const char *action_name) {
-		g_print("BindRadioWidget: widget=%p, action=%s\n", widget, action_name);
-		if (widget == NULL) { g_print("WIDGET IS NULL\n"); return; }
+		if (widget == NULL) return;
 		GAction *action = QuiverUtils::GetAction(action_name);
 		if (NULL == action) return;
 		gtk_widget_insert_action_group(ancestor, "quiver", G_ACTION_GROUP(g_pActionGroup));
