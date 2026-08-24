@@ -392,6 +392,7 @@ Browser::GetWidget()
 //=============================================================================
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data);
+static gchar* text_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data);
 static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, gulong cell, QuiverIconOverlayType type, gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
@@ -681,6 +682,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetIconPixbufFunc)icon_pixbuf_callback,this,NULL);
+	quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetTextFunc)text_pixbuf_callback,this,NULL);
 
 	g_signal_connect (G_OBJECT (hscale), "value_changed",
 	      G_CALLBACK (icon_size_value_changed), this);
@@ -1056,6 +1058,32 @@ static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpo
 	return pixbuf;
 }
 
+static gchar* text_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data)
+{ (void)iconview;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+
+	if (cell >= b->m_ImageListPtr->GetSize())
+		return NULL;
+
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+	if (!f.IsFolder())
+		return NULL;
+
+	const gchar* uri = f.GetURI();
+	gchar* path = g_filename_from_uri(uri,NULL,NULL);
+	gchar* name;
+	if (path)
+	{
+		name = g_filename_display_basename(path);
+		g_free(path);
+	}
+	else
+	{
+		name = g_strdup("");
+	}
+	return name;
+}
+
 static gboolean thumbnail_loader_update_list (gpointer data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)data;
@@ -1176,16 +1204,20 @@ static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, gulong cell,
 	}
 	else if (type == QUIVER_ICON_OVERLAY_LINK && f.IsVideo())
 	{
-		const gchar* icon_name = "media-playback-start";
-		pixbuf = b->m_IconOverlayCache.GetPixbuf(icon_name);
-		if (NULL == pixbuf)
+		// show the default icon for the video mime-type, like folders do
+		gchar* icon_name = f.GetIconName();
+		if (icon_name)
 		{
-			GtkIconTheme *icon_theme = gtk_icon_theme_get_default();
-			pixbuf = gtk_icon_theme_load_icon(icon_theme, icon_name, 32, (GtkIconLookupFlags)0, NULL);
-			if (NULL != pixbuf)
+			pixbuf = b->m_IconOverlayCache.GetPixbuf(icon_name);
+			if (NULL == pixbuf)
 			{
-				b->m_IconOverlayCache.AddPixbuf(icon_name, pixbuf);
+				pixbuf = f.GetIcon(32,32);
+				if (NULL != pixbuf)
+				{
+					b->m_IconOverlayCache.AddPixbuf(icon_name,pixbuf);
+				}
 			}
+			g_free(icon_name);
 		}
 	}
 

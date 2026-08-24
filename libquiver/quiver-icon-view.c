@@ -950,7 +950,7 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 							GdkPixbuf*overlay2 = gdk_pixbuf_copy(overlay);
 							if (current_cell != iconview->priv->prelight_cell)
 								pixbuf_set_grayscale(overlay2);
-							pixbuf_set_alpha(overlay2,64);
+							pixbuf_set_alpha(overlay2,115);
 							g_object_unref(overlay);
 							overlay = overlay2;
 						}
@@ -998,6 +998,53 @@ quiver_icon_view_draw_icons (GtkWidget *widget, cairo_t* cr, cairo_rectangle_int
 
 			g_object_unref(layout);
 			*/
+
+			/* draw the cell text (e.g. folder names), if provided */
+			if (iconview->priv->callback_get_text)
+			{
+				gchar* text = (*iconview->priv->callback_get_text)(iconview,
+						current_cell,
+						iconview->priv->callback_get_text_data);
+
+				if (NULL != text && '\0' != text[0])
+				{
+					PangoLayout *layout = pango_cairo_create_layout (cr);
+
+					PangoFontDescription* font_desc = NULL;
+					GtkStyleContext* context = gtk_widget_get_style_context(widget);
+					gtk_style_context_get(context, state,
+						GTK_STYLE_PROPERTY_FONT, &font_desc, NULL);
+					pango_layout_set_font_description(layout, font_desc);
+					pango_font_description_free(font_desc);
+
+					pango_layout_set_text(layout, text, -1);
+					pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+					pango_layout_set_width(layout,
+						((gint)cell_width - (gint)padding) * PANGO_SCALE);
+
+					gint text_w = 0, text_h = 0;
+					pango_layout_get_pixel_size(layout, &text_w, &text_h);
+
+					GdkRGBA fg;
+					gtk_style_context_get_color(context, state, &fg);
+
+					gint x_text = x_cell_offset
+						+ ((gint)cell_width - text_w) / 2;
+					gint y_text = y_cell_offset + (gint)cell_height
+						- text_h - ((gint)padding / 2) - 2;
+
+					cairo_move_to(cr, x_text + 1, y_text + 1);
+					cairo_set_source_rgba(cr, 0, 0, 0, .55);
+					pango_cairo_show_layout(cr, layout);
+
+					cairo_move_to(cr, x_text, y_text);
+					cairo_set_source_rgba(cr, fg.red, fg.green, fg.blue, fg.alpha);
+					pango_cairo_show_layout(cr, layout);
+
+					g_object_unref(layout);
+				}
+				g_free(text);
+			}
 
 
 		}

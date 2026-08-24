@@ -9,6 +9,7 @@ set(QUIVER_SOURCES
     ImageCache.cpp
     ImageList.cpp
     ImageListEventSource.cpp
+    ImageListFilter.cpp
     ImageLoader.cpp
     IconViewThumbLoader.cpp
     ImageSaveManager.cpp

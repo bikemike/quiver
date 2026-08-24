@@ -352,7 +352,7 @@ public:
 	~ViewerImpl();
 
 // methods
-	void SetImageList(ImageListPtr imgList);
+	void SetImageList(IImageListViewPtr imgList);
 	void UpdateUI();
 	
 	void CacheNext(bool bDirectionForward);
@@ -520,7 +520,7 @@ public:
 
 	IPixbufLoaderObserverPtr m_PixbufLoaderObserverPtr;
 	ImageLoader m_ImageLoader;
-	ImageListPtr m_ImageListPtr;
+	IImageListViewPtr m_ImageListPtr;
 
 	Viewer *m_pViewer;
 	
@@ -698,7 +698,7 @@ public:
 
 };
 
-void Viewer::ViewerImpl::SetImageList(ImageListPtr imgList)
+void Viewer::ViewerImpl::SetImageList(IImageListViewPtr imgList)
 {
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandlerPtr);
 	
@@ -1044,7 +1044,7 @@ void Viewer::ViewerImpl::CacheNext(bool bDirectionForward)
 		}
 		else if (0 != m_iTimeoutSlideshowID && m_bSlideShowLoop)
 		{
-			QuiverFile f = (*m_ImageListPtr)[0];
+			QuiverFile f = m_ImageListPtr->Get(0);
 			CacheImageAtSize(f, width, height);
 		}
 	}
@@ -4972,7 +4972,7 @@ GtkWidget *Viewer::GetWidget()
 	return m_ViewerImplPtr->m_pHBox;
 }
 
-void Viewer::SetImageList(ImageListPtr imgList)
+void Viewer::SetImageList(IImageListViewPtr imgList)
 {
 	m_ViewerImplPtr->SetImageList(imgList);
 }
@@ -5362,7 +5362,7 @@ static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data)
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, gulong cell, gpointer user_data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	QuiverFile f = (*pViewerImpl->m_ImageListPtr)[cell];
+	QuiverFile f = pViewerImpl->m_ImageListPtr->Get(cell);
 
 	guint width, height;
 	quiver_icon_view_get_icon_size(iconview,&width, &height);
@@ -5392,14 +5392,14 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cel
 	guint bound_width, bound_height;
 	quiver_icon_view_get_icon_size(iconview,&width,&height);
 	
-	pixbuf = pViewerImpl->m_ThumbnailCache.GetPixbuf((*pViewerImpl->m_ImageListPtr)[cell].GetURI());
+	pixbuf = pViewerImpl->m_ThumbnailCache.GetPixbuf(pViewerImpl->m_ImageListPtr->Get(cell).GetURI());
 
 	if (pixbuf)
 	{
-		*actual_width = (*pViewerImpl->m_ImageListPtr)[cell].GetWidth();
-		*actual_height = (*pViewerImpl->m_ImageListPtr)[cell].GetHeight();
+		*actual_width = pViewerImpl->m_ImageListPtr->Get(cell).GetWidth();
+		*actual_height = pViewerImpl->m_ImageListPtr->Get(cell).GetHeight();
 
-		if (4 < (*pViewerImpl->m_ImageListPtr)[cell].GetOrientation())
+		if (4 < pViewerImpl->m_ImageListPtr->Get(cell).GetOrientation())
 		{
 			swap(*actual_width,*actual_height);
 		}
@@ -5631,7 +5631,7 @@ QuiverFile Viewer::ViewerImpl::ViewerThumbLoader::GetQuiverFile(gulong index)
 {
 	if (index < m_pViewerImpl->m_ImageListPtr->GetSize())
 	{
-		return (*m_pViewerImpl->m_ImageListPtr)[index];
+		return m_pViewerImpl->m_ImageListPtr->Get(index);
 	}
 	return QuiverFile();
 }

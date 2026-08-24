@@ -6,9 +6,10 @@
 
 #include "QuiverFile.h"
 #include "ImageListEventSource.h"
+#include "IImageListView.h"
 
-	
-class ImageList : public virtual ImageListEventSource
+
+class ImageList : public virtual IImageListView
 {
 public:
 
@@ -40,37 +41,37 @@ public:
 
 	std::vector<QuiverFile> GetQuiverFiles();
 
-	void Remove(unsigned int iIndex);
+	virtual void Remove(unsigned int iIndex);
 	void RemoveRange(unsigned int iStart, unsigned int iEnd);
 
 	// reload the list from the items in the maps (F5)
 	void Reload();
-	
+
 	void Reverse(); // reverse the list
 
 	void Clear();
-	
-	bool HasNext() const ;
-	bool HasPrevious() const;
-	
-	bool Next();
-	bool Previous();
-	bool First();
-	bool Last();
 
-	unsigned int GetSize() const;
-	unsigned int GetCurrentIndex() const;
-	
-	bool SetCurrentIndex(unsigned int new_index );
+	virtual bool HasNext() const;
+	virtual bool HasPrevious() const;
+
+	virtual bool Next();
+	virtual bool Previous();
+	virtual bool First();
+	virtual bool Last();
+
+	virtual unsigned int GetSize() const;
+	virtual unsigned int GetCurrentIndex() const;
+
+	virtual bool SetCurrentIndex(unsigned int new_index );
 	bool SetCurrentFile(std::string file);
 
-	QuiverFile GetNext() const;
-	QuiverFile GetPrevious() const;
-	QuiverFile GetCurrent() const;
-	QuiverFile GetFirst() const;
-	QuiverFile GetLast() const;
+	virtual QuiverFile GetNext() const;
+	virtual QuiverFile GetPrevious() const;
+	virtual QuiverFile GetCurrent() const;
+	virtual QuiverFile GetFirst() const;
+	virtual QuiverFile GetLast() const;
 
-	QuiverFile Get(unsigned int n) const;
+	virtual QuiverFile Get(unsigned int n) const;
 	QuiverFile operator[](unsigned int n);
 	QuiverFile const operator[](unsigned int n) const;
 

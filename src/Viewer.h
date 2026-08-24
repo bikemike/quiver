@@ -7,6 +7,7 @@
 
 #include "ViewerEventSource.h"
 #include "ImageList.h"
+#include "IImageListView.h"
 
 class Statusbar;
 typedef boost::shared_ptr<Statusbar> StatusbarPtr;
@@ -21,7 +22,7 @@ public:
 	//member functions
 	GtkWidget *GetWidget();
 
-	void SetImageList(ImageListPtr imgList);
+	void SetImageList(IImageListViewPtr imgList);
 	int GetCurrentOrientation();
 
 	void SlideShowStart();

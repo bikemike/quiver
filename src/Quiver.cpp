@@ -32,6 +32,7 @@ GtkApplication *g_pApp = NULL;
 #include "AdjustDateDlg.h"
 #include "AdjustDateTask.h"
 
+#include "ImageListFilter.h"
 #include "OrganizeDlg.h"
 #include "OrganizeTask.h"
 
@@ -2291,7 +2292,11 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 		m_QuiverImplPtr->m_bListImagesRecursive);
 
 	m_QuiverImplPtr->m_BrowserPtr->SetImageList(m_QuiverImplPtr->m_ImageListPtr);
-	m_QuiverImplPtr->m_ViewerPtr->SetImageList(m_QuiverImplPtr->m_ImageListPtr);
+	// the viewer browses a folder-filtered view of the shared list
+	IImageListViewPtr pViewerList(
+		new ImageListFilter(m_QuiverImplPtr->m_ImageListPtr,
+			[](const QuiverFile& f) { return !f.IsFolder(); }));
+	m_QuiverImplPtr->m_ViewerPtr->SetImageList(pViewerList);
 
 	// call this a second time to make sure the list is updated
 	if (m_QuiverImplPtr->m_bViewerMode)
