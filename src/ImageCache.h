@@ -2,6 +2,7 @@
 #define FILE_IMAGECACHE_H
 
 #include <string>
+#include <set>
 #include <pthread.h>
 
 
@@ -64,9 +65,12 @@ public:
 	void Clear();
 
 
+	void AddFailure(std::string filename);
+	bool HasFailed(std::string filename);
 	
 private:
 	ImageCacheMap m_mapImageCache;
+	std::set<std::string> m_setLoadFailures;
 	unsigned int m_iCacheSize;
 	
 	pthread_mutex_t m_MutexImageCache;

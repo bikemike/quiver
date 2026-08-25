@@ -148,7 +148,7 @@ bool ImageCache::InCache(std::string filename)
 	pthread_mutex_lock (&m_MutexImageCache);
 	
 	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
-	rval = (m_mapImageCache.end() != itr);
+	rval = (m_mapImageCache.end() != itr) || (m_setLoadFailures.find(filename) != m_setLoadFailures.end());
 	pthread_mutex_unlock (&m_MutexImageCache);
 	
 	return rval;
@@ -185,10 +185,26 @@ void ImageCache::Clear()
 	}
 	
 	m_mapImageCache.clear();
+	m_setLoadFailures.clear();
 	
 	pthread_mutex_unlock (&m_MutexImageCache);
 }
 
+
+void ImageCache::AddFailure(std::string filename)
+{
+	pthread_mutex_lock (&m_MutexImageCache);
+	m_setLoadFailures.insert(filename);
+	pthread_mutex_unlock (&m_MutexImageCache);
+}
+
+bool ImageCache::HasFailed(std::string filename)
+{
+	pthread_mutex_lock (&m_MutexImageCache);
+	bool rval = m_setLoadFailures.find(filename) != m_setLoadFailures.end();
+	pthread_mutex_unlock (&m_MutexImageCache);
+	return rval;
+}
 
 static unsigned long CurrentTimeInMilliseconds()
 {

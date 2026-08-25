@@ -411,6 +411,7 @@ public:
 			set_control_visible(m_pFfBtn, true);
 			set_control_visible(m_pSnapBtn, true);
 			set_control_visible(m_pVolumeButton, true);
+			set_control_visible(m_pVideoOptionsBtn, true);
 			set_control_visible(m_pFullscreenBtn, true);
 			StartControlsFade(true);
 
@@ -504,6 +505,7 @@ public:
 	GtkWidget* m_pTimelineRow;
 	GtkWidget* m_pVolumeButton;
 	GtkWidget* m_pFullscreenBtn;
+	GtkWidget* m_pVideoOptionsBtn;
 
 	/* the timeline (time label, progress bar, volume button) stays hidden for
 	 * a newly shown video until play is pressed; after that it is sticky so
@@ -571,7 +573,8 @@ public:
 		VIDEO_ZOOM_SOFTWARE = 0, // videocrop + videoscale (CPU)
 		VIDEO_ZOOM_MEDIA_SDK,    // Intel Media SDK: videocrop + vapostproc
 		VIDEO_ZOOM_VAAPI,        // Intel gstreamer-vaapi: native crop-* props
-		VIDEO_ZOOM_NVIDIA        // NVIDIA: nvvidconv coordinate-based crop props
+		VIDEO_ZOOM_NVIDIA,       // NVIDIA: nvvidconv coordinate-based crop props
+		VIDEO_ZOOM_GL
 	} VideoZoomType;
 	VideoZoomType m_VideoZoomType;
 	GstElement* m_pVideoZoomInput;  // input capsfilter: permissive caps so playbin template check passes with HW decoders
@@ -592,7 +595,6 @@ public:
 	gboolean    m_bVideoZoomCropActive; // zoomcaps is forcing the scaled output size
 	gboolean    m_bVideoZoomInputCropActive; // zoominputcaps is forcing system-memory input for the crop
 	gboolean    m_bVideoPanning;    // left-button pan drag in progress
-	gboolean    m_bVideoZoomToCursor; // zoom toward cursor position (set by scroll-wheel only)
 	gdouble     m_dVideoPanStartRootX; // pan drag start point, root (screen) coords
 	gdouble     m_dVideoPanStartRootY;
 	gdouble     m_dVideoPanStartPX; // crop window left/top at drag start
@@ -1097,6 +1099,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			set_control_visible(m_pFfBtn, false);
 			set_control_visible(m_pSnapBtn, false);
 			set_control_visible(m_pVolumeButton, false);
+			set_control_visible(m_pVideoOptionsBtn, false);
 			set_control_visible(m_pFullscreenBtn, false);
 		}
 		else
@@ -1752,6 +1755,8 @@ timeout_event_motion_notify (gpointer user_data)
 			bKeepVisible = TRUE;
 	}
 
+	/* Note: gtk_menu_popup_at_widget grabs the pointer, so we don't need explicit keep visible for the gear menu */
+
 	// ...and while the speed popover is open
 	if (!bKeepVisible && pViewerImpl->m_pSpeedButton != NULL)
 	{
@@ -1975,7 +1980,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	{
 		if (pViewerImpl->IsVideo())
 		{
-			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom * 1.25);
+			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal * 1.25);
 			return;
 		}
 
@@ -1990,7 +1995,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	{
 		if (pViewerImpl->IsVideo())
 		{
-			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom / 1.25);
+			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / 1.25);
 			return;
 		}
 
@@ -2243,19 +2248,18 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 		(event->state & GDK_CONTROL_MASK || event->state & GDK_SHIFT_MASK))
 	{
 		const gdouble zoom_step = 1.25;
-		pViewerImpl->m_bVideoZoomToCursor = TRUE;
 
 		switch (event->direction)
 		{
 			case GDK_SCROLL_UP:
 			case GDK_SCROLL_LEFT:
 				pViewerImpl->m_dVideoScrollAccum = 0.;
-				pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom * zoom_step);
+				pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal * zoom_step);
 				break;
 			case GDK_SCROLL_DOWN:
 			case GDK_SCROLL_RIGHT:
 				pViewerImpl->m_dVideoScrollAccum = 0.;
-				pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom / zoom_step);
+				pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / zoom_step);
 				break;
 			case GDK_SCROLL_SMOOTH:
 			{
@@ -2273,12 +2277,12 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 					/* positive delta scrolls down, which zooms out, matching
 					 * the image view's smooth-scroll zoom direction */
 					pViewerImpl->m_dVideoScrollAccum = 0.;
-					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom / zoom_step);
+					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / zoom_step);
 				}
 				else if (pViewerImpl->m_dVideoScrollAccum <= -1.0)
 				{
 					pViewerImpl->m_dVideoScrollAccum = 0.;
-					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoom * zoom_step);
+					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal * zoom_step);
 				}
 				break;
 			}
@@ -2550,6 +2554,134 @@ static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,
 
 }
 
+
+static void viewer_video_option_audio_cb(GtkMenuItem *item, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "track-id"));
+	g_object_set(G_OBJECT(p->m_pPipeline), "current-audio", track, NULL);
+}
+
+static void viewer_video_option_text_cb(GtkMenuItem *item, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "track-id"));
+	
+	GstPlayFlags flags = (GstPlayFlags)0;
+	g_object_get(G_OBJECT(p->m_pPipeline), "flags", &flags, NULL);
+	
+	if (track < 0) {
+		flags = (GstPlayFlags)(flags & ~(1 << 2)); // disable GST_PLAY_FLAG_TEXT
+		g_object_set(G_OBJECT(p->m_pPipeline), "flags", flags, NULL);
+	} else {
+		flags = (GstPlayFlags)(flags | (1 << 2)); // enable GST_PLAY_FLAG_TEXT
+		g_object_set(G_OBJECT(p->m_pPipeline), "flags", flags, "current-text", track, NULL);
+	}
+}
+
+static void viewer_video_option_rotate_cb(GtkMenuItem *item, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL && p->m_pVideoZoomScaler != NULL)
+	{
+		gfloat rot = 0.0f;
+		g_object_get(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", &rot, NULL);
+		rot += 90.0f;
+		if (rot >= 360.0f) rot -= 360.0f;
+		g_object_set(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", rot, NULL);
+	}
+}
+
+static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	GtkWidget *menu = gtk_menu_new();
+	
+	gint n_audio = 0;
+	g_object_get(p->m_pPipeline, "n-audio", &n_audio, NULL);
+	gint current_audio = -1;
+	g_object_get(p->m_pPipeline, "current-audio", &current_audio, NULL);
+	
+	if (n_audio > 0) {
+		GtkWidget *mi = gtk_menu_item_new_with_label("Audio Tracks:");
+		gtk_widget_set_sensitive(mi, FALSE);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
+		
+		for (gint i = 0; i < n_audio; ++i) {
+			GstTagList *tags = NULL;
+			g_signal_emit_by_name(p->m_pPipeline, "get-audio-tags", i, &tags);
+			gchar *lang = NULL;
+			if (tags) {
+				gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
+				gst_tag_list_free(tags);
+			}
+			gchar *label = g_strdup_printf("%sTrack %d%s", 
+				(i == current_audio) ? "✓ " : "   ", 
+				i + 1, 
+				lang ? g_strdup_printf(" (%s)", lang) : "");
+			GtkWidget *item = gtk_menu_item_new_with_label(label);
+			g_free(label);
+			if (lang) g_free(lang);
+			
+			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
+			g_signal_connect(item, "activate", G_CALLBACK(viewer_video_option_audio_cb), p);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+	}
+	
+	gint n_text = 0;
+	g_object_get(p->m_pPipeline, "n-text", &n_text, NULL);
+	gint current_text = -1;
+	g_object_get(p->m_pPipeline, "current-text", &current_text, NULL);
+	
+	GstPlayFlags flags = (GstPlayFlags)0;
+	g_object_get(p->m_pPipeline, "flags", &flags, NULL);
+	gboolean text_enabled = (flags & (1 << 2)) != 0; // GST_PLAY_FLAG_TEXT
+	
+	GtkWidget *mi = gtk_menu_item_new_with_label("Subtitles:");
+	gtk_widget_set_sensitive(mi, FALSE);
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
+	
+	GtkWidget *item_off = gtk_menu_item_new_with_label(!text_enabled ? "✓ Off" : "   Off");
+	g_object_set_data(G_OBJECT(item_off), "track-id", GINT_TO_POINTER(-1));
+	g_signal_connect(item_off, "activate", G_CALLBACK(viewer_video_option_text_cb), p);
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item_off);
+	
+	if (n_text > 0) {
+		for (gint i = 0; i < n_text; ++i) {
+			GstTagList *tags = NULL;
+			g_signal_emit_by_name(p->m_pPipeline, "get-text-tags", i, &tags);
+			gchar *lang = NULL;
+			if (tags) {
+				gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
+				gst_tag_list_free(tags);
+			}
+			gchar *label = g_strdup_printf("%sTrack %d%s", 
+				(text_enabled && i == current_text) ? "✓ " : "   ", 
+				i + 1, 
+				lang ? g_strdup_printf(" (%s)", lang) : "");
+			GtkWidget *item = gtk_menu_item_new_with_label(label);
+			g_free(label);
+			if (lang) g_free(lang);
+			
+			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
+			g_signal_connect(item, "activate", G_CALLBACK(viewer_video_option_text_cb), p);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
+	}
+	
+	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL) {
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+		GtkWidget *item_rot = gtk_menu_item_new_with_label("Rotate 90°");
+		g_signal_connect(item_rot, "activate", G_CALLBACK(viewer_video_option_rotate_cb), p);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item_rot);
+	}
+	
+	gtk_widget_show_all(menu);
+	gtk_menu_popup_at_widget(GTK_MENU(menu), GTK_WIDGET(button), GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_SOUTH_WEST, NULL);
+}
+
 static void
 viewer_volume_value_changed (GtkScaleButton *button, gdouble value, gpointer user_data)
 { (void)value; 
@@ -2772,13 +2904,20 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 		case GST_MESSAGE_STATE_CHANGED:
 				break;
 		case GST_MESSAGE_ASYNC_DONE:
-				if (pViewerImpl->m_pVideoFixed != NULL)
-					gtk_widget_show(pViewerImpl->m_pVideoFixed);
-				gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
-				if (pViewerImpl->m_pVideoSinkWidget != NULL && gtk_widget_get_visible(pViewerImpl->m_pVideoFixed))
-					gtk_widget_set_opacity(pViewerImpl->m_pVideoSinkWidget, 1.0);
-				pViewerImpl->UpdateTimeline();
+			{
+				GstState current = GST_STATE_VOID_PENDING;
+				gst_element_get_state(GST_ELEMENT(pViewerImpl->m_pPipeline), &current, NULL, 0);
+				if (current == GST_STATE_PAUSED || current == GST_STATE_PLAYING)
+				{
+					if (pViewerImpl->m_pVideoFixed != NULL)
+						gtk_widget_show(pViewerImpl->m_pVideoFixed);
+					gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
+					if (pViewerImpl->m_pVideoSinkWidget != NULL && gtk_widget_get_visible(pViewerImpl->m_pVideoFixed))
+						gtk_widget_set_opacity(pViewerImpl->m_pVideoSinkWidget, 1.0);
+					pViewerImpl->UpdateTimeline();
+				}
 				break;
+			}
 		case GST_MESSAGE_DURATION:
 				pViewerImpl->UpdateTimeline();
 				break;
@@ -3304,10 +3443,7 @@ static gboolean video_apply_zoom_idle(gpointer user_data)
 {
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 
-	int areaW = pViewerImpl->m_pVideoFixed
-		? gtk_widget_get_allocated_width(pViewerImpl->m_pVideoFixed) : 0;
-	int areaH = pViewerImpl->m_pVideoFixed
-		? gtk_widget_get_allocated_height(pViewerImpl->m_pVideoFixed) : 0;
+	
 
 	/* The caps probe can fire before GTK has allocated the layout or mapped
 	 * the sink widget.  Without a mapped sink the GL surface does not exist
@@ -3377,6 +3513,7 @@ static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data)
 static void video_zoom_resize_cb(GtkWidget *widget, GdkRectangle *allocation, gpointer user_data)
 {
 	(void)widget;
+	(void)allocation;
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
 		g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, pViewerImpl, NULL);
@@ -3451,8 +3588,9 @@ static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeIn
  * stuck / range-limited until the pipeline catches up (waiting for the next
  * key frame to resync).  Instant zoom applies the crop once per gesture and
  * tracks the state exactly; flip this to 1 to re-enable the animation. */
-#define VIDEO_ZOOM_SMOOTH_ANIMATION 0
+#define VIDEO_ZOOM_SMOOTH_ANIMATION 1
 
+static gboolean video_zoom_timeout(gpointer data);
 void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 {
 	/* zooming with +/- or the wheel leaves the view modes and pins the
@@ -3635,8 +3773,6 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	gdouble fillScale = MAX((gdouble)areaW / dispW, (gdouble)areaH / dispH);
 	gdouble fitZoom = MIN(fitScale, 1.0);
 
-	m_dVideoZoomMin = MIN(m_dVideoZoomMin, fitZoom);
-
 	gdouble zoom;
 	QuiverImageViewMode videoViewMode =
 		quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
@@ -3644,18 +3780,35 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	{
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
 			zoom = fitZoom;
+			m_dVideoZoomMin = fitZoom;
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
 			zoom = fitScale;
+			m_dVideoZoomMin = fitScale;
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE:
 			zoom = 1.0;
+			m_dVideoZoomMin = 1.0;
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
 			zoom = fillScale;
+			m_dVideoZoomMin = fillScale;
 			break;
 		default:
 			zoom = CLAMP(m_dVideoZoom, m_dVideoZoomMin, 8.0);
+			/* when zooming out lands back at the fit level, snap back to
+			 * FIT_WINDOW so a window resize will re-fit the video instead
+			 * of keeping it pinned at the old fit size */
+			if (zoom <= m_dVideoZoomMin)
+			{
+				quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView),
+					QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+				QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM,
+					QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+				videoViewMode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
+				zoom = fitZoom;
+				m_dVideoZoomMin = fitZoom;
+			}
 			break;
 	}
 	m_dVideoZoom = zoom;
@@ -3690,9 +3843,8 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	 * area (e.g. a toolbar zoom button) zoom about the center instead of the
 	 * crop's corner (skipped while dragging so the user's pan is not overridden,
 	 * and skipped for menu/toolbar zooms which should center) */
-	if (!m_bVideoPanning && m_bVideoZoomToCursor && m_dVideoLastWidgetW > 0.)
+	if (!m_bVideoPanning && m_dVideoLastWidgetW > 0.)
 	{
-		m_bVideoZoomToCursor = FALSE;
 		gdouble px = -1., py = -1.;
 		video_zoom_get_pointer(this, &px, &py);
 		if (px < 0. || py < 0.)
@@ -3700,13 +3852,29 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			px = areaW / 2.;
 			py = areaH / 2.;
 		}
-		/* the source pixel under screen point (px,py) is pan + px*crop/widget */
-		{
-			gdouble srcX = m_dVideoPanX + px * (srcW / m_dVideoLastZc) / m_dVideoLastWidgetW;
-			gdouble srcY = m_dVideoPanY + py * (srcH / m_dVideoLastZc) / m_dVideoLastWidgetH;
+		/* 1. Find the source pixel under the pointer from the PREVIOUS frame's layout */
+		gdouble srcX, srcY;
+		if (m_dVideoLastWidgetW > areaW)
+			srcX = m_dVideoPanX + px * (srcW / m_dVideoLastZc) / m_dVideoLastWidgetW;
+		else
+			srcX = m_dVideoPanX + (px - (areaW - m_dVideoLastWidgetW) / 2.) * (srcW / m_dVideoLastZc) / m_dVideoLastWidgetW;
+
+		if (m_dVideoLastWidgetH > areaH)
+			srcY = m_dVideoPanY + py * (srcH / m_dVideoLastZc) / m_dVideoLastWidgetH;
+		else
+			srcY = m_dVideoPanY + (py - (areaH - m_dVideoLastWidgetH) / 2.) * (srcH / m_dVideoLastZc) / m_dVideoLastWidgetH;
+
+		/* 2. Compute the new pan so that the same source pixel stays under the pointer in the NEW layout */
+		if (widgetW > areaW)
 			m_dVideoPanX = srcX - px * (srcW / zc) / widgetW;
+		else
+			m_dVideoPanX = srcX - (px - (areaW - widgetW) / 2.) * (srcW / zc) / widgetW;
+
+		if (widgetH > areaH)
 			m_dVideoPanY = srcY - py * (srcH / zc) / widgetH;
-		}
+		else
+			m_dVideoPanY = srcY - (py - (areaH - widgetH) / 2.) * (srcH / zc) / widgetH;
+
 	}
 	else if (!m_bVideoPanning && m_dVideoLastWidgetW == 0.)
 	{
@@ -3782,14 +3950,33 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 				NULL);
 			break;
 		case VIDEO_ZOOM_NVIDIA:
-			/* nvvidconv crop properties are coordinates, not margins:
-			 * right = srcW - rightMargin - 1, bottom = srcH - bottomMargin - 1 */
 			g_object_set(G_OBJECT(m_pVideoZoomScaler),
 				"left", cropLeft,
 				"right", (gint)srcW - cropRight - 1,
 				"top", cropTop,
 				"bottom", (gint)srcH - cropBottom - 1,
 				NULL);
+			break;
+		case VIDEO_ZOOM_GL:
+			if (m_pVideoZoomScaler != NULL)
+			{
+				gdouble sx = srcW / (gdouble)(srcW - cropLeft - cropRight);
+				gdouble sy = srcH / (gdouble)(srcH - cropTop - cropBottom);
+				/* gltransformation's prepare_output_buffer composes:
+				 *   result = yflip * mvp * inv_aspect
+				 * which reduces to: x_out = x*sx + tx*2, y_out = y*sy - ty*2
+				 * on the meta's [0,1]→NDC vertices.
+				 * Solve for tx/ty so cropLeft→x_out=-1, cropTop→y_out=+1. */
+				gdouble tx = (sx - 1.0) / 2.0 - cropLeft * sx / srcW;
+				gdouble ty = (sy - 1.0) / 2.0 - cropTop * sy / srcH;
+
+				g_object_set(G_OBJECT(m_pVideoZoomScaler),
+					"scale-x", (gfloat)sx,
+					"scale-y", (gfloat)sy,
+					"translation-x", (gfloat)tx,
+					"translation-y", (gfloat)ty,
+					NULL);
+			}
 			break;
 	}
 
@@ -4071,6 +4258,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pTimelineRow(NULL),
 	m_pVolumeButton(NULL),
 	m_pFullscreenBtn(NULL),
+	m_pVideoOptionsBtn(NULL),
 	m_ImageListPtr(new ImageList()),
 	m_bIsPlaying(false),
 	m_ThumbnailCache(100),
@@ -4178,6 +4366,12 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pVolumeButton = gtk_volume_button_new();
 	gtk_style_context_add_class(gtk_widget_get_style_context(m_pVolumeButton), "media-btn");
 
+		/* Video Options button */
+	m_pVideoOptionsBtn = gtk_button_new_from_icon_name("emblem-system-symbolic", GTK_ICON_SIZE_BUTTON);
+	gtk_button_set_relief(GTK_BUTTON(m_pVideoOptionsBtn), GTK_RELIEF_NONE);
+	g_signal_connect(G_OBJECT(m_pVideoOptionsBtn), "clicked", G_CALLBACK(viewer_video_options_btn_clicked_cb), this);
+	gtk_style_context_add_class(gtk_widget_get_style_context(m_pVideoOptionsBtn), "media-btn");
+
 	/* Fullscreen button */
 	m_pFullscreenBtn = gtk_button_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE_BUTTON);
 	gtk_button_set_relief(GTK_BUTTON(m_pFullscreenBtn), GTK_RELIEF_NONE);
@@ -4189,6 +4383,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_box_pack_start(GTK_BOX(extraBtns), m_pSpeedButton, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(extraBtns), m_pSnapBtn, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(extraBtns), m_pVolumeButton, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(extraBtns), m_pVideoOptionsBtn, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(extraBtns), m_pFullscreenBtn, FALSE, FALSE, 0);
 	gtk_widget_set_halign(extraBtns, GTK_ALIGN_END);
 	gtk_widget_set_valign(extraBtns, GTK_ALIGN_CENTER);
@@ -4308,6 +4503,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	set_control_visible(m_pFfBtn, false);
 	set_control_visible(m_pSnapBtn, false);
 	set_control_visible(m_pVolumeButton, false);
+			set_control_visible(m_pVideoOptionsBtn, false);
 	set_control_visible(m_pFullscreenBtn, false);
 
 	m_iCurrentOrientation = 1;
@@ -4334,7 +4530,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_bVideoZoomCropActive = FALSE;
 	m_bVideoZoomInputCropActive = FALSE;
 	m_bVideoPanning = FALSE;
-	m_bVideoZoomToCursor = FALSE;
 	m_iVideoWidth = 0;
 	m_iVideoHeight = 0;
 	m_iVideoFpsNum = 0;
@@ -4571,7 +4766,6 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	m_bVideoZoomCropActive = FALSE;
 	m_bVideoZoomInputCropActive = FALSE;
 	m_bVideoPanning = FALSE;
-	m_bVideoZoomToCursor = FALSE;
 	GstElement* video_sink = NULL;
 	GstElement* gtkglsink = gst_element_factory_make("gtkglsink", NULL);
 	GstElement* glupload = NULL;
@@ -4635,148 +4829,20 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 		GstElement *zoombin = gst_bin_new("videozoom");
 		GstElement *first_element = NULL;
 
-		/* NVIDIA: nvvidconv crops via its native left/right/top/bottom
-		 * coordinate properties and scales to the caps on its src pad */
-		m_pVideoZoomScaler = gst_element_factory_make("nvvidconv", "zoomscaler");
+		m_VideoZoomType = VIDEO_ZOOM_GL;
+		
+		GstElement *glupload_zoom = gst_element_factory_make("glupload", "zoomupload");
+		GstElement *glcolorconvert = gst_element_factory_make("glcolorconvert", "zoomcolorconvert");
+		m_pVideoZoomScaler = gst_element_factory_make("gltransformation", "zoomtransform");
+		
+		GstElement *chain[4] = { glupload_zoom, glcolorconvert, m_pVideoZoomScaler, video_sink };
+		guint n_chain = 4;
+		first_element = chain[0];
+
 		if (m_pVideoZoomScaler != NULL)
 		{
-			m_VideoZoomType = VIDEO_ZOOM_NVIDIA;
+			g_object_set(G_OBJECT(m_pVideoZoomScaler), "ortho", TRUE, NULL);
 		}
-		/* Intel Media SDK: vapostproc has no crop properties, so the crop is
-		 * done with videocrop (which handles VAMemory and system memory) and
-		 * vapostproc scales to the caps forced downstream */
-		else if ((m_pVideoZoomScaler = gst_element_factory_make("vapostproc", "zoomscaler")) != NULL)
-		{
-			m_VideoZoomType = VIDEO_ZOOM_MEDIA_SDK;
-			m_pVideoCrop = gst_element_factory_make("videocrop", "zoomcrop");
-		}
-		else
-		{
-			/* Intel gstreamer-vaapi: vavideoprocess/vaapipostproc expose native
-			 * crop-* properties and scale to the caps forced downstream */
-			static const gchar * const vaapi_scalers[] = { "vavideoprocess", "vaapipostproc" };
-			for (guint i = 0; i < G_N_ELEMENTS(vaapi_scalers); ++i)
-			{
-				m_pVideoZoomScaler = gst_element_factory_make(vaapi_scalers[i], "zoomscaler");
-				if (m_pVideoZoomScaler == NULL)
-					continue;
-				GObjectClass *klass = G_OBJECT_GET_CLASS(m_pVideoZoomScaler);
-				if (g_object_class_find_property(klass, "crop-left") != NULL &&
-				    g_object_class_find_property(klass, "crop-top") != NULL)
-				{
-					m_VideoZoomType = VIDEO_ZOOM_VAAPI;
-					break;
-				}
-				gst_object_unref(m_pVideoZoomScaler);
-				m_pVideoZoomScaler = NULL;
-			}
-			if (m_VideoZoomType == VIDEO_ZOOM_SOFTWARE)
-			{
-				/* software fallback */
-				m_pVideoZoomScaler = gst_element_factory_make("videoscale", "zoomscaler");
-				m_pVideoCrop = gst_element_factory_make("videocrop", "zoomcrop");
-				m_pVideoZoomConvert = gst_element_factory_make("videoconvert", "zoomconvert");
-			}
-		}
-
-		/* the capsfilter after the scaler forces the output memory type and,
-		 * when zoomed, the scaled frame size.  It must always be present:
-		 * without a forced output the Intel elements can leave the pipeline
-		 * unable to preroll */
-		m_pVideoZoomCaps = gst_element_factory_make("capsfilter", "zoomcaps");
-
-		/* Input converter: two problems must be solved at the bin's
-		 * entrance when a HW decoder (e.g. vah264dec) is upstream:
-		 *
-		 *  1) Template check – playbin verifies the video-sink's sink
-		 *     pad *template* caps intersect the decoder output before
-		 *     linking.  videocrop's template is plain video/x-raw
-		 *     (system memory only), which excludes VAMemory / DMABuf.
-		 *
-		 *  2) Runtime conversion – even if templates matched, videocrop
-		 *     cannot process VAMemory buffers; an element that actually
-		 *     converts the memory type is required.
-		 *
-		 * vapostproc solves both: its sink template includes
-		 * video/x-raw(memory:VAMemory) (and DMABuf), and during caps
-		 * negotiation it sees that downstream (videocrop) only accepts
-		 * system-memory video/x-raw, so it converts accordingly.
-		 *
-		 * Fallback: vaapipostproc (older VA stack) or capsfilter (for
-		 * pure software-decoder systems where no conversion is needed). */
-		m_pVideoZoomInput = gst_element_factory_make("vapostproc", "zoominput");
-		if (m_pVideoZoomInput == NULL)
-			m_pVideoZoomInput = gst_element_factory_make("vaapipostproc", "zoominput");
-		if (m_pVideoZoomInput == NULL)
-			m_pVideoZoomInput = gst_element_factory_make("capsfilter", "zoominput");
-
-		/* playbin links its custom video-sink using the sink's template
-		 * caps, and the hardware decoder only emits VAMemory.  A plain
-		 * videocrop/vapostproc first element exposes a system-memory-only
-		 * template, so playbin cannot link it to the decoder.  Prepend a
-		 * capsfilter whose caps accept both VAMemory and system memory to
-		 * widen the chain's sink template */
-		if (m_VideoZoomType == VIDEO_ZOOM_MEDIA_SDK || m_VideoZoomType == VIDEO_ZOOM_VAAPI)
-		{
-			m_pVideoZoomInputCaps = gst_element_factory_make("capsfilter", "zoominputcaps");
-			if (m_pVideoZoomInputCaps != NULL)
-			{
-				GstCaps* input = gst_caps_new_empty();
-				GstCaps* va = gst_caps_new_empty_simple("video/x-raw");
-				gst_caps_set_features(va, 0, gst_caps_features_from_string("memory:VAMemory"));
-				gst_caps_append(input, va);
-				gst_caps_append(input, gst_caps_new_empty_simple("video/x-raw"));
-				g_object_set(G_OBJECT(m_pVideoZoomInputCaps), "caps", input, NULL);
-				gst_caps_unref(input);
-			}
-		}
-
-		/* assemble the chain for the chosen backend:
-		 *   software: videocrop -> videoconvert -> videoscale -> capsfilter
-		 *   MediaSDK: videocrop -> vapostproc -> capsfilter
-		 *   VA-API:   vaapipostproc -> capsfilter
-		 *   NVIDIA:   nvvidconv -> capsfilter */
-		GstElement *chain[9] = { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
-		guint n_chain = 0;
-		/* input capsfilter is always first: it provides the permissive
-		 * sink template that lets playbin link hardware decoders */
-		if (m_pVideoZoomInput != NULL)
-			chain[n_chain++] = m_pVideoZoomInput;
-		switch (m_VideoZoomType)
-		{
-			case VIDEO_ZOOM_SOFTWARE:
-				chain[n_chain++] = m_pVideoCrop;
-				chain[n_chain++] = m_pVideoZoomConvert;
-				chain[n_chain++] = m_pVideoZoomScaler;
-				chain[n_chain++] = m_pVideoZoomCaps;
-				break;
-			case VIDEO_ZOOM_MEDIA_SDK:
-				if (m_pVideoZoomInputCaps != NULL)
-					chain[n_chain++] = m_pVideoZoomInputCaps;
-				chain[n_chain++] = m_pVideoCrop;
-				chain[n_chain++] = m_pVideoZoomScaler;
-				chain[n_chain++] = m_pVideoZoomCaps;
-				break;
-			case VIDEO_ZOOM_VAAPI:
-				if (m_pVideoZoomInputCaps != NULL)
-					chain[n_chain++] = m_pVideoZoomInputCaps;
-				chain[n_chain++] = m_pVideoZoomScaler;
-				chain[n_chain++] = m_pVideoZoomCaps;
-				break;
-			case VIDEO_ZOOM_NVIDIA:
-				chain[n_chain++] = m_pVideoZoomScaler;
-				chain[n_chain++] = m_pVideoZoomCaps;
-				break;
-		}
-		/* the GL upload goes directly into the zoombin before the sink so
-		 * playsink sees the sink chain with glupload's negotiated caps; see
-		 * the comment at the glupload creation above */
-		if (glupload != NULL && video_sink == gtkglsink)
-		{
-			chain[n_chain++] = glupload;
-		}
-		chain[n_chain++] = video_sink;
-		first_element = chain[0];
 
 		gboolean bChainOk = TRUE;
 		guint n_added = 0;
@@ -4876,6 +4942,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 
 	GstPlayFlags flags = (GstPlayFlags)0;
 	g_object_get(G_OBJECT(m_pPipeline), "flags", &flags, NULL);
+	flags = (GstPlayFlags)(flags & ~(1 << 2)); // Disable subtitles by default
 	/* do NOT enable GST_PLAY_FLAG_DEINTERLACE: playbin inserts a software
 	 * videoconvert for it, which cannot convert the hardware decoder's
 	 * VAMemory buffers and leaves the GL sink showing a black frame */

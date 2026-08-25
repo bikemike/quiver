@@ -146,23 +146,6 @@ namespace QuiverUtils
 		g_free(group);
 	}
 
-	static gboolean accel_activate_cb(gpointer data1, gpointer arg1, guint arg2, guint arg3, gpointer data2) { (void)arg3;  (void)arg2;  (void)arg1;  (void)data1; 
-	GAction *action = G_ACTION(data2);
-	if (NULL == action || !G_IS_ACTION(action)) return FALSE;
-	const GVariantType *ptype = g_action_get_parameter_type(action);
-	if (NULL != ptype && g_variant_type_equal(ptype, G_VARIANT_TYPE_BOOLEAN))
-	{
-		GVariant *state = g_action_get_state(action);
-		gboolean active = (NULL != state) ? g_variant_get_boolean(state) : FALSE;
-		if (NULL != state) g_variant_unref(state);
-		g_action_activate(action, g_variant_new_boolean(!active));
-	}
-	else
-	{
-		g_action_activate(action, NULL);
-	}
-	return FALSE;
-}
 
 static void register_accelerator(const char *action_name, const gchar *accel) {
 		guint keyval;

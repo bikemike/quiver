@@ -410,7 +410,7 @@ void ImageLoader::Load()
 		
 		if ( NULL == pixbuf)
 		{
-			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
+			if (0 != strcmp(m_Command.quiverFile.GetURI(),"") && !m_ImageCache.HasFailed(m_Command.quiverFile.GetURI()))
 			{
 				bool bLoadedQuickPreview = LoadQuickPreview();
 
@@ -544,6 +544,17 @@ void ImageLoader::Load()
 
 					m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
 					g_object_unref(pixbuf);
+				}
+				else
+				{
+					m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
+					list<IPixbufLoaderObserver*>::iterator itr;
+					g_mutex_lock(&m_csObservers);
+					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+					{
+						(*itr)->SetPixbuf(NULL);
+					}
+					g_mutex_unlock(&m_csObservers);
 				}
 			}
 			else
@@ -714,6 +725,20 @@ void ImageLoader::Load()
 						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf,0);
 					}
 					g_object_unref(pixbuf);
+				}
+				else
+				{
+					m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
+					if (CACHE_LOAD == m_Command.params.state || LOAD == m_Command.params.state)
+					{
+						list<IPixbufLoaderObserver*>::iterator itr;
+						g_mutex_lock(&m_csObservers);
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							(*itr)->SetPixbuf(NULL);
+						}
+						g_mutex_unlock(&m_csObservers);
+					}
 				}
 			}
 
