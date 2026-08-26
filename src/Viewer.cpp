@@ -564,6 +564,7 @@ public:
 
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline;
+	GstElement* m_pGtkGLSink;     // the actual gtkglsink GStreamer element (for pad probing)
 	GtkWidget*  m_pVideoSinkWidget; // Changed from GstElement* to GtkWidget*
 	GtkWidget*  m_pVideoFixed;      // GtkLayout canvas (fills the viewer area, clips the video sink widget)
 	// how the digital zoom crop+scale chain is implemented, chosen at build time
@@ -595,6 +596,8 @@ public:
 	gboolean    m_bVideoZoomCropActive; // zoomcaps is forcing the scaled output size
 	gboolean    m_bVideoZoomInputCropActive; // zoominputcaps is forcing system-memory input for the crop
 	gboolean    m_bVideoPanning;    // left-button pan drag in progress
+	gboolean    m_bVideoNeedsFirstFrame; // TRUE after switching videos: defer opacity restore until new frame is decoded
+	gboolean    m_bVideoFlushPending; // TRUE between the flushing seek and the next ASYNC_DONE
 	gdouble     m_dVideoPanStartRootX; // pan drag start point, root (screen) coords
 	gdouble     m_dVideoPanStartRootY;
 	gdouble     m_dVideoPanStartPX; // crop window left/top at drag start
@@ -627,8 +630,7 @@ public:
 	bool        m_bControlsFadingIn;
 	double      m_dControlsFadeOpacity;
 
-	GtkWidget* m_pTimelinePopover;   /* time tooltip shown on hover over scale */
-	GtkWidget* m_pTimelinePopoverLabel;
+	gboolean    m_bSeekDragging;
 
 	bool IsFilmstripOverlay() const { return m_bFilmstripOverlay; }
 	bool IsHideFilmstripFS() const { return m_bHideFilmstripFS; }
@@ -1347,13 +1349,7 @@ static void set_control_visible(GtkWidget* w, bool visible)
 {
 	if (!w) return;
 	gtk_widget_set_opacity(w, visible ? 1.0 : 0.0);
-	gtk_widget_set_can_focus(w, visible);
-	if (gtk_widget_get_realized(w) && gtk_widget_get_has_window(w))
-	{
-		cairo_region_t *region = visible ? NULL : cairo_region_create();
-		gtk_widget_input_shape_combine_region(w, region);
-		if (!visible) cairo_region_destroy(region);
-	}
+	gtk_widget_set_can_focus(w, FALSE);
 }
 
 #define CONTROLS_FADE_STEP  0.12
@@ -1437,8 +1433,15 @@ void Viewer::ViewerImpl::UpdateFilmstripForPlayback()
 
 	if (IsVideo() && IsPlaying())
 	{
-		/* hide edge and filmstrip so they don't interfere with video controls */
-		HideFilmstripOverlay();
+		/* hide edge and filmstrip so they don't interfere with video controls;
+		 * force-hide unconditionally even if the pointer is over the filmstrip
+		 * (e.g. user pressed play while hovering the filmstrip) */
+		CancelFilmstripFade();
+		m_dFadeOpacity = gtk_widget_get_opacity(m_pIconView);
+		if (m_dFadeOpacity > 0.0)
+			StartFilmstripFade(false);
+		else
+			gtk_widget_hide(m_pIconView);
 		gtk_widget_hide(m_pFilmstripEdge);
 	}
 	else
@@ -1492,19 +1495,15 @@ bool Viewer::ViewerImpl::IsPointerOverMediaControls() const
 	gint local_x = root_x - win_x;
 	gint local_y = root_y - win_y;
 
-	GtkAllocation play_alloc;
-	gtk_widget_get_allocation(m_pPlayButton, &play_alloc);
-
 	GtkAllocation mc_alloc;
 	gtk_widget_get_allocation(m_pMediaControls, &mc_alloc);
 
-	/* X: within the play button (with small margin for gap to window edge) */
-	bool in_x = local_x >= play_alloc.x - 4
-		&& local_x < play_alloc.x + play_alloc.width + 4;
+	/* X: anywhere across the full width of the media controls bar */
+	bool in_x = local_x >= mc_alloc.x
+		&& local_x < mc_alloc.x + mc_alloc.width;
 
-	/* Y: at or below the play button top, extending down to the media
-	 * controls bottom (covers the gap between play button and screen edge) */
-	bool in_y = local_y >= play_alloc.y
+	/* Y: at or below the media controls top, extending to its bottom */
+	bool in_y = local_y >= mc_alloc.y
 		&& local_y <= mc_alloc.y + mc_alloc.height;
 
 	return in_x && in_y;
@@ -1733,22 +1732,7 @@ timeout_event_motion_notify (gpointer user_data)
 
 	gboolean bKeepVisible = FALSE;
 
-	// keep the controls on screen while the pointer is over them
-	gint x = -1, y = -1;
-	GdkWindow* media_window = gtk_widget_get_window(pViewerImpl->m_pMediaControls);
-	if (NULL != media_window)
-	{
-		GdkDisplay* display = gdk_window_get_display(media_window);
-		GdkDevice* device = gdk_seat_get_pointer(gdk_display_get_default_seat(display));
-		gdk_window_get_device_position(media_window, device, &x, &y, NULL);
-	}
-	GtkAllocation a = {};
-	gtk_widget_get_allocation(pViewerImpl->m_pMediaControls, &a);
-	if (0 <= x && 0 <= y && x <= a.width && y <= a.height)
-		bKeepVisible = TRUE;
-
-	// ...and while the volume popup is open (it floats above the bar)
-	if (!bKeepVisible)
+	// keep visible while the volume popup is open (it floats above the bar)
 	{
 		GtkWidget* popup = gtk_scale_button_get_popup(GTK_SCALE_BUTTON(pViewerImpl->m_pVolumeButton));
 		if (popup != NULL && gtk_widget_get_visible(popup))
@@ -1772,7 +1756,9 @@ timeout_event_motion_notify (gpointer user_data)
 	if (pViewerImpl->IsPlaying())
 	{
 		if (bKeepVisible)
+		{
 			pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
+		}
 		else
 		{
 			pViewerImpl->StartControlsFade(false);
@@ -1780,7 +1766,9 @@ timeout_event_motion_notify (gpointer user_data)
 		}
 	}
 	else
+	{
 		pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
+	}
 
 	return FALSE;
 }
@@ -1825,45 +1813,56 @@ viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble valu
 }
 
 static gboolean
-	viewer_scale_motion_cb(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+viewer_scale_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
 	(void)widget;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-
-	if (!p->m_pPipeline || !p->m_pTimelinePopover)
-		return FALSE;
-
-	gint64 clip_duration = 0;
-	if (!gst_element_query_duration(GST_ELEMENT(p->m_pPipeline), GST_FORMAT_TIME, &clip_duration)
-		|| clip_duration <= 0)
-		return FALSE;
-
-	GtkAllocation alloc;
-	gtk_widget_get_allocation(p->m_pPlayProgress, &alloc);
-
-	gdouble fraction = CLAMP(event->x / (gdouble)alloc.width, 0.0, 1.0);
-
-	gint64 target = (gint64)(clip_duration * fraction);
-	gchar *str = gst_time_format(target);
-	gtk_label_set_text(GTK_LABEL(p->m_pTimelinePopoverLabel), str);
-	g_free(str);
-
-	gint popover_x = CLAMP((gint)event->x, 20, alloc.width - 20);
-	GdkRectangle rect = { popover_x, 0, 1, 1 };
-	gtk_popover_set_pointing_to(GTK_POPOVER(p->m_pTimelinePopover), &rect);
-	gtk_widget_show(p->m_pTimelinePopover);
-
+	p->m_bSeekDragging = TRUE;
+	/* hide only the top button row so the timeline stays visible for dragging */
+	if (p->m_pControlsBox)
+		gtk_widget_hide(p->m_pControlsBox);
 	return FALSE;
 }
 
 static gboolean
-viewer_scale_leave_cb(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+viewer_scale_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+	(void)widget; (void)event;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->m_bSeekDragging = FALSE;
+	if (p->m_pControlsBox)
+		gtk_widget_show(p->m_pControlsBox);
+	p->RefreshAutoHideTimer();
+	return FALSE;
+}
+
+/* Connected on the controls event box (above_child=TRUE) to catch
+ * motion events that buttons swallow.  Shows controls if hidden and
+ * resets the hide timer.  Returns FALSE so buttons still get hover. */
+static gboolean controls_eventbox_motion_cb(GtkWidget *widget, GdkEvent *event, gpointer user_data)
 {
 	(void)widget;
-	(void)event;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	if (p->m_pTimelinePopover)
-		gtk_widget_hide(p->m_pTimelinePopover);
+	if (event->type != GDK_MOTION_NOTIFY)
+		return FALSE;
+	if (gtk_widget_get_opacity(p->m_pMediaControls) < 0.5)
+		set_control_visible(p->m_pMediaControls, true);
+	p->RefreshAutoHideTimer();
+	return FALSE;
+}
+
+/* Connected on control buttons via button-press-event and on the
+ * timeline scale via motion-notify-event / button-press-event. */
+static gboolean controls_show_on_event_cb(GtkWidget *widget, GdkEvent *event, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	gboolean was_hidden = gtk_widget_get_opacity(p->m_pMediaControls) < 0.5;
+	if (was_hidden)
+		set_control_visible(p->m_pMediaControls, true);
+	p->RefreshAutoHideTimer();
+	if (event->type == GDK_BUTTON_PRESS && was_hidden)
+		return TRUE;
 	return FALSE;
 }
 
@@ -1919,7 +1918,9 @@ viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_dat
 		}
 
 		if (pViewerImpl->IsPlaying())
+		{
 			pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
+		}
 	}
 		
 	return FALSE;
@@ -2909,11 +2910,39 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 				gst_element_get_state(GST_ELEMENT(pViewerImpl->m_pPipeline), &current, NULL, 0);
 				if (current == GST_STATE_PAUSED || current == GST_STATE_PLAYING)
 				{
-					if (pViewerImpl->m_pVideoFixed != NULL)
-						gtk_widget_show(pViewerImpl->m_pVideoFixed);
-					gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
-					if (pViewerImpl->m_pVideoSinkWidget != NULL && gtk_widget_get_visible(pViewerImpl->m_pVideoFixed))
-						gtk_widget_set_opacity(pViewerImpl->m_pVideoSinkWidget, 1.0);
+					if (pViewerImpl->m_bVideoNeedsFirstFrame && !pViewerImpl->m_bVideoFlushPending)
+					{
+						/* Phase 1: pipeline just prerolled the new video.
+						 * Send a flushing seek to position 0 — this forces the
+						 * GL sink to discard its old texture and re-decode from
+						 * the start.  The second ASYNC_DONE (after the flush)
+						 * will restore opacity. */
+						pViewerImpl->m_bVideoFlushPending = TRUE;
+						if (pViewerImpl->m_pVideoFixed != NULL)
+							gtk_widget_show(pViewerImpl->m_pVideoFixed);
+						gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
+						gst_element_seek(GST_ELEMENT(pViewerImpl->m_pPipeline),
+							1.0, GST_FORMAT_TIME,
+							GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+							GST_SEEK_TYPE_SET, 0,
+							GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+					}
+					else if (pViewerImpl->m_bVideoFlushPending)
+					{
+						/* Phase 2: the flushing seek completed.  The GL sink
+						 * has flushed its old texture and decoded a fresh frame
+						 * from position 0.  The draw callback will restore
+						 * opacity on the next paint — trigger it now. */
+						pViewerImpl->m_bVideoFlushPending = FALSE;
+						if (pViewerImpl->m_pVideoSinkWidget != NULL)
+							gtk_widget_queue_draw(pViewerImpl->m_pVideoSinkWidget);
+					}
+					else
+					{
+						if (pViewerImpl->m_pVideoFixed != NULL)
+							gtk_widget_show(pViewerImpl->m_pVideoFixed);
+						gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
+					}
 					pViewerImpl->UpdateTimeline();
 				}
 				break;
@@ -3049,11 +3078,25 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		StopVideo(false);
 		if (m_pVideoSinkWidget != NULL)
 		{
-			/* hide until the caps probe applies the correct zoom for the
-			 * new video; stale m_iVideoWidth from a different video would
-			 * compute the wrong zoom anyway */
+			/* The GL sink needs a mapped widget (and therefore a live
+			 * GL context) during preroll to upload the first frame.
+			 * Keep it invisible via opacity so the old texture is never
+			 * shown, but show the widget itself so the GL context
+			 * exists.  The draw callback will restore opacity once the
+			 * new frame is actually rendered. */
 			gtk_widget_set_opacity(m_pVideoSinkWidget, 0.0);
+			gtk_widget_show(m_pVideoSinkWidget);
 		}
+		if (m_pVideoFixed != NULL)
+			gtk_widget_show(m_pVideoFixed);
+		/* Send explicit flush_start + flush_stop to drain any lingering
+		 * buffers from the old video before loading the new URI.
+		 * Going to NULL stops the pipeline but does NOT flush the
+		 * downstream queue — residual decoded frames can sit in the
+		 * GL sink's texture until the new video's first buffer
+		 * overwrites them, causing a flash of the old frame.
+		 * NOTE: events sent in NULL state are no-ops (no streaming
+		 * thread).  The actual flush is sent in ASYNC_DONE below. */
 		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
@@ -3137,6 +3180,11 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 		gtk_widget_set_opacity(m_pVideoSinkWidget, 0.0);
 		gtk_widget_hide(m_pVideoSinkWidget);
 	}
+	/* The GL sink retains the old frame in its texture until the new
+	 * video's first buffer arrives.  Mark that we need to defer the
+	 * opacity restore so the old frame is never shown. */
+	m_bVideoNeedsFirstFrame = TRUE;
+	m_bVideoFlushPending = FALSE;
 	if (m_pVideoFixed != NULL)
 		gtk_widget_hide(m_pVideoFixed);
 	//gtk_widget_set_double_buffered (m_pImageView, TRUE); // Double buffering handled by gtksink
@@ -3357,6 +3405,7 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 						NULL, NULL, NULL, NULL);
 				}
 				}
+				set_control_visible(pViewerImpl->m_pMediaControls, true);
 				pViewerImpl->RefreshAutoHideTimer();
 				return TRUE;
 			}
@@ -3553,6 +3602,24 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 		}
 	}
 	return GST_PAD_PROBE_OK;
+}
+
+/* Called when the GL sink widget draws.  After a video switch, the sink's
+ * framebuffer still contains the OLD video's last frame until the new
+ * video's first frame is actually rendered.  Restoring opacity here
+ * (rather than in ASYNC_DONE or a pad probe) ensures the new frame is
+ * already in the sink's texture when it becomes visible. */
+static gboolean video_sink_draw_cb(GtkWidget *widget, cairo_t *cr, gpointer user_data)
+{ (void)cr;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_bVideoNeedsFirstFrame
+		&& !p->m_bVideoFlushPending
+		&& p->m_pVideoFixed != NULL && gtk_widget_get_visible(p->m_pVideoFixed))
+	{
+		p->m_bVideoNeedsFirstFrame = FALSE;
+		gtk_widget_set_opacity(widget, 1.0);
+	}
+	return FALSE;
 }
 
 static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
@@ -4099,6 +4166,28 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	m_dVideoLastWidgetW = widgetW;
 	m_dVideoLastWidgetH = widgetH;
 	m_dVideoLastZc = zc;
+
+	/* When paused, no buffers flow through gltransformation so property
+	 * changes are invisible until the next seek or state change.  Push the
+	 * new transform values through by re-seeking to the current position.
+	 * A flushing seek is safe in PAUSED and triggers exactly one buffer
+	 * through the pipeline. */
+	if (m_pPipeline != NULL)
+	{
+		GstState current = GST_STATE_VOID_PENDING;
+		gst_element_get_state(GST_ELEMENT(m_pPipeline), &current, NULL, 0);
+		if (current == GST_STATE_PAUSED)
+		{
+			gint64 pos = 0;
+			if (gst_element_query_position(m_pPipeline, GST_FORMAT_TIME, &pos))
+			{
+				gst_element_seek(GST_ELEMENT(m_pPipeline), 1.0,
+					GST_FORMAT_TIME,
+					GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+					GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, 0);
+			}
+		}
+	}
 }
 
 static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data)
@@ -4277,8 +4366,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iTimeoutControlsFade(0),
 	m_bControlsFadingIn(false),
 	m_dControlsFadeOpacity(0.0),
-	m_pTimelinePopover(NULL),
-	m_pTimelinePopoverLabel(NULL),
+	m_bSeekDragging(FALSE),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_ThumbnailLoader(this,2)
@@ -4378,6 +4466,25 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	g_signal_connect(G_OBJECT(m_pFullscreenBtn), "clicked", G_CALLBACK(viewer_fullscreen_button_clicked_cb), this);
 	gtk_style_context_add_class(gtk_widget_get_style_context(m_pFullscreenBtn), "media-btn");
 
+	/* Connect button-press on every control so clicking a hidden
+	 * button shows the controls bar without activating the button.
+	 * Also add GDK_POINTER_MOTION_MASK + event signal so motion
+	 * events reach our handler (GtkButton swallows them at the
+	 * GdkWindow level otherwise). */
+	{
+		GtkWidget *btns[] = { m_pSpeedButton, m_pSnapBtn, m_pVolumeButton,
+			m_pVideoOptionsBtn, m_pFullscreenBtn };
+		for (size_t i = 0; i < sizeof(btns)/sizeof(btns[0]); i++)
+		{
+			gtk_widget_set_events(btns[i],
+				gtk_widget_get_events(btns[i]) | GDK_POINTER_MOTION_MASK);
+			g_signal_connect(btns[i], "event",
+				G_CALLBACK(controls_eventbox_motion_cb), this);
+			g_signal_connect(btns[i], "button-press-event",
+				G_CALLBACK(controls_show_on_event_cb), this);
+		}
+	}
+
 	/* Far-right group: speed | snap | vol | fullscreen */
 	GtkWidget* extraBtns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_box_pack_start(GTK_BOX(extraBtns), m_pSpeedButton, FALSE, FALSE, 0);
@@ -4390,25 +4497,40 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	/* Rewind button */
 	m_pRewindBtn = gtk_button_new_from_icon_name("media-seek-backward", GTK_ICON_SIZE_BUTTON);
+	gtk_widget_set_events(m_pRewindBtn,
+		gtk_widget_get_events(m_pRewindBtn) | GDK_POINTER_MOTION_MASK);
+	g_signal_connect(m_pRewindBtn, "event",
+		G_CALLBACK(controls_eventbox_motion_cb), this);
 	gtk_button_set_relief(GTK_BUTTON(m_pRewindBtn), GTK_RELIEF_NONE);
 	g_signal_connect_swapped(G_OBJECT(m_pRewindBtn), "clicked", G_CALLBACK(viewer_skip_back_cb), this);
 	gtk_style_context_add_class(gtk_widget_get_style_context(m_pRewindBtn), "media-btn");
+	g_signal_connect(m_pRewindBtn, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
 
 	/* Fast-forward button */
 	m_pFfBtn = gtk_button_new_from_icon_name("media-seek-forward", GTK_ICON_SIZE_BUTTON);
+	gtk_widget_set_events(m_pFfBtn,
+		gtk_widget_get_events(m_pFfBtn) | GDK_POINTER_MOTION_MASK);
+	g_signal_connect(m_pFfBtn, "event",
+		G_CALLBACK(controls_eventbox_motion_cb), this);
 	gtk_button_set_relief(GTK_BUTTON(m_pFfBtn), GTK_RELIEF_NONE);
 	g_signal_connect_swapped(G_OBJECT(m_pFfBtn), "clicked", G_CALLBACK(viewer_skip_fwd_cb), this);
 	gtk_style_context_add_class(gtk_widget_get_style_context(m_pFfBtn), "media-btn");
+	g_signal_connect(m_pFfBtn, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
 
 	/* Play button — regular GtkButton, not GtkEventBox (event boxes
 	 * create their own GdkWindow which steals events from the scale's
 	 * grab when the pointer enters during a drag) */
 	m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DIALOG);
 	m_pPlayButton = gtk_button_new();
+	gtk_widget_set_events(m_pPlayButton,
+		gtk_widget_get_events(m_pPlayButton) | GDK_POINTER_MOTION_MASK);
+	g_signal_connect(m_pPlayButton, "event",
+		G_CALLBACK(controls_eventbox_motion_cb), this);
 	gtk_button_set_relief(GTK_BUTTON(m_pPlayButton), GTK_RELIEF_NONE);
 	gtk_container_add(GTK_CONTAINER(m_pPlayButton), m_pPlayImage);
 	g_signal_connect_swapped(G_OBJECT(m_pPlayButton), "clicked", G_CALLBACK(viewer_play_button_clicked_cb), this);
 	gtk_style_context_add_class(gtk_widget_get_style_context(m_pPlayButton), "media-btn");
+	g_signal_connect(m_pPlayButton, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
 
 	/* Centered group: [rewind][play][ff] */
 	GtkWidget* centerGroup = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -4427,16 +4549,13 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	GtkWidget* scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.001);
 	m_pPlayProgress = scale;
 	gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
+	gtk_widget_set_can_focus(scale, FALSE);
 
-	/* Timeline hover popover — shows time at cursor position */
-	m_pTimelinePopover = gtk_popover_new(scale);
-	gtk_popover_set_modal(GTK_POPOVER(m_pTimelinePopover), FALSE);
-	m_pTimelinePopoverLabel = gtk_label_new("");
-	gtk_container_add(GTK_CONTAINER(m_pTimelinePopover), m_pTimelinePopoverLabel);
-	gtk_widget_show(m_pTimelinePopoverLabel);
-	gtk_widget_add_events(scale, GDK_POINTER_MOTION_MASK | GDK_LEAVE_NOTIFY_MASK);
-	g_signal_connect(scale, "motion-notify-event", G_CALLBACK(viewer_scale_motion_cb), this);
-	g_signal_connect(scale, "leave-notify-event", G_CALLBACK(viewer_scale_leave_cb), this);
+	gtk_widget_add_events(scale, GDK_POINTER_MOTION_MASK);
+	g_signal_connect(scale, "motion-notify-event", G_CALLBACK(controls_show_on_event_cb), this);
+	g_signal_connect(scale, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
+	g_signal_connect(scale, "button-press-event", G_CALLBACK(viewer_scale_button_press_cb), this);
+	g_signal_connect(scale, "button-release-event", G_CALLBACK(viewer_scale_button_release_cb), this);
 
 	m_pTimelineRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_set_margin_start(m_pTimelineRow, 6);
@@ -4474,8 +4593,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_css_provider_load_from_data(cssProvider,
 		".speed-active { background-image: none; background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n"
 		".filmstrip-overlay { background-color: transparent; }\n"
-".media-btn { border-radius: 8px; min-width: 36px; min-height: 36px; padding: 4px; background-image: none; background-color: transparent; border: none; }\n"
-".media-btn:hover { background-image: none; background-color: alpha(@theme_bg_color, 0.60); border: none; }\n"
+".media-btn { border-radius: 8px; min-width: 36px; min-height: 36px; padding: 4px; background-image: none; background-color: transparent; border: none; outline: none; }\n"
+		".media-btn:hover { background-image: none; background-color: alpha(@theme_bg_color, 0.60); border: none; }\n"
+		".media-btn:focus, .media-btn:focus-visible, .media-btn:focusring { outline: none; box-shadow: none; -gtk-outline-radius: 0; }\n"
+		"*:focus { outline: none; box-shadow: none; -gtk-outline-radius: 0; }\n"
 		".time-label { color: rgba(255, 255, 255, 0.85); font-size: 12px; }\n",
 		-1, NULL);
 	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
@@ -4766,6 +4887,9 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	m_bVideoZoomCropActive = FALSE;
 	m_bVideoZoomInputCropActive = FALSE;
 	m_bVideoPanning = FALSE;
+	m_bVideoNeedsFirstFrame = FALSE;
+	m_bVideoFlushPending = FALSE;
+	m_pGtkGLSink = NULL;
 	GstElement* video_sink = NULL;
 	GstElement* gtkglsink = gst_element_factory_make("gtkglsink", NULL);
 	GstElement* glupload = NULL;
@@ -4773,6 +4897,12 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	{
 		g_object_set(G_OBJECT(gtkglsink), "force-aspect-ratio", TRUE, NULL);
 		g_object_get(G_OBJECT(gtkglsink), "widget", &m_pVideoSinkWidget, NULL);
+		m_pGtkGLSink = gtkglsink;  // keep reference for pad probing during video switches
+
+		/* Restore opacity after the GL sink actually renders the new
+		 * frame (not just after ASYNC_DONE or a pad probe, which fire
+		 * before the texture is uploaded). */
+		g_signal_connect(m_pVideoSinkWidget, "draw", G_CALLBACK(video_sink_draw_cb), this);
 
 		/* glsinkbin fails to share its GL display with gtkglsink's widget
 		 * context on Wayland and leaves the window black.  Link glupload
@@ -4806,6 +4936,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 		{
 			g_object_set(G_OBJECT(video_sink), "force-aspect-ratio", TRUE, NULL);
 			g_object_get(G_OBJECT(video_sink), "widget", &m_pVideoSinkWidget, NULL);
+			g_signal_connect(m_pVideoSinkWidget, "draw", G_CALLBACK(video_sink_draw_cb), this);
 		}
 	}
 
@@ -4881,8 +5012,8 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 				GstPad *crop_sinkpad = gst_element_get_static_pad(first_element, "sink");
 				if (crop_sinkpad != NULL)
 				{
-					gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, video_crop_pad_probe, this, NULL);
-					gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, video_zoom_reconfigure_probe, this, NULL);
+				gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, video_crop_pad_probe, this, NULL);
+				gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, video_zoom_reconfigure_probe, this, NULL);
 
 					/* expose this pad as the bin's sink so playbin can
 					 * link to the zoombin; the capsfilter's ANY template
