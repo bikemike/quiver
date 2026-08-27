@@ -2,15 +2,18 @@
 #define FILE_QUIVER_FILE_H
 
 
+#include <memory>
 #include <string>
 
 #include <gio/gio.h>
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
-#include <libexif/exif-data.h>
-#include <libexif/exif-loader.h>
 #include <boost/shared_ptr.hpp>
+
+namespace Exiv2 {
+class ExifData;
+}
 
 class QuiverFile {
 	// Associations
@@ -49,8 +52,8 @@ public:
 	
 	void RemoveCachedThumbnail(int iSize = 0);
 
-	ExifData *GetExifData();
-	bool SetExifData(ExifData* pExifData);
+	std::shared_ptr<Exiv2::ExifData> GetExifData();
+	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
 	
 	const char* GetMimeType();
 	GFileInfo* GetFileInfo();

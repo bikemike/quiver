@@ -104,7 +104,7 @@ public:
 
 	BrowserPtr m_BrowserPtr;
 	ViewerPtr m_ViewerPtr;
-	ExifView m_ExifView;
+	PropertyView m_PropertyView;
 	
 	StatusbarPtr m_StatusbarPtr;
 
@@ -1420,7 +1420,7 @@ void Quiver::ImageChanged()
 		SetWindowTitle( f.GetFilePath() );
 		
 		m_QuiverImplPtr->m_StatusbarPtr->SetPosition(m_QuiverImplPtr->m_ImageListPtr->GetCurrentIndex()+1,m_QuiverImplPtr->m_ImageListPtr->GetSize());
-		m_QuiverImplPtr->m_ExifView.SetQuiverFile(f);
+		m_QuiverImplPtr->m_PropertyView.SetQuiverFile(f);
 		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
 		
 	}
@@ -1864,7 +1864,7 @@ void Quiver::Init()
 	//FIXME: temp notebook stuff
 	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("File"));
 	//gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Exif"));
-	gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),m_QuiverImplPtr->m_ExifView.GetWidget(),gtk_label_new("Exif"));
+	gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),m_QuiverImplPtr->m_PropertyView.GetWidget(),gtk_label_new("Properties"));
 	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("IPTC"));
 	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Database"));
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties));

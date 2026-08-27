@@ -2,106 +2,16 @@
 
 #include "ImageSaveManager.h"
 
+#include <exiv2/exiv2.hpp>
+
 /*
  * this routine parses a date in exif date format and checks that it is valid
  * format: YYYY:MM:DD HH:MM:SS
  */
-#include <libexif/exif-ifd.h>
-#include <libexif/exif-entry.h>
-#include <libexif/exif-data.h>
-#include <libexif/exif-loader.h>
-#include <libexif/exif-tag.h>
-#include <libexif/exif-utils.h>
-
-static void
-exif_convert_arg_to_entry (const char *set_value, ExifEntry *e, ExifByteOrder o)
-{
-	unsigned int i;
-	const char *value_p;
-
-	/*
-	 * ASCII strings are handled separately,
-	 * since they don't require any conversion.
-	 */
-	if (e->format == EXIF_FORMAT_ASCII) {
-		if (e->data) free (e->data);
-
-		e->components = strlen (set_value) + 1;
-		e->size = sizeof (char) * e->components;
-		e->data = (unsigned char*)malloc (e->size);
-		if (!e->data) 
-		{
-			//fprintf (stderr, ("Not enough memory."));
-			//fputc ('\n', stderr);
-			//exit (1);
-		}
-		else
-		{
-			strcpy ((char*)e->data, set_value);
-		}
-		return;
-	}
-
-	value_p = set_value;
-	for (i = 0; i < e->components; i++) 
-	{
-		const char *begin, *end;
-		unsigned char *buf, s;
-		const char comp_separ = ' ';
-
-		begin = value_p;
-		value_p = index (begin, comp_separ);
-		if (!value_p) 
-		{
-			if (i != e->components - 1)
-			{
-				break;
-			}
-			else
-			{
-				end = begin + strlen (begin);
-			}
-		} 
-		else
-		{
-			end = value_p++;
-		}
-
-		buf = (unsigned char*)malloc ((end - begin + 1) * sizeof (char));
-		strncpy ((char*)buf, begin, end - begin);
-		buf[end - begin] = '\0';
-
-		s = exif_format_get_size (e->format);
-		switch (e->format)
-		{
-			case EXIF_FORMAT_ASCII:
-				//internal_error (); /* Previously handled */
-				break;
-			case EXIF_FORMAT_SHORT:
-				exif_set_short (e->data + (s * i), o, atoi ((char*)buf));
-				break;
-			case EXIF_FORMAT_LONG:
-				exif_set_long (e->data + (s * i), o, atol ((char*)buf));
-				break;
-			case EXIF_FORMAT_SLONG:
-				exif_set_slong (e->data + (s * i), o, atol ((char*)buf));
-				break;
-			case EXIF_FORMAT_RATIONAL:
-			case EXIF_FORMAT_SRATIONAL:
-			case EXIF_FORMAT_BYTE:
-			default:
-				break;
-		}
-
-		free (buf);
-	}
-}
-
-
 static gboolean exif_date_format_is_valid(const char *date)
 {
 	gboolean retval = FALSE;
-	
+
 	if (19 == strlen(date))
 	{
 		int year, month, day, hour, min, sec;
@@ -125,34 +35,9 @@ static gboolean exif_date_format_is_valid(const char *date)
 		{
 			retval = TRUE;
 		}
-		else
-		{
-		}
-		
-	}
-	else
-	{
 	}
 
 	return retval;
-}
-static void exif_update_entry(ExifData *pExifData, ExifIfd ifd,ExifTag tag,const char *value)
-{
-	ExifEntry *e;
-
-	/* If the entry doesn't exist, create it. */
-	e = exif_content_get_entry (pExifData->ifd[ifd], tag);
-	if (!e) 
-	{
-		e = exif_entry_new ();
-		exif_content_add_entry (pExifData->ifd[ifd], e);
-		exif_entry_initialize (e, tag);
-	}
-
-	/* Now set the value and save the data. */
-	exif_convert_arg_to_entry (value, e, exif_data_get_byte_order (pExifData));
-	
-	//save_exif_data_to_file (exifData, *args, fname);
 }
 
 
@@ -262,26 +147,25 @@ void AdjustDateTask::Run()
 				(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
 				(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
 			{
-				ExifData *pExifData = f.GetExifData();
-			
-				time_t date = 0;
- (void)date;
-				if (NULL != pExifData)
+				std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
+
+				if (NULL != pExifData.get())
 				{
 					// use date_time_original
-					ExifEntry* pEntry;
-					pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME_ORIGINAL);
-					if (NULL == pEntry)
+					auto it = pExifData->findKey(
+						Exiv2::ExifKey("Exif.Photo.DateTimeOriginal"));
+					if (pExifData->end() == it)
 					{
 						// try date_time
-						pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME);
+						it = pExifData->findKey(
+							Exiv2::ExifKey("Exif.Image.DateTime"));
 					}
 
-					if (NULL != pEntry)
+					if (pExifData->end() != it)
 					{
 						char szDate[20];
-						exif_entry_get_value(pEntry,szDate,20);
-			
+						g_strlcpy(szDate, it->toString().c_str(), sizeof(szDate));
+
 						tm tm_exif_time;
 						int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
 							&tm_exif_time.tm_year,
@@ -301,28 +185,27 @@ void AdjustDateTask::Run()
 							tm_exif_time.tm_min +=  m_iAdjMins;
 							tm_exif_time.tm_sec +=  m_iAdjSecs;
 							// successfully parsed date
-							date = mktime(&tm_exif_time);
+							time_t date = mktime(&tm_exif_time);
+ (void)date;
 
 							g_snprintf(szDate, 20, "%04d:%02d:%02d %02d:%02d:%02d",
 								tm_exif_time.tm_year+1900,tm_exif_time.tm_mon+1,tm_exif_time.tm_mday,
 								tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
 
-							//printf("ymd: %s\n", szDate);
-
-
 							if ( exif_date_format_is_valid(szDate) )
 							{
+								// operator[] creates the entry if missing
 								if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
 								{
-									exif_update_entry(pExifData, EXIF_IFD_0, EXIF_TAG_DATE_TIME, szDate);
+									(*pExifData)["Exif.Image.DateTime"] = szDate;
 								}
 								if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
 								{
-									exif_update_entry(pExifData, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_ORIGINAL, szDate);
+									(*pExifData)["Exif.Photo.DateTimeOriginal"] = szDate;
 								}
 								if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
 								{
-									exif_update_entry(pExifData, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_DIGITIZED, szDate);
+									(*pExifData)["Exif.Photo.DateTimeDigitized"] = szDate;
 								}
 
 								f.SetExifData(pExifData);
@@ -332,14 +215,10 @@ void AdjustDateTask::Run()
 									//now save the file:
 									ImageSaveManager::GetInstance()->SaveImage(f);
 								}
-							} 
-
-
-							
+							}
 						}
-						
+
 					}
-					exif_data_unref(pExifData);
 				}
 			}
 			

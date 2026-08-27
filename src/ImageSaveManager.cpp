@@ -6,6 +6,8 @@
 
 #include <gio/gio.h>
 
+#include <exiv2/exiv2.hpp>
+
 ImageSaveManagerPtr ImageSaveManager::c_pImageSaveManagerPtr;
 
 class ImageSaverJPEG;
@@ -37,7 +39,8 @@ std::string ImageSaverJPEG::GetMimeType()
 	return "image/jpeg";
 }
 
-static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf, ExifData *exifData, 
+static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf,
+		std::shared_ptr<Exiv2::ExifData> exifData,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data);
 
 bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
@@ -45,9 +48,8 @@ bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
 {
-	ExifData* exifData = quiverFile.GetExifData();
+	std::shared_ptr<Exiv2::ExifData> exifData = quiverFile.GetExifData();
 	int rval = save_jpeg_file(quiverFile.GetURI(), pixbuf, exifData, cb, user_data);
-	exif_data_unref(exifData);
 	quiverFile.Reload();
 	return (0 == rval);
 }
@@ -178,7 +180,8 @@ EXTERN(void) jpeg_gio_dest JPP((j_compress_ptr cinfo, GOutputStream * outfile));
 EXTERN(void) jpeg_gio_src JPP((j_decompress_ptr cinfo, GInputStream * infile));
 }
 
-static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf, ExifData *exifData,
+static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf,
+		std::shared_ptr<Exiv2::ExifData> exifData,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data)
 {
 /*
@@ -320,15 +323,24 @@ int jpeg_transform_files(char *infile, char *outfile,
 	(void)perfect;
 
 	/* do exif updating */
-	//ExifData *ed = NULL;
-	unsigned char *exif_raw_data;
-	unsigned int  exif_raw_size;
-
-	/* build new exif data block */
-	// exifData is saved to a data block allocated by the function
-	// - it must be freed
-	exif_data_save_data(exifData,&exif_raw_data,&exif_raw_size);
-	//exif_data_unref(ed);
+	// build the APP1 "Exif\0\0" + TIFF payload from the exiv2 container
+	std::vector<JOCTET> exif_app1_payload;
+	if (NULL != exifData.get() && !exifData->empty())
+	{
+		try
+		{
+			Exiv2::Blob blob;
+			Exiv2::ExifParser::encode(blob, Exiv2::bigEndian, *exifData);
+			exif_app1_payload.reserve(6 + blob.size());
+			const JOCTET header[] = { 'E', 'x', 'i', 'f', '\0', '\0' };
+			exif_app1_payload.insert(exif_app1_payload.end(), header, header + 6);
+			exif_app1_payload.insert(exif_app1_payload.end(), blob.begin(), blob.end());
+		}
+		catch (...)
+		{
+			exif_app1_payload.clear();
+		}
+	}
 
 	/* Any space needed by a transform option must be requested before
 	 * jpeg_read_coefficients so that memory allocation will be done right.
@@ -336,7 +348,7 @@ int jpeg_transform_files(char *infile, char *outfile,
 	//jtransform_request_workspace(&src, &transformoption);
 	src_coef_arrays = jpeg_read_coefficients(&src);
 
-	if (NULL == pixbuf)	
+	if (NULL == pixbuf)
 	{
 		jpeg_copy_critical_parameters(&src, &dst);
 
@@ -347,7 +359,8 @@ int jpeg_transform_files(char *infile, char *outfile,
 		jpeg_write_coefficients(&dst, src_coef_arrays);
 
 		/* Copy to the output file any extra markers that we want to preserve */
-		jpeg_write_marker(&dst, JPEG_APP0+1, exif_raw_data, exif_raw_size);
+		if (!exif_app1_payload.empty())
+			jpeg_write_marker(&dst, JPEG_APP0+1, exif_app1_payload.data(), exif_app1_payload.size());
 		jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL_BUT_EXIF);
 	}
 	else
@@ -379,7 +392,8 @@ int jpeg_transform_files(char *infile, char *outfile,
 		jpeg_start_compress(&dst, TRUE);
 
 		/* Copy to the output file any extra markers that we want to preserve */
-		jpeg_write_marker(&dst, JPEG_APP0+1, exif_raw_data, exif_raw_size);
+		if (!exif_app1_payload.empty())
+			jpeg_write_marker(&dst, JPEG_APP0+1, exif_app1_payload.data(), exif_app1_payload.size());
 		jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL_BUT_EXIF);
 
 		if (gdk_pixbuf_get_has_alpha(pixbuf))
@@ -398,7 +412,6 @@ int jpeg_transform_files(char *infile, char *outfile,
 
 
 	}
-	free(exif_raw_data);
 
 
 	/* Execute image transformation, if any */

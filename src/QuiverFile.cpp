@@ -6,7 +6,7 @@
 #include <gdk-pixbuf/gdk-pixbuf-io.h>
 
 
-#include <libexif/exif-utils.h>
+#include <exiv2/exiv2.hpp>
 #include <glib/gstdio.h>
 
 #include <string>
@@ -120,8 +120,8 @@ public:
 	int GetOrientation();
 	time_t GetTimeT(bool fromExif = true);
 	
-	ExifData* GetExifData();
-	bool SetExifData(ExifData* pExifData);	
+	std::shared_ptr<Exiv2::ExifData> GetExifData();
+	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
 	GdkPixbuf* GetExifThumbnail();
 	
 	bool HasThumbnail(int iSize) ;
@@ -137,8 +137,8 @@ public:
 	gchar* m_szMimeType;
 	GFileInfo* m_pGFileInfo;
  	
- 	ExifData* m_pExifData;
- 	ExifData* m_pExifDataOriginal;
+ 	std::shared_ptr<Exiv2::ExifData> m_ExifData;
+ 	std::shared_ptr<Exiv2::ExifData> m_ExifDataOriginal;
  	
 	IptcData* m_pIPTCData;
 	DBData* m_pDBData;
@@ -268,10 +268,8 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 	}
 	
 	m_szMimeType = NULL;
-	m_pExifData = NULL;
-	m_pExifDataOriginal = NULL;
-	
-	m_pIPTCData = NULL;	
+
+	m_pIPTCData = NULL;
 
 	m_iWidth = -1;
 	m_iHeight = -1;
@@ -367,16 +365,6 @@ QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 	{
 		g_free(m_szMimeType);
 	}
-
-	if (NULL != m_pExifData)
-	{
-		exif_data_unref(m_pExifData);
-	}
-	
-	if (NULL != m_pExifDataOriginal)
-	{
-		exif_data_unref(m_pExifDataOriginal);
-	}
 }
 
 GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
@@ -384,29 +372,39 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 	//Timer t("QuiverFile::GetExifThumbnail()");
 	GdkPixbuf *thumb_pixbuf = NULL;
 
-	ExifData *pExifData = GetExifData();
-	
-	if (m_fDataExists & QUIVER_FILE_DATA_EXIF && pExifData->data)
+	LoadExifData();
+
+	if (m_fDataExists & QUIVER_FILE_DATA_EXIF && NULL != m_ExifData.get())
 	{
-		GdkPixbufLoader *pixbuf_loader;
-		
-		pixbuf_loader = NULL;
-		pixbuf_loader = gdk_pixbuf_loader_new();
-		if (NULL != pixbuf_loader)
+		try
 		{
-			gdk_pixbuf_loader_write (pixbuf_loader,(guchar*)pExifData->data, pExifData->size, NULL);
-	
-			gdk_pixbuf_loader_close(pixbuf_loader, NULL);
-			thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
-			
-			if (NULL != thumb_pixbuf)
+			Exiv2::DataBuf buf = Exiv2::ExifThumbC(*m_ExifData).copy();
+
+			if (0 < buf.size())
 			{
-				g_object_ref(thumb_pixbuf);
-			}				
-			g_object_unref(pixbuf_loader);
-		}		
+				GdkPixbufLoader *pixbuf_loader;
+				pixbuf_loader = gdk_pixbuf_loader_new();
+				if (NULL != pixbuf_loader)
+				{
+					gdk_pixbuf_loader_write (pixbuf_loader, buf.c_data(), buf.size(), NULL);
+
+					gdk_pixbuf_loader_close(pixbuf_loader, NULL);
+					thumb_pixbuf = gdk_pixbuf_loader_get_pixbuf(pixbuf_loader);
+
+					if (NULL != thumb_pixbuf)
+					{
+						g_object_ref(thumb_pixbuf);
+					}
+					g_object_unref(pixbuf_loader);
+				}
+			}
+		}
+		catch (...)
+		{
+			thumb_pixbuf = NULL;
+		}
 	}
-	
+
 	return thumb_pixbuf;
 }
 
@@ -950,11 +948,8 @@ void QuiverFile::QuiverFileImpl::Reload()
 	delete [] m_szURI;
 	m_szURI = NULL;
 
-	if (NULL != m_pExifData)
-	{
-		exif_data_unref(m_pExifData);
-		m_pExifData = NULL;
-	}
+	m_ExifData.reset();
+	m_ExifDataOriginal.reset();
 	
 	unsigned int n_elements = G_N_ELEMENTS(ThumbnailSizes);
 	for (unsigned int i = 0 ; i < n_elements; i++)
@@ -971,93 +966,47 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 {
 	if (NULL != m_szURI && !( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
 	{
-		ExifLoader *loader;
-		//	unsigned char data[1024];
-	
-		loader = exif_loader_new ();
-	
-		int buffsize = 2048;
-		unsigned char buffer[buffsize];
-		gssize  bytes_read = 0;
-		
-		GFile* gfile = g_file_new_for_uri(m_szURI);
-
-		GInputStream* inStream = G_INPUT_STREAM(g_file_read(gfile, NULL, NULL));
-
-		if (NULL != inStream)
+		gchar* szPath = g_filename_from_uri(m_szURI, NULL, NULL);
+		if (NULL != szPath)
 		{
-			while (0 < (bytes_read = g_input_stream_read(inStream, buffer, buffsize, NULL, NULL)))
+			try
 			{
-				if (!exif_loader_write (loader, buffer, bytes_read))
+				auto image = Exiv2::ImageFactory::open(szPath);
+				image->readMetadata();
+
+				Exiv2::ExifData exifData = image->exifData();
+				if (!exifData.empty())
 				{
-					break;
+					m_ExifData =
+						std::make_shared<Exiv2::ExifData>(std::move(exifData));
+					m_fDataExists =
+						(QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_EXIF);
+
+					m_ExifDataOriginal =
+						std::make_shared<Exiv2::ExifData>(*m_ExifData);
 				}
 			}
-			g_object_unref(inStream);
+			catch (...)
+			{
+				// unreadable metadata counts as no-exif
+			}
+			g_free(szPath);
 		}
-		
-		g_object_unref(gfile);
 
-		m_pExifData = exif_loader_get_data (loader);
-		exif_loader_unref (loader);
-		
-		if (NULL == m_pExifData)
-		{
-			//printf("exif data is null\n");
-		}
-		else
-		{
-			bool no_exif = true;
-			
-			// go through exif fields to see if any are set (if not, no exif)
-			for (int i = 0; i < EXIF_IFD_COUNT && no_exif; i++)
-			{
-				if (m_pExifData->ifd[i] && m_pExifData->ifd[i]->count)
-				{
-					no_exif = false;
-				}
-			}
-			
-			if (m_pExifData->data)
-			{
-				no_exif = false;
-			}
-			
-			if (!no_exif)
-			{
-				m_fDataExists = (QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_EXIF);
-				//printf("there is exif!!\n");
-			}
-			else
-			{
-				//printf("no data in the exif!\n");
-				// dont keep structure around, it has nothing in it
-				exif_data_unref(m_pExifData);
-				m_pExifData = NULL;
-			}
-	
-		}
-		
-		if ( NULL != m_pExifData)
-		{
-			m_pExifDataOriginal = m_pExifData;
-			exif_data_ref(m_pExifDataOriginal);
-		}
-		
 		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_EXIF);
 	}
 }
 
-ExifData* QuiverFile::QuiverFileImpl::GetExifData()
+std::shared_ptr<Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifData()
 {
 	LoadExifData();
-	return m_pExifData;
+	return m_ExifData;
 }
 
 // Parses a container date string ("creation_time"/"date" metadata).
-// ISO-8601 strings with an explicit '+' offset are flagged as zoned;
-// plain "...Z" (mvhd-derived) and exiftool-style "YYYY-MM-DD HH:MM:SS"
-// strings come back unzoned.
+// ISO-8601 strings with an explicit zone ('+' offset or 'Z' suffix) are
+// flagged as zoned; exiftool-style "YYYY-MM-DD HH:MM:SS" strings come
+// back unzoned.
 static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbExplicitTZ)
 {
 	*pbExplicitTZ = false;
@@ -1067,7 +1016,10 @@ static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbExplici
 	GDateTime* pDate = g_date_time_new_from_iso8601(szValue, NULL);
 	if (NULL != pDate)
 	{
-		*pbExplicitTZ = (NULL != strchr(szValue, '+'));
+		size_t len = strlen(szValue);
+		char cLast = (0 < len) ? szValue[len - 1] : '\0';
+		*pbExplicitTZ = (NULL != strchr(szValue, '+')) ||
+			'Z' == cLast || 'z' == cLast;
 		return pDate;
 	}
 
@@ -1088,16 +1040,16 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 
 	if (fromExif && !IsVideo())
 	{
-		ExifData* pExifData = GetExifData();
-		if (NULL != pExifData)
+		std::shared_ptr<Exiv2::ExifData> pExifData = GetExifData();
+		if (NULL != pExifData.get())
 		{
 			// use date_time_original
-			ExifEntry* pEntry;
-			pEntry = exif_data_get_entry(pExifData,EXIF_TAG_DATE_TIME_ORIGINAL);
-			if (NULL != pEntry)
+			auto it = pExifData->findKey(
+				Exiv2::ExifKey("Exif.Photo.DateTimeOriginal"));
+			if (pExifData->end() != it)
 			{
 				char szDate[20];
-				exif_entry_get_value(pEntry,szDate,20);
+				g_strlcpy(szDate, it->toString().c_str(), sizeof(szDate));
 
 				struct tm tm_exif_time = {};
 				int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
@@ -1117,7 +1069,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 					// successfully parsed date
 					m_cachedTimeT = mktime(&tm_exif_time);
 				}
-				
+
 			}
 		}
 	}
@@ -1145,6 +1097,12 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 					av_dict_get(pFmt->metadata, "creation_time", NULL, 0);
 				if (NULL == e) // some muxers store a plain "date" tag
 					e = av_dict_get(pFmt->metadata, "date", NULL, 0);
+				for (unsigned i = 0; NULL == e && i < pFmt->nb_streams; i++)
+				{
+					// some muxers only tag the streams
+					e = av_dict_get(pFmt->streams[i]->metadata,
+						"creation_time", NULL, 0);
+				}
 
 				bool bExplicitTZ = false;
 				GDateTime* pGDate =
@@ -1216,52 +1174,51 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 
 
 
-bool QuiverFile::QuiverFileImpl::SetExifData(ExifData* pExifData)
+// structural comparison for change detection (ignores byte-order and
+// format normalization differences that raw serialization would flag)
+static bool ExifDataEqual(const Exiv2::ExifData& a, const Exiv2::ExifData& b)
+{
+	if (a.count() != b.count())
+	{
+		return false;
+	}
+
+	auto ia = a.begin();
+	auto ib = b.begin();
+	for (; ia != a.end() && ib != b.end(); ++ia, ++ib)
+	{
+		if (ia->key() != ib->key() || ia->value().toString() != ib->value().toString())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData)
 {
 	bool bSet = false;
 	bool bModified = false;
-	
+
 	LoadExifData();
-	
-	if (NULL != pExifData && NULL != m_pExifDataOriginal)
+
+	if (NULL != pExifData.get() && NULL != m_ExifDataOriginal.get())
 	{
-		unsigned char *data1 = NULL;
-		unsigned char *data2 = NULL;
-		unsigned int  size1, size2;
+		bModified = !ExifDataEqual(*pExifData, *m_ExifDataOriginal);
 
-		exif_data_save_data(pExifData,&data1,&size1);
-		exif_data_save_data(m_pExifDataOriginal,&data2,&size2);
-
-		if (size1 != size2)
-		{
-			bModified = true;
-		}
-		else if (0 != memcmp(data1,data2, size1))
-		{
-			bModified = true;
-		}
-		
 		int iOldOrientation = GetOrientation();
-		
+
 		if (bModified)
 		{
-			ExifData *pExifDataCopy = exif_data_new_from_data(data1,size1);
-			
-			exif_data_unref(m_pExifData);
-			
-			m_pExifData = pExifDataCopy;
-			
+			m_ExifData = std::make_shared<Exiv2::ExifData>(*pExifData);
+
 			// set the modified flag
 			m_fDataModified = (QuiverDataFlags)(m_fDataModified|QUIVER_FILE_DATA_EXIF);
 		}
 		else
 		{
-			exif_data_unref(m_pExifData);
-			
-			m_pExifData = m_pExifDataOriginal;
-			
-			exif_data_ref(m_pExifData);
-			
+			m_ExifData = m_ExifDataOriginal;
+
 			// unset the modified flag
 			if (QUIVER_FILE_DATA_EXIF & m_fDataModified)
 			{
@@ -1277,15 +1234,10 @@ bool QuiverFile::QuiverFileImpl::SetExifData(ExifData* pExifData)
 			for (unsigned int i = 0 ; i < n_elements; i++)
 			{
 				c_ThumbnailCache.m_mapThumbnailCache[ThumbnailSizes[i].size]->RemovePixbuf(m_szURI);
-					
+
 			}
 		}
-		
-		
-		free(data1);
-		free(data2);
-		
-		
+
 		bSet = true;
 	}
 	return bSet;
@@ -1368,18 +1320,24 @@ int QuiverFile::QuiverFileImpl::GetOrientation()
 	{
 		if (m_fDataExists & QUIVER_FILE_DATA_EXIF)
 		{
-			ExifData *pExifData = GetExifData();
+			std::shared_ptr<Exiv2::ExifData> pExifData = GetExifData();
 			int orientation = 1;
-			
-			ExifEntry *entry;
-			entry = exif_data_get_entry(pExifData,EXIF_TAG_ORIENTATION);
-			if (NULL != entry)
+
+			if (NULL != pExifData.get())
 			{
-				// the orientation field is set
-				//exif_entry_dump(entry,2);
-				ExifByteOrder o;
-				o = exif_data_get_byte_order (entry->parent->parent);
-				orientation = exif_get_short (entry->data, o);
+				try
+				{
+					auto it = pExifData->findKey(
+						Exiv2::ExifKey("Exif.Image.Orientation"));
+					if (pExifData->end() != it)
+					{
+						orientation = it->toInt64();
+					}
+				}
+				catch (...)
+				{
+					orientation = 1;
+				}
 			}
 
 			m_iOrientation = orientation;
@@ -1740,24 +1698,19 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 }
 
 
-ExifData* QuiverFile::GetExifData()
+std::shared_ptr<Exiv2::ExifData> QuiverFile::GetExifData()
 {
 	// return a copy of the exif data
-	ExifData* pExifData = m_QuiverFilePtr->GetExifData();
-	ExifData* pExifDataCopy = NULL;
+	std::shared_ptr<Exiv2::ExifData> pExifDataCopy;
+	std::shared_ptr<Exiv2::ExifData> pExifData = m_QuiverFilePtr->GetExifData();
 	if (pExifData)
 	{
-		unsigned char *data = NULL;
-		unsigned int  size;
-
-		exif_data_save_data(pExifData,&data,&size);
-		pExifDataCopy = exif_data_new_from_data(data,size);
-		free(data);
+		pExifDataCopy = std::make_shared<Exiv2::ExifData>(*pExifData);
 	}
 	return pExifDataCopy;
 }
 
-bool QuiverFile::SetExifData(ExifData* pExifData)
+bool QuiverFile::SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData)
 {
 	return m_QuiverFilePtr->SetExifData(pExifData);
 }

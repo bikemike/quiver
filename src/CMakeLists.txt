@@ -1,6 +1,7 @@
 set(QUIVER_SOURCES
     MD5.cpp
-    ExifView.cpp
+    PropertyView.cpp
+    VideoDateEditTask.cpp
     PreferencesEventSource.cpp
     Preferences.cpp
     PreferencesDlg.cpp
@@ -76,7 +77,7 @@ target_link_libraries(quiver PRIVATE
     quiver_lib
     PkgConfig::GTK3
     PkgConfig::GIO
-    PkgConfig::LIBEXIF
+    PkgConfig::EXIV2
     PkgConfig::LIBSQLITE
     PkgConfig::GSTREAMER
     PkgConfig::FFMPEG

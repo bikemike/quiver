@@ -40,7 +40,8 @@
 #include "IconViewThumbLoader.h"
 
 #include <gdk/gdkkeysyms.h>
-#include <libexif/exif-utils.h>
+#include <exiv2/exiv2.hpp>
+#include <memory>
 
 using namespace std;
 
@@ -1218,29 +1219,16 @@ void Viewer::ViewerImpl::SetCurrentOrientation(int iOrientation, bool bUpdateExi
 	if (bUpdateExif)
 	{
 		QuiverFile f = m_ImageListPtr->GetCurrent();
-		ExifData* pExifData = f.GetExifData();
-		
-		if (NULL != pExifData)
+		std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
+
+		if (NULL != pExifData.get())
 		{
-			ExifEntry *pExifEntry;
-		
-			// If the entry doesn't exist, create it. /
-			pExifEntry = exif_content_get_entry (pExifData->ifd[EXIF_IFD_0], EXIF_TAG_ORIENTATION);
-			if (!pExifEntry) 
-			{
-				pExifEntry = exif_entry_new ();
-				exif_content_add_entry (pExifData->ifd[EXIF_IFD_0], pExifEntry);
-				exif_entry_initialize (pExifEntry, EXIF_TAG_ORIENTATION);
-			}
-		
-			// Now set the value and save the data. /
-			exif_set_short (pExifEntry->data , exif_data_get_byte_order (pExifData), m_iCurrentOrientation);
-			
+			// operator[] creates the entry if it doesn't exist
+			(*pExifData)["Exif.Image.Orientation"] = m_iCurrentOrientation;
+
 			f.SetExifData(pExifData);
-			
-			exif_data_unref(pExifData);
 		}
-		
+
 	}
 	m_ImageLoader.SetLoadOrientation(GetCurrentOrientation(true));
 }
