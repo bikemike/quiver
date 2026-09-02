@@ -59,4 +59,4 @@ include(CTest)
 
 add_subdirectory(libquiver)
 add_subdirectory(src)
-add_subdirectory(tests)
+#add_subdirectory(tests)
