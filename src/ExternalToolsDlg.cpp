@@ -43,7 +43,9 @@ public:
 	
 	// dlg widgets
 	GtkWidget*             m_pWidget;
-	GtkTreeView*           m_pTreeViewExternalTools;
+	GtkWidget*             m_pTreeViewExternalTools;
+	GListStore*            m_pListStoreExternalTools;
+	GtkMultiSelection*     m_pSelectionExternalTools;
 	GtkButton*             m_pButtonMoveUp;
 	GtkButton*             m_pButtonMoveDown;
 	GtkButton*             m_pButtonAdd;
@@ -65,6 +67,124 @@ public:
 };
 
 
+// row item type for the external tools column view
+typedef struct {
+	GObject  parent_instance;
+	int      id;
+	gchar*   icon;
+	gchar*   name;
+} ExternalToolItem;
+
+typedef struct {
+	GObjectClass parent_class;
+} ExternalToolItemClass;
+
+#define EXTERNALTOOL_ITEM_TYPE (externaltool_item_get_type())
+#define EXTERNALTOOL_ITEM(obj) \
+	(G_TYPE_CHECK_INSTANCE_CAST((obj), EXTERNALTOOL_ITEM_TYPE, ExternalToolItem))
+
+G_DEFINE_TYPE(ExternalToolItem, externaltool_item, G_TYPE_OBJECT)
+
+static void externaltool_item_finalize (GObject* object)
+{
+	ExternalToolItem* item = EXTERNALTOOL_ITEM(object);
+	g_free(item->icon);
+	g_free(item->name);
+	G_OBJECT_CLASS(g_type_class_peek_parent(
+		G_OBJECT_GET_CLASS(object)))->finalize(object);
+}
+
+static void externaltool_item_class_init (ExternalToolItemClass* klass)
+{
+	G_OBJECT_CLASS(klass)->finalize = externaltool_item_finalize;
+}
+
+static void externaltool_item_init (ExternalToolItem* item)
+{
+	item->id = 0;
+	item->icon = NULL;
+	item->name = NULL;
+}
+
+static ExternalToolItem* externaltool_item_new (int id, const gchar* icon, const gchar* name)
+{
+	ExternalToolItem* item = static_cast<ExternalToolItem*>(
+		g_object_new(EXTERNALTOOL_ITEM_TYPE, NULL));
+	item->id = id;
+	item->icon = g_strdup(icon);
+	item->name = g_strdup(name);
+	return item;
+}
+
+static void externaltool_icon_setup (GtkListItem* list_item, gpointer user_data)
+{ (void)user_data;
+	GtkWidget* image = gtk_image_new();
+	gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
+	gtk_widget_set_margin_start(image, 6);
+	gtk_widget_set_margin_end(image, 6);
+	gtk_list_item_set_child(list_item, image);
+}
+
+static void externaltool_icon_bind (GtkListItem* list_item, gpointer user_data)
+{ (void)user_data;
+	ExternalToolItem* item = EXTERNALTOOL_ITEM(gtk_list_item_get_item(list_item));
+	GtkWidget* image = gtk_list_item_get_child(list_item);
+	gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon);
+}
+
+static void externaltool_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
+	ExternalToolsDlg::ExternalToolsDlgPriv* priv);
+static void externaltool_name_setup (GtkListItem* list_item, gpointer user_data)
+{
+	ExternalToolsDlg::ExternalToolsDlgPriv* priv =
+		static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
+	GtkWidget* editable = gtk_editable_label_new(NULL);
+	gtk_widget_set_hexpand(editable, TRUE);
+	g_signal_connect(editable, "notify::text",
+		G_CALLBACK(externaltool_name_edited), priv);
+	gtk_list_item_set_child(list_item, editable);
+}
+
+static void externaltool_name_bind (GtkListItem* list_item, gpointer user_data)
+{ (void)user_data;
+	ExternalToolItem* item = EXTERNALTOOL_ITEM(gtk_list_item_get_item(list_item));
+	GtkWidget* editable = gtk_list_item_get_child(list_item);
+	g_object_set_data(G_OBJECT(editable), "externaltool-id",
+		GINT_TO_POINTER(item->id));
+	gtk_editable_set_text(GTK_EDITABLE(editable), item->name);
+}
+
+static void externaltool_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
+	ExternalToolsDlg::ExternalToolsDlgPriv* priv)
+{ (void)pspec;
+	int id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(editable), "externaltool-id"));
+	const ExternalTool* ext = priv->m_ExternalToolsPtr->GetExternalTool(id);
+	if (NULL != ext)
+	{
+		ExternalTool modified = *ext;
+		modified.SetName(gtk_editable_get_text(GTK_EDITABLE(editable)));
+		priv->m_ExternalToolsPtr->UpdateExternalTool(modified);
+	}
+}
+
+static GtkListItemFactory* externaltool_column_factory (int iCol,
+	ExternalToolsDlg::ExternalToolsDlgPriv* priv)
+{
+	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
+	if (COLUMN_ICON == iCol)
+	{
+		g_signal_connect(factory, "setup", G_CALLBACK(externaltool_icon_setup), NULL);
+		g_signal_connect(factory, "bind", G_CALLBACK(externaltool_icon_bind), NULL);
+	}
+	else
+	{
+		g_signal_connect(factory, "setup", G_CALLBACK(externaltool_name_setup), priv);
+		g_signal_connect(factory, "bind", G_CALLBACK(externaltool_name_bind), NULL);
+	}
+	return factory;
+}
+
+
 ExternalToolsDlg::ExternalToolsDlg() : m_PrivPtr(new ExternalToolsDlg::ExternalToolsDlgPriv(this))
 {
 	
@@ -81,8 +201,13 @@ void ExternalToolsDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
-		gtk_widget_destroy(m_PrivPtr->m_pWidget);
+		GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+		g_object_set_data(G_OBJECT(m_PrivPtr->m_pWidget), "tools-loop", loop);
+		gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pWidget), TRUE);
+		gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
+		g_main_loop_run(loop);
+		g_main_loop_unref(loop);
+		gtk_window_destroy(GTK_WINDOW(m_PrivPtr->m_pWidget));
 	}
 }
 
@@ -91,8 +216,7 @@ void ExternalToolsDlg::Run()
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer user_data);
-static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data);
-static void cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data);
+static void selection_changed (GtkSelectionModel* selection, gpointer user_data);
 
 
 ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *parent) :
@@ -102,12 +226,14 @@ ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *p
 	m_ExternalToolsPtr = ExternalTools::GetInstance();
 	m_ExternalToolsPtr->AddEventHandler(m_ExternalToolsEventHandler);
 	m_bLoadedDlg = false;
+	m_pListStoreExternalTools = NULL;
+	m_pSelectionExternalTools = NULL;
 
 	m_pGtkBuilder = gtk_builder_new();
 	const gchar* objectids[] = {
 		"ExternalToolsDialog",
 		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
@@ -116,6 +242,16 @@ ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *p
 ExternalToolsDlg::ExternalToolsDlgPriv::~ExternalToolsDlgPriv()
 {
 	m_ExternalToolsPtr->RemoveEventHandler(m_ExternalToolsEventHandler);
+	if (NULL != m_pSelectionExternalTools)
+	{
+		g_object_unref(m_pSelectionExternalTools);
+		m_pSelectionExternalTools = NULL;
+	}
+	if (NULL != m_pListStoreExternalTools)
+	{
+		g_object_unref(m_pListStoreExternalTools);
+		m_pListStoreExternalTools = NULL;
+	}
 	if (NULL != m_pGtkBuilder)
 	{
 		g_object_unref(m_pGtkBuilder);
@@ -130,66 +266,33 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 	if (NULL != m_pGtkBuilder)
 	{
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "ExternalToolsDialog"));
-		m_pTreeViewExternalTools     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
+		m_pTreeViewExternalTools     = GTK_WIDGET(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_treeview") );
 
 		m_pButtonClose           = GTK_BUTTON( gtk_button_new_with_mnemonic("_Close") );
-		gtk_button_set_image(GTK_BUTTON(m_pButtonClose), gtk_image_new_from_icon_name(GTK_STOCK_CLOSE, GTK_ICON_SIZE_BUTTON));
-		/*
-		m_pButtonAdd             = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_ADD) );
-		m_pButtonEdit            = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_EDIT) );
-		m_pButtonRemove          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_REMOVE) );
-
-
-		gtk_widget_show(GTK_WIDGET(m_pButtonAdd));
-		gtk_widget_show(GTK_WIDGET(m_pButtonEdit));
-		gtk_widget_show(GTK_WIDGET(m_pButtonRemove));
-		*/
-		gtk_widget_show(GTK_WIDGET(m_pButtonClose));
 
 		if (m_pWidget)
 		{
-			/*
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonAdd),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonEdit),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonRemove),FALSE,TRUE,5);
-			*/
-			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonClose),GTK_RESPONSE_NONE);
+			GtkHeaderBar* hbar = GTK_HEADER_BAR(gtk_header_bar_new());
+			gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), TRUE);
+			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonClose));
+			gtk_window_set_titlebar(GTK_WINDOW(m_pWidget), GTK_WIDGET(hbar));
 		}
 		if (m_pTreeViewExternalTools)
 		{
-			GtkTreeViewColumn*column;
+			m_pListStoreExternalTools = g_list_store_new(EXTERNALTOOL_ITEM_TYPE);
+			m_pSelectionExternalTools = gtk_multi_selection_new(
+				G_LIST_MODEL(m_pListStoreExternalTools));
+			gtk_column_view_set_model(GTK_COLUMN_VIEW(m_pTreeViewExternalTools),
+				GTK_SELECTION_MODEL(m_pSelectionExternalTools));
 
-			GtkCellRenderer* renderer = gtk_cell_renderer_pixbuf_new ();
-			g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-			g_object_set (G_OBJECT (renderer),  "stock-size", 3,  NULL);
+			GtkColumnViewColumn* column =
+				gtk_column_view_column_new("icon",
+					externaltool_column_factory(COLUMN_ICON, this));
+			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewExternalTools), column);
 
-			column = gtk_tree_view_column_new_with_attributes ("icon",
-			  renderer,
-			  "icon_name", COLUMN_ICON,
-			NULL);
-
-
-			gtk_tree_view_append_column (m_pTreeViewExternalTools, column);
-
-			renderer = gtk_cell_renderer_text_new ();
-			g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-			g_object_set (G_OBJECT (renderer),  "editable", TRUE,  NULL);
-			g_signal_connect(renderer, "edited", (GCallback) cell_edited_callback, this);
-
-			column = gtk_tree_view_column_new_with_attributes ("externaltool",
-			  renderer,
-			  "text",COLUMN_NAME,
-			NULL);
-
-			gtk_tree_view_append_column (m_pTreeViewExternalTools, column);
-
-#if GTK_MAJOR_VERSION == 2  &&  GTK_MINOR_VERSION >= 12 || GTK_MAJOR_VERSION > 2
-			g_object_set(G_OBJECT(m_pTreeViewExternalTools),"show-expanders",FALSE,NULL);
-#endif
-	
-			gtk_tree_view_set_search_column (m_pTreeViewExternalTools,COLUMN_NAME);
-			GtkTreeSelection* selection = gtk_tree_view_get_selection(m_pTreeViewExternalTools);
-			gtk_tree_selection_set_mode(selection,GTK_SELECTION_MULTIPLE);
+			column = gtk_column_view_column_new("externaltool",
+				externaltool_column_factory(COLUMN_NAME, this));
+			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewExternalTools), column);
 		}
 
 		m_pButtonMoveUp          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "externaltools_button_move_up") );
@@ -213,58 +316,23 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 
 void ExternalToolsDlg::ExternalToolsDlgPriv::SelectionChanged()
 {
-	GList* paths;
-	GList* path_itr;
-	GtkTreeModel *model;
-	GtkTreeSelection* selection;
-	int selection_count = 0;
-	
-	GtkTreePath *path;
-	GtkTreeIter iter;
-
-	model = gtk_tree_view_get_model(m_pTreeViewExternalTools);
-	selection = gtk_tree_view_get_selection(m_pTreeViewExternalTools);
-
+	GtkSelectionModel* sel = GTK_SELECTION_MODEL(m_pSelectionExternalTools);
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pListStoreExternalTools));
+	guint selection_count = 0;
 	bool bTop = false, bBottom = false;
-	GtkTreeIter iter2;
-	GtkTreePath *path_top = NULL;
-	GtkTreePath *path_bottom = NULL;
-	int n_children = gtk_tree_model_iter_n_children(model,NULL);
-	if (n_children)
+
+	if (n)
 	{
-		gtk_tree_model_iter_nth_child(model, &iter2, NULL,0);
-		path_top = gtk_tree_model_get_path(model,&iter2);
-		gtk_tree_model_iter_nth_child(model, &iter2, NULL,n_children-1);
-		path_bottom = gtk_tree_model_get_path(model,&iter2);
+		bBottom = gtk_selection_model_is_selected(sel, n - 1);
 	}
-
-	paths = gtk_tree_selection_get_selected_rows(selection,&model);
-	path_itr = paths;
-	while (NULL != path_itr)
+	for (guint i = 0 ; i < n ; i++)
 	{
-		path = (GtkTreePath*)path_itr->data;
-		gtk_tree_model_get_iter(model,&iter,path);
-
-		if (0 == gtk_tree_path_compare(path, path_top))
+		if (gtk_selection_model_is_selected(sel, i))
 		{
-			bTop = true;
+			selection_count++;
+			if (0 == i)
+				bTop = true;
 		}
-
-		if (0 == gtk_tree_path_compare(path, path_bottom))
-		{
-			bBottom = true;
-		}
-		
-		path_itr = g_list_next(path_itr);
-		++selection_count;
-	}
-
-	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
-
-	if (n_children)
-	{
-		gtk_tree_path_free(path_top);
-		gtk_tree_path_free(path_bottom);
 	}
 
 	if (0 == selection_count)
@@ -314,25 +382,19 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::UpdateUI()
 	{
 		ExternalToolsPtr externaltoolsPtr = m_ExternalToolsPtr;
 		
-		//m_pTreeViewExternalTools;
-		GtkTreeStore *store;
-		store = gtk_tree_store_new(COLUMN_COUNT, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING);
+		g_list_store_remove_all(m_pListStoreExternalTools);
 		vector<ExternalTool> externaltools = externaltoolsPtr->GetExternalTools();
 		vector<ExternalTool>::iterator itr;
 
 		for (itr = externaltools.begin(); externaltools.end() != itr; ++itr)
 		{
-			GtkTreeIter iter1 = {};
-			gtk_tree_store_append (store, &iter1, NULL);  
-			gtk_tree_store_set (store, &iter1,
-				COLUMN_ID, itr->GetID(),
-				COLUMN_NAME, itr->GetName().c_str(),
-				COLUMN_ICON, itr->GetIcon().c_str(),
-				-1);
-
+			ExternalToolItem* item = externaltool_item_new(
+				itr->GetID(),
+				itr->GetIcon().c_str(),
+				itr->GetName().c_str());
+			g_list_store_append(m_pListStoreExternalTools, G_OBJECT(item));
+			g_object_unref(item);
 		}
-		gtk_tree_view_set_model(m_pTreeViewExternalTools, GTK_TREE_MODEL (store));
-		g_object_unref(store);
 
 		SelectionChanged();
 
@@ -341,20 +403,17 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::UpdateUI()
 }
 
 
-static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{ (void)data; 
-	if (GTK_RESPONSE_NONE == response)
-	{
-		g_signal_stop_emission_by_name (dlg, "response");
-	}
-}
-
 void ExternalToolsDlg::ExternalToolsDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
-		g_signal_connect(m_pWidget,
-			"response",(GCallback)on_dialog_response,this);
+		g_signal_connect(m_pWidget, "close-request",
+			G_CALLBACK(+[](GtkWidget* widget, gpointer) -> gboolean {
+				GMainLoop *loop = (GMainLoop*)g_object_get_data(G_OBJECT(widget), "tools-loop");
+				if (loop)
+					g_main_loop_quit(loop);
+				return FALSE;
+			}), NULL);
 
 		g_signal_connect(m_pButtonMoveUp,
 			"clicked",(GCallback)on_clicked,this);
@@ -369,9 +428,8 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::ConnectSignals()
 		g_signal_connect(m_pButtonClose,
 			"clicked",(GCallback)on_clicked,this);
 
-		GtkTreeSelection* selection = gtk_tree_view_get_selection(m_pTreeViewExternalTools);
-		g_signal_connect(G_OBJECT(selection),
-			"changed",G_CALLBACK(selection_changed),this);
+		g_signal_connect(G_OBJECT(m_pSelectionExternalTools),
+			"selection-changed",G_CALLBACK(selection_changed),this);
 	}
 }
 
@@ -383,31 +441,19 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	
 	list<int> values;
 
-	// move the externaltool one up in the row
-	GList* paths;
-	GList* path_itr;
-	GtkTreePath *path;
-	GtkTreeModel *model;
-	GtkTreeSelection* selection;
-	GtkTreeIter iter;
-	int value;
-	
-	model = gtk_tree_view_get_model(priv->m_pTreeViewExternalTools);
-	selection = gtk_tree_view_get_selection(priv->m_pTreeViewExternalTools);
+	GtkSelectionModel* sel = GTK_SELECTION_MODEL(priv->m_pSelectionExternalTools);
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(priv->m_pListStoreExternalTools));
 
-
-	paths = gtk_tree_selection_get_selected_rows(selection,&model);
-	path_itr = paths;
-	while (NULL != path_itr)
+	for (guint i = 0 ; i < n ; i++)
 	{
-		path = (GtkTreePath*)path_itr->data;
-		gtk_tree_model_get_iter(model,&iter,path);
-
-		gtk_tree_model_get (model,&iter,COLUMN_ID,&value,-1);
-		values.push_back(value);
-		path_itr = g_list_next(path_itr);
-	}	
-	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
+		if (gtk_selection_model_is_selected(sel, i))
+		{
+			ExternalToolItem* item = EXTERNALTOOL_ITEM(
+				g_list_model_get_item(G_LIST_MODEL(priv->m_pListStoreExternalTools), i));
+			values.push_back(item->id);
+			g_object_unref(item);
+		}
+	}
 	// have to remove after iterating the model because
 	// removing modifiees the model
 	if (button == priv->m_pButtonMoveUp)
@@ -417,16 +463,15 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 			priv->m_ExternalToolsPtr->MoveUp(*itr);
 			// make sure the item is selected again
 			// because the model has changed
-			model = gtk_tree_view_get_model(priv->m_pTreeViewExternalTools);
-			selection = gtk_tree_view_get_selection(priv->m_pTreeViewExternalTools);
-			int n_children = gtk_tree_model_iter_n_children(model,NULL);
-			for (int i = 0; i < n_children; ++i)
+			for (guint i = 0 ; i < n ; i++)
 			{
-				gtk_tree_model_iter_nth_child(model, &iter, NULL,i);
-				gtk_tree_model_get (model,&iter,COLUMN_ID,&value,-1);
-				if (value == *itr)
+				ExternalToolItem* item = EXTERNALTOOL_ITEM(
+					g_list_model_get_item(G_LIST_MODEL(priv->m_pListStoreExternalTools), i));
+				int id = item->id;
+				g_object_unref(item);
+				if (id == *itr)
 				{
-					gtk_tree_selection_select_iter(selection,&iter);
+					gtk_selection_model_select_item(sel, i, FALSE);
 				}
 			}
 		}
@@ -438,16 +483,15 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 			priv->m_ExternalToolsPtr->MoveDown(*itr);
 			// make sure the item is selected again
 			// because the model has changed
-			model = gtk_tree_view_get_model(priv->m_pTreeViewExternalTools);
-			selection = gtk_tree_view_get_selection(priv->m_pTreeViewExternalTools);
-			int n_children = gtk_tree_model_iter_n_children(model,NULL);
-			for (int i = 0; i < n_children; ++i)
+			for (guint i = 0 ; i < n ; i++)
 			{
-				gtk_tree_model_iter_nth_child(model, &iter, NULL,i);
-				gtk_tree_model_get (model,&iter,COLUMN_ID,&value,-1);
-				if (value == *itr)
+				ExternalToolItem* item = EXTERNALTOOL_ITEM(
+					g_list_model_get_item(G_LIST_MODEL(priv->m_pListStoreExternalTools), i));
+				int id = item->id;
+				g_object_unref(item);
+				if (id == *itr)
 				{
-					gtk_tree_selection_select_iter(selection,&iter);
+					gtk_selection_model_select_item(sel, i, FALSE);
 				}
 			}
 		}
@@ -496,44 +540,18 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonClose)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_CLOSE);
+		GMainLoop *loop = (GMainLoop*)g_object_get_data(G_OBJECT(priv->m_pWidget), "tools-loop");
+		if (loop)
+			g_main_loop_quit(loop);
 	}
 }
 
-static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
-{ (void)treeselection; 
+static void selection_changed (GtkSelectionModel* selection, gpointer user_data)
+{ (void)selection; 
 	ExternalToolsDlg::ExternalToolsDlgPriv *priv = static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
 	priv->SelectionChanged();
 }
 
-static void
-cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data)
-{ (void)cell; 
-	ExternalToolsDlg::ExternalToolsDlgPriv *priv = static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
-
-	GtkTreePath *path;
-	GtkTreeIter child = {};
-	GtkTreeIter parent = {};
-
-	int value;
-
-	GtkTreeModel *pTreeModel = gtk_tree_view_get_model(priv->m_pTreeViewExternalTools);
-
-	path = gtk_tree_path_new_from_string(path_string);
-	gtk_tree_model_get_iter(pTreeModel,&child,path);
-
-	gtk_tree_model_iter_parent(pTreeModel,&parent, &child);
-	
-	gtk_tree_model_get (pTreeModel,&child,COLUMN_ID,&value,-1);
-
-	const ExternalTool* ext = priv->m_ExternalToolsPtr->GetExternalTool(value);
-	if (NULL != ext)
-	{
-		ExternalTool modified = *ext;
-		modified.SetName(new_text);
-		priv->m_ExternalToolsPtr->UpdateExternalTool(modified);
-	}
-}
 
 // nested class
 
@@ -544,6 +562,5 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsEventHandler::HandleEx
 		parent->UpdateUI();
 	}
 }
-
 
 

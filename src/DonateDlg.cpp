@@ -47,9 +47,12 @@ void DonateDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
-
-		gtk_widget_destroy(m_PrivPtr->m_pWidget);
+		GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+		g_object_set_data(G_OBJECT(m_PrivPtr->m_pWidget), "donate-loop", loop);
+		gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pWidget), TRUE);
+		gtk_window_present(GTK_WINDOW(m_PrivPtr->m_pWidget));
+		g_main_loop_run(loop);
+		g_main_loop_unref(loop);
 	}
 }
 
@@ -69,7 +72,7 @@ DonateDlg::DonateDlgPriv::DonateDlgPriv(DonateDlg *parent) :
 	const gchar* objectids[] = {
 		"DonateDialog",
 		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (const char**)objectids, NULL);
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
@@ -94,17 +97,17 @@ void DonateDlg::DonateDlgPriv::LoadWidgets()
 
 		m_pButtonDonate          = GTK_BUTTON( gtk_button_new_with_label("Donate to Quiver"));
 		m_pButtonClose              = GTK_BUTTON( gtk_button_new_with_mnemonic("_Close") );
-		gtk_button_set_image(GTK_BUTTON(m_pButtonClose), gtk_image_new_from_icon_name(GTK_STOCK_CLOSE, GTK_ICON_SIZE_BUTTON));
 
 
-		gtk_widget_show(GTK_WIDGET(m_pButtonDonate));
-		gtk_widget_show(GTK_WIDGET(m_pButtonClose));
 
 		if (m_pWidget)
 		{
-			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonDonate),GTK_RESPONSE_NONE);
-			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonClose),GTK_RESPONSE_NONE);
-			gtk_button_box_set_layout  (GTK_BUTTON_BOX(gtk_builder_get_object(m_pGtkBuilder, "dialog-action_area7")), GTK_BUTTONBOX_EDGE);
+			/* pack the action buttons into a header bar titlebar */
+			GtkHeaderBar* hbar = GTK_HEADER_BAR(gtk_header_bar_new());
+			gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), FALSE);
+			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonDonate));
+			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonClose));
+			gtk_window_set_titlebar(GTK_WINDOW(m_pWidget), GTK_WIDGET(hbar));
 		}
 
 		m_bLoadedDlg = (
@@ -123,20 +126,17 @@ void DonateDlg::DonateDlgPriv::UpdateUI()
 }
 
 
-static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{ (void)data; 
-	if (GTK_RESPONSE_NONE == response)
-	{
-		g_signal_stop_emission_by_name (dlg, "response");
-	}
-}
-
 void DonateDlg::DonateDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
-		g_signal_connect(m_pWidget,
-			"response",(GCallback)on_dialog_response,this);
+		g_signal_connect(m_pWidget, "close-request",
+			G_CALLBACK(+[](GtkWidget* widget, gpointer) -> gboolean {
+				GMainLoop *loop = (GMainLoop*)g_object_get_data(G_OBJECT(widget), "donate-loop");
+				if (loop)
+					g_main_loop_quit(loop);
+				return FALSE;
+			}), NULL);
 
 		g_signal_connect(m_pButtonClose,
 			"clicked",(GCallback)on_clicked,this);
@@ -153,7 +153,10 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	
 	if (button == priv->m_pButtonClose)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_CLOSE);
+		GMainLoop *loop = (GMainLoop*)g_object_get_data(G_OBJECT(priv->m_pWidget), "donate-loop");
+		if (loop)
+			g_main_loop_quit(loop);
+		gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
 	}
 	else if (button == priv->m_pButtonDonate)
 	{

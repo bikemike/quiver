@@ -13,7 +13,7 @@ and manage bookmarks.
 | CMake >= 3.10     | Build system                  | `cmake`                        | `cmake`                         |
 | C/C++ compiler    | Compilation                   | `build-essential`              | `gcc gcc-c++`                   |
 | pkg-config        | Locating libraries            | `pkg-config`                   | `pkgconf-pkg-config`            |
-| GTK+ 3            | GUI toolkit                   | `libgtk-3-dev`                 | `gtk3-devel`                    |
+| GTK 4            | GUI toolkit                   | `libgtk-4-dev`                 | `gtk4-devel`                    |
 | GLib / GIO        | Core library & I/O            | `libglib2.0-dev`               | `glib2-devel`                   |
 | libexif           | EXIF metadata reading         | `libexif-dev`                  | `libexif-devel`                 |
 | SQLite            | Database storage              | `libsqlite3-dev`               | `sqlite-devel`                  |
@@ -100,7 +100,7 @@ cmake -B build -DQUIVER_DATADIR=/usr/share/quiver
 ## Testing
 
 > [!NOTE]
-> When testing the binary manually under Xvfb, you must force the GTK backend to X11 to prevent GTK3 from bypassing Xvfb and launching on your active Wayland session:
+> When testing the binary manually under Xvfb, you must force the GTK backend to X11 to prevent GTK4 from bypassing Xvfb and launching on your active Wayland session:
 > ```sh
 > GDK_BACKEND=x11 xvfb-run -a build/src/quiver
 > ```

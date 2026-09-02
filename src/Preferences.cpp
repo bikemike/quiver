@@ -359,7 +359,7 @@ void Preferences::SetStringList(std::string section, std::string key, std::list<
 
 		if (0 != nstrings)
 		{
-			strings = new char*[nstrings];
+			strings = g_new(char*, nstrings);
 			std::list<std::string>::iterator itr;
 			int i = 0;
 			for (itr = value_list.begin(); value_list.end() != itr; ++itr)
@@ -372,7 +372,7 @@ void Preferences::SetStringList(std::string section, std::string key, std::list<
 		if (NULL != strings)
 		{
 			g_key_file_set_string_list (m_KeyFile, section.c_str(), key.c_str(), strings, nstrings);
-			free(strings);
+			g_free(strings);
 		}
 
 		m_bModified = true;
@@ -406,7 +406,7 @@ void Preferences::SetBooleanList(std::string section, std::string key, std::list
 
 		if (0 != nvals)
 		{
-			values = new gboolean[nvals];
+			values = g_new(gboolean, nvals);
 			std::list<bool>::iterator itr;
 			int i = 0;
 			for (itr = value_list.begin(); value_list.end() != itr; ++itr)
@@ -419,7 +419,7 @@ void Preferences::SetBooleanList(std::string section, std::string key, std::list
 		if (NULL != values)
 		{
 			g_key_file_set_boolean_list (m_KeyFile, section.c_str(), key.c_str(), values, nvals);
-			free(values);
+			g_free(values);
 		}
 
 		m_bModified = true;
@@ -448,7 +448,7 @@ void Preferences::SetIntegerList(std::string section, std::string key, std::list
 
 		if (0 != nvals)
 		{
-			values = new int[nvals];
+			values = g_new(int, nvals);
 			std::list<int>::iterator itr;
 			int i = 0;
 			for (itr = value_list.begin(); value_list.end() != itr; ++itr)
@@ -461,7 +461,7 @@ void Preferences::SetIntegerList(std::string section, std::string key, std::list
 		if (NULL != values)
 		{
 			g_key_file_set_integer_list (m_KeyFile, section.c_str(), key.c_str(), values, nvals);
-			free(values);
+			g_free(values);
 		}
 
 		m_bModified = true;

@@ -160,28 +160,47 @@ typedef struct _VelocityTimeStruct
 
 /* start private function prototypes */
 
-static void quiver_image_view_realize        (GtkWidget *widget);
+static void quiver_image_view_snapshot (GtkWidget *widget, GtkSnapshot *snapshot);
 static void quiver_image_view_size_allocate  (GtkWidget     *widget,
-                                             GtkAllocation *allocation);
+                                             int width,
+                                             int height,
+                                             int baseline);
 
 static void      quiver_image_view_size_request (GtkWidget *widget, GtkRequisition *requisition);
 static void      quiver_image_view_get_preferred_width (GtkWidget *widget, gint* min_width, gint* natural_width);
 static void      quiver_image_view_get_preferred_height (GtkWidget *widget, gint* min_height, gint* natural_height);
+static void      quiver_image_view_measure (GtkWidget *widget,
+					GtkOrientation orientation,
+					int for_size,
+					int *minimum,
+					int *natural,
+					int *minimum_baseline,
+					int *natural_baseline);
 
-static void      quiver_image_view_send_configure (QuiverImageView *imageview);
+static void      quiver_image_view_handle_size_change (QuiverImageView *imageview);
 
-static gboolean  quiver_image_view_configure_event (GtkWidget *widget,
-                    GdkEventConfigure *event);
-static gboolean quiver_image_view_draw(GtkWidget* imageview, cairo_t* cr);
-static gboolean  quiver_image_view_button_press_event  (GtkWidget *widget,
-                    GdkEventButton *event);
-
-static gboolean  quiver_image_view_button_release_event (GtkWidget *widget,
-                    GdkEventButton *event);
-static gboolean  quiver_image_view_motion_notify_event (GtkWidget *widget,
-                    GdkEventMotion *event);
-static gboolean  quiver_image_view_scroll_event ( GtkWidget *widget,
-                    GdkEventScroll *event);
+static void quiver_image_view_gesture_pressed (GtkGestureClick *gesture,
+					       int n_press,
+					       double x,
+					       double y,
+					       QuiverImageView *imageview);
+static void quiver_image_view_gesture_drag_begin (GtkGestureDrag *gesture,
+						  double x,
+						  double y,
+						  QuiverImageView *imageview);
+static void quiver_image_view_gesture_drag_update (GtkGestureDrag *gesture,
+						   double x,
+						   double y,
+						   QuiverImageView *imageview);
+static void quiver_image_view_gesture_drag_end (GtkGestureDrag *gesture,
+						double x,
+						double y,
+						QuiverImageView *imageview);
+static gboolean quiver_image_view_scroll_controller_cb (GtkEventControllerScroll *controller,
+							double dx,
+							double dy,
+							QuiverImageView *imageview);
+static void quiver_image_view_setup_controllers (QuiverImageView *imageview);
 
 static void      quiver_image_view_set_hadjustment (QuiverImageView *imageview,
                     GtkAdjustment *hadjustment);
@@ -214,6 +233,7 @@ quiver_image_view_set_adjustment_upper (GtkAdjustment *adj,
 
 static void quiver_image_view_add_scale_hq_timeout(QuiverImageView *imageview);
 static gboolean quiver_image_view_timeout_scale_hq(gpointer data);
+static gboolean quiver_image_view_timeout_smooth_scroll_slowdown(gpointer data);
 static void quiver_image_view_prepare_transition_pixbufs(QuiverImageView *imageview);
 static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *imageview);
 static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,GdkInterpType interptype);
@@ -278,17 +298,9 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 	widget_class = GTK_WIDGET_CLASS (klass);
 	obj_class = G_OBJECT_CLASS (klass);
 
-	widget_class->realize              = quiver_image_view_realize;
-	widget_class->size_allocate        = quiver_image_view_size_allocate;
-	widget_class->get_preferred_width  = quiver_image_view_get_preferred_width;
-	widget_class->get_preferred_height = quiver_image_view_get_preferred_height;
-	widget_class->draw                 = quiver_image_view_draw;
-	widget_class->configure_event      = quiver_image_view_configure_event;
-	widget_class->button_press_event   = quiver_image_view_button_press_event;
-	widget_class->button_release_event = quiver_image_view_button_release_event;
-	widget_class->motion_notify_event  = quiver_image_view_motion_notify_event;
-	widget_class->scroll_event         = quiver_image_view_scroll_event;
-	//widget_class->key_press_event      = quiver_image_view_key_press_event;
+	widget_class->snapshot = quiver_image_view_snapshot;
+	widget_class->measure = quiver_image_view_measure;
+	widget_class->size_allocate = quiver_image_view_size_allocate;
 
 	//klass->set_scroll_adjustments      = quiver_image_view_set_scroll_adjustments;
 
@@ -438,9 +450,10 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->velocity_time_list = NULL;
 
 	gtk_widget_set_can_focus(GTK_WIDGET(imageview), TRUE);
-	gtk_widget_set_has_window(GTK_WIDGET(imageview), TRUE);
 
 	gtk_widget_set_size_request(GTK_WIDGET(imageview),QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE,QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE);
+
+	quiver_image_view_setup_controllers(imageview);
 
 	
 }
@@ -454,42 +467,6 @@ quiver_image_view_destroy(GtkObject *object)
 }
 */
 
-
-static void
-quiver_image_view_realize (GtkWidget *widget)
-{
-	QuiverImageView *imageview;
-	GdkWindowAttr attributes;
-	gint attributes_mask;
-
-	g_return_if_fail (QUIVER_IS_IMAGE_VIEW (widget));
-
-	imageview = QUIVER_IMAGE_VIEW (widget);
-	gtk_widget_set_realized(widget, TRUE);
-
-	attributes.window_type = GDK_WINDOW_CHILD;
-	GtkAllocation allocation = {0};
-	gtk_widget_get_allocation(widget, &allocation);
-	attributes.x = allocation.x;
-	attributes.y = allocation.y;
-	attributes.width = gtk_widget_get_allocated_width(widget);
-	attributes.height = gtk_widget_get_allocated_height(widget);
-	attributes.wclass = GDK_INPUT_OUTPUT;
-	attributes.visual = gtk_widget_get_visual (widget);
-
-	attributes.event_mask = gtk_widget_get_events (widget) | 
-					   GDK_EXPOSURE_MASK |
-					   GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK |
-					   GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
-					   GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK| GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK;
-
-	attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;
-
-	gtk_widget_set_window(widget, gdk_window_new (gtk_widget_get_parent_window (widget), &attributes, attributes_mask));
-	gdk_window_set_user_data(gtk_widget_get_window(widget), imageview);
-
-	quiver_image_view_send_configure (QUIVER_IMAGE_VIEW (widget));
-}
 
 /*
 static void
@@ -590,26 +567,37 @@ quiver_image_view_finalize(GObject *object)
 
 static void
 quiver_image_view_size_allocate (GtkWidget     *widget,
-				GtkAllocation *allocation)
+				int width,
+				int height,
+				int baseline)
 {
+	(void)baseline;
+	(void)width;
+	(void)height;
 	g_return_if_fail (QUIVER_IS_IMAGE_VIEW (widget));
-	g_return_if_fail (allocation != NULL);
 
-	/*QuiverImageView *imageview = QUIVER_IMAGE_VIEW(widget);*/
+	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(widget);
 
-	gtk_widget_set_allocation(widget, allocation);
-
-	if (gtk_widget_get_mapped (widget))
-	{
-		gdk_window_move_resize( gtk_widget_get_window(widget),
-			allocation->x, allocation->y,
-			allocation->width, allocation->height);
-			
-		quiver_image_view_send_configure (QUIVER_IMAGE_VIEW (widget));
-	}
-
+	quiver_image_view_handle_size_change(imageview);
 }
 
+static void quiver_image_view_measure (GtkWidget *widget,
+					GtkOrientation orientation,
+					int for_size,
+					int *minimum,
+					int *natural,
+					int *minimum_baseline,
+					int *natural_baseline)
+{
+	(void)widget;
+	(void)orientation;
+	(void)for_size;
+	(void)minimum_baseline;
+	(void)natural_baseline;
+	*minimum = *natural = QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE;
+}
+
+/*
 static void
 quiver_image_view_size_request (GtkWidget *widget, GtkRequisition *requisition)
 {
@@ -636,49 +624,13 @@ quiver_image_view_get_preferred_height (GtkWidget *widget, gint* min_height, gin
 	quiver_image_view_size_request(widget, &requisition);
 	*min_height = *natural_height = requisition.height;
 }
+*/
 
 static void
-quiver_image_view_send_configure (QuiverImageView *imageview)
+quiver_image_view_handle_size_change (QuiverImageView *imageview)
 {
-	GtkWidget *widget;
-	GdkEvent *event = gdk_event_new (GDK_CONFIGURE);
-
-	widget = GTK_WIDGET (imageview);
-
-	event->configure.window = g_object_ref(gtk_widget_get_window(widget));
-	event->configure.send_event = TRUE;
-
-	GtkAllocation allocation = {0};
-	gtk_widget_get_allocation(widget, &allocation);
-	event->configure.x = allocation.x;
-	event->configure.y = allocation.y;
-	event->configure.width = gtk_widget_get_allocated_width(widget);
-	event->configure.height = gtk_widget_get_allocated_height(widget);
-
-
-	gtk_widget_event (widget, event);
-
-
-	gdk_event_free (event);
-}
-
-static gboolean
-quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
-{ (void)event; 
-	QuiverImageView *imageview;
-	
 	gdouble old_mag;
-	
-	GdkModifierType mask;
-	int x,y;
 
-	imageview = QUIVER_IMAGE_VIEW(widget);
-	{
-		GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gtk_widget_get_window(widget))));
-		gdk_window_get_device_position(gtk_widget_get_window(widget), device, &x, &y, &mask);
-	}
-	
-	GdkInterpType interptype = GDK_INTERP_NEAREST;
 	quiver_image_view_update_size(imageview);
 
 	if (imageview->priv->needs_recenter
@@ -691,7 +643,7 @@ quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 	quiver_image_view_send_reload_event(imageview);
 
 	quiver_image_view_transition_stop(imageview);
-	quiver_image_view_create_scaled_pixbuf(imageview,interptype);
+	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
 	quiver_image_view_add_scale_hq_timeout(imageview);
 
 	// set the magnification
@@ -699,15 +651,13 @@ quiver_image_view_configure_event( GtkWidget *widget, GdkEventConfigure *event )
 	{
 		old_mag = imageview->priv->magnification;
 		imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
-	
+
 		if (old_mag != imageview->priv->magnification)
 		{
 			// emit a magnification changed signal
 			g_signal_emit(imageview,imageview_signals[SIGNAL_MAGNIFICATION_CHANGED],0);
 		}
 	}
-	
-	return TRUE;
 }
 
 static void quiver_image_view_send_reload_event(QuiverImageView *imageview)
@@ -843,12 +793,12 @@ static void quiver_image_view_create_next_transition_pixbuf(QuiverImageView *ima
 	w = MAX(old_w,new_w);
 	h = MAX(old_h,new_h);
 
-	gint old_offset_w = (gint)((gtk_widget_get_allocated_width(widget) - old_w)/2.);
-	gint old_offset_h = (gint)((gtk_widget_get_allocated_height(widget) - old_h)/2.);
-	gint new_offset_w = (gint)((gtk_widget_get_allocated_width(widget) - new_w)/2.);
-	gint new_offset_h = (gint)((gtk_widget_get_allocated_height(widget) - new_h)/2.);
-	gint combined_offset_w = (gint)((gtk_widget_get_allocated_width(widget) - w)/2.);
-	gint combined_offset_h = (gint)((gtk_widget_get_allocated_height(widget) - h)/2.);
+	gint old_offset_w = (gint)((gtk_widget_get_width(widget) - old_w)/2.);
+	gint old_offset_h = (gint)((gtk_widget_get_height(widget) - old_h)/2.);
+	gint new_offset_w = (gint)((gtk_widget_get_width(widget) - new_w)/2.);
+	gint new_offset_h = (gint)((gtk_widget_get_height(widget) - new_h)/2.);
+	gint combined_offset_w = (gint)((gtk_widget_get_width(widget) - w)/2.);
+	gint combined_offset_h = (gint)((gtk_widget_get_height(widget) - h)/2.);
 
 	old_offset_w = MAX(0, old_offset_w - combined_offset_w);
 	old_offset_h = MAX(0, old_offset_h - combined_offset_h);
@@ -919,7 +869,7 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 	if (NULL == pixbuf)
 		return;
 
-	if (1 == gtk_widget_get_allocated_width(widget) || 1 == gtk_widget_get_allocated_height(widget))
+	if (gtk_widget_get_width(widget) < 2 || gtk_widget_get_height(widget) < 2)
 		return;
 
 
@@ -930,6 +880,9 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 	height = imageview->priv->pixbuf_height;
 
 	quiver_image_view_get_pixbuf_display_size(imageview, &new_width,&new_height);
+
+	if (new_width < 1 || new_height < 1)
+		return;
 
 	if (NULL != imageview->priv->pixbuf_scaled)
 	{
@@ -960,8 +913,8 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 				// this is for quickview to blow up a thumbnail to the size of
 				// the actual image 
 			}
-			else if (new_width <= gtk_widget_get_allocated_width(widget)
-				&& new_height <= gtk_widget_get_allocated_height(widget))
+			else if (new_width <= gtk_widget_get_width(widget)
+				&& new_height <= gtk_widget_get_height(widget))
 			{
 				break;
 			}
@@ -970,8 +923,8 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
 		{
 			gint wnd_width,wnd_height;
-			wnd_width = gtk_widget_get_allocated_width(widget);
-			wnd_height = gtk_widget_get_allocated_height(widget);
+			wnd_width = gtk_widget_get_width(widget);
+			wnd_height = gtk_widget_get_height(widget);
 
 			if (new_width == actual_width && new_height == actual_height
 				&& new_width <= wnd_width && new_height <= wnd_height)
@@ -1078,7 +1031,7 @@ static void quiver_image_view_create_scaled_pixbuf(QuiverImageView *imageview,Gd
 	}
 }
  
-static void draw_pixbuf(QuiverImageView *imageview, cairo_t *cr)
+static void draw_pixbuf(QuiverImageView *imageview, GtkSnapshot *snapshot)
 {
 	GtkWidget *widget;
 	GdkPixbuf *pixbuf;
@@ -1087,33 +1040,41 @@ static void draw_pixbuf(QuiverImageView *imageview, cairo_t *cr)
 
 	widget = GTK_WIDGET(imageview);
 
-	gint hadj,vadj;
- (void)vadj;
- (void)hadj;
-	hadj = (gint)gtk_adjustment_get_value(imageview->priv->hadjustment);
-	vadj = (gint)gtk_adjustment_get_value(imageview->priv->vadjustment);
-
 	pixbuf = imageview->priv->pixbuf;
 	pixbuf_scaled = imageview->priv->pixbuf_scaled;
 
 	if (pixbuf_scaled)
 	{
 		pixbuf = pixbuf_scaled;
-		hadj = 0;
-		vadj = 0;
 	}
 
+	if (NULL == pixbuf)
+		return;
+
 	g_object_ref(pixbuf);
-		
+
 	width = gdk_pixbuf_get_width(pixbuf);
 	height = gdk_pixbuf_get_height(pixbuf);
 
+	int alloc_w = gtk_widget_get_width(widget);
+	int alloc_h = gtk_widget_get_height(widget);
 
 	cairo_rectangle_int_t pixbuf_rect;
-	pixbuf_rect.x = (gint)((gtk_widget_get_allocated_width(widget) - width)/2. );
-	pixbuf_rect.y = (gint)((gtk_widget_get_allocated_height(widget) - height)/2.);
-	pixbuf_rect.width = MIN(width,gtk_widget_get_allocated_width(widget));
-	pixbuf_rect.height = MIN(height,gtk_widget_get_allocated_height(widget));
+	pixbuf_rect.x = (gint)((alloc_w - width)/2. );
+	pixbuf_rect.y = (gint)((alloc_h - height)/2.);
+	pixbuf_rect.width = MIN(width,alloc_w);
+	pixbuf_rect.height = MIN(height,alloc_h);
+
+	cairo_rectangle_int_t bounds;
+	bounds = pixbuf_rect;
+
+	graphene_rect_t gbounds;
+	gbounds.origin.x = bounds.x;
+	gbounds.origin.y = bounds.y;
+	gbounds.size.width = bounds.width;
+	gbounds.size.height = bounds.height;
+
+	cairo_t *cr = gtk_snapshot_append_cairo(snapshot, &gbounds);
 
 	cairo_save(cr);
 
@@ -1121,45 +1082,43 @@ static void draw_pixbuf(QuiverImageView *imageview, cairo_t *cr)
 	cairo_rectangle(cr, 0,0, pixbuf_rect.width, pixbuf_rect.height);
 	cairo_clip(cr);
 
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 	gdk_cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
+G_GNUC_END_IGNORE_DEPRECATIONS
 	cairo_paint(cr);
 
 	cairo_restore(cr);
+	cairo_destroy(cr);
 
 	g_object_unref(pixbuf);
 
 }
 
-static gboolean
-quiver_image_view_draw(GtkWidget* widget, cairo_t* cr)
+static void
+quiver_image_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot)
 {
 	QuiverImageView *imageview;
 	imageview = QUIVER_IMAGE_VIEW(widget);
 
 	if (NULL != imageview->priv->pixbuf)
 	{
-		draw_pixbuf(imageview, cr);
+		draw_pixbuf(imageview, snapshot);
 	}
-
-	return TRUE;
 }
 
 
-static gboolean 
-quiver_image_view_button_press_event (GtkWidget *widget, 
-                     GdkEventButton *event)
+static void
+quiver_image_view_gesture_pressed (GtkGestureClick *gesture,
+				   int n_press,
+				   double x,
+				   double y,
+				   QuiverImageView *imageview)
 {
-	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(widget);
+	(void)gesture;
+	GtkWidget *widget = GTK_WIDGET(imageview);
 
-	//printf("button pressed\n");
-
-	gint x =0, y=0;
-	x = (gint)event->x;
-	y = (gint)event->y;
-
-	imageview->priv->mouse_x1 = imageview->priv->mouse_x2 = x;
-	imageview->priv->mouse_y1 = imageview->priv->mouse_y2 = y;
-
+	imageview->priv->mouse_x1 = imageview->priv->mouse_x2 = (gint)x;
+	imageview->priv->mouse_y1 = imageview->priv->mouse_y2 = (gint)y;
 
 	if ( 0 != imageview->priv->timeout_id_smooth_scroll_slowdown)
 	{
@@ -1175,26 +1134,100 @@ quiver_image_view_button_press_event (GtkWidget *widget,
 		gtk_widget_grab_focus (widget);
 	}
 
-	if (1 == event->button)
+	if (2 == n_press)
 	{
-		if (GDK_BUTTON_PRESS == event->type)
+		quiver_image_view_activate(imageview);
+	}
+}
+
+static void
+quiver_image_view_gesture_drag_begin (GtkGestureDrag *gesture,
+				      double x,
+				      double y,
+				      QuiverImageView *imageview)
+{
+	(void)gesture;
+	imageview->priv->mouse_x1 = (gint)x;
+	imageview->priv->mouse_y1 = (gint)y;
+	imageview->priv->mouse_move_capture = TRUE;
+}
+
+static void
+quiver_image_view_gesture_drag_update (GtkGestureDrag *gesture,
+				       double x,
+				       double y,
+				       QuiverImageView *imageview)
+{
+	(void)gesture;
+	if (QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG != imageview->priv->mouse_move_mode)
+		return;
+
+	struct timeval new_motion_time = {0};
+	gettimeofday(&new_motion_time,NULL);
+	gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
+	gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+
+#define MAX_VELOCITY 12000
+	VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
+
+	gint xdist = (gint)x - imageview->priv->mouse_x1;
+	gint ydist = (gint)y - imageview->priv->mouse_y1;
+
+	vt->time     = new_time - old_time;
+	vt->angle    = atan2(ydist, xdist);
+	gdouble dist = sqrt ( (double)( ydist*ydist + xdist*xdist));
+	vt->velocity =  dist / vt->time ;
+	vt->velocity = MIN (MAX_VELOCITY, vt->velocity);
+
+	if ( 3 == g_list_length(imageview->priv->velocity_time_list) )
+	{
+		GList* last = g_list_last(imageview->priv->velocity_time_list);
+		imageview->priv->velocity_time_list =
+			g_list_remove_link(imageview->priv->velocity_time_list,last);
+	}
+	imageview->priv->velocity_time_list =
+		g_list_prepend(imageview->priv->velocity_time_list, vt);
+
+	imageview->priv->last_motion_time = new_motion_time;
+
+	gdouble hadjust = gtk_adjustment_get_value(imageview->priv->hadjustment);
+	gdouble vadjust = gtk_adjustment_get_value(imageview->priv->vadjustment);
+	hadjust += imageview->priv->mouse_x1 - (gint)x;
+	hadjust = MAX(0,MIN(gtk_adjustment_get_upper(imageview->priv->hadjustment) - gtk_adjustment_get_page_size(imageview->priv->hadjustment),hadjust));
+	vadjust += imageview->priv->mouse_y1 - (gint)y;
+	vadjust = MAX(0,MIN(gtk_adjustment_get_upper(imageview->priv->vadjustment) - gtk_adjustment_get_page_size(imageview->priv->vadjustment),vadjust));
+	gtk_adjustment_set_value(imageview->priv->hadjustment,hadjust);
+	gtk_adjustment_set_value(imageview->priv->vadjustment,vadjust);
+	imageview->priv->mouse_x1 = (gint)x;
+	imageview->priv->mouse_y1 = (gint)y;
+}
+
+static void
+quiver_image_view_gesture_drag_end (GtkGestureDrag *gesture,
+				    double x,
+				    double y,
+				    QuiverImageView *imageview)
+{
+	(void)gesture;
+	(void)x;
+	(void)y;
+	imageview->priv->mouse_move_capture = FALSE;
+
+	if (QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG == imageview->priv->mouse_move_mode)
+	{
+		struct timeval new_motion_time = {0};
+		gettimeofday(&new_motion_time,NULL);
+
+		gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
+		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+
+		if ( 3 == g_list_length(imageview->priv->velocity_time_list) &&
+			(0.1 > new_time - old_time) )
 		{
-			imageview->priv->mouse_move_capture = TRUE;
-			return TRUE;
-		}
-		else if (GDK_2BUTTON_PRESS == event->type)
-		{
-			//activate
-			quiver_image_view_activate(imageview);
-		}
-		else if (GDK_3BUTTON_PRESS == event->type)
-		{
+			imageview->priv->timeout_id_smooth_scroll_slowdown =
+				g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_image_view_timeout_smooth_scroll_slowdown,imageview);
 		}
 	}
-
-
-	return FALSE;
-	
 }
 
 static gboolean
@@ -1320,274 +1353,80 @@ quiver_image_view_timeout_smooth_scroll_slowdown(gpointer data)
 
 
 
-static gboolean 
-quiver_image_view_button_release_event (GtkWidget *widget, 
-         GdkEventButton *event)
+static gboolean
+quiver_image_view_scroll_controller_cb (GtkEventControllerScroll *controller,
+					double dx,
+					double dy,
+					QuiverImageView *imageview)
 {
-	//printf("button released\n");
+	(void)controller;
+	(void)dx;
 
-	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(widget);
+	/* Only handle the case where Control is held down (zoom). */
+	GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller));
+	if (event == NULL)
+		return FALSE;
 
-	gint x =0, y=0;
-	x = (gint)event->x;
-	y = (gint)event->y;
+	GdkModifierType state = gdk_event_get_modifier_state(event);
+	if (!(state & GDK_CONTROL_MASK))
+		return FALSE;
 
-	imageview->priv->mouse_x1 = imageview->priv->mouse_x2 = x;
-	imageview->priv->mouse_y1 = imageview->priv->mouse_y2 = y;
-	
-	if (1 == event->button)
+	/* Accumulate the smooth deltas and zoom on each full notch (~1.0). */
+	imageview->priv->zoom_scroll_accum += dy;
+	if (imageview->priv->zoom_scroll_accum >= 1.0)
 	{
-		imageview->priv->mouse_move_capture = FALSE;
+		imageview->priv->zoom_scroll_accum -= 1.0;
+	}
+	else if (imageview->priv->zoom_scroll_accum <= -1.0)
+	{
+		imageview->priv->zoom_scroll_accum += 1.0;
+	}
+	else
+	{
+		return TRUE;
 	}
 
-	if (imageview->priv->rubberband_mode)
+	if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode)
 	{
-
-		cairo_region_t *invalid_region;
-		cairo_region_t *tmp_region;
-
-		tmp_region = cairo_region_create_rectangle(&imageview->priv->rubberband_rect);
-		// FIXME: no shrink
-		//gdk_region_shrink(tmp_region,1,1);
-
-		invalid_region = cairo_region_create_rectangle(&imageview->priv->rubberband_rect);
-
-		cairo_region_subtract(invalid_region,tmp_region);
-		// FIXME: no shrink
-		//gdk_region_shrink(invalid_region,-1,-1);
-
-		gdk_window_invalidate_region(gtk_widget_get_window(widget),invalid_region,FALSE);
-
-		cairo_region_destroy(invalid_region);
-		cairo_region_destroy(tmp_region);
+		quiver_image_view_set_view_mode_full(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM,FALSE);
 	}
 
-	if (QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG == imageview->priv->mouse_move_mode)
-	{
-		struct timeval new_motion_time = {0};
-		gettimeofday(&new_motion_time,NULL);
+	gboolean bZoomIn = (imageview->priv->zoom_scroll_accum <= -1.0 + 1.0e-2);
 
-		gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
-		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
-		
-		if ( 3 == g_list_length(imageview->priv->velocity_time_list) &&
-			(0.1 > new_time - old_time) )
-		{
-			imageview->priv->timeout_id_smooth_scroll_slowdown = 
-				g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_image_view_timeout_smooth_scroll_slowdown,imageview);
-		}
-		
-	}
+	gdouble magnification = quiver_image_view_get_magnification(imageview);
+	quiver_image_view_set_magnification(imageview,
+		bZoomIn ? magnification * 1.25 : magnification / 1.25);
 
-	imageview->priv->rubberband_mode_start = FALSE;
-	imageview->priv->rubberband_mode = FALSE;
 	return TRUE;
 }
 
-static gboolean
-quiver_image_view_motion_notify_event (GtkWidget *widget,
-            GdkEventMotion *event)
+static void
+quiver_image_view_setup_controllers (QuiverImageView *imageview)
 {
-	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(widget);
+	GtkWidget *widget = GTK_WIDGET(imageview);
 
-	GdkModifierType state;
-	gint x =0, y=0;
+	GtkGesture *click = gtk_gesture_click_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+	g_signal_connect(click, "pressed",
+		G_CALLBACK(quiver_image_view_gesture_pressed), imageview);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(click));
 
-	if (event->is_hint)
-	{
-		GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(event->window)));
-		gdk_window_get_device_position(event->window, device, &x, &y, &state);
-	}		
-	else
-	{
-		x = (gint)event->x;
-		y = (gint)event->y;
-		state = (GdkModifierType)event->state;
-		
-	}
+	GtkGesture *drag = gtk_gesture_drag_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), GDK_BUTTON_PRIMARY);
+	g_signal_connect(drag, "drag-begin",
+		G_CALLBACK(quiver_image_view_gesture_drag_begin), imageview);
+	g_signal_connect(drag, "drag-update",
+		G_CALLBACK(quiver_image_view_gesture_drag_update), imageview);
+	g_signal_connect(drag, "drag-end",
+		G_CALLBACK(quiver_image_view_gesture_drag_end), imageview);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(drag));
 
-	if (imageview->priv->mouse_move_capture)
-	{
-		if (QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG == imageview->priv->mouse_move_mode)
-		{
-			//printf("motion\n");
-			struct timeval new_motion_time = {0};
-			gettimeofday(&new_motion_time,NULL);
-			gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
-			gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
-			
-			// velocity pixels per second
-			// max velocity should be around +/-12000 pps
-#define MAX_VELOCITY 12000
-			VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
-			//d = vt
-			//v = d/t
-			// tan(angle) = o / a
-			
-			gint xdist = x - imageview->priv->mouse_x1;
-			gint ydist = y - imageview->priv->mouse_y1;
-
-			vt->time     = new_time - old_time;
-			vt->angle    = atan2(ydist, xdist);
-			gdouble dist = sqrt ( (double)( ydist*ydist + xdist*xdist));
-			vt->velocity =  dist / vt->time ;
-			vt->velocity = MIN (MAX_VELOCITY, vt->velocity);
-
-			if ( 3 == g_list_length(imageview->priv->velocity_time_list) )
-			{
-				GList* last = g_list_last(imageview->priv->velocity_time_list);
-				imageview->priv->velocity_time_list = 
-					g_list_remove_link(imageview->priv->velocity_time_list,last);	
-			}
-			imageview->priv->velocity_time_list = 
-				g_list_prepend(imageview->priv->velocity_time_list, vt);
-			
-			
-			imageview->priv->last_motion_time = new_motion_time;
-				
-			
-			gdouble hadjust = gtk_adjustment_get_value(imageview->priv->hadjustment);
-			gdouble vadjust = gtk_adjustment_get_value(imageview->priv->vadjustment);
-			hadjust += imageview->priv->mouse_x1 - x;
-			hadjust = MAX(0,MIN(gtk_adjustment_get_upper(imageview->priv->hadjustment) - gtk_adjustment_get_page_size(imageview->priv->hadjustment),hadjust));
-			vadjust += imageview->priv->mouse_y1 - y;
-			vadjust = MAX(0,MIN(gtk_adjustment_get_upper(imageview->priv->vadjustment) - gtk_adjustment_get_page_size(imageview->priv->vadjustment),vadjust));
-			gtk_adjustment_set_value(imageview->priv->hadjustment,hadjust);
-			gtk_adjustment_set_value(imageview->priv->vadjustment,vadjust);
-			imageview->priv->mouse_x1 = x;
-			imageview->priv->mouse_y1 = y;
-		}
-		//imageview->priv->mouse_move_capture = FALSE;
-	}
-
-	/*
-	 * FIXME
-	 */
-	if (imageview->priv->rubberband_mode_start)
-	{
-		imageview->priv->rubberband_mode_start = FALSE;
-		imageview->priv->rubberband_mode = TRUE;
-	}
-
-	if (imageview->priv->rubberband_mode)
-	{
-		cairo_region_t *invalid_region;
-		cairo_region_t *old_region;
-
-		imageview->priv->rubberband_rect_old.x = MIN (imageview->priv->mouse_x1, imageview->priv->mouse_x2);
-		imageview->priv->rubberband_rect_old.y = MIN (imageview->priv->mouse_y1, imageview->priv->mouse_y2);
-		imageview->priv->rubberband_rect_old.width = ABS (imageview->priv->mouse_x1 - imageview->priv->mouse_x2)+1;
-		imageview->priv->rubberband_rect_old.height = ABS (imageview->priv->mouse_y1 - imageview->priv->mouse_y2)+1;
-		
-		imageview->priv->mouse_x2 = x;
-		imageview->priv->mouse_y2 = y;
-
-		imageview->priv->rubberband_rect.x = MIN (imageview->priv->mouse_x1, imageview->priv->mouse_x2);
-		imageview->priv->rubberband_rect.y = MIN (imageview->priv->mouse_y1, imageview->priv->mouse_y2);
-		imageview->priv->rubberband_rect.width = ABS (imageview->priv->mouse_x1 - imageview->priv->mouse_x2)+1;
-		imageview->priv->rubberband_rect.height = ABS (imageview->priv->mouse_y1 - imageview->priv->mouse_y2)+1;
-
-		invalid_region = cairo_region_create_rectangle(&imageview->priv->rubberband_rect);
-		old_region = cairo_region_create_rectangle(&imageview->priv->rubberband_rect_old);
-		cairo_region_xor(invalid_region,old_region);
-		// FIXME: no shrink
-		//gdk_region_shrink(invalid_region,-1,-1);
-
-		// the way that gdk draws rectangles means we need to subtract
-		// one from the width and height
-		imageview->priv->rubberband_rect.width -= 1;
-		imageview->priv->rubberband_rect.height -= 1;
-		//rubberband_rect_old.width -= 1;
-		//rubberband_rect_old.height -= 1;
-
-		//redraw_needed = TRUE;
-		gdk_window_invalidate_region(gtk_widget_get_window(widget),invalid_region,FALSE);
-		cairo_region_destroy(invalid_region);
-		cairo_region_destroy(old_region);
-	}
-
-	return FALSE;
-
-}
-
-gboolean quiver_image_view_scroll_event ( GtkWidget *widget,
-           GdkEventScroll *event)
-{
-	
-	QuiverImageView *imageview;
-	imageview = QUIVER_IMAGE_VIEW(widget);
-
-
-	int adjustment = 5;
- (void)adjustment;
-	if (event->state & GDK_SHIFT_MASK)
-	{
-		adjustment = 1;
-	}
-	//printf("scroll event\n");
-
-	gboolean rvalue = FALSE;
-
-	if (event->state & GDK_CONTROL_MASK)
-	{
-		/* magnification in on the image */
-		gboolean bZoomIn = FALSE;
-		gboolean bZoomOut = FALSE;
-
-		switch (event->direction)
-		{
-			case GDK_SCROLL_UP:
-			case GDK_SCROLL_LEFT:
-				imageview->priv->zoom_scroll_accum = 0.;
-				bZoomIn = TRUE;
-				break;
-			case GDK_SCROLL_DOWN:
-			case GDK_SCROLL_RIGHT:
-				imageview->priv->zoom_scroll_accum = 0.;
-				bZoomOut = TRUE;
-				break;
-			case GDK_SCROLL_SMOOTH:
-			{
-				/* Wayland / touchpads deliver smooth axis events, so accumulate
-				 * the deltas and only zoom once a full notch (+/- 1.0) has been
-				 * scrolled. */
-				gdouble delta = event->delta_y;
-				if (0. == delta)
-					delta = event->delta_x;
-
-				imageview->priv->zoom_scroll_accum += delta;
-				if (imageview->priv->zoom_scroll_accum >= 1.0)
-				{
-					imageview->priv->zoom_scroll_accum -= 1.0;
-					bZoomOut = TRUE;
-				}
-				else if (imageview->priv->zoom_scroll_accum <= -1.0)
-				{
-					imageview->priv->zoom_scroll_accum += 1.0;
-					bZoomIn = TRUE;
-				}
-				break;
-			}
-			default:
-				break;
-		}
-
-		if (bZoomIn || bZoomOut)
-		{
-			if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode)
-			{
-				quiver_image_view_set_view_mode_full(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM,FALSE);
-			}
-
-			gdouble magnification = quiver_image_view_get_magnification(imageview);
-			quiver_image_view_set_magnification(imageview,
-				bZoomIn ? magnification * 1.25 : magnification / 1.25);
-		}
-
-		rvalue = TRUE;
-	}
-
-	return rvalue;
+	GtkEventController *scroll = gtk_event_controller_scroll_new(
+		GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+	gtk_event_controller_set_propagation_phase(scroll, GTK_PHASE_TARGET);
+	g_signal_connect(scroll, "scroll",
+		G_CALLBACK(quiver_image_view_scroll_controller_cb), imageview);
+	gtk_widget_add_controller(widget, scroll);
 }
 
 
@@ -1692,42 +1531,18 @@ quiver_image_view_timeout_scale_hq(gpointer data)
 	QuiverImageView *imageview;
 	GtkWidget *widget;
 
-	GdkModifierType mask;
-	gint x,y;
-
 	imageview = (QuiverImageView*)data;
 	widget = GTK_WIDGET(imageview);
 	retval = FALSE;
 
+	// run the hq scale function
+	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
+	if (gtk_widget_get_mapped (widget))
 	{
-		GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gtk_widget_get_window(widget))));
-		gdk_window_get_device_position(gtk_widget_get_window(widget), device, &x, &y, &mask);
+		gtk_widget_queue_draw(widget);
 	}
+	imageview->priv->timeout_scale_hq_id = 0;
 
-
-	if (GDK_BUTTON1_MASK & mask || GDK_BUTTON2_MASK & mask) 
-	{
-		retval = TRUE;
-	}
-	else
-	{
-		// run the hq scale function
-		// now invalidate the window
-		//
-		cairo_rectangle_int_t rect;
-		rect.x = 0;
-		rect.y = 0;
-		rect.width = gtk_widget_get_allocated_width(widget);
-		rect.height = gtk_widget_get_allocated_height(widget);
-		//printf("%%%%%%%%%%%% timeout scale HQ!\n");
-		quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
-		if (gtk_widget_get_mapped (widget))
-		{
-			// FIXME: probably dont need to invalidate whole image area
-			gdk_window_invalidate_rect(gtk_widget_get_window(widget),&rect,FALSE);
-		}
-		imageview->priv->timeout_scale_hq_id = 0;
-	}
 	return retval;
 }
 
@@ -1747,15 +1562,11 @@ quiver_image_view_scroll(QuiverImageView *imageview)
 			//printf("########### scrolldraw scale\n");
 			quiver_image_view_transition_stop(imageview);
 
-			quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
+		quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_NEAREST);
 
-			gint hdiff = floor(imageview->priv->last_hadjustment - hadj);
-			gint vdiff = floor(imageview->priv->last_vadjustment - vadj);
+		gtk_widget_queue_draw(widget);
 
-			gdk_window_scroll(gtk_widget_get_window(widget),hdiff,vdiff);
-			gtk_widget_queue_draw(widget);
-
-			quiver_image_view_add_scale_hq_timeout(imageview);
+		quiver_image_view_add_scale_hq_timeout(imageview);
 		}
 		imageview->priv->last_vadjustment = vadj;
 		imageview->priv->last_hadjustment = hadj;
@@ -1922,20 +1733,20 @@ quiver_image_view_update_size(QuiverImageView *imageview)
 	hadjustment = imageview->priv->hadjustment;
 	vadjustment = imageview->priv->vadjustment;
 
-	gtk_adjustment_set_page_size(hadjustment, gtk_widget_get_allocated_width(widget));
-	gtk_adjustment_set_page_increment(hadjustment, gtk_widget_get_allocated_width(widget) * 0.9);
-	gtk_adjustment_set_step_increment(hadjustment, gtk_widget_get_allocated_width(widget) * 0.1);
+	gtk_adjustment_set_page_size(hadjustment, gtk_widget_get_width(widget));
+	gtk_adjustment_set_page_increment(hadjustment, gtk_widget_get_width(widget) * 0.9);
+	gtk_adjustment_set_step_increment(hadjustment, gtk_widget_get_width(widget) * 0.1);
 	gtk_adjustment_set_lower(hadjustment, 0);
-	gtk_adjustment_set_upper(hadjustment, MAX (gtk_widget_get_allocated_width(widget), width));
+	gtk_adjustment_set_upper(hadjustment, MAX (gtk_widget_get_width(widget), width));
 
 	if (gtk_adjustment_get_value(hadjustment) > gtk_adjustment_get_upper(hadjustment) - gtk_adjustment_get_page_size(hadjustment))
 		gtk_adjustment_set_value (hadjustment, MAX (0, gtk_adjustment_get_upper(hadjustment) - gtk_adjustment_get_page_size(hadjustment)));
 
-	gtk_adjustment_set_page_size(vadjustment, gtk_widget_get_allocated_height(widget));
-	gtk_adjustment_set_page_increment(vadjustment, gtk_widget_get_allocated_height(widget) * 0.9);
-	gtk_adjustment_set_step_increment(vadjustment, gtk_widget_get_allocated_height(widget) * 0.1);
+	gtk_adjustment_set_page_size(vadjustment, gtk_widget_get_height(widget));
+	gtk_adjustment_set_page_increment(vadjustment, gtk_widget_get_height(widget) * 0.9);
+	gtk_adjustment_set_step_increment(vadjustment, gtk_widget_get_height(widget) * 0.1);
 	gtk_adjustment_set_lower(vadjustment, 0);
-	gtk_adjustment_set_upper(vadjustment, MAX (gtk_widget_get_allocated_height(widget), height));
+	gtk_adjustment_set_upper(vadjustment, MAX (gtk_widget_get_height(widget), height));
 
 	if (gtk_adjustment_get_value(vadjustment) > gtk_adjustment_get_upper(vadjustment) - gtk_adjustment_get_page_size(vadjustment))
 		gtk_adjustment_set_value (vadjustment, MAX (0, gtk_adjustment_get_upper(vadjustment) - gtk_adjustment_get_page_size(vadjustment)));
@@ -2306,10 +2117,10 @@ void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *ima
 			break;
 
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
-			quiver_rect_get_bound_size(gtk_widget_get_allocated_width(widget),gtk_widget_get_allocated_height(widget),(guint*)out_width,(guint*)out_height,FALSE);
+			quiver_rect_get_bound_size(gtk_widget_get_width(widget),gtk_widget_get_height(widget),(guint*)out_width,(guint*)out_height,FALSE);
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
-			quiver_rect_get_bound_size(gtk_widget_get_allocated_width(widget),gtk_widget_get_allocated_height(widget),(guint*)out_width,(guint*)out_height,TRUE);
+			quiver_rect_get_bound_size(gtk_widget_get_width(widget),gtk_widget_get_height(widget),(guint*)out_width,(guint*)out_height,TRUE);
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
 			{
@@ -2317,19 +2128,19 @@ void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *ima
 				w1 = in_width;
 				h1 = in_height;
 				
-				quiver_rect_get_bound_size(gtk_widget_get_allocated_width(widget),gtk_widget_get_allocated_height(widget),(guint*)&w1,(guint*)&h1,FALSE);
-				if (w1 < gtk_widget_get_allocated_width(widget) && h1 < gtk_widget_get_allocated_height(widget))
+				quiver_rect_get_bound_size(gtk_widget_get_width(widget),gtk_widget_get_height(widget),(guint*)&w1,(guint*)&h1,FALSE);
+				if (w1 < gtk_widget_get_width(widget) && h1 < gtk_widget_get_height(widget))
 				{
 					*out_width = w1;
 					*out_height = h1;
 				}
-				else if (w1 < gtk_widget_get_allocated_width(widget))
+				else if (w1 < gtk_widget_get_width(widget))
 				{
-					quiver_rect_get_bound_size(gtk_widget_get_allocated_width(widget),in_height,(guint*)out_width,(guint*)out_height,FALSE);
+					quiver_rect_get_bound_size(gtk_widget_get_width(widget),in_height,(guint*)out_width,(guint*)out_height,FALSE);
 				}
-				else if (h1 < gtk_widget_get_allocated_height(widget))
+				else if (h1 < gtk_widget_get_height(widget))
 				{
-					quiver_rect_get_bound_size(in_height,gtk_widget_get_allocated_height(widget),(guint*)out_width,(guint*)out_height,FALSE);
+					quiver_rect_get_bound_size(in_height,gtk_widget_get_height(widget),(guint*)out_width,(guint*)out_height,FALSE);
 				}
 				else
 				{
@@ -2378,15 +2189,15 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 	}
 	quiver_image_view_get_pixbuf_display_size_for_mode_alt(imageview, mode, new_width, new_height, &new_width, &new_height);
 
-	old_rect.x = MAX(0,(gint)((gtk_widget_get_allocated_width(widget) - old_width)/2.));
-	old_rect.y = MAX(0,(gint)((gtk_widget_get_allocated_height(widget) - old_height)/2.));
-	old_rect.width = MIN(old_width,gtk_widget_get_allocated_width(widget));
-	old_rect.height = MIN(old_height,gtk_widget_get_allocated_height(widget));
+	old_rect.x = MAX(0,(gint)((gtk_widget_get_width(widget) - old_width)/2.));
+	old_rect.y = MAX(0,(gint)((gtk_widget_get_height(widget) - old_height)/2.));
+	old_rect.width = MIN(old_width,gtk_widget_get_width(widget));
+	old_rect.height = MIN(old_height,gtk_widget_get_height(widget));
 
-	new_rect.x = MAX(0,(gint)((gtk_widget_get_allocated_width(widget) - new_width)/2.));
-	new_rect.y = MAX(0,(gint)((gtk_widget_get_allocated_height(widget) - new_height)/2.));
-	new_rect.width = MIN(new_width,gtk_widget_get_allocated_width(widget));
-	new_rect.height = MIN(new_height,gtk_widget_get_allocated_height(widget));
+	new_rect.x = MAX(0,(gint)((gtk_widget_get_width(widget) - new_width)/2.));
+	new_rect.y = MAX(0,(gint)((gtk_widget_get_height(widget) - new_height)/2.));
+	new_rect.width = MIN(new_width,gtk_widget_get_width(widget));
+	new_rect.height = MIN(new_height,gtk_widget_get_height(widget));
 	//printf(" %d %d %d %d\n",old_rect.x,old_rect.y,old_rect.width,old_rect.height);
 	//printf(" %d %d %d %d\n",new_rect.x,new_rect.y,new_rect.width,new_rect.height);
 
@@ -2395,7 +2206,7 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 	//gdk_region_shrink(old_region,-1,-1);
 	//gdk_region_shrink(new_region,1,1);
 	cairo_region_subtract(old_region,new_region);
-	gdk_window_invalidate_region(gtk_widget_get_window(widget),old_region,FALSE);
+	gtk_widget_queue_draw(widget);
 	cairo_region_destroy(old_region);
 	cairo_region_destroy(new_region);
 
@@ -2408,10 +2219,7 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,cairo_rectangle_int_t *sub_rect)
 {
 	GtkWidget *widget;
-	cairo_rectangle_int_t invalid_rect;
-	cairo_rectangle_int_t pixbuf_rect;
-	cairo_rectangle_int_t sub_rect_tmp;
-	gint width,height;
+	(void)sub_rect;
 
 	widget = GTK_WIDGET(imageview);
 
@@ -2419,27 +2227,8 @@ static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,c
 	{
 		return;
 	}
-	
-	quiver_image_view_get_pixbuf_display_size(imageview,&width,&height);
 
-	pixbuf_rect.x = MAX(0,(gint)((gtk_widget_get_allocated_width(widget) - width)/2.));
-	pixbuf_rect.y = MAX(0,(gint)((gtk_widget_get_allocated_height(widget) - height)/2.));
-	pixbuf_rect.width = MIN(width,gtk_widget_get_allocated_width(widget));
-	pixbuf_rect.height = MIN(height,gtk_widget_get_allocated_height(widget));
-
-	if (NULL != sub_rect)
-	{
-		sub_rect_tmp = *sub_rect;
-		sub_rect_tmp.x += pixbuf_rect.x;
-		sub_rect_tmp.y += pixbuf_rect.y;
-		gdk_rectangle_intersect(&sub_rect_tmp,&pixbuf_rect,&invalid_rect);
-		//printf("invalid rect: %d %d %d %d\n",invalid_rect.x,invalid_rect.y,invalid_rect.width,invalid_rect.height);
-	}
-	else
-	{
-		invalid_rect = pixbuf_rect;
-	}
-	gdk_window_invalidate_rect(gtk_widget_get_window(widget),&invalid_rect,FALSE);
+	gtk_widget_queue_draw(widget);
 }
 
 
@@ -2570,7 +2359,7 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 		g_signal_emit(imageview,imageview_signals[SIGNAL_MAGNIFICATION_CHANGED],0);
 	}
 
-	if (1 == gtk_widget_get_allocated_width(widget) || 1 == gtk_widget_get_allocated_height(widget))
+	if (1 == gtk_widget_get_width(widget) || 1 == gtk_widget_get_height(widget))
 		return;
 
 	if (imageview->priv->transitions_enabled && reset_view_mode)
@@ -2625,7 +2414,6 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 {
 	
 	GtkWidget *widget;
-	cairo_rectangle_int_t rect;
 	QuiverImageViewMode old_mode;
 	
 	gdouble old_mag = imageview->priv->magnification;
@@ -2693,18 +2481,13 @@ static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,Quiv
 		imageview->priv->scroll_draw   = TRUE;
 		imageview->priv->needs_recenter = TRUE;
 
-		rect.x = 0;
-		rect.y = 0;
-		rect.width = gtk_widget_get_allocated_width(widget);
-		rect.height = gtk_widget_get_allocated_height(widget);
-
 		quiver_image_view_transition_stop(imageview);
 
 		quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
 		if ( gtk_widget_get_mapped (widget) )
 		{
 			//FIXME: probably dont need to invalidate whole image area
-			gdk_window_invalidate_rect(gtk_widget_get_window(widget),&rect,FALSE);
+			gtk_widget_queue_draw(widget);
 		}
 	}
 }
@@ -2836,10 +2619,8 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 {
 	/*FIXME: we should CLAMP the input to a calculated size*/
 	GtkWidget *widget;
-	cairo_rectangle_int_t rect;
 	gint old_width,old_height, new_width,new_height;
-	GdkModifierType mask;
-	gint x,y;
+	gint x = 0, y = 0;
 	gdouble old_hadjust,old_vadjust,new_hadjust,new_vadjust;
 	gdouble old_mag;
 
@@ -2864,9 +2645,22 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 
 	widget = GTK_WIDGET(imageview);
 
+	/* capture the pointer position relative to the widget so that
+	 * zoom can stay centered on the pointer */
 	{
-		GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gtk_widget_get_window(widget))));
-		gdk_window_get_device_position(gtk_widget_get_window(widget), device, &x, &y, &mask);
+		GtkNative *native = gtk_widget_get_native(widget);
+		if (native != NULL)
+		{
+			GdkSurface *surface = gtk_native_get_surface(native);
+			GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_surface_get_display(surface)));
+			double px = 0, py = 0;
+			GdkModifierType mask = 0;
+			if (gdk_surface_get_device_position(surface, device, &px, &py, &mask))
+			{
+				x = (gint)px;
+				y = (gint)py;
+			}
+		}
 	}
 
 	old_hadjust = gtk_adjustment_get_value(imageview->priv->hadjustment);
@@ -2881,14 +2675,14 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 	gint old_hpage_size = gtk_adjustment_get_page_size(imageview->priv->hadjustment);
 	gint old_vpage_size = gtk_adjustment_get_page_size(imageview->priv->vadjustment);
 
-	if (old_width < gtk_widget_get_allocated_width(widget))
+	if (old_width < gtk_widget_get_width(widget))
 	{
 		old_hpage_size = old_width;
-		x = (x * old_width)/gtk_widget_get_allocated_width(widget);
+		x = (x * old_width)/gtk_widget_get_width(widget);
 	}
-	if (old_height < gtk_widget_get_allocated_height(widget))
+	if (old_height < gtk_widget_get_height(widget))
 	{
-		y = (y * old_height)/gtk_widget_get_allocated_height(widget);
+		y = (y * old_height)/gtk_widget_get_height(widget);
 		old_vpage_size = old_height;
 	}
 
@@ -2896,11 +2690,11 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 	// update the scrollbar adjustments, update the scaled pixbuf, and invalidate
 	quiver_image_view_get_pixbuf_display_size(imageview,&new_width,&new_height);
 
-	if (new_width > gtk_widget_get_allocated_width(widget))
+	if (new_width > gtk_widget_get_width(widget))
 	{
 		// we will set the adjustment based on the pointer position.
 		// if the pointer is not within the widget area, use middle!
-		if (0 < x && x <= gtk_widget_get_allocated_width(widget) && 0 < y && y <= gtk_widget_get_allocated_height(widget))
+		if (0 < x && x <= gtk_widget_get_width(widget) && 0 < y && y <= gtk_widget_get_height(widget))
 		{
 			//set x as the next center point
 			//new_hadjust = (old_hadjust + x) * (new_mag/old_mag) - gtk_adjustment_get_page_size(imageview->priv->hadjustment)/2.;
@@ -2924,11 +2718,11 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 		gtk_adjustment_set_value(imageview->priv->hadjustment,0);
 	}
 
-	if (new_height > gtk_widget_get_allocated_height(widget))
+	if (new_height > gtk_widget_get_height(widget))
 	{
 		// we will set the adjustment based on the pointer position.
 		// if the pointer is not within the widget area, use middle!
-		if (0 < x && x <= gtk_widget_get_allocated_width(widget) && 0 < y && y <= gtk_widget_get_allocated_height(widget))
+		if (0 < x && x <= gtk_widget_get_width(widget) && 0 < y && y <= gtk_widget_get_height(widget))
 		{
 			//set x as the next center point
 			//new_vadjust = (old_vadjust + y) * (new_mag/old_mag) - gtk_adjustment_get_page_size(imageview->priv->vadjustment)/2.;
@@ -2960,15 +2754,9 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 	quiver_image_view_add_scale_hq_timeout(imageview);
 	imageview->priv->scroll_draw   = TRUE;
 
-	rect.x = 0;
-	rect.y = 0;
-	rect.width = gtk_widget_get_allocated_width(widget);
-	rect.height = gtk_widget_get_allocated_height(widget);
-	
 	if (gtk_widget_get_mapped(widget))
 	{
-		// FIXME: probably dont need to invalidate whole window
-		gdk_window_invalidate_rect(gtk_widget_get_window(widget),&rect,FALSE);
+		gtk_widget_queue_draw(widget);
 	}
 }
 

@@ -32,7 +32,6 @@ public:
 
 
 	
-	guint m_iDefaultContext;
 	guint m_iTimeoutPulse;
 	guint m_iPulseCount;
 
@@ -50,74 +49,51 @@ Statusbar::StatusbarImpl::StatusbarImpl(Statusbar* pStatusbar) : m_uiIdleSourceI
 	m_iTimeoutPulse = 0;
 	m_iPulseCount = 0;
 	
-	m_pStatusbar = gtk_statusbar_new();
-	//gtk_frame_set_shadow_type(GTK_FRAME(m_pStatusbar),GTK_SHADOW_OUT);
-	
-
-	 
-	/*
-	m_pLabelStatus = gtk_label_new ("");
-	gtk_label_set_ellipsize(GTK_LABEL(m_pLabelStatus),PANGO_ELLIPSIZE_END);
-	gtk_misc_set_alignment (GTK_MISC (m_pLabelStatus), 0, 0.5);
-	//gtk_label_set_selectable (GTK_LABEL (m_pLabelStatus), TRUE);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), m_pLabelStatus, TRUE, TRUE, 2);
-	*/
-
-	/*
-	GtkWidget *vseparator = gtk_vseparator_new ();
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), vseparator, FALSE, FALSE, 5);
-	*/
+	m_pStatusbar = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(m_pStatusbar), 0.);
+	gtk_label_set_ellipsize(GTK_LABEL(m_pStatusbar), PANGO_ELLIPSIZE_END);
+	m_pWidget = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+	gtk_box_append (GTK_BOX (m_pWidget), m_pStatusbar);
+	gtk_widget_set_hexpand(m_pStatusbar, TRUE);
 
 	GtkWidget* frame;
-	
+
 	m_pLabelDateTime = gtk_label_new ("");
-	
+
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
-	gtk_container_add(GTK_CONTAINER(frame),m_pLabelDateTime);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), frame, FALSE, FALSE, 0);
+	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelDateTime);
+	gtk_box_append (GTK_BOX (m_pWidget), frame);
 	
 	m_pLabelImageSize  = gtk_label_new ("");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
-	gtk_container_add(GTK_CONTAINER(frame),m_pLabelImageSize);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), frame, FALSE, FALSE, 0);
+	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelImageSize);
+	gtk_box_append (GTK_BOX (m_pWidget), frame);
 	
 	
 	m_pLabelZoom = gtk_label_new ("");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
-	gtk_container_add(GTK_CONTAINER(frame),m_pLabelZoom);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), frame, FALSE, FALSE, 0);
+	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelZoom);
+	gtk_box_append (GTK_BOX (m_pWidget), frame);
 
 
 	m_pLabelListPosition = gtk_label_new ("");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
-	gtk_container_add(GTK_CONTAINER(frame),m_pLabelListPosition);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), frame, FALSE, FALSE, 0);
+	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelListPosition);
+	gtk_box_append (GTK_BOX (m_pWidget), frame);
 	
 	
 	m_pLabelLoadTime = gtk_label_new ("0.000s");
 	frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_IN);
-	gtk_container_add(GTK_CONTAINER(frame),m_pLabelLoadTime);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), frame, FALSE, FALSE, 0);
+	gtk_frame_set_child(GTK_FRAME(frame),m_pLabelLoadTime);
+	gtk_box_append (GTK_BOX (m_pWidget), frame);
 
 	m_pProgressbar = gtk_progress_bar_new ();
 	gtk_widget_set_size_request (m_pProgressbar, 75, -1);
 	gtk_widget_set_valign(m_pProgressbar, GTK_ALIGN_CENTER);
-	gtk_box_pack_start (GTK_BOX (m_pStatusbar), m_pProgressbar, FALSE, FALSE, 0);
-	
-	
-	m_iDefaultContext = gtk_statusbar_get_context_id (GTK_STATUSBAR(m_pStatusbar),"default");
+	gtk_box_append (GTK_BOX (m_pWidget), m_pProgressbar);
 
-	//m_pWidget = gtk_frame_new(NULL);
-	//gtk_frame_set_shadow_type(GTK_FRAME(m_pWidget),GTK_SHADOW_OUT);;
-	//gtk_container_add(GTK_CONTAINER(m_pWidget), m_pStatusbar);
-	m_pWidget = m_pStatusbar;
-
-	g_object_ref(m_pWidget);
+	/* m_pWidget is returned floating; it is later parented into the window
+	 * tree (Quiver::Init), which owns it.  Do not ref or unref it here. */
 	
 }
 
@@ -133,7 +109,8 @@ Statusbar::StatusbarImpl::~StatusbarImpl()
 		g_source_remove(m_uiIdleSourceID);
 		m_uiIdleSourceID = 0;
 	}
-	g_object_unref(m_pWidget);
+	/* m_pWidget is parented into the window tree and owned by it; no manual
+	 * ref is kept and it must not be unref'd here. */
 }
 
 Statusbar::Statusbar() : m_StatusbarImplPtr ( new StatusbarImpl(this) )
@@ -215,17 +192,16 @@ void Statusbar::SetLoadTime(double seconds)
 }
 void Statusbar::SetText(std::string s)
 {
-	gtk_statusbar_pop(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext);
-	gtk_statusbar_push(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext,s.c_str());
+	gtk_label_set_text(GTK_LABEL(m_StatusbarImplPtr->m_pStatusbar), s.c_str());
 }
 
 void Statusbar::PushText(std::string s)
 {
-	gtk_statusbar_push(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext,s.c_str());
+	gtk_label_set_text(GTK_LABEL(m_StatusbarImplPtr->m_pStatusbar), s.c_str());
 }
 void Statusbar::PopText()
 {
-	gtk_statusbar_pop(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext);
+	gtk_label_set_text(GTK_LABEL(m_StatusbarImplPtr->m_pStatusbar), "");
 }
 
 void Statusbar::SetText()
@@ -279,13 +255,11 @@ void Statusbar::SetText()
 
 		g_object_unref(info);		
 		
-		gtk_statusbar_pop(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext);
-		gtk_statusbar_push(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext,status_text);
+		gtk_label_set_text(GTK_LABEL(m_StatusbarImplPtr->m_pStatusbar), status_text);
 	}
 	else
 	{
-		gtk_statusbar_pop(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext);
-		gtk_statusbar_push(GTK_STATUSBAR(m_StatusbarImplPtr->m_pStatusbar),m_StatusbarImplPtr->m_iDefaultContext,"");
+		gtk_label_set_text(GTK_LABEL(m_StatusbarImplPtr->m_pStatusbar), "");
 	}
 
 }

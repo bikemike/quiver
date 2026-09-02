@@ -55,62 +55,102 @@ using namespace std;
 typedef boost::shared_ptr<IPixbufLoaderObserver> IPixbufLoaderObserverPtr;
 
 
+/* Shared, ref-counted handle to the browser's preview image-view widget.
+ * Both the loader observer and pixbuf idles posted from the loader thread hold
+ * a reference; "destroy" NULLs the pointer so a queued idle cannot write into
+ * a freed widget after component teardown. */
+struct PixbufTarget {
+	QuiverImageView *pImageView;
+	int iRefs;
+};
+
+static void pixbuf_target_destroyed(GtkWidget *widget, gpointer data)
+{
+	(void)widget;
+	((PixbufTarget*)data)->pImageView = NULL;
+}
+
+static PixbufTarget* pixbuf_target_new(QuiverImageView *pImageView)
+{
+	PixbufTarget *t = new PixbufTarget{pImageView, 1};
+	g_signal_connect(G_OBJECT(pImageView), "destroy", G_CALLBACK(pixbuf_target_destroyed), t);
+	return t;
+}
+
+static void pixbuf_target_ref(PixbufTarget *t)
+{
+	g_atomic_int_inc(&t->iRefs);
+}
+
+static void pixbuf_target_unref(PixbufTarget *t)
+{
+	if (g_atomic_int_dec_and_test(&t->iRefs))
+		delete t;
+}
+
 struct AsyncPixbufData {
-    QuiverImageView *pImageView;
-    GdkPixbuf *pixbuf;
-    gint width, height;
-    gboolean bReset;
-    bool bAtSize;
+	PixbufTarget *pTarget;
+	GdkPixbuf *pixbuf;
+	gint width, height;
+	gboolean bReset;
+	bool bAtSize;
 };
 
 static gboolean idle_set_pixbuf_b(gpointer data) {
-    AsyncPixbufData *p = (AsyncPixbufData*)data;
-    if (p->bAtSize) {
-        quiver_image_view_set_pixbuf_at_size_ex(p->pImageView, p->pixbuf, p->width, p->height, p->bReset);
-    } else {
-        quiver_image_view_set_pixbuf(p->pImageView, p->pixbuf);
-    }
-    if (p->pixbuf) g_object_unref(p->pixbuf);
-    delete p;
-    return FALSE;
+	AsyncPixbufData *p = (AsyncPixbufData*)data;
+	/* the preview image view may already be gone (queued before teardown) */
+	if (p->pTarget->pImageView != NULL)
+	{
+		if (p->bAtSize) {
+			quiver_image_view_set_pixbuf_at_size_ex(p->pTarget->pImageView, p->pixbuf, p->width, p->height, p->bReset);
+		} else {
+			quiver_image_view_set_pixbuf(p->pTarget->pImageView, p->pixbuf);
+		}
+	}
+	if (p->pixbuf) g_object_unref(p->pixbuf);
+	pixbuf_target_unref(p->pTarget);
+	delete p;
+	return FALSE;
 }
 
 class ImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
-	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pImageView = imageview;};
-	virtual ~ImageViewPixbufLoaderObserver(){};
+	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pTarget = pixbuf_target_new(imageview);};
+	virtual ~ImageViewPixbufLoaderObserver(){ pixbuf_target_unref(m_pTarget); };
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
-			quiver_image_view_connect_pixbuf_loader_signals(m_pImageView,loader);
+			quiver_image_view_connect_pixbuf_loader_signals(m_pTarget->pImageView,loader);
 		};
 	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){
-			quiver_image_view_connect_pixbuf_size_prepared_signal(m_pImageView,loader);
+			quiver_image_view_connect_pixbuf_size_prepared_signal(m_pTarget->pImageView,loader);
 		};
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
 		if (ThreadUtil::IsGUIThread()) {
-			quiver_image_view_set_pixbuf(m_pImageView,pixbuf);
+			quiver_image_view_set_pixbuf(m_pTarget->pImageView,pixbuf);
 		} else {
 			if (pixbuf) g_object_ref(pixbuf);
-			AsyncPixbufData *data = new AsyncPixbufData{m_pImageView, pixbuf, 0, 0, FALSE, false};
+			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, 0, 0, FALSE, false};
+			pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_pixbuf_b, data, NULL);
 		}
 	};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
 		gboolean bReset = bResetViewMode ? TRUE : FALSE;
 		if (ThreadUtil::IsGUIThread()) {
-			quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
+			quiver_image_view_set_pixbuf_at_size_ex(m_pTarget->pImageView,pixbuf,width,height,bReset);
 		} else {
 			if (pixbuf) g_object_ref(pixbuf);
-			AsyncPixbufData *data = new AsyncPixbufData{m_pImageView, pixbuf, width, height, bReset, true};
+			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, width, height, bReset, true};
+			pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_pixbuf_b, data, NULL);
 		}
 	};
 	virtual void SignalBytesRead(long bytes_read,long total){ (void)total;  (void)bytes_read; };
 private:
-	QuiverImageView *m_pImageView;
+	PixbufTarget *m_pTarget;
 };
 
 
@@ -124,7 +164,7 @@ public:
 /* member functions */
 
 	void RegisterActions();
-	void SetToolbar(GtkToolbar *toolbar);
+	void SetToolbar(GtkWidget *toolbar);
 	void UpdateUI(); // enable/disable toolbar/menu items
 	void Show();
 	void Hide();
@@ -160,9 +200,11 @@ public:
 	GtkWidget *m_pLocationEntry;
 	GtkWidget *hscale;
 
-	GtkToolItem *m_pToolItemThumbSizer;
+	GtkWidget *m_pToolItemThumbSizer;
 	
-	GtkToolbar *m_pToolbar;
+	GtkWidget *m_pToolbar;
+
+	GtkWidget *m_pContextMenuPopover;
 	
 	StatusbarPtr m_StatusbarPtr;
 	
@@ -337,7 +379,7 @@ Browser::RegisterActions()
 }
 
 void 
-Browser::SetToolbar(GtkToolbar *toolbar)
+Browser::SetToolbar(GtkWidget *toolbar)
 {
 	m_BrowserImplPtr->SetToolbar(toolbar);
 }
@@ -401,56 +443,51 @@ static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
-static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
+	static void iconview_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data);
 
-static gboolean browser_popup_menu_cb (GtkWidget *treeview, gpointer userdata);
-static gboolean browser_button_press_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
-static void browser_show_context_menu(GdkEventButton *event, gpointer userdata);
+static void browser_button_press_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data); 
+static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, gpointer userdata);
 
 static void entry_activate(GtkEntry *entry, gpointer user_data);
-static gboolean entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data);
+static gboolean entry_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
 
 static void browser_imageview_magnification_changed(QuiverImageView *imageview,gpointer data);
 static void browser_imageview_reload(QuiverImageView *imageview,gpointer data);
 
-static gboolean entry_focus_in ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
-{ (void)event;  (void)widget; 
+static void entry_focus_in ( GtkEventControllerFocus *controller, gpointer user_data)
+{ (void)controller; 
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
 	QuiverUtils::DisconnectUnmodifiedAccelerators();
-	gtk_widget_show(pBrowserImpl->m_pLocationEntry);
+	gtk_widget_set_visible(pBrowserImpl->m_pLocationEntry, TRUE);
 	if (0 != pBrowserImpl->m_iTimeoutHideLocationID)
 	{
 		g_source_remove(pBrowserImpl->m_iTimeoutHideLocationID);
 		pBrowserImpl->m_iTimeoutHideLocationID = 0;
 	}
-
-	return FALSE;
 }
 
 static gboolean timeout_hide_location (gpointer data)
 {
 	GtkWidget *widget = (GtkWidget*)data;
-	gtk_widget_hide(widget);
+	gtk_widget_set_visible(widget, FALSE);
 	return FALSE;
 }
 
-static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
-{ (void)event; 
+static void entry_focus_out ( GtkEventControllerFocus *controller, gpointer user_data)
+{ (void)controller; 
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
 	QuiverUtils::ConnectUnmodifiedAccelerators();
 
 	if (0 == pBrowserImpl->m_iTimeoutHideLocationID)
 	{
-		pBrowserImpl->m_iTimeoutHideLocationID = g_timeout_add(10,timeout_hide_location,widget);
+		pBrowserImpl->m_iTimeoutHideLocationID = g_timeout_add(10,timeout_hide_location,pBrowserImpl->m_pLocationEntry);
 	}
-	
-	return FALSE;
 }
 
-static void pane_size_allocate (GtkWidget* widget, GtkAllocation *allocation, gpointer user_data)
-{ (void)user_data; 
+static void pane_position_changed (GObject* widget, GParamSpec* pspec, gpointer user_data)
+{ (void)user_data; (void)pspec; (void)widget;
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	if (GTK_IS_PANED(widget))
 	{
@@ -460,15 +497,6 @@ static void pane_size_allocate (GtkWidget* widget, GtkAllocation *allocation, gp
 		}
 		else
 		{
-			if (!prefsPtr->HasKey(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDER_VPANE))
-			{
-				int preview_height = allocation->width * 3 / 4;
-				int new_pos = allocation->height - preview_height;
-				if (new_pos > 0 && new_pos < allocation->height)
-				{
-					gtk_paned_set_position(GTK_PANED(widget), new_pos);
-				}
-			}
 			prefsPtr->SetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE,gtk_paned_get_position(GTK_PANED(widget)));
 		}
 	}
@@ -493,19 +521,16 @@ static void pane_size_allocate (GtkWidget* widget, GtkAllocation *allocation, gp
 	}
 	if (!visible)
 	{
-		gtk_widget_hide(pBrowserImpl->vpaned);Initialize
+		gtk_widget_set_visible(pBrowserImpl->vpaned, FALSE);Initialize
 	}
 */
 
 void notebook_page_added  (GtkNotebook *notebook, 
 	GtkWidget *child, guint page_num, gpointer user_data)
-{ (void)page_num;  (void)child; 
-	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
+{ (void)page_num;  (void)child;  (void)user_data;
 
 	gtk_notebook_set_show_tabs(notebook, 1 > gtk_notebook_get_n_pages(notebook));
-	gtk_widget_show(GTK_WIDGET(notebook));
 
-	gtk_widget_show(pBrowserImpl->vpaned);
 }
 
 void notebook_page_removed  (GtkNotebook *notebook, 
@@ -516,10 +541,10 @@ void notebook_page_removed  (GtkNotebook *notebook,
 	gtk_notebook_set_show_tabs(notebook, 1 <= gtk_notebook_get_n_pages(notebook));
 	if (0 == gtk_notebook_get_n_pages(notebook))
 	{
-		gtk_widget_hide(GTK_WIDGET(notebook));
+		gtk_widget_set_visible(GTK_WIDGET(notebook), FALSE);
 		if (!gtk_widget_get_visible(pBrowserImpl->m_pImageView))
 		{
-			gtk_widget_hide(pBrowserImpl->vpaned);
+			gtk_widget_set_visible(pBrowserImpl->vpaned, FALSE);
 		}
 	}
 }
@@ -572,19 +597,17 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_scale_set_draw_value(GTK_SCALE(hscale),FALSE);
 
 	gtk_widget_set_size_request(hscale,100,-1);
-	m_pToolItemThumbSizer = gtk_tool_item_new();
-	gtk_tool_item_set_expand(m_pToolItemThumbSizer, TRUE);
+	m_pToolItemThumbSizer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_widget_set_hexpand(m_pToolItemThumbSizer, TRUE);
 
 	gtk_widget_set_halign(hscale, GTK_ALIGN_END);
 	gtk_widget_set_valign(hscale, GTK_ALIGN_CENTER);
 	
-	gtk_container_add(GTK_CONTAINER(m_pToolItemThumbSizer), hscale);
+	gtk_box_append(GTK_BOX(m_pToolItemThumbSizer), hscale);
 
-	gtk_widget_show_all(GTK_WIDGET(m_pToolItemThumbSizer));
 	g_object_ref(m_pToolItemThumbSizer);
 	
 	m_pLocationEntry = gtk_entry_new();
-	gtk_widget_set_no_show_all(m_pLocationEntry, TRUE);
 	
 	hpaned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
 	vpaned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
@@ -600,32 +623,50 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pIconView = quiver_icon_view_new();
 	m_pImageView = quiver_image_view_new();
 
-	gtk_widget_set_no_show_all(m_pImageView, TRUE);
-
 	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
 	if (bShowPreview)
 	{
-		gtk_widget_show(m_pImageView);
+		gtk_widget_set_visible(m_pImageView, TRUE);
 	}
 
-	scrolled_window = gtk_scrolled_window_new(NULL,NULL);
+	scrolled_window = gtk_scrolled_window_new();
 	
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
-	gtk_container_add(GTK_CONTAINER(scrolled_window),m_pIconView);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window),m_pIconView);
 	
 	hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
 	
-	gtk_box_pack_start (GTK_BOX (hbox), m_pLocationEntry, TRUE, TRUE, 0);
-	//gtk_box_pack_start (GTK_BOX (hbox), hscale, FALSE, FALSE, 0);
-	gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
-	gtk_box_pack_start (GTK_BOX (vbox), scrolled_window, TRUE, TRUE, 0);
+	gtk_box_append (GTK_BOX (hbox), m_pLocationEntry);
+	//gtk_box_append (GTK_BOX (hbox), hscale);
+	gtk_widget_set_hexpand(hbox, TRUE);
+	gtk_widget_set_vexpand(vbox, TRUE);
+	gtk_widget_set_hexpand(scrolled_window, TRUE);
+	gtk_widget_set_vexpand(scrolled_window, TRUE);
+	gtk_box_append (GTK_BOX (vbox), hbox);
+	gtk_box_append (GTK_BOX (vbox), scrolled_window);
+	gtk_widget_set_vexpand(m_pImageView, TRUE);
 	
-	gtk_paned_pack1(GTK_PANED(vpaned),m_pNotebook,TRUE,TRUE);
-	gtk_paned_pack2(GTK_PANED(vpaned),m_pImageView,FALSE,TRUE);
+	gtk_paned_set_start_child(GTK_PANED(vpaned),m_pNotebook);
+	gtk_paned_set_end_child(GTK_PANED(vpaned),m_pImageView);
 	
-	gtk_paned_pack1(GTK_PANED(hpaned),vpaned,FALSE,TRUE);
-	gtk_paned_pack2(GTK_PANED(hpaned),vbox,TRUE,TRUE);
+	gtk_paned_set_start_child(GTK_PANED(hpaned),vpaned);
+	gtk_paned_set_end_child(GTK_PANED(hpaned),vbox);
+
+	// in GTK4, paned children must be explicitly allowed to resize/shrink
+	gtk_paned_set_resize_start_child(GTK_PANED(vpaned), TRUE);
+	gtk_paned_set_resize_end_child(GTK_PANED(vpaned), TRUE);
+	gtk_paned_set_shrink_start_child(GTK_PANED(vpaned), TRUE);
+	gtk_paned_set_shrink_end_child(GTK_PANED(vpaned), TRUE);
+	gtk_paned_set_resize_start_child(GTK_PANED(hpaned), TRUE);
+	gtk_paned_set_resize_end_child(GTK_PANED(hpaned), TRUE);
+	gtk_paned_set_shrink_start_child(GTK_PANED(hpaned), TRUE);
+	gtk_paned_set_shrink_end_child(GTK_PANED(hpaned), TRUE);
+	
+	gtk_widget_set_hexpand(vpaned, TRUE);
+	gtk_widget_set_vexpand(vpaned, TRUE);
+	gtk_widget_set_hexpand(vbox, TRUE);
+	gtk_widget_set_vexpand(vbox, TRUE);
 	
 	// set the size of the hpane and vpane
 	int hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_HPANE,200);
@@ -635,27 +676,25 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_paned_set_position(GTK_PANED(vpaned),vpaned_pos);
 	
 	
-	g_signal_connect (G_OBJECT (hpaned), "size_allocate",
-	      G_CALLBACK (pane_size_allocate), this);
-	g_signal_connect (G_OBJECT (vpaned), "size_allocate",
-	      G_CALLBACK (pane_size_allocate), this);
+	g_signal_connect (G_OBJECT (hpaned), "notify::position",
+	      G_CALLBACK (pane_position_changed), this);
+	g_signal_connect (G_OBJECT (vpaned), "notify::position",
+	      G_CALLBACK (pane_position_changed), this);
 	
 	m_pBrowserWidget = hpaned;
-	g_object_ref(hpaned);
 	
-	m_pSWFolderTree = gtk_scrolled_window_new(NULL,NULL);
-	g_object_ref(m_pSWFolderTree);
+	m_pSWFolderTree = gtk_scrolled_window_new();
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pSWFolderTree),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	GtkWidget *pFolderTree = m_FolderTreePtr->GetWidget();
 	
-	gtk_container_add(GTK_CONTAINER(m_pSWFolderTree),pFolderTree);
-	gtk_widget_show_all(m_pSWFolderTree);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(m_pSWFolderTree),pFolderTree);
+	gtk_widget_set_visible(m_pSWFolderTree, TRUE);
 	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNotebook), m_pSWFolderTree,gtk_label_new("Folders"));	
-	gtk_widget_show_all(m_pNotebook);
+	gtk_widget_set_visible(m_pNotebook, TRUE);
 
 	if (!prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
 	{	
-		gtk_widget_hide(vpaned);
+		gtk_widget_set_visible(vpaned, FALSE);
 	}
 
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_pNotebook));
@@ -675,8 +714,13 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
     			G_CALLBACK (browser_imageview_reload), this);
 
 	//popup menu stuff
-	g_signal_connect(G_OBJECT(m_pImageView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);
-	g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
+	{
+		GtkGesture *gesture = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
+		g_signal_connect(gesture, "pressed", G_CALLBACK(browser_button_press_cb), this);
+		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(gesture));
+	}
+	//g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
 
 	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH);
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
@@ -692,17 +736,35 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);
 
 	// popup menu stuff
-	g_signal_connect(G_OBJECT(m_pIconView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
-	g_signal_connect(G_OBJECT(m_pIconView), "button-press-event", G_CALLBACK(browser_button_press_cb), this);	
-	g_signal_connect(G_OBJECT(m_pIconView), "motion-notify-event", G_CALLBACK(iconview_motion_notify), this);	
+	{
+		GtkGesture *gesture = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
+		g_signal_connect(gesture, "pressed", G_CALLBACK(browser_button_press_cb), this);
+		gtk_widget_add_controller(m_pIconView, GTK_EVENT_CONTROLLER(gesture));
+	}
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(iconview_motion_notify), this);
+		gtk_widget_add_controller(m_pIconView, motion);
+	}
 	g_signal_connect(G_OBJECT(m_pLocationEntry),"activate",G_CALLBACK(entry_activate),this);
-	g_signal_connect(G_OBJECT(m_pLocationEntry),"key-press-event",G_CALLBACK(entry_key_press),this);
+	{
+		GtkEventController *key_ctrl = gtk_event_controller_key_new();
+		g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(entry_key_press), this);
+		gtk_widget_add_controller(m_pLocationEntry, key_ctrl);
+	}
 
 
-    g_signal_connect (G_OBJECT (m_pLocationEntry), "focus-in-event",
-    			G_CALLBACK (entry_focus_in), this);
-    g_signal_connect (G_OBJECT (m_pLocationEntry), "focus-out-event",
-    			G_CALLBACK (entry_focus_out), this);
+	{
+		GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+		g_signal_connect(focus_ctrl, "enter", G_CALLBACK(entry_focus_in), this);
+		gtk_widget_add_controller(m_pLocationEntry, focus_ctrl);
+	}
+	{
+		GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+		g_signal_connect(focus_ctrl, "leave", G_CALLBACK(entry_focus_out), this);
+		gtk_widget_add_controller(m_pLocationEntry, focus_ctrl);
+	}
 
 	string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW, "#000");
 	string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW, "#444");
@@ -711,8 +773,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	{
 		std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 		strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
-		gtk_css_provider_load_from_data(m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
-		gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
+		gtk_css_provider_load_from_string(m_pCssProvider, strCSS.c_str());
+		gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 	}
 
 	quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetOverlayPixbufFunc)overlay_pixbuf_callback,this,NULL);
@@ -721,9 +783,27 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ImageViewPixbufLoaderObserverPtr = tmp;
 	m_ImageLoader.AddPixbufLoaderObserver(m_ImageViewPixbufLoaderObserverPtr.get());
 
-	gtk_widget_show_all(m_pBrowserWidget);
-	gtk_widget_hide(m_pBrowserWidget);
-	gtk_widget_set_no_show_all(m_pBrowserWidget,TRUE);
+	gtk_widget_set_visible(m_pBrowserWidget, TRUE);
+	gtk_widget_set_visible(m_pBrowserWidget, FALSE);
+
+	// build context menu popover (follows FolderTree.cpp pattern)
+	m_pContextMenuPopover = gtk_popover_new();
+	{
+		GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+		GtkWidget* menuitem = gtk_button_new_with_label("Copy");
+		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver." ACTION_BROWSER_COPY);
+		gtk_box_append(GTK_BOX(menu_box), menuitem);
+
+		menuitem = gtk_button_new_with_label("Move To Trash");
+		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver." ACTION_BROWSER_TRASH);
+		gtk_box_append(GTK_BOX(menu_box), menuitem);
+
+		gtk_popover_set_child(GTK_POPOVER(m_pContextMenuPopover), menu_box);
+	}
+	gtk_widget_insert_action_group(m_pContextMenuPopover, "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
 
 
 	gdouble thumb_size = (gdouble)prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE);	
@@ -752,12 +832,18 @@ Browser::BrowserImpl::~BrowserImpl()
 
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandlerPtr);
-	
-	g_object_unref(m_pBrowserWidget);
-	g_object_unref(m_pToolItemThumbSizer);
 
-	g_object_unref(m_pSWFolderTree);
+	/* The icon view (and its folder-tree sibling, notebook and preview pane)
+	 * live inside m_pBrowserWidget, which is owned by the window tree.  The
+	 * window destroy at the end of ~QuiverImpl runs AFTER BrowserImpl has
+	 * been freed, and unmapping the window there fires the icon view's
+	 * leave/unmap controller, which calls back into this C++ object
+	 * (n_cells_callback -> freed BrowserImpl) and crashes.
+	 *
+	 * The whole widget subtree must therefore be unparented HERE, while `this`
+	 * is still alive, so the widgets are torn down before BrowserImpl is. */
 
+	/* disconnect signal handlers on the notebook while it still exists */
 	g_signal_handlers_disconnect_matched(
 		m_pNotebook,
 		G_SIGNAL_MATCH_DATA,
@@ -767,7 +853,51 @@ Browser::BrowserImpl::~BrowserImpl()
 		NULL,
 		this);
 
-	gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(),GTK_STYLE_PROVIDER(m_pCssProvider));
+	/* cancel the icon-view refresh timer before the widgets go away */
+	if (0 != m_iTimeoutUpdateListID)
+	{
+		g_source_remove(m_iTimeoutUpdateListID);
+		m_iTimeoutUpdateListID = 0;
+	}
+
+	/* 1. the context-menu popover is parented to the icon view on demand;
+	 *    unparent it before the icon view is destroyed */
+	if (m_pContextMenuPopover)
+	{
+		if (gtk_widget_get_parent(m_pContextMenuPopover))
+		{
+			gtk_widget_unparent(m_pContextMenuPopover);
+		}
+		m_pContextMenuPopover = NULL;
+	}
+
+	/* 2. tear down the FolderTree component while its widget subtree is still
+	 *    alive, so ~FolderTreeImpl can unparent its own menu popover */
+	m_FolderTreePtr.reset();
+
+	/* 3. the thumb-sizer floats between the app toolbar and the browser; it is
+	 *    NOT part of m_pBrowserWidget, release it while both still exist */
+	if (m_pToolItemThumbSizer)
+	{
+		if (gtk_widget_get_parent(m_pToolItemThumbSizer))
+		{
+			gtk_widget_unparent(m_pToolItemThumbSizer);
+		}
+		g_object_unref(m_pToolItemThumbSizer);
+		m_pToolItemThumbSizer = NULL;
+	}
+
+	/* 4. unparent the whole browser widget subtree: since it is owned through
+	 *    the window tree, this destroys it (icon view, folder tree scrolled
+	 *    window, notebook and preview pane) while `this` is still valid */
+	if (m_pBrowserWidget && gtk_widget_get_parent(m_pBrowserWidget))
+	{
+		gtk_widget_unparent(m_pBrowserWidget);
+	}
+	m_pBrowserWidget = NULL;
+	m_pSWFolderTree = NULL;
+
+	gtk_style_context_remove_provider_for_display(gdk_display_get_default(),GTK_STYLE_PROVIDER(m_pCssProvider));
 	g_object_unref(m_pCssProvider);
 
 }
@@ -799,7 +929,7 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_SIDEBAR, bShowFolderTree ? TRUE : FALSE);
 }
 
-void Browser::BrowserImpl::SetToolbar(GtkToolbar *toolbar)
+void Browser::BrowserImpl::SetToolbar(GtkWidget *toolbar)
 {
 	m_pToolbar = toolbar;
 }
@@ -846,7 +976,7 @@ void Browser::BrowserImpl::Show()
 {
 	if (NULL != m_pToolbar && NULL == gtk_widget_get_parent(GTK_WIDGET(m_pToolItemThumbSizer)))
 	{
-		gtk_toolbar_insert(m_pToolbar, m_pToolItemThumbSizer, -1);
+		gtk_box_append(GTK_BOX(m_pToolbar), m_pToolItemThumbSizer);
 	}
 
  	if (0 != m_ImageListPtr->GetSize())
@@ -877,7 +1007,7 @@ void Browser::BrowserImpl::Show()
 	
 	}
 
-	gtk_widget_show(m_pBrowserWidget);
+	gtk_widget_set_visible(m_pBrowserWidget, TRUE);
 	
 	if (m_ImageListPtr->GetSize() && m_QuiverFileCurrent != m_ImageListPtr->GetCurrent() )
 	{
@@ -888,10 +1018,10 @@ void Browser::BrowserImpl::Show()
 
 void Browser::BrowserImpl::Hide()
 {
-	gtk_widget_hide(m_pBrowserWidget);
+	gtk_widget_set_visible(m_pBrowserWidget, FALSE);
 	if (NULL != m_pToolbar && NULL != gtk_widget_get_parent(GTK_WIDGET(m_pToolItemThumbSizer)))
 	{
-		gtk_container_remove(GTK_CONTAINER(m_pToolbar),GTK_WIDGET(m_pToolItemThumbSizer));
+		gtk_box_remove(GTK_BOX(m_pToolbar), m_pToolItemThumbSizer);
 	}
 	
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
@@ -936,8 +1066,8 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(m_pImageView))
 	{
 
-		width = gtk_widget_get_allocated_width(m_pImageView);
-		height = gtk_widget_get_allocated_height(m_pImageView);
+		width = gtk_widget_get_width(m_pImageView);
+		height = gtk_widget_get_height(m_pImageView);
 	}
 
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
@@ -1259,18 +1389,18 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 	b->m_BrowserParent->EmitSelectionChangedEvent();
 }
 
-static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+static void iconview_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
-	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller)));
 
-	gint x = (gint)event->x;
-	gint y = (gint)event->y;
+	gint ix = (gint)x;
+	gint iy = (gint)y;
 
-	gulong cell =  quiver_icon_view_get_cell_for_xy(iconview, x, y);
+	gulong cell =  quiver_icon_view_get_cell_for_xy(iconview, ix, iy);
 
 	if (G_MAXULONG == cell)
-		return FALSE;
+		return;
 
 	guint width, height;
 	quiver_icon_view_get_icon_size(iconview,&width,&height);
@@ -1313,57 +1443,51 @@ static gboolean iconview_motion_notify(GtkWidget *widget, GdkEventMotion *event,
 	{
 		b->m_mapFolderToFile.clear();
 	}
-
-	return FALSE;
 }
 
 
 static gboolean
-entry_key_press (GtkWidget   *widget, GdkEventKey *event, gpointer user_data)
-{ (void)user_data; 
-	switch(event->keyval)
+entry_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data)
+{ (void)controller; (void)state; (void)user_data; (void)keycode;
+ GtkWidget *widget = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller)));
+	switch(keyval)
 	{
 		case GDK_KEY_Escape:
-			gtk_widget_hide(widget);
+			gtk_widget_set_visible(widget, FALSE);
 			break;
 	}
 	return FALSE;
 }
-static gboolean browser_popup_menu_cb (GtkWidget *widget, gpointer userdata)
-{ (void)widget; 
-	browser_show_context_menu(NULL, userdata);
-	return TRUE; 
+
+static void 
+browser_button_press_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data)
+{ (void)n_press; (void)x; (void)y;
+	GtkWidget *widget = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)));
+	guint button = gtk_gesture_single_get_button(GTK_GESTURE_SINGLE(gesture));
+	if (3 == button)
+	{
+		browser_show_context_menu(widget, x, y, user_data);
+	}
 }
 
-static gboolean 
-browser_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
-{ (void)widget; 
-	if (GDK_BUTTON_PRESS == event->type && 3 == event->button)
-	{
-		browser_show_context_menu(event, user_data);
-		return TRUE;
-	}
-	return FALSE;
-} 
-
-static void browser_show_context_menu(GdkEventButton *event, gpointer userdata)
+static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, gpointer userdata)
 {
-	(void)userdata;
+	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)userdata;
+	(void)widget;
 
-	// FIXME - add more actions
-	GtkWidget *menu = gtk_menu_new();
-	gtk_widget_insert_action_group(menu, "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
-
-	GtkWidget *item = gtk_menu_item_new_with_label("Copy");
-	gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_BROWSER_COPY);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-	item = gtk_menu_item_new_with_label("Move To Trash");
-	gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_BROWSER_TRASH);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-	gtk_widget_show_all(menu);
-	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
+	if (NULL != pBrowserImpl->m_pContextMenuPopover)
+	{
+		if (x >= 0 && y >= 0)
+		{
+			GdkRectangle rect;
+			rect.x = (int)x;
+			rect.y = (int)y;
+			rect.width = 1;
+			rect.height = 1;
+			gtk_popover_set_pointing_to(GTK_POPOVER(pBrowserImpl->m_pContextMenuPopover), &rect);
+		}
+		gtk_popover_popup(GTK_POPOVER(pBrowserImpl->m_pContextMenuPopover));
+	}
 }
 
 
@@ -1371,7 +1495,7 @@ static void browser_show_context_menu(GdkEventButton *event, gpointer userdata)
 static void entry_activate(GtkEntry *entry, gpointer user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
-	string entry_text = gtk_entry_get_text(entry);
+	string entry_text = gtk_editable_get_text(GTK_EDITABLE(entry));
 	list<string> file_list;
 	file_list.push_back(entry_text);
 	b->m_ImageListPtr->SetImageList(&file_list);
@@ -1429,7 +1553,6 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	{
 		if( QuiverUtils::ToggleActionGetActive(szAction) )
 		{
-			gtk_widget_show(pBrowserImpl->vpaned);
 			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 			if (!bFullscreen)
 			{
@@ -1438,7 +1561,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 		}
 		else
 		{
-			gtk_widget_hide(pBrowserImpl->vpaned);
+			gtk_widget_set_visible(pBrowserImpl->vpaned, FALSE);
 			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 			if (!bFullscreen)
 			{
@@ -1450,12 +1573,11 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	{
 		if( QuiverUtils::ToggleActionGetActive(szAction) )
 		{
-			gtk_widget_show(pBrowserImpl->m_pImageView);	
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
 		}
 		else
 		{
-			gtk_widget_hide(pBrowserImpl->m_pImageView);	
+			gtk_widget_set_visible(pBrowserImpl->m_pImageView, FALSE);	
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
 		}
 	}
@@ -1491,7 +1613,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	}	
 	else if (0 == strcmp(szAction,ACTION_BROWSER_COPY))
 	{
-		GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+		GdkClipboard* clipboard = gdk_display_get_clipboard(gdk_display_get_default());
 		
 		string strClipText;
 		
@@ -1516,7 +1638,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			}
 			g_list_free(selection);
 
-			gtk_clipboard_set_text (clipboard, strClipText.c_str(), strClipText.length());
+			gdk_clipboard_set_text (clipboard, strClipText.c_str());
 
 		}
 			
@@ -1559,10 +1681,53 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			{
 			strDlgText = "Move the selected images to the trash?";
 			}
-			GtkWidget* dialog = gtk_message_dialog_new (/*FIXME*/NULL,GTK_DIALOG_MODAL,
-									GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,"%s",strDlgText.c_str());
-			rval = gtk_dialog_run(GTK_DIALOG(dialog));
-			gtk_widget_destroy(dialog);
+		GtkWidget* dialog = gtk_window_new();
+		gtk_window_set_title(GTK_WINDOW(dialog), "Confirm");
+		gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+		gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+		GtkWidget* dlgBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+		GtkWidget* dlgLabel = gtk_label_new(strDlgText.c_str());
+		gtk_label_set_wrap(GTK_LABEL(dlgLabel), TRUE);
+		gtk_widget_set_margin_start(dlgLabel, 12);
+		gtk_widget_set_margin_end(dlgLabel, 12);
+		gtk_widget_set_margin_top(dlgLabel, 12);
+		gtk_widget_set_margin_bottom(dlgLabel, 4);
+		GtkWidget* btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+		gtk_widget_set_halign(btnBox, GTK_ALIGN_END);
+		gtk_widget_set_margin_start(btnBox, 12);
+		gtk_widget_set_margin_end(btnBox, 12);
+		gtk_widget_set_margin_bottom(btnBox, 12);
+		gtk_box_append(GTK_BOX(dlgBox), dlgLabel);
+		gtk_box_append(GTK_BOX(dlgBox), btnBox);
+		gtk_window_set_child(GTK_WINDOW(dialog), dlgBox);
+		GtkWidget* btnNo = gtk_button_new_with_label("No");
+		GtkWidget* btnYes = gtk_button_new_with_label("Yes");
+		gtk_box_append(GTK_BOX(btnBox), btnNo);
+		gtk_box_append(GTK_BOX(btnBox), btnYes);
+			{
+				GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+				struct { gint resp; GMainLoop *loop; } d = { GTK_RESPONSE_NO, loop };
+				gulong no_handler = g_signal_connect(btnNo, "clicked",
+					G_CALLBACK(+[](GtkWidget*, gpointer user_data) {
+						auto *d2 = (decltype(&d))user_data;
+						d2->resp = GTK_RESPONSE_NO;
+						g_main_loop_quit(d2->loop);
+					}), &d);
+				gulong yes_handler = g_signal_connect(btnYes, "clicked",
+					G_CALLBACK(+[](GtkWidget*, gpointer user_data) {
+						auto *d2 = (decltype(&d))user_data;
+						d2->resp = GTK_RESPONSE_YES;
+						g_main_loop_quit(d2->loop);
+					}), &d);
+				gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+				gtk_window_present(GTK_WINDOW(dialog));
+				g_main_loop_run(loop);
+				g_signal_handler_disconnect(btnNo, no_handler);
+				g_signal_handler_disconnect(btnYes, yes_handler);
+				rval = d.resp;
+				g_main_loop_unref(loop);
+			}
+			gtk_window_destroy(GTK_WINDOW(dialog));
 		}
 
 		switch (rval)
@@ -1639,22 +1804,22 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 		char* local_path = g_file_get_path(file);
 		if (NULL != local_path)
 		{
-			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),local_path);
+			gtk_editable_set_text(GTK_EDITABLE(parent->m_pLocationEntry),local_path);
 			g_free(local_path);
 		}
 		else
 		{
-			gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),dirs.front().c_str());
+			gtk_editable_set_text(GTK_EDITABLE(parent->m_pLocationEntry),dirs.front().c_str());
 		}
 		g_object_unref(file);
 	}
 	else if (0 == dirs.size() && 1 == files.size())
 	{
-		gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),files.front().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(parent->m_pLocationEntry),files.front().c_str());
 	}
 	else if (0 == dirs.size() && 0 == files.size())
 	{
-		gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),"");
+		gtk_editable_set_text(GTK_EDITABLE(parent->m_pLocationEntry),"");
 	}
 	else
 	{
@@ -1671,7 +1836,7 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 		{
 			g_snprintf(szText,256,"%zu folders, %zu files", dirs.size(), files.size());
 		}
-		gtk_entry_set_text(GTK_ENTRY(parent->m_pLocationEntry),szText);
+		gtk_editable_set_text(GTK_EDITABLE(parent->m_pLocationEntry),szText);
 		
 	}
 	
@@ -1692,8 +1857,8 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(Imag
 	
 	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(parent->m_pImageView))
 	{
-		width = gtk_widget_get_allocated_width(parent->m_pImageView);
-		height = gtk_widget_get_allocated_height(parent->m_pImageView);
+		width = gtk_widget_get_width(parent->m_pImageView);
+		height = gtk_widget_get_height(parent->m_pImageView);
 	}
 	
 	parent->SetImageIndex(event->GetIndex(),true);
@@ -1737,7 +1902,7 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 			if (event->GetNewBoolean())
 			{
 				// use theme color
-				gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider));
+				gtk_style_context_remove_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider));
 			}
 			else
 			{
@@ -1745,8 +1910,8 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
-				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
-				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
+				gtk_css_provider_load_from_string(parent->m_pCssProvider, strCSS.c_str());
+				gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 				
 			}
 		}
@@ -1759,8 +1924,8 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
 				std::string strCSS =  "QuiverIconView { background-color:" + strBGColorThumb + ";}\n";
 				strCSS += "QuiverImageView { background-color:" + strBGColorImg + ";}\n";
-				gtk_css_provider_load_from_data(parent->m_pCssProvider, strCSS.c_str(), strCSS.size(), NULL);
-				gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
+				gtk_css_provider_load_from_string(parent->m_pCssProvider, strCSS.c_str());
+				gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(parent->m_pCssProvider), GTK_STYLE_PROVIDER_PRIORITY_THEME);
 			}
 		}
 		else if (QUIVER_PREFS_APP_WINDOW_FULLSCREEN == event->GetKey() )
@@ -1918,16 +2083,26 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 
 			if (thumb_width != bound_width || thumb_height != bound_height)
 			{
-				GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
-								pixbuf,
-								bound_width,
-								bound_height,
-								GDK_INTERP_BILINEAR);
-				g_object_unref(pixbuf);
-				pixbuf = newpixbuf;
+				if (0 == bound_width || 0 == bound_height ||
+					0 == gdk_pixbuf_get_width(pixbuf) ||
+					0 == gdk_pixbuf_get_height(pixbuf))
+				{
+					g_object_unref(pixbuf);
+					pixbuf = NULL;
+				}
+				else
+				{
+					GdkPixbuf* newpixbuf = gdk_pixbuf_scale_simple (
+									pixbuf,
+									bound_width,
+									bound_height,
+									GDK_INTERP_BILINEAR);
+					g_object_unref(pixbuf);
+					pixbuf = newpixbuf;
+				}
 			}
 
-			m_pBrowserImpl->m_ThumbnailCache.AddPixbuf(f.GetURI(),pixbuf);
+			if (NULL != pixbuf)			m_pBrowserImpl->m_ThumbnailCache.AddPixbuf(f.GetURI(),pixbuf);
 			g_object_unref(pixbuf);
 
 			BrowserThumbLoaderSyncData* pInvData = new BrowserThumbLoaderSyncData();

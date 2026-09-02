@@ -69,7 +69,7 @@ public:
 	
 private:	
 	void Load();
-	bool LoadPixbuf(GdkPixbufLoader *loader);
+	bool LoadPixbuf(GdkPixbufLoader *loader, bool* bAborted = NULL);
 	bool CommandsPending();
 	
 	bool LoadQuickPreview();

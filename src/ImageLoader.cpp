@@ -413,6 +413,7 @@ void ImageLoader::Load()
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),"") && !m_ImageCache.HasFailed(m_Command.quiverFile.GetURI()))
 			{
 				bool bLoadedQuickPreview = LoadQuickPreview();
+				bool bAborted = false;
 
 				if (m_Command.quiverFile.IsVideo())
 				{
@@ -485,7 +486,7 @@ void ImageLoader::Load()
 					}
 					g_mutex_unlock(&m_csObservers);
 
-					bool rval = LoadPixbuf(loader);
+					bool rval = LoadPixbuf(loader, &bAborted);
 
 					if (rval)
 					{
@@ -547,19 +548,36 @@ void ImageLoader::Load()
 				}
 				else
 				{
-					m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
-					list<IPixbufLoaderObserver*>::iterator itr;
-					g_mutex_lock(&m_csObservers);
-					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+					/* a load can also "fail" because a newer command arrived
+					 * while this one was still reading the file (quick user
+					 * navigation).  that is NOT a file problem, so do not
+					 * record the image as failed or blank the view - the
+					 * pending command will paint the new image. */
+					if (!bAborted)
 					{
-						(*itr)->SetPixbuf(NULL);
+						m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
+						list<IPixbufLoaderObserver*>::iterator itr;
+						g_mutex_lock(&m_csObservers);
+						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						{
+							(*itr)->SetPixbuf(NULL);
+						}
+						g_mutex_unlock(&m_csObservers);
 					}
-					g_mutex_unlock(&m_csObservers);
 				}
 			}
 			else
 			{
-				// error loading 
+				/* the image is already known to be unloadable (or the URI is
+				 * empty).  Let the view know so it does not keep showing the
+				 * previous image's content when the user navigates to it. */
+				list<IPixbufLoaderObserver*>::iterator itr;
+				g_mutex_lock(&m_csObservers);
+				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+				{
+					(*itr)->SetPixbuf(NULL);
+				}
+				g_mutex_unlock(&m_csObservers);
 			}
 		}
 		else
@@ -612,6 +630,7 @@ void ImageLoader::Load()
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
 				//cout << "cache : " << m_Command.filename << endl;
+				bool bAborted = false;
 				if (m_Command.quiverFile.IsVideo())
 				{
 					gint n=1, d=1;
@@ -665,7 +684,7 @@ void ImageLoader::Load()
 						g_mutex_unlock(&m_csObservers);
 					}
 									
-					bool rval = LoadPixbuf(ldr);
+					bool rval = LoadPixbuf(ldr, &bAborted);
 
 					if (rval)
 					{
@@ -728,16 +747,22 @@ void ImageLoader::Load()
 				}
 				else
 				{
-					m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
-					if (CACHE_LOAD == m_Command.params.state || LOAD == m_Command.params.state)
+					/* an aborted load (user navigated away mid-read) is not a
+					 * file problem: do not mark the image as failed and do not
+					 * blank the view - the pending command paints the new image */
+					if (!bAborted)
 					{
-						list<IPixbufLoaderObserver*>::iterator itr;
-						g_mutex_lock(&m_csObservers);
-						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
+						if (CACHE_LOAD == m_Command.params.state || LOAD == m_Command.params.state)
 						{
-							(*itr)->SetPixbuf(NULL);
+							list<IPixbufLoaderObserver*>::iterator itr;
+							g_mutex_lock(&m_csObservers);
+							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+							{
+								(*itr)->SetPixbuf(NULL);
+							}
+							g_mutex_unlock(&m_csObservers);
 						}
-						g_mutex_unlock(&m_csObservers);
 					}
 				}
 			}
@@ -753,7 +778,7 @@ void ImageLoader::Load()
 	}
 }
 
-bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
+bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader, bool* bAborted /* = NULL */)
 {
 	//cout << "Loading: " <<  m_Command.quiverFile.GetURI() << endl;
 	bool retval = true; // did not load
@@ -763,6 +788,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 	
 	if (CommandsPending())
 	{	
+		if (NULL != bAborted) *bAborted = true;
 		gdk_pixbuf_loader_close(loader,NULL);	
 		return false;
 	}
@@ -792,6 +818,7 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader)
 		{
 			if (CommandsPending())
 			{
+				if (NULL != bAborted) *bAborted = true;
 				gdk_pixbuf_loader_close(loader,NULL);
 				g_object_unref(inStream);
 				g_object_unref(gfile);

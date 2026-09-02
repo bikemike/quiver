@@ -1,5 +1,4 @@
 #include <config.h>
-#pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "OrganizeDlg.h"
 #include "OrganizeTask.h"
 #include "RenameTask.h"
@@ -16,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 class OrganizeDlg::OrganizeDlgPriv
 {
@@ -65,16 +65,18 @@ public:
 
 
 	// dlg widgets
-	GtkDialog*              m_pDialogOrganize;
+	GtkWidget*              m_pDialogOrganize;
 
 	GtkWidget*              m_pBtnOK;
 
-	GtkComboBoxText*        m_pComboTemplateFolder;
+	GtkDropDown*            m_pComboTemplateFolder;
 	GtkEntry*               m_pEntryTemplateFile;
-	GtkFileChooserButton*   m_pFCBtnSourceFolder;
-	GtkFileChooserButton*   m_pFCBtnDestFolder;
-	GtkToggleButton*        m_pTglBtnSubfolders;
-	GtkToggleButton*        m_pTglBtnRenameFiles;
+	GtkWidget*              m_pFCBtnSourceFolder;
+	GtkWidget*              m_pFCBtnDestFolder;
+	std::string             m_strSrcFolder;
+	std::string             m_strDestFolder;
+	GtkCheckButton*        m_pTglBtnSubfolders;
+	GtkCheckButton*        m_pTglBtnRenameFiles;
 	//GtkToggleButton*        m_pTglBtnCurrentSelection;
 	//GtkToggleButton*        m_pTglBtnFolder;
 	GtkSpinButton*          m_pSpinExtension;
@@ -118,61 +120,54 @@ bool OrganizeDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pDialogOrganize));
-		return (GTK_RESPONSE_OK == result);
+		GtkWidget* dlg = m_PrivPtr->m_pDialogOrganize;
+		int iResult = GTK_RESPONSE_NONE;
+		g_object_set_data(G_OBJECT(dlg), "organize-result", &iResult);
+		gtk_widget_set_visible(dlg, TRUE);
+		GMainLoop* loop = g_main_loop_new(NULL, FALSE);
+		gulong doneId = g_signal_connect_swapped(dlg, "destroy",
+			G_CALLBACK(g_main_loop_quit), loop);
+		g_main_loop_run(loop);
+		g_signal_handler_disconnect(dlg, doneId);
+		g_object_set_data(G_OBJECT(dlg), "organize-result", NULL);
+		g_main_loop_unref(loop);
+		return (GTK_RESPONSE_OK == iResult);
 	}
 	return false;
 }
 
 std::string OrganizeDlg::GetFolderTemplate() const
 {
-	return gtk_combo_box_text_get_active_text(m_PrivPtr->m_pComboTemplateFolder);
+	GtkStringObject* pItem = GTK_STRING_OBJECT(
+		gtk_drop_down_get_selected_item(m_PrivPtr->m_pComboTemplateFolder));
+	if (NULL == pItem)
+		return std::string();
+	return gtk_string_object_get_string(pItem);
 }
 
 std::string OrganizeDlg::GetFileTemplate() const
 {
-	return gtk_entry_get_text(m_PrivPtr->m_pEntryTemplateFile);
+	return gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryTemplateFile));
 }
 
 std::string OrganizeDlg::GetOutputFolder() const
 {
-	std::string strDir;
-
-	gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_PrivPtr->m_pFCBtnDestFolder));
-	if (NULL != dir)
-	{
-		strDir = dir;
-		g_free(dir);
-	}
-
-	return strDir;
+	return m_PrivPtr->m_strDestFolder;
 }
 
 std::string OrganizeDlg::GetAppendedText() const
 {
-	return gtk_entry_get_text(m_PrivPtr->m_pEntryFolderName);
+	return gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryFolderName));
 }
 
 std::string OrganizeDlg::GetInputFolder() const
 {
-	std::string strDir;
-
-	gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_PrivPtr->m_pFCBtnSourceFolder));
-	if (NULL != dir)
-	{
-		strDir = dir;
-		g_free(dir);
-	}
-
-	return strDir;
-
+	return m_PrivPtr->m_strSrcFolder;
 }
 
 void OrganizeDlg::SetInputFolder(std::string dir)
 {
-	gtk_file_chooser_set_current_folder_uri(GTK_FILE_CHOOSER(m_PrivPtr->m_pFCBtnSourceFolder), dir.c_str());
+	m_PrivPtr->m_strSrcFolder = dir;
 }
 
 
@@ -183,7 +178,7 @@ int OrganizeDlg::GetDayExtention() const
 
 bool OrganizeDlg::GetIncludeSubfolders() const
 {
-	return (TRUE == gtk_toggle_button_get_active(m_PrivPtr->m_pTglBtnSubfolders));
+	return (TRUE == gtk_check_button_get_active(m_PrivPtr->m_pTglBtnSubfolders));
 }
 
 bool OrganizeDlg::GetRenameFiles() const
@@ -198,10 +193,9 @@ bool OrganizeDlg::GetRenameFiles() const
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer   user_data);
-static void on_folder_change (GtkFileChooser *chooser, gpointer user_data);
-static void __attribute__((unused))  on_toggled (GtkToggleButton *togglebutton, gpointer user_data);
+static void on_folder_change (GtkButton *button, gpointer user_data);
 static void on_editable_changed (GtkEditable *editable, gpointer user_data);
-static void combo_changed (GtkComboBox *widget, gpointer user_data);
+static void combo_changed (GObject *widget, gpointer user_data);
 static gboolean conflict_check_timeout_cb (gpointer user_data);
 static gboolean conflict_poll_cb (gpointer user_data);
 static void on_view_conflicts_clicked (GtkButton *button, gpointer user_data);
@@ -220,10 +214,9 @@ OrganizeDlg::OrganizeDlgPriv::OrganizeDlgPriv(OrganizeDlg *parent) :
 	m_bConflictFound = false;
 	m_bConflictKeyValid = false;
 	m_pGtkBuilder = gtk_builder_new();
-	gchar* objectids[] = {
-		(gchar*)"OrganizeDialog",
-		(gchar*)"adjustment8",
-		(gchar*)"liststore3",
+	const gchar* objectids[] = {
+		"OrganizeDialog",
+		"adjustment8",
 		NULL};
 	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 
@@ -256,7 +249,7 @@ OrganizeDlg::OrganizeDlgPriv::~OrganizeDlgPriv()
 
 	if (NULL != m_pDialogOrganize)
 	{
-		gtk_widget_destroy(GTK_WIDGET(m_pDialogOrganize));
+		gtk_window_destroy(GTK_WINDOW(m_pDialogOrganize));
 		m_pDialogOrganize = NULL;
 	}
 }
@@ -264,11 +257,29 @@ OrganizeDlg::OrganizeDlgPriv::~OrganizeDlgPriv()
 
 void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 {
-	m_pDialogOrganize         = GTK_DIALOG(gtk_builder_get_object (m_pGtkBuilder, "OrganizeDialog"));
+	m_pDialogOrganize         = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "OrganizeDialog"));
 
-	m_pBtnOK = gtk_dialog_add_button(m_pDialogOrganize, "_OK", GTK_RESPONSE_OK);
-
-	m_pComboTemplateFolder       = GTK_COMBO_BOX_TEXT( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
+	m_pBtnOK = gtk_button_new_with_mnemonic("_OK");
+	if (m_pDialogOrganize)
+	{
+		GtkHeaderBar* hbar = GTK_HEADER_BAR(gtk_header_bar_new());
+		gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), TRUE);
+		gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pBtnOK));
+		gtk_window_set_titlebar(GTK_WINDOW(m_pDialogOrganize), GTK_WIDGET(hbar));
+	}
+	m_pComboTemplateFolder       = GTK_DROP_DOWN( gtk_builder_get_object(m_pGtkBuilder, "organize_combo_template") );
+	if (NULL != m_pComboTemplateFolder)
+	{
+		const char* templates[] = {
+			"YYYY/YYYY-MM-DD",
+			"YYYY/MM/DD",
+			"YYYY/MM-DD",
+			"YYYY-MM-DD",
+			NULL};
+		GtkStringList* model = gtk_string_list_new(templates);
+		gtk_drop_down_set_model(m_pComboTemplateFolder, G_LIST_MODEL(model));
+		g_object_unref(model);
+	}
 	m_pEntryTemplateFile       = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "organize_entry_filename_template") );
 	//m_pTglBtnCurrentSelection = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_current_selection") );
 	//m_pTglBtnFolder           = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_folder") );
@@ -276,20 +287,19 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 	//m_pTglBtnMove             = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_rb_move") );
 	m_pSpinExtension            = GTK_SPIN_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_spinbutton_day_offset") );
 
-	m_pTglBtnSubfolders       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_subfolders") );
-	m_pTglBtnRenameFiles      = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_rename_files") );
+	m_pTglBtnSubfolders       = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_subfolders") );
+	m_pTglBtnRenameFiles      = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_rename_files") );
 
-	GtkContainer* src_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "organize_align_source_folder") );
-	GtkContainer* dst_cont = GTK_CONTAINER( gtk_builder_get_object(m_pGtkBuilder, "organize_align_dest_folder") );
-		m_pFCBtnSourceFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Source Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
-		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder), FALSE);
-		m_pFCBtnDestFolder = GTK_FILE_CHOOSER_BUTTON(gtk_file_chooser_button_new ("Choose Destination Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER));
-		gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(m_pFCBtnDestFolder), FALSE);
-		gtk_widget_show(GTK_WIDGET(m_pFCBtnSourceFolder));
-		gtk_widget_show(GTK_WIDGET(m_pFCBtnDestFolder));
-		
-		gtk_container_add(src_cont, GTK_WIDGET(m_pFCBtnSourceFolder));
-		gtk_container_add(dst_cont, GTK_WIDGET(m_pFCBtnDestFolder));
+	GtkWidget* src_cont = GTK_WIDGET( gtk_builder_get_object(m_pGtkBuilder, "organize_align_source_folder") );
+	GtkWidget* dst_cont = GTK_WIDGET( gtk_builder_get_object(m_pGtkBuilder, "organize_align_dest_folder") );
+		m_pFCBtnSourceFolder = gtk_button_new_with_label("Choose Source Folder…");
+		gtk_widget_set_halign(m_pFCBtnSourceFolder, GTK_ALIGN_START);
+		m_pFCBtnDestFolder = gtk_button_new_with_label("Choose Destination Folder…");
+		gtk_widget_set_halign(m_pFCBtnDestFolder, GTK_ALIGN_START);
+		if (NULL != src_cont)
+			gtk_widget_set_parent(m_pFCBtnSourceFolder, src_cont);
+		if (NULL != dst_cont)
+			gtk_widget_set_parent(m_pFCBtnDestFolder, dst_cont);
 	m_pEntryFolderName        = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "organize_entry_folder_name") );
 
 	m_pLabelExample           = GTK_LABEL( gtk_builder_get_object(m_pGtkBuilder, "organize_label_example_output") );
@@ -321,39 +331,35 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 
 		gtk_window_set_default_size(GTK_WINDOW(m_pDialogOrganize), 400,-1);
 
-		gtk_combo_box_set_active(GTK_COMBO_BOX(m_pComboTemplateFolder), 0);
+		gtk_drop_down_set_selected(m_pComboTemplateFolder, 0);
 
 
 		PreferencesPtr prefs = Preferences::GetInstance();
 		std::string strPhotoLibrary = prefs->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PHOTO_LIBRARY);
 		if (!strPhotoLibrary.empty())
 		{
-			gtk_file_chooser_set_current_folder_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnDestFolder),
-				strPhotoLibrary.c_str());
+			m_strDestFolder = strPhotoLibrary;
 		}
 
 		GtkWidget* content_area =
-			gtk_dialog_get_content_area(m_pDialogOrganize);
+			gtk_window_get_child(GTK_WINDOW(m_pDialogOrganize));
 
 		m_pLabelWarning = gtk_label_new(NULL);
 		gtk_label_set_use_markup(GTK_LABEL(m_pLabelWarning), TRUE);
-		gtk_label_set_line_wrap(GTK_LABEL(m_pLabelWarning), TRUE);
+		gtk_label_set_wrap(GTK_LABEL(m_pLabelWarning), TRUE);
 		gtk_label_set_xalign(GTK_LABEL(m_pLabelWarning), 0.0);
-		gtk_widget_set_no_show_all(m_pLabelWarning, TRUE);
+		gtk_label_set_wrap_mode(GTK_LABEL(m_pLabelWarning), PANGO_WRAP_WORD_CHAR);
 		gtk_widget_set_margin_top(m_pLabelWarning, 6);
-		gtk_box_pack_start(GTK_BOX(content_area), m_pLabelWarning, FALSE, FALSE, 0);
+		gtk_box_append(GTK_BOX(content_area), m_pLabelWarning);
 
 		m_pBtnViewConflicts = gtk_button_new_with_mnemonic("_View Conflicts…");
-		gtk_widget_set_no_show_all(m_pBtnViewConflicts, TRUE);
 		gtk_widget_set_halign(m_pBtnViewConflicts, GTK_ALIGN_START);
 		g_signal_connect(m_pBtnViewConflicts,
 			"clicked",(GCallback)on_view_conflicts_clicked,this);
-		gtk_box_pack_start(GTK_BOX(content_area), m_pBtnViewConflicts, FALSE, FALSE, 0);
+		gtk_box_append(GTK_BOX(content_area), m_pBtnViewConflicts);
 
 		m_pProgressBar = GTK_PROGRESS_BAR(gtk_progress_bar_new());
-		gtk_widget_set_no_show_all(GTK_WIDGET(m_pProgressBar), TRUE);
-		gtk_box_pack_start(GTK_BOX(content_area), GTK_WIDGET(m_pProgressBar), FALSE, FALSE, 0);
+		gtk_box_append(GTK_BOX(content_area), GTK_WIDGET(m_pProgressBar));
 	}
 }
 
@@ -361,26 +367,17 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 {
 	if (m_bLoadedDlg)
 	{
-		std::string strLabel;
-		gchar* dir = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnDestFolder));
-
-		if (NULL != dir)
-		{
-			// directory name
-			strLabel = dir;
-			g_free(dir);
-		}
+		std::string strLabel = m_strDestFolder;
 		GDateTime* time = g_date_time_new_now_local();
 
 		strLabel += G_DIR_SEPARATOR_S;
-		strLabel += gtk_combo_box_text_get_active_text(m_pComboTemplateFolder);
-		strLabel += gtk_entry_get_text(m_pEntryFolderName);
+		strLabel += m_pOrganizeDlg->GetFolderTemplate();
+		strLabel += gtk_editable_get_text(GTK_EDITABLE(m_pEntryFolderName));
 		strLabel = OrganizeTask::DoVariableSubstitution(strLabel, time);
 		if (GetRenameFiles())
 		{
 			strLabel += G_DIR_SEPARATOR_S;
-			std::string strFileName = gtk_entry_get_text(m_pEntryTemplateFile);
+			std::string strFileName = gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplateFile));
 			strFileName = RenameTask::DoVariableSubstitution(strFileName, time, 1);
 			strLabel += strFileName;
 		}
@@ -407,9 +404,9 @@ void OrganizeDlg::OrganizeDlgPriv::ConnectSignals()
 	if (m_bLoadedDlg)
 	{
 		g_signal_connect(m_pFCBtnSourceFolder,
-			"current-folder-changed",(GCallback)on_folder_change,this);
+			"clicked",(GCallback)on_folder_change,this);
 		g_signal_connect(m_pFCBtnDestFolder,
-			"current-folder-changed",(GCallback)on_folder_change,this);
+			"clicked",(GCallback)on_folder_change,this);
 
 		g_signal_connect(m_pBtnOK,
 			"clicked",(GCallback)on_clicked,this);
@@ -429,7 +426,7 @@ void OrganizeDlg::OrganizeDlgPriv::ConnectSignals()
 			"changed",(GCallback)on_editable_changed,this);
 
 		g_signal_connect(m_pComboTemplateFolder,
-			"changed",(GCallback)combo_changed,this);
+			"notify::selected",(GCallback)combo_changed,this);
 
 		g_signal_connect(m_pEntryTemplateFile,
 			"changed",(GCallback)on_editable_changed,this);
@@ -451,16 +448,13 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 	// make sure source and dest directories are
 	// in separate locations
 
-	gchar* src_uri = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnSourceFolder));
+	const std::string& src_uri = m_strSrcFolder;
+	const std::string& dst_uri = m_strDestFolder;
 
-	gchar* dst_uri = gtk_file_chooser_get_uri (
-				GTK_FILE_CHOOSER (m_pFCBtnDestFolder));
-
-	if (NULL != src_uri && NULL != dst_uri)
+	if (!src_uri.empty() && !dst_uri.empty())
 	{
-		GFile* file_src = g_file_new_for_uri(src_uri);
-		GFile* file_dst = g_file_new_for_uri(dst_uri);
+		GFile* file_src = g_file_new_for_uri(src_uri.c_str());
+		GFile* file_dst = g_file_new_for_uri(dst_uri.c_str());
 
 		gboolean source_is_parent = 
 			g_file_has_parent(file_dst, file_src);
@@ -478,24 +472,10 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 		{
 			bIsValid = false;
 
-			GtkWidget* dialog = gtk_message_dialog_new (GTK_WINDOW(m_pDialogOrganize),
-				GTK_DIALOG_DESTROY_WITH_PARENT,
-				GTK_MESSAGE_ERROR,
-				GTK_BUTTONS_CLOSE,
+			GtkAlertDialog* alert = gtk_alert_dialog_new(
 				"Source and Destination folders overlap. Please choose a different destination folder.");
-			gtk_window_set_title(GTK_WINDOW(dialog), "Folder Conflict");
-			gtk_dialog_run (GTK_DIALOG (dialog));
-			gtk_widget_destroy (dialog);
+			gtk_alert_dialog_show(alert, GTK_WINDOW(m_pDialogOrganize));
 		}
-	}
-
-	if (NULL != src_uri)
-	{
-		g_free(src_uri);
-	}
-	if (NULL != dst_uri)
-	{
-		g_free(dst_uri);
 	}
 
 	// conflict gate: reuse the threaded result when it matches the
@@ -520,15 +500,13 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 			CancelConflictCheck();
 
 			OrganizeTask::Options o;
-			gchar* s = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder));
-			if (NULL != s) { o.strSrcDirURI = s; g_free(s); }
-			gchar* d = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(m_pFCBtnDestFolder));
-			if (NULL != d) { o.strDestDirURI = d; g_free(d); }
-			gchar* c = gtk_combo_box_text_get_active_text(m_pComboTemplateFolder);
+			o.strSrcDirURI = m_strSrcFolder;
+			o.strDestDirURI = m_strDestFolder;
+			gchar* c = g_strdup(m_pOrganizeDlg->GetFolderTemplate().c_str());
 			if (NULL != c) { o.strFolderTemplate = c; g_free(c); }
-			o.strFileTemplate = gtk_entry_get_text(m_pEntryTemplateFile);
-			o.strAppendedText = gtk_entry_get_text(m_pEntryFolderName);
-			o.bIncludeSubfolders = (TRUE == gtk_toggle_button_get_active(m_pTglBtnSubfolders));
+			o.strFileTemplate = gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplateFile));
+			o.strAppendedText = gtk_editable_get_text(GTK_EDITABLE(m_pEntryFolderName));
+			o.bIncludeSubfolders = (TRUE == gtk_check_button_get_active(m_pTglBtnSubfolders));
 			o.bRenameFiles = GetRenameFiles();
 			o.iDayExtension = gtk_spin_button_get_value_as_int(m_pSpinExtension);
 
@@ -554,16 +532,13 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 		if (bConflictFound)
 		{
 			bIsValid = false;
-			GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(m_pDialogOrganize),
-				GTK_DIALOG_DESTROY_WITH_PARENT,
-				GTK_MESSAGE_ERROR,
-				GTK_BUTTONS_CLOSE,
+			gchar* detail = g_strdup_printf(
 				"%d file(s) would collide with existing or generated names. "
 				"Use the conflict list to review them.",
 				(int)nConflicts);
-			gtk_window_set_title(GTK_WINDOW(dialog), "Organize Conflict");
-			gtk_dialog_run(GTK_DIALOG(dialog));
-			gtk_widget_destroy(dialog);
+			GtkAlertDialog* alert = gtk_alert_dialog_new("%s", detail);
+			gtk_alert_dialog_show(alert, GTK_WINDOW(m_pDialogOrganize));
+			g_free(detail);
 		}
 	}
 
@@ -572,7 +547,7 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 
 bool OrganizeDlg::OrganizeDlgPriv::GetRenameFiles() const
 {
-	return (TRUE == gtk_toggle_button_get_active(m_pTglBtnRenameFiles));
+	return (TRUE == gtk_check_button_get_active(m_pTglBtnRenameFiles));
 }
 
 bool OrganizeDlg::OrganizeDlgPriv::CollectAndCheck(const OrganizeTask::Options& opts,
@@ -610,25 +585,23 @@ void OrganizeDlg::OrganizeDlgPriv::StartConflictCheck()
 
 	m_bConflictKeyValid = false;
 
-	gtk_widget_hide(m_pLabelWarning);
-	gtk_widget_hide(m_pBtnViewConflicts);
+	gtk_widget_set_visible(m_pLabelWarning, FALSE);
+	gtk_widget_set_visible(m_pBtnViewConflicts, FALSE);
 
 	OrganizeTask::Options opts;
 
-	gchar* dir = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder));
-	if (NULL != dir) { opts.strSrcDirURI = dir; g_free(dir); }
-	dir = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(m_pFCBtnDestFolder));
-	if (NULL != dir) { opts.strDestDirURI = dir; g_free(dir); }
+	opts.strSrcDirURI = m_strSrcFolder;
+	opts.strDestDirURI = m_strDestFolder;
 
-	gchar* szCombo = gtk_combo_box_text_get_active_text(m_pComboTemplateFolder);
+	gchar* szCombo = g_strdup(m_pOrganizeDlg->GetFolderTemplate().c_str());
 	if (NULL != szCombo)
 	{
 		opts.strFolderTemplate = szCombo;
 		g_free(szCombo);
 	}
-	opts.strFileTemplate = gtk_entry_get_text(m_pEntryTemplateFile);
-	opts.strAppendedText = gtk_entry_get_text(m_pEntryFolderName);
-	opts.bIncludeSubfolders = (TRUE == gtk_toggle_button_get_active(m_pTglBtnSubfolders));
+	opts.strFileTemplate = gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplateFile));
+	opts.strAppendedText = gtk_editable_get_text(GTK_EDITABLE(m_pEntryFolderName));
+	opts.bIncludeSubfolders = (TRUE == gtk_check_button_get_active(m_pTglBtnSubfolders));
 	opts.bRenameFiles = GetRenameFiles();
 	opts.iDayExtension = gtk_spin_button_get_value_as_int(m_pSpinExtension);
 
@@ -641,7 +614,6 @@ void OrganizeDlg::OrganizeDlgPriv::StartConflictCheck()
 
 	gtk_widget_set_sensitive(m_pBtnOK, FALSE);
 	gtk_progress_bar_set_fraction(m_pProgressBar, 0.);
-	gtk_widget_show(GTK_WIDGET(m_pProgressBar));
 
 	int iGeneration = ++(*m_pConflictGeneration);
 
@@ -699,7 +671,7 @@ void OrganizeDlg::OrganizeDlgPriv::CancelConflictCheck()
 
 void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 {
-	gtk_widget_hide(GTK_WIDGET(m_pProgressBar));
+	gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), FALSE);
 
 	{
 		std::lock_guard<std::mutex> lock(state.mutex);
@@ -739,8 +711,6 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 			+ " file(s) would collide with existing or generated names."
 			+ "</span>" + strDetails;
 		gtk_label_set_markup(GTK_LABEL(m_pLabelWarning), strMsg.c_str());
-		gtk_widget_show(m_pLabelWarning);
-		gtk_widget_show(m_pBtnViewConflicts);
 	}
 
 	gtk_widget_set_sensitive(m_pBtnOK, !m_bConflictFound);
@@ -751,21 +721,18 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 
 std::string OrganizeDlg::OrganizeDlgPriv::GetConflictInputKey() const
 {
-	std::string strKey;
-	gchar* dir = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(m_pFCBtnSourceFolder));
-	if (NULL != dir) { strKey += dir; g_free(dir); }
+	std::string strKey = m_strSrcFolder;
 	strKey += "\n";
-	dir = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(m_pFCBtnDestFolder));
-	if (NULL != dir) { strKey += dir; g_free(dir); }
+	strKey += m_strDestFolder;
 	strKey += "\n";
-	gchar* szCombo = gtk_combo_box_text_get_active_text(m_pComboTemplateFolder);
+	gchar* szCombo = g_strdup(m_pOrganizeDlg->GetFolderTemplate().c_str());
 	if (NULL != szCombo) { strKey += szCombo; g_free(szCombo); }
 	strKey += "\n";
-	strKey += gtk_entry_get_text(m_pEntryTemplateFile);
+	strKey += gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplateFile));
 	strKey += "\n";
-	strKey += gtk_entry_get_text(m_pEntryFolderName);
+	strKey += gtk_editable_get_text(GTK_EDITABLE(m_pEntryFolderName));
 	strKey += (GetRenameFiles() ? "\nR" : "\nr");
-	strKey += (TRUE == gtk_toggle_button_get_active(m_pTglBtnSubfolders) ? "S" : "s");
+	strKey += (TRUE == gtk_check_button_get_active(m_pTglBtnSubfolders) ? "S" : "s");
 	char szExt[16];
 	g_snprintf(szExt, sizeof(szExt), "%d",
 		gtk_spin_button_get_value_as_int(m_pSpinExtension));
@@ -773,18 +740,39 @@ std::string OrganizeDlg::OrganizeDlgPriv::GetConflictInputKey() const
 	return strKey;
 }
 
-void on_folder_change (GtkFileChooser *chooser, gpointer user_data)
+static void on_folder_selected(GObject* source, GAsyncResult* res, gpointer data)
+{
+	GtkFileDialog* dlg = GTK_FILE_DIALOG(source);
+	GError* error = NULL;
+	GFile* folder = gtk_file_dialog_select_folder_finish(dlg, res, &error);
+	auto* ctx = static_cast<std::pair<OrganizeDlg::OrganizeDlgPriv*, std::string*>*>(data);
+	if (folder != NULL)
+	{
+		gchar* uri = g_file_get_uri(folder);
+		*(ctx->second) = uri;
+		g_free(uri);
+		g_object_unref(folder);
+		ctx->first->UpdateUI();
+	}
+	if (error != NULL)
+		g_error_free(error);
+	delete ctx;
+	g_object_unref(dlg);
+}
+
+static void on_folder_change (GtkButton *button, gpointer user_data)
 {
 	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
-	
-	if (GTK_FILE_CHOOSER(priv->m_pFCBtnSourceFolder) == chooser)
-	{
-		priv->UpdateUI();
-	}
-	else if (GTK_FILE_CHOOSER(priv->m_pFCBtnDestFolder) == chooser)
-	{
-		priv->UpdateUI();
-	}
+
+	bool bSource = (GTK_WIDGET(button) == priv->m_pFCBtnSourceFolder);
+	std::pair<OrganizeDlg::OrganizeDlgPriv*, std::string*>* ctx =
+		new std::pair<OrganizeDlg::OrganizeDlgPriv*, std::string*>(priv,
+			bSource ? &priv->m_strSrcFolder : &priv->m_strDestFolder);
+
+	GtkFileDialog* dlg = gtk_file_dialog_new();
+	gtk_file_dialog_set_title(dlg, "Choose Folder");
+	gtk_file_dialog_select_folder(dlg, GTK_WINDOW(priv->m_pDialogOrganize), NULL,
+		on_folder_selected, ctx);
 }
 
 static void  on_clicked (GtkButton *button, gpointer   user_data)
@@ -794,7 +782,11 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 	{
 		if (priv->ValidateInput())
 		{
-			gtk_dialog_response(priv->m_pDialogOrganize, GTK_RESPONSE_OK);
+			int* pResult = (int*)g_object_get_data(G_OBJECT(priv->m_pDialogOrganize), "organize-result");
+			if (pResult)
+				*pResult = GTK_RESPONSE_OK;
+			gtk_window_destroy(GTK_WINDOW(priv->m_pDialogOrganize));
+			priv->m_pDialogOrganize = NULL;
 		}
 	}
 	else if (button == GTK_BUTTON(priv->m_pTglBtnRenameFiles))
@@ -803,21 +795,16 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 	}
 }
 
-
-static void __attribute__((unused))  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
-{
-	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
-	priv->UpdateUI();
-}
-
 static void on_editable_changed (GtkEditable *editable, gpointer user_data)
 {
+	(void)editable;
 	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
 	priv->UpdateUI();
 }
 
-void combo_changed (GtkComboBox *widget, gpointer user_data)
+static void combo_changed (GObject *widget, gpointer user_data)
 {
+	(void)widget;
 	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
 	priv->UpdateUI();
 }

@@ -1668,7 +1668,7 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 {
 	GdkPixbuf* pixbuf = NULL;
 
-	GtkIconTheme* icon_theme = gtk_icon_theme_get_default();
+	GtkIconTheme* icon_theme = gtk_icon_theme_get_for_display(gdk_display_get_default());
 
 	gint size_wanted = MIN(width_desired,height_desired);
 		
@@ -1678,16 +1678,32 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 
 	if (NULL != icon)
 	{
-		GtkIconInfo* icon_info = gtk_icon_theme_lookup_by_gicon (
-			icon_theme,
-			icon,
-			size_wanted,
-			GTK_ICON_LOOKUP_USE_BUILTIN);
-
-		if (NULL != icon_info)
+		char* icon_name = g_icon_to_string(icon);
+		if (NULL != icon_name)
 		{
-			pixbuf = gtk_icon_info_load_icon(icon_info, NULL);
-			g_object_unref(icon_info);
+			GtkIconPaintable* paintable = gtk_icon_theme_lookup_icon(
+				icon_theme,
+				icon_name,
+				NULL,
+				size_wanted,
+				1,
+				GTK_TEXT_DIR_NONE,
+				GTK_ICON_LOOKUP_FORCE_REGULAR);
+			if (NULL != paintable)
+			{
+				GFile* icon_file = gtk_icon_paintable_get_file(paintable);
+				if (NULL != icon_file)
+				{
+					char* path = g_file_get_path(icon_file);
+					if (NULL != path)
+					{
+						pixbuf = gdk_pixbuf_new_from_file_at_size(path, size_wanted, size_wanted, NULL);
+						g_free(path);
+					}
+				}
+				g_object_unref(paintable);
+			}
+			g_free(icon_name);
 		}
 		g_object_unref(icon);
 	}

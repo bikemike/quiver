@@ -43,7 +43,9 @@ public:
 	
 	// dlg widgets
 	GtkWidget*             m_pWidget;
-	GtkTreeView*           m_pTreeViewLocations;
+	GtkWidget*             m_pTreeViewLocations;
+	GListStore*            m_pListStoreLocations;
+	GtkMultiSelection*     m_pSelectionLocations;
 	GtkEntry*              m_pEntryName;
 	GtkEntry*              m_pEntryDescription;
 	GtkEntry*              m_pEntryIcon;
@@ -51,8 +53,98 @@ public:
 	GtkButton*             m_pButtonRemove;
 	GtkButton*             m_pButtonOk;
 	GtkButton*             m_pButtonCancel;
-	GtkToggleButton*       m_pToggleRecursive;
+	GtkCheckButton*        m_pToggleRecursive;
+	bool m_bRunDone;
+	gint m_iRunResponse;
 };
+
+
+// row item type for the locations column view
+typedef struct {
+	GObject  parent_instance;
+	int      index;
+	gchar*   uri;
+} LocationItem;
+
+typedef struct {
+	GObjectClass parent_class;
+} LocationItemClass;
+
+#define LOCATION_ITEM_TYPE (location_item_get_type())
+#define LOCATION_ITEM(obj) \
+	(G_TYPE_CHECK_INSTANCE_CAST((obj), LOCATION_ITEM_TYPE, LocationItem))
+
+G_DEFINE_TYPE(LocationItem, location_item, G_TYPE_OBJECT)
+
+static void location_item_finalize (GObject* object)
+{
+	LocationItem* item = LOCATION_ITEM(object);
+	g_free(item->uri);
+	G_OBJECT_CLASS(g_type_class_peek_parent(
+		G_OBJECT_GET_CLASS(object)))->finalize(object);
+}
+
+static void location_item_class_init (LocationItemClass* klass)
+{
+	G_OBJECT_CLASS(klass)->finalize = location_item_finalize;
+}
+
+static void location_item_init (LocationItem* item)
+{
+	item->index = 0;
+	item->uri = NULL;
+}
+
+static LocationItem* location_item_new (int index, const gchar* uri)
+{
+	LocationItem* item = static_cast<LocationItem*>(
+		g_object_new(LOCATION_ITEM_TYPE, NULL));
+	item->index = index;
+	item->uri = g_strdup(uri);
+	return item;
+}
+
+static void location_edited (GtkEditableLabel* editable, GParamSpec* pspec,
+	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv);
+static void location_text_setup (GtkListItem* list_item, gpointer user_data)
+{
+	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv =
+		static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
+	GtkWidget* editable = gtk_editable_label_new(NULL);
+	gtk_widget_set_hexpand(editable, TRUE);
+	g_signal_connect(editable, "notify::text",
+		G_CALLBACK(location_edited), priv);
+	gtk_list_item_set_child(list_item, editable);
+}
+
+static void location_text_bind (GtkListItem* list_item, gpointer user_data)
+{ (void)user_data;
+	LocationItem* item = LOCATION_ITEM(gtk_list_item_get_item(list_item));
+	GtkWidget* editable = gtk_list_item_get_child(list_item);
+	g_object_set_data(G_OBJECT(editable), "location-index",
+		GINT_TO_POINTER(item->index));
+	gtk_editable_set_text(GTK_EDITABLE(editable), item->uri);
+}
+
+static void location_edited (GtkEditableLabel* editable, GParamSpec* pspec,
+	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv)
+{ (void)pspec;
+	int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(editable), "location-index"));
+	if (index >= 0 && (size_t)index < priv->m_vectURIs.size())
+	{
+		priv->m_vectURIs[index] = gtk_editable_get_text(GTK_EDITABLE(editable));
+	}
+	priv->UpdateUI();
+}
+
+static GtkListItemFactory* location_column_factory (
+	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv)
+{
+	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
+	g_signal_connect(factory, "setup", G_CALLBACK(location_text_setup), priv);
+	g_signal_connect(factory, "bind", G_CALLBACK(location_text_bind), NULL);
+	return factory;
+}
 
 
 BookmarkAddEditDlg::BookmarkAddEditDlg() : m_PrivPtr(new BookmarkAddEditDlg::BookmarkAddEditDlgPriv(Bookmark(),this))
@@ -78,19 +170,28 @@ void BookmarkAddEditDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gint result = gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
-		if (GTK_RESPONSE_OK == result)
+		m_PrivPtr->m_bRunDone = false;
+		m_PrivPtr->m_iRunResponse = GTK_RESPONSE_NONE;
+		gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pWidget), TRUE);
+		gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
+
+		GMainContext* ctx = g_main_context_default();
+		while (!m_PrivPtr->m_bRunDone)
+		{
+			g_main_context_iteration(ctx, TRUE);
+		}
+
+		if (GTK_RESPONSE_OK == m_PrivPtr->m_iRunResponse)
 		{
 			m_PrivPtr->m_bCancelled = false;
 
-			m_PrivPtr->m_Bookmark.SetName( gtk_entry_get_text(m_PrivPtr->m_pEntryName) );
-			m_PrivPtr->m_Bookmark.SetDescription( gtk_entry_get_text(m_PrivPtr->m_pEntryDescription) );
-			m_PrivPtr->m_Bookmark.SetIcon( gtk_entry_get_text(m_PrivPtr->m_pEntryIcon) );
-			m_PrivPtr->m_Bookmark.SetRecursive( gtk_toggle_button_get_active(m_PrivPtr->m_pToggleRecursive) ? true : false );
+			m_PrivPtr->m_Bookmark.SetName( gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryName)) );
+			m_PrivPtr->m_Bookmark.SetDescription( gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryDescription)) );
+			m_PrivPtr->m_Bookmark.SetIcon( gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryIcon)) );
+			m_PrivPtr->m_Bookmark.SetRecursive( gtk_check_button_get_active(m_PrivPtr->m_pToggleRecursive) ? true : false );
 			list<string> uris(m_PrivPtr->m_vectURIs.begin(), m_PrivPtr->m_vectURIs.end());
 			m_PrivPtr->m_Bookmark.SetURIs(uris);
 		}
-		gtk_widget_destroy(m_PrivPtr->m_pWidget);
 	}
 }
 
@@ -104,9 +205,8 @@ bool BookmarkAddEditDlg::Cancelled() const
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer user_data);
-static void  on_toggled (GtkToggleButton *button, gpointer user_data);
-static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data);
-static void cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data);
+static void  on_toggled (GtkCheckButton *button, gpointer user_data);
+static void selection_changed (GtkSelectionModel* selection, gpointer user_data);
 
 
 BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(Bookmark b, BookmarkAddEditDlg *parent) :
@@ -118,12 +218,14 @@ BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(Bookmark b, B
 
 	list<string> uris = m_Bookmark.GetURIs();
 	m_vectURIs = vector<string>(uris.begin(), uris.end());
+	m_pListStoreLocations = NULL;
+	m_pSelectionLocations = NULL;
 
 	m_pGtkBuilder = gtk_builder_new();
 	const gchar* objectids[] = {
 		"BookmarkAddEditDialog", 
 		NULL};
-	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
+	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (const char**)objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();
@@ -132,6 +234,16 @@ BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(Bookmark b, B
 
 BookmarkAddEditDlg::BookmarkAddEditDlgPriv::~BookmarkAddEditDlgPriv()
 {
+	if (NULL != m_pSelectionLocations)
+	{
+		g_object_unref(m_pSelectionLocations);
+		m_pSelectionLocations = NULL;
+	}
+	if (NULL != m_pListStoreLocations)
+	{
+		g_object_unref(m_pListStoreLocations);
+		m_pListStoreLocations = NULL;
+	}
 	if (NULL != m_pGtkBuilder)
 	{
 		g_object_unref(m_pGtkBuilder);
@@ -146,52 +258,39 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 	if (NULL != m_pGtkBuilder)
 	{
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "BookmarkAddEditDialog"));
-		m_pTreeViewLocations     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "bookmark_treeview_locations") );
+		m_pTreeViewLocations     = GTK_WIDGET(     gtk_builder_get_object (m_pGtkBuilder, "bookmark_treeview_locations") );
 
 		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_with_mnemonic("_Cancel") );
-		gtk_button_set_image(GTK_BUTTON(m_pButtonCancel), gtk_image_new_from_icon_name(GTK_STOCK_CANCEL, GTK_ICON_SIZE_BUTTON));
 		m_pButtonOk              = GTK_BUTTON( gtk_button_new_with_mnemonic("_OK") );
-		gtk_button_set_image(GTK_BUTTON(m_pButtonOk), gtk_image_new_from_icon_name(GTK_STOCK_OK, GTK_ICON_SIZE_BUTTON));
 
 
-		gtk_widget_show(GTK_WIDGET(m_pButtonCancel));
-		gtk_widget_show(GTK_WIDGET(m_pButtonOk));
 
 		if (m_pWidget)
 		{
-			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonCancel),GTK_RESPONSE_NONE);
-			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonOk),GTK_RESPONSE_NONE);
+			GtkHeaderBar* hbar = GTK_HEADER_BAR(gtk_header_bar_new());
+			gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), TRUE);
+			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonCancel));
+			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonOk));
+			gtk_window_set_titlebar(GTK_WINDOW(m_pWidget), GTK_WIDGET(hbar));
 		}
 
 		if (m_pTreeViewLocations)
 		{
-			GtkTreeViewColumn*column;
-			GtkCellRenderer* renderer;
+			m_pListStoreLocations = g_list_store_new(LOCATION_ITEM_TYPE);
+			m_pSelectionLocations = gtk_multi_selection_new(
+				G_LIST_MODEL(m_pListStoreLocations));
+			gtk_column_view_set_model(GTK_COLUMN_VIEW(m_pTreeViewLocations),
+				GTK_SELECTION_MODEL(m_pSelectionLocations));
 
-			renderer = gtk_cell_renderer_text_new ();
-			g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-			g_object_set (G_OBJECT (renderer),  "editable", TRUE,  NULL);
-			g_signal_connect(renderer, "edited", (GCallback) cell_edited_callback, this);
-
-			column = gtk_tree_view_column_new_with_attributes ("bookmark",
-			  renderer,
-			  "text",COLUMN_NAME,
-			NULL);
-
-			gtk_tree_view_append_column (m_pTreeViewLocations, column);
-
-#if GTK_MAJOR_VERSION == 2  &&  GTK_MINOR_VERSION >= 12 || GTK_MAJOR_VERSION > 2
-			g_object_set(G_OBJECT(m_pTreeViewLocations),"show-expanders",FALSE,NULL);
-#endif
-	
-			gtk_tree_view_set_search_column (m_pTreeViewLocations,COLUMN_NAME);
-			GtkTreeSelection* selection = gtk_tree_view_get_selection(m_pTreeViewLocations);
-			gtk_tree_selection_set_mode(selection,GTK_SELECTION_MULTIPLE);
+			GtkColumnViewColumn* column =
+				gtk_column_view_column_new("bookmark",
+					location_column_factory(this));
+			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewLocations), column);
 		}
 
 		m_pButtonAdd             = GTK_BUTTON       ( gtk_builder_get_object (m_pGtkBuilder, "bookmark_button_add") );
 		m_pButtonRemove          = GTK_BUTTON       ( gtk_builder_get_object (m_pGtkBuilder, "bookmark_button_remove") );
-		m_pToggleRecursive       = GTK_TOGGLE_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "bookmark_checkbutton_recursive"));
+		m_pToggleRecursive       = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "bookmark_checkbutton_recursive"));
 		m_pEntryName             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "bookmark_entry_name"));
 		m_pEntryDescription      = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "bookmark_entry_description"));
 		m_pEntryIcon             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "bookmark_entry_icon"));
@@ -209,71 +308,25 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 				NULL != m_pToggleRecursive
 				); 
 	
-		gtk_entry_set_text(m_pEntryName, m_Bookmark.GetName().c_str());
-		gtk_entry_set_text(m_pEntryDescription, m_Bookmark.GetDescription().c_str());
-		gtk_entry_set_text(m_pEntryIcon, m_Bookmark.GetIcon().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(m_pEntryName), m_Bookmark.GetName().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(m_pEntryDescription), m_Bookmark.GetDescription().c_str());
+		gtk_editable_set_text(GTK_EDITABLE(m_pEntryIcon), m_Bookmark.GetIcon().c_str());
 
-		gtk_toggle_button_set_active(m_pToggleRecursive, m_Bookmark.GetRecursive() ? TRUE : FALSE );
+		gtk_check_button_set_active(m_pToggleRecursive, m_Bookmark.GetRecursive() ? TRUE : FALSE );
 
 	}
 }
 
 void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::SelectionChanged()
 {
-	GList* paths;
-	GList* path_itr;
-	GtkTreeModel *model;
-	GtkTreeSelection* selection;
-	int selection_count = 0;
-	
-	GtkTreePath *path;
-	GtkTreeIter iter;
+	GtkSelectionModel* sel = GTK_SELECTION_MODEL(m_pSelectionLocations);
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pListStoreLocations));
+	guint selection_count = 0;
 
-	model = gtk_tree_view_get_model(m_pTreeViewLocations);
-	selection = gtk_tree_view_get_selection(m_pTreeViewLocations);
-
-	bool bTop = false, bBottom = false;
- (void)bTop;
- (void)bBottom;
-	GtkTreeIter iter2;
-	GtkTreePath *path_top = NULL;
-	GtkTreePath *path_bottom = NULL;
-	int n_children = gtk_tree_model_iter_n_children(model,NULL);
-	if (n_children)
+	for (guint i = 0 ; i < n ; i++)
 	{
-		gtk_tree_model_iter_nth_child(model, &iter2, NULL,0);
-		path_top = gtk_tree_model_get_path(model,&iter2);
-		gtk_tree_model_iter_nth_child(model, &iter2, NULL,n_children-1);
-		path_bottom = gtk_tree_model_get_path(model,&iter2);
-	}
-
-	paths = gtk_tree_selection_get_selected_rows(selection,&model);
-	path_itr = paths;
-	while (NULL != path_itr)
-	{
-		path = (GtkTreePath*)path_itr->data;
-		gtk_tree_model_get_iter(model,&iter,path);
-
-		if (0 == gtk_tree_path_compare(path, path_top))
-		{
-			bTop = true;
-		}
-
-		if (0 == gtk_tree_path_compare(path, path_bottom))
-		{
-			bBottom = true;
-		}
-		
-		path_itr = g_list_next(path_itr);
-		++selection_count;
-	}
-
-	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
-
-	if (n_children)
-	{
-		gtk_tree_path_free(path_top);
-		gtk_tree_path_free(path_bottom);
+		if (gtk_selection_model_is_selected(sel, i))
+			selection_count++;
 	}
 
 	if (0 == selection_count)
@@ -292,22 +345,17 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::UpdateUI()
 	if (m_bLoadedDlg)
 	{
 		
-		//m_pTreeViewLocations;
-		GtkTreeStore *store;
-		store = gtk_tree_store_new(COLUMN_COUNT, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING);
+		g_list_store_remove_all(m_pListStoreLocations);
 		vector<string>::iterator itr;
+		int idx = 0;
 
 		for (itr = m_vectURIs.begin(); m_vectURIs.end() != itr; ++itr)
 		{
-			GtkTreeIter iter1 = {};
-			gtk_tree_store_append (store, &iter1, NULL);  
-			gtk_tree_store_set (store, &iter1,
-				COLUMN_ID, itr - m_vectURIs.begin(), 
-				COLUMN_NAME, itr->c_str(),
-				-1);
+			LocationItem* item = location_item_new(idx, itr->c_str());
+			g_list_store_append(m_pListStoreLocations, G_OBJECT(item));
+			g_object_unref(item);
+			++idx;
 		}
-		gtk_tree_view_set_model(m_pTreeViewLocations, GTK_TREE_MODEL (store));
-		g_object_unref(store);
 
 		SelectionChanged();
 
@@ -315,20 +363,19 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::UpdateUI()
 }
 
 
-static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{ (void)data; 
-	if (GTK_RESPONSE_NONE == response)
-	{
-		g_signal_stop_emission_by_name (dlg, "response");
-	}
-}
-
 void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
-		g_signal_connect(m_pWidget,
-			"response",(GCallback)on_dialog_response,this);
+		g_signal_connect(m_pWidget, "close-request",
+			G_CALLBACK(+[](GtkWidget* widget, gpointer user_data) -> gboolean {
+				(void)widget;
+				BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv =
+					static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
+				priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
+				priv->m_bRunDone = true;
+				return FALSE;
+			}), this);
 
 		g_signal_connect(m_pToggleRecursive,
 			"toggled",(GCallback)on_toggled,this);
@@ -342,20 +389,46 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::ConnectSignals()
 		g_signal_connect(m_pButtonCancel,
 			"clicked",(GCallback)on_clicked,this);
 
-		GtkTreeSelection* selection = gtk_tree_view_get_selection(m_pTreeViewLocations);
-		g_signal_connect(G_OBJECT(selection),
-			"changed",G_CALLBACK(selection_changed),this);
+		g_signal_connect(G_OBJECT(m_pSelectionLocations),
+			"selection-changed",G_CALLBACK(selection_changed),this);
 	}
 }
 
 
-static void  on_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+static void  on_toggled (GtkCheckButton *togglebutton, gpointer user_data)
 {
 	BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv = static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
 	if (priv->m_pToggleRecursive == togglebutton)
 	{ 
-		gboolean bRecursive = gtk_toggle_button_get_active(togglebutton);
- (void)bRecursive;
+		gboolean bRecursive = gtk_check_button_get_active(togglebutton);
+  (void)bRecursive;
+	}
+}
+
+static GMainLoop *s_bookmark_loop = NULL;
+static BookmarkAddEditDlg::BookmarkAddEditDlgPriv *s_bookmark_loop_priv = NULL;
+
+static void on_folder_selected(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+	(void)user_data;
+	GtkFileDialog *filedialog = GTK_FILE_DIALOG(source);
+	GError *error = NULL;
+	GFile *folder = gtk_file_dialog_select_folder_finish(filedialog, result, &error);
+	if (folder != NULL)
+	{
+		char* uri = g_file_get_uri(folder);
+		s_bookmark_loop_priv->m_vectURIs.push_back(std::string(uri));
+		g_free(uri);
+		s_bookmark_loop_priv->UpdateUI();
+		g_object_unref(folder);
+	}
+	else if (error != NULL)
+	{
+		g_error_free(error);
+	}
+	if (s_bookmark_loop != NULL)
+	{
+		g_main_loop_quit(s_bookmark_loop);
 	}
 }
 
@@ -365,55 +438,32 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	
 	list<int> values;
 
-	// move the bookmark one up in the row
-	GList* paths;
-	GList* path_itr;
-	GtkTreePath *path;
-	GtkTreeModel *model;
-	GtkTreeSelection* selection;
-	GtkTreeIter iter;
-	int value;
-	
-	model = gtk_tree_view_get_model(priv->m_pTreeViewLocations);
-	selection = gtk_tree_view_get_selection(priv->m_pTreeViewLocations);
+	GtkSelectionModel* sel = GTK_SELECTION_MODEL(priv->m_pSelectionLocations);
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(priv->m_pListStoreLocations));
 
-
-	paths = gtk_tree_selection_get_selected_rows(selection,&model);
-	path_itr = paths;
-	while (NULL != path_itr)
+	for (guint i = 0 ; i < n ; i++)
 	{
-		path = (GtkTreePath*)path_itr->data;
-		gtk_tree_model_get_iter(model,&iter,path);
-
-		gtk_tree_model_get (model,&iter,COLUMN_ID,&value,-1);
-		values.push_back(value);
-		path_itr = g_list_next(path_itr);
-	}	
-	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
-	// have to remove after iterating the model because
-	// removing modifiees the model
+		if (gtk_selection_model_is_selected(sel, i))
+		{
+			LocationItem* item = LOCATION_ITEM(
+				g_list_model_get_item(G_LIST_MODEL(priv->m_pListStoreLocations), i));
+			values.push_back(item->index);
+			g_object_unref(item);
+		}
+	}
 	if (button == priv->m_pButtonAdd)
 	{
-		GtkWidget* widget = gtk_file_chooser_dialog_new ("Select Folder",
-			NULL,
-			GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-			QUIVER_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-			QUIVER_STOCK_OK, GTK_RESPONSE_OK, 
-		   	NULL);
+		GtkFileDialog *filedialog = gtk_file_dialog_new();
+		gtk_file_dialog_set_title(filedialog, "Select Folder");
 
-
-		gint rval  = gtk_dialog_run(GTK_DIALOG(widget));
-		if (GTK_RESPONSE_OK == rval)
-		{
-			char* uri = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(widget));
-			if (NULL != uri)
-			{
-				priv->m_vectURIs.push_back(uri);
-				g_free(uri);
-				priv->UpdateUI();
-			}
-		}
-		gtk_widget_destroy(widget);
+		s_bookmark_loop = g_main_loop_new(NULL, FALSE);
+		gtk_file_dialog_select_folder(filedialog, NULL, NULL,
+			on_folder_selected, priv);
+		s_bookmark_loop_priv = priv;
+		g_main_loop_run(s_bookmark_loop);
+		g_main_loop_unref(s_bookmark_loop);
+		s_bookmark_loop = NULL;
+		g_object_unref(filedialog);
 	}
 	else if (button == priv->m_pButtonRemove)
 	{
@@ -430,45 +480,20 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonOk)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_OK);
+		priv->m_iRunResponse = GTK_RESPONSE_OK;
+		priv->m_bRunDone = true;
 	}
 	else if (button == priv->m_pButtonCancel)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_CANCEL);
+		priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
+		priv->m_bRunDone = true;
 	}
 }
 
-static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
-{ (void)treeselection; 
+static void selection_changed (GtkSelectionModel* selection, gpointer user_data)
+{ (void)selection; 
 	BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv = static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
 	priv->SelectionChanged();
-}
-
-static void
-cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data)
-{ (void)cell; 
-	BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv = static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
-
-	GtkTreePath *path;
-	GtkTreeIter child = {};
-	GtkTreeIter parent = {};
-
-	unsigned int value;
-
-	GtkTreeModel *pTreeModel = gtk_tree_view_get_model(priv->m_pTreeViewLocations);
-
-	path = gtk_tree_path_new_from_string(path_string);
-	gtk_tree_model_get_iter(pTreeModel,&child,path);
-
-	gtk_tree_model_iter_parent(pTreeModel,&parent, &child);
-	
-	gtk_tree_model_get (pTreeModel,&child,COLUMN_ID,&value,-1);
-
-	if (value < priv->m_vectURIs.size() )
-	{
-		priv->m_vectURIs[value] = new_text;
-	}
-	priv->UpdateUI();
 }
 
 

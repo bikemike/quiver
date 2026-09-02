@@ -23,7 +23,7 @@ public:
 	void SetImageList(ImageListPtr list);
 	
 	void RegisterActions();
-	void SetToolbar(GtkToolbar *toolbar);
+	void SetToolbar(GtkWidget *toolbar);
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 	
 	void GrabFocus();

@@ -2,6 +2,8 @@
 
 #include "BookmarksDlg.h"
 
+extern GtkApplication *g_pApp;
+
 #include <list>
 #include <vector>
 
@@ -43,7 +45,9 @@ public:
 	
 	// dlg widgets
 	GtkWidget*             m_pWidget;
-	GtkTreeView*           m_pTreeViewBookmarks;
+	GtkWidget*             m_pTreeViewBookmarks;
+	GListStore*            m_pListStoreBookmarks;
+	GtkMultiSelection*     m_pSelectionBookmarks;
 	GtkButton*             m_pButtonMoveUp;
 	GtkButton*             m_pButtonMoveDown;
 	GtkButton*             m_pButtonAdd;
@@ -65,6 +69,124 @@ public:
 };
 
 
+// row item type for the bookmarks column view
+typedef struct {
+	GObject  parent_instance;
+	int      id;
+	gchar*   icon;
+	gchar*   name;
+} BookmarkItem;
+
+typedef struct {
+	GObjectClass parent_class;
+} BookmarkItemClass;
+
+#define BOOKMARK_ITEM_TYPE (bookmark_item_get_type())
+#define BOOKMARK_ITEM(obj) \
+	(G_TYPE_CHECK_INSTANCE_CAST((obj), BOOKMARK_ITEM_TYPE, BookmarkItem))
+
+G_DEFINE_TYPE(BookmarkItem, bookmark_item, G_TYPE_OBJECT)
+
+static void bookmark_item_finalize (GObject* object)
+{
+	BookmarkItem* item = BOOKMARK_ITEM(object);
+	g_free(item->icon);
+	g_free(item->name);
+	G_OBJECT_CLASS(g_type_class_peek_parent(
+		G_OBJECT_GET_CLASS(object)))->finalize(object);
+}
+
+static void bookmark_item_class_init (BookmarkItemClass* klass)
+{
+	G_OBJECT_CLASS(klass)->finalize = bookmark_item_finalize;
+}
+
+static void bookmark_item_init (BookmarkItem* item)
+{
+	item->id = 0;
+	item->icon = NULL;
+	item->name = NULL;
+}
+
+static BookmarkItem* bookmark_item_new (int id, const gchar* icon, const gchar* name)
+{
+	BookmarkItem* item = static_cast<BookmarkItem*>(
+		g_object_new(BOOKMARK_ITEM_TYPE, NULL));
+	item->id = id;
+	item->icon = g_strdup(icon);
+	item->name = g_strdup(name);
+	return item;
+}
+
+static void bookmark_icon_setup (GtkListItem* list_item, gpointer user_data)
+{ (void)user_data;
+	GtkWidget* image = gtk_image_new();
+	gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
+	gtk_widget_set_margin_start(image, 6);
+	gtk_widget_set_margin_end(image, 6);
+	gtk_list_item_set_child(list_item, image);
+}
+
+static void bookmark_icon_bind (GtkListItem* list_item, gpointer user_data)
+{ (void)user_data;
+	BookmarkItem* item = BOOKMARK_ITEM(gtk_list_item_get_item(list_item));
+	GtkWidget* image = gtk_list_item_get_child(list_item);
+	gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon);
+}
+
+static void bookmark_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
+	BookmarksDlg::BookmarksDlgPriv* priv);
+static void bookmark_name_setup (GtkListItem* list_item, gpointer user_data)
+{
+	BookmarksDlg::BookmarksDlgPriv* priv =
+		static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
+	GtkWidget* editable = gtk_editable_label_new(NULL);
+	gtk_widget_set_hexpand(editable, TRUE);
+	g_signal_connect(editable, "notify::text",
+		G_CALLBACK(bookmark_name_edited), priv);
+	gtk_list_item_set_child(list_item, editable);
+}
+
+static void bookmark_name_bind (GtkListItem* list_item, gpointer user_data)
+{ (void)user_data;
+	BookmarkItem* item = BOOKMARK_ITEM(gtk_list_item_get_item(list_item));
+	GtkWidget* editable = gtk_list_item_get_child(list_item);
+	g_object_set_data(G_OBJECT(editable), "bookmark-id",
+		GINT_TO_POINTER(item->id));
+	gtk_editable_set_text(GTK_EDITABLE(editable), item->name);
+}
+
+static void bookmark_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
+	BookmarksDlg::BookmarksDlgPriv* priv)
+{ (void)pspec;
+	int id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(editable), "bookmark-id"));
+	const Bookmark* b = priv->m_BookmarksPtr->GetBookmark(id);
+	if (NULL != b)
+	{
+		Bookmark modified = *b;
+		modified.SetName(gtk_editable_get_text(GTK_EDITABLE(editable)));
+		priv->m_BookmarksPtr->UpdateBookmark(modified);
+	}
+}
+
+static GtkListItemFactory* bookmark_column_factory (int iCol,
+	BookmarksDlg::BookmarksDlgPriv* priv)
+{
+	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
+	if (COLUMN_ICON == iCol)
+	{
+		g_signal_connect(factory, "setup", G_CALLBACK(bookmark_icon_setup), NULL);
+		g_signal_connect(factory, "bind", G_CALLBACK(bookmark_icon_bind), NULL);
+	}
+	else
+	{
+		g_signal_connect(factory, "setup", G_CALLBACK(bookmark_name_setup), priv);
+		g_signal_connect(factory, "bind", G_CALLBACK(bookmark_name_bind), NULL);
+	}
+	return factory;
+}
+
+
 BookmarksDlg::BookmarksDlg() : m_PrivPtr(new BookmarksDlg::BookmarksDlgPriv(this))
 {
 	
@@ -77,12 +199,32 @@ GtkWidget* BookmarksDlg::GetWidget()
 }
 
 
+static gboolean bookmarks_dlg_delete_idle(gpointer user_data)
+{
+	BookmarksDlg *dlg = static_cast<BookmarksDlg*>(user_data);
+	delete dlg;
+	return G_SOURCE_REMOVE;
+}
+
+static void bookmarks_dlg_destroy_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	g_idle_add(bookmarks_dlg_delete_idle, user_data);
+}
+
 void BookmarksDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gtk_dialog_run(GTK_DIALOG(m_PrivPtr->m_pWidget));
-		gtk_widget_destroy(m_PrivPtr->m_pWidget);
+		/* The dialog is heap-allocated (see the ACTION_QUIVER_BOOKMARKS_EDIT
+		 * handler) so that its signal handlers (which use this object as
+		 * user_data) outlive the show-and-return Run(). */
+		GtkWindow *mainWin = gtk_application_get_active_window(g_pApp);
+		if (mainWin != NULL)
+			gtk_window_set_transient_for(GTK_WINDOW(m_PrivPtr->m_pWidget), mainWin);
+		g_signal_connect(m_PrivPtr->m_pWidget, "destroy", G_CALLBACK(bookmarks_dlg_destroy_cb), this);
+		gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
+		gtk_window_present(GTK_WINDOW(m_PrivPtr->m_pWidget));
 	}
 }
 
@@ -91,8 +233,7 @@ void BookmarksDlg::Run()
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer user_data);
-static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data);
-static void cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data);
+static void selection_changed (GtkSelectionModel* selection, gpointer user_data);
 
 
 BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
@@ -102,11 +243,13 @@ BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
 	m_BookmarksPtr = Bookmarks::GetInstance();
 	m_BookmarksPtr->AddEventHandler(m_BookmarksEventHandler);
 	m_bLoadedDlg = false;
+	m_pListStoreBookmarks = NULL;
+	m_pSelectionBookmarks = NULL;
 
 	m_pGtkBuilder = gtk_builder_new();
 	const gchar* objectids[] = {
 		"BookmarksDialog", NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (gchar**)objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
 	LoadWidgets();
 	UpdateUI();
 	ConnectSignals();
@@ -115,6 +258,16 @@ BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
 BookmarksDlg::BookmarksDlgPriv::~BookmarksDlgPriv()
 {
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
+	if (NULL != m_pSelectionBookmarks)
+	{
+		g_object_unref(m_pSelectionBookmarks);
+		m_pSelectionBookmarks = NULL;
+	}
+	if (NULL != m_pListStoreBookmarks)
+	{
+		g_object_unref(m_pListStoreBookmarks);
+		m_pListStoreBookmarks = NULL;
+	}
 	if (NULL != m_pGtkBuilder)
 	{
 		g_object_unref(m_pGtkBuilder);
@@ -129,66 +282,26 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 	if (NULL != m_pGtkBuilder)
 	{
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "BookmarksDialog"));
-		m_pTreeViewBookmarks     = GTK_TREE_VIEW(     gtk_builder_get_object (m_pGtkBuilder, "treeview_bookmarks") );
+		m_pTreeViewBookmarks     = GTK_WIDGET(     gtk_builder_get_object (m_pGtkBuilder, "treeview_bookmarks") );
 
 		m_pButtonClose           = GTK_BUTTON( gtk_button_new_with_mnemonic("_Close") );
-		gtk_button_set_image(GTK_BUTTON(m_pButtonClose), gtk_image_new_from_icon_name(GTK_STOCK_CLOSE, GTK_ICON_SIZE_BUTTON));
-		/*
-		m_pButtonAdd             = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_ADD) );
-		m_pButtonEdit            = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_EDIT) );
-		m_pButtonRemove          = GTK_BUTTON( gtk_button_new_from_stock(QUIVER_STOCK_REMOVE) );
 
-
-		gtk_widget_show(GTK_WIDGET(m_pButtonAdd));
-		gtk_widget_show(GTK_WIDGET(m_pButtonEdit));
-		gtk_widget_show(GTK_WIDGET(m_pButtonRemove));
-		*/
-		gtk_widget_show(GTK_WIDGET(m_pButtonClose));
-
-		if (m_pWidget)
-		{
-			/*
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonAdd),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonEdit),FALSE,TRUE,5);
-			gtk_box_pack_start(GTK_BOX(GTK_DIALOG(m_pWidget)->action_area),GTK_WIDGET(m_pButtonRemove),FALSE,TRUE,5);
-			*/
-			gtk_dialog_add_action_widget(GTK_DIALOG(m_pWidget),GTK_WIDGET(m_pButtonClose),GTK_RESPONSE_NONE);
-		}
 		if (m_pTreeViewBookmarks)
 		{
-			GtkTreeViewColumn*column;
+			m_pListStoreBookmarks = g_list_store_new(BOOKMARK_ITEM_TYPE);
+			m_pSelectionBookmarks = gtk_multi_selection_new(
+				G_LIST_MODEL(m_pListStoreBookmarks));
+			gtk_column_view_set_model(GTK_COLUMN_VIEW(m_pTreeViewBookmarks),
+				GTK_SELECTION_MODEL(m_pSelectionBookmarks));
 
-			GtkCellRenderer* renderer = gtk_cell_renderer_pixbuf_new ();
-			g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-			g_object_set (G_OBJECT (renderer),  "stock-size", 3,  NULL);
+			GtkColumnViewColumn* column =
+				gtk_column_view_column_new("icon",
+					bookmark_column_factory(COLUMN_ICON, this));
+			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewBookmarks), column);
 
-			column = gtk_tree_view_column_new_with_attributes ("icon",
-			  renderer,
-			  "icon_name", COLUMN_ICON,
-			NULL);
-
-
-			gtk_tree_view_append_column (m_pTreeViewBookmarks, column);
-
-			renderer = gtk_cell_renderer_text_new ();
-			g_object_set (G_OBJECT (renderer),  "mode", GTK_CELL_RENDERER_MODE_INERT,  NULL);
-			g_object_set (G_OBJECT (renderer),  "editable", TRUE,  NULL);
-			g_signal_connect(renderer, "edited", (GCallback) cell_edited_callback, this);
-
-			column = gtk_tree_view_column_new_with_attributes ("bookmark",
-			  renderer,
-			  "text",COLUMN_NAME,
-			NULL);
-
-			gtk_tree_view_append_column (m_pTreeViewBookmarks, column);
-
-#if GTK_MAJOR_VERSION == 2  &&  GTK_MINOR_VERSION >= 12 || GTK_MAJOR_VERSION > 2
-			g_object_set(G_OBJECT(m_pTreeViewBookmarks),"show-expanders",FALSE,NULL);
-#endif
-	
-			gtk_tree_view_set_search_column (m_pTreeViewBookmarks,COLUMN_NAME);
-			GtkTreeSelection* selection = gtk_tree_view_get_selection(m_pTreeViewBookmarks);
-			gtk_tree_selection_set_mode(selection,GTK_SELECTION_MULTIPLE);
+			column = gtk_column_view_column_new("bookmark",
+				bookmark_column_factory(COLUMN_NAME, this));
+			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewBookmarks), column);
 		}
 
 		m_pButtonMoveUp          = GTK_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "button_move_up") );
@@ -212,58 +325,23 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 
 void BookmarksDlg::BookmarksDlgPriv::SelectionChanged()
 {
-	GList* paths;
-	GList* path_itr;
-	GtkTreeModel *model;
-	GtkTreeSelection* selection;
-	int selection_count = 0;
-	
-	GtkTreePath *path;
-	GtkTreeIter iter;
-
-	model = gtk_tree_view_get_model(m_pTreeViewBookmarks);
-	selection = gtk_tree_view_get_selection(m_pTreeViewBookmarks);
-
+	GtkSelectionModel* sel = GTK_SELECTION_MODEL(m_pSelectionBookmarks);
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pListStoreBookmarks));
+	guint selection_count = 0;
 	bool bTop = false, bBottom = false;
-	GtkTreeIter iter2;
-	GtkTreePath *path_top = NULL;
-	GtkTreePath *path_bottom = NULL;
-	int n_children = gtk_tree_model_iter_n_children(model,NULL);
-	if (n_children)
+
+	if (n)
 	{
-		gtk_tree_model_iter_nth_child(model, &iter2, NULL,0);
-		path_top = gtk_tree_model_get_path(model,&iter2);
-		gtk_tree_model_iter_nth_child(model, &iter2, NULL,n_children-1);
-		path_bottom = gtk_tree_model_get_path(model,&iter2);
+		bBottom = gtk_selection_model_is_selected(sel, n - 1);
 	}
-
-	paths = gtk_tree_selection_get_selected_rows(selection,&model);
-	path_itr = paths;
-	while (NULL != path_itr)
+	for (guint i = 0 ; i < n ; i++)
 	{
-		path = (GtkTreePath*)path_itr->data;
-		gtk_tree_model_get_iter(model,&iter,path);
-
-		if (0 == gtk_tree_path_compare(path, path_top))
+		if (gtk_selection_model_is_selected(sel, i))
 		{
-			bTop = true;
+			selection_count++;
+			if (0 == i)
+				bTop = true;
 		}
-
-		if (0 == gtk_tree_path_compare(path, path_bottom))
-		{
-			bBottom = true;
-		}
-		
-		path_itr = g_list_next(path_itr);
-		++selection_count;
-	}
-
-	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
-
-	if (n_children)
-	{
-		gtk_tree_path_free(path_top);
-		gtk_tree_path_free(path_bottom);
 	}
 
 	if (0 == selection_count)
@@ -313,25 +391,19 @@ void BookmarksDlg::BookmarksDlgPriv::UpdateUI()
 	{
 		BookmarksPtr bookmarksPtr = m_BookmarksPtr;
 		
-		//m_pTreeViewBookmarks;
-		GtkTreeStore *store;
-		store = gtk_tree_store_new(COLUMN_COUNT, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING);
+		g_list_store_remove_all(m_pListStoreBookmarks);
 		vector<Bookmark> bookmarks = bookmarksPtr->GetBookmarks();
 		vector<Bookmark>::iterator itr;
 
 		for (itr = bookmarks.begin(); bookmarks.end() != itr; ++itr)
 		{
-			GtkTreeIter iter1 = {};
-			gtk_tree_store_append (store, &iter1, NULL);  
-			gtk_tree_store_set (store, &iter1,
-				COLUMN_ID, itr->GetID(),
-				COLUMN_NAME, itr->GetName().c_str(),
-				COLUMN_ICON, itr->GetIcon().c_str(),
-				-1);
-
+			BookmarkItem* item = bookmark_item_new(
+				itr->GetID(),
+				itr->GetIcon().c_str(),
+				itr->GetName().c_str());
+			g_list_store_append(m_pListStoreBookmarks, G_OBJECT(item));
+			g_object_unref(item);
 		}
-		gtk_tree_view_set_model(m_pTreeViewBookmarks, GTK_TREE_MODEL (store));
-		g_object_unref(store);
 
 		SelectionChanged();
 
@@ -340,21 +412,10 @@ void BookmarksDlg::BookmarksDlgPriv::UpdateUI()
 }
 
 
-static void on_dialog_response (GtkDialog *dlg, gint response, gpointer data)
-{ (void)data; 
-	if (GTK_RESPONSE_NONE == response)
-	{
-		g_signal_stop_emission_by_name (dlg, "response");
-	}
-}
-
 void BookmarksDlg::BookmarksDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
-		g_signal_connect(m_pWidget,
-			"response",(GCallback)on_dialog_response,this);
-
 		g_signal_connect(m_pButtonMoveUp,
 			"clicked",(GCallback)on_clicked,this);
 		g_signal_connect(m_pButtonMoveDown,
@@ -368,9 +429,8 @@ void BookmarksDlg::BookmarksDlgPriv::ConnectSignals()
 		g_signal_connect(m_pButtonClose,
 			"clicked",(GCallback)on_clicked,this);
 
-		GtkTreeSelection* selection = gtk_tree_view_get_selection(m_pTreeViewBookmarks);
-		g_signal_connect(G_OBJECT(selection),
-			"changed",G_CALLBACK(selection_changed),this);
+		g_signal_connect(G_OBJECT(m_pSelectionBookmarks),
+			"selection-changed",G_CALLBACK(selection_changed),this);
 	}
 }
 
@@ -382,31 +442,19 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	
 	list<int> values;
 
-	// move the bookmark one up in the row
-	GList* paths;
-	GList* path_itr;
-	GtkTreePath *path;
-	GtkTreeModel *model;
-	GtkTreeSelection* selection;
-	GtkTreeIter iter;
-	int value;
-	
-	model = gtk_tree_view_get_model(priv->m_pTreeViewBookmarks);
-	selection = gtk_tree_view_get_selection(priv->m_pTreeViewBookmarks);
+	GtkSelectionModel* sel = GTK_SELECTION_MODEL(priv->m_pSelectionBookmarks);
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(priv->m_pListStoreBookmarks));
 
-
-	paths = gtk_tree_selection_get_selected_rows(selection,&model);
-	path_itr = paths;
-	while (NULL != path_itr)
+	for (guint i = 0 ; i < n ; i++)
 	{
-		path = (GtkTreePath*)path_itr->data;
-		gtk_tree_model_get_iter(model,&iter,path);
-
-		gtk_tree_model_get (model,&iter,COLUMN_ID,&value,-1);
-		values.push_back(value);
-		path_itr = g_list_next(path_itr);
-	}	
-	g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
+		if (gtk_selection_model_is_selected(sel, i))
+		{
+			BookmarkItem* item = BOOKMARK_ITEM(
+				g_list_model_get_item(G_LIST_MODEL(priv->m_pListStoreBookmarks), i));
+			values.push_back(item->id);
+			g_object_unref(item);
+		}
+	}
 	// have to remove after iterating the model because
 	// removing modifiees the model
 	if (button == priv->m_pButtonMoveUp)
@@ -416,16 +464,15 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 			priv->m_BookmarksPtr->MoveUp(*itr);
 			// make sure the item is selected again
 			// because the model has changed
-			model = gtk_tree_view_get_model(priv->m_pTreeViewBookmarks);
-			selection = gtk_tree_view_get_selection(priv->m_pTreeViewBookmarks);
-			int n_children = gtk_tree_model_iter_n_children(model,NULL);
-			for (int i = 0; i < n_children; ++i)
+			for (guint i = 0 ; i < n ; i++)
 			{
-				gtk_tree_model_iter_nth_child(model, &iter, NULL,i);
-				gtk_tree_model_get (model,&iter,COLUMN_ID,&value,-1);
-				if (value == *itr)
+				BookmarkItem* item = BOOKMARK_ITEM(
+					g_list_model_get_item(G_LIST_MODEL(priv->m_pListStoreBookmarks), i));
+				int id = item->id;
+				g_object_unref(item);
+				if (id == *itr)
 				{
-					gtk_tree_selection_select_iter(selection,&iter);
+					gtk_selection_model_select_item(sel, i, FALSE);
 				}
 			}
 		}
@@ -437,16 +484,15 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 			priv->m_BookmarksPtr->MoveDown(*itr);
 			// make sure the item is selected again
 			// because the model has changed
-			model = gtk_tree_view_get_model(priv->m_pTreeViewBookmarks);
-			selection = gtk_tree_view_get_selection(priv->m_pTreeViewBookmarks);
-			int n_children = gtk_tree_model_iter_n_children(model,NULL);
-			for (int i = 0; i < n_children; ++i)
+			for (guint i = 0 ; i < n ; i++)
 			{
-				gtk_tree_model_iter_nth_child(model, &iter, NULL,i);
-				gtk_tree_model_get (model,&iter,COLUMN_ID,&value,-1);
-				if (value == *itr)
+				BookmarkItem* item = BOOKMARK_ITEM(
+					g_list_model_get_item(G_LIST_MODEL(priv->m_pListStoreBookmarks), i));
+				int id = item->id;
+				g_object_unref(item);
+				if (id == *itr)
 				{
-					gtk_tree_selection_select_iter(selection,&iter);
+					gtk_selection_model_select_item(sel, i, FALSE);
 				}
 			}
 		}
@@ -495,44 +541,16 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonClose)
 	{
-		gtk_dialog_response(GTK_DIALOG(priv->m_pWidget), GTK_RESPONSE_CLOSE);
+		gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
 	}
 }
 
-static void selection_changed (GtkTreeSelection *treeselection, gpointer user_data)
-{ (void)treeselection; 
+static void selection_changed (GtkSelectionModel* selection, gpointer user_data)
+{ (void)selection; 
 	BookmarksDlg::BookmarksDlgPriv *priv = static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
 	priv->SelectionChanged();
 }
 
-static void
-cell_edited_callback (GtkCellRendererText *cell, gchar *path_string, gchar *new_text, gpointer user_data)
-{ (void)cell; 
-	BookmarksDlg::BookmarksDlgPriv *priv = static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
-
-	GtkTreePath *path;
-	GtkTreeIter child = {};
-	GtkTreeIter parent = {};
-
-	int value;
-
-	GtkTreeModel *pTreeModel = gtk_tree_view_get_model(priv->m_pTreeViewBookmarks);
-
-	path = gtk_tree_path_new_from_string(path_string);
-	gtk_tree_model_get_iter(pTreeModel,&child,path);
-
-	gtk_tree_model_iter_parent(pTreeModel,&parent, &child);
-	
-	gtk_tree_model_get (pTreeModel,&child,COLUMN_ID,&value,-1);
-
-	const Bookmark* b = priv->m_BookmarksPtr->GetBookmark(value);
-	if (NULL != b)
-	{
-		Bookmark modified = *b;
-		modified.SetName(new_text);
-		priv->m_BookmarksPtr->UpdateBookmark(modified);
-	}
-}
 
 // nested class
 
@@ -543,6 +561,5 @@ void BookmarksDlg::BookmarksDlgPriv::BookmarksEventHandler::HandleBookmarkChange
 		parent->UpdateUI();
 	}
 }
-
 
 

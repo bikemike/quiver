@@ -31,6 +31,6 @@ target_include_directories(quiver_lib PUBLIC
 )
 
 target_link_libraries(quiver_lib PUBLIC
-    PkgConfig::GTK3
+    PkgConfig::GTK4
     PkgConfig::GIO
 )

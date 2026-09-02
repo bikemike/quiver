@@ -37,9 +37,9 @@ public:
 	static gboolean idle_quiver_init (gpointer data);
 	gboolean IdleQuiverInit(gpointer data);
 
-	static gboolean event_delete( GtkWidget *widget, GdkEvent  *event, gpointer   data );
+	static gboolean event_close_request( GtkWindow *window, gpointer data );
 
-	gboolean EventDelete( GtkWidget *widget,GdkEvent  *event,gpointer data );
+	gboolean EventCloseRequest( GtkWindow *window, gpointer data );
 	
 	bool LoadSettings();
 	void SaveSettings();

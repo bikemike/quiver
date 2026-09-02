@@ -50,34 +50,20 @@ enum {
 
 /* start private function prototypes */
 
-static void      quiver_navigation_control_realize        (GtkWidget *widget);
+static void      quiver_navigation_control_snapshot        (GtkWidget *widget, GtkSnapshot *snapshot);
 
 static void      quiver_navigation_control_size_allocate  (GtkWidget     *widget,
-                                             GtkAllocation *allocation);
+                                             int width,
+                                             int height,
+                                             int baseline);
 
-static void      quiver_navigation_control_size_request (GtkWidget *widget, GtkRequisition *requisition);
-static void      quiver_navigation_control_get_preferred_width (GtkWidget *widget, gint* min_width, gint* natural_width);
-static void      quiver_navigation_control_get_preferred_height (GtkWidget *widget, gint* min_height, gint* natural_height);
-
-
-static void      quiver_navigation_control_send_configure (QuiverNavigationControl *navcontrol);
-
-static gboolean  quiver_navigation_control_configure_event (GtkWidget *widget,
-                    GdkEventConfigure *event);
-
-/*
-static gboolean  quiver_navigation_control_expose_event (GtkWidget *navcontrol,
-                    GdkEventExpose *event);
-*/
-static gboolean  quiver_navigation_control_draw(GtkWidget* navcontrol, cairo_t* cr);
-
-static gboolean  quiver_navigation_control_button_press_event  (GtkWidget *widget,
-                    GdkEventButton *event);
-
-static gboolean  quiver_navigation_control_button_release_event (GtkWidget *widget,
-                    GdkEventButton *event);
-static gboolean  quiver_navigation_control_motion_notify_event (GtkWidget *widget,
-                    GdkEventMotion *event);
+static void      quiver_navigation_control_measure (GtkWidget *widget,
+					GtkOrientation orientation,
+					int for_size,
+					int *minimum,
+					int *natural,
+					int *minimum_baseline,
+					int *natural_baseline);
 
 static void     quiver_navigation_control_finalize(GObject *object);
 
@@ -102,6 +88,36 @@ static void      quiver_navigation_control_adjustment_changed (GtkAdjustment *ad
                     gpointer userdata);
 /* end utility function prototypes*/
 
+/* start controller callback prototypes */
+static void quiver_navigation_control_gesture_pressed (GtkGestureClick *gesture,
+					       int n_press,
+					       double x,
+					       double y,
+					       QuiverNavigationControl *navcontrol);
+static void quiver_navigation_control_gesture_released (GtkGestureClick *gesture,
+					       int n_press,
+					       double x,
+					       double y,
+					       QuiverNavigationControl *navcontrol);
+static void quiver_navigation_control_gesture_drag_begin (GtkGestureDrag *gesture,
+						  double x,
+						  double y,
+						  QuiverNavigationControl *navcontrol);
+static void quiver_navigation_control_gesture_drag_update (GtkGestureDrag *gesture,
+						   double x,
+						   double y,
+						   QuiverNavigationControl *navcontrol);
+static void quiver_navigation_control_gesture_drag_end (GtkGestureDrag *gesture,
+						double x,
+						double y,
+						QuiverNavigationControl *navcontrol);
+static void quiver_navigation_control_motion_controller_cb (GtkEventControllerMotion *controller,
+						   double x,
+						   double y,
+						   QuiverNavigationControl *navcontrol);
+static void quiver_navigation_control_setup_controllers (QuiverNavigationControl *navcontrol);
+/* end controller callback prototypes */
+
 /* end private function prototypes */
 
 /* start private globals */
@@ -121,14 +137,10 @@ quiver_navigation_control_class_init (QuiverNavigationControlClass *klass)
 	widget_class = GTK_WIDGET_CLASS (klass);
 	obj_class = G_OBJECT_CLASS (klass);
 
-	widget_class->realize              = quiver_navigation_control_realize;
-	widget_class->size_allocate        = quiver_navigation_control_size_allocate;
-	widget_class->get_preferred_width  = quiver_navigation_control_get_preferred_width;
-	widget_class->get_preferred_height = quiver_navigation_control_get_preferred_height;
-	widget_class->draw                 = quiver_navigation_control_draw;
-	widget_class->configure_event      = quiver_navigation_control_configure_event;
-	widget_class->button_press_event   = quiver_navigation_control_button_press_event;
-	
+	widget_class->snapshot      = quiver_navigation_control_snapshot;
+	widget_class->measure       = quiver_navigation_control_measure;
+	widget_class->size_allocate = quiver_navigation_control_size_allocate;
+
 	obj_class->set_property            = quiver_navigation_control_set_property;
 	obj_class->get_property            = quiver_navigation_control_get_property;
 
@@ -137,9 +149,6 @@ quiver_navigation_control_class_init (QuiverNavigationControlClass *klass)
 	g_object_class_override_property (obj_class, PROP_VADJUSTMENT, "vadjustment");
 	g_object_class_override_property (obj_class, PROP_HSCROLL_POLICY, "hscroll-policy");
 	g_object_class_override_property (obj_class, PROP_VSCROLL_POLICY, "vscroll-policy");
-
-	widget_class->button_release_event = quiver_navigation_control_button_release_event;
-	widget_class->motion_notify_event  = quiver_navigation_control_motion_notify_event;
 
 	obj_class->finalize                = quiver_navigation_control_finalize;
 
@@ -161,7 +170,8 @@ quiver_navigation_control_init(QuiverNavigationControl *navcontrol)
 	navcontrol->priv->view_area_rect.x = -1;
 
 	gtk_widget_set_can_focus(GTK_WIDGET(navcontrol),TRUE);
-	gtk_widget_set_has_window(GTK_WIDGET(navcontrol), TRUE);
+
+	quiver_navigation_control_setup_controllers(navcontrol);
 }
 
 
@@ -207,307 +217,75 @@ quiver_navigation_control_finalize(GObject *object)
 }
 
 static void
-quiver_navigation_control_realize (GtkWidget *widget)
+quiver_navigation_control_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 {
-	QuiverNavigationControl *navcontrol;
-	GdkWindowAttr attributes;
-	gint attributes_mask;
-	GtkAllocation allocation = {0};
+	QuiverNavigationControl *navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
 
-	g_return_if_fail (QUIVER_IS_NAVIGATION_CONTROL (widget));
+	int alloc_w = gtk_widget_get_width(widget);
+	int alloc_h = gtk_widget_get_height(widget);
 
-	navcontrol = QUIVER_NAVIGATION_CONTROL (widget);
-	gtk_widget_set_realized (widget, TRUE);
+	{
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+		GtkStyleContext *context = gtk_widget_get_style_context(widget);
+		graphene_rect_t gbounds;
+		gbounds.origin.x = 0;
+		gbounds.origin.y = 0;
+		gbounds.size.width = alloc_w;
+		gbounds.size.height = alloc_h;
+		cairo_t *cr = gtk_snapshot_append_cairo(snapshot, &gbounds);
+		gtk_render_background(context, cr, 0, 0, alloc_w, alloc_h);
+		cairo_destroy(cr);
+G_GNUC_END_IGNORE_DEPRECATIONS
+	}
 
-	attributes.window_type = GDK_WINDOW_CHILD;
-	gtk_widget_get_allocation(widget, &allocation);
-	attributes.x = allocation.x;
-	attributes.y = allocation.y;
-	attributes.width = gtk_widget_get_allocated_width(widget);
-	attributes.height = gtk_widget_get_allocated_height(widget);
-	attributes.wclass = GDK_INPUT_OUTPUT;
-	attributes.visual = gtk_widget_get_visual (widget);
-	//FIXME: color map
-	//attributes.colormap = gtk_widget_get_colormap (widget);
-	//attributes.event_mask = GDK_VISIBILITY_NOTIFY_MASK;
-	attributes.event_mask = gtk_widget_get_events (widget) | 
-					   GDK_EXPOSURE_MASK |
-					   GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK |
-					   GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
-					   GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK |
-					   GDK_LEAVE_NOTIFY_MASK | GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK;
-
-	attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;//FIXME: | GDK_WA_COLORMAP;
-
-	gtk_widget_set_window(widget, gdk_window_new (gtk_widget_get_parent_window (widget), &attributes, attributes_mask));
-	gdk_window_set_user_data (gtk_widget_get_window(widget), navcontrol);
-
-	quiver_navigation_control_send_configure (QUIVER_NAVIGATION_CONTROL (widget));
+	(void)navcontrol;
 }
-
-/*
-static void
-quiver_navigation_control_unrealize(GtkWidget *widget)
-{
-
-}
-*/
 
 static void
 quiver_navigation_control_size_allocate (GtkWidget     *widget,
-				GtkAllocation *allocation)
+				int width,
+				int height,
+				int baseline)
 {
+	(void)baseline;
 	g_return_if_fail (QUIVER_IS_NAVIGATION_CONTROL (widget));
-	g_return_if_fail (allocation != NULL);
 
-	gtk_widget_set_allocation(widget, allocation);
+	QuiverNavigationControl *navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
 
-	if (gtk_widget_get_realized (widget))
-	{
-		gdk_window_move_resize (gtk_widget_get_window(widget),
-			allocation->x, allocation->y,
-			allocation->width, allocation->height);
-	
-		quiver_navigation_control_send_configure (QUIVER_NAVIGATION_CONTROL (widget));
+	(void)width;
+	(void)height;
 
-	}
-
-
-}
-
-static void
-quiver_navigation_control_size_request (GtkWidget *widget, GtkRequisition *requisition)
-{ (void)requisition; 
-	QuiverNavigationControl *navcontrol;
- (void)navcontrol;
-	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
-}
-
-static void 
-quiver_navigation_control_get_preferred_width (GtkWidget *widget, gint* min_width, gint* natural_width)
-{
-	GtkRequisition requisition = {0};
-	quiver_navigation_control_size_request(widget, &requisition);
-	*min_width = *natural_width = requisition.width;
-}
-
-static void
-quiver_navigation_control_get_preferred_height (GtkWidget *widget, gint* min_height, gint* natural_height)
-{
-	GtkRequisition requisition = {0};
-	quiver_navigation_control_size_request(widget, &requisition);
-	*min_height = *natural_height = requisition.height;
-}
-
-static void
-quiver_navigation_control_send_configure (QuiverNavigationControl *navcontrol)
-{
-	GtkWidget *widget;
-	GdkEvent *event = gdk_event_new (GDK_CONFIGURE);
-	GtkAllocation allocation = {0};
-
-	widget = GTK_WIDGET (navcontrol);
-
-	event->configure.window = g_object_ref (gtk_widget_get_window(widget));
-	event->configure.send_event = TRUE;
-	gtk_widget_get_allocation(widget, &allocation);
-	event->configure.x = allocation.x;
-	event->configure.y = allocation.y;
-	event->configure.width = gtk_widget_get_allocated_width(widget);
-	event->configure.height = gtk_widget_get_allocated_height(widget);
-
-	gtk_widget_event (widget, event);
-	gdk_event_free (event);
-}
-
-static gboolean
-quiver_navigation_control_configure_event( GtkWidget *widget, GdkEventConfigure *event )
-{ (void)event; 
-	QuiverNavigationControl *navcontrol;
-	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
-	
 	if (NULL != navcontrol->priv->hadjustment && NULL != navcontrol->priv->vadjustment)
 	{
 		quiver_navigation_control_adjustment_changed(navcontrol->priv->hadjustment, (gpointer)navcontrol);
 	}
 
-	return TRUE;
+	gtk_widget_queue_draw(widget);
 }
 
-// FIXME: 
-/*
-static gboolean
-quiver_navigation_control_expose_event (GtkWidget *widget, GdkEventExpose *event)
+static void
+quiver_navigation_control_measure (GtkWidget *widget,
+				GtkOrientation orientation,
+				int for_size,
+				int *minimum,
+				int *natural,
+				int *minimum_baseline,
+				int *natural_baseline)
 {
-	QuiverNavigationControl *navcontrol;
-	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
+	(void)for_size;
+	(void)widget;
+	(void)minimum_baseline;
+	(void)natural_baseline;
 
-	int i;
-	int n_rectangles =0;
-	GdkRectangle *rects = NULL;
-
-	gdk_region_get_rectangles(event->region, &rects, &n_rectangles);
-
-	for (i = 0; i < n_rectangles; i++)
+	if (orientation == GTK_ORIENTATION_HORIZONTAL)
 	{
-		gdk_draw_rectangle(
-			gtk_widget_get_window(widget),
-			widget->style->bg_gc[GTK_WIDGET_STATE (navcontrol)],
-			TRUE,
-			rects[i].x,
-			rects[i].y,
-			rects[i].width,
-			rects[i].height
-			);
-			
-		if (NULL != navcontrol->priv->pixbuf)
-		{
-			gint w,h;
-			w  = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-			h  = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
-
-			GdkRectangle pixbuf_rect = {0};
-			pixbuf_rect.x = 0;
-			pixbuf_rect.y = 0;
-			pixbuf_rect.width = w;
-			pixbuf_rect.height = h;
-			
-			GdkRectangle intersect_rect = {0};
-			gdk_rectangle_intersect(&rects[i],&pixbuf_rect, &intersect_rect);
-			
-			gdk_draw_pixbuf	(gtk_widget_get_window(widget),
-				widget->style->fg_gc[GTK_WIDGET_STATE (navcontrol)],
-				navcontrol->priv->pixbuf,
-				intersect_rect.x,
-				intersect_rect.y,
-				intersect_rect.x,
-				intersect_rect.y,
-				intersect_rect.width,
-				intersect_rect.height,
-				GDK_RGB_DITHER_NONE,0,0);
-			
-		}
+		*minimum = *natural = 0;
 	}
-	g_free(rects);
-
-	if (-1 != navcontrol->priv->view_area_rect.x)
-	{
-#define LINE_WIDTH 2
-		GdkGC *area_line_gc = gdk_gc_new (gtk_widget_get_window(widget));
-	
-		gdk_gc_set_function (area_line_gc, GDK_INVERT);
-		gdk_gc_set_line_attributes (area_line_gc,LINE_WIDTH,GDK_LINE_SOLID, GDK_CAP_BUTT,GDK_JOIN_MITER);
-
-		gdk_draw_rectangle (gtk_widget_get_window(widget), 
-		   area_line_gc, FALSE, 
-		    navcontrol->priv->view_area_rect.x + LINE_WIDTH/2, 
-		    navcontrol->priv->view_area_rect.y + LINE_WIDTH/2, 
-		    navcontrol->priv->view_area_rect.width - LINE_WIDTH,
-		    navcontrol->priv->view_area_rect.height - LINE_WIDTH
-		    );
-
-		g_object_unref(area_line_gc);
-		
-	}
-	
-	return TRUE;
-}
-*/
-
-
-static gboolean
-quiver_navigation_control_draw(GtkWidget* navcontrol, cairo_t* cr)
-{ (void)cr;  (void)navcontrol; 
-	return FALSE;
-}
-
-void quiver_navigation_control_update_adjustments(QuiverNavigationControl *navcontrol, gint x, gint y)
-{
-	int w,h;
-	double xval, yval;
-
-	GtkAdjustment *hadj = navcontrol->priv->hadjustment;
-	GtkAdjustment *vadj = navcontrol->priv->vadjustment;
-	
-	
-	if (NULL != navcontrol->priv->pixbuf)
-	{	
-	
-		w  = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-		h  = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
-		
-		
-		xval = x/(double)w*gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj)/2;
-		yval = y/(double)h*gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj)/2;
-	
-		if (gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj) < xval)
-			xval = gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj);
-		else if (x < 0)
-			xval = 0;
-	
-		if (gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj) < yval)
-			yval = gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj);
-		else if (y < 0)
-			yval = 0;
-			
-		gtk_adjustment_set_value(hadj,xval);
-		gtk_adjustment_set_value(vadj,yval);
-	}
-}
-
-static gboolean
-quiver_navigation_control_button_press_event  (GtkWidget *widget, GdkEventButton *event)
-{
-	QuiverNavigationControl *navcontrol;
-	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
-
-	int x,y;
-
-	x = (int)event->x;
-	y = (int)event->y;
-	quiver_navigation_control_update_adjustments(navcontrol, x, y);
-	return TRUE;
-}
-
-
-static gboolean
-quiver_navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event)
-{ (void)event;  (void)widget; 
-	return TRUE;
-}
-                   
-static gboolean
-quiver_navigation_control_motion_notify_event (GtkWidget *widget, GdkEventMotion *event)
-{
-	QuiverNavigationControl *navcontrol;
-	navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
-	
-	if ( !(GDK_BUTTON1_MASK & event->state) )
-	{
-		return FALSE;
-	}
-	
-	int x,y;
-	GdkModifierType state;
-	
-	if (event->is_hint)
-	{
-		GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_window_get_display(gtk_widget_get_window(widget))));
-		gdk_window_get_device_position(gtk_widget_get_window(widget), device, &x, &y, &state);
-	}		
 	else
 	{
-		x = (int)event->x;
-		y = (int)event->y;
-		state = (GdkModifierType)event->state;
+		*minimum = *natural = 0;
 	}
-	
-	quiver_navigation_control_update_adjustments(navcontrol, x, y);
-
-	return TRUE;
 }
-
-
 
 static void
 quiver_navigation_control_set_property (GObject *object,
@@ -577,6 +355,39 @@ quiver_navigation_control_get_property (GObject    *object,
 
 
 
+void quiver_navigation_control_update_adjustments(QuiverNavigationControl *navcontrol, gint x, gint y)
+{
+	int w,h;
+	double xval, yval;
+
+	GtkAdjustment *hadj = navcontrol->priv->hadjustment;
+	GtkAdjustment *vadj = navcontrol->priv->vadjustment;
+	
+	
+	if (NULL != navcontrol->priv->pixbuf)
+	{	
+	
+		w  = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
+		h  = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
+		
+		
+		xval = x/(double)w*gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj)/2;
+		yval = y/(double)h*gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj)/2;
+	
+		if (gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj) < xval)
+			xval = gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj);
+		else if (x < 0)
+			xval = 0;
+	
+		if (gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj) < yval)
+			yval = gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj);
+		else if (y < 0)
+			yval = 0;
+			
+		gtk_adjustment_set_value(hadj,xval);
+		gtk_adjustment_set_value(vadj,yval);
+	}
+}
 
 GtkWidget *quiver_navigation_control_new ()
 {
@@ -611,15 +422,7 @@ void quiver_navigation_control_set_pixbuf (QuiverNavigationControl *navcontrol, 
 	
 		gtk_widget_set_size_request(GTK_WIDGET(navcontrol),width,height);
 
-		if (gtk_widget_get_realized(widget))
-		{
-			cairo_rectangle_int_t pixbuf_rect = {0};
-			pixbuf_rect.x = 0;
-			pixbuf_rect.y = 0;
-			pixbuf_rect.width = width;
-			pixbuf_rect.height = height;
-			gdk_window_invalidate_rect(gtk_widget_get_window(widget),&pixbuf_rect,FALSE);
-		}
+		gtk_widget_queue_draw(widget);
 	}
 }
 
@@ -720,24 +523,121 @@ quiver_navigation_control_adjustment_changed (GtkAdjustment *adjustment, gpointe
 		navcontrol->priv->view_area_rect.height = b_h + 1;
 	}
 	
-	if (gtk_widget_get_realized(widget))
-	{
-
-		/* FIXME:
-		GdkRegion *invalid_region;
-		invalid_region = gdk_region_new();
-		
-		gdk_region_union_with_rect(invalid_region, &navcontrol->priv->view_area_rect);
-		gdk_region_union_with_rect(invalid_region, &view_area_rect_old);
-		
-		
-		gdk_window_invalidate_region(gtk_widget_get_window(widget),invalid_region,FALSE);
-	
-		gdk_region_destroy(invalid_region);
-		*/
-		gdk_window_invalidate_rect(gtk_widget_get_window(widget),NULL,FALSE);
-	}
+	gtk_widget_queue_draw(widget);
 
 }
 
+/* start controller callbacks */
 
+static void
+quiver_navigation_control_gesture_pressed (GtkGestureClick *gesture,
+				   int n_press,
+				   double x,
+				   double y,
+				   QuiverNavigationControl *navcontrol)
+{
+	(void)gesture;
+	(void)n_press;
+	int ix = (int)x;
+	int iy = (int)y;
+	quiver_navigation_control_update_adjustments(navcontrol, ix, iy);
+}
+
+static void
+quiver_navigation_control_gesture_released (GtkGestureClick *gesture,
+				   int n_press,
+				   double x,
+				   double y,
+				   QuiverNavigationControl *navcontrol)
+{
+	(void)gesture;
+	(void)n_press;
+	(void)x;
+	(void)y;
+	(void)navcontrol;
+}
+
+static void
+quiver_navigation_control_gesture_drag_begin (GtkGestureDrag *gesture,
+				      double x,
+				      double y,
+				      QuiverNavigationControl *navcontrol)
+{
+	(void)gesture;
+	(void)x;
+	(void)y;
+	(void)navcontrol;
+}
+
+static void
+quiver_navigation_control_gesture_drag_update (GtkGestureDrag *gesture,
+				       double x,
+				       double y,
+				       QuiverNavigationControl *navcontrol)
+{
+	(void)gesture;
+
+	double start_x, start_y;
+	gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);
+	int abs_x = (int)start_x + (int)x;
+	int abs_y = (int)start_y + (int)y;
+
+	quiver_navigation_control_update_adjustments(navcontrol, abs_x, abs_y);
+}
+
+static void
+quiver_navigation_control_gesture_drag_end (GtkGestureDrag *gesture,
+				    double x,
+				    double y,
+				    QuiverNavigationControl *navcontrol)
+{
+	(void)gesture;
+	(void)x;
+	(void)y;
+	(void)navcontrol;
+}
+
+static void
+quiver_navigation_control_motion_controller_cb (GtkEventControllerMotion *controller,
+				       double x,
+				       double y,
+				       QuiverNavigationControl *navcontrol)
+{
+	(void)controller;
+	(void)x;
+	(void)y;
+	(void)navcontrol;
+}
+
+static void
+quiver_navigation_control_setup_controllers (QuiverNavigationControl *navcontrol)
+{
+	GtkWidget *widget = GTK_WIDGET(navcontrol);
+
+	GtkGesture *click = gtk_gesture_click_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+	g_signal_connect(click, "pressed",
+		G_CALLBACK(quiver_navigation_control_gesture_pressed), navcontrol);
+	g_signal_connect(click, "released",
+		G_CALLBACK(quiver_navigation_control_gesture_released), navcontrol);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(click));
+
+	GtkGesture *drag = gtk_gesture_drag_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), GDK_BUTTON_PRIMARY);
+	g_signal_connect(drag, "drag-begin",
+		G_CALLBACK(quiver_navigation_control_gesture_drag_begin), navcontrol);
+	g_signal_connect(drag, "drag-update",
+		G_CALLBACK(quiver_navigation_control_gesture_drag_update), navcontrol);
+	g_signal_connect(drag, "drag-end",
+		G_CALLBACK(quiver_navigation_control_gesture_drag_end), navcontrol);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(drag));
+
+	GtkEventController *motion = gtk_event_controller_motion_new();
+	g_signal_connect(motion, "motion",
+		G_CALLBACK(quiver_navigation_control_motion_controller_cb), navcontrol);
+	gtk_widget_add_controller(widget, motion);
+}
+
+/* end controller callbacks */
+
+/* end private functions */

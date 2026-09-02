@@ -1,7 +1,6 @@
 set(QUIVER_SOURCES
     MD5.cpp
     PropertyView.cpp
-    VideoDateEditTask.cpp
     PreferencesEventSource.cpp
     Preferences.cpp
     PreferencesDlg.cpp
@@ -75,7 +74,7 @@ target_include_directories(quiver PRIVATE
 
 target_link_libraries(quiver PRIVATE
     quiver_lib
-    PkgConfig::GTK3
+    PkgConfig::GTK4
     PkgConfig::GIO
     PkgConfig::EXIV2
     PkgConfig::LIBSQLITE

@@ -2,14 +2,17 @@
 #include "QuiverStockIcons.h"
 #include <gtk/gtk.h>
 
-#include <gdk-pixbuf/gdk-pixdata.h>
 
-
-
-
-
+#define ICON_DIR  QUIVER_DATADIR "/icons"
 
 void QuiverStockIcons::Load()
 {
-}
+	GdkDisplay* display = gdk_display_get_default();
+	if (NULL == display)
+	{
+		return;
+	}
 
+	GtkIconTheme* icon_theme = gtk_icon_theme_get_for_display(display);
+	gtk_icon_theme_add_search_path(icon_theme, ICON_DIR);
+}

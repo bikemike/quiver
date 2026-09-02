@@ -124,7 +124,7 @@ namespace QuiverUtils
 	};
 
 	static GSimpleActionGroup *g_pActionGroup = NULL;
-	static GtkAccelGroup *g_pAccelGroup = NULL;
+
 	static GPtrArray *g_accelEntries = NULL;
 	static GPtrArray *g_radioGroups = NULL;
 	static bool g_bAcceleratorsSuppressed = false;
@@ -171,7 +171,7 @@ static void register_accelerator(const char *action_name, const gchar *accel) {
 	}
 
 	static gboolean accel_has_modifier(guint keyval, GdkModifierType mods) { (void)keyval; 
-		guint mask = GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_MOD2_MASK | GDK_MOD3_MASK | GDK_MOD4_MASK | GDK_MOD5_MASK;
+		guint mask = GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_META_MASK | GDK_SUPER_MASK;
 		return 0 != (mask & mods);
 	}
 
@@ -237,9 +237,6 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 			for (guint i = 0; i < g_accelEntries->len; i++) {
 				AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
 				if (0 == strcmp(entry->action_name, action_name)) {
-					if (entry->connected && NULL != g_pAccelGroup) {
-						gtk_accel_group_disconnect_key(g_pAccelGroup, entry->keyval, entry->mods);
-					}
 					g_ptr_array_remove_index(g_accelEntries, i);
 					break;
 				}
@@ -425,17 +422,13 @@ void ConnectUnmodifiedAccelerators() {
 	void BindBuilderAccelerators(GtkBuilder *builder) {
 		GSList *objects = gtk_builder_get_objects(builder);
 		for (GSList *l = objects; l != NULL; l = l->next) {
-			if (GTK_IS_MENU_ITEM(l->data) && GTK_IS_ACTIONABLE(l->data)) {
+			if (GTK_IS_ACTIONABLE(l->data)) {
 				const gchar *action_name = gtk_actionable_get_action_name(GTK_ACTIONABLE(l->data));
 				if (action_name && g_str_has_prefix(action_name, "quiver.")) {
 					const gchar *name = action_name + 7;
 					for (guint i = 0; i < g_accelEntries->len; i++) {
 						AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
 						if (g_strcmp0(entry->action_name, name) == 0) {
-							GtkWidget *child = gtk_bin_get_child(GTK_BIN(l->data));
-							if (GTK_IS_ACCEL_LABEL(child)) {
-								gtk_accel_label_set_accel(GTK_ACCEL_LABEL(child), entry->keyval, entry->mods);
-							}
 							break;
 						}
 					}

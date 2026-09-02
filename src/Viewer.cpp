@@ -1,9 +1,7 @@
 #include <config.h>
 
 #include <gdk/gdk.h>
-#ifdef GDK_WINDOWING_X11
-#include <gdk/gdkx.h>
-#endif
+// GDK4: gdkx.h removed; X11-specific code guarded out.
 
 #include <libquiver/quiver-icon-view.h>
 #include <libquiver/quiver-image-view.h>
@@ -42,6 +40,7 @@
 #include <gdk/gdkkeysyms.h>
 #include <exiv2/exiv2.hpp>
 #include <memory>
+#include <math.h>
 
 using namespace std;
 
@@ -82,59 +81,73 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 static void viewer_radio_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data);
 
-static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data );
+static gboolean viewer_scrollwheel_event(GtkEventControllerScroll *controller, gdouble dx, gdouble dy, gpointer data);
+static void viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer data);
 static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data);
 static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data);
 static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gpointer data);
 static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpointer data);
-static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventKey *event, gpointer userdata);
+static gboolean viewer_imageview_key_press_event(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata);
 
 static void viewer_iconview_cell_activated(QuiverIconView *iconview,gulong cell,gpointer data);
 static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,gpointer data);
 
-static void viewer_volume_value_changed (GtkScaleButton *button, gdouble value, gpointer user_data);
+static void viewer_volume_value_changed (GtkRange *range, gdouble value, gpointer user_data);
+static void viewer_volume_toggle_popover_cb(gpointer user_data, GtkWidget *widget);
 
 static gboolean viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble value, gpointer user_data);
 
-static gboolean viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata);
-gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data );
+static void viewer_navigation_button_press_event(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer userdata);
+void navigation_control_button_release_event (GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer userdata);
 // FIXME: remove
 //static GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get);
 
 
 
 static void set_widget_bg_color(GtkWidget *widget, GdkRGBA *color) {
-    GtkStyleContext *context = gtk_widget_get_style_context(widget);
-    GtkCssProvider *provider = (GtkCssProvider *)g_object_get_data(G_OBJECT(widget), "quiver-bg-provider");
+    static guint class_counter = 0;
+    gchar *old_class = (gchar *)g_object_get_data(G_OBJECT(widget), "quiver-bg-class");
     
-    if (color == NULL) {
-        if (provider) {
-            gtk_style_context_remove_provider(context, GTK_STYLE_PROVIDER(provider));
-            g_object_set_data(G_OBJECT(widget), "quiver-bg-provider", NULL);
-        }
+    GtkCssProvider *old = (GtkCssProvider *)g_object_get_data(G_OBJECT(widget), "quiver-bg-provider");
+    if (old != NULL) {
+        gtk_style_context_remove_provider_for_display(
+            gdk_display_get_default(), GTK_STYLE_PROVIDER(old));
+        g_object_set_data(G_OBJECT(widget), "quiver-bg-provider", NULL);
+        g_object_unref(old);
+    }
+    
+    if (old_class != NULL) {
+        gtk_widget_remove_css_class(widget, old_class);
+        g_object_set_data(G_OBJECT(widget), "quiver-bg-class", NULL);
+        g_free(old_class);
+    }
+    
+    if (color == NULL)
         return;
-    }
     
-    if (!provider) {
-        provider = gtk_css_provider_new();
-        g_object_set_data_full(G_OBJECT(widget), "quiver-bg-provider", provider, g_object_unref);
-        gtk_style_context_add_provider(context, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    }
+    GtkCssProvider *provider = gtk_css_provider_new();
     
+    gchar *class_name = g_strdup_printf("quiver-bg-%u", ++class_counter);
     gchar *color_str = gdk_rgba_to_string(color);
-    gchar *css = g_strdup_printf("* { background-color: %s; }", color_str);
-    gtk_css_provider_load_from_data(provider, css, -1, NULL);
+    gchar *css = g_strdup_printf(".%s { background-color: %s; }", class_name, color_str);
+    gtk_css_provider_load_from_string(provider, css);
     g_free(css);
     g_free(color_str);
+    
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_set_data(G_OBJECT(widget), "quiver-bg-provider", provider);
+    
+    gtk_widget_add_css_class(widget, class_name);
+    g_object_set_data_full(G_OBJECT(widget), "quiver-bg-class", class_name, g_free);
 }
 
 
 // popup menu callbacks
-static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata);
-static gboolean viewer_popup_menu_cb (GtkWidget *treeview, gpointer userdata);
-static gboolean viewer_button_press_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
-static gboolean viewer_button_release_cb(GtkWidget   *widget, GdkEventButton *event, gpointer user_data); 
-static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata);
+static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble y_root, guint32 time, gpointer userdata);
+static void viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
+static void viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
+static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble y_root, guint32 time, gpointer userdata);
 static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data);
 static void viewer_speed_toggle_popover_cb(gpointer user_data, GtkWidget *widget);
 static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user_data);
@@ -144,25 +157,28 @@ static void viewer_skip_fwd_cb(gpointer user_data);
 static void viewer_frame_step_back_cb(gpointer user_data);
 static void viewer_frame_step_fwd_cb(gpointer user_data);
 
-enum
+static GdkContentProvider* signal_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data);
+static void signal_drag_begin (GtkDragSource *source, GdkDrag *drag, gpointer user_data);
+static void signal_drag_end(GtkDragSource *source, GdkDrag *drag, gpointer user_data);
+
+/* Attach the shared input controllers (click/scroll/motion) to a widget
+ * so the viewer area responds over the image, the video fixed and the GL
+ * sink widget alike. */
+static void attach_viewer_input_controllers(GtkWidget *widget, gpointer user_data)
 {
-	QUIVER_TARGET_STRING = 0,
-	QUIVER_TARGET_URI
-};
+	GtkGesture *click = gtk_gesture_click_new();
+	g_signal_connect(click, "pressed", G_CALLBACK(viewer_button_press_cb), user_data);
+	g_signal_connect(click, "released", G_CALLBACK(viewer_button_release_cb), user_data);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(click));
 
-static const GtkTargetEntry quiver_drag_target_table[] = {
-		{ (gchar*)"STRING",     0, QUIVER_TARGET_STRING }, // STRING is used for legacy motif apps
-		{ (gchar*)"text/plain", 0, QUIVER_TARGET_STRING },  // the real mime types to support
-		 { (gchar*)"text/uri-list", 0, QUIVER_TARGET_URI },
-};
+	GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+	g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), user_data);
+	gtk_widget_add_controller(widget, scroll);
 
-static void signal_drag_data_get  (GtkWidget *widget, GdkDragContext *context, GtkSelectionData *selection_data, guint info, guint time,gpointer user_data);
-static void signal_drag_data_delete  (GtkWidget *widget,GdkDragContext *context,gpointer user_data);
-static void signal_drag_data_received(GtkWidget *widget,GdkDragContext *drag_context, gint x,gint y, GtkSelectionData *data, guint info, guint time,gpointer user_data);
-static void signal_drag_begin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
-static void signal_drag_end(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data);
-static void signal_drag_motion (GtkWidget *widget, GdkDragContext *context, gint x, gint y, guint time, gpointer user_data);
-static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_context, gint x, gint y, guint time,  gpointer user_data);
+	GtkEventController *motion = gtk_event_controller_motion_new();
+	g_signal_connect(motion, "motion", G_CALLBACK(viewer_motion_notify), user_data);
+	gtk_widget_add_controller(widget, motion);
+}
 
 
 static gboolean timeout_play_position (gpointer data);
@@ -175,9 +191,9 @@ static gchar* gst_time_format(gint64 time);
 static gboolean video_zoom_timeout(gpointer data);
 #endif
 static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *py);
-static void video_zoom_resize_cb(GtkWidget *widget, GdkRectangle *allocation, gpointer user_data);
 static void video_zoom_raise_media_windows(Viewer::ViewerImpl *p);
 static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data);
+static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer user_data);
 
 #define ACTION_VIEWER_CUT              "ViewerCut"
 #define ACTION_VIEWER_COPY             "ViewerCopy"
@@ -275,63 +291,124 @@ static const gchar* pszActionsVideo[] =
 
 
 
-struct AsyncPixbufData {
-    QuiverImageView *pImageView;
-    GdkPixbuf *pixbuf;
-    gint width, height;
-    gboolean bReset;
-    bool bAtSize;
+/* Shared, ref-counted handle to the viewer's image-view widget.  Both the
+ * loader observer and every pixbuf idle posted from the loader thread hold a
+ * reference.  When the widget is destroyed (component teardown) its "destroy"
+ * handler NULLs the pointers, so a pixbuf idle that was already queued when
+ * the widget died can no longer write into freed widgets. */
+struct ViewPixbufTarget {
+	QuiverImageView *pImageView;
+	GtkWidget *pErrorLabel;
+	int iRefs;
 };
 
+static void view_pixbuf_target_destroyed(GtkWidget *widget, gpointer data)
+{
+	(void)widget;
+	ViewPixbufTarget *t = (ViewPixbufTarget*)data;
+	t->pImageView = NULL;
+	t->pErrorLabel = NULL;
+}
+
+static ViewPixbufTarget* view_pixbuf_target_new(QuiverImageView *pImageView, GtkWidget *pErrorLabel)
+{
+	ViewPixbufTarget *t = new ViewPixbufTarget{pImageView, pErrorLabel, 1};
+	g_signal_connect(G_OBJECT(pImageView), "destroy", G_CALLBACK(view_pixbuf_target_destroyed), t);
+	return t;
+}
+
+static void view_pixbuf_target_ref(ViewPixbufTarget *t)
+{
+	g_atomic_int_inc(&t->iRefs);
+}
+
+static void view_pixbuf_target_unref(ViewPixbufTarget *t)
+{
+	if (g_atomic_int_dec_and_test(&t->iRefs))
+		delete t;
+}
+
+struct AsyncPixbufData {
+	ViewPixbufTarget *pTarget;
+	GdkPixbuf *pixbuf;
+	gint width, height;
+	gboolean bReset;
+	bool bAtSize;
+};
+
+/* toggle the "failed to load" indicator for the viewer image view.
+ * SetPixbuf(NULL) is only ever dispatched by the image loader for a failed
+ * load (or for a previously-failed image), so NULL == show the indicator. */
+static void show_image_load_error(GtkWidget *pErrorLabel, bool bShow)
+{
+	if (NULL == pErrorLabel)
+		return;
+	if (bShow != gtk_widget_get_visible(pErrorLabel))
+		gtk_widget_set_visible(pErrorLabel, bShow);
+}
+
 static gboolean idle_set_pixbuf_v(gpointer data) {
-    AsyncPixbufData *p = (AsyncPixbufData*)data;
-    if (p->bAtSize) {
-        quiver_image_view_set_pixbuf_at_size_ex(p->pImageView, p->pixbuf, p->width, p->height, p->bReset);
-    } else {
-        quiver_image_view_set_pixbuf(p->pImageView, p->pixbuf);
-    }
-    if (p->pixbuf) g_object_unref(p->pixbuf);
-    delete p;
-    return FALSE;
+	AsyncPixbufData *p = (AsyncPixbufData*)data;
+	/* the image view may already be gone (queued before widget teardown) */
+	if (p->pTarget->pImageView != NULL)
+	{
+		/* an aborted/preview-load path sends a real pixbuf; only the failure
+		 * path sends NULL */
+		show_image_load_error(p->pTarget->pErrorLabel, p->pixbuf == NULL);
+		if (p->bAtSize) {
+			quiver_image_view_set_pixbuf_at_size_ex(p->pTarget->pImageView, p->pixbuf, p->width, p->height, p->bReset);
+		} else {
+			quiver_image_view_set_pixbuf(p->pTarget->pImageView, p->pixbuf);
+		}
+	}
+	if (p->pixbuf) g_object_unref(p->pixbuf);
+	view_pixbuf_target_unref(p->pTarget);
+	delete p;
+	return FALSE;
 }
 
 class ViewerImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
-	ViewerImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pImageView = imageview;};
-	virtual ~ViewerImageViewPixbufLoaderObserver(){};
+	ViewerImageViewPixbufLoaderObserver(QuiverImageView *imageview, GtkWidget *pErrorLabel)
+		: m_pTarget(view_pixbuf_target_new(imageview, pErrorLabel)) {};
+	virtual ~ViewerImageViewPixbufLoaderObserver(){ view_pixbuf_target_unref(m_pTarget); };
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
-		quiver_image_view_connect_pixbuf_loader_signals(m_pImageView,loader);
+		quiver_image_view_connect_pixbuf_loader_signals(m_pTarget->pImageView,loader);
 		};
 	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader){
-		quiver_image_view_connect_pixbuf_size_prepared_signal(m_pImageView,loader);
+		quiver_image_view_connect_pixbuf_size_prepared_signal(m_pTarget->pImageView,loader);
 		};
 
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf){
 		if (ThreadUtil::IsGUIThread()) {
-			quiver_image_view_set_pixbuf(m_pImageView,pixbuf);
+			show_image_load_error(m_pTarget->pErrorLabel, pixbuf == NULL);
+			quiver_image_view_set_pixbuf(m_pTarget->pImageView,pixbuf);
 		} else {
 			if (pixbuf) g_object_ref(pixbuf);
-			AsyncPixbufData *data = new AsyncPixbufData{m_pImageView, pixbuf, 0, 0, FALSE, false};
+			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, 0, 0, FALSE, false};
+			view_pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_pixbuf_v, data, NULL);
 		}
 	};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
 		gboolean bReset = bResetViewMode ? TRUE : FALSE;
 		if (ThreadUtil::IsGUIThread()) {
-			quiver_image_view_set_pixbuf_at_size_ex(m_pImageView,pixbuf,width,height,bReset);
+			show_image_load_error(m_pTarget->pErrorLabel, false);
+			quiver_image_view_set_pixbuf_at_size_ex(m_pTarget->pImageView,pixbuf,width,height,bReset);
 		} else {
 			if (pixbuf) g_object_ref(pixbuf);
-			AsyncPixbufData *data = new AsyncPixbufData{m_pImageView, pixbuf, width, height, bReset, true};
+			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, width, height, bReset, true};
+			view_pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_pixbuf_v, data, NULL);
 		}
 	};
 	
 	virtual void SignalBytesRead(long bytes_read,long total){ (void)total;  (void)bytes_read; };
 private:
-	QuiverImageView *m_pImageView;
+	ViewPixbufTarget *m_pTarget;
 };
 
 typedef boost::shared_ptr<IPixbufLoaderObserver> IPixbufLoaderObserverPtr;
@@ -402,7 +479,7 @@ public:
 		{
 			m_bTimelineVisible = true;
 			UpdateTimelineVisibility();
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause", GTK_ICON_SIZE_DIALOG);
+			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause");
 
 			/* show all controls via opacity fade-in */
 			set_control_visible(m_pTimeElapsedLabel, true);
@@ -428,7 +505,7 @@ public:
 				m_iTimeoutMouseMotionNotify = 0;
 			}
 			CancelControlsFade();
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start", GTK_ICON_SIZE_DIALOG);
+			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start");
 		}
 
 		UpdateFilmstripForPlayback();
@@ -460,6 +537,8 @@ public:
 	void Snapshot();
 	// returns true if current item is a video
 	bool IsVideo();
+	// switch the stack to the video page and unhide the video widgets
+	void ShowVideoPage();
 
 	// video zoom (in-pipeline crop, optionally HW-accelerated upscale)
 	void SetVideoZoom(gdouble zoom);
@@ -474,6 +553,10 @@ public:
 	GtkWidget * m_pGrid;
 	GtkWidget * m_pOverlay;
 	GtkWidget * m_pStack;
+
+	/* shown on top of the image view when the current image failed to load
+	 * (otherwise the previous image's content would keep being displayed) */
+	GtkWidget * m_pImageErrorLabel;
 	GtkAdjustment * m_pAdjustmentH;
 	GtkAdjustment * m_pAdjustmentV;
 
@@ -505,8 +588,13 @@ public:
 	GtkWidget* m_pSnapBtn;
 	GtkWidget* m_pTimelineRow;
 	GtkWidget* m_pVolumeButton;
+	GtkWidget* m_pVolumePopover;
+	GtkWidget* m_pVolumeScale;
+	double m_dVolume;
 	GtkWidget* m_pFullscreenBtn;
 	GtkWidget* m_pVideoOptionsBtn;
+	GtkWidget* m_pVideoOptionsPopover; // currently-open video-options popover (created on click)
+	guint       m_iVideoZoomIdle;      // pending ApplyVideoZoom idle (0 = none)
 
 	/* the timeline (time label, progress bar, volume button) stays hidden for
 	 * a newly shown video until play is pressed; after that it is sticky so
@@ -563,11 +651,15 @@ public:
 	GtkWidget* m_pSpeedButton;
 	GtkWidget* m_pSpeedLabel;
 
+	GtkDragSource* m_pDragSource;
+	GtkDropTarget* m_pDropTarget;
+	GtkWidget* m_pContextMenuPopover;
+
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline;
-	GstElement* m_pGtkGLSink;     // the actual gtkglsink GStreamer element (for pad probing)
-	GtkWidget*  m_pVideoSinkWidget; // Changed from GstElement* to GtkWidget*
-	GtkWidget*  m_pVideoFixed;      // GtkLayout canvas (fills the viewer area, clips the video sink widget)
+	GdkPaintable* m_pVideoPaintable; // paintable exposed by the sink
+	GtkWidget*  m_pVideoSinkWidget; // GtkPicture wrapping the paintable
+	GtkWidget*  m_pVideoFixed;      // GtkFixed canvas (fills the viewer area, clips the video sink widget)
 	// how the digital zoom crop+scale chain is implemented, chosen at build time
 	// from the GPU acceleration actually available on the platform
 	typedef enum
@@ -632,6 +724,12 @@ public:
 	double      m_dControlsFadeOpacity;
 
 	gboolean    m_bSeekDragging;
+
+	/* last pointer position in surface coords (to ignore synthetic motion
+	 * events caused by the controls re-laying-out under a parked pointer) */
+	double      m_dPointerRootX;
+	double      m_dPointerRootY;
+	bool        m_bPointerPosValid;
 
 	bool IsFilmstripOverlay() const { return m_bFilmstripOverlay; }
 	bool IsHideFilmstripFS() const { return m_bHideFilmstripFS; }
@@ -828,16 +926,16 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 	if (NULL == m_pScrollbarH)
 		return;
 
-	gint sb_width = gtk_widget_get_allocated_width(pScrollbarV);
-	gint sb_height = gtk_widget_get_allocated_height(pScrollbarH);
+	gint sb_width = gtk_widget_get_width(pScrollbarV);
+	gint sb_height = gtk_widget_get_height(pScrollbarH);
 	
 	GtkWidget * pNavigationBox = m_pNavigationBox;
 
 // FIXME: remove
 	//GtkTableChild * child = GetGtkTableChild(GTK_TABLE(m_pGrid),m_pImageView);
 	
-	gint area_w = gtk_widget_get_allocated_width(m_pGrid);
-	gint area_h = gtk_widget_get_allocated_height(m_pGrid);
+	gint area_w = gtk_widget_get_width(m_pGrid);
+	gint area_h = gtk_widget_get_height(m_pGrid);
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	bool bHideScrollbars = 	prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE);
@@ -847,9 +945,9 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 		//FIXME: just don't show scrollbars because they jump around in an
 		// infinite loop for certain situations in this mode
 		// hide h hide v
-		gtk_widget_hide (pScrollbarV); 	
-		gtk_widget_hide (pScrollbarH);
-		gtk_widget_hide (pNavigationBox);
+		gtk_widget_set_visible(pScrollbarV, FALSE); 	
+		gtk_widget_set_visible(pScrollbarH, FALSE);
+		gtk_widget_set_visible(pNavigationBox, FALSE);
 
 	}
 	else if ( (area_w < width && area_h < height) ||
@@ -857,30 +955,30 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 		(area_w - sb_width < width && area_h < height) )
 	{
 		// show h show v
-		gtk_widget_show (pScrollbarV); 	
-		gtk_widget_show (pScrollbarH);
-		gtk_widget_show (pNavigationBox);
+		gtk_widget_set_visible(pScrollbarV, TRUE); 	
+		gtk_widget_set_visible(pScrollbarH, TRUE);
+		gtk_widget_set_visible(pNavigationBox, TRUE);
 	}
 	else if (area_w < width)
 	{
 		// show h hide v
-		gtk_widget_show (pNavigationBox);	
-		gtk_widget_hide (pScrollbarV);
-		gtk_widget_show (pScrollbarH);		
+		gtk_widget_set_visible(pNavigationBox, TRUE);	
+		gtk_widget_set_visible(pScrollbarV, FALSE);
+		gtk_widget_set_visible(pScrollbarH, TRUE);		
 	}
 	else if (area_h < height)
 	{
 		// hide h show v
-		gtk_widget_show (pNavigationBox);	
-		gtk_widget_hide (pScrollbarH);
-		gtk_widget_show (pScrollbarV);	
+		gtk_widget_set_visible(pNavigationBox, TRUE);	
+		gtk_widget_set_visible(pScrollbarH, FALSE);
+		gtk_widget_set_visible(pScrollbarV, TRUE);	
 	}
 	else
 	{
 		// hide h hide v
-		gtk_widget_hide (pScrollbarV); 	
-		gtk_widget_hide (pScrollbarH);
-		gtk_widget_hide (pNavigationBox);
+		gtk_widget_set_visible(pScrollbarV, FALSE); 	
+		gtk_widget_set_visible(pScrollbarH, FALSE);
+		gtk_widget_set_visible(pNavigationBox, FALSE);
 	}
 
 	m_iTimeoutScrollbars = 0;
@@ -896,19 +994,23 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 	if (gtk_adjustment_get_page_size(h) >= gtk_adjustment_get_upper(h) &&
 		gtk_adjustment_get_page_size(v) >= gtk_adjustment_get_upper(v))
 	{
-		// enable drag n drop
-		gtk_drag_source_set (m_pImageView, (GdkModifierType)(GDK_BUTTON1_MASK | GDK_BUTTON3_MASK),
-				   quiver_drag_target_table, G_N_ELEMENTS(quiver_drag_target_table), (GdkDragAction)( GDK_ACTION_COPY |
-			       GDK_ACTION_MOVE |
-		           GDK_ACTION_LINK |
-		           GDK_ACTION_ASK ));
+		// enable drag n drop via GtkDragSource controller
+		if (!m_pDragSource) {
+			m_pDragSource = gtk_drag_source_new();
+			g_signal_connect(m_pDragSource, "prepare", G_CALLBACK(signal_drag_source_prepare), this);
+			g_signal_connect(m_pDragSource, "drag-begin", G_CALLBACK(signal_drag_begin), this);
+			g_signal_connect(m_pDragSource, "drag-end", G_CALLBACK(signal_drag_end), this);
+			gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(m_pDragSource));
+		}
 
 	}
 	else
 	{
 		// disable drag n drop
-		gtk_widget_grab_focus(m_pImageView);
-		gtk_drag_source_unset (m_pImageView);
+		if (m_pDragSource) {
+			gtk_widget_remove_controller(m_pImageView, GTK_EVENT_CONTROLLER(m_pDragSource));
+			m_pDragSource = NULL;
+		}
 	}
 
 }
@@ -942,8 +1044,8 @@ void Viewer::ViewerImpl::LoadImage(QuiverFile f)
 	
 	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(m_pImageView))
 	{
-		width = gtk_widget_get_allocated_width(m_pImageView);
-		height = gtk_widget_get_allocated_height(m_pImageView);
+		width = gtk_widget_get_width(m_pImageView);
+		height = gtk_widget_get_height(m_pImageView);
 	}
 
 	if (mode == QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN)
@@ -1035,8 +1137,8 @@ void Viewer::ViewerImpl::CacheNext(bool bDirectionForward)
 	}
 	else if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(m_pImageView))
 	{
-		width = gtk_widget_get_allocated_width(m_pImageView);
-		height = gtk_widget_get_allocated_height(m_pImageView);
+		width = gtk_widget_get_width(m_pImageView);
+		height = gtk_widget_get_height(m_pImageView);
 	}
 
 	if (bDirectionForward)
@@ -1111,7 +1213,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			set_control_visible(m_pMediaControls, false);
 		}
 
-		gtk_window_resize (GTK_WINDOW (m_pNavigationWindow),1,1);
+		gtk_window_set_default_size (GTK_WINDOW (m_pNavigationWindow),1,1);
 		QuiverFile f = m_ImageListPtr->GetCurrent();
 		GdkPixbuf *pixbuf = NULL;
 		if (f.HasThumbnail(128)) {
@@ -1151,6 +1253,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 	{
 		QuiverFile f;
 		m_QuiverFileCurrent = f;
+		show_image_load_error(m_pImageErrorLabel, false);
 		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_pImageView),NULL);
 	}
 	
@@ -1171,8 +1274,8 @@ int  Viewer::ViewerImpl::GetMaximizedOrientation(QuiverFile f, bool bCombinedWit
 		}
 
 		gint width=0, height=0;
-		width = gtk_widget_get_allocated_width(m_pImageView);
-		height = gtk_widget_get_allocated_height(m_pImageView);
+		width = gtk_widget_get_width(m_pImageView);
+		height = gtk_widget_get_height(m_pImageView);
 
 		double rimg = aw/(double)ah;
 		double rscreen = width/(double)height;
@@ -1233,47 +1336,39 @@ void Viewer::ViewerImpl::SetCurrentOrientation(int iOrientation, bool bUpdateExi
 	m_ImageLoader.SetLoadOrientation(GetCurrentOrientation(true));
 }
 
-static gboolean
-on_filmstrip_overlay_leave(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+static void
+on_filmstrip_overlay_leave(GtkEventControllerMotion *controller, gpointer user_data)
 {
-	(void)widget;
-	if (event->detail == GDK_NOTIFY_INFERIOR) return FALSE;
+	(void)controller;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->ScheduleFilmstripHide();
-	return FALSE;
 }
 
-static gboolean
-on_filmstrip_overlay_enter(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+static void
+on_filmstrip_overlay_enter(GtkEventControllerMotion *controller, gpointer user_data)
 {
-	(void)widget;
-	(void)event;
+	(void)controller;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->CancelFilmstripHide();
 	p->ShowFilmstripOverlay();
-	return FALSE;
 }
 
-static gboolean
-on_filmstrip_edge_enter(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+static void
+on_filmstrip_edge_enter(GtkEventControllerMotion *controller, gpointer user_data)
 {
-	(void)widget;
-	(void)event;
+	(void)controller;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	if (p->IsPointerOverMediaControls()) return FALSE;
+	if (p->IsPointerOverMediaControls()) return;
 	p->CancelFilmstripHide();
 	p->ShowFilmstripOverlay();
-	return FALSE;
 }
 
-static gboolean
-on_filmstrip_edge_leave(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+static void
+on_filmstrip_edge_leave(GtkEventControllerMotion *controller, gpointer user_data)
 {
-	(void)widget;
-	(void)event;
+	(void)controller;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->ScheduleFilmstripHide();
-	return FALSE;
 }
 
 static gboolean filmstrip_hide_timeout_cb(gpointer user_data)
@@ -1307,7 +1402,7 @@ static gboolean filmstrip_fade_cb(gpointer user_data)
 		gtk_widget_set_opacity(p->m_pIconView, p->m_dFadeOpacity);
 		if (p->m_dFadeOpacity <= 0.0)
 		{
-			gtk_widget_hide(p->m_pIconView);
+			gtk_widget_set_visible(p->m_pIconView, FALSE);
 			p->m_iTimeoutFilmstripFade = 0;
 			return G_SOURCE_REMOVE;
 		}
@@ -1395,9 +1490,18 @@ void Viewer::ViewerImpl::ShowFilmstripOverlay()
 	if (!QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP)) return;
 	if (m_bFilmstripHiddenByFS) return;
 	if (IsVideo() && IsPlaying()) return;
+	g_printerr("[FILMSTRIP] ShowFilmstripOverlay: visible=%d opacity=%.2f\n",
+		gtk_widget_get_visible(m_pIconView), gtk_widget_get_opacity(m_pIconView));
+	/* The icon view is created hidden and never shown again after a
+	 * fade-out completes; a fade-in only animates opacity.  Reveal the
+	 * widget itself or the strip can never be displayed. */
+	if (!gtk_widget_get_visible(m_pIconView))
+	{
+		gtk_widget_set_visible(m_pIconView, TRUE);
+		g_printerr("[FILMSTRIP] ShowFilmstripOverlay: revealed icon view\n");
+	}
 	CancelFilmstripHide();
 	CancelFilmstripFade();
-	gtk_widget_show(m_pIconView);
 	m_dFadeOpacity = gtk_widget_get_opacity(m_pIconView);
 	if (m_dFadeOpacity < 1.0)
 		StartFilmstripFade(true);
@@ -1412,7 +1516,7 @@ void Viewer::ViewerImpl::HideFilmstripOverlay()
 	if (m_dFadeOpacity > 0.0)
 		StartFilmstripFade(false);
 	else
-		gtk_widget_hide(m_pIconView);
+		gtk_widget_set_visible(m_pIconView, FALSE);
 }
 
 void Viewer::ViewerImpl::UpdateFilmstripForPlayback()
@@ -1429,70 +1533,65 @@ void Viewer::ViewerImpl::UpdateFilmstripForPlayback()
 		if (m_dFadeOpacity > 0.0)
 			StartFilmstripFade(false);
 		else
-			gtk_widget_hide(m_pIconView);
-		gtk_widget_hide(m_pFilmstripEdge);
+			gtk_widget_set_visible(m_pIconView, FALSE);
+		gtk_widget_set_visible(m_pFilmstripEdge, FALSE);
 	}
 	else
 	{
 		/* restore the hover edge */
-		gtk_widget_show(m_pFilmstripEdge);
 	}
 }
 
 bool Viewer::ViewerImpl::IsPointerOverFilmstrip() const
 {
 	if (!m_bFilmstripOverlay || !m_pFilmstripOverlayContainer) return false;
-	GtkWidget *toplevel = gtk_widget_get_toplevel(m_pFilmstripOverlayContainer);
-	if (!toplevel || !gtk_widget_is_visible(toplevel)) return false;
-	GdkWindow *gdk_win = gtk_widget_get_window(m_pFilmstripOverlayContainer);
-	if (!gdk_win) return false;
 
-	/* get pointer position in root-window coordinates */
-	GdkDisplay *display = gdk_window_get_display(gdk_win);
+	GtkNative *native = GTK_NATIVE(gtk_widget_get_native(m_pFilmstripOverlayContainer));
+	if (!native) return false;
+	GdkSurface *surface = gtk_native_get_surface(native);
+
+	GdkDisplay *display = gtk_widget_get_display(m_pFilmstripOverlayContainer);
 	GdkSeat *seat = gdk_display_get_default_seat(display);
 	GdkDevice *device = gdk_seat_get_pointer(seat);
-	gint root_x, root_y;
-	gdk_device_get_position(device, NULL, &root_x, &root_y);
+	double surface_x, surface_y;
+	gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL);
 
-	/* convert to widget-local coordinates */
-	gint win_x, win_y;
-	gdk_window_get_origin(gdk_win, &win_x, &win_y);
-	gint local_x = root_x - win_x;
-	gint local_y = root_y - win_y;
-
-	GtkAllocation alloc;
-	gtk_widget_get_allocation(m_pFilmstripOverlayContainer, &alloc);
-	return local_x >= alloc.x && local_x < alloc.x + alloc.width
-		&& local_y >= alloc.y && local_y < alloc.y + alloc.height;
+	graphene_point_t src = GRAPHENE_POINT_INIT((float)surface_x, (float)surface_y);
+	graphene_point_t dest;
+	if (!gtk_widget_compute_point(m_pFilmstripOverlayContainer, GTK_WIDGET(native), &src, &dest))
+		return false;
+	return dest.x >= 0 && dest.x < gtk_widget_get_width(m_pFilmstripOverlayContainer)
+		&& dest.y >= 0 && dest.y < gtk_widget_get_height(m_pFilmstripOverlayContainer);
 }
 
 bool Viewer::ViewerImpl::IsPointerOverMediaControls() const
 {
 	if (!m_pPlayButton || !m_pMediaControls) return false;
-	GdkWindow *play_win = gtk_widget_get_window(m_pPlayButton);
-	if (!play_win) return false;
 
-	GdkDisplay *display = gdk_window_get_display(play_win);
+	GtkNative *native = GTK_NATIVE(gtk_widget_get_native(m_pMediaControls));
+	if (!native) return false;
+	GdkSurface *surface = gtk_native_get_surface(native);
+
+	GdkDisplay *display = gtk_widget_get_display(m_pPlayButton);
 	GdkSeat *seat = gdk_display_get_default_seat(display);
 	GdkDevice *device = gdk_seat_get_pointer(seat);
-	gint root_x, root_y;
-	gdk_device_get_position(device, NULL, &root_x, &root_y);
+	double surface_x, surface_y;
+	gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL);
 
-	gint win_x, win_y;
-	gdk_window_get_origin(play_win, &win_x, &win_y);
-	gint local_x = root_x - win_x;
-	gint local_y = root_y - win_y;
-
-	GtkAllocation mc_alloc;
-	gtk_widget_get_allocation(m_pMediaControls, &mc_alloc);
+	graphene_point_t src = GRAPHENE_POINT_INIT((float)surface_x, (float)surface_y);
+	graphene_point_t dest;
+	if (!gtk_widget_compute_point(m_pMediaControls, GTK_WIDGET(native), &src, &dest))
+		return false;
+	float local_x = dest.x;
+	float local_y = dest.y;
 
 	/* X: anywhere across the full width of the media controls bar */
-	bool in_x = local_x >= mc_alloc.x
-		&& local_x < mc_alloc.x + mc_alloc.width;
+	bool in_x = local_x >= 0
+		&& local_x < gtk_widget_get_width(m_pMediaControls);
 
 	/* Y: at or below the media controls top, extending to its bottom */
-	bool in_y = local_y >= mc_alloc.y
-		&& local_y <= mc_alloc.y + mc_alloc.height;
+	bool in_y = local_y >= 0
+		&& local_y <= gtk_widget_get_height(m_pMediaControls);
 
 	return in_x && in_y;
 }
@@ -1520,29 +1619,37 @@ void Viewer::ViewerImpl::AddFilmstrip()
 	int iFilmstripPos = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
 	bool bOverlay = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
 
+	g_printerr("[FILMSTRIP] AddFilmstrip overlay=%d pos=%d toggle_active=%d\n",
+		bOverlay, iFilmstripPos,
+		QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP));
+
 	/* remove filmstrip from its current parent (if any) */
 	GtkWidget *current_parent = gtk_widget_get_parent(m_pIconView);
 	if (current_parent != NULL) {
 		g_object_ref(m_pIconView);
-		gtk_container_remove(GTK_CONTAINER(current_parent), m_pIconView);
+		gtk_widget_unparent(m_pIconView);
 	}
 
 	/* clean up any previous overlay edge widget */
 	if (NULL != m_pFilmstripEdge)
 	{
-		GtkWidget *edge_parent = gtk_widget_get_parent(m_pFilmstripEdge);
-		if (edge_parent)
-			gtk_container_remove(GTK_CONTAINER(edge_parent), m_pFilmstripEdge);
+		GtkWidget *edge = m_pFilmstripEdge;
 		m_pFilmstripEdge = NULL;
+		if (gtk_widget_get_parent(edge) != NULL)
+		{
+			gtk_widget_unparent(edge);
+		}
 	}
 
 	/* clean up any previous overlay container */
 	if (NULL != m_pFilmstripOverlayContainer)
 	{
-		GtkWidget *container_parent = gtk_widget_get_parent(m_pFilmstripOverlayContainer);
-		if (container_parent)
-			gtk_container_remove(GTK_CONTAINER(container_parent), m_pFilmstripOverlayContainer);
+		GtkWidget *container = m_pFilmstripOverlayContainer;
 		m_pFilmstripOverlayContainer = NULL;
+		if (gtk_widget_get_parent(container) != NULL)
+		{
+			gtk_widget_unparent(container);
+		}
 	}
 
 	if (bOverlay)
@@ -1556,10 +1663,8 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		else
 			quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView), 1);
 
-		/* wrap in an event box to position it within the overlay;
-		 * EventBox has its own GdkWindow so crossing events fire based
-		 * on the widget allocation, not the overlay's GdkWindow */
-		m_pFilmstripOverlayContainer = gtk_event_box_new();
+		/* wrap in an event box to position it within the overlay */
+		m_pFilmstripOverlayContainer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 		gtk_widget_set_vexpand(m_pFilmstripOverlayContainer, FALSE);
 
 		switch (iFilmstripPos)
@@ -1582,45 +1687,48 @@ void Viewer::ViewerImpl::AddFilmstrip()
 				break;
 		}
 
-		gtk_container_add(GTK_CONTAINER(m_pFilmstripOverlayContainer), m_pIconView);
+		gtk_box_append(GTK_BOX(m_pFilmstripOverlayContainer), m_pIconView);
 
-		/* for top/bottom, the container and icon view fill the full width */
+		/* for top/bottom, the container and icon view fill the full width;
+		 * for left/right they stretch across the full overlay height */
 		if (iFilmstripPos == FSTRIP_POS_TOP || iFilmstripPos == FSTRIP_POS_BOTTOM)
 		{
 			gtk_widget_set_hexpand(m_pFilmstripOverlayContainer, TRUE);
+			gtk_widget_set_vexpand(m_pFilmstripOverlayContainer, FALSE);
 			gtk_widget_set_hexpand(m_pIconView, TRUE);
+			gtk_widget_set_vexpand(m_pIconView, FALSE);
 		}
 		else
 		{
 			gtk_widget_set_hexpand(m_pFilmstripOverlayContainer, FALSE);
+			gtk_widget_set_vexpand(m_pFilmstripOverlayContainer, TRUE);
+			gtk_widget_set_hexpand(m_pIconView, FALSE);
+			gtk_widget_set_vexpand(m_pIconView, TRUE);
 		}
-		gtk_widget_set_vexpand(m_pFilmstripOverlayContainer, FALSE);
 
 		gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pFilmstripOverlayContainer);
-		gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(m_pOverlay), m_pFilmstripOverlayContainer, TRUE);
-		gtk_widget_show(m_pFilmstripOverlayContainer);
 
 		/* add a transparent CSS class (clear any per-widget bg first) */
 		set_widget_bg_color(m_pIconView, NULL);
-		GtkStyleContext *ctx = gtk_widget_get_style_context(m_pIconView);
-		gtk_style_context_add_class(ctx, "filmstrip-overlay");
+		gtk_widget_add_css_class(m_pIconView, "filmstrip-overlay");
 
 		/* create a hover edge along the relevant screen edge */
-		m_pFilmstripEdge = gtk_event_box_new();
-		gtk_widget_set_events(m_pFilmstripEdge, GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK);
-		g_signal_connect(m_pFilmstripEdge, "enter-notify-event",
-			G_CALLBACK(on_filmstrip_edge_enter), this);
-		g_signal_connect(m_pFilmstripEdge, "leave-notify-event",
-			G_CALLBACK(on_filmstrip_edge_leave), this);
+		m_pFilmstripEdge = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+		{
+			GtkEventController *motion = gtk_event_controller_motion_new();
+			g_signal_connect(motion, "enter", G_CALLBACK(on_filmstrip_edge_enter), this);
+			g_signal_connect(motion, "leave", G_CALLBACK(on_filmstrip_edge_leave), this);
+			gtk_widget_add_controller(m_pFilmstripEdge, motion);
+		}
 
 		/* the filmstrip container tracks leave/enter so the strip stays
 		 * visible while the mouse is anywhere over the filmstrip */
-		gtk_widget_add_events(m_pFilmstripOverlayContainer,
-			GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK);
-		g_signal_connect(m_pFilmstripOverlayContainer, "leave-notify-event",
-			G_CALLBACK(on_filmstrip_overlay_leave), this);
-		g_signal_connect(m_pFilmstripOverlayContainer, "enter-notify-event",
-			G_CALLBACK(on_filmstrip_overlay_enter), this);
+		{
+			GtkEventController *motion = gtk_event_controller_motion_new();
+			g_signal_connect(motion, "enter", G_CALLBACK(on_filmstrip_overlay_enter), this);
+			g_signal_connect(motion, "leave", G_CALLBACK(on_filmstrip_overlay_leave), this);
+			gtk_widget_add_controller(m_pFilmstripOverlayContainer, motion);
+		}
 
 		/* size the edge: thin strip along the relevant edge */
 		switch (iFilmstripPos)
@@ -1648,11 +1756,9 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		}
 
 		gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pFilmstripEdge);
-		gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(m_pOverlay), m_pFilmstripEdge, TRUE);
-		gtk_widget_show_all(m_pFilmstripEdge);
 
 		/* start hidden; the hover edge reveals it */
-		gtk_widget_hide(m_pIconView);
+		gtk_widget_set_visible(m_pIconView, FALSE);
 	}
 	else
 	{
@@ -1660,6 +1766,8 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		m_bFilmstripOverlay = false;
 
 		GtkBox* box = NULL;
+		if (m_pIconView != NULL && !gtk_widget_get_visible(m_pIconView))
+			gtk_widget_set_visible(m_pIconView, TRUE);
 
 		switch (iFilmstripPos)
 		{
@@ -1667,42 +1775,68 @@ void Viewer::ViewerImpl::AddFilmstrip()
 			case FSTRIP_POS_BOTTOM:
 				box = GTK_BOX(m_pVBox);
 				quiver_icon_view_set_n_rows(QUIVER_ICON_VIEW(m_pIconView),1);
-				gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+				gtk_widget_set_hexpand(m_pIconView, TRUE);
+				gtk_widget_set_vexpand(m_pIconView, FALSE);
+				gtk_box_append (box, m_pIconView);
 				break;
 			case FSTRIP_POS_LEFT:
 			case FSTRIP_POS_RIGHT:
 				box = GTK_BOX(m_pHBox);
 				quiver_icon_view_set_n_columns(QUIVER_ICON_VIEW(m_pIconView),1);
-				gtk_box_pack_start (box, m_pIconView, FALSE, TRUE, 0);
+				gtk_widget_set_hexpand(m_pIconView, FALSE);
+				gtk_widget_set_vexpand(m_pIconView, TRUE);
+				gtk_box_append (box, m_pIconView);
 				break;
 		}
 
-		if (NULL != box)
+		switch (iFilmstripPos)
 		{
-			switch (iFilmstripPos)
-			{
-				case FSTRIP_POS_TOP:
-				case FSTRIP_POS_LEFT:
-					gtk_box_reorder_child (box, m_pIconView,0);
-					break;
-				case FSTRIP_POS_BOTTOM:
-				case FSTRIP_POS_RIGHT:
-					gtk_box_reorder_child (box, m_pIconView,-1);
-					break;
-			}
+			case FSTRIP_POS_TOP:
+			case FSTRIP_POS_LEFT:
+				/* place the filmstrip first in the box (at the start) */
+				gtk_box_reorder_child_after (box, m_pIconView, NULL);
+				break;
+			case FSTRIP_POS_BOTTOM:
+			case FSTRIP_POS_RIGHT:
+				/* gtk_box_append already put it last; leave it at the end so
+				 * it docks below / to the right of the image area. */
+				break;
 		}
 
 		/* remove the overlay CSS class */
-		GtkStyleContext *ctx = gtk_widget_get_style_context(m_pIconView);
-		gtk_style_context_remove_class(ctx, "filmstrip-overlay");
+		gtk_widget_remove_css_class(m_pIconView, "filmstrip-overlay");
 
-		CancelFilmstripHide();
+/* The video paintable is referenced by the sink AND by us (g_object_get).
+	 * The sink widget holds its own reference, so our ref can be dropped here;
+	 * also disconnect the invalidate handler so it can never fire with this
+	 * (freed) object after the pipeline teardown */
+	if (m_pVideoPaintable)
+	{
+		g_signal_handlers_disconnect_matched(
+			G_OBJECT(m_pVideoPaintable),
+			G_SIGNAL_MATCH_DATA,
+			0,
+			0,
+			NULL,
+			NULL,
+			this);
+		g_object_unref(m_pVideoPaintable);
+		m_pVideoPaintable = NULL;
+	}
+
+	CancelFilmstripHide();
 		CancelFilmstripFade();
 
-		/* icon view may have been hidden in overlay mode; show it for docked */
-		if (!gtk_widget_get_visible(m_pIconView))
-			gtk_widget_show(m_pIconView);
+		/* icon view may have been hidden or faded out in overlay mode;
+		 * ensure it is fully shown and opaque for docked mode */
+		gtk_widget_set_visible(m_pIconView, TRUE);
 		gtk_widget_set_opacity(m_pIconView, 1.0);
+		g_printerr("[FILMSTRIP] docked: box=%p visible=%d opacity=%.2f imglist=%lu parent=%p\n",
+			(void*)box,
+			gtk_widget_get_visible(m_pIconView),
+			gtk_widget_get_opacity(m_pIconView),
+			(unsigned long)m_ImageListPtr->GetSize(),
+			(void*)gtk_widget_get_parent(m_pIconView));
 	}
 
 	/* hand our reference over to the new parent container */
@@ -1722,7 +1856,7 @@ timeout_event_motion_notify (gpointer user_data)
 
 	// keep visible while the volume popup is open (it floats above the bar)
 	{
-		GtkWidget* popup = gtk_scale_button_get_popup(GTK_SCALE_BUTTON(pViewerImpl->m_pVolumeButton));
+		GtkWidget* popup = pViewerImpl->m_pVolumePopover;
 		if (popup != NULL && gtk_widget_get_visible(popup))
 			bKeepVisible = TRUE;
 	}
@@ -1738,7 +1872,7 @@ timeout_event_motion_notify (gpointer user_data)
 	}
 
 	// ...and while a GTK grab is active (e.g. dragging the timeline scale)
-	if (!bKeepVisible && gtk_grab_get_current() != NULL)
+	if (!bKeepVisible && FALSE)
 		bKeepVisible = TRUE;
 
 	if (pViewerImpl->IsPlaying())
@@ -1800,80 +1934,97 @@ viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble valu
 	return FALSE;
 }
 
-static gboolean
-viewer_scale_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+static void
+viewer_scale_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
 {
-	(void)widget;
+	(void)gesture; (void)n_press; (void)x; (void)y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->m_bSeekDragging = TRUE;
-	/* hide only the top button row so the timeline stays visible for dragging */
+	/* Keep the whole media bar (transport row + timeline + time labels)
+	 * visible while seeking by cancelling any in-flight fade-out. */
+	p->CancelControlsFade();
+	set_control_visible(p->m_pMediaControls, true);
+	/* ensure the transport row is not left hidden from a prior seek */
 	if (p->m_pControlsBox)
-		gtk_widget_hide(p->m_pControlsBox);
-	return FALSE;
+		gtk_widget_set_visible(p->m_pControlsBox, TRUE);
 }
 
-static gboolean
-viewer_scale_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+static void
+viewer_scale_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
 {
-	(void)widget; (void)event;
+	(void)gesture; (void)n_press; (void)x; (void)y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->m_bSeekDragging = FALSE;
+	/* restore the top transport row that had been hidden while dragging the scale */
 	if (p->m_pControlsBox)
-		gtk_widget_show(p->m_pControlsBox);
+		gtk_widget_set_visible(p->m_pControlsBox, TRUE);
 	p->RefreshAutoHideTimer();
-	return FALSE;
 }
 
-/* Connected on the controls event box (above_child=TRUE) to catch
- * motion events that buttons swallow.  Shows controls if hidden and
- * resets the hide timer.  Returns FALSE so buttons still get hover. */
-static gboolean controls_eventbox_motion_cb(GtkWidget *widget, GdkEvent *event, gpointer user_data)
+/* Only treat a motion event as real "activity" when the pointer has actually
+ * moved in surface coordinates.  GTK synthesizes motion events when a widget
+ * re-lays-out under a parked pointer (e.g. the elapsed-time label growing and
+ * nudging the transport row every tick); re-arming the auto-hide timer on
+ * those kept the controls visible forever while the pointer sat still. */
+static bool viewer_pointer_moved(Viewer::ViewerImpl *p)
 {
-	(void)widget;
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	if (event->type != GDK_MOTION_NOTIFY)
-		return FALSE;
-	if (gtk_widget_get_opacity(p->m_pMediaControls) < 0.5)
-		set_control_visible(p->m_pMediaControls, true);
-	p->RefreshAutoHideTimer();
-	return FALSE;
-}
-
-/* Connected on control buttons via button-press-event and on the
- * timeline scale via motion-notify-event / button-press-event. */
-static gboolean controls_show_on_event_cb(GtkWidget *widget, GdkEvent *event, gpointer user_data)
-{
-	(void)widget;
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	gboolean was_hidden = gtk_widget_get_opacity(p->m_pMediaControls) < 0.5;
-	if (was_hidden)
-		set_control_visible(p->m_pMediaControls, true);
-	p->RefreshAutoHideTimer();
-	if (event->type == GDK_BUTTON_PRESS && was_hidden)
+	GdkDevice *dev = gdk_seat_get_pointer(gdk_display_get_default_seat(
+		gtk_widget_get_display(p->m_pMediaControls)));
+	double sx = 0., sy = 0.;
+	GdkSurface *surf = gdk_device_get_surface_at_position(dev, &sx, &sy);
+	if (NULL == surf)
+	{
+		/* Pointer not over any surface (e.g. outside the window). */
+		p->m_bPointerPosValid = FALSE;
 		return TRUE;
-	return FALSE;
+	}
+	bool moved = !p->m_bPointerPosValid
+		|| fabs(sx - p->m_dPointerRootX) >= 1.0
+		|| fabs(sy - p->m_dPointerRootY) >= 1.0;
+	p->m_dPointerRootX = sx;
+	p->m_dPointerRootY = sy;
+	p->m_bPointerPosValid = TRUE;
+	return moved;
 }
 
-static gboolean
-viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_data)
+/* Connected on control buttons and the timeline scale via motion
+ * controllers so the bar stays visible while hovering. */
+static void controls_show_on_event_cb(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
 {
+	(void)controller; (void)x; (void)y;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	/* Only re-show the media controls while the current item is a video.
+	 * Otherwise hovering the transport buttons after navigating to a plain
+	 * image would resurrect the controls over the image. */
+	if (p->IsVideo())
+	{
+		if (!viewer_pointer_moved(p))
+		{
+			return;
+		}
+		gboolean was_hidden = gtk_widget_get_opacity(p->m_pMediaControls) < 0.5;
+		if (was_hidden)
+			set_control_visible(p->m_pMediaControls, true);
+		p->RefreshAutoHideTimer();
+	}
+}
+
+static void
+viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
+{
+	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+	(void)x; (void)y;
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if ((widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
 		&& pViewerImpl->m_bVideoPanning)
 	{
-		/* drag-to-pan: move the viewport so the video follows the pointer.
-		 * The delta uses root coords because the widget slides against the
-		 * window while it overflows, so widget-relative motion is unreliable.
-		 * 1 screen px is (crop width)/(widget width) source px - or, since the
-		 * display keeps the frame's aspect, 1/(fit-to-area scale * zoom). */
+		/* drag-to-pan: move the viewport so the video follows the pointer. */
 		gdouble srcPerPxX = 1., srcPerPxY = 1.;
 		if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
 		{
-			GtkAllocation allocation = {};
-			gtk_widget_get_allocation(pViewerImpl->m_pVideoFixed, &allocation);
-			gdouble scale = MIN((gdouble)allocation.width / pViewerImpl->m_iVideoWidth,
-				(gdouble)allocation.height / pViewerImpl->m_iVideoHeight);
+			gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoWidth,
+				(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoHeight);
 			gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
 			if (scale * zoom > 0.)
 			{
@@ -1881,16 +2032,21 @@ viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_dat
 				srcPerPxY = srcPerPxX;
 			}
 		}
-		pViewerImpl->m_dVideoPanX = pViewerImpl->m_dVideoPanStartPX - (event->x_root - pViewerImpl->m_dVideoPanStartRootX) * srcPerPxX;
-		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (event->y_root - pViewerImpl->m_dVideoPanStartRootY) * srcPerPxY;
+		pViewerImpl->m_dVideoPanX = pViewerImpl->m_dVideoPanStartPX - (x - pViewerImpl->m_dVideoPanStartRootX) * srcPerPxX;
+		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (y - pViewerImpl->m_dVideoPanStartRootY) * srcPerPxY;
 		pViewerImpl->ApplyVideoZoom();
 		pViewerImpl->RefreshAutoHideTimer();
-		return TRUE;
+		return;
 	}
 
 	if (widget == pViewerImpl->m_pImageView || widget == pViewerImpl->m_pVideoFixed
 		|| widget == pViewerImpl->m_pVideoSinkWidget)
 	{
+		if (!viewer_pointer_moved(pViewerImpl))
+		{
+			return;
+		}
+
 		if (0 != pViewerImpl->m_iTimeoutMouseMotionNotify)
 		{
 			g_source_remove(pViewerImpl->m_iTimeoutMouseMotionNotify);
@@ -1900,9 +2056,17 @@ viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_dat
 		if (0 != pViewerImpl->m_ImageListPtr->GetSize() && 
 				pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
 		{
-			pViewerImpl->CancelControlsFade();
-			set_control_visible(pViewerImpl->m_pMediaControls, true);
-			pViewerImpl->UpdateTimelineVisibility();
+			/* Only re-show the controls on motion if they are not already
+			 * visible.  Once visible, motion merely re-arms the auto-hide
+			 * timer, so a fade-out that has started is allowed to complete
+			 * instead of being cancelled on every motion event (which is why
+			 * the controls never hid while the cursor stayed in the viewer). */
+			if (gtk_widget_get_opacity(pViewerImpl->m_pMediaControls) < 0.5)
+			{
+				pViewerImpl->CancelControlsFade();
+				set_control_visible(pViewerImpl->m_pMediaControls, true);
+				pViewerImpl->UpdateTimelineVisibility();
+			}
 		}
 
 		if (pViewerImpl->IsPlaying())
@@ -1910,8 +2074,6 @@ viewer_motion_notify(GtkWidget* widget, GdkEventMotion* event, gpointer user_dat
 			pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
 		}
 	}
-		
-	return FALSE;
 }
 
 static void viewer_radio_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data)
@@ -2095,7 +2257,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			}
 			else
 			{
-				gtk_widget_show(pViewerImpl->m_pIconView);
+				gtk_widget_set_visible(pViewerImpl->m_pIconView, TRUE);
 			}
 		}
 		else
@@ -2107,7 +2269,9 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			}
 			else
 			{
-				gtk_widget_hide(pViewerImpl->m_pIconView);
+				/* never leave a stale overlay-mode fade hiding it */
+				pViewerImpl->CancelFilmstripFade();
+				gtk_widget_set_visible(pViewerImpl->m_pIconView, FALSE);
 			}
 		}
 
@@ -2159,13 +2323,13 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_COPY))
 	{
-		GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+		GdkClipboard* clipboard = gdk_display_get_clipboard(gdk_display_get_default());
 		
 		string strClipText;
 		if (pViewerImpl->m_ImageListPtr->GetSize())
 		{
 			string strPath = pViewerImpl->m_ImageListPtr->GetCurrent().GetFilePath();
-			gtk_clipboard_set_text (clipboard, strPath.c_str(), strPath.length());
+			gdk_clipboard_set_text (clipboard, strPath.c_str());
 		}		
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ROTATE_FOR_BEST_FIT))
@@ -2199,8 +2363,8 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			{
 				//printf("#### got a reload message from the imageview\n");
 				ImageLoader::LoadParams params = {};
-				params.max_width = gtk_widget_get_allocated_width(pViewerImpl->m_pImageView);
-				params.max_height = gtk_widget_get_allocated_height(pViewerImpl->m_pImageView);
+				params.max_width = gtk_widget_get_width(pViewerImpl->m_pImageView);
+				params.max_height = gtk_widget_get_height(pViewerImpl->m_pImageView);
 				params.orientation = pViewerImpl->GetCurrentOrientation(true);
 				params.reload = false;
 				params.fullsize = false;
@@ -2223,65 +2387,41 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 }
 
-static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *event, gpointer data )
-{ (void)widget; 
+static gboolean viewer_scrollwheel_event(GtkEventControllerScroll *controller, gdouble dx, gdouble dy, gpointer data )
+{ (void)controller; 
 
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
+
+	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
+
+	gboolean bSmooth = (ABS(dx) < 1.0 && ABS(dy) < 1.0);
+	gboolean bVertical = ABS(dy) >= ABS(dx);
 
 	/* Videos render in their own sink widget: Ctrl/Shift+wheel zooms the
 	 * video by cropping in the pipeline, so the image view never zooms in on
 	 * the poster/preview frame underneath it.  A plain wheel over a video
 	 * still navigates to the next/previous file. */
 	if (pViewerImpl->IsVideo() &&
-		(event->state & GDK_CONTROL_MASK || event->state & GDK_SHIFT_MASK))
+		(state & GDK_CONTROL_MASK || state & GDK_SHIFT_MASK))
 	{
 		const gdouble zoom_step = 1.25;
 
-		switch (event->direction)
+		gdouble scroll_dir = bVertical ? dy : dx;
+		if (scroll_dir > 0)
 		{
-			case GDK_SCROLL_UP:
-			case GDK_SCROLL_LEFT:
-				pViewerImpl->m_dVideoScrollAccum = 0.;
-				pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal * zoom_step);
-				break;
-			case GDK_SCROLL_DOWN:
-			case GDK_SCROLL_RIGHT:
-				pViewerImpl->m_dVideoScrollAccum = 0.;
-				pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / zoom_step);
-				break;
-			case GDK_SCROLL_SMOOTH:
-			{
-				/* Wayland / touchpads deliver smooth axis events, one per
-				 * frame, not one event per wheel notch.  Accumulate the deltas
-				 * and only zoom once a full notch (+/- 1.0) has been scrolled
-				 * so a wheel still zooms one step at a time. */
-				gdouble delta = event->delta_y;
-				if (0. == delta)
-					delta = event->delta_x;
-
-				pViewerImpl->m_dVideoScrollAccum += delta;
-				if (pViewerImpl->m_dVideoScrollAccum >= 1.0)
-				{
-					/* positive delta scrolls down, which zooms out, matching
-					 * the image view's smooth-scroll zoom direction */
-					pViewerImpl->m_dVideoScrollAccum = 0.;
-					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / zoom_step);
-				}
-				else if (pViewerImpl->m_dVideoScrollAccum <= -1.0)
-				{
-					pViewerImpl->m_dVideoScrollAccum = 0.;
-					pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal * zoom_step);
-				}
-				break;
-			}
-			default:
-				break;
+			pViewerImpl->m_dVideoScrollAccum = 0.;
+			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / zoom_step);
+		}
+		else if (scroll_dir < 0)
+		{
+			pViewerImpl->m_dVideoScrollAccum = 0.;
+			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal * zoom_step);
 		}
 		return TRUE;
 	}
 
-	if (event->state & GDK_CONTROL_MASK || event->state & GDK_SHIFT_MASK)
+	if (state & GDK_CONTROL_MASK || state & GDK_SHIFT_MASK)
 	{
 		return FALSE;
 	}
@@ -2289,43 +2429,35 @@ static gboolean viewer_scrollwheel_event(GtkWidget *widget, GdkEventScroll *even
 	gboolean bPrevious = FALSE;
 	gboolean bNext = FALSE;
 
-	switch (event->direction)
+	if (!bSmooth)
 	{
-		case GDK_SCROLL_UP:
-		case GDK_SCROLL_LEFT:
-			pViewerImpl->m_dSmoothScrollAccum = 0.;
-			bPrevious = TRUE;
-			break;
-		case GDK_SCROLL_DOWN:
-		case GDK_SCROLL_RIGHT:
-			pViewerImpl->m_dSmoothScrollAccum = 0.;
-			bNext = TRUE;
-			break;
-		case GDK_SCROLL_SMOOTH:
+		/* discrete wheel notch: dy/dx are whole notches */
+		if (bVertical)
 		{
-			/* Wayland / touchpads deliver smooth axis events, one per frame,
-			 * not one event per wheel notch.  Accumulate the deltas and only
-			 * navigate once a full notch (+/- 1.0) has been scrolled so that
-			 * a wheel still moves exactly one file at a time. */
-			gdouble delta = event->delta_y;
-			if (0. == delta)
-				delta = event->delta_x;
-
-			pViewerImpl->m_dSmoothScrollAccum += delta;
-			if (pViewerImpl->m_dSmoothScrollAccum >= 1.0)
-			{
-				pViewerImpl->m_dSmoothScrollAccum -= 1.0;
-				bNext = TRUE;
-			}
-			else if (pViewerImpl->m_dSmoothScrollAccum <= -1.0)
-			{
-				pViewerImpl->m_dSmoothScrollAccum += 1.0;
-				bPrevious = TRUE;
-			}
-			break;
+			if (dy > 0) bNext = TRUE;
+			else if (dy < 0) bPrevious = TRUE;
 		}
-		default:
-			break;
+		else
+		{
+			if (dx > 0) bNext = TRUE;
+			else if (dx < 0) bPrevious = TRUE;
+		}
+	}
+	else
+	{
+		/* Wayland / touchpads deliver smooth axis events, one per frame. */
+		gdouble delta = bVertical ? dy : dx;
+		pViewerImpl->m_dSmoothScrollAccum += delta;
+		if (pViewerImpl->m_dSmoothScrollAccum >= 1.0)
+		{
+			pViewerImpl->m_dSmoothScrollAccum -= 1.0;
+			bNext = TRUE;
+		}
+		else if (pViewerImpl->m_dSmoothScrollAccum <= -1.0)
+		{
+			pViewerImpl->m_dSmoothScrollAccum += 1.0;
+			bPrevious = TRUE;
+		}
 	}
 
 	if (bPrevious)
@@ -2422,8 +2554,8 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 	}
 }
 
-static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventKey *event, gpointer userdata)
-{ (void)imageview; 
+static gboolean viewer_imageview_key_press_event(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata)
+{ (void)controller; (void)keycode; (void)state; 
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)userdata;
 
@@ -2443,11 +2575,11 @@ static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventK
 	GtkAdjustment *adjustment = NULL;
 	gdouble increment = 0.;
 
-	if (GDK_KEY_Left == event->keyval || GDK_KEY_Up == event->keyval)
+	if (GDK_KEY_Left == keyval || GDK_KEY_Up == keyval)
 	{
 		if (bPanMode)
 		{
-			if (GDK_KEY_Left == event->keyval)
+			if (GDK_KEY_Left == keyval)
 			{
 				adjustment = h;
 			}
@@ -2458,12 +2590,6 @@ static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventK
 			increment = -gtk_adjustment_get_step_increment(adjustment);
 			
 		}
-		//else if (pViewerImpl->IsPlaying())
-		//{
-			// skip back
-			//GAction* action = QuiverUtils::GetAction( ACTION_VIEWER_VIDEO_SKIP_BACK);
-			//gtk_action_activate(action);
-		//}
 		else
 		{
 			GAction* action = QuiverUtils::GetAction( ACTION_VIEWER_PREVIOUS);
@@ -2471,11 +2597,11 @@ static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventK
 		}
 		rval = TRUE;
 	}
-	else if (GDK_KEY_Right == event->keyval || GDK_KEY_Down == event->keyval)
+	else if (GDK_KEY_Right == keyval || GDK_KEY_Down == keyval)
 	{
 		if (bPanMode)
 		{
-			if (GDK_KEY_Right == event->keyval)
+			if (GDK_KEY_Right == keyval)
 			{
 				adjustment = h;
 			}
@@ -2485,12 +2611,6 @@ static gboolean viewer_imageview_key_press_event(GtkWidget *imageview, GdkEventK
 			}
 			increment = gtk_adjustment_get_step_increment(adjustment);
 		}
-		//else if (pViewerImpl->IsPlaying())
-		//{
-			// skip forward
-			//GAction* action = QuiverUtils::GetAction( ACTION_VIEWER_VIDEO_SKIP_FORWARD);
-			//gtk_action_activate(action);
-		//}
 		else
 		{
 			GAction* action = QuiverUtils::GetAction( ACTION_VIEWER_NEXT);
@@ -2544,17 +2664,17 @@ static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,
 }
 
 
-static void viewer_video_option_audio_cb(GtkMenuItem *item, gpointer user_data)
+static void viewer_video_option_audio_cb(GtkButton *button, gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
-	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "track-id"));
+	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "track-id"));
 	g_object_set(G_OBJECT(p->m_pPipeline), "current-audio", track, NULL);
 }
 
-static void viewer_video_option_text_cb(GtkMenuItem *item, gpointer user_data)
+static void viewer_video_option_text_cb(GtkButton *button, gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
-	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "track-id"));
+	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "track-id"));
 	
 	GstPlayFlags flags = (GstPlayFlags)0;
 	g_object_get(G_OBJECT(p->m_pPipeline), "flags", &flags, NULL);
@@ -2568,8 +2688,9 @@ static void viewer_video_option_text_cb(GtkMenuItem *item, gpointer user_data)
 	}
 }
 
-static void viewer_video_option_rotate_cb(GtkMenuItem *item, gpointer user_data)
+static void viewer_video_option_rotate_cb(GtkButton *button, gpointer user_data)
 {
+	(void)button;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
 	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL && p->m_pVideoZoomScaler != NULL)
 	{
@@ -2581,20 +2702,42 @@ static void viewer_video_option_rotate_cb(GtkMenuItem *item, gpointer user_data)
 	}
 }
 
+static void viewer_video_options_popover_closed_cb(GtkPopover *popover, gpointer user_data)
+{
+	(void)user_data;
+	/* each options popover is created on click and parented to the button;
+	 * on close, unparent it so it is destroyed and cannot linger as a child
+	 * of the button (a later button finalize would leave a dangling parent
+	 * pointer in the child). */
+	GtkWidget *w = GTK_WIDGET(popover);
+	if (gtk_widget_get_parent(w))
+		gtk_widget_unparent(w);
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	if (p != NULL && p->m_pVideoOptionsPopover == w)
+		p->m_pVideoOptionsPopover = NULL;
+}
+
 static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
-	GtkWidget *menu = gtk_menu_new();
-	
+
+	GtkWidget *popover = gtk_popover_new();
+	gtk_widget_set_parent(popover, GTK_WIDGET(button));
+	gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
+	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_popover_set_child(GTK_POPOVER(popover), box);
+	g_signal_connect(G_OBJECT(popover), "closed", G_CALLBACK(viewer_video_options_popover_closed_cb), p);
+	p->m_pVideoOptionsPopover = popover;
+
 	gint n_audio = 0;
 	g_object_get(p->m_pPipeline, "n-audio", &n_audio, NULL);
 	gint current_audio = -1;
 	g_object_get(p->m_pPipeline, "current-audio", &current_audio, NULL);
 	
 	if (n_audio > 0) {
-		GtkWidget *mi = gtk_menu_item_new_with_label("Audio Tracks:");
+		GtkWidget *mi = gtk_button_new_with_label("Audio Tracks:");
 		gtk_widget_set_sensitive(mi, FALSE);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
+		gtk_box_append(GTK_BOX(box), mi);
 		
 		for (gint i = 0; i < n_audio; ++i) {
 			GstTagList *tags = NULL;
@@ -2608,15 +2751,15 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 				(i == current_audio) ? "✓ " : "   ", 
 				i + 1, 
 				lang ? g_strdup_printf(" (%s)", lang) : "");
-			GtkWidget *item = gtk_menu_item_new_with_label(label);
+			GtkWidget *item = gtk_button_new_with_label(label);
 			g_free(label);
 			if (lang) g_free(lang);
 			
 			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
-			g_signal_connect(item, "activate", G_CALLBACK(viewer_video_option_audio_cb), p);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_audio_cb), p);
+			gtk_box_append(GTK_BOX(box), item);
 		}
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+		gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 	}
 	
 	gint n_text = 0;
@@ -2628,14 +2771,14 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 	g_object_get(p->m_pPipeline, "flags", &flags, NULL);
 	gboolean text_enabled = (flags & (1 << 2)) != 0; // GST_PLAY_FLAG_TEXT
 	
-	GtkWidget *mi = gtk_menu_item_new_with_label("Subtitles:");
+	GtkWidget *mi = gtk_button_new_with_label("Subtitles:");
 	gtk_widget_set_sensitive(mi, FALSE);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
+	gtk_box_append(GTK_BOX(box), mi);
 	
-	GtkWidget *item_off = gtk_menu_item_new_with_label(!text_enabled ? "✓ Off" : "   Off");
+	GtkWidget *item_off = gtk_button_new_with_label(!text_enabled ? "✓ Off" : "   Off");
 	g_object_set_data(G_OBJECT(item_off), "track-id", GINT_TO_POINTER(-1));
-	g_signal_connect(item_off, "activate", G_CALLBACK(viewer_video_option_text_cb), p);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item_off);
+	g_signal_connect(item_off, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
+	gtk_box_append(GTK_BOX(box), item_off);
 	
 	if (n_text > 0) {
 		for (gint i = 0; i < n_text; ++i) {
@@ -2650,56 +2793,75 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 				(text_enabled && i == current_text) ? "✓ " : "   ", 
 				i + 1, 
 				lang ? g_strdup_printf(" (%s)", lang) : "");
-			GtkWidget *item = gtk_menu_item_new_with_label(label);
+			GtkWidget *item = gtk_button_new_with_label(label);
 			g_free(label);
 			if (lang) g_free(lang);
 			
 			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
-			g_signal_connect(item, "activate", G_CALLBACK(viewer_video_option_text_cb), p);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
+			gtk_box_append(GTK_BOX(box), item);
 		}
 	}
 	
 	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL) {
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-		GtkWidget *item_rot = gtk_menu_item_new_with_label("Rotate 90°");
-		g_signal_connect(item_rot, "activate", G_CALLBACK(viewer_video_option_rotate_cb), p);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item_rot);
+		gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+		GtkWidget *item_rot = gtk_button_new_with_label("Rotate 90°");
+		g_signal_connect(item_rot, "clicked", G_CALLBACK(viewer_video_option_rotate_cb), p);
+		gtk_box_append(GTK_BOX(box), item_rot);
 	}
 	
-	gtk_widget_show_all(menu);
-	gtk_menu_popup_at_widget(GTK_MENU(menu), GTK_WIDGET(button), GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_SOUTH_WEST, NULL);
+	gtk_popover_popup(GTK_POPOVER(popover));
 }
 
 static void
-viewer_volume_value_changed (GtkScaleButton *button, gdouble value, gpointer user_data)
+viewer_volume_value_changed (GtkRange *range, gdouble value, gpointer user_data)
 { (void)value; 
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", gtk_scale_button_get_value(button), NULL);
-	//g_object_get(G_OBJECT(m_pPipeline), "current-uri", &uri, NULL);
+	pViewerImpl->m_dVolume = gtk_range_get_value(range);
+	g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", pViewerImpl->m_dVolume, NULL);
+}
+
+static void viewer_volume_popover_closed_cb(GtkPopover *popover, gpointer user_data)
+{
+	(void)popover;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_pVolumeButton != NULL)
+	{
+		/* reset the toggle so it doesn't stay visually pressed.  set_active
+		 * re-emits "toggled", but our toggle handler sees active==FALSE and
+		 * only hides an already-hidden popover, so there is no recursion. */
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->m_pVolumeButton), FALSE);
+	}
+}
+
+static void viewer_volume_toggle_popover_cb(gpointer user_data, GtkWidget *widget)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_pVolumeButton == NULL || p->m_pVolumePopover == NULL) return;
+	/* The volume button is a GtkToggleButton, so GTK already flipped its
+	 * active state when the user clicked it.  Show or hide the (parented,
+	 * anchored) popover to match.  Never call set_active() here: a toggle
+	 * button emits "toggled" (and this handler) again, recursing to a crash. */
+	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->m_pVolumeButton)))
+		gtk_popover_popup(GTK_POPOVER(p->m_pVolumePopover));
+	else
+		gtk_widget_set_visible(p->m_pVolumePopover, FALSE);
 }
 
 
-static gboolean
-viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, gpointer userdata)
-{ (void)widget; 
+static void
+viewer_navigation_button_press_event(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer userdata)
+{
+	(void)gesture; (void)n_press;
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)userdata;
 	
-	GdkModifierType state;
- (void)state;
-	gint x =0, y=0;
-
-	x = (gint)event->x_root;
-	y = (gint)event->y_root;
-	state = (GdkModifierType)event->state;
-	
-
-	gtk_widget_show_all (pViewerImpl->m_pNavigationWindow);
+	gtk_widget_set_visible(pViewerImpl->m_pNavigationWindow, TRUE);
 
 	gint w,h;
-	gtk_window_get_size(GTK_WINDOW (pViewerImpl->m_pNavigationWindow),&w,&h);
+	gtk_window_get_default_size(GTK_WINDOW (pViewerImpl->m_pNavigationWindow),&w,&h);
   	int ww, wh, pos_x,pos_y;
   	ww = w+2;
   	wh = h+2;
@@ -2709,9 +2871,9 @@ viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, g
   		
 	
   	GdkDisplay *display = gdk_display_get_default();
-    GdkMonitor *monitor = gdk_display_get_primary_monitor(display);
+    GdkMonitor *monitor = gdk_display_get_monitor_at_surface(display, gtk_native_get_surface(gtk_widget_get_native(pViewerImpl->m_pNavigationWindow)));
     GdkRectangle workarea;
-    gdk_monitor_get_workarea(monitor, &workarea);
+    gdk_monitor_get_geometry(monitor, &workarea);
     if (workarea.width < pos_x + ww)
         pos_x = workarea.width - ww;
     else if (0 > pos_x)
@@ -2721,130 +2883,62 @@ viewer_navigation_button_press_event(GtkWidget *widget, GdkEventButton *event, g
   	else if (0 > pos_y)
   		pos_y = 0;
 	
-	gtk_window_move (GTK_WINDOW (pViewerImpl->m_pNavigationWindow), pos_x, pos_y);
-
-	GdkCursor *cursor;	
-	GdkDisplay* nav_display = gdk_window_get_display(gtk_widget_get_window(pViewerImpl->m_pNavigationWindow));
-	cursor = gdk_cursor_new_for_display (nav_display, GDK_FLEUR); 
-		
-	gdk_seat_grab(gdk_display_get_default_seat(nav_display),
-			  gtk_widget_get_window(pViewerImpl->m_pNavigationWindow), 
-			  GDK_SEAT_CAPABILITY_ALL, TRUE,
-			  cursor,
-			  NULL, NULL, NULL);
-
-	g_object_unref (cursor);
-	return TRUE;
+	GdkDisplay* nav_display = gtk_widget_get_display(GTK_WIDGET(gtk_widget_get_root(pViewerImpl->m_pNavigationWindow)));
+	(void)nav_display;
 }
 
-gboolean navigation_control_button_release_event (GtkWidget *widget, GdkEventButton *event, gpointer data )
+void navigation_control_button_release_event (GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer data )
 {
-	(void)event;
+	(void)gesture; (void)n_press; (void)x; (void)y;
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 
-	GdkDisplay* nav_display = gtk_widget_get_display(widget);
-	gdk_seat_ungrab(gdk_display_get_default_seat(nav_display));
-
-	gtk_widget_hide (pViewerImpl->m_pNavigationWindow);
-	return TRUE;	
+	gtk_widget_set_visible(pViewerImpl->m_pNavigationWindow, FALSE);
 }
 
-static void signal_drag_data_get  (GtkWidget *widget, GdkDragContext *context, GtkSelectionData *selection_data, guint info, guint time,gpointer user_data)
-{ (void)time;  (void)context;  (void)widget; 
+static GdkContentProvider* signal_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data)
+{ (void)source; (void)x; (void)y; 
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	
-	
-	
-	if (info == QUIVER_TARGET_STRING)
-    {
-		if (pViewerImpl->m_ImageListPtr->GetSize())
-		{
-    		gtk_selection_data_set (selection_data,
-			    gtk_selection_data_get_target(selection_data),
-			    8, (const guchar*)pViewerImpl->m_ImageListPtr->GetCurrent().GetURI(),strlen(pViewerImpl->m_ImageListPtr->GetCurrent().GetURI()));
-		}
-	}
-	else if (info == QUIVER_TARGET_URI)
-	{
-		if (pViewerImpl->m_ImageListPtr->GetSize())
-		{
-			//selection data set
-			//context->suggested_action = GDK_ACTION_LINK;
-    		gtk_selection_data_set (selection_data,
-			    gtk_selection_data_get_target(selection_data),
-			    8, (const guchar*)pViewerImpl->m_ImageListPtr->GetCurrent().GetURI(),strlen(pViewerImpl->m_ImageListPtr->GetCurrent().GetURI()));
-		}
-	}
-  	else
-	{
-		gtk_selection_data_set (selection_data,
-			    gtk_selection_data_get_target(selection_data),
-				8, (const guchar*)"I'm Data!", 9);
-	}
+	const gchar* uri = NULL;
+	if (pViewerImpl->m_ImageListPtr->GetSize())
+		uri = pViewerImpl->m_ImageListPtr->GetCurrent().GetURI();
+
+	if (uri == NULL)
+		return NULL;
+
+	GValue value = G_VALUE_INIT;
+	g_value_init(&value, G_TYPE_STRING);
+	g_value_set_string(&value, uri);
+	GdkContentProvider *provider = gdk_content_provider_new_for_value(&value);
+	g_value_unset(&value);
+	return provider;
 }
 
-static void signal_drag_data_delete  (GtkWidget *widget,GdkDragContext *context,gpointer user_data)
-{ (void)context;  (void)widget; 
-	Viewer::ViewerImpl *pViewerImpl;
- (void)pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-}
-
-static void signal_drag_data_received(GtkWidget *widget,GdkDragContext *drag_context, gint x,gint y, GtkSelectionData *data, guint info, guint time,gpointer user_data)
-{ (void)time;  (void)info;  (void)data;  (void)y;  (void)x;  (void)drag_context;  (void)widget; 
-	Viewer::ViewerImpl *pViewerImpl;
- (void)pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-}
-
-static void signal_drag_begin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data)
-{ (void)widget; 
+static void signal_drag_begin (GtkDragSource *source, GdkDrag *drag, gpointer user_data)
+{ (void)source; (void)drag; 
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	
-	// disable drop 
-	//gtk_drag_dest_unset(pViewerImpl->m_pImageView);
-	
-	// TODO
-	// set icon
 	GdkPixbuf *thumb = pViewerImpl->m_ImageListPtr->GetCurrent().GetThumbnail(128);
 
 	if (NULL != thumb)
 	{
-		gtk_drag_set_icon_pixbuf(drag_context,thumb,-2,-2);
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+		GdkTexture *texture = gdk_texture_new_for_pixbuf(thumb);
+G_GNUC_END_IGNORE_DEPRECATIONS
+		if (texture) {
+			gtk_drag_source_set_icon(source, GDK_PAINTABLE(texture), -2, -2);
+			g_object_unref(texture);
+		}
 		g_object_unref(thumb);
 	}
 }
 
-static void signal_drag_end(GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data)
-{ (void)drag_context;  (void)widget; 
+static void signal_drag_end(GtkDragSource *source, GdkDrag *drag, gpointer user_data)
+{ (void)drag;  (void)source; 
 	Viewer::ViewerImpl *pViewerImpl;
  (void)pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-}
-
-static void signal_drag_motion (GtkWidget *widget, GdkDragContext *context, gint x, gint y, guint time, gpointer user_data)
-{ (void)time;  (void)y;  (void)x;  (void)context;  (void)widget; 
-	Viewer::ViewerImpl *pViewerImpl;
- (void)pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-}
-
-
-static gboolean signal_drag_drop (GtkWidget *widget, GdkDragContext *drag_context, gint x, gint y, guint time,  gpointer user_data)
-{ (void)time;  (void)y;  (void)x;  (void)drag_context;  (void)widget; 
-	Viewer::ViewerImpl *pViewerImpl;
- (void)pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	return TRUE;
-
-}
-
-static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata);
-static gboolean viewer_popup_menu_cb (GtkWidget *widget, gpointer userdata)
-{ (void)widget; 
-	viewer_show_context_menu(NULL, userdata);
-	return TRUE; 
 }
 
 static gchar*
@@ -2905,11 +2999,9 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 						 * GL sink to discard its old texture and re-decode from
 						 * the start.  The second ASYNC_DONE (after the flush)
 						 * will restore opacity. */
-						pViewerImpl->m_bVideoFlushPending = TRUE;
-						if (pViewerImpl->m_pVideoFixed != NULL)
-							gtk_widget_show(pViewerImpl->m_pVideoFixed);
-						gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
-						gst_element_seek(GST_ELEMENT(pViewerImpl->m_pPipeline),
+					pViewerImpl->m_bVideoFlushPending = TRUE;
+					pViewerImpl->ShowVideoPage();
+					gst_element_seek(GST_ELEMENT(pViewerImpl->m_pPipeline),
 							1.0, GST_FORMAT_TIME,
 							GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
 							GST_SEEK_TYPE_SET, 0,
@@ -2927,9 +3019,7 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 					}
 					else
 					{
-						if (pViewerImpl->m_pVideoFixed != NULL)
-							gtk_widget_show(pViewerImpl->m_pVideoFixed);
-						gtk_stack_set_visible_child_name(GTK_STACK(pViewerImpl->m_pStack), "video");
+						pViewerImpl->ShowVideoPage();
 					}
 					pViewerImpl->UpdateTimeline();
 				}
@@ -3008,6 +3098,25 @@ void Viewer::ViewerImpl::UpdateTimeline()
 	g_signal_handler_unblock(m_pPlayProgress, m_iPlayProgressChangeHandler);
 }
 
+void Viewer::ViewerImpl::ShowVideoPage()
+{
+	if (m_pStack != NULL)
+	{
+		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
+	}
+	/* The picture is a child of the video fixed page; GtkStack shows the
+	 * fixed page itself.  Still, StopVideo() explicitly hides the picture, so
+	 * re-show it when the video page is brought up, or the sink picture stays
+	 * invisible while audio plays. */
+	if (m_pVideoFixed != NULL)
+		gtk_widget_set_visible(m_pVideoFixed, TRUE);
+	if (m_pVideoSinkWidget != NULL)
+	{
+		gtk_widget_set_visible(m_pVideoSinkWidget, TRUE);
+		gtk_widget_queue_draw(m_pVideoSinkWidget);
+	}
+}
+
 void Viewer::ViewerImpl::PlayPauseVideo()
 {
 	if (!IsVideo())
@@ -3019,10 +3128,8 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	gboolean same = (0 == g_strcmp0(uri, m_ImageListPtr->GetCurrent().GetURI()));
 	if (same)
 	{
-		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtksink
-		if (m_pVideoFixed != NULL)
-			gtk_widget_show(m_pVideoFixed);
-		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
+		//gtk_widget_set_double_buffered (m_pImageView, FALSE); // Double buffering handled by gtk4sink
+		ShowVideoPage();
 		if (m_pVideoSinkWidget != NULL)
 		{
 			/* The GStreamer sink auto-shows its widget on the first buffer,
@@ -3064,6 +3171,10 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	else
 	{
 		StopVideo(false);
+		/* Bring the video page up immediately (rather than waiting for
+		 * ASYNC_DONE) so the picture area is visible from the first play.
+		 * The picture is kept transparent until the first frame arrives. */
+		ShowVideoPage();
 		if (m_pVideoSinkWidget != NULL)
 		{
 			/* The GL sink needs a mapped widget (and therefore a live
@@ -3073,10 +3184,8 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 			 * exists.  The draw callback will restore opacity once the
 			 * new frame is actually rendered. */
 			gtk_widget_set_opacity(m_pVideoSinkWidget, 0.0);
-			gtk_widget_show(m_pVideoSinkWidget);
 		}
 		if (m_pVideoFixed != NULL)
-			gtk_widget_show(m_pVideoFixed);
 		/* Send explicit flush_start + flush_stop to drain any lingering
 		 * buffers from the old video before loading the new URI.
 		 * Going to NULL stops the pipeline but does NOT flush the
@@ -3166,16 +3275,13 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	if (m_pVideoSinkWidget != NULL)
 	{
 		gtk_widget_set_opacity(m_pVideoSinkWidget, 0.0);
-		gtk_widget_hide(m_pVideoSinkWidget);
 	}
 	/* The GL sink retains the old frame in its texture until the new
 	 * video's first buffer arrives.  Mark that we need to defer the
 	 * opacity restore so the old frame is never shown. */
 	m_bVideoNeedsFirstFrame = TRUE;
 	m_bVideoFlushPending = FALSE;
-	if (m_pVideoFixed != NULL)
-		gtk_widget_hide(m_pVideoFixed);
-	//gtk_widget_set_double_buffered (m_pImageView, TRUE); // Double buffering handled by gtksink
+	//gtk_widget_set_double_buffered (m_pImageView, TRUE); // Double buffering handled by gtk4sink
 	gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "image");
 
 	/* reset the digital zoom so the next video starts at fit, and drop the
@@ -3246,7 +3352,7 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	if (reloadImage && 0 != m_ImageListPtr->GetSize())
 	{
 		if (gtk_widget_get_mapped(m_pImageView))
-			gdk_window_invalidate_rect(gtk_widget_get_window(m_pImageView), NULL, TRUE);
+			gtk_widget_queue_draw(m_pImageView);
 		if (0 == m_iTimeoutSlideshowID)
 			LoadImage(m_ImageListPtr->GetCurrent());
 	}
@@ -3331,77 +3437,66 @@ void Viewer::ViewerImpl::Snapshot()
 	}
 }
 
-static gboolean 
-viewer_button_release_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+static void 
+viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
 {
+	(void)n_press;
+	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	if ((widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
 		&& pViewerImpl->m_bVideoPanning)
 	{
 		pViewerImpl->m_bVideoPanning = FALSE;
-		GdkDisplay* pan_display = gtk_widget_get_display(widget);
-		gdk_seat_ungrab(gdk_display_get_default_seat(pan_display));
 
 		/* a click (no meaningful drag) toggles play/pause */
-		if (ABS(event->x_root - pViewerImpl->m_dVideoPanStartRootX) < 5.
-			&& ABS(event->y_root - pViewerImpl->m_dVideoPanStartRootY) < 5.)
+		if (ABS(x - pViewerImpl->m_dVideoPanStartRootX) < 5.
+			&& ABS(y - pViewerImpl->m_dVideoPanStartRootY) < 5.)
 		{
 			if (pViewerImpl->IsVideo())
 				pViewerImpl->PlayPauseVideo();
 		}
 		pViewerImpl->RefreshAutoHideTimer();
-		return TRUE;
 	}
-	return FALSE;
 }
 
-static gboolean 
-viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+static void 
+viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
 {
+	(void)n_press;
+	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+
+	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 
 	if (widget == pViewerImpl->m_pImageView || widget == pViewerImpl->m_pVideoFixed
 		|| widget == pViewerImpl->m_pVideoSinkWidget) 
 	{
-		if (GDK_BUTTON_PRESS == event->type && 3 == event->button)
+		if (3 == button)
 		{
-			viewer_show_context_menu(event, user_data);
-			return TRUE;
+			viewer_show_context_menu(widget, x, y, 0, user_data);
+			return;
 		}
 		else if ((widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
-			&& GDK_BUTTON_PRESS == event->type && 1 == event->button)
+			&& 1 == button)
 		{
-			/* begin a potential pan drag; a click without movement toggles
-			 * play/pause when the button is released.  Grab the GL sink's own
-			 * window (the fixed is a no-window container) so the drag keeps
-			 * tracking even when the pointer leaves the viewer area. */
 			if (pViewerImpl->IsVideo())
 			{
 				pViewerImpl->m_bVideoPanning = TRUE;
-				pViewerImpl->m_dVideoPanStartRootX = event->x_root;
-				pViewerImpl->m_dVideoPanStartRootY = event->y_root;
+				pViewerImpl->m_dVideoPanStartRootX = x;
+				pViewerImpl->m_dVideoPanStartRootY = y;
 				pViewerImpl->m_dVideoPanStartPX = pViewerImpl->m_dVideoPanX;
 				pViewerImpl->m_dVideoPanStartPY = pViewerImpl->m_dVideoPanY;
-				if (pViewerImpl->m_pVideoSinkWidget != NULL)
-				{
-				GdkWindow *win = gtk_widget_get_window(pViewerImpl->m_pVideoSinkWidget);
-				if (win != NULL)
-				{
-					gdk_seat_grab(gdk_display_get_default_seat(gdk_window_get_display(win)), win, GDK_SEAT_CAPABILITY_ALL, TRUE,
-						NULL, NULL, NULL, NULL);
-				}
-				}
 				set_control_visible(pViewerImpl->m_pMediaControls, true);
 				pViewerImpl->RefreshAutoHideTimer();
-				return TRUE;
+				return;
 			}
 		}
 	}
 	else
 	{
-		if (GDK_BUTTON_PRESS == event->type && 1 == event->button)
+		if (1 == button)
 		{
 			// play video
 			if (pViewerImpl->IsVideo())
@@ -3411,41 +3506,54 @@ viewer_button_press_cb(GtkWidget *widget, GdkEventButton *event, gpointer user_d
 			}
 		}
 	}
-	return FALSE;
-} 
+}
 
-static void viewer_show_context_menu(GdkEventButton *event, gpointer userdata)
+static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble y_root, guint32 /*time*/, gpointer userdata)
 {
 	(void)userdata;
 
-	// FIXME - add more actions
-	GtkWidget *menu = gtk_menu_new();
-	gtk_widget_insert_action_group(menu, "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
+	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)userdata;
 
-	GtkWidget *item = gtk_menu_item_new_with_label("Copy");
-	gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_COPY);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	if (NULL == pViewerImpl->m_pContextMenuPopover)
+	{
+		GtkWidget *popover = gtk_popover_new();
+		GtkWidget *menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-	item = gtk_separator_menu_item_new();
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		gtk_widget_insert_action_group(popover, "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
 
-	item = gtk_menu_item_new_with_label("Rotate Counterclockwise");
-	gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_ROTATE_CCW);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		GtkWidget *item = gtk_button_new_with_label("Copy");
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_COPY);
+		gtk_box_append(GTK_BOX(menu_box), item);
 
-	item = gtk_menu_item_new_with_label("Rotate Clockwise");
-	gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_ROTATE_CW);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+		gtk_box_append(GTK_BOX(menu_box), sep);
 
-	item = gtk_separator_menu_item_new();
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		item = gtk_button_new_with_label("Rotate Counterclockwise");
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_ROTATE_CCW);
+		gtk_box_append(GTK_BOX(menu_box), item);
 
-	item = gtk_menu_item_new_with_label("Move To Trash");
-	gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_TRASH);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		item = gtk_button_new_with_label("Rotate Clockwise");
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_ROTATE_CW);
+		gtk_box_append(GTK_BOX(menu_box), item);
 
-	gtk_widget_show_all(menu);
-	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
+		sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+		gtk_box_append(GTK_BOX(menu_box), sep);
+
+		item = gtk_button_new_with_label("Move To Trash");
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_TRASH);
+		gtk_box_append(GTK_BOX(menu_box), item);
+
+		gtk_popover_set_child(GTK_POPOVER(popover), menu_box);
+		pViewerImpl->m_pContextMenuPopover = popover;
+		gtk_widget_set_parent(popover, widget);
+	}
+
+	if (x_root >= 0 && y_root >= 0)
+	{
+		GdkRectangle rect = { (gint)x_root, (gint)y_root, 1, 1 };
+		gtk_popover_set_pointing_to(GTK_POPOVER(pViewerImpl->m_pContextMenuPopover), &rect);
+	}
+	gtk_popover_popup(GTK_POPOVER(pViewerImpl->m_pContextMenuPopover));
 }
 
 
@@ -3458,10 +3566,57 @@ Viewer::ViewerImpl::~ViewerImpl()
 
 	gst_object_unref(GST_OBJECT(m_pPipeline));
 
+	/* cancel every main-loop callback that captures `this` so none can fire
+	 * into the freed object after the teardown idle returns */
 	if (0 != m_iIdleSetIndex)
 	{
 		g_source_remove(m_iIdleSetIndex);
 		m_iIdleSetIndex = 0;
+	}
+	if (0 != m_iVideoZoomIdle)
+	{
+		g_source_remove(m_iVideoZoomIdle);
+		m_iVideoZoomIdle = 0;
+	}
+	if (0 != m_iTimeoutUpdateListID)
+	{
+		g_source_remove(m_iTimeoutUpdateListID);
+		m_iTimeoutUpdateListID = 0;
+	}
+	if (0 != m_iTimeoutSlideshowID)
+	{
+		g_source_remove(m_iTimeoutSlideshowID);
+		m_iTimeoutSlideshowID = 0;
+	}
+	if (0 != m_iTimeoutMouseMotionNotify)
+	{
+		g_source_remove(m_iTimeoutMouseMotionNotify);
+		m_iTimeoutMouseMotionNotify = 0;
+	}
+	if (0 != m_iTimeoutPlayProgress)
+	{
+		g_source_remove(m_iTimeoutPlayProgress);
+		m_iTimeoutPlayProgress = 0;
+	}
+	if (0 != m_iTimeoutScrollbars)
+	{
+		g_source_remove(m_iTimeoutScrollbars);
+		m_iTimeoutScrollbars = 0;
+	}
+	if (0 != m_iTimeoutFilmstripFade)
+	{
+		g_source_remove(m_iTimeoutFilmstripFade);
+		m_iTimeoutFilmstripFade = 0;
+	}
+	if (0 != m_iTimeoutControlsFade)
+	{
+		g_source_remove(m_iTimeoutControlsFade);
+		m_iTimeoutControlsFade = 0;
+	}
+	if (0 != m_iVideoZoomTimeoutID)
+	{
+		g_source_remove(m_iVideoZoomTimeoutID);
+		m_iVideoZoomTimeoutID = 0;
 	}
 
 	CancelFilmstripHide();
@@ -3469,8 +3624,48 @@ Viewer::ViewerImpl::~ViewerImpl()
 	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
 	m_ImageLoader.RemovePixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
 
-	if (NULL != m_pHBox)
-		g_object_unref(m_pHBox);
+	/* popovers are parented to viewer widgets (buttons / icon view); unparent
+	 * them NOW while their parents are still alive, or they would be left with
+	 * a dangling parent pointer when the widget tree below is destroyed */
+	if (m_pVolumePopover)
+	{
+		if (gtk_widget_get_parent(m_pVolumePopover))
+			gtk_widget_unparent(m_pVolumePopover);
+		m_pVolumePopover = NULL;
+	}
+	if (m_pVideoOptionsPopover)
+	{
+		if (gtk_widget_get_parent(m_pVideoOptionsPopover))
+			gtk_widget_unparent(m_pVideoOptionsPopover);
+		m_pVideoOptionsPopover = NULL;
+	}
+	if (m_pSpeedButton)
+	{
+		GtkWidget *speedPop = (GtkWidget*)g_object_get_data(G_OBJECT(m_pSpeedButton), "speed-popover");
+		if (speedPop)
+		{
+			if (gtk_widget_get_parent(speedPop))
+				gtk_widget_unparent(speedPop);
+			g_object_set_data(G_OBJECT(m_pSpeedButton), "speed-popover", NULL);
+		}
+	}
+	if (m_pContextMenuPopover)
+	{
+		if (gtk_widget_get_parent(m_pContextMenuPopover))
+			gtk_widget_unparent(m_pContextMenuPopover);
+		m_pContextMenuPopover = NULL;
+	}
+
+	/* m_pHBox is parented into the window tree and owned by it; the window
+	 * destroy at the end of ~QuiverImpl runs AFTER ViewerImpl has been freed.
+	 * Unmap the whole viewer subtree HERE, while `this` is still alive, so no
+	 * widget can fire a leave/unmap/gesture callback into this freed object
+	 * during the window teardown (same pattern as ~BrowserImpl). */
+	if (m_pHBox && gtk_widget_get_parent(m_pHBox))
+	{
+		gtk_widget_unparent(m_pHBox);
+	}
+	m_pHBox = NULL;
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
@@ -3488,56 +3683,187 @@ static gboolean video_apply_zoom_idle(gpointer user_data)
 	 * (which means the overlay has allocated the stack -> layout -> sink). */
 	pViewerImpl->ApplyVideoZoom();
 	if (pViewerImpl->m_pVideoFixed != NULL)
-		gtk_widget_show(pViewerImpl->m_pVideoFixed);
 	if (pViewerImpl->m_pVideoSinkWidget != NULL)
 	{
-		gtk_widget_show(pViewerImpl->m_pVideoSinkWidget);
 	}
+	pViewerImpl->m_iVideoZoomIdle = 0;
 	return FALSE;
-}
-
-static void video_zoom_raise_windows_cb(GtkWidget *widget, gpointer user_data)
-{
-	(void)user_data;
-	if (widget == NULL || !gtk_widget_get_realized(widget))
-		return;
-	if (GTK_IS_CONTAINER(widget))
-	{
-		/* raise children first so the outermost window of each branch ends up
-		 * on top of its ancestors */
-		GList *children = gtk_container_get_children(GTK_CONTAINER(widget));
-		for (GList *l = children; l != NULL; l = l->next)
-			video_zoom_raise_windows_cb((GtkWidget *)l->data, NULL);
-		g_list_free(children);
-	}
-	if (gtk_widget_get_has_window(widget))
-	{
-		GdkWindow *win = gtk_widget_get_window(widget);
-		if (win != NULL)
-			gdk_window_raise(win);
-	}
 }
 
 static void video_zoom_raise_media_windows(Viewer::ViewerImpl *p)
 {
-	/* A GtkOverlay gives each overlay child its own GdkWindow.  Showing an
-	 * overlay child implicitly raises its window, so when the video's fixed
-	 * container is shown it is stacked above the media controls even though
-	 * the overlay still draws the controls on top; clicks then land on the
-	 * video and the timeline / volume button are dead.  Raise the controls'
-	 * overlay window (the no-window alignment's parent window) and every
-	 * windowed descendant whenever the video appears or the layout changes
-	 * so the controls always stay on top of the video. */
-	if (p->m_pMediaControls != NULL)
+	(void)p;
+	/* In GTK4 overlay stacking is managed by the widget tree; no manual
+	 * window raising is needed. */
+}
+
+/* ── Video free-layout container ──────────────────────────────────── *
+ * A GtkLayout replacement (GtkLayout was removed in GTK 4.10).
+ *
+ * Two GTK3→GTK4 regressions are fixed here:
+ *  1. GTK4 removed the ::size-allocate signal, so the video never re-fit on
+ *     window resize.  The size_allocate vfunc below re-queues the zoom math
+ *     (video_apply_zoom_idle) whenever the canvas is reallocated.
+ *  2. GtkFixed reports its children's minimum size through its own request,
+ *     so a large video picture size_request pinned the stack/window minimum
+ *     and the window could not be shrunk.  measure() always returns (0,0),
+ *     so the window minimum never depends on the (possibly oversized)
+ *     picture. */
+
+typedef struct {
+	GtkWidget *child;
+	gint x;
+	gint y;
+} QuiverFreelayoutChild;
+
+G_DECLARE_FINAL_TYPE(QuiverFreelayout, quiver_freelayout, QUIVER, FREELAYOUT, GtkWidget)
+
+struct _QuiverFreelayout {
+	GtkWidget parent_instance;
+	GArray *children;
+};
+
+G_DEFINE_TYPE(QuiverFreelayout, quiver_freelayout, GTK_TYPE_WIDGET)
+
+static void
+quiver_freelayout_measure(GtkWidget *widget, GtkOrientation orientation,
+	int for_size, int *minimum, int *natural,
+	int *minimum_baseline, int *natural_baseline)
+{
+	(void)widget; (void)orientation; (void)for_size;
+	/* Never report the children's size so the window minimum stays free */
+	if (minimum) *minimum = 0;
+	if (natural) *natural = 0;
+	if (minimum_baseline) *minimum_baseline = -1;
+	if (natural_baseline) *natural_baseline = -1;
+}
+
+static void
+quiver_freelayout_size_allocate(GtkWidget *widget, int width, int height, int baseline)
+{
+	(void)baseline;
+	QuiverFreelayout *self = QUIVER_FREELAYOUT(widget);
+
+	for (guint i = 0; i < self->children->len; i++)
 	{
-		GtkWidget *alignment = gtk_widget_get_parent(p->m_pMediaControls);
-		if (alignment != NULL && gtk_widget_get_realized(alignment))
+		QuiverFreelayoutChild *c = &g_array_index(self->children, QuiverFreelayoutChild, i);
+		if (c->child == NULL || !gtk_widget_get_visible(c->child) ||
+			!gtk_widget_get_child_visible(c->child))
+			continue;
+
+		int req_w = 0, req_h = 0;
+		gtk_widget_get_size_request(c->child, &req_w, &req_h);
+
+		GtkAllocation alloc;
+		alloc.x = c->x;
+		alloc.y = c->y;
+		alloc.width = (req_w > 0) ? req_w : width;
+		alloc.height = (req_h > 0) ? req_h : height;
+		gtk_widget_size_allocate(c->child, &alloc, -1);
+	}
+
+	/* GTK4: re-fit the video when this canvas is reallocated (the old
+	 * ::size-allocate signal no longer exists, so the zoom never followed
+	 * window resizes). */
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)g_object_get_data(
+		G_OBJECT(widget), "quiver-viewer-impl");
+	if (p != NULL && p->m_iVideoWidth > 0 && p->m_iVideoHeight > 0)
+	{
+		/* keep at most one pending zoom idle so none can fire after the
+		 * ViewerImpl is gone (tracked so the destructor can cancel it) */
+		if (p->m_iVideoZoomIdle != 0)
+			g_source_remove(p->m_iVideoZoomIdle);
+		p->m_iVideoZoomIdle = g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, p, NULL);
+	}
+}
+
+static void
+quiver_freelayout_snapshot(GtkWidget *widget, GtkSnapshot *snapshot)
+{
+	QuiverFreelayout *self = QUIVER_FREELAYOUT(widget);
+	for (guint i = 0; i < self->children->len; i++)
+	{
+		QuiverFreelayoutChild *c = &g_array_index(self->children, QuiverFreelayoutChild, i);
+		if (c->child != NULL)
+			gtk_widget_snapshot_child(widget, c->child, snapshot);
+	}
+}
+
+static void
+quiver_freelayout_init(QuiverFreelayout *self)
+{
+	self->children = g_array_new(FALSE, FALSE, sizeof(QuiverFreelayoutChild));
+}
+
+static void
+quiver_freelayout_dispose(GObject *object)
+{
+	QuiverFreelayout *self = QUIVER_FREELAYOUT(object);
+	if (self->children != NULL)
+	{
+		for (guint i = 0; i < self->children->len; i++)
 		{
-			GdkWindow *win = gtk_widget_get_window(alignment);
-			if (win != NULL)
-				gdk_window_raise(win);
+			QuiverFreelayoutChild *c = &g_array_index(self->children, QuiverFreelayoutChild, i);
+			if (c->child != NULL)
+			{
+				/* only unparent a child that still has us as parent; a child
+				 * with extra refs (e.g. the video sink's GtkPicture) survives
+				 * as a standalone widget instead of leaking with a dangling
+				 * parent pointer */
+				if (gtk_widget_get_parent(c->child) == GTK_WIDGET(self))
+					gtk_widget_unparent(c->child);
+				c->child = NULL;
+			}
 		}
-		video_zoom_raise_windows_cb(p->m_pMediaControls, NULL);
+		g_array_set_size(self->children, 0);
+	}
+	G_OBJECT_CLASS(quiver_freelayout_parent_class)->dispose(object);
+}
+
+static void
+quiver_freelayout_class_init(QuiverFreelayoutClass *klass)
+{
+	GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
+	gobject_class->dispose = quiver_freelayout_dispose;
+
+	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+	widget_class->measure = quiver_freelayout_measure;
+	widget_class->size_allocate = quiver_freelayout_size_allocate;
+	widget_class->snapshot = quiver_freelayout_snapshot;
+}
+
+static GtkWidget *
+quiver_freelayout_new(void)
+{
+	return GTK_WIDGET(g_object_new(quiver_freelayout_get_type(), NULL));
+}
+
+static void
+quiver_freelayout_put(GtkWidget *container, GtkWidget *child, gint x, gint y)
+{
+	QuiverFreelayout *self = QUIVER_FREELAYOUT(container);
+	QuiverFreelayoutChild c;
+	c.child = child;
+	c.x = x;
+	c.y = y;
+	g_array_append_val(self->children, c);
+	gtk_widget_set_parent(child, container);
+}
+
+static void
+quiver_freelayout_move(GtkWidget *container, GtkWidget *child, gint x, gint y)
+{
+	QuiverFreelayout *self = QUIVER_FREELAYOUT(container);
+	for (guint i = 0; i < self->children->len; i++)
+	{
+		QuiverFreelayoutChild *c = &g_array_index(self->children, QuiverFreelayoutChild, i);
+		if (c->child == child)
+		{
+			c->x = x;
+			c->y = y;
+			gtk_widget_queue_allocate(container);
+			return;
+		}
 	}
 }
 
@@ -3545,16 +3871,6 @@ static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data)
 {
 	(void)widget;
 	video_zoom_raise_media_windows((Viewer::ViewerImpl *)user_data);
-}
-
-static void video_zoom_resize_cb(GtkWidget *widget, GdkRectangle *allocation, gpointer user_data)
-{
-	(void)widget;
-	(void)allocation;
-	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
-		g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, pViewerImpl, NULL);
-	video_zoom_raise_media_windows(pViewerImpl);
 }
 
 static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
@@ -3584,7 +3900,9 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 					pViewerImpl->m_iVideoHeight = h;
 					/* element properties must not be touched from the streaming
 					 * thread, so re-apply the zoom on the main thread */
-					g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, pViewerImpl, NULL);
+					if (pViewerImpl->m_iVideoZoomIdle != 0)
+						g_source_remove(pViewerImpl->m_iVideoZoomIdle);
+					pViewerImpl->m_iVideoZoomIdle = g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, pViewerImpl, NULL);
 				}
 			}
 		}
@@ -3592,28 +3910,28 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 	return GST_PAD_PROBE_OK;
 }
 
-/* Called when the GL sink widget draws.  After a video switch, the sink's
- * framebuffer still contains the OLD video's last frame until the new
- * video's first frame is actually rendered.  Restoring opacity here
+/* Called when the sink's paintable delivers a new frame.  After a video
+ * switch, the paintable still shows the OLD video's last frame until the
+ * new video's first frame is actually rendered.  Restoring opacity here
  * (rather than in ASYNC_DONE or a pad probe) ensures the new frame is
- * already in the sink's texture when it becomes visible. */
-static gboolean video_sink_draw_cb(GtkWidget *widget, cairo_t *cr, gpointer user_data)
-{ (void)cr;
+ * already available when it becomes visible. */
+static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer user_data)
+{
+	(void)paintable;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	if (p->m_bVideoNeedsFirstFrame
 		&& !p->m_bVideoFlushPending
 		&& p->m_pVideoFixed != NULL && gtk_widget_get_visible(p->m_pVideoFixed))
 	{
 		p->m_bVideoNeedsFirstFrame = FALSE;
-		gtk_widget_set_opacity(widget, 1.0);
+		gtk_widget_set_opacity(p->m_pVideoSinkWidget, 1.0);
 	}
-	return FALSE;
 }
 
 static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
 { (void)pad; (void)user_data;
 
-	/* gtkglsink pushes an upstream reconfigure event whenever its widget is
+	/* gtk4paintablesink pushes an upstream reconfigure event whenever its widget is
 	 * resized, and the crop/caps changes from zooming do too.  If that event
 	 * reaches decodebin, the hardware decoder must renegotiate its output
 	 * mid-stream, which fails and aborts playback with "Internal data stream
@@ -3731,26 +4049,36 @@ static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *
 	GtkWidget *area = p->m_pVideoFixed;
 	if (area == NULL || !gtk_widget_get_realized(area))
 		return;
-	gint w = gtk_widget_get_allocated_width(area);
-	gint h = gtk_widget_get_allocated_height(area);
+	gint w = gtk_widget_get_width(area);
+	gint h = gtk_widget_get_height(area);
 	if (w <= 0 || h <= 0)
 		return;
 	/* use the toplevel window for the pointer lookup and translate the
 	 * result back into the area's coords */
-	GtkWidget *toplevel = gtk_widget_get_toplevel(area);
+	GtkWidget *toplevel = GTK_WIDGET(gtk_widget_get_root(area));
 	if (toplevel == NULL || !gtk_widget_get_realized(toplevel))
 		return;
-	gint dx = 0, dy = 0;
-	if (!gtk_widget_translate_coordinates(area, toplevel, 0, 0, &dx, &dy))
+	double ddx = 0, ddy = 0;
+	graphene_point_t origin = GRAPHENE_POINT_INIT(0.f, 0.f);
+	graphene_point_t out;
+	if (!gtk_widget_compute_point(area, toplevel, &origin, &out))
 		return;
-	GdkWindow *win = gtk_widget_get_window(toplevel);
-	gint x = 0, y = 0;
-	GdkModifierType mask;
+	ddx = out.x;
+	ddy = out.y;
+	gint dx = (gint)ddx, dy = (gint)ddy;
+	GtkNative *native = gtk_widget_get_native(toplevel);
+	if (native == NULL)
+		return;
+	GdkSurface *surface = gtk_native_get_surface(native);
+	if (surface == NULL)
+		return;
 	GdkDevice *device = gdk_seat_get_pointer(
-		gdk_display_get_default_seat(gdk_window_get_display(win)));
-	gdk_window_get_device_position(win, device, &x, &y, &mask);
-	x -= dx;
-	y -= dy;
+		gdk_display_get_default_seat(gdk_surface_get_display(surface)));
+	double surfx = 0, surfy = 0;
+	GdkModifierType mask;
+	gdk_surface_get_device_position(surface, device, &surfx, &surfy, &mask);
+	gint x = (gint)surfx - dx;
+	gint y = (gint)surfy - dy;
 	if (x >= 0 && x <= w && y >= 0 && y <= h)
 	{
 		*px = x;
@@ -3800,8 +4128,8 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 
 	/* Wait for ASYNC_DONE to restore opacity to prevent old frame flash */
 
-	gint areaW = gtk_widget_get_allocated_width(m_pVideoFixed);
-	gint areaH = gtk_widget_get_allocated_height(m_pVideoFixed);
+	gint areaW = gtk_widget_get_width(m_pVideoFixed);
+	gint areaH = gtk_widget_get_height(m_pVideoFixed);
 	if (areaW <= 0 || areaH <= 0)
 	{
 		return;
@@ -3870,7 +4198,7 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 
 	/* the video display grows with the zoom until it covers the viewer area,
 	 * like an image; zooming beyond that is covered by the crop + upscale
-	 * below.  The widget is also capped so gtkglsink's GL surface stays
+	 * below.  The widget is also capped so the sink's GL surface stays
 	 * within limits on huge windows; past the cap the crop covers the extra
 	 * zoom. */
 	gdouble effZoom = MIN(zoom, MIN(fillScale, 4096. / MAX(dispW, dispH)));
@@ -4142,7 +4470,7 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 		m_iVideoSinkX = newX;
 		m_iVideoSinkY = newY;
 		gtk_widget_set_size_request(m_pVideoSinkWidget, newW, newH);
-		gtk_layout_move(GTK_LAYOUT(m_pVideoFixed), m_pVideoSinkWidget, newX, newY);
+		quiver_freelayout_move(m_pVideoFixed, m_pVideoSinkWidget, newX, newY);
 	}
 
 	/* report the zoom percentage in the statusbar, like the image view does
@@ -4150,6 +4478,21 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	 * an image does not clobber the image's percentage) */
 	if (gtk_widget_get_visible(m_pVideoSinkWidget))
 		m_StatusbarPtr->SetMagnification((int)(m_dVideoZoom * 100. + 0.5));
+
+	g_printerr("[QLAYOUT applyzoom] mode=%d zoom=%.3f effZoom=%.3f widget=%dx%d area=%dx%d -> sink %dx%d@%d,%d\n",
+		(int)videoViewMode, m_dVideoZoom, effZoom,
+		(gint)(widgetW+0.5), (gint)(widgetH+0.5), areaW, areaH,
+		newW, newH, newX, newY);
+
+	{
+		GtkRoot *root = gtk_widget_get_root(m_pVideoFixed);
+		g_printerr("[QLAYOUT sizes] window=%dx%d fixed=%dx%d stack=%dx%d sinkreq=%dx%d\n",
+			root ? gtk_widget_get_width(GTK_WIDGET(root)) : -1,
+			root ? gtk_widget_get_height(GTK_WIDGET(root)) : -1,
+			gtk_widget_get_width(m_pVideoFixed), gtk_widget_get_height(m_pVideoFixed),
+			m_pStack ? gtk_widget_get_width(m_pStack) : -1, m_pStack ? gtk_widget_get_height(m_pStack) : -1,
+			newW, newH);
+	}
 
 	m_dVideoLastWidgetW = widgetW;
 	m_dVideoLastWidgetH = widgetH;
@@ -4220,7 +4563,7 @@ static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data
 	{
 		GtkPopover *popover = (GtkPopover *)g_object_get_data(G_OBJECT(speedBtn), "speed-popover");
 		if (popover != NULL)
-			gtk_widget_hide(GTK_WIDGET(popover));
+			gtk_widget_set_visible(GTK_WIDGET(popover), FALSE);
 	}
 }
 
@@ -4234,33 +4577,30 @@ static void viewer_speed_toggle_popover_cb(gpointer user_data, GtkWidget *widget
 	if (popover == NULL) return;
 	if (gtk_widget_get_visible(GTK_WIDGET(popover)))
 	{
-		gtk_widget_hide(GTK_WIDGET(popover));
+		gtk_widget_set_visible(GTK_WIDGET(popover), FALSE);
 	}
-	else
-	{
-		/* highlight current speed */
-		GtkWidget *box = (GtkWidget *)g_object_get_data(G_OBJECT(popover), "speed-box");
-		if (box != NULL)
+		else
 		{
-			GList *children = gtk_container_get_children(GTK_CONTAINER(box));
-			gdouble current = p->m_dPlaybackSpeed;
-			for (GList *l = children; l != NULL; l = l->next)
+			/* highlight current speed */
+			GtkWidget *box = (GtkWidget *)g_object_get_data(G_OBJECT(popover), "speed-box");
+			if (box != NULL)
 			{
-				GtkWidget *child = (GtkWidget *)l->data;
-				int val2 = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "speed-value"));
-				gdouble spd = val2 / 1000.0;
-				GtkStyleContext *ctx = gtk_widget_get_style_context(child);
-				if (spd == current)
-					gtk_style_context_add_class(ctx, "speed-active");
-				else
-					gtk_style_context_remove_class(ctx, "speed-active");
+				gdouble current = p->m_dPlaybackSpeed;
+				for (GtkWidget *child = gtk_widget_get_first_child(box);
+					 child != NULL;
+					 child = gtk_widget_get_next_sibling(child))
+				{
+					int val2 = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "speed-value"));
+					gdouble spd = val2 / 1000.0;
+					if (spd == current)
+						gtk_widget_add_css_class(child, "speed-active");
+					else
+						gtk_widget_remove_css_class(child, "speed-active");
+				}
 			}
-			g_list_free(children);
+			gtk_popover_popup(popover);
 		}
-		gtk_popover_set_relative_to(GTK_POPOVER(popover), speedBtn);
-		gtk_widget_show(GTK_WIDGET(popover));
 	}
-}
 
 static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user_data)
 {
@@ -4334,14 +4674,20 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pSnapBtn(NULL),
 	m_pTimelineRow(NULL),
 	m_pVolumeButton(NULL),
+	m_pVolumePopover(NULL),
+	m_pVolumeScale(NULL),
+	m_dVolume(1.0),
 	m_pFullscreenBtn(NULL),
 	m_pVideoOptionsBtn(NULL),
+	m_pVideoOptionsPopover(NULL),
+	m_iVideoZoomIdle(0),
 	m_ImageListPtr(new ImageList()),
 	m_bIsPlaying(false),
 	m_ThumbnailCache(100),
 	m_dPlaybackSpeed(1.0),
 	m_pSpeedButton(NULL),
 	m_pSpeedLabel(NULL),
+	m_pContextMenuPopover(NULL),
 	m_bFilmstripOverlay(false),
 	m_bHideFilmstripFS(true),
 	m_bFilmstripHiddenByFS(false),
@@ -4355,6 +4701,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_bControlsFadingIn(false),
 	m_dControlsFadeOpacity(0.0),
 	m_bSeekDragging(FALSE),
+	m_dPointerRootX(0.0),
+	m_dPointerRootY(0.0),
+	m_bPointerPosValid(false),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_ThumbnailLoader(this,2)
@@ -4365,7 +4714,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pViewer = pViewer;
 
 	m_pIconView = quiver_icon_view_new();
-	m_pImageView = quiver_image_view_new();
+ 	m_pImageView = quiver_image_view_new();
 	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_pImageView), FALSE);
 
 	gtk_widget_set_size_request(m_pImageView, 100, 100);
@@ -4382,7 +4731,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_margin_bottom(alignment, 0);
 	gtk_widget_set_margin_start(alignment, 0);
 	gtk_widget_set_margin_end(alignment, 0);
-	gtk_widget_set_no_show_all(alignment,TRUE);
 	gtk_box_set_spacing(GTK_BOX(alignment), 0);
 
 	/* ── Row 1: Transport controls (overlay layout) ─────────────── */
@@ -4392,9 +4740,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	/* Speed button — bold label, manual popover */
 	m_dPlaybackSpeed = 1.0;
-	GtkWidget* speedPopover = gtk_popover_new(NULL);
-	g_object_ref_sink(speedPopover);
-	gtk_popover_set_modal(GTK_POPOVER(speedPopover), TRUE);
+	GtkWidget* speedPopover = gtk_popover_new();
+	gtk_popover_set_autohide(GTK_POPOVER(speedPopover), TRUE);
 	gtk_widget_set_size_request(speedPopover, 100, -1);
 	GtkWidget* speedBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
 	gtk_widget_set_margin_start(speedBox, 3);
@@ -4412,197 +4759,224 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		GtkWidget* lbl = gtk_label_new(NULL);
 		gtk_label_set_use_markup(GTK_LABEL(lbl), TRUE);
 		gtk_label_set_markup(GTK_LABEL(lbl), label);
-		gtk_container_add(GTK_CONTAINER(btn), lbl);
+		gtk_button_set_child(GTK_BUTTON(btn), lbl);
 		g_free(label);
 		g_object_set_data(G_OBJECT(btn), "speed-value", GINT_TO_POINTER((int)(speeds[i] * 1000)));
 		g_signal_connect(G_OBJECT(btn), "clicked", G_CALLBACK(viewer_speed_button_clicked_cb), this);
-		gtk_box_pack_start(GTK_BOX(speedBox), btn, TRUE, TRUE, 0);
+		gtk_box_append(GTK_BOX(speedBox), btn);
 	}
 
-	gtk_container_add(GTK_CONTAINER(speedPopover), speedBox);
-	gtk_widget_show_all(speedBox);
+	gtk_popover_set_child(GTK_POPOVER(speedPopover), speedBox);
 
 	m_pSpeedButton = gtk_button_new();
-	gtk_button_set_relief(GTK_BUTTON(m_pSpeedButton), GTK_RELIEF_NONE);
+	gtk_button_set_has_frame(GTK_BUTTON(m_pSpeedButton), FALSE);
 	m_pSpeedLabel = gtk_label_new(NULL);
 	gtk_label_set_use_markup(GTK_LABEL(m_pSpeedLabel), TRUE);
 	gtk_label_set_markup(GTK_LABEL(m_pSpeedLabel), "<b>1x</b>");
-	gtk_container_add(GTK_CONTAINER(m_pSpeedButton), m_pSpeedLabel);
+	gtk_button_set_child(GTK_BUTTON(m_pSpeedButton), m_pSpeedLabel);
 	g_object_set_data(G_OBJECT(m_pSpeedButton), "speed-popover", speedPopover);
+	/* Anchor the popover to the speed button (GTK4 takes ownership by parenting) */
+	gtk_widget_set_parent(speedPopover, m_pSpeedButton);
+	gtk_popover_set_position(GTK_POPOVER(speedPopover), GTK_POS_TOP);
 	g_signal_connect_swapped(G_OBJECT(m_pSpeedButton), "clicked", G_CALLBACK(viewer_speed_toggle_popover_cb), this);
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pSpeedButton), "media-btn");
+	gtk_widget_add_css_class(m_pSpeedButton, "media-btn");
 
 	/* Snapshot button */
-	m_pSnapBtn = gtk_button_new_from_icon_name("camera-photo", GTK_ICON_SIZE_BUTTON);
-	gtk_button_set_relief(GTK_BUTTON(m_pSnapBtn), GTK_RELIEF_NONE);
+	m_pSnapBtn = gtk_button_new_from_icon_name("camera-photo");
+	gtk_button_set_has_frame(GTK_BUTTON(m_pSnapBtn), FALSE);
 	g_signal_connect(G_OBJECT(m_pSnapBtn), "clicked", G_CALLBACK(viewer_snapshot_button_clicked_cb), this);
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pSnapBtn), "media-btn");
+	gtk_widget_add_css_class(m_pSnapBtn, "media-btn");
 
 	/* Volume button */
-	m_pVolumeButton = gtk_volume_button_new();
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pVolumeButton), "media-btn");
+	m_pVolumeButton = gtk_toggle_button_new();
+	gtk_button_set_has_frame(GTK_BUTTON(m_pVolumeButton), FALSE);
+	GtkWidget* volIcon = gtk_image_new_from_icon_name("audio-volume-high");
+	gtk_button_set_child(GTK_BUTTON(m_pVolumeButton), volIcon);
+	gtk_widget_add_css_class(m_pVolumeButton, "media-btn");
+
+	m_pVolumePopover = gtk_popover_new();
+	gtk_popover_set_autohide(GTK_POPOVER(m_pVolumePopover), TRUE);
+	GtkWidget* volBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	gtk_widget_set_margin_start(volBox, 8);
+	gtk_widget_set_margin_end(volBox, 8);
+	gtk_widget_set_margin_top(volBox, 8);
+	gtk_widget_set_margin_bottom(volBox, 8);
+	GtkWidget* volLabel = gtk_label_new("Volume");
+	gtk_box_append(GTK_BOX(volBox), volLabel);
+	m_pVolumeScale = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, 0.0, 1.0, 0.05);
+	gtk_widget_set_size_request(m_pVolumeScale, -1, 120);
+	gtk_range_set_value(GTK_RANGE(m_pVolumeScale), m_dVolume);
+	g_signal_connect(G_OBJECT(m_pVolumeScale), "value-changed", G_CALLBACK(viewer_volume_value_changed), this);
+	gtk_box_append(GTK_BOX(volBox), m_pVolumeScale);
+	gtk_popover_set_child(GTK_POPOVER(m_pVolumePopover), volBox);
+	/* Anchor the popover to the volume button (GTK4 takes ownership via
+	 * parenting) */
+	gtk_widget_set_parent(m_pVolumePopover, m_pVolumeButton);
+	gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_TOP);
+	g_signal_connect_swapped(G_OBJECT(m_pVolumeButton), "toggled", G_CALLBACK(viewer_volume_toggle_popover_cb), this);
+	/* when the popover auto-hides, reset the toggle button's pressed state */
+	g_signal_connect(m_pVolumePopover, "closed", G_CALLBACK(viewer_volume_popover_closed_cb), this);
 
 		/* Video Options button */
-	m_pVideoOptionsBtn = gtk_button_new_from_icon_name("emblem-system-symbolic", GTK_ICON_SIZE_BUTTON);
-	gtk_button_set_relief(GTK_BUTTON(m_pVideoOptionsBtn), GTK_RELIEF_NONE);
+	m_pVideoOptionsBtn = gtk_button_new_from_icon_name("emblem-system-symbolic");
+	gtk_button_set_has_frame(GTK_BUTTON(m_pVideoOptionsBtn), FALSE);
 	g_signal_connect(G_OBJECT(m_pVideoOptionsBtn), "clicked", G_CALLBACK(viewer_video_options_btn_clicked_cb), this);
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pVideoOptionsBtn), "media-btn");
+	gtk_widget_add_css_class(m_pVideoOptionsBtn, "media-btn");
 
 	/* Fullscreen button */
-	m_pFullscreenBtn = gtk_button_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE_BUTTON);
-	gtk_button_set_relief(GTK_BUTTON(m_pFullscreenBtn), GTK_RELIEF_NONE);
+	m_pFullscreenBtn = gtk_button_new_from_icon_name("view-fullscreen");
+	gtk_button_set_has_frame(GTK_BUTTON(m_pFullscreenBtn), FALSE);
 	g_signal_connect(G_OBJECT(m_pFullscreenBtn), "clicked", G_CALLBACK(viewer_fullscreen_button_clicked_cb), this);
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pFullscreenBtn), "media-btn");
+	gtk_widget_add_css_class(m_pFullscreenBtn, "media-btn");
 
-	/* Connect button-press on every control so clicking a hidden
-	 * button shows the controls bar without activating the button.
-	 * Also add GDK_POINTER_MOTION_MASK + event signal so motion
-	 * events reach our handler (GtkButton swallows them at the
-	 * GdkWindow level otherwise). */
+	/* Attach motion controllers so hovering any button keeps the
+	 * controls bar (and the timeline) visible. */
 	{
 		GtkWidget *btns[] = { m_pSpeedButton, m_pSnapBtn, m_pVolumeButton,
 			m_pVideoOptionsBtn, m_pFullscreenBtn };
 		for (size_t i = 0; i < sizeof(btns)/sizeof(btns[0]); i++)
 		{
-			gtk_widget_set_events(btns[i],
-				gtk_widget_get_events(btns[i]) | GDK_POINTER_MOTION_MASK);
-			g_signal_connect(btns[i], "event",
-				G_CALLBACK(controls_eventbox_motion_cb), this);
-			g_signal_connect(btns[i], "button-press-event",
-				G_CALLBACK(controls_show_on_event_cb), this);
+			GtkEventController *motion = gtk_event_controller_motion_new();
+			g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+			gtk_widget_add_controller(btns[i], motion);
 		}
 	}
 
 	/* Far-right group: speed | snap | vol | fullscreen */
 	GtkWidget* extraBtns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_pack_start(GTK_BOX(extraBtns), m_pSpeedButton, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(extraBtns), m_pSnapBtn, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(extraBtns), m_pVolumeButton, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(extraBtns), m_pVideoOptionsBtn, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(extraBtns), m_pFullscreenBtn, FALSE, FALSE, 0);
+	gtk_box_append(GTK_BOX(extraBtns), m_pSpeedButton);
+	gtk_box_append(GTK_BOX(extraBtns), m_pSnapBtn);
+	gtk_box_append(GTK_BOX(extraBtns), m_pVolumeButton);
+	gtk_box_append(GTK_BOX(extraBtns), m_pVideoOptionsBtn);
+	gtk_box_append(GTK_BOX(extraBtns), m_pFullscreenBtn);
 	gtk_widget_set_halign(extraBtns, GTK_ALIGN_END);
 	gtk_widget_set_valign(extraBtns, GTK_ALIGN_CENTER);
 
 	/* Rewind button */
-	m_pRewindBtn = gtk_button_new_from_icon_name("media-seek-backward", GTK_ICON_SIZE_BUTTON);
-	gtk_widget_set_events(m_pRewindBtn,
-		gtk_widget_get_events(m_pRewindBtn) | GDK_POINTER_MOTION_MASK);
-	g_signal_connect(m_pRewindBtn, "event",
-		G_CALLBACK(controls_eventbox_motion_cb), this);
-	gtk_button_set_relief(GTK_BUTTON(m_pRewindBtn), GTK_RELIEF_NONE);
+	m_pRewindBtn = gtk_button_new_from_icon_name("media-seek-backward");
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pRewindBtn, motion);
+	}
+	gtk_button_set_has_frame(GTK_BUTTON(m_pRewindBtn), FALSE);
 	g_signal_connect_swapped(G_OBJECT(m_pRewindBtn), "clicked", G_CALLBACK(viewer_skip_back_cb), this);
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pRewindBtn), "media-btn");
-	g_signal_connect(m_pRewindBtn, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
+	gtk_widget_add_css_class(m_pRewindBtn, "media-btn");
 
 	/* Fast-forward button */
-	m_pFfBtn = gtk_button_new_from_icon_name("media-seek-forward", GTK_ICON_SIZE_BUTTON);
-	gtk_widget_set_events(m_pFfBtn,
-		gtk_widget_get_events(m_pFfBtn) | GDK_POINTER_MOTION_MASK);
-	g_signal_connect(m_pFfBtn, "event",
-		G_CALLBACK(controls_eventbox_motion_cb), this);
-	gtk_button_set_relief(GTK_BUTTON(m_pFfBtn), GTK_RELIEF_NONE);
+	m_pFfBtn = gtk_button_new_from_icon_name("media-seek-forward");
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pFfBtn, motion);
+	}
+	gtk_button_set_has_frame(GTK_BUTTON(m_pFfBtn), FALSE);
 	g_signal_connect_swapped(G_OBJECT(m_pFfBtn), "clicked", G_CALLBACK(viewer_skip_fwd_cb), this);
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pFfBtn), "media-btn");
-	g_signal_connect(m_pFfBtn, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
+	gtk_widget_add_css_class(m_pFfBtn, "media-btn");
 
-	/* Play button — regular GtkButton, not GtkEventBox (event boxes
-	 * create their own GdkWindow which steals events from the scale's
-	 * grab when the pointer enters during a drag) */
-	m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DIALOG);
+	/* Play button */
+	m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start");
 	m_pPlayButton = gtk_button_new();
-	gtk_widget_set_events(m_pPlayButton,
-		gtk_widget_get_events(m_pPlayButton) | GDK_POINTER_MOTION_MASK);
-	g_signal_connect(m_pPlayButton, "event",
-		G_CALLBACK(controls_eventbox_motion_cb), this);
-	gtk_button_set_relief(GTK_BUTTON(m_pPlayButton), GTK_RELIEF_NONE);
-	gtk_container_add(GTK_CONTAINER(m_pPlayButton), m_pPlayImage);
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pPlayButton, motion);
+	}
+	gtk_button_set_has_frame(GTK_BUTTON(m_pPlayButton), FALSE);
+	gtk_button_set_child(GTK_BUTTON(m_pPlayButton), m_pPlayImage);
 	g_signal_connect_swapped(G_OBJECT(m_pPlayButton), "clicked", G_CALLBACK(viewer_play_button_clicked_cb), this);
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pPlayButton), "media-btn");
-	g_signal_connect(m_pPlayButton, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
+	gtk_widget_add_css_class(m_pPlayButton, "media-btn");
 
 	/* Centered group: [rewind][play][ff] */
 	GtkWidget* centerGroup = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_pack_start(GTK_BOX(centerGroup), m_pRewindBtn, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(centerGroup), m_pPlayButton, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(centerGroup), m_pFfBtn, FALSE, FALSE, 0);
+	gtk_box_append(GTK_BOX(centerGroup), m_pRewindBtn);
+	gtk_box_append(GTK_BOX(centerGroup), m_pPlayButton);
+	gtk_box_append(GTK_BOX(centerGroup), m_pFfBtn);
 
-	/* Main box: center widget for [rewind][play][ff], far-right for [speed][snap][vol] */
+	/* GtkCenterBox keeps the [rewind][play][ff] transport group pinned to the
+	 * visual center while the far-right controls sit at the end. The start
+	 * side is deliberately empty so the transport group stays centered
+	 * instead of being shifted by the asymmetric right-hand group.
+	 * GtkCenterBox requires GTK 4.4+ (we require 4.12). */
+	GtkWidget *controlsInner = gtk_center_box_new();
+	gtk_widget_set_hexpand(controlsInner, TRUE);
+	gtk_center_box_set_center_widget(GTK_CENTER_BOX(controlsInner), centerGroup);
+	gtk_center_box_set_end_widget(GTK_CENTER_BOX(controlsInner), extraBtns);
+
 	m_pControlsBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_set_margin_start(m_pControlsBox, 6);
 	gtk_widget_set_margin_end(m_pControlsBox, 6);
-	gtk_box_pack_end(GTK_BOX(m_pControlsBox), extraBtns, FALSE, FALSE, 0);
-	gtk_box_set_center_widget(GTK_BOX(m_pControlsBox), centerGroup);
+	gtk_box_append(GTK_BOX(m_pControlsBox), controlsInner);
 
 	/* ── Row 2: Timeline scale ─────────────────────────────────── */
 	GtkWidget* scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.001);
 	m_pPlayProgress = scale;
 	gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
 	gtk_widget_set_can_focus(scale, FALSE);
+	gtk_widget_set_hexpand(scale, TRUE);
 
-	gtk_widget_add_events(scale, GDK_POINTER_MOTION_MASK);
-	g_signal_connect(scale, "motion-notify-event", G_CALLBACK(controls_show_on_event_cb), this);
-	g_signal_connect(scale, "button-press-event", G_CALLBACK(controls_show_on_event_cb), this);
-	g_signal_connect(scale, "button-press-event", G_CALLBACK(viewer_scale_button_press_cb), this);
-	g_signal_connect(scale, "button-release-event", G_CALLBACK(viewer_scale_button_release_cb), this);
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(scale, motion);
+	}
+	{
+		GtkGesture *click = gtk_gesture_click_new();
+		g_signal_connect(click, "pressed", G_CALLBACK(viewer_scale_button_press_cb), this);
+		g_signal_connect(click, "released", G_CALLBACK(viewer_scale_button_release_cb), this);
+		gtk_widget_add_controller(scale, GTK_EVENT_CONTROLLER(click));
+	}
 
 	m_pTimelineRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_set_margin_start(m_pTimelineRow, 6);
 	gtk_widget_set_margin_end(m_pTimelineRow, 6);
-	gtk_box_pack_start(GTK_BOX(m_pTimelineRow), scale, TRUE, TRUE, 0);
+	gtk_box_append(GTK_BOX(m_pTimelineRow), scale);
 
 	/* ── Row 3: Time labels — at the edges of the scale ──────── */
 	m_pTimeElapsedLabel = gtk_label_new(NULL);
 	gtk_label_set_markup(GTK_LABEL(m_pTimeElapsedLabel), "<b>0:00</b>");
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pTimeElapsedLabel), "time-label");
+	gtk_widget_add_css_class(m_pTimeElapsedLabel, "time-label");
 
 	m_pTimeDurationLabel = gtk_label_new(NULL);
 	gtk_label_set_markup(GTK_LABEL(m_pTimeDurationLabel), "<b>0:00</b>");
-	gtk_style_context_add_class(gtk_widget_get_style_context(m_pTimeDurationLabel), "time-label");
+	gtk_widget_add_css_class(m_pTimeDurationLabel, "time-label");
 
 	GtkWidget* timeRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_set_margin_start(timeRow, 18);
 	gtk_widget_set_margin_end(timeRow, 18);
-	gtk_box_pack_start(GTK_BOX(timeRow), m_pTimeElapsedLabel, FALSE, FALSE, 0);
+	gtk_box_append(GTK_BOX(timeRow), m_pTimeElapsedLabel);
 	GtkWidget* timeSpacer = gtk_label_new("");
 	gtk_widget_set_hexpand(timeSpacer, TRUE);
-	gtk_box_pack_start(GTK_BOX(timeRow), timeSpacer, TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(timeRow), m_pTimeDurationLabel, FALSE, FALSE, 0);
+	gtk_box_append(GTK_BOX(timeRow), timeSpacer);
+	gtk_box_append(GTK_BOX(timeRow), m_pTimeDurationLabel);
 
 	/* ── Assemble alignment ──────────────────────────────────── */
-	gtk_box_pack_start(GTK_BOX(alignment), m_pControlsBox, FALSE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(alignment), m_pTimelineRow, FALSE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(alignment), timeRow, FALSE, TRUE, 0);
+	gtk_box_append(GTK_BOX(alignment), m_pControlsBox);
+	gtk_box_append(GTK_BOX(alignment), m_pTimelineRow);
+	gtk_box_append(GTK_BOX(alignment), timeRow);
 
 	m_pMediaControls = alignment;
 	m_pTimeline = scale;
 
 	/* ── Screen-wide CSS ──────────────────────────────────────── */
 	GtkCssProvider *cssProvider = gtk_css_provider_new();
-	gtk_css_provider_load_from_data(cssProvider,
+	gtk_css_provider_load_from_string(cssProvider,
 		".speed-active { background-image: none; background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n"
 		".filmstrip-overlay { background-color: transparent; }\n"
 ".media-btn { border-radius: 8px; min-width: 36px; min-height: 36px; padding: 4px; background-image: none; background-color: transparent; border: none; outline: none; }\n"
 		".media-btn:hover { background-image: none; background-color: alpha(@theme_bg_color, 0.60); border: none; }\n"
-		".media-btn:focus, .media-btn:focus-visible, .media-btn:focusring { outline: none; box-shadow: none; -gtk-outline-radius: 0; }\n"
-		"*:focus { outline: none; box-shadow: none; -gtk-outline-radius: 0; }\n"
-		".time-label { color: rgba(255, 255, 255, 0.85); font-size: 12px; }\n",
-		-1, NULL);
-	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+		".media-btn:focus, .media-btn:focus-visible { outline: none; box-shadow: none; }\n"
+		".time-label { color: rgba(255, 255, 255, 0.85); font-size: 12px; }\n"
+		".image-load-error { color: rgba(255, 255, 255, 1.0); font-size: 18px; padding: 20px; border-radius: 12px; background-color: alpha(#000, 0.55); }\n");
+	gtk_style_context_add_provider_for_display(gdk_display_get_default(),
 		GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
 	g_object_unref(cssProvider);
 
 	/* ── Wire events ──────────────────────────────────────────── */
-	g_signal_connect(G_OBJECT(m_pVolumeButton), "value-changed", G_CALLBACK(viewer_volume_value_changed), this);
 	m_iPlayProgressChangeHandler = g_signal_connect(G_OBJECT(m_pPlayProgress), "change-value",
 		G_CALLBACK(viewer_scale_change_value_cb), this);
 
 	/* Show everything initially, then hide what should be invisible at startup */
-	{
-		gboolean ns = gtk_widget_get_no_show_all(alignment);
-		gtk_widget_set_no_show_all(alignment, FALSE);
-		gtk_widget_show_all(alignment);
-		gtk_widget_set_no_show_all(alignment, ns);
-	}
 	/* Only the play button should be visible when a video is loaded. */
 	set_control_visible(m_pTimeElapsedLabel, false);
 	set_control_visible(m_pTimeDurationLabel, false);
@@ -4658,26 +5032,23 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pScrollbarV = gtk_scrollbar_new (GTK_ORIENTATION_VERTICAL, m_pAdjustmentV);
 	m_pScrollbarH = gtk_scrollbar_new (GTK_ORIENTATION_HORIZONTAL, m_pAdjustmentH);
 	
-	m_pNavigationBox = gtk_event_box_new ();
+	m_pNavigationBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 
-GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE_BUTTON);
-	gtk_container_add (GTK_CONTAINER (m_pNavigationBox),image);
-	gtk_widget_show(image);
+GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
+	gtk_box_append (GTK_BOX (m_pNavigationBox), image);
 
-	gtk_widget_set_no_show_all(m_pScrollbarV,TRUE);
-	gtk_widget_set_no_show_all(m_pScrollbarH,TRUE);
-	gtk_widget_set_no_show_all(m_pNavigationBox,TRUE);
-
-
-	g_signal_connect (G_OBJECT (m_pNavigationBox), 
-			  "button_press_event",
-			  G_CALLBACK (viewer_navigation_button_press_event), 
-			  this);
+	{
+		GtkGesture *click = gtk_gesture_click_new();
+		g_signal_connect(click, "pressed", G_CALLBACK(viewer_navigation_button_press_event), this);
+		gtk_widget_add_controller(m_pNavigationBox, GTK_EVENT_CONTROLLER(click));
+	}
 
 	
 
 	m_pGrid = gtk_grid_new ();
 	m_pOverlay = gtk_overlay_new ();
+	gtk_widget_set_hexpand(m_pOverlay, TRUE);
+	gtk_widget_set_vexpand(m_pOverlay, TRUE);
 	m_pStack = gtk_stack_new ();
 	gtk_widget_set_hexpand(m_pStack, TRUE);
 	gtk_widget_set_vexpand(m_pStack, TRUE);
@@ -4687,13 +5058,35 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	gtk_widget_set_hexpand(alignment, TRUE);
 	gtk_widget_set_valign(alignment, GTK_ALIGN_END);
 	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), alignment);
-	gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(m_pOverlay), alignment, TRUE);
+	// In GTK4 overlay children contribute to the overlay's size by default;
+	// the transport buttons' min-widths would otherwise pin the viewer area
+	// wider than the window (controls off-center, timeline scale overflowing
+	// past the edge).  Mark the floating bar as non-measuring so it always
+	// spans exactly the viewer's actual width.
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), alignment, FALSE);
 
 	// the image/video stack is the overlay's single main widget
 	gtk_widget_set_hexpand(m_pImageView, TRUE);
 	gtk_widget_set_vexpand(m_pImageView, TRUE);
 	gtk_stack_add_named(GTK_STACK(m_pStack), m_pImageView, "image");
-	gtk_container_add(GTK_CONTAINER(m_pOverlay), m_pStack);
+	gtk_overlay_set_child(GTK_OVERLAY(m_pOverlay), m_pStack);
+
+	/* "failed to load" indicator, centered above the image.  It is only
+	 * shown when the image loader reports a failed load for the current
+	 * image, so the user sees that navigation actually happened instead of
+	 * staring at the previous image's content. */
+	m_pImageErrorLabel = gtk_label_new(NULL);
+	gtk_label_set_markup(GTK_LABEL(m_pImageErrorLabel),
+		"<b>Failed to load</b>\n<small>This file could not be decoded.</small>");
+	gtk_widget_set_halign(m_pImageErrorLabel, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pImageErrorLabel, GTK_ALIGN_CENTER);
+	gtk_widget_set_hexpand(m_pImageErrorLabel, TRUE);
+	gtk_widget_set_vexpand(m_pImageErrorLabel, TRUE);
+	gtk_widget_add_css_class(m_pImageErrorLabel, "image-load-error");
+	gtk_widget_set_can_target(m_pImageErrorLabel, FALSE);
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pImageErrorLabel);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pImageErrorLabel, FALSE);
+	gtk_widget_set_visible(m_pImageErrorLabel, FALSE);
 
 	gtk_grid_attach (GTK_GRID (m_pGrid), m_pOverlay, 0, 0, 1, 1);
 
@@ -4708,11 +5101,19 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 
 //	GTK_WIDGET_SET_FLAGS(m_pGrid,GTK_CAN_FOCUS);
 	m_pHBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
-	g_object_ref(m_pHBox);
 	m_pVBox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
 
-	gtk_box_pack_start (GTK_BOX (m_pVBox), m_pGrid, TRUE, TRUE, 0);
-	gtk_box_pack_start (GTK_BOX (m_pHBox), m_pVBox, TRUE, TRUE, 0);
+	// let the image/viewer area expand to fill the top-level widget, so the
+	// quiver-image-view (m_pImageView) is not confined to its natural size.
+	gtk_widget_set_hexpand(m_pGrid, TRUE);
+	gtk_widget_set_vexpand(m_pGrid, TRUE);
+	gtk_widget_set_hexpand(m_pVBox, TRUE);
+	gtk_widget_set_vexpand(m_pVBox, TRUE);
+	gtk_widget_set_hexpand(m_pHBox, TRUE);
+	gtk_widget_set_vexpand(m_pHBox, TRUE);
+
+	gtk_box_append (GTK_BOX (m_pVBox), m_pGrid);
+	gtk_box_append (GTK_BOX (m_pHBox), m_pVBox);
 
 	AddFilmstrip();
 
@@ -4751,39 +5152,20 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 
 	quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), view_mode);
 
-	//QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
-	//if (_ == mode || _ == mode)
-	
-	gtk_drag_source_set (m_pImageView, (GdkModifierType)(GDK_BUTTON1_MASK | GDK_BUTTON3_MASK),
-			   quiver_drag_target_table, G_N_ELEMENTS(quiver_drag_target_table), (GdkDragAction)( GDK_ACTION_COPY |
-		       GDK_ACTION_MOVE |
-	           GDK_ACTION_LINK |
-	           GDK_ACTION_ASK ));
-	           
-	g_signal_connect (G_OBJECT (m_pImageView), "drag_data_received",
-				G_CALLBACK (signal_drag_data_received), this);
-	           
-	g_signal_connect (G_OBJECT (m_pImageView), "drag_data_get",
-		      G_CALLBACK (signal_drag_data_get), this);
+	/* GTK4 drag-and-drop source via GtkDragSource controller */
+	if (!m_pDragSource) {
+		m_pDragSource = gtk_drag_source_new();
+		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(m_pDragSource));
+		g_signal_connect(m_pDragSource, "prepare", G_CALLBACK(signal_drag_source_prepare), this);
+		g_signal_connect(m_pDragSource, "drag-begin", G_CALLBACK(signal_drag_begin), this);
+		g_signal_connect(m_pDragSource, "drag-end", G_CALLBACK(signal_drag_end), this);
+	}
 
-	g_signal_connect (G_OBJECT (m_pImageView), "drag_data_delete",
-		      G_CALLBACK (signal_drag_data_delete), this);
-
-	g_signal_connect (G_OBJECT (m_pImageView), "drag_begin",
-	      G_CALLBACK (signal_drag_begin), this);
-	
-	g_signal_connect (G_OBJECT (m_pImageView), "drag_end",
-	      G_CALLBACK (signal_drag_end), this);		  
-
-
-	g_signal_connect (G_OBJECT (m_pImageView), "drag_drop",
-				G_CALLBACK (signal_drag_drop), this);
-
-	g_signal_connect (G_OBJECT (m_pImageView), "drag_motion",
-				G_CALLBACK (signal_drag_motion), this);
-
-	g_signal_connect (G_OBJECT (m_pImageView), "motion-notify-event",
-				G_CALLBACK (viewer_motion_notify), this);
+	/* GTK4 drop target controller on the image view */
+	if (!m_pDropTarget) {
+		m_pDropTarget = gtk_drop_target_new(G_TYPE_STRING, GDK_ACTION_COPY);
+		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(m_pDropTarget));
+	}
 
 
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
@@ -4797,11 +5179,28 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(viewer_iconview_cell_activated),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(viewer_iconview_cursor_changed),this);
 
-	//popup menu stuff
-	g_signal_connect(G_OBJECT(m_pImageView), "button-press-event", G_CALLBACK(viewer_button_press_cb), this);
-	g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(viewer_popup_menu_cb), this);
-    g_signal_connect (G_OBJECT (m_pImageView), "scroll_event",
-    			G_CALLBACK (viewer_scrollwheel_event), this);
+	//popup menu stuff: GTK4 gesture controllers on the image view
+	{
+		GtkGesture *click = gtk_gesture_click_new();
+		g_signal_connect(click, "pressed", G_CALLBACK(viewer_button_press_cb), this);
+		g_signal_connect(click, "released", G_CALLBACK(viewer_button_release_cb), this);
+		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(click));
+	}
+	{
+		GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
+		gtk_widget_add_controller(m_pImageView, scroll);
+	}
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(viewer_motion_notify), this);
+		gtk_widget_add_controller(m_pImageView, motion);
+	}
+	{
+		GtkEventController *key = gtk_event_controller_key_new();
+		g_signal_connect(key, "key-pressed", G_CALLBACK(viewer_imageview_key_press_event), this);
+		gtk_widget_add_controller(m_pImageView, key);
+	}
 
     g_signal_connect (G_OBJECT (m_pImageView), "activated",
     			G_CALLBACK (viewer_imageview_activated), this);
@@ -4815,9 +5214,6 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
     g_signal_connect (G_OBJECT (m_pImageView), "view-mode-changed",
     			G_CALLBACK (viewer_imageview_view_mode_changed), this);
 
-    g_signal_connect (G_OBJECT (m_pImageView), "key-press-event",
-    			G_CALLBACK (viewer_imageview_key_press_event), this);
-
     g_signal_connect (G_OBJECT (m_pAdjustmentH), "changed",
     			G_CALLBACK (image_view_adjustment_changed), this);
 
@@ -4825,35 +5221,35 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
     			G_CALLBACK (image_view_adjustment_changed), this);
 
 	//g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);
-	IPixbufLoaderObserverPtr tmp( new ViewerImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView)));
+	IPixbufLoaderObserverPtr tmp( new ViewerImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView), m_pImageErrorLabel));
 	m_PixbufLoaderObserverPtr = tmp;
 	m_ImageLoader.AddPixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
 	
-	gtk_widget_show_all(m_pHBox);
-	gtk_widget_hide(m_pHBox);
-	gtk_widget_set_no_show_all(m_pHBox,TRUE);
+	gtk_widget_set_visible(m_pHBox, TRUE);
+	gtk_widget_set_visible(m_pHBox, FALSE);
 	
-	
-	m_pNavigationWindow = gtk_window_new (GTK_WINDOW_POPUP);
+	m_pNavigationWindow = gtk_window_new ();
 	m_pNavigationControl = quiver_navigation_control_new_with_adjustments (m_pAdjustmentH, m_pAdjustmentV);
 
-	g_signal_connect (G_OBJECT (m_pNavigationControl), "button_release_event",  
-				G_CALLBACK (navigation_control_button_release_event), this);
-
- 	gtk_widget_add_events (m_pNavigationControl, GDK_POINTER_MOTION_MASK|GDK_POINTER_MOTION_HINT_MASK);
-	gtk_widget_add_events (m_pNavigationControl, GDK_BUTTON_PRESS_MASK|GDK_BUTTON_RELEASE_MASK);
+	// GTK4: navigation control release handled via gesture click controller
+	{
+		GtkGesture *click = gtk_gesture_click_new();
+		g_signal_connect(click, "released", G_CALLBACK(navigation_control_button_release_event), this);
+		gtk_widget_add_controller(m_pNavigationControl, GTK_EVENT_CONTROLLER(click));
+	}
+	gtk_window_set_decorated(GTK_WINDOW(m_pNavigationWindow), FALSE);
+	gtk_window_set_transient_for(GTK_WINDOW(m_pNavigationWindow), GTK_WINDOW(gtk_widget_get_root(m_pImageView)));
 
 	GtkWidget * frame = gtk_frame_new(NULL);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame),GTK_SHADOW_ETCHED_IN);	
 
 	
-	gtk_container_add (GTK_CONTAINER (frame), m_pNavigationControl);
-	gtk_container_add (GTK_CONTAINER (m_pNavigationWindow), frame);
+	gtk_frame_set_child (GTK_FRAME(frame), m_pNavigationControl);
+	gtk_window_set_child (GTK_WINDOW(m_pNavigationWindow), frame);
 	
 	bool bShowFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW,true);
 	if (!bShowFilmstrip)
 	{
-		gtk_widget_hide(m_pIconView);
+		gtk_widget_set_visible(m_pIconView, FALSE);
 	}
 	gboolean bQuickPreview = (gboolean)prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, true);
 	m_ImageLoader.EnableQuickPreview(bQuickPreview);
@@ -4877,54 +5273,53 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 	m_bVideoPanning = FALSE;
 	m_bVideoNeedsFirstFrame = FALSE;
 	m_bVideoFlushPending = FALSE;
-	m_pGtkGLSink = NULL;
+	m_pVideoPaintable = NULL;
 	GstElement* video_sink = NULL;
-	GstElement* gtkglsink = gst_element_factory_make("gtkglsink", NULL);
+	GstElement* gtk4glsink = gst_element_factory_make("gtk4paintablesink", NULL);
 	GstElement* glupload = NULL;
-	if (gtkglsink != NULL)
+	if (gtk4glsink != NULL)
 	{
-		g_object_set(G_OBJECT(gtkglsink), "force-aspect-ratio", TRUE, NULL);
-		g_object_get(G_OBJECT(gtkglsink), "widget", &m_pVideoSinkWidget, NULL);
-		m_pGtkGLSink = gtkglsink;  // keep reference for pad probing during video switches
+		if (g_object_class_find_property(G_OBJECT_GET_CLASS(gtk4glsink), "force-aspect-ratio") != NULL)
+			g_object_set(G_OBJECT(gtk4glsink), "force-aspect-ratio", TRUE, NULL);
+		g_object_get(G_OBJECT(gtk4glsink), "paintable", &m_pVideoPaintable, NULL);
 
-		/* Restore opacity after the GL sink actually renders the new
-		 * frame (not just after ASYNC_DONE or a pad probe, which fire
-		 * before the texture is uploaded). */
-		g_signal_connect(m_pVideoSinkWidget, "draw", G_CALLBACK(video_sink_draw_cb), this);
+		m_pVideoSinkWidget = gtk_picture_new_for_paintable(m_pVideoPaintable);
+		gtk_picture_set_content_fit(GTK_PICTURE(m_pVideoSinkWidget), GTK_CONTENT_FIT_FILL);
+		gtk_picture_set_can_shrink(GTK_PICTURE(m_pVideoSinkWidget), TRUE);
 
-		/* glsinkbin fails to share its GL display with gtkglsink's widget
-		 * context on Wayland and leaves the window black.  Link glupload
-		 * explicitly instead, matching the known-good
-		 * `vapostproc ! glupload ! gtkglsink` reference pipeline.
-		 *
-		 * NOTE: glupload + gtkglsink must be added to the zoombin DIRECTLY,
-		 * not wrapped in a separate glsinkbin.  A wrapper bin widens the
-		 * sink template seen by playsink (video/x-raw ANY via the ghost
-		 * pad), which breaks the sink-link caps negotiation during preroll
-		 * and makes playbin fail with a "not-linked" stream error.  With
-		 * the elements in the zoombin directly, glupload negotiates an
-		 * XB24 DMABuf output and playback prerolls. */
+		/* Restore opacity after the sink delivers a new frame. */
+		g_signal_connect(m_pVideoPaintable, "invalidate-contents", G_CALLBACK(video_paintable_invalidated_cb), this);
+
+		/* Link glupload explicitly to gtk4paintablesink (matching the
+		 * known-good `glupload ! gtk4paintablesink` pipeline).
+		 * glupload + the sink must be added to the zoombin DIRECTLY,
+		 * not wrapped in a separate glsinkbin. */
 		glupload = gst_element_factory_make("glupload", NULL);
-		if (glupload != NULL && gst_element_link(glupload, gtkglsink))
+		if (glupload != NULL && gst_element_link(glupload, gtk4glsink))
 		{
-			video_sink = gtkglsink;
+			video_sink = gtk4glsink;
 		}
 		else
 		{
 			if (glupload != NULL)
 				gst_object_unref(glupload);
 			glupload = NULL;
-			video_sink = gtkglsink;
+			video_sink = gtk4glsink;
 		}
 	}
 	else
 	{
-		video_sink = gst_element_factory_make("gtksink", NULL);
+		video_sink = gst_element_factory_make("gtk4sink", NULL);
 		if (video_sink != NULL)
 		{
-			g_object_set(G_OBJECT(video_sink), "force-aspect-ratio", TRUE, NULL);
-			g_object_get(G_OBJECT(video_sink), "widget", &m_pVideoSinkWidget, NULL);
-			g_signal_connect(m_pVideoSinkWidget, "draw", G_CALLBACK(video_sink_draw_cb), this);
+			if (g_object_class_find_property(G_OBJECT_GET_CLASS(video_sink), "force-aspect-ratio") != NULL)
+				g_object_set(G_OBJECT(video_sink), "force-aspect-ratio", TRUE, NULL);
+			g_object_get(G_OBJECT(video_sink), "paintable", &m_pVideoPaintable, NULL);
+
+			m_pVideoSinkWidget = gtk_picture_new_for_paintable(m_pVideoPaintable);
+			gtk_picture_set_content_fit(GTK_PICTURE(m_pVideoSinkWidget), GTK_CONTENT_FIT_FILL);
+			gtk_picture_set_can_shrink(GTK_PICTURE(m_pVideoSinkWidget), TRUE);
+			g_signal_connect(m_pVideoPaintable, "invalidate-contents", G_CALLBACK(video_paintable_invalidated_cb), this);
 		}
 	}
 
@@ -5084,54 +5479,32 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen", GTK_ICON_SIZE
 
 	if (m_pVideoSinkWidget != NULL)
 	{
-		// A GtkLayout (a scrolling canvas whose size request is always 0,
-		// independent of its children) is the video container.  GtkFixed and
-		// GtkScrolledWindow both report the child's minimum size in their own
-		// request, so the zoomed-up sink widget's size request propagated to
-		// the stack and pinned the window minimum -- the window could no
-		// longer be resized smaller (and grew as you zoomed in).  GtkLayout
-		// never contributes its children's requests to the window minimum,
-		// fills the viewer area via hexpand/vexpand (its allocation is the
-		// zoom math's "area" size), and clips the oversized sink widget to
-		// its own allocation via its bin window.
-		m_pVideoFixed = gtk_layout_new(NULL, NULL);
-		gtk_widget_set_no_show_all(m_pVideoFixed, TRUE);
+		m_pVideoFixed = quiver_freelayout_new();
 		gtk_widget_set_hexpand(m_pVideoFixed, TRUE);
 		gtk_widget_set_vexpand(m_pVideoFixed, TRUE);
+		/* clip the (possibly oversized) video picture to the video area, like
+		 * GtkFixed's bin window used to */
+		gtk_widget_set_overflow(m_pVideoFixed, GTK_OVERFLOW_HIDDEN);
+		/* the container's size_allocate vfunc re-runs the zoom math whenever
+		 * the video area is reallocated (GTK4 removed ::size-allocate) */
+		g_object_set_data(G_OBJECT(m_pVideoFixed), "quiver-viewer-impl", this);
 		gtk_stack_add_named(GTK_STACK(m_pStack), m_pVideoFixed, "video");
-		gtk_widget_show(m_pVideoFixed);
 
 		gtk_widget_set_size_request(m_pVideoSinkWidget, 1, 1);
-		gtk_layout_put(GTK_LAYOUT(m_pVideoFixed), m_pVideoSinkWidget, 0, 0);
-		gtk_widget_show(m_pVideoSinkWidget);
+		quiver_freelayout_put(m_pVideoFixed, m_pVideoSinkWidget, 0, 0);
 
-		gtk_widget_add_events(m_pVideoFixed, GDK_POINTER_MOTION_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
-		g_signal_connect(G_OBJECT(m_pVideoFixed), "button-press-event", G_CALLBACK(viewer_button_press_cb), this);
-		g_signal_connect(G_OBJECT(m_pVideoFixed), "button-release-event", G_CALLBACK(viewer_button_release_cb), this);
-		g_signal_connect(G_OBJECT(m_pVideoFixed), "motion-notify-event", G_CALLBACK(viewer_motion_notify), this);
-		g_signal_connect(G_OBJECT(m_pVideoFixed), "scroll-event", G_CALLBACK(viewer_scrollwheel_event), this);
-		g_signal_connect(G_OBJECT(m_pVideoFixed), "popup-menu", G_CALLBACK(viewer_popup_menu_cb), this);
-		// The GL sink widget has its own GdkWindow, so everything the pointer
-		// does while over the video lands on the sink widget rather than the
-		// fixed; wire both so scroll/click/pan work over the video as well as
-		// over the letterboxed margins (and so a pan drag keeps tracking).
-		gtk_widget_add_events(m_pVideoSinkWidget, GDK_POINTER_MOTION_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
-		g_signal_connect(G_OBJECT(m_pVideoSinkWidget), "button-press-event", G_CALLBACK(viewer_button_press_cb), this);
-		g_signal_connect(G_OBJECT(m_pVideoSinkWidget), "button-release-event", G_CALLBACK(viewer_button_release_cb), this);
-		g_signal_connect(G_OBJECT(m_pVideoSinkWidget), "motion-notify-event", G_CALLBACK(viewer_motion_notify), this);
-		g_signal_connect(G_OBJECT(m_pVideoSinkWidget), "scroll-event", G_CALLBACK(viewer_scrollwheel_event), this);
-		g_signal_connect(G_OBJECT(m_pVideoSinkWidget), "popup-menu", G_CALLBACK(viewer_popup_menu_cb), this);
+		attach_viewer_input_controllers(m_pVideoFixed, this);
+		attach_viewer_input_controllers(m_pVideoSinkWidget, this);
 		// whenever the video appears, make sure the media controls stack above
-		// the sink's GdkWindow so the timeline and volume button stay clickable
 		g_signal_connect(G_OBJECT(m_pVideoSinkWidget), "map", G_CALLBACK(video_zoom_sink_map_cb), this);
-		// re-fit the video display when the viewer area is resized
-		g_signal_connect(G_OBJECT(m_pVideoFixed), "size-allocate", G_CALLBACK(video_zoom_resize_cb), this);
 	}
 
 
 	gdouble volume = 0.;
 	g_object_get(G_OBJECT(m_pPipeline), "volume", &volume, NULL);
-	gtk_scale_button_set_value(GTK_SCALE_BUTTON(m_pVolumeButton), volume);
+	m_dVolume = volume;
+	if (m_pVolumeScale != NULL)
+		gtk_range_set_value(GTK_RANGE(m_pVolumeScale), volume);
 
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline));
 	//gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL); // Removed sync handler
@@ -5150,7 +5523,7 @@ Viewer::~Viewer()
 {
 	m_ViewerImplPtr->SlideShowStop(false);
 	
-	gtk_widget_destroy(m_ViewerImplPtr->m_pNavigationWindow);
+	gtk_window_destroy(GTK_WINDOW(m_ViewerImplPtr->m_pNavigationWindow));
 }
 
 GtkWidget *Viewer::GetWidget()
@@ -5191,9 +5564,12 @@ static gboolean idle_set_image_index (gpointer data)
 
 void Viewer::Show()
 {
+	gtk_widget_set_visible(m_ViewerImplPtr->m_pHBox, TRUE);
+
 	gint cursor_cell = quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(m_ViewerImplPtr->m_pIconView));
 	if (0 == m_ViewerImplPtr->m_ImageListPtr->GetSize() || m_ViewerImplPtr->m_QuiverFileCurrent != m_ViewerImplPtr->m_ImageListPtr->GetCurrent())
 	{
+		show_image_load_error(m_ViewerImplPtr->m_pImageErrorLabel, false);
 		quiver_image_view_set_pixbuf(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView),NULL);
 		// set image index in an idle function
 		m_ViewerImplPtr->m_iIdleSetIndex
@@ -5214,7 +5590,6 @@ void Viewer::Show()
 	
 	}
 
-	gtk_widget_show(m_ViewerImplPtr->m_pHBox);
 
 	m_ViewerImplPtr->m_ImageListPtr->UnblockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
 
@@ -5225,7 +5600,7 @@ void Viewer::Hide()
 	m_ViewerImplPtr->StopVideo(true);
 	SlideShowStop();
 	
-	gtk_widget_hide(m_ViewerImplPtr->m_pHBox);
+	gtk_widget_set_visible(m_ViewerImplPtr->m_pHBox, FALSE);
 
 	m_ViewerImplPtr->m_ImageListPtr->BlockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
 }
@@ -5542,7 +5917,14 @@ GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get)
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data)
 { (void)iconview; 
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	return pViewerImpl->m_ImageListPtr->GetSize();
+	gulong n = pViewerImpl->m_ImageListPtr->GetSize();
+	static gulong last = (gulong)-1;
+	if (n != last)
+	{
+		g_printerr("[ICONVIEW] n_cells=%lu\n", n);
+		last = n;
+	}
+	return n;
 }
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, gulong cell, gpointer user_data)
