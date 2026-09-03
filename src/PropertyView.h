@@ -1,23 +1,28 @@
-#ifndef PROPERTY_VIEW_H
-#define PROPERTY_VIEW_H
+#ifndef FILE_PROPERTY_VIEW_H
+#define FILE_PROPERTY_VIEW_H
 
-#include <gtk/gtk.h>
+#include <boost/shared_ptr.hpp>
+
+#include "QuiverFile.h"
 
 class QuiverFile;
 
 class PropertyView
 {
+
 public:
 	PropertyView();
 	~PropertyView();
 
 	GtkWidget *GetWidget();
-	void SetQuiverFile(QuiverFile file);
-	void Clear();
+	void SetQuiverFile(QuiverFile quiverFile);
 
+
+	class PropertyViewImpl;
+	typedef boost::shared_ptr<PropertyViewImpl> PropertyViewImplPtr;
 private:
-	GtkWidget *m_pScrolledWindow;
-	GtkWidget *m_pLabel;
+	PropertyViewImplPtr m_PropertyViewImplPtr;
 };
+
 
 #endif

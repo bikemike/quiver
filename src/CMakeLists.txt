@@ -1,6 +1,7 @@
 set(QUIVER_SOURCES
     MD5.cpp
     PropertyView.cpp
+    VideoDateEditTask.cpp
     PreferencesEventSource.cpp
     Preferences.cpp
     PreferencesDlg.cpp
