@@ -608,6 +608,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	g_object_ref(m_pToolItemThumbSizer);
 	
 	m_pLocationEntry = gtk_entry_new();
+	gtk_widget_set_visible(m_pLocationEntry, FALSE);
+	gtk_widget_set_hexpand(m_pLocationEntry, TRUE);
 	
 	hpaned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
 	vpaned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
@@ -1844,7 +1846,7 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	{
 		parent->m_FolderTreePtr->SetSelectedFolders(dirs);
 	}
-	
+	parent->m_bFolderTreeEvent = false;
 	parent->UpdateUI();
 }
 
@@ -1939,11 +1941,9 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(FolderTreeEventPtr event)
 { (void)event; 
 	list<string> listFolders = parent->m_FolderTreePtr->GetSelectedFolders();
-	list<string>::iterator itr;
 
 	parent->m_bFolderTreeEvent = true;
 	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders);
-	parent->m_bFolderTreeEvent = false;
 }
 
 

@@ -12,7 +12,7 @@ public:
 	~PropertyView();
 
 	GtkWidget *GetWidget();
-	void SetQuiverFile(const QuiverFile &file);
+	void SetQuiverFile(QuiverFile file);
 	void Clear();
 
 private:

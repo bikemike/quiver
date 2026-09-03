@@ -125,7 +125,9 @@ public:
 	GdkPixbuf* GetExifThumbnail();
 	
 	bool HasThumbnail(int iSize) ;
-	GdkPixbuf* GetThumbnail(int iSize = 0);
+	GdkPixbuf* GetThumbnail(int iSize = 0,
+		QuiverVideoOps::VideoAbortFn abort_fn = NULL,
+		gpointer abort_data = NULL);
 	void SaveThumbnail(GdkPixbuf* pixbuf, const char* uri, const char* path, time_t mtime, gint64 size, int width, int height, int orientation);
 	
 	bool Modified() const;
@@ -462,7 +464,9 @@ static void get_thumbnail_embedded_size(GdkPixbuf* pixbuf, gint *width, gint *he
 
 }
 
-GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
+GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */,
+	QuiverVideoOps::VideoAbortFn abort_fn /* = NULL */,
+	gpointer abort_data /* = NULL */)
 {
 	//Timer t("QuiverFileImpl::GetThumbnail");
 	if (IsFolder() || m_bThumbloadFail)
@@ -734,7 +738,8 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */)
 		if (IsVideo())
 		{
 			gint n=1, d=1;
-			GdkPixbuf* video_pixbuf = QuiverVideoOps::LoadPixbuf(m_szURI, &n, &d);
+			GdkPixbuf* video_pixbuf = QuiverVideoOps::LoadPixbuf(m_szURI, &n, &d,
+				-1, 0, 0, abort_fn, abort_data);
 			if (NULL != video_pixbuf)
 			{
 				guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
@@ -1515,28 +1520,28 @@ static void pixbuf_loader_size_prepared (GdkPixbufLoader *loader, gint width,
 
 void QuiverFile::QuiverFileImpl::GetVideoDimensions(gint *width, gint *height)
 {
+	/* Prefer the container metadata: it gives the coded frame size plus the
+	 * pixel aspect ratio, without decoding a frame (fast).  Some files also
+	 * carry an embedded thumbnail whose private size is a good fallback. */
+	gint n=1, d=1;
+	gint w=0, h=0;
+
+	if (QuiverVideoOps::Probe(m_szURI, NULL, &w, &h, &n, &d))
+	{
+		if (n > d)
+			w = (gint)((w * n) / double(d) + .5);
+		else
+			h = (gint)((h * d) / double(n) + .5);
+		*width = w;
+		*height = h;
+		return;
+	}
+
 	GdkPixbuf* pixbuf = GetThumbnail();
 	if (NULL != pixbuf)
-	{	
+	{
 		get_thumbnail_embedded_size(pixbuf, width, height);
 		g_object_unref(pixbuf);
-	}
-	else
-	{
-		gint n=1, d=1;
-		GdkPixbuf* pixbuf = QuiverVideoOps::LoadPixbuf(m_szURI, &n, &d);
-		if (NULL != pixbuf)
-		{
-			*width  = gdk_pixbuf_get_width(pixbuf);
-			*height = gdk_pixbuf_get_height(pixbuf);
-
-			if (n > d)
-				*width = (guint)((*width * n) / float(d) + .5);
-			else
-				*height = (guint)((*height * d) / float(n) + .5);
-
-			g_object_unref(pixbuf);
-		}
 	}
 }
 
@@ -1639,9 +1644,11 @@ bool QuiverFile::HasThumbnail(int iSize )
 	return m_QuiverFilePtr->HasThumbnail(iSize);
 }
 
-GdkPixbuf * QuiverFile::GetThumbnail(int iSize /* = 0 */)
+GdkPixbuf * QuiverFile::GetThumbnail(int iSize /* = 0 */,
+	QuiverVideoOps::VideoAbortFn abort_fn /* = NULL */,
+	gpointer abort_data /* = NULL */)
 {
-	return m_QuiverFilePtr->GetThumbnail(iSize);
+	return m_QuiverFilePtr->GetThumbnail(iSize, abort_fn, abort_data);
 }
 
 gchar* QuiverFile::GetIconName()
@@ -1678,19 +1685,33 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 
 	if (NULL != icon)
 	{
-		char* icon_name = g_icon_to_string(icon);
-		if (NULL != icon_name)
+		if (G_IS_THEMED_ICON(icon))
 		{
-			GtkIconPaintable* paintable = gtk_icon_theme_lookup_icon(
-				icon_theme,
-				icon_name,
-				NULL,
-				size_wanted,
-				1,
-				GTK_TEXT_DIR_NONE,
-				GTK_ICON_LOOKUP_FORCE_REGULAR);
-			if (NULL != paintable)
+			/* A GThemedIcon carries a *list* of fallback names (e.g.
+			 * "image-png image-x-generic").  g_icon_to_string() joins them
+			 * into a single opaque string that never matches an icon theme
+			 * entry, so gtk_icon_theme_lookup_icon() would hand back the
+			 * image-missing fallback.  Iterate the real names and use the
+			 * first one that exists in the current theme. */
+			const char* const* names = g_themed_icon_get_names(G_THEMED_ICON(icon));
+			for (int i = 0; names && names[i]; ++i)
 			{
+				/* skip names absent from the theme: gtk_icon_theme_lookup_icon()
+				 * otherwise falls back to the image-missing placeholder. */
+				if (!gtk_icon_theme_has_icon(icon_theme, names[i]))
+					continue;
+
+				GtkIconPaintable* paintable = gtk_icon_theme_lookup_icon(
+					icon_theme,
+					names[i],
+					NULL,
+					size_wanted,
+					1,
+					GTK_TEXT_DIR_NONE,
+					GTK_ICON_LOOKUP_FORCE_REGULAR);
+				if (NULL == paintable)
+					continue;
+
 				GFile* icon_file = gtk_icon_paintable_get_file(paintable);
 				if (NULL != icon_file)
 				{
@@ -1700,10 +1721,44 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 						pixbuf = gdk_pixbuf_new_from_file_at_size(path, size_wanted, size_wanted, NULL);
 						g_free(path);
 					}
+					g_object_unref(icon_file);
 				}
 				g_object_unref(paintable);
+
+				if (NULL != pixbuf)
+					break;
 			}
-			g_free(icon_name);
+		}
+		else
+		{
+			char* icon_name = g_icon_to_string(icon);
+			if (NULL != icon_name)
+			{
+				GtkIconPaintable* paintable = gtk_icon_theme_lookup_icon(
+					icon_theme,
+					icon_name,
+					NULL,
+					size_wanted,
+					1,
+					GTK_TEXT_DIR_NONE,
+					GTK_ICON_LOOKUP_FORCE_REGULAR);
+				if (NULL != paintable)
+				{
+					GFile* icon_file = gtk_icon_paintable_get_file(paintable);
+					if (NULL != icon_file)
+					{
+						char* path = g_file_get_path(icon_file);
+						if (NULL != path)
+						{
+							pixbuf = gdk_pixbuf_new_from_file_at_size(path, size_wanted, size_wanted, NULL);
+							g_free(path);
+						}
+						g_object_unref(icon_file);
+					}
+					g_object_unref(paintable);
+				}
+				g_free(icon_name);
+			}
 		}
 		g_object_unref(icon);
 	}

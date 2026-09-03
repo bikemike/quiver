@@ -11,6 +11,8 @@
 
 #include <boost/shared_ptr.hpp>
 
+#include "QuiverVideoOps.h"
+
 namespace Exiv2 {
 class ExifData;
 }
@@ -48,7 +50,9 @@ public:
 	bool IsVideo();
 
 	GdkPixbuf *GetExifThumbnail();
-	GdkPixbuf *GetThumbnail(int iSize = 0);
+	GdkPixbuf *GetThumbnail(int iSize = 0,
+		QuiverVideoOps::VideoAbortFn abort_fn = NULL,
+		gpointer abort_data = NULL);
 	
 	void RemoveCachedThumbnail(int iSize = 0);
 

@@ -171,7 +171,13 @@ static void attach_viewer_input_controllers(GtkWidget *widget, gpointer user_dat
 	g_signal_connect(click, "released", G_CALLBACK(viewer_button_release_cb), user_data);
 	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(click));
 
-	GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+	/* One shared scroll controller on every viewer widget (image view, video
+	 * fixed, GL sink).  It is created smooth; the handler toggles
+	 * GTK_EVENT_CONTROLLER_SCROLL_DISCRETE on/off depending on whether the
+	 * user is zooming (Ctrl/Shift -> smooth continuous zoom) or navigating
+	 * (no modifier -> discrete, one image per wheel notch). */
+	GtkEventController *scroll = gtk_event_controller_scroll_new(
+		(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
 	g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), user_data);
 	gtk_widget_add_controller(widget, scroll);
 
@@ -213,6 +219,12 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 #define ACTION_VIEWER_ROTATE_CCW       "RotateCCW"
 #define ACTION_VIEWER_FLIP_H           "FlipH"
 #define ACTION_VIEWER_FLIP_V           "FlipV"
+
+/* Multiply a smooth (touchpad) scroll delta by this to get a "notch"
+ * equivalent for proportional Ctrl+wheel zooming.  WHEEL deltas are already
+ * whole notches (1.0).  1.0 = treat 1 surface unit as one notch; lower makes
+ * touchpad zoom slower.  Tune on-device. */
+#define QUIVER_SCROLL_SURFACE_PER_NOTCH  0.25
 #define ACTION_VIEWER_VIEW_FILM_STRIP  "ViewFilmStrip"
 #define ACTION_VIEWER_NEXT_2            ACTION_VIEWER_NEXT"_2"
 #define ACTION_VIEWER_PREVIOUS_2        ACTION_VIEWER_PREVIOUS"_2"
@@ -632,10 +644,6 @@ public:
 	guint m_iTimeoutMouseMotionNotify;
 	guint m_iTimeoutPlayProgress;
 
-	/* accumulated smooth-scroll delta for next/previous navigation
-	 * (Wayland delivers smooth axis events, not one event per wheel notch) */
-	gdouble m_dSmoothScrollAccum;
-
 	int   m_iSlideShowDuration;
 	int   m_iSlideShowWaitCount;
 	bool  m_bSlideShowLoop;
@@ -651,7 +659,7 @@ public:
 	GtkWidget* m_pSpeedButton;
 	GtkWidget* m_pSpeedLabel;
 
-	GtkDragSource* m_pDragSource;
+	GtkDragSource* m_pDragSource = nullptr;
 	GtkDropTarget* m_pDropTarget;
 	GtkWidget* m_pContextMenuPopover;
 
@@ -695,7 +703,6 @@ public:
 	gdouble     m_dVideoPanStartRootY;
 	gdouble     m_dVideoPanStartPX; // crop window left/top at drag start
 	gdouble     m_dVideoPanStartPY;
-	gdouble     m_dVideoScrollAccum; // accumulated smooth-scroll delta for video zoom
 	gint        m_iVideoWidth;      // current video frame width (from caps probe)
 	gint        m_iVideoHeight;     // current video frame height
 	gint        m_iVideoFpsNum;
@@ -865,7 +872,7 @@ void Viewer::ViewerImpl::UpdateUI()
 		gboolean bCanZoomIn, bCanZoomOut;
 		if (IsVideo())
 		{
-			bCanZoomIn = (m_dVideoZoomFinal < 8.0);
+			bCanZoomIn = (m_dVideoZoomFinal < 16.0);
 			bCanZoomOut = (m_dVideoZoomFinal > m_dVideoZoomMin);
 		}
 		else
@@ -2387,94 +2394,96 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 }
 
-static gboolean viewer_scrollwheel_event(GtkEventControllerScroll *controller, gdouble dx, gdouble dy, gpointer data )
-{ (void)controller; 
+ static gboolean viewer_scrollwheel_event(GtkEventControllerScroll *controller, gdouble dx, gdouble dy, gpointer data )
+ {
+ 	Viewer::ViewerImpl *pViewerImpl;
+ 	pViewerImpl = (Viewer::ViewerImpl*)data;
 
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)data;
+  GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
 
-	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(controller));
+  gboolean bVertical = ABS(dy) >= ABS(dx);
 
-	gboolean bSmooth = (ABS(dx) < 1.0 && ABS(dy) < 1.0);
-	gboolean bVertical = ABS(dy) >= ABS(dx);
+ 	/* One controller serves every viewer widget (image view, video fixed, GL
+ 	 * sink).  With no modifier it navigates (DISCRETE: each wheel notch
+ 	 * advances exactly one image, no accumulation).  With Ctrl held it zooms
+ 	 * (DISCRETE cleared: smooth continuous deltas) -- the video via the GL
+ 	 * pipeline crop, the image via the image view's own zoom. */
+ 	gboolean bZoom = (state & GDK_CONTROL_MASK) != 0;
+ 	GtkEventControllerScrollFlags flags = GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES;
+ 	if (!bZoom)
+ 		flags = (GtkEventControllerScrollFlags)(flags | GTK_EVENT_CONTROLLER_SCROLL_DISCRETE);
+ 	gtk_event_controller_scroll_set_flags(GTK_EVENT_CONTROLLER_SCROLL(controller), flags);
 
-	/* Videos render in their own sink widget: Ctrl/Shift+wheel zooms the
-	 * video by cropping in the pipeline, so the image view never zooms in on
-	 * the poster/preview frame underneath it.  A plain wheel over a video
-	 * still navigates to the next/previous file. */
-	if (pViewerImpl->IsVideo() &&
-		(state & GDK_CONTROL_MASK || state & GDK_SHIFT_MASK))
-	{
-		const gdouble zoom_step = 1.25;
+ 	/* Delta in the dominant axis (same direction sense as dy). */
+ 	gdouble scroll_dir = bVertical ? dy : dx;
 
-		gdouble scroll_dir = bVertical ? dy : dx;
-		if (scroll_dir > 0)
-		{
-			pViewerImpl->m_dVideoScrollAccum = 0.;
-			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / zoom_step);
-		}
-		else if (scroll_dir < 0)
-		{
-			pViewerImpl->m_dVideoScrollAccum = 0.;
-			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal * zoom_step);
-		}
-		return TRUE;
-	}
+ 	if (bZoom)
+ 	{
+ 		/* Scale smooth (touchpad) deltas to a notch-equivalent so the zoom is
+ 		 * proportional; WHEEL deltas are already whole notches. */
+ 		GdkScrollUnit unit = gtk_event_controller_scroll_get_unit(
+ 			GTK_EVENT_CONTROLLER_SCROLL(controller));
+ 		gdouble per_unit = (unit == GDK_SCROLL_UNIT_SURFACE)
+ 			? QUIVER_SCROLL_SURFACE_PER_NOTCH : 1.0;
 
-	if (state & GDK_CONTROL_MASK || state & GDK_SHIFT_MASK)
-	{
-		return FALSE;
-	}
+ 		/* scroll up (negative) zooms in; pow(~1.25, -delta) is continuous. */
+ 		gdouble amount = -scroll_dir * per_unit;
 
-	gboolean bPrevious = FALSE;
-	gboolean bNext = FALSE;
+ 		if (pViewerImpl->IsVideo())
+ 		{
+ 			pViewerImpl->SetVideoZoom(
+ 				pViewerImpl->m_dVideoZoomFinal * pow(1.25, amount));
+ 		}
+  		else
+  		{
+  			quiver_image_view_set_view_mode(
+  				QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView),
+  				QUIVER_IMAGE_VIEW_MODE_ZOOM);
+  			/* The scroll events for smooth/device scrolling carry no usable
+  			 * position, so the image view derives the zoom anchor from the
+  			 * pointer device itself (see set_magnification_full). */
+  			quiver_image_view_zoom_by(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView),
+  				pow(1.25, amount));
+  		}
+ 		return TRUE;
+ 	}
 
-	if (!bSmooth)
-	{
-		/* discrete wheel notch: dy/dx are whole notches */
-		if (bVertical)
-		{
-			if (dy > 0) bNext = TRUE;
-			else if (dy < 0) bPrevious = TRUE;
-		}
-		else
-		{
-			if (dx > 0) bNext = TRUE;
-			else if (dx < 0) bPrevious = TRUE;
-		}
-	}
-	else
-	{
-		/* Wayland / touchpads deliver smooth axis events, one per frame. */
-		gdouble delta = bVertical ? dy : dx;
-		pViewerImpl->m_dSmoothScrollAccum += delta;
-		if (pViewerImpl->m_dSmoothScrollAccum >= 1.0)
-		{
-			pViewerImpl->m_dSmoothScrollAccum -= 1.0;
-			bNext = TRUE;
-		}
-		else if (pViewerImpl->m_dSmoothScrollAccum <= -1.0)
-		{
-			pViewerImpl->m_dSmoothScrollAccum += 1.0;
-			bPrevious = TRUE;
-		}
-	}
+ 	/* Navigation.  With DISCRETE on, GTK quantizes deltas to whole wheel
+ 	 * units.  (If a scroll event still arrives as smooth SURFACE -- e.g. the
+ 	 * event that raced the Ctrl release that disabled DISCRETE -- skip it;
+ 	 * the next event is quantized.) */
+ 	GdkScrollUnit unit = gtk_event_controller_scroll_get_unit(
+ 		GTK_EVENT_CONTROLLER_SCROLL(controller));
+ 	if (unit != GDK_SCROLL_UNIT_WHEEL)
+ 		return FALSE;
 
-	if (bPrevious)
-	{
-		pViewerImpl->m_ImageListPtr->Previous();
-	}
-	else if (bNext)
-	{
-		pViewerImpl->m_ImageListPtr->Next();
-	}
-	else
-	{
-		return FALSE;
-	}
+ 	gint navigate = 0;
+ 	if (scroll_dir >= 1.0)
+ 		navigate = (gint)scroll_dir;
+ 	else if (scroll_dir <= -1.0)
+ 		navigate = (gint)scroll_dir;
 
-	return TRUE;
-}
+ 	if (navigate < 0)
+ 	{
+ 		while (navigate++ < 0)
+ 		{
+ 			pViewerImpl->m_ImageListPtr->Previous();
+ 		}
+ 	}
+ 	else if (navigate > 0)
+ 	{
+ 		while (navigate-- > 0)
+ 		{
+ 			pViewerImpl->m_ImageListPtr->Next();
+ 		}
+ 	}
+ 	else
+ 	{
+ 		return FALSE;
+ 	}
+
+ 	return TRUE;
+ }
 
 
 static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
@@ -3290,7 +3299,6 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_dVideoZoom = 1.0;
 	m_dVideoZoomFinal = 1.0;
 	m_dVideoZoomMin = 1.0;
-	m_dVideoScrollAccum = 0.;
 	m_dPlaybackSpeed = 1.0;
 	if (m_pSpeedLabel)
 		gtk_label_set_markup(GTK_LABEL(m_pSpeedLabel), "<b>1x</b>");
@@ -3975,8 +3983,8 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 		QUIVER_IMAGE_VIEW_MODE_ZOOM);
 	if (zoom < m_dVideoZoomMin)
 		zoom = m_dVideoZoomMin;
-	else if (zoom > 8.0)
-		zoom = 8.0;
+	else if (zoom > 16.0)
+		zoom = 16.0;
 	QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_ZOOM);
 
 #if VIDEO_ZOOM_SMOOTH_ANIMATION
@@ -4143,6 +4151,25 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 		dispW = srcW * ((gdouble)m_iVideoParN / m_iVideoParD);
 	else if (m_iVideoParN > 0 && m_iVideoParD > m_iVideoParN)
 		dispH = srcH * ((gdouble)m_iVideoParD / m_iVideoParN);
+	/* The pipeline renders the coded frames unrotated (the display matrix is
+	 * applied by the sink for the actual picture), so the caps width/height
+	 * stay the *coded* dimensions even for a 90-degree-rotated video.  When
+	 * the current file's display orientation is portrait but the coded frame
+	 * is landscape (or vice versa) the video is rotated a quarter turn: the
+	 * display aspect must be swapped so the window and FIT/zoom math use the
+	 * portrait dims, while the crop in source pixels keeps using the coded
+	 * srcW/srcH above. */
+	if (!(m_ImageListPtr == NULL))
+	{
+		QuiverFile vf = m_ImageListPtr->GetCurrent();
+		if (vf.GetWidth() > 0 && vf.GetHeight() > 0)
+		{
+			bool codedLandscape = (srcW > srcH);
+			bool displayLandscape = (vf.GetWidth() > vf.GetHeight());
+			if (codedLandscape != displayLandscape)
+				swap(dispW, dispH);
+		}
+	}
 	/* the zoom is the magnification relative to the video's actual size
 	 * (1.0 = 100%), exactly like the image view: FIT never upscales a small
 	 * video past its actual size, FIT_STRETCH upscales it to fill the window,
@@ -4178,7 +4205,7 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			m_dVideoZoomMin = fillScale;
 			break;
 		default:
-			zoom = CLAMP(m_dVideoZoom, m_dVideoZoomMin, 8.0);
+			zoom = CLAMP(m_dVideoZoom, m_dVideoZoomMin, 16.0);
 			/* when zooming out lands back at the fit level, snap back to
 			 * FIT_WINDOW so a window resize will re-fit the video instead
 			 * of keeping it pinned at the old fit size */
@@ -4958,6 +4985,17 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pMediaControls = alignment;
 	m_pTimeline = scale;
 
+	/* Scroll over the floating controls must reach the viewer's unified
+	 * handler too: Ctrl+wheel zooms (video), plain wheel navigates.  The
+	 * controls are an overlay child above the video/image widget, so they
+	 * would otherwise swallow these scroll events. */
+	{
+		GtkEventController *scroll = gtk_event_controller_scroll_new(
+			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
+		gtk_widget_add_controller(m_pMediaControls, scroll);
+	}
+
 	/* ── Screen-wide CSS ──────────────────────────────────────── */
 	GtkCssProvider *cssProvider = gtk_css_provider_new();
 	gtk_css_provider_load_from_string(cssProvider,
@@ -4998,12 +5036,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iTimeoutSlideshowID = 0;
 	m_iTimeoutClickID = 0;
 	m_iTimeoutMouseMotionNotify = 0;
-	m_dSmoothScrollAccum = 0.;
 	m_VideoZoomType = VIDEO_ZOOM_SOFTWARE;
 	m_dVideoZoom = 1.0;
 	m_dVideoZoomFinal = 1.0;
 	m_dVideoZoomMin = 1.0;
-	m_dVideoScrollAccum = 0.;
 	m_dVideoPanX = 0.;
 	m_dVideoPanY = 0.;
 	m_dVideoLastWidgetW = 0.;
@@ -5187,7 +5223,8 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(click));
 	}
 	{
-		GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+		GtkEventController *scroll = gtk_event_controller_scroll_new(
+			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
 		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
 		gtk_widget_add_controller(m_pImageView, scroll);
 	}

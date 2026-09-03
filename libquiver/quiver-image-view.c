@@ -15,7 +15,10 @@
 #define QUIVER_IMAGE_VIEW_GET_PRIVATE(obj) (quiver_image_view_get_instance_private (QUIVER_IMAGE_VIEW (obj)))
 
 /* set up some defaults */
-#define QUIVER_IMAGE_VIEW_MAG_MAX              50.
+/* Max zoom (magnification) applied to an image: 16x (1600%).  Matches the
+ * video zoom ceiling; adjustable constant.  Was previously 50x which was
+ * effectively unbounded. */
+#define QUIVER_IMAGE_VIEW_MAG_MAX              16.
 #define QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE       32
 #define QUIVER_IMAGE_VIEW_SCALE_HQ_TIMEOUT     200
 
@@ -60,9 +63,6 @@ struct _QuiverImageViewPrivate
 	
 	gdouble magnification_final;
 	gdouble magnification; // magnification level as a percent (1 = 100%)
-
-	/* accumulated smooth-scroll delta for ctrl+wheel zooming */
-	gdouble zoom_scroll_accum;
 
 	guint timeout_scale_hq_id;
 	
@@ -196,10 +196,6 @@ static void quiver_image_view_gesture_drag_end (GtkGestureDrag *gesture,
 						double x,
 						double y,
 						QuiverImageView *imageview);
-static gboolean quiver_image_view_scroll_controller_cb (GtkEventControllerScroll *controller,
-							double dx,
-							double dy,
-							QuiverImageView *imageview);
 static void quiver_image_view_setup_controllers (QuiverImageView *imageview);
 
 static void      quiver_image_view_set_hadjustment (QuiverImageView *imageview,
@@ -251,8 +247,9 @@ static gboolean quiver_image_view_timeout_transition(gpointer data);
 static void quiver_image_view_transition_start(QuiverImageView *imageview);
 static void quiver_image_view_transition_stop(QuiverImageView *imageview);
 
-static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,gdouble new_mag);
-static void quiver_image_view_add_magnification_timeout(QuiverImageView *imageview);
+static void      quiver_image_view_set_magnification_full(QuiverImageView *imageview,gdouble new_mag);
+static gdouble   quiver_image_view_clamp_magnification(QuiverImageView *imageview,gdouble new_mag);
+static void      quiver_image_view_add_magnification_timeout(QuiverImageView *imageview);
 static gboolean quiver_image_view_timeout_magnification(gpointer data);
 //static void quiver_image_view_magnification_start(QuiverImageView *imageview);
 
@@ -411,8 +408,8 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->magnification = 1; // magnification level as a percent (1 = 100%)
 	imageview->priv->magnification_timeout_id = 0; // 
 	imageview->priv->magnification_final = 1;
-	imageview->priv->zoom_scroll_accum = 0.;
-	
+
+
 	imageview->priv->timeout_scale_hq_id = 0;
 /*
 	imageview->priv->closure_n_items = NULL;
@@ -1353,53 +1350,6 @@ quiver_image_view_timeout_smooth_scroll_slowdown(gpointer data)
 
 
 
-static gboolean
-quiver_image_view_scroll_controller_cb (GtkEventControllerScroll *controller,
-					double dx,
-					double dy,
-					QuiverImageView *imageview)
-{
-	(void)controller;
-	(void)dx;
-
-	/* Only handle the case where Control is held down (zoom). */
-	GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller));
-	if (event == NULL)
-		return FALSE;
-
-	GdkModifierType state = gdk_event_get_modifier_state(event);
-	if (!(state & GDK_CONTROL_MASK))
-		return FALSE;
-
-	/* Accumulate the smooth deltas and zoom on each full notch (~1.0). */
-	imageview->priv->zoom_scroll_accum += dy;
-	if (imageview->priv->zoom_scroll_accum >= 1.0)
-	{
-		imageview->priv->zoom_scroll_accum -= 1.0;
-	}
-	else if (imageview->priv->zoom_scroll_accum <= -1.0)
-	{
-		imageview->priv->zoom_scroll_accum += 1.0;
-	}
-	else
-	{
-		return TRUE;
-	}
-
-	if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode)
-	{
-		quiver_image_view_set_view_mode_full(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM,FALSE);
-	}
-
-	gboolean bZoomIn = (imageview->priv->zoom_scroll_accum <= -1.0 + 1.0e-2);
-
-	gdouble magnification = quiver_image_view_get_magnification(imageview);
-	quiver_image_view_set_magnification(imageview,
-		bZoomIn ? magnification * 1.25 : magnification / 1.25);
-
-	return TRUE;
-}
-
 static void
 quiver_image_view_setup_controllers (QuiverImageView *imageview)
 {
@@ -1420,13 +1370,6 @@ quiver_image_view_setup_controllers (QuiverImageView *imageview)
 	g_signal_connect(drag, "drag-end",
 		G_CALLBACK(quiver_image_view_gesture_drag_end), imageview);
 	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(drag));
-
-	GtkEventController *scroll = gtk_event_controller_scroll_new(
-		GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
-	gtk_event_controller_set_propagation_phase(scroll, GTK_PHASE_TARGET);
-	g_signal_connect(scroll, "scroll",
-		G_CALLBACK(quiver_image_view_scroll_controller_cb), imageview);
-	gtk_widget_add_controller(widget, scroll);
 }
 
 
@@ -2561,30 +2504,57 @@ gboolean quiver_image_view_can_magnify(QuiverImageView *imageview, gboolean in)
 	}
 	else
 	{
-		gdouble w = imageview->priv->pixbuf_width * mag;
-		gdouble h = imageview->priv->pixbuf_height * mag;
-
-		if ( (w > imageview->priv->pixbuf_width && h > imageview->priv->pixbuf_height)
-			 || (QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE < w &&
-			QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE < h) )
+		/* Can zoom out while above the fit-to-window floor (mirrors the
+		 * clamp in quiver_image_view_clamp_magnification). */
+		gdouble wnd_w = (gdouble)gtk_widget_get_width(GTK_WIDGET(imageview));
+		gdouble wnd_h = (gdouble)gtk_widget_get_height(GTK_WIDGET(imageview));
+		gdouble min_mag = 0.;
+		if (wnd_w > 0. && wnd_h > 0.)
 		{
-			can_magnify = TRUE;
+			gdouble fit_scale = MIN(wnd_w / imageview->priv->pixbuf_width,
+				wnd_h / imageview->priv->pixbuf_height);
+			min_mag = MIN(fit_scale, 1.0);
 		}
+		can_magnify = (mag > min_mag);
 	}
 		
 	return can_magnify;
 }
 
-void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_mag)
+/* Clamp a magnification level to the allowed zoom range: at most
+ * QUIVER_IMAGE_VIEW_MAG_MAX (when zooming in) and at least the "fit to
+ * window" magnification (when zooming out), so the image never shrinks
+ * smaller than it fits in the window -- mirroring the video zoom-out clamp.
+ * QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE remains as an absolute floor.  Shared by
+ * every code path that applies a zoom so the limit is always enforced (the
+ * old per-call clamps left set_magnification_full, and thus wheel/menu
+ * zooming, clamped only on one path). */
+static gdouble
+quiver_image_view_clamp_magnification(QuiverImageView *imageview, gdouble new_mag)
 {
-	// restrict the zoom amount
 	if (QUIVER_IMAGE_VIEW_MAG_MAX < new_mag)
 	{
 		new_mag = QUIVER_IMAGE_VIEW_MAG_MAX;
 	}
-	
+
 	if (1 > new_mag)
 	{
+		/* Mirror the video zoom-out clamp: the low floor is the "fit to
+		 * window" magnification, so the user can zoom out to fit but never
+		 * below actual size (1.0), which keeps the image from shrinking
+		 * smaller than it fits in the window.  MIN_IMAGE_SIZE below remains
+		 * as an absolute floor. */
+		gdouble wnd_w = (gdouble)gtk_widget_get_width(GTK_WIDGET(imageview));
+		gdouble wnd_h = (gdouble)gtk_widget_get_height(GTK_WIDGET(imageview));
+		if (wnd_w > 0. && wnd_h > 0.)
+		{
+			gdouble fit_scale = MIN(wnd_w / imageview->priv->pixbuf_width,
+				wnd_h / imageview->priv->pixbuf_height);
+			gdouble min_mag = MIN(fit_scale, 1.0);
+			if (min_mag > 0.)
+				new_mag = MAX(new_mag, min_mag);
+		}
+
 		gdouble new_w = imageview->priv->pixbuf_width * new_mag;
 		gdouble new_h = imageview->priv->pixbuf_height * new_mag;
 		if (QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE > imageview->priv->pixbuf_width &&
@@ -2598,12 +2568,20 @@ void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_
 			gdouble mag_w = (gdouble)QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE / imageview->priv->pixbuf_width;
 			gdouble mag_h = (gdouble)QUIVER_IMAGE_VIEW_MIN_IMAGE_SIZE / imageview->priv->pixbuf_height;
 			new_mag = mag_w;
-			if (mag_h< mag_w)
+			if (mag_h < mag_w)
 			{
 				new_mag = mag_h;
-			} 
+			}
 		}
 	}
+
+	return new_mag;
+}
+
+void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_mag)
+{
+	/* restrict the zoom amount */
+	new_mag = quiver_image_view_clamp_magnification(imageview, new_mag);
 	
 	if (QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH == imageview->priv->magnification_mode)
 	{
@@ -2615,9 +2593,23 @@ void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_
 		quiver_image_view_set_magnification_full(imageview,new_mag);
 	}
 }
+
+/* Apply a multiplicative zoom factor immediately (no smooth animation).
+ * Used for continuous wheel/touchpad zooming so the image tracks the input
+ * without easing on after the scroll stops.  Is clamped to the allowed range;
+ * returns the factor actually applied (may differ if a limit was hit). */
+gdouble quiver_image_view_zoom_by(QuiverImageView *imageview,gdouble factor)
+{
+	gdouble new_mag = quiver_image_view_clamp_magnification(imageview,
+		imageview->priv->magnification * factor);
+	quiver_image_view_set_magnification_full(imageview,new_mag);
+	return factor;
+}
+
 static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,gdouble new_mag)
 {
-	/*FIXME: we should CLAMP the input to a calculated size*/
+	new_mag = quiver_image_view_clamp_magnification(imageview, new_mag);
+
 	GtkWidget *widget;
 	gint old_width,old_height, new_width,new_height;
 	gint x = 0, y = 0;
@@ -2645,21 +2637,53 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 
 	widget = GTK_WIDGET(imageview);
 
-	/* capture the pointer position relative to the widget so that
-	 * zoom can stay centered on the pointer */
+	/* Zoom anchor: use the pointer's widget-local position so zooming stays
+	 * centered on the cursor.  The device reports surface (window) coordinates,
+	 * which include the window-frame/decoration offset, so convert surface ->
+	 * native-widget coords with gtk_native_get_surface_transform, then
+	 * native-widget -> this widget with gtk_widget_compute_point. */
 	{
-		GtkNative *native = gtk_widget_get_native(widget);
-		if (native != NULL)
+		gint wwd = gtk_widget_get_width(widget);
+		gint wht = gtk_widget_get_height(widget);
+		GtkWidget *toplevel = GTK_WIDGET(gtk_widget_get_root(widget));
+		if (toplevel != NULL && gtk_widget_get_realized(toplevel))
 		{
-			GdkSurface *surface = gtk_native_get_surface(native);
-			GdkDevice *device = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_surface_get_display(surface)));
-			double px = 0, py = 0;
-			GdkModifierType mask = 0;
-			if (gdk_surface_get_device_position(surface, device, &px, &py, &mask))
+			GtkNative *native = gtk_widget_get_native(toplevel);
+			if (native != NULL)
 			{
-				x = (gint)px;
-				y = (gint)py;
+				GdkSurface *surface = gtk_native_get_surface(native);
+				GdkDevice *device = gdk_seat_get_pointer(
+					gdk_display_get_default_seat(gdk_surface_get_display(surface)));
+				double px = 0, py = 0;
+				GdkModifierType mask = 0;
+				double sx = 0, sy = 0;
+				if (gdk_surface_get_device_position(surface, device, &px, &py, &mask))
+				{
+					gtk_native_get_surface_transform(native, &sx, &sy);
+					graphene_point_t pt_native = GRAPHENE_POINT_INIT(
+						(float)(px - sx), (float)(py - sy));
+					graphene_point_t pt_widget;
+					if (gtk_widget_compute_point(GTK_WIDGET(native), widget,
+							&pt_native, &pt_widget))
+					{
+						x = (gint)pt_widget.x;
+						y = (gint)pt_widget.y;
+					}
+				}
 			}
+		}
+
+		/* keep the anchor within the widget; an out-of-area position (e.g.
+		 * pointer over a sibling) must not drive centering off the viewport */
+		if (x < 0 || x > wwd || y < 0 || y > wht)
+		{
+			x = -1;
+			y = -1;
+		}
+		else
+		{
+			x = MIN(x, wwd);
+			y = MIN(y, wht);
 		}
 	}
 
@@ -2741,7 +2765,6 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 		if (0 > new_vadjust)
 			new_vadjust = 0;
 
-		//printf("old new v: %d %d\n",(gint)old_vadjust,(gint)new_vadjust);
 		gtk_adjustment_set_value(imageview->priv->vadjustment,new_vadjust);
 	}
 	else

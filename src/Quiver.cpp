@@ -43,8 +43,6 @@ GtkApplication *g_pApp = NULL;
 #include "BookmarksDlg.h"
 #include "BookmarkAddEditDlg.h"
 
-#include "DonateDlg.h"
-
 #include "TaskManager.h"
 #include "TaskManagerDlg.h"
 
@@ -297,30 +295,40 @@ void QuiverImpl::LoadBookmarks()
 		return;
 	}
 
-	// Remove all dynamic bookmark items (keep first 3: Add, Edit, Separator)
-	// GMenu doesn't support removing by position easily; rebuild the whole menu
+	/* Rebuild the whole menu so it always has the static section followed by a
+	 * dynamic section of bookmarks.  GTK draws a separator between the two
+	 * non-empty adjacent sections, replacing the old blank separator item. */
+	while (g_menu_model_get_n_items(G_MENU_MODEL(m_pBookmarkMenu)) > 0)
 	{
-		gint remaining;
-		while ((remaining = g_menu_model_get_n_items(G_MENU_MODEL(m_pBookmarkMenu))) > 3)
-		{
-			g_menu_remove(m_pBookmarkMenu, 3);
-		}
+		g_menu_remove(m_pBookmarkMenu, 0);
 	}
 
+	GMenu *staticSection = g_menu_new();
+	g_menu_append(staticSection, "_Add Bookmark", "quiver.BookmarksAdd");
+	g_menu_append(staticSection, "_Edit Bookmarks...", "quiver.BookmarksEdit");
+	g_menu_append_section(m_pBookmarkMenu, NULL, G_MENU_MODEL(staticSection));
+	g_object_unref(staticSection);
+
 	vector<Bookmark> bookmarks = m_BookmarksPtr->GetBookmarks();
-	for (unsigned int i = 0; i < bookmarks.size(); ++i)
+	if (!bookmarks.empty())
 	{
-		stringstream ss;
-		ss << "Bookmark_" << bookmarks[i].GetID();
-		string name = ss.str();
+		GMenu *dynSection = g_menu_new();
+		for (unsigned int i = 0; i < bookmarks.size(); ++i)
+		{
+			stringstream ss;
+			ss << "Bookmark_" << bookmarks[i].GetID();
+			string name = ss.str();
 
-		QuiverUtils::RemoveAction(name.c_str());
-		QuiverUtils::AddSimpleAction(name.c_str(), "", quiver_new_action_handler_cb, this);
+			QuiverUtils::RemoveAction(name.c_str());
+			QuiverUtils::AddSimpleAction(name.c_str(), "", quiver_new_action_handler_cb, this);
 
-		string full_name = "quiver." + name;
-		GMenuItem *item = g_menu_item_new(bookmarks[i].GetName().c_str(), full_name.c_str());
-		g_menu_append_item(m_pBookmarkMenu, item);
-		g_object_unref(item);
+			string full_name = "quiver." + name;
+			GMenuItem *item = g_menu_item_new(bookmarks[i].GetName().c_str(), full_name.c_str());
+			g_menu_append_item(dynSection, item);
+			g_object_unref(item);
+		}
+		g_menu_append_section(m_pBookmarkMenu, NULL, G_MENU_MODEL(dynSection));
+		g_object_unref(dynSection);
 	}
 }
 
@@ -331,29 +339,42 @@ void QuiverImpl::LoadExternalTools()
 		return;
 	}
 
-	// Remove all dynamic external tool items (keep first 4: AdjustDate, Rename, Organize, ExternalTools, Separator = 5 items)
+	/* Rebuild the whole menu so it always has the static section followed by a
+	 * dynamic section of external tools.  GTK draws a separator between the two
+	 * non-empty adjacent sections, replacing the old blank separator item. */
+	while (g_menu_model_get_n_items(G_MENU_MODEL(m_pExternalToolsMenu)) > 0)
 	{
-		gint remaining;
-		while ((remaining = g_menu_model_get_n_items(G_MENU_MODEL(m_pExternalToolsMenu))) > 5)
-		{
-			g_menu_remove(m_pExternalToolsMenu, 5);
-		}
+		g_menu_remove(m_pExternalToolsMenu, 0);
 	}
 
+	GMenu *staticSection = g_menu_new();
+	g_menu_append(staticSection, "Adjust Date...", "quiver.AdjustDate");
+	g_menu_append(staticSection, "Rename...", "quiver.Rename");
+	g_menu_append(staticSection, "Organize...", "quiver.Organize");
+	g_menu_append(staticSection, "External Tools...", "quiver.ExternalTools");
+	g_menu_append_section(m_pExternalToolsMenu, NULL, G_MENU_MODEL(staticSection));
+	g_object_unref(staticSection);
+
 	vector<ExternalTool> externaltools = m_ExternalToolsPtr->GetExternalTools();
-	for (unsigned int i = 0; i < externaltools.size(); ++i)
+	if (!externaltools.empty())
 	{
-		stringstream ss;
-		ss << "ExternalTool_" << externaltools[i].GetID();
-		string name = ss.str();
+		GMenu *dynSection = g_menu_new();
+		for (unsigned int i = 0; i < externaltools.size(); ++i)
+		{
+			stringstream ss;
+			ss << "ExternalTool_" << externaltools[i].GetID();
+			string name = ss.str();
 
-		QuiverUtils::RemoveAction(name.c_str());
-		QuiverUtils::AddSimpleAction(name.c_str(), "", quiver_new_action_handler_cb, this);
+			QuiverUtils::RemoveAction(name.c_str());
+			QuiverUtils::AddSimpleAction(name.c_str(), "", quiver_new_action_handler_cb, this);
 
-		string full_name = "quiver." + name;
-		GMenuItem *item = g_menu_item_new(externaltools[i].GetName().c_str(), full_name.c_str());
-		g_menu_append_item(m_pExternalToolsMenu, item);
-		g_object_unref(item);
+			string full_name = "quiver." + name;
+			GMenuItem *item = g_menu_item_new(externaltools[i].GetName().c_str(), full_name.c_str());
+			g_menu_append_item(dynSection, item);
+			g_object_unref(item);
+		}
+		g_menu_append_section(m_pExternalToolsMenu, NULL, G_MENU_MODEL(dynSection));
+		g_object_unref(dynSection);
 	}
 }
 
@@ -436,7 +457,6 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_ADJUST_DATE                            "AdjustDate"
 #define ACTION_QUIVER_ORGANIZE                               "Organize"
 #define ACTION_QUIVER_RENAME                                 "Rename"
-#define ACTION_QUIVER_DONATE                                 "Donate"
 #define ACTION_QUIVER_ABOUT                                  "About"
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
@@ -446,188 +466,234 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
 #define ACTION_QUIVER_CLOSE_4                                ACTION_QUIVER_CLOSE"_4"
 
-/* GMenu-based menu definition for GtkPopoverMenuBar (replaces GTK3 GtkMenuBar XML) */
+/* GMenu-based menu definition for GtkPopoverMenuBar (replaces GTK3 GtkMenuBar XML).
+ * GTK4 draws a visual separator line automatically between consecutive,
+ * non-empty sections, so each logical group of items is appended as its own
+ * section rather than inserting an explicit (blank, clickable) separator item. */
 static GMenu* quiver_build_app_menu(GMenu *bookmarkMenu, GMenu *externalToolsMenu)
 {
+	/* Append a section (a GMenu) of items into a parent menu with no label,
+	 * so GTK renders a separator between adjacent non-empty sections. */
+	auto add_section = [](GMenu *parent, GMenu *section) {
+		g_menu_append_section(parent, NULL, G_MENU_MODEL(section));
+		g_object_unref(section);
+	};
+
 	GMenu *menu = g_menu_new();
 
 	// === File ===
-	GMenu *fileMenu = g_menu_new();
-	g_menu_append(fileMenu, "_Open", "quiver.FileOpen");
-	g_menu_append(fileMenu, "Open _Folder", "quiver.FileOpenFolder");
-	g_menu_append(fileMenu, "Open _Location", "quiver.BrowserOpenLocation");
-	g_menu_append_section(fileMenu, NULL, NULL);
-	g_menu_append(fileMenu, "_Save", "quiver.Save");
-	g_menu_append(fileMenu, "Save _As", "quiver.SaveAs");
-	g_menu_append_section(fileMenu, NULL, NULL);
-	g_menu_append(fileMenu, "_Close", "quiver.Close");
-	g_menu_append_section(fileMenu, NULL, NULL);
-	g_menu_append(fileMenu, "_Quit", "quiver.Close_3");
-	g_menu_append_submenu(menu, "_File", G_MENU_MODEL(fileMenu));
-	g_object_unref(fileMenu);
+	{
+		GMenu *fileMenu = g_menu_new();
+		add_section(fileMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Open", "quiver.FileOpen");
+			g_menu_append(s, "Open _Folder", "quiver.FileOpenFolder");
+			g_menu_append(s, "Open _Location", "quiver.BrowserOpenLocation");
+			s; }));
+		add_section(fileMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Save", "quiver.Save");
+			g_menu_append(s, "Save _As", "quiver.SaveAs");
+			s; }));
+		add_section(fileMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Close", "quiver.Close");
+			s; }));
+		add_section(fileMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Quit", "quiver.Close_3");
+			s; }));
+		g_menu_append_submenu(menu, "_File", G_MENU_MODEL(fileMenu));
+		g_object_unref(fileMenu);
+	}
 
 	// === Edit ===
-	GMenu *editMenu = g_menu_new();
-	g_menu_append(editMenu, "_Copy (Browser)", "quiver.BrowserCopy");
-	g_menu_append(editMenu, "_Copy (Viewer)", "quiver.ViewerCopy");
-	g_menu_append_section(editMenu, NULL, NULL);
-	g_menu_append(editMenu, "_Move To Trash (Browser)", "quiver.BrowserTrash");
-	g_menu_append(editMenu, "_Move To Trash (Viewer)", "quiver.ViewerTrash");
-	g_menu_append_section(editMenu, NULL, NULL);
-	g_menu_append(editMenu, "_Preferences", "quiver.Preferences");
-	g_menu_append_submenu(menu, "_Edit", G_MENU_MODEL(editMenu));
-	g_object_unref(editMenu);
+	{
+		GMenu *editMenu = g_menu_new();
+		add_section(editMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Copy (Browser)", "quiver.BrowserCopy");
+			g_menu_append(s, "_Copy (Viewer)", "quiver.ViewerCopy");
+			s; }));
+		add_section(editMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Move To Trash (Browser)", "quiver.BrowserTrash");
+			g_menu_append(s, "_Move To Trash (Viewer)", "quiver.ViewerTrash");
+			s; }));
+		add_section(editMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Preferences", "quiver.Preferences");
+			s; }));
+		g_menu_append_submenu(menu, "_Edit", G_MENU_MODEL(editMenu));
+		g_object_unref(editMenu);
+	}
 
 	// === View ===
-	GMenu *viewMenu = g_menu_new();
-	g_menu_append(viewMenu, "_Viewer", "quiver.UIModeViewer");
-	g_menu_append(viewMenu, "_Browser", "quiver.UIModeBrowser");
-	g_menu_append_section(viewMenu, NULL, NULL);
 	{
-		GMenuItem *item;
-		item = g_menu_item_new("Menubar", "quiver.ViewMenubar");
-		g_menu_append_item(viewMenu, item);
-		g_object_unref(item);
-		item = g_menu_item_new("Toolbar", "quiver.ViewToolbarMain");
-		g_menu_append_item(viewMenu, item);
-		g_object_unref(item);
-		item = g_menu_item_new("Properties", "quiver.ViewProperties");
-		g_menu_append_item(viewMenu, item);
-		g_object_unref(item);
-		item = g_menu_item_new("Statusbar", "quiver.ViewStatusbar");
-		g_menu_append_item(viewMenu, item);
-		g_object_unref(item);
-	}
-	g_menu_append_section(viewMenu, NULL, NULL);
-	g_menu_append(viewMenu, "Sidebar", "quiver.BrowserViewSidebar");
-	g_menu_append(viewMenu, "Preview", "quiver.BrowserViewPreview");
-	g_menu_append(viewMenu, "Film Strip", "quiver.ViewFilmStrip");
-	g_menu_append_section(viewMenu, NULL, NULL);
-
-	// Sort submenu
-	GMenu *sortMenu = g_menu_new();
-	{
-		GMenuItem *item;
-		const char *sortNames[] = {"By _Name", "By _Name (natural order)", "By _Date", "By Date _Modified", "_Randomize"};
-		const char *sortActions[] = {"quiver.SortByName", "quiver.SortByNameNatural", "quiver.SortByDate", "quiver.SortByDateModified", "quiver.SortByRandom"};
-		for (int i = 0; i < 5; i++) {
-			item = g_menu_item_new(sortNames[i], sortActions[i]);
-			g_menu_append_item(sortMenu, item);
-			g_object_unref(item);
+		GMenu *viewMenu = g_menu_new();
+		add_section(viewMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Viewer", "quiver.UIModeViewer");
+			g_menu_append(s, "_Browser", "quiver.UIModeBrowser");
+			s; }));
+		add_section(viewMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Menubar", "quiver.ViewMenubar");
+			g_menu_append(s, "Toolbar", "quiver.ViewToolbarMain");
+			g_menu_append(s, "Properties", "quiver.ViewProperties");
+			g_menu_append(s, "Statusbar", "quiver.ViewStatusbar");
+			s; }));
+		add_section(viewMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Sidebar", "quiver.BrowserViewSidebar");
+			g_menu_append(s, "Preview", "quiver.BrowserViewPreview");
+			g_menu_append(s, "Film Strip", "quiver.ViewFilmStrip");
+			s; }));
+		{
+			// Sort submenu
+			GMenu *sortMenu = g_menu_new();
+			{
+				GMenuItem *item;
+				const char *sortNames[] = {"By _Name", "By _Name (natural order)", "By _Date", "By Date _Modified", "_Randomize"};
+				const char *sortActions[] = {"quiver.SortByName", "quiver.SortByNameNatural", "quiver.SortByDate", "quiver.SortByDateModified", "quiver.SortByRandom"};
+				for (int i = 0; i < 5; i++) {
+					item = g_menu_item_new(sortNames[i], sortActions[i]);
+					g_menu_append_item(sortMenu, item);
+					g_object_unref(item);
+				}
+				item = g_menu_item_new("In _Descending Order", "quiver.SortDescending");
+				g_menu_append_item(sortMenu, item);
+				g_object_unref(item);
+			}
+			add_section(viewMenu, ({ GMenu *s = g_menu_new();
+				g_menu_append_submenu(s, "_Arrange Items", G_MENU_MODEL(sortMenu));
+				s; }));
+			g_object_unref(sortMenu);
 		}
-		item = g_menu_item_new("In _Descending Order", "quiver.SortDescending");
-		g_menu_append_item(sortMenu, item);
-		g_object_unref(item);
-	}
-	g_menu_append_submenu(viewMenu, "_Arrange Items", G_MENU_MODEL(sortMenu));
-	g_object_unref(sortMenu);
-
-	g_menu_append_section(viewMenu, NULL, NULL);
-	g_menu_append(viewMenu, "_Full Screen", "quiver.FullScreen");
-	g_menu_append(viewMenu, "_Slide Show", "quiver.SlideShow");
-	g_menu_append_section(viewMenu, NULL, NULL);
-
-	// Zoom submenu
-	GMenu *zoomMenu = g_menu_new();
-	{
-		GMenuItem *item;
-		const char *zNames[] = {"Zoom _Fit", "Zoom Fit _Stretch", "_Actual Size", "_Fill Screen"};
-		const char *zActions[] = {"quiver.ZoomFit", "quiver.ZoomFitStretch", "quiver.Zoom100", "quiver.ZoomFillScreen"};
-		for (int i = 0; i < 4; i++) {
-			item = g_menu_item_new(zNames[i], zActions[i]);
-			g_menu_append_item(zoomMenu, item);
-			g_object_unref(item);
+		add_section(viewMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Full Screen", "quiver.FullScreen");
+			g_menu_append(s, "_Slide Show", "quiver.SlideShow");
+			s; }));
+		{
+			// Zoom submenu
+			GMenu *zoomMenu = g_menu_new();
+			{
+				GMenuItem *item;
+				const char *zNames[] = {"Zoom _Fit", "Zoom Fit _Stretch", "_Actual Size", "_Fill Screen"};
+				const char *zActions[] = {"quiver.ZoomFit", "quiver.ZoomFitStretch", "quiver.Zoom100", "quiver.ZoomFillScreen"};
+				for (int i = 0; i < 4; i++) {
+					item = g_menu_item_new(zNames[i], zActions[i]);
+					g_menu_append_item(zoomMenu, item);
+					g_object_unref(item);
+				}
+				item = g_menu_item_new("Rotate to _Maximize View", "quiver.MaximizeForDisplay");
+				g_menu_append_item(zoomMenu, item);
+				g_object_unref(item);
+			}
+			add_section(viewMenu, ({ GMenu *s = g_menu_new();
+				g_menu_append_submenu(s, "Zoom", G_MENU_MODEL(zoomMenu));
+				s; }));
+			g_object_unref(zoomMenu);
 		}
-		item = g_menu_item_new("Rotate to _Maximize View", "quiver.MaximizeForDisplay");
-		g_menu_append_item(zoomMenu, item);
-		g_object_unref(item);
+		g_menu_append_submenu(menu, "_View", G_MENU_MODEL(viewMenu));
+		g_object_unref(viewMenu);
 	}
-	g_menu_append_submenu(viewMenu, "Zoom", G_MENU_MODEL(zoomMenu));
-	g_object_unref(zoomMenu);
-
-	g_menu_append_submenu(menu, "_View", G_MENU_MODEL(viewMenu));
-	g_object_unref(viewMenu);
 
 	// === Image ===
-	GMenu *imageMenu = g_menu_new();
-	g_menu_append(imageMenu, "_Rotate Clockwise", "quiver.RotateCW");
-	g_menu_append(imageMenu, "Rotate _Counterclockwise", "quiver.RotateCCW");
-	g_menu_append_section(imageMenu, NULL, NULL);
-	g_menu_append(imageMenu, "Flip _Horizontally", "quiver.FlipH");
-	g_menu_append(imageMenu, "Flip _Vertically", "quiver.FlipV");
-	g_menu_append_submenu(menu, "_Image", G_MENU_MODEL(imageMenu));
-	g_object_unref(imageMenu);
+	{
+		GMenu *imageMenu = g_menu_new();
+		add_section(imageMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Rotate Clockwise", "quiver.RotateCW");
+			g_menu_append(s, "Rotate _Counterclockwise", "quiver.RotateCCW");
+			s; }));
+		add_section(imageMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Flip _Horizontally", "quiver.FlipH");
+			g_menu_append(s, "Flip _Vertically", "quiver.FlipV");
+			s; }));
+		g_menu_append_submenu(menu, "_Image", G_MENU_MODEL(imageMenu));
+		g_object_unref(imageMenu);
+	}
 
 	// === Video ===
-	GMenu *videoMenu = g_menu_new();
-	g_menu_append(videoMenu, "_Play / Pause", "quiver.VideoPlay");
-	g_menu_append_section(videoMenu, NULL, NULL);
-	g_menu_append(videoMenu, "Seek _Back 5s", "quiver.VideoSeekBack5");
-	g_menu_append(videoMenu, "Seek _Forward 5s", "quiver.VideoSeekFwd5");
-	g_menu_append_section(videoMenu, NULL, NULL);
-	g_menu_append(videoMenu, "Skip Back _10s", "quiver.VideoSkipBack");
-	g_menu_append(videoMenu, "Skip Forward 1_0s", "quiver.VideoSkipForward");
-	g_menu_append_section(videoMenu, NULL, NULL);
-	g_menu_append(videoMenu, "Previous Frame", "quiver.VideoFrameBack");
-	g_menu_append(videoMenu, "Next Frame", "quiver.VideoFrameFwd");
-	g_menu_append_section(videoMenu, NULL, NULL);
-
-	// Speed submenu
-	GMenu *speedMenu = g_menu_new();
 	{
-		const char *speeds[] = {"0.25x", "0.5x", "1.0x (Normal)", "1.5x", "2.0x", "4.0x", "8.0x", "16.0x"};
-		const char *speedActions[] = {"quiver.VideoSpeed025", "quiver.VideoSpeed05", "quiver.VideoSpeed10", "quiver.VideoSpeed15", "quiver.VideoSpeed20", "quiver.VideoSpeed40", "quiver.VideoSpeed80", "quiver.VideoSpeed160"};
-		for (int i = 0; i < 8; i++) {
-			g_menu_append(speedMenu, speeds[i], speedActions[i]);
+		GMenu *videoMenu = g_menu_new();
+		add_section(videoMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Play / Pause", "quiver.VideoPlay");
+			s; }));
+		add_section(videoMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Seek _Back 5s", "quiver.VideoSeekBack5");
+			g_menu_append(s, "Seek _Forward 5s", "quiver.VideoSeekFwd5");
+			s; }));
+		add_section(videoMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Skip Back _10s", "quiver.VideoSkipBack");
+			g_menu_append(s, "Skip Forward 1_0s", "quiver.VideoSkipForward");
+			s; }));
+		add_section(videoMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Previous Frame", "quiver.VideoFrameBack");
+			g_menu_append(s, "Next Frame", "quiver.VideoFrameFwd");
+			s; }));
+		{
+			// Speed submenu
+			GMenu *speedMenu = g_menu_new();
+			{
+				const char *speeds[] = {"0.25x", "0.5x", "1.0x (Normal)", "1.5x", "2.0x", "4.0x", "8.0x", "16.0x"};
+				const char *speedActions[] = {"quiver.VideoSpeed025", "quiver.VideoSpeed05", "quiver.VideoSpeed10", "quiver.VideoSpeed15", "quiver.VideoSpeed20", "quiver.VideoSpeed40", "quiver.VideoSpeed80", "quiver.VideoSpeed160"};
+				for (int i = 0; i < 8; i++) {
+					g_menu_append(speedMenu, speeds[i], speedActions[i]);
+				}
+			}
+			add_section(videoMenu, ({ GMenu *s = g_menu_new();
+				g_menu_append_submenu(s, "Playback _Speed", G_MENU_MODEL(speedMenu));
+				s; }));
+			g_object_unref(speedMenu);
 		}
+		add_section(videoMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_Take Snapshot", "quiver.VideoSnapshot");
+			s; }));
+		g_menu_append_submenu(menu, "V_ideo", G_MENU_MODEL(videoMenu));
+		g_object_unref(videoMenu);
 	}
-	g_menu_append_submenu(videoMenu, "Playback _Speed", G_MENU_MODEL(speedMenu));
-	g_object_unref(speedMenu);
-	g_menu_append_section(videoMenu, NULL, NULL);
-	g_menu_append(videoMenu, "_Take Snapshot", "quiver.VideoSnapshot");
-	g_menu_append_submenu(menu, "V_ideo", G_MENU_MODEL(videoMenu));
-	g_object_unref(videoMenu);
 
 	// === Go ===
-	GMenu *goMenu = g_menu_new();
-	g_menu_append(goMenu, "_First Image", "quiver.ImageFirst");
-	g_menu_append(goMenu, "_Previous Image", "quiver.ImagePrevious");
-	g_menu_append(goMenu, "_Next Image", "quiver.ImageNext");
-	g_menu_append(goMenu, "_Last Image", "quiver.ImageLast");
-	g_menu_append_section(goMenu, NULL, NULL);
-	g_menu_append(goMenu, "Go _Back", "quiver.BrowserHistoryBack");
-	g_menu_append(goMenu, "Go _Forward", "quiver.BrowserHistoryForward");
-	g_menu_append_section(goMenu, NULL, NULL);
-	g_menu_append(goMenu, "Open _Parent", "quiver.GoFolderParent");
-	g_menu_append(goMenu, "Open _Next Folder", "quiver.GoFolderNext");
-	g_menu_append(goMenu, "Open _Previous Folder", "quiver.GoFolderPrev");
-	g_menu_append_section(goMenu, NULL, NULL);
-	g_menu_append_submenu(menu, "_Go", G_MENU_MODEL(goMenu));
-	g_object_unref(goMenu);
+	{
+		GMenu *goMenu = g_menu_new();
+		add_section(goMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_First Image", "quiver.ImageFirst");
+			g_menu_append(s, "_Previous Image", "quiver.ImagePrevious");
+			g_menu_append(s, "_Next Image", "quiver.ImageNext");
+			g_menu_append(s, "_Last Image", "quiver.ImageLast");
+			s; }));
+		add_section(goMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Go _Back", "quiver.BrowserHistoryBack");
+			g_menu_append(s, "Go _Forward", "quiver.BrowserHistoryForward");
+			s; }));
+		add_section(goMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "Open _Parent", "quiver.GoFolderParent");
+			g_menu_append(s, "Open _Next Folder", "quiver.GoFolderNext");
+			g_menu_append(s, "Open _Previous Folder", "quiver.GoFolderPrev");
+			s; }));
+		g_menu_append_submenu(menu, "_Go", G_MENU_MODEL(goMenu));
+		g_object_unref(goMenu);
+	}
 
 	// === Bookmarks ===
-	// bookmarkMenu is passed in from QuiverImpl for dynamic bookmark items
-	g_menu_append(bookmarkMenu, "_Add Bookmark", "quiver.BookmarksAdd");
-	g_menu_append(bookmarkMenu, "_Edit Bookmarks...", "quiver.BookmarksEdit");
-	g_menu_append_section(bookmarkMenu, NULL, NULL);
+	// bookmarkMenu is passed in from QuiverImpl; static items go in their own
+	// section and dynamic bookmark items are added later in LoadBookmarks().
+	add_section(bookmarkMenu, ({ GMenu *s = g_menu_new();
+		g_menu_append(s, "_Add Bookmark", "quiver.BookmarksAdd");
+		g_menu_append(s, "_Edit Bookmarks...", "quiver.BookmarksEdit");
+		s; }));
 	g_menu_append_submenu(menu, "_Bookmarks", G_MENU_MODEL(bookmarkMenu));
 
 	// === Tools ===
-	// externalToolsMenu is passed in from QuiverImpl
-	g_menu_append(externalToolsMenu, "Adjust Date...", "quiver.AdjustDate");
-	g_menu_append(externalToolsMenu, "Rename...", "quiver.Rename");
-	g_menu_append(externalToolsMenu, "Organize...", "quiver.Organize");
-	g_menu_append(externalToolsMenu, "External Tools...", "quiver.ExternalTools");
-	g_menu_append_section(externalToolsMenu, NULL, NULL);
+	// externalToolsMenu is passed in from QuiverImpl; static items go in their
+	// own section and dynamic external-tool items are added in LoadExternalTools().
+	add_section(externalToolsMenu, ({ GMenu *s = g_menu_new();
+		g_menu_append(s, "Adjust Date...", "quiver.AdjustDate");
+		g_menu_append(s, "Rename...", "quiver.Rename");
+		g_menu_append(s, "Organize...", "quiver.Organize");
+		g_menu_append(s, "External Tools...", "quiver.ExternalTools");
+		s; }));
 	g_menu_append_submenu(menu, "_Tools", G_MENU_MODEL(externalToolsMenu));
 
 	// === Help ===
-	GMenu *helpMenu = g_menu_new();
-	g_menu_append(helpMenu, "_Donate...", "quiver.Donate");
-	g_menu_append_section(helpMenu, NULL, NULL);
-	g_menu_append(helpMenu, "_About", "quiver.About");
-	g_menu_append_submenu(menu, "_Help", G_MENU_MODEL(helpMenu));
-	g_object_unref(helpMenu);
+	{
+		GMenu *helpMenu = g_menu_new();
+		add_section(helpMenu, ({ GMenu *s = g_menu_new();
+			g_menu_append(s, "_About", "quiver.About");
+			s; }));
+		g_menu_append_submenu(menu, "_Help", G_MENU_MODEL(helpMenu));
+	}
 
 	return menu;
 }
@@ -1049,7 +1115,6 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ORGANIZE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_RENAME, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_EXTERNAL_TOOLS, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_DONATE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ABOUT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 
 	/* Global toggle actions */
@@ -1149,10 +1214,6 @@ void Quiver::Init()
 	
 	bool prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 
-	if (prefs_show)
-	{
-		gtk_widget_set_visible(m_QuiverImplPtr->m_pNBProperties, TRUE);
-	}
 	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_PROPERTIES, prefs_show);
 
 	{
@@ -1173,6 +1234,9 @@ void Quiver::Init()
 	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Database"));
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties));
 	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),TRUE);
+	/* gtk_notebook_append_page() above auto-shows the notebook, so re-apply
+	 * the preference here regardless of its value. */
+	gtk_widget_set_visible(m_QuiverImplPtr->m_pNBProperties, prefs_show);
 	
 	// statusbar
 	statusbar =  m_QuiverImplPtr->m_StatusbarPtr->GetWidget();
@@ -1954,6 +2018,7 @@ void Quiver::OnShowProperties(bool bShow /* = true */)
 	
 	if (bShow)
 	{
+		gtk_widget_set_visible(m_QuiverImplPtr->m_pNBProperties, TRUE);
 	}
 	else
 	{
@@ -2234,11 +2299,6 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_VIEWER))
 	{
 		pQuiver->ShowViewer();
-	}
-	else if (0 == strcmp(szAction, ACTION_QUIVER_DONATE))
-	{
-		DonateDlg dlg;
-		dlg.Run();
 	}
 	else if (0 == strcmp(szAction, ACTION_QUIVER_ABOUT))
 	{

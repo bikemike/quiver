@@ -97,6 +97,8 @@ void quiver_image_view_set_enable_transitions(QuiverImageView *imageview,gboolea
 gboolean quiver_image_view_is_in_transition(QuiverImageView *imageview);
 
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble amount);
+/* Apply a multiplicative zoom factor immediately (no smooth animation). */
+gdouble quiver_image_view_zoom_by(QuiverImageView *imageview,gdouble factor);
 void quiver_image_view_set_magnification_mode(QuiverImageView *imageview,QuiverImageViewMagnificationMode mode);
 gdouble quiver_image_view_get_magnification(QuiverImageView *imageview);
 gboolean  quiver_image_view_can_magnify(QuiverImageView *imageview, gboolean in);

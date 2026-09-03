@@ -193,6 +193,12 @@ bool ImageLoader::CommandsPending()
 	return rval;
 }
 
+gboolean ImageLoader::abort_video_load(gpointer data)
+{
+	ImageLoader* self = (ImageLoader*)data;
+	return self->CommandsPending() ? TRUE : FALSE;
+}
+
 void ImageLoader::ReCacheImage(QuiverFile f)
 {
 	LoadParams p = {};
@@ -419,7 +425,11 @@ void ImageLoader::Load()
 				{
 					gint n=1, d=1;
 					GdkPixbuf* video_pixbuf = NULL;
-					video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
+					video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d,
+						-1, m_Command.params.max_width, m_Command.params.max_height,
+						abort_video_load, this);
+					if (NULL == video_pixbuf && CommandsPending())
+						bAborted = true;
 					if (NULL != video_pixbuf)
 					{
 						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
@@ -635,7 +645,11 @@ void ImageLoader::Load()
 				{
 					gint n=1, d=1;
 					GdkPixbuf* video_pixbuf = NULL;
-					video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d);
+					video_pixbuf = QuiverVideoOps::LoadPixbuf(m_Command.quiverFile.GetURI(), &n, &d,
+						-1, m_Command.params.max_width, m_Command.params.max_height,
+						abort_video_load, this);
+					if (NULL == video_pixbuf && CommandsPending())
+						bAborted = true;
 					if (NULL != video_pixbuf)
 					{
 						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);

@@ -34,7 +34,6 @@ set(QUIVER_SOURCES
     BookmarkAddEditDlg.cpp
     Bookmarks.cpp
     BrowserHistory.cpp
-    DonateDlg.cpp
     TaskEventSource.cpp
     TaskManagerDlg.cpp
     TaskManager.cpp

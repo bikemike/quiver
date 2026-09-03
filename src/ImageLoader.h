@@ -71,6 +71,7 @@ private:
 	void Load();
 	bool LoadPixbuf(GdkPixbufLoader *loader, bool* bAborted = NULL);
 	bool CommandsPending();
+	static gboolean abort_video_load(gpointer data);
 	
 	bool LoadQuickPreview();
 
