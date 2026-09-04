@@ -25,164 +25,103 @@ extern "C" {
 #include "TaskManager.h"
 
 
-/* prototypes */
+/* ═══════════════════════════════════════════════════════════════════════
+ * GObject model items — used as rows in GListStore
+ * ═══════════════════════════════════════════════════════════════════════ */
 
-static void property_value_cell_edited_callback (GtkCellRendererText *cell,
-                                  gchar               *path_string,
-                                  gchar               *new_text,
-                                  gpointer             user_data);
-
-static void property_video_value_cell_edited_callback (GtkCellRendererText *cell,
-                                  gchar               *path_string,
-                                  gchar               *new_text,
-                                  gpointer             user_data);
-
-static void property_value_editing_started_callback (GtkCellRenderer *renderer,
-                                            GtkCellEditable *editable,
-                                            gchar *path,
-                                            gpointer user_data);
-
-static void property_value_editing_canceled_callback (GtkCellRenderer *renderer,
-                                            gpointer user_data);
-
-static gboolean property_tree_event_popup_menu (GtkWidget *treeview, gpointer userdata);
-static gboolean property_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpointer userdata);
-static void property_tree_show_popup_menu (PropertyView::PropertyViewImpl *pImpl, GtkWidget *treeview, guint button, guint32 activate_time);
-
-static gboolean property_date_format_is_valid(const char *date);
-
-static void property_orientation_to_text (GtkTreeViewColumn *tree_column,
-	                GtkCellRenderer   *cell,
-                    GtkTreeModel      *tree_model,
-	                GtkTreeIter       *iter,
-                    gpointer           data);
-
-static void property_view_map(GtkWidget *widget, gpointer user_data);
-static gboolean property_view_idle_load(gpointer data);
-static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl);
-
-static void property_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data);
-static void property_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data);
-
-/* private implementation */
-class PropertyView::PropertyViewImpl
+typedef struct _PropertyItem
 {
-public:
-//	methods
-	PropertyViewImpl();
-	~PropertyViewImpl();
+	GObject    parent_instance;
+	char      *key;
+	char      *value;
+	gboolean   editable;
+	gboolean   is_group;
+} PropertyItem;
 
-	void LoadProperties();
-	void PopulateSummary();
-	void PopulateXmp();
-	void PopulateIptc();
-	void PopulateVideo();
-	void UpdateTabsForFile();
+typedef struct _PropertyItemClass { GObjectClass parent_class; } PropertyItemClass;
 
-// variables
-	QuiverFile    m_QuiverFile;
-	std::shared_ptr<Exiv2::ExifData> m_ExifData;
+static GType property_item_get_type(void);
+G_DEFINE_TYPE(PropertyItem, property_item, G_TYPE_OBJECT)
+#define PROPERTY_ITEM(o) ((PropertyItem *)(o))
 
-	GtkWidget*    m_pNotebook;
-	GtkWidget*    m_pPageWidgets[5];
+static void property_item_init(PropertyItem *s)
+{ s->key = NULL; s->value = NULL; s->editable = FALSE; s->is_group = FALSE; }
 
-	GtkWidget*    m_pSummaryTreeView;
-	GtkWidget*    m_pSummaryPreview;
-	GtkWidget*    m_pSummaryTitle;
-	GtkWidget*    m_pExifTreeView;
-	GtkWidget*    m_pXmpTreeView;
-	GtkWidget*    m_pIptcTreeView;
-	GtkWidget*    m_pVideoTreeView;
+static void property_item_finalize(GObject *o)
+{
+	PropertyItem *s = PROPERTY_ITEM(o);
+	g_free(s->key); g_free(s->value);
+	G_OBJECT_CLASS(property_item_parent_class)->finalize(o);
+}
 
-	guint         m_iIdleLoadID;
+static void property_item_class_init(PropertyItemClass *k)
+{ G_OBJECT_CLASS(k)->finalize = property_item_finalize; }
 
-	gboolean      m_bLoaded;
-	bool          m_bIsVideo;
+static PropertyItem* property_item_new(const char *k, const char *v,
+	gboolean ed, gboolean grp)
+{
+	PropertyItem *i = PROPERTY_ITEM(g_object_new(property_item_get_type(), NULL));
+	i->key = g_strdup(k); i->value = g_strdup(v ? v : "");
+	i->editable = ed; i->is_group = grp;
+	return i;
+}
 
-	// whether the current file actually carries each metadata type;
-	// tabs without data stay hidden
-	bool          m_bHasExif;
-	bool          m_bHasXmp;
-	bool          m_bHasIptc;
+typedef struct _ExifItem
+{
+	GObject     parent_instance;
+	char       *full_key;
+	char       *name;
+	char       *value_text;
+	int         value_orientation;
+	GdkPixbuf  *thumbnail;
+	gboolean    is_group;
+	gboolean    is_editable;
+	gboolean    show_text;
+	gboolean    show_orientation;
+	gboolean    show_pixbuf;
+} ExifItem;
 
-// nested classes
-	class PreferencesEventHandler : public IPreferencesEventHandler
-	{
-	public:
-		PreferencesEventHandler(PropertyViewImpl* parent) {this->parent = parent;};
-		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
-	private:
-		PropertyViewImpl* parent;
-	};
+typedef struct _ExifItemClass { GObjectClass parent_class; } ExifItemClass;
 
-	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
+static GType exif_item_get_type(void);
+G_DEFINE_TYPE(ExifItem, exif_item, G_TYPE_OBJECT)
+#define EXIF_ITEM(o) ((ExifItem *)(o))
+
+static void exif_item_init(ExifItem *s)
+{
+	s->full_key = NULL; s->name = NULL; s->value_text = NULL;
+	s->thumbnail = NULL; s->value_orientation = 0;
+	s->is_group = FALSE; s->is_editable = FALSE;
+	s->show_text = FALSE; s->show_orientation = FALSE; s->show_pixbuf = FALSE;
+}
+
+static void exif_item_finalize(GObject *o)
+{
+	ExifItem *s = EXIF_ITEM(o);
+	g_free(s->full_key); g_free(s->name); g_free(s->value_text);
+	if (s->thumbnail) g_object_unref(s->thumbnail);
+	G_OBJECT_CLASS(exif_item_parent_class)->finalize(o);
+}
+
+static void exif_item_class_init(ExifItemClass *k)
+{ G_OBJECT_CLASS(k)->finalize = exif_item_finalize; }
+
+static ExifItem* exif_item_new(void)
+{ return EXIF_ITEM(g_object_new(exif_item_get_type(), NULL)); }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Constants / data tables
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static const char *orientation_options[] = {
+	"top - left", "top - right", "bottom - right", "bottom - left",
+	"left - top", "right - top", "right - bottom", "left - bottom",
 };
 
-enum
-{
-	PROP_TREE_COLUMN_KEY,
-	PROP_TREE_COLUMN_NAME,
-	PROP_TREE_COLUMN_VALUE_TEXT,
-	PROP_TREE_COLUMN_VALUE_ORIENTATION,
-	PROP_TREE_COLUMN_VALUE_PIXBUF,
-	PROP_TREE_COLUMN_IS_VISIBLE_TEXT,
-	PROP_TREE_COLUMN_IS_VISIBLE_PIXBUF,
-	PROP_TREE_COLUMN_IS_VISIBLE_ORIENTATION,
-	PROP_TREE_COLUMN_IS_GROUP,
-	PROP_TREE_COLUMN_IS_EDITABLE,
-	PROP_TREE_COLUMN_COUNT,
-};
+typedef struct _EditableTag { const char *key; const char *title; int kind; } EditableTag;
 
-enum
-{
-	SUMMARY_COLUMN_LABEL,
-	SUMMARY_COLUMN_VALUE,
-	SUMMARY_COLUMN_COUNT,
-};
-
-enum
-{
-	KEYVALUE_COLUMN_KEY,
-	KEYVALUE_COLUMN_VALUE,
-	KEYVALUE_COLUMN_EDITABLE,
-	KEYVALUE_COLUMN_GROUP,
-	KEYVALUE_COLUMN_COUNT,
-};
-
-
-enum
-{
-  ORIENTATION_COLUMN_TEXT_VALUE,
-  ORIENTATION_COLUMN_COUNT
-};
-
-
-const char *orientation_options[] = {
-        "top - left",
-        "top - right",
-        "bottom - right",
-        "bottom - left",
-        "left - top",
-        "right - top",
-        "right - bottom",
-        "left - bottom",
-};
-
-typedef struct _EditableTag
-{
-	const char* key;
-	const char* title;
-	int kind;
-} EditableTag;
-
-enum TagKind
-{
-	TAGKIND_STRING,
-	TAGKIND_INT,
-	TAGKIND_DATE,
-	TAGKIND_ORIENTATION,
-	TAGKIND_COMMENT,
-};
+enum TagKind { TAGKIND_STRING, TAGKIND_INT, TAGKIND_DATE, TAGKIND_ORIENTATION, TAGKIND_COMMENT };
 
 static const EditableTag k_editableTags[] = {
 	{ "Exif.Image.DateTime",             "Date and Time",        TAGKIND_DATE },
@@ -204,15 +143,13 @@ static const EditableTag k_editableTags[] = {
 typedef struct _KeyActionStruct
 {
 	PropertyView::PropertyViewImpl *pImpl;
-	char* key;
+	char *key;
 } KeyActionStruct;
 
-/* video info fetched with libavformat */
 struct VideoInfo
 {
 	bool ok;
-	std::string container;
-	std::string codecs;
+	std::string container, codecs;
 	double duration_seconds;
 	int width, height;
 	long long bit_rate;
@@ -251,17 +188,13 @@ static double ParseRationalTriple(const std::string& str)
 static VideoInfo ProbeVideoInfo(const gchar* szPath)
 {
 	VideoInfo info;
-
-	if (NULL == szPath)
-		return info;
+	if (NULL == szPath) return info;
 
 	std::lock_guard<std::mutex> lock(s_avformatMutex);
-	std::call_once(s_avformatInitFlag,
-		[](){ av_log_set_level(AV_LOG_ERROR); });
+	std::call_once(s_avformatInitFlag, [](){ av_log_set_level(AV_LOG_ERROR); });
 
 	auto cached = s_mapVideoInfoCache.find(szPath);
-	if (s_mapVideoInfoCache.end() != cached)
-		return cached->second;
+	if (s_mapVideoInfoCache.end() != cached) return cached->second;
 
 	AVFormatContext* pFmt = NULL;
 	if (avformat_open_input(&pFmt, szPath, NULL, NULL) >= 0 && NULL != pFmt)
@@ -272,415 +205,324 @@ static VideoInfo ProbeVideoInfo(const gchar* szPath)
 			if (NULL != pFmt->iformat && NULL != pFmt->iformat->name)
 				info.container = pFmt->iformat->name;
 
-			AVDictionaryEntry* e =
-				av_dict_get(pFmt->metadata, "creation_time", NULL, 0);
-			if (NULL == e)
-				e = av_dict_get(pFmt->metadata, "date", NULL, 0);
+			AVDictionaryEntry* e = av_dict_get(pFmt->metadata, "creation_time", NULL, 0);
+			if (NULL == e) e = av_dict_get(pFmt->metadata, "date", NULL, 0);
 			for (unsigned int i = 0; NULL == e && i < pFmt->nb_streams; i++)
-			{
-				// some muxers only tag the streams
-				e = av_dict_get(pFmt->streams[i]->metadata,
-					"creation_time", NULL, 0);
-			}
+				e = av_dict_get(pFmt->streams[i]->metadata, "creation_time", NULL, 0);
 			if (NULL != e)
-			{
-				g_strlcpy(info.creation_time, e->value,
-					sizeof(info.creation_time));
-			}
+				g_strlcpy(info.creation_time, e->value, sizeof(info.creation_time));
 
-			if (pFmt->duration > 0)
-				info.duration_seconds = pFmt->duration / (double)AV_TIME_BASE;
-			if (pFmt->bit_rate > 0)
-				info.bit_rate = pFmt->bit_rate;
+			if (pFmt->duration > 0) info.duration_seconds = pFmt->duration / (double)AV_TIME_BASE;
+			if (pFmt->bit_rate > 0) info.bit_rate = pFmt->bit_rate;
 
 			for (unsigned int i = 0; i < pFmt->nb_streams; i++)
 			{
 				AVStream* pStream = pFmt->streams[i];
-				if (NULL == pStream || NULL == pStream->codecpar)
-					continue;
+				if (NULL == pStream || NULL == pStream->codecpar) continue;
 				AVCodecParameters* pPar = pStream->codecpar;
-
 				if (AVMEDIA_TYPE_VIDEO == pPar->codec_type)
-				{
-					info.width = pPar->width;
-					info.height = pPar->height;
-				}
-
+				{ info.width = pPar->width; info.height = pPar->height; }
 				if (AV_CODEC_ID_NONE != pPar->codec_id && 0 != pPar->codec_id)
 				{
-					if (!info.codecs.empty())
-						info.codecs += ", ";
+					if (!info.codecs.empty()) info.codecs += ", ";
 					info.codecs += avcodec_get_name(pPar->codec_id);
 				}
 			}
 		}
 		avformat_close_input(&pFmt);
 	}
-
 	s_mapVideoInfoCache[szPath] = info;
 	return info;
 }
 
 
-PropertyView::PropertyViewImpl::PropertyViewImpl() :
-	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) )
+/* ═══════════════════════════════════════════════════════════════════════
+ * Forward declarations for helpers used before definition
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static void property_value_cell_edited_callback(const char *key, const char *new_text,
+	gpointer user_data);
+static void property_video_value_cell_edited_callback(const char *new_text, gpointer user_data);
+static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl);
+static gboolean property_view_idle_load(gpointer data);
+static gboolean property_date_format_is_valid(const char *date);
+static void set_exif_value(std::shared_ptr<Exiv2::ExifData> pExifData,
+	const char* key, const char* new_text, Exiv2::TypeId typeId);
+static void exif_entry_activate_cb(GtkEntry *entry, gpointer user_data);
+static void exif_right_click_cb(GtkGestureClick *gesture, gint n_press,
+	gdouble x, gdouble y, gpointer user_data);
+static void exif_popover_closed_cb(GtkPopover *popover, gpointer user_data);
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Private implementation class
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+class PropertyView::PropertyViewImpl
 {
-	m_iIdleLoadID = 0;
-	m_bLoaded     = FALSE;
-	m_bIsVideo    = false;
-	m_bHasExif    = false;
-	m_bHasXmp     = false;
-	m_bHasIptc    = false;
-	m_pNotebook   = NULL;
+public:
+	PropertyViewImpl();
+	~PropertyViewImpl();
 
-	m_pSummaryPreview = NULL;
-	m_pSummaryTitle   = NULL;
+	void LoadProperties();
+	void PopulateSummary();
+	void PopulateXmp();
+	void PopulateIptc();
+	void PopulateVideo();
+	void UpdateTabsForFile();
 
-	for (int i = 0; i < 5; i++)
-		m_pPageWidgets[i] = NULL;
+	QuiverFile    m_QuiverFile;
+	std::shared_ptr<Exiv2::ExifData> m_ExifData;
 
-	PreferencesPtr prefPtr = Preferences::GetInstance();
-	prefPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
-}
+	GtkWidget*    m_pNotebook;
+	GtkWidget*    m_pPageWidgets[5];
 
+	GtkWidget*    m_pSummaryColumnView;
+	GtkWidget*    m_pSummaryPreview;
+	GtkWidget*    m_pSummaryTitle;
+	GtkWidget*    m_pExifColumnView;
+	GtkWidget*    m_pXmpColumnView;
+	GtkWidget*    m_pIptcColumnView;
+	GtkWidget*    m_pVideoColumnView;
 
-PropertyView::PropertyViewImpl::~PropertyViewImpl()
-{
-	PreferencesPtr prefPtr = Preferences::GetInstance();
-	prefPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
+	GtkWidget*    m_pExifPopover;
 
-	if (NULL != m_pNotebook)
+	guint         m_iIdleLoadID;
+	gboolean      m_bLoaded;
+	bool          m_bIsVideo;
+	bool          m_bHasExif;
+	bool          m_bHasXmp;
+	bool          m_bHasIptc;
+
+	class PreferencesEventHandler : public IPreferencesEventHandler
 	{
-		g_object_unref(m_pNotebook);
-	}
+	public:
+		PreferencesEventHandler(PropertyViewImpl* parent) {this->parent = parent;};
+		virtual void HandlePreferenceChanged(PreferencesEventPtr event);
+	private:
+		PropertyViewImpl* parent;
+	};
+	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
+};
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * GtkColumnView / GtkSignalListItemFactory callbacks
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* --- Key-value label pair (used by Summary, XMP, IPTC tabs) --- */
+
+static void kv_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	gtk_list_item_set_child(item, gtk_label_new(NULL)); }
+
+static void kv_key_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	PropertyItem *pi = PROPERTY_ITEM(gtk_list_item_get_item(item));
+	GtkWidget *label = gtk_list_item_get_child(item);
+	gchar *text;
+	if (pi->is_group)
+		text = g_markup_printf_escaped("<b>%s</b>", pi->key ? pi->key : "");
+	else
+		text = g_markup_escape_text(pi->key ? pi->key : "", -1);
+	gtk_label_set_markup(GTK_LABEL(label), text);
+	g_free(text);
 }
 
-static void property_view_map(GtkWidget *widget, gpointer user_data)
-{ (void)widget;
-	PropertyView::PropertyViewImpl *pImpl = static_cast<PropertyView::PropertyViewImpl*>(user_data);
-	if (!pImpl->m_bLoaded)
+static void kv_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	PropertyItem *pi = PROPERTY_ITEM(gtk_list_item_get_item(item));
+	gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(item)),
+		pi->value ? pi->value : "");
+}
+
+static void kv_unbind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)item; (void)user_data; }
+
+
+/* --- Video / EXIF editable entry pair --- */
+
+static void entry_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	gtk_list_item_set_child(item, gtk_entry_new()); }
+
+static void video_entry_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	PropertyItem *pi = PROPERTY_ITEM(gtk_list_item_get_item(item));
+	GtkWidget *entry = gtk_list_item_get_child(item);
+
+	if (pi->editable)
 	{
-		if (0 != pImpl->m_iIdleLoadID)
-		{
-			g_source_remove(pImpl->m_iIdleLoadID );
-			pImpl->m_iIdleLoadID = 0;
-		}
-
-		pImpl->m_iIdleLoadID = g_timeout_add(10,property_view_idle_load,pImpl);
-		pImpl->m_bLoaded = TRUE;
-	}
-}
-
-PropertyView::PropertyView() : m_PropertyViewImplPtr ( new PropertyViewImpl() )
-{
-	GtkWidget *notebook = gtk_notebook_new();
-	gtk_notebook_set_scrollable(GTK_NOTEBOOK(notebook), TRUE);
-	gtk_notebook_popup_enable(GTK_NOTEBOOK(notebook));
-
-	const char* labels[5] = { "Summary", "EXIF", "XMP", "IPTC", "Video" };
-	GtkWidget* trees[5] = {};
-
-	// editable values get a subtle tint so users can spot them
-	GdkRGBA edit_color;
-	gdk_rgba_parse(&edit_color, "#3584e4");
-
-	for (int i = 0; i < 5; i++)
-	{
-		GtkWidget *treeview = gtk_tree_view_new();
-		GtkWidget *scrolled_window = gtk_scrolled_window_new(NULL,NULL);
-		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),
-			GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
-		gtk_widget_show(treeview);
-		gtk_widget_show(scrolled_window);
-
-		if (0 != i) // summary builds its own layout around the treeview
-			gtk_container_add(GTK_CONTAINER(scrolled_window),treeview);
-
-		// hold our own ref so pages can be pulled out of the notebook
-		// and re-inserted later
-		g_object_ref(scrolled_window);
-		m_PropertyViewImplPtr->m_pPageWidgets[i] = scrolled_window;
-
-		GtkTreeViewColumn *column;
-		GtkCellRenderer *renderer;
-
-		switch (i)
-		{
-			case 0: // summary: preview + filename above a plain field list
-			{
-				GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-				gtk_container_set_border_width(GTK_CONTAINER(vbox), 8);
-
-				GtkWidget* preview = gtk_image_new();
-				gtk_widget_set_halign(preview, GTK_ALIGN_CENTER);
-				gtk_widget_set_valign(preview, GTK_ALIGN_START);
-				gtk_widget_set_no_show_all(preview, TRUE);
-				gtk_box_pack_start(GTK_BOX(vbox), preview, FALSE, FALSE, 0);
-				m_PropertyViewImplPtr->m_pSummaryPreview = preview;
-
-				GtkWidget* title = gtk_label_new(NULL);
-				gtk_label_set_xalign(GTK_LABEL(title), 0.0);
-				gtk_label_set_line_wrap(GTK_LABEL(title), TRUE);
-				gtk_label_set_line_wrap_mode(GTK_LABEL(title),
-					PANGO_WRAP_WORD_CHAR);
-				gtk_box_pack_start(GTK_BOX(vbox), title, FALSE, FALSE, 0);
-				m_PropertyViewImplPtr->m_pSummaryTitle = title;
-
-				renderer = gtk_cell_renderer_text_new ();
-				column = gtk_tree_view_column_new_with_attributes (
-					"Property", renderer,
-					"text", SUMMARY_COLUMN_LABEL,
-					NULL);
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-
-				renderer = gtk_cell_renderer_text_new ();
-				g_object_set (G_OBJECT (renderer), "wrap-width",300,  NULL);
-				g_object_set (G_OBJECT (renderer),
-					"wrap-mode",PANGO_WRAP_WORD_CHAR,  NULL);
-				column = gtk_tree_view_column_new_with_attributes ("Value",
-					renderer,
-					"text", SUMMARY_COLUMN_VALUE,
-					NULL);
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-
-				gtk_tree_view_set_headers_visible(
-					GTK_TREE_VIEW(treeview), FALSE);
-
-				gtk_container_add(GTK_CONTAINER(vbox), treeview);
-				gtk_widget_show(vbox);
-				gtk_container_add(GTK_CONTAINER(scrolled_window), vbox);
-			}
-			break;
-
-			case 2: // xmp
-			case 3: // iptc
-			{
-				renderer = gtk_cell_renderer_text_new ();
-				column = gtk_tree_view_column_new_with_attributes (
-					"Property", renderer,
-					"text", KEYVALUE_COLUMN_KEY,
-					"weight-set", KEYVALUE_COLUMN_GROUP,
-					NULL);
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-
-				renderer = gtk_cell_renderer_text_new ();
-				g_object_set (G_OBJECT (renderer), "wrap-width",300,  NULL);
-				g_object_set (G_OBJECT (renderer),
-					"wrap-mode",PANGO_WRAP_WORD_CHAR,  NULL);
-				column = gtk_tree_view_column_new_with_attributes ("Value",
-					renderer,
-					"text", KEYVALUE_COLUMN_VALUE,
-					NULL);
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-			}
-			break;
-
-			case 4: // video
-			{
-				renderer = gtk_cell_renderer_text_new ();
-				column = gtk_tree_view_column_new_with_attributes ("Property",
-					renderer,
-					"text", KEYVALUE_COLUMN_KEY,
-					NULL);
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-
-				renderer = gtk_cell_renderer_text_new ();
-				g_object_set (G_OBJECT (renderer), "wrap-width",300,  NULL);
-				g_object_set (G_OBJECT (renderer),
-					"wrap-mode",PANGO_WRAP_WORD_CHAR,  NULL);
-				g_object_set (G_OBJECT (renderer), "mode",GTK_CELL_RENDERER_MODE_EDITABLE,  NULL);
-				g_object_set (G_OBJECT (renderer), "editable",TRUE,  NULL);
-				g_object_set (G_OBJECT (renderer), "editable-set",TRUE,  NULL);
-				g_object_set (G_OBJECT (renderer), "foreground-rgba", &edit_color,  NULL);
-				column = gtk_tree_view_column_new_with_attributes ("Value",
-					renderer,
-					"text", KEYVALUE_COLUMN_VALUE,
-					"editable-set", KEYVALUE_COLUMN_EDITABLE,
-					"foreground-set", KEYVALUE_COLUMN_EDITABLE,
-					NULL);
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-
-				g_signal_connect(renderer, "edited", (GCallback) property_video_value_cell_edited_callback, m_PropertyViewImplPtr.get());
-				g_signal_connect(renderer, "editing-started", (GCallback) property_value_editing_started_callback, m_PropertyViewImplPtr.get());
-				g_signal_connect(renderer, "editing-canceled", (GCallback) property_value_editing_canceled_callback, m_PropertyViewImplPtr.get());
-			}
-			break;
-
-			case 1: // exif (editable tree)
-			{
-				// Property
-				renderer = gtk_cell_renderer_text_new ();
-				g_object_set (G_OBJECT (renderer),  "yalign", 0.0,  NULL);
-
-				column = gtk_tree_view_column_new_with_attributes ("Property", renderer,
-				  "text", PROP_TREE_COLUMN_NAME,
-				  "weight-set",PROP_TREE_COLUMN_IS_GROUP,
-				NULL);
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-
-				// Value
-				renderer = gtk_cell_renderer_text_new ();
-				g_signal_connect(renderer, "edited", (GCallback) property_value_cell_edited_callback, m_PropertyViewImplPtr.get());
-				g_signal_connect(renderer, "editing-started", (GCallback) property_value_editing_started_callback, m_PropertyViewImplPtr.get());
-				g_signal_connect(renderer, "editing-canceled", (GCallback) property_value_editing_canceled_callback, m_PropertyViewImplPtr.get());
-
-				g_object_set (G_OBJECT (renderer),  "mode",GTK_CELL_RENDERER_MODE_EDITABLE,  NULL);
-				g_object_set (G_OBJECT (renderer),  "foreground-rgba", &edit_color,  NULL);
-				g_object_set (G_OBJECT (renderer),  "wrap-width",200,  NULL);
-				g_object_set (G_OBJECT (renderer),  "wrap-mode",PANGO_WRAP_WORD_CHAR,  NULL);
-
-				column = gtk_tree_view_column_new();
-				gtk_tree_view_column_set_title(column,"Value");
-
-				gtk_tree_view_column_pack_start (column,renderer,TRUE);
-				gtk_tree_view_column_set_attributes(column,renderer,
-				  "text", PROP_TREE_COLUMN_VALUE_TEXT,
-				  "editable",PROP_TREE_COLUMN_IS_EDITABLE,
-				  "visible",PROP_TREE_COLUMN_IS_VISIBLE_TEXT,
-				  "foreground-set",PROP_TREE_COLUMN_IS_EDITABLE,
-				NULL);
-
-				renderer = gtk_cell_renderer_combo_new();
-
-				gtk_tree_view_column_pack_end (column,renderer,FALSE);
-
-				GtkListStore* numbers_model = gtk_list_store_new (ORIENTATION_COLUMN_COUNT, G_TYPE_STRING);
-				GtkTreeIter oIter;
-				for (int j = 0; j < 8; j++)
-				{
-					gtk_list_store_append (numbers_model, &oIter);
-					gtk_list_store_set (numbers_model, &oIter,
-									  ORIENTATION_COLUMN_TEXT_VALUE, orientation_options[j],
-									  -1);
-				}
-				g_object_set (renderer,
-							"model", numbers_model,
-							"text-column", ORIENTATION_COLUMN_TEXT_VALUE,
-							"has-entry", FALSE,
-							"editable",TRUE,
-							"foreground-rgba", &edit_color,
-							"foreground-set",TRUE,
-							NULL);
-				g_object_unref(numbers_model);
-
-
-				gtk_tree_view_column_add_attribute(column,renderer,"text",PROP_TREE_COLUMN_VALUE_ORIENTATION);
-				gtk_tree_view_column_add_attribute(column,renderer,"visible",PROP_TREE_COLUMN_IS_VISIBLE_ORIENTATION);
-				gtk_tree_view_column_set_cell_data_func(column,renderer,property_orientation_to_text,NULL,NULL);
-
-				g_signal_connect(renderer, "edited", (GCallback) property_value_cell_edited_callback, m_PropertyViewImplPtr.get());
-				g_signal_connect(renderer, "editing-started", (GCallback) property_value_editing_started_callback, m_PropertyViewImplPtr.get());
-				g_signal_connect(renderer, "editing-canceled", (GCallback) property_value_editing_canceled_callback, m_PropertyViewImplPtr.get());
-
-				renderer = gtk_cell_renderer_pixbuf_new();
-				gtk_tree_view_column_pack_end (column,renderer,FALSE);
-
-				gtk_tree_view_column_add_attribute(column,renderer,"pixbuf",PROP_TREE_COLUMN_VALUE_PIXBUF);
-				gtk_tree_view_column_add_attribute(column,renderer,"visible",PROP_TREE_COLUMN_IS_VISIBLE_PIXBUF);
-
-				gtk_tree_view_column_set_resizable (column,TRUE);
-				gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
-
-				g_signal_connect(treeview, "button-press-event", (GCallback) property_tree_event_button_press, m_PropertyViewImplPtr.get());
-				g_signal_connect(treeview, "popup-menu", (GCallback) property_tree_event_popup_menu, m_PropertyViewImplPtr.get());
-			}
-			break;
-		}
-
-		gtk_notebook_append_page(GTK_NOTEBOOK(notebook), scrolled_window,
-			gtk_label_new(labels[i]));
-
-		trees[i] = treeview;
-	}
-
-	m_PropertyViewImplPtr->m_pSummaryTreeView = trees[0];
-	m_PropertyViewImplPtr->m_pExifTreeView    = trees[1];
-	m_PropertyViewImplPtr->m_pXmpTreeView     = trees[2];
-	m_PropertyViewImplPtr->m_pIptcTreeView    = trees[3];
-	m_PropertyViewImplPtr->m_pVideoTreeView   = trees[4];
-
-	m_PropertyViewImplPtr->m_pNotebook = notebook;
-	g_object_ref(m_PropertyViewImplPtr->m_pNotebook);
-
-	gtk_widget_show(notebook);
-
-	g_signal_connect(notebook, "map", (GCallback) property_view_map, m_PropertyViewImplPtr.get());
-}
-
-PropertyView::~PropertyView()
-{
-}
-
-GtkWidget *
-PropertyView::GetWidget()
-{
-	return m_PropertyViewImplPtr->m_pNotebook;
-}
-
-void
-PropertyView::SetQuiverFile(QuiverFile quiverFile)
-{
-	m_PropertyViewImplPtr->m_QuiverFile = quiverFile;
-
-	if (gtk_widget_get_mapped(m_PropertyViewImplPtr->m_pNotebook))
-	{
-		if (0 != m_PropertyViewImplPtr->m_iIdleLoadID)
-		{
-			g_source_remove(m_PropertyViewImplPtr->m_iIdleLoadID );
-			m_PropertyViewImplPtr->m_iIdleLoadID = 0;
-		}
-
-		m_PropertyViewImplPtr->m_iIdleLoadID = g_timeout_add(300,property_view_idle_load,m_PropertyViewImplPtr.get());
-		m_PropertyViewImplPtr->m_bLoaded = TRUE;
+		gtk_editable_set_text(GTK_EDITABLE(entry), pi->value ? pi->value : "");
+		gtk_widget_set_sensitive(entry, TRUE);
+		gtk_widget_add_css_class(entry, "dim-label");
 	}
 	else
 	{
-		m_PropertyViewImplPtr->m_bLoaded = FALSE;
+		gtk_editable_set_text(GTK_EDITABLE(entry), pi->value ? pi->value : "");
+		gtk_widget_set_sensitive(entry, FALSE);
+	}
+}
+
+static void video_entry_activate(GtkEntry *entry, gpointer user_data)
+{ (void)user_data;
+	const char *new_text = gtk_editable_get_text(GTK_EDITABLE(entry));
+	g_signal_handlers_disconnect_by_func(entry, (gpointer)video_entry_activate, user_data);
+	property_video_value_cell_edited_callback(new_text, user_data);
+}
+
+
+/* --- EXIF name column (bold for groups) --- */
+
+static void exif_name_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	GtkWidget *label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+	gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+	gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+	gtk_list_item_set_child(item, label);
+}
+
+static void exif_name_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	ExifItem *ei = EXIF_ITEM(gtk_list_item_get_item(item));
+	GtkWidget *label = gtk_list_item_get_child(item);
+	gchar *text;
+	if (ei->is_group)
+		text = g_markup_printf_escaped("<b>%s</b>", ei->name ? ei->name : "");
+	else
+		text = g_markup_escape_text(ei->name ? ei->name : "", -1);
+	gtk_label_set_markup(GTK_LABEL(label), text);
+	g_free(text);
+}
+
+
+/* --- EXIF value column (text / orientation / pixbuf + optional editable) --- */
+
+static void exif_value_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+	GtkWidget *label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+	gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+	gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+	gtk_widget_set_hexpand(label, TRUE);
+	GtkWidget *picture = gtk_picture_new();
+	gtk_widget_set_visible(picture, FALSE);
+	GtkWidget *entry = gtk_entry_new();
+	gtk_widget_set_visible(entry, FALSE);
+	gtk_box_append(GTK_BOX(box), label);
+	gtk_box_append(GTK_BOX(box), picture);
+	gtk_box_append(GTK_BOX(box), entry);
+	gtk_list_item_set_child(item, box);
+}
+
+static void exif_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)user_data;
+	ExifItem *ei = EXIF_ITEM(gtk_list_item_get_item(item));
+	GtkWidget *box = gtk_list_item_get_child(item);
+	GtkWidget *label = gtk_widget_get_first_child(box);
+	GtkWidget *picture = gtk_widget_get_next_sibling(label);
+	GtkWidget *entry = gtk_widget_get_next_sibling(picture);
+
+	if (ei->is_group)
+	{
+		gtk_label_set_text(GTK_LABEL(label), "");
+		gtk_widget_set_visible(label, TRUE);
+		gtk_widget_set_visible(picture, FALSE);
+		gtk_widget_set_visible(entry, FALSE);
+		return;
 	}
 
+	if (ei->show_pixbuf && ei->thumbnail)
+	{
+		char buf[48];
+		snprintf(buf, sizeof(buf), "%dx%d",
+			gdk_pixbuf_get_width(ei->thumbnail),
+			gdk_pixbuf_get_height(ei->thumbnail));
+		gtk_label_set_text(GTK_LABEL(label), buf);
+		{
+			GdkTexture *tex = gdk_texture_new_for_pixbuf(ei->thumbnail);
+			gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(tex));
+			g_object_unref(tex);
+		}
+		gtk_widget_set_visible(label, FALSE);
+		gtk_widget_set_visible(picture, TRUE);
+		gtk_widget_set_visible(entry, FALSE);
+	}
+	else if (ei->show_orientation)
+	{
+		int v = ei->value_orientation;
+		const char *text = (v <= 8 && 0 < v) ? orientation_options[v-1] : "";
+		if (ei->is_editable)
+		{
+			gtk_editable_set_text(GTK_EDITABLE(entry), text);
+			gtk_widget_set_visible(label, FALSE);
+			gtk_widget_set_visible(picture, FALSE);
+			gtk_widget_set_visible(entry, TRUE);
+			gtk_widget_set_sensitive(entry, TRUE);
+			g_object_set_data(G_OBJECT(gtk_list_item_get_item(item)),
+				"pv-exif-key", ei->full_key);
+			g_signal_connect(entry, "activate",
+				G_CALLBACK(exif_entry_activate_cb), pImpl);
+		}
+		else
+		{
+			gtk_label_set_text(GTK_LABEL(label), text);
+			gtk_widget_set_visible(label, TRUE);
+			gtk_widget_set_visible(picture, FALSE);
+			gtk_widget_set_visible(entry, FALSE);
+		}
+	}
+	else
+	{
+		const char *text = ei->value_text ? ei->value_text : "";
+		if (ei->is_editable)
+		{
+			gtk_editable_set_text(GTK_EDITABLE(entry), text);
+			gtk_widget_set_visible(label, FALSE);
+			gtk_widget_set_visible(picture, FALSE);
+			gtk_widget_set_visible(entry, TRUE);
+			gtk_widget_set_sensitive(entry, TRUE);
+			g_object_set_data(G_OBJECT(gtk_list_item_get_item(item)),
+				"pv-exif-key", ei->full_key);
+			g_signal_connect(entry, "activate",
+				G_CALLBACK(exif_entry_activate_cb), pImpl);
+		}
+		else
+		{
+			gtk_label_set_text(GTK_LABEL(label), text);
+			gtk_widget_set_visible(label, TRUE);
+			gtk_widget_set_visible(picture, FALSE);
+			gtk_widget_set_visible(entry, FALSE);
+		}
+	}
 }
 
-/* misc helpers */
 
-static GtkTreeStore* property_tree_store_create_exif(void)
+/* --- EXIF entry activation (editing callback) --- */
+
+static void exif_entry_activate_cb(GtkEntry *entry, gpointer user_data)
 {
-	return gtk_tree_store_new (PROP_TREE_COLUMN_COUNT,
-	 G_TYPE_STRING,
-	 G_TYPE_STRING,
-	 G_TYPE_STRING,
-	 G_TYPE_INT,
-	 GDK_TYPE_PIXBUF,
-	 G_TYPE_BOOLEAN,
-	 G_TYPE_BOOLEAN,
-	 G_TYPE_BOOLEAN,
-	 G_TYPE_BOOLEAN,
-	 G_TYPE_BOOLEAN
-	 );
+	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)user_data;
+	const char *key = (const char*)g_object_get_data(
+		G_OBJECT(entry), "pv-exif-key");
+	if (NULL == key) return;
+	const char *new_text = gtk_editable_get_text(GTK_EDITABLE(entry));
+	property_value_cell_edited_callback(key, new_text, pImpl);
+	QuiverUtils::ConnectUnmodifiedAccelerators();
 }
 
-static GtkTreeStore* property_tree_store_create_pair(void)
-{
-	return gtk_tree_store_new (KEYVALUE_COLUMN_COUNT,
-	 G_TYPE_STRING,
-	 G_TYPE_STRING,
-	 G_TYPE_BOOLEAN,
-	 G_TYPE_BOOLEAN);
-}
+/* ═══════════════════════════════════════════════════════════════════════
+ * Static helper functions
+ * ═══════════════════════════════════════════════════════════════════════ */
 
 static const EditableTag* FindEditableTag(const std::string& key)
 {
 	for (size_t i = 0; i < sizeof(k_editableTags)/sizeof(k_editableTags[0]); i++)
-	{
 		if (key == k_editableTags[i].key)
 			return &k_editableTags[i];
-	}
 	return NULL;
 }
 
@@ -699,19 +541,14 @@ static std::string GetGpsCoordinateString(std::shared_ptr<Exiv2::ExifData> pExif
 	try
 	{
 		auto itCoord = pExifData->findKey(Exiv2::ExifKey(coordKey));
-		if (pExifData->end() == itCoord)
-			return "";
-
+		if (pExifData->end() == itCoord) return "";
 		double degrees = ParseRationalTriple(itCoord->toString());
-
 		std::string ref;
 		if ('\0' != refKey[0])
 		{
 			auto itRef = pExifData->findKey(Exiv2::ExifKey(refKey));
-			if (pExifData->end() != itRef)
-				ref = itRef->toString();
+			if (pExifData->end() != itRef) ref = itRef->toString();
 		}
-
 		char buf[64];
 		if (!ref.empty())
 			snprintf(buf,sizeof(buf),"%.6f (%s)",degrees,ref.c_str());
@@ -719,55 +556,307 @@ static std::string GetGpsCoordinateString(std::shared_ptr<Exiv2::ExifData> pExif
 			snprintf(buf,sizeof(buf),"%.6f",degrees);
 		return buf;
 	}
-	catch (...)
+	catch (...) { return ""; }
+}
+
+static void property_view_map(GtkWidget *widget, gpointer user_data)
+{ (void)widget;
+	PropertyView::PropertyViewImpl *pImpl =
+		static_cast<PropertyView::PropertyViewImpl*>(user_data);
+	if (!pImpl->m_bLoaded)
 	{
-		return "";
+		if (0 != pImpl->m_iIdleLoadID)
+		{ g_source_remove(pImpl->m_iIdleLoadID); pImpl->m_iIdleLoadID = 0; }
+		pImpl->m_iIdleLoadID = g_timeout_add(10, property_view_idle_load, pImpl);
+		pImpl->m_bLoaded = TRUE;
 	}
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Constructor / destructor / public API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+PropertyView::PropertyViewImpl::PropertyViewImpl() :
+	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) )
+{
+	m_iIdleLoadID = 0;
+	m_bLoaded     = FALSE;
+	m_bIsVideo    = false;
+	m_bHasExif    = false;
+	m_bHasXmp     = false;
+	m_bHasIptc    = false;
+	m_pNotebook   = NULL;
+	m_pSummaryPreview = NULL;
+	m_pSummaryTitle   = NULL;
+	m_pExifPopover    = NULL;
+	for (int i = 0; i < 5; i++) m_pPageWidgets[i] = NULL;
+
+	PreferencesPtr prefPtr = Preferences::GetInstance();
+	prefPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
+}
+
+PropertyView::PropertyViewImpl::~PropertyViewImpl()
+{
+	PreferencesPtr prefPtr = Preferences::GetInstance();
+	prefPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
+
+	if (NULL != m_pExifPopover)
+	{ gtk_widget_unparent(m_pExifPopover); m_pExifPopover = NULL; }
+	if (NULL != m_pNotebook)
+		g_object_unref(m_pNotebook);
+}
+
+/* Helper: create a GtkColumnView in a scrolled window */
+static GtkWidget* column_view_new(GListModel **out_model,
+	GtkSelectionModel **out_sel)
+{
+	GListStore *store = g_list_store_new(property_item_get_type());
+	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
+	gtk_single_selection_set_autoselect(sel, FALSE);
+	gtk_single_selection_set_can_unselect(sel, TRUE);
+	GtkColumnView *cv = GTK_COLUMN_VIEW(gtk_column_view_new(GTK_SELECTION_MODEL(sel)));
+	gtk_column_view_set_show_column_separators(cv, TRUE);
+	*out_model = G_LIST_MODEL(store);
+	*out_sel = GTK_SELECTION_MODEL(sel);
+	return GTK_WIDGET(cv);
+}
+
+PropertyView::PropertyView()
+	: m_PropertyViewImplPtr ( new PropertyViewImpl() )
+{
+	const char* labels[5] = { "Summary", "EXIF", "XMP", "IPTC", "Video" };
+
+	GdkRGBA edit_color;
+	gdk_rgba_parse(&edit_color, "#3584e4");
+
+	GtkWidget* views[5] = {};
+
+	/* Create notebook first so pages can be added in the loop */
+	m_PropertyViewImplPtr->m_pNotebook = gtk_notebook_new();
+	g_object_ref(m_PropertyViewImplPtr->m_pNotebook);
+	gtk_notebook_set_scrollable(GTK_NOTEBOOK(m_PropertyViewImplPtr->m_pNotebook), TRUE);
+
+	for (int i = 0; i < 5; i++)
+	{
+		GtkWidget *scrolled = gtk_scrolled_window_new();
+		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+			GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+		g_object_ref(scrolled);
+		m_PropertyViewImplPtr->m_pPageWidgets[i] = scrolled;
+
+		GListModel *model = NULL;
+		GtkSelectionModel *sel = NULL;
+		GtkWidget *colview_widget = column_view_new(&model, &sel);
+		GtkColumnView *colview = GTK_COLUMN_VIEW(colview_widget);
+		(void)colview;
+
+		switch (i)
+		{
+			case 0: /* summary */
+			{
+				GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+				gtk_widget_set_margin_start(vbox, 8);
+				gtk_widget_set_margin_end(vbox, 8);
+				gtk_widget_set_margin_top(vbox, 8);
+				gtk_widget_set_margin_bottom(vbox, 8);
+
+				GtkWidget *preview = gtk_picture_new();
+				gtk_widget_set_halign(preview, GTK_ALIGN_CENTER);
+				gtk_widget_set_valign(preview, GTK_ALIGN_START);
+				gtk_widget_set_visible(preview, FALSE);
+				gtk_box_append(GTK_BOX(vbox), preview);
+				m_PropertyViewImplPtr->m_pSummaryPreview = preview;
+
+				GtkWidget *title = gtk_label_new(NULL);
+				gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+				gtk_label_set_wrap(GTK_LABEL(title), TRUE);
+				gtk_label_set_wrap_mode(GTK_LABEL(title), PANGO_WRAP_WORD_CHAR);
+				gtk_box_append(GTK_BOX(vbox), title);
+				m_PropertyViewImplPtr->m_pSummaryTitle = title;
+
+				/* Property column */
+				GtkListItemFactory *fkey = gtk_signal_list_item_factory_new();
+				g_signal_connect(fkey, "setup", G_CALLBACK(kv_setup), NULL);
+				g_signal_connect(fkey, "bind", G_CALLBACK(kv_key_bind), NULL);
+				g_signal_connect(fkey, "unbind", G_CALLBACK(kv_unbind), NULL);
+				GtkColumnViewColumn *ckey = gtk_column_view_column_new("Property", fkey);
+				gtk_column_view_column_set_expand(ckey, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), ckey);
+
+				/* Value column */
+				GtkListItemFactory *fval = gtk_signal_list_item_factory_new();
+				g_signal_connect(fval, "setup", G_CALLBACK(kv_setup), NULL);
+				g_signal_connect(fval, "bind", G_CALLBACK(kv_value_bind), NULL);
+				g_signal_connect(fval, "unbind", G_CALLBACK(kv_unbind), NULL);
+				GtkColumnViewColumn *cval = gtk_column_view_column_new("Value", fval);
+				gtk_column_view_column_set_expand(cval, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cval);
+
+				/* Summary tab: no column headers needed */
+
+				gtk_box_append(GTK_BOX(vbox), colview_widget);
+				gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), vbox);
+			}
+			break;
+
+			case 1: /* EXIF */
+			{
+				GtkListItemFactory *fname = gtk_signal_list_item_factory_new();
+				g_signal_connect(fname, "setup", G_CALLBACK(exif_name_setup), NULL);
+				g_signal_connect(fname, "bind", G_CALLBACK(exif_name_bind), NULL);
+				GtkColumnViewColumn *cname = gtk_column_view_column_new("Property", fname);
+				gtk_column_view_column_set_expand(cname, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cname);
+
+				GtkListItemFactory *fval = gtk_signal_list_item_factory_new();
+				g_signal_connect(fval, "setup", G_CALLBACK(exif_value_setup), NULL);
+				g_signal_connect(fval, "bind", G_CALLBACK(exif_value_bind),
+					m_PropertyViewImplPtr.get());
+				GtkColumnViewColumn *cval = gtk_column_view_column_new("Value", fval);
+				gtk_column_view_column_set_expand(cval, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cval);
+
+				/* Right-click context menu via GtkGestureClick */
+				GtkGestureClick *rclick = GTK_GESTURE_CLICK(gtk_gesture_click_new());
+				gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick), GDK_BUTTON_SECONDARY);
+				g_signal_connect(rclick, "pressed",
+					G_CALLBACK(exif_right_click_cb), m_PropertyViewImplPtr.get());
+				gtk_widget_add_controller(colview_widget, GTK_EVENT_CONTROLLER(rclick));
+
+				gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), colview_widget);
+			}
+			break;
+
+			case 2: /* XMP */
+			case 3: /* IPTC */
+			{
+				GtkListItemFactory *fkey = gtk_signal_list_item_factory_new();
+				g_signal_connect(fkey, "setup", G_CALLBACK(kv_setup), NULL);
+				g_signal_connect(fkey, "bind", G_CALLBACK(kv_key_bind), NULL);
+				g_signal_connect(fkey, "unbind", G_CALLBACK(kv_unbind), NULL);
+				GtkColumnViewColumn *ckey = gtk_column_view_column_new("Property", fkey);
+				gtk_column_view_column_set_expand(ckey, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), ckey);
+
+				GtkListItemFactory *fval = gtk_signal_list_item_factory_new();
+				g_signal_connect(fval, "setup", G_CALLBACK(kv_setup), NULL);
+				g_signal_connect(fval, "bind", G_CALLBACK(kv_value_bind), NULL);
+				g_signal_connect(fval, "unbind", G_CALLBACK(kv_unbind), NULL);
+				GtkColumnViewColumn *cval = gtk_column_view_column_new("Value", fval);
+				gtk_column_view_column_set_expand(cval, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cval);
+
+				gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), colview_widget);
+			}
+			break;
+
+			case 4: /* Video */
+			{
+				GtkListItemFactory *fkey = gtk_signal_list_item_factory_new();
+				g_signal_connect(fkey, "setup", G_CALLBACK(kv_setup), NULL);
+				g_signal_connect(fkey, "bind", G_CALLBACK(kv_key_bind), NULL);
+				g_signal_connect(fkey, "unbind", G_CALLBACK(kv_unbind), NULL);
+				GtkColumnViewColumn *ckey = gtk_column_view_column_new("Property", fkey);
+				gtk_column_view_column_set_expand(ckey, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), ckey);
+
+				GtkListItemFactory *fval = gtk_signal_list_item_factory_new();
+				g_signal_connect(fval, "setup", G_CALLBACK(entry_setup), NULL);
+				g_signal_connect(fval, "bind", G_CALLBACK(video_entry_bind),
+					m_PropertyViewImplPtr.get());
+				GtkColumnViewColumn *cval = gtk_column_view_column_new("Value", fval);
+				gtk_column_view_column_set_expand(cval, TRUE);
+				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cval);
+
+				gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), colview_widget);
+			}
+			break;
+		}
+
+		gtk_notebook_append_page(GTK_NOTEBOOK(m_PropertyViewImplPtr->m_pNotebook),
+			scrolled, gtk_label_new(labels[i]));
+		views[i] = colview_widget;
+	}
+
+	m_PropertyViewImplPtr->m_pSummaryColumnView = views[0];
+	m_PropertyViewImplPtr->m_pExifColumnView    = views[1];
+	m_PropertyViewImplPtr->m_pXmpColumnView     = views[2];
+	m_PropertyViewImplPtr->m_pIptcColumnView    = views[3];
+	m_PropertyViewImplPtr->m_pVideoColumnView   = views[4];
+
+	g_signal_connect(m_PropertyViewImplPtr->m_pNotebook,
+		"map", G_CALLBACK(property_view_map), m_PropertyViewImplPtr.get());
+}
+
+PropertyView::~PropertyView()
+{
+}
+
+GtkWidget*
+PropertyView::GetWidget()
+{
+	return m_PropertyViewImplPtr->m_pNotebook;
+}
+
+void
+PropertyView::SetQuiverFile(QuiverFile quiverFile)
+{
+	m_PropertyViewImplPtr->m_QuiverFile = quiverFile;
+
+	if (gtk_widget_get_mapped(m_PropertyViewImplPtr->m_pNotebook))
+	{
+		if (0 != m_PropertyViewImplPtr->m_iIdleLoadID)
+		{ g_source_remove(m_PropertyViewImplPtr->m_iIdleLoadID);
+		  m_PropertyViewImplPtr->m_iIdleLoadID = 0; }
+		m_PropertyViewImplPtr->m_iIdleLoadID =
+			g_timeout_add(300, property_view_idle_load,
+				m_PropertyViewImplPtr.get());
+		m_PropertyViewImplPtr->m_bLoaded = TRUE;
+	}
+	else
+	{
+		m_PropertyViewImplPtr->m_bLoaded = FALSE;
+	}
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PopulateSummary
+ * ═══════════════════════════════════════════════════════════════════════ */
+
 void PropertyView::PropertyViewImpl::PopulateSummary()
 {
-	GtkTreeStore* store = property_tree_store_create_pair();
-	GtkTreeIter iter = {};
+	GListStore *store = g_list_store_new(property_item_get_type());
 
 	auto add_row = [&](const char* label, const std::string& value)
 	{
-		if (value.empty())
-			return;
-		gtk_tree_store_append (store, &iter, NULL);
-		gtk_tree_store_set (store, &iter,
-			SUMMARY_COLUMN_LABEL, label,
-			SUMMARY_COLUMN_VALUE, value.c_str(),
-			-1);
+		if (value.empty()) return;
+		g_list_store_append(store, property_item_new(label, value.c_str(), FALSE, FALSE));
 	};
 
 	if (NULL == m_QuiverFile.GetURI())
 	{
-		gtk_tree_view_set_model(GTK_TREE_VIEW(m_pSummaryTreeView),
-			GTK_TREE_MODEL(store));
-		gtk_image_clear(GTK_IMAGE(m_pSummaryPreview));
-		gtk_widget_hide(m_pSummaryPreview);
+		GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
+		gtk_column_view_set_model(GTK_COLUMN_VIEW(m_pSummaryColumnView),
+			GTK_SELECTION_MODEL(sel));
+		gtk_widget_set_visible(m_pSummaryPreview, FALSE);
 		gtk_label_set_markup(GTK_LABEL(m_pSummaryTitle), "");
-		g_object_unref(store);
 		return;
 	}
 
-	// filename as the page heading
-	gchar* szMarkup = g_markup_printf_escaped(
+	/* filename heading */
+	gchar *szMarkup = g_markup_printf_escaped(
 		"<big><b>%s</b></big>", m_QuiverFile.GetFileName().c_str());
 	gtk_label_set_markup(GTK_LABEL(m_pSummaryTitle), szMarkup);
 	g_free(szMarkup);
 
-	// preview: embedded EXIF thumbnail for photos, poster frame for videos
+	/* preview: EXIF thumbnail for photos, poster frame for videos */
 	GdkPixbuf* pixbuf = NULL;
 	if (m_bIsVideo)
-	{
 		pixbuf = QuiverVideoOps::LoadPixbuf(m_QuiverFile.GetURI());
-	}
 	else
-	{
 		pixbuf = m_QuiverFile.GetExifThumbnail();
-	}
 
 	if (NULL != pixbuf)
 	{
@@ -789,13 +878,15 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 
 	if (NULL != pixbuf)
 	{
-		gtk_image_set_from_pixbuf(GTK_IMAGE(m_pSummaryPreview), pixbuf);
-		gtk_widget_show(m_pSummaryPreview);
+		GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
+		gtk_picture_set_paintable(GTK_PICTURE(m_pSummaryPreview), GDK_PAINTABLE(tex));
+		g_object_unref(tex);
+		gtk_widget_set_visible(m_pSummaryPreview, TRUE);
 		g_object_unref(pixbuf);
 	}
 	else
 	{
-		gtk_widget_hide(m_pSummaryPreview);
+		gtk_widget_set_visible(m_pSummaryPreview, FALSE);
 	}
 
 	add_row("Type", m_QuiverFile.GetMimeType());
@@ -826,8 +917,6 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 		VideoInfo info = ProbeVideoInfo(szPath);
 		g_free(szPath);
 
-		// only claim a date when the container actually carries one;
-		// GetTimeT's mtime fallback is for sorting, not display
 		if ('\0' != info.creation_time[0])
 			add_row("Date Taken", FormatTimeT(m_QuiverFile.GetTimeT(true)));
 
@@ -863,13 +952,10 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 				try
 				{
 					auto it = m_ExifData->findKey(Exiv2::ExifKey(key));
-					if (m_ExifData->end() != it)
-						return it->toString();
-				}
-				catch (...) {}
+					if (m_ExifData->end() != it) return it->toString();
+				} catch (...) {}
 				return "";
 			};
-
 			add_row("Camera Make", get_string("Exif.Image.Make"));
 			add_row("Camera Model", get_string("Exif.Image.Model"));
 			add_row("Software", get_string("Exif.Image.Software"));
@@ -886,64 +972,63 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 		}
 	}
 
-	gtk_tree_view_set_model(GTK_TREE_VIEW(m_pSummaryTreeView),
-		GTK_TREE_MODEL(store));
-	gtk_tree_view_expand_all(GTK_TREE_VIEW(m_pSummaryTreeView));
-	g_object_unref(store);
+	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
+	gtk_column_view_set_model(GTK_COLUMN_VIEW(m_pSummaryColumnView),
+		GTK_SELECTION_MODEL(sel));
 }
 
-// insert a value at the nested path given by parts, creating group rows
-// along the way (rows are matched by their KEY label)
-static void property_xmp_insert(GtkTreeStore* store, GtkTreeIter* parent,
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * XMP / IPTC population
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* For XMP we build a flat list with indentation strings to simulate the
+ * tree hierarchy that GtkTreeView had. */
+static void xmp_insert_flat(GListStore *store, const std::string& /*prefix*/,
 	std::vector<std::string>& parts, size_t idx, const std::string& value)
 {
-	GtkTreeIter iter = {};
+	std::string full_key;
+	for (size_t j = 0; j <= idx; j++)
+	{
+		if (!full_key.empty()) full_key += " ";
+		full_key += parts[j];
+	}
+
+	/* find if this key already exists */
 	gboolean found = FALSE;
-
-	if (gtk_tree_model_iter_children(GTK_TREE_MODEL(store), &iter, parent))
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(store));
+	for (guint i = 0; i < n; i++)
 	{
-		do
-		{
-			gchar* name = NULL;
-			gtk_tree_model_get(GTK_TREE_MODEL(store), &iter,
-				KEYVALUE_COLUMN_KEY, &name, -1);
-			gboolean eq = (NULL != name && 0 == strcmp(name, parts[idx].c_str()));
-			g_free(name);
-			if (eq)
-			{
-				found = TRUE;
-				break;
-			}
-		} while (gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter));
+		PropertyItem *pi = PROPERTY_ITEM(g_list_model_get_item(G_LIST_MODEL(store), i));
+		if (pi->key && 0 == strcmp(pi->key, full_key.c_str()))
+		{ g_object_unref(pi); found = TRUE; break; }
+		g_object_unref(pi);
 	}
 
-	if (!found)
-	{
-		gtk_tree_store_append(store, &iter, parent);
-		gtk_tree_store_set(store, &iter,
-			KEYVALUE_COLUMN_KEY, parts[idx].c_str(),
-			KEYVALUE_COLUMN_VALUE, "",
-			KEYVALUE_COLUMN_EDITABLE, FALSE,
-			KEYVALUE_COLUMN_GROUP, (gboolean)(idx + 1 != parts.size()),
-			-1);
-	}
-
-	if (idx + 1 == parts.size())
+	if (!found && idx + 1 == parts.size())
 	{
 		std::string display = value;
 		if (display.size() > 200)
 			display = display.substr(0, 197) + "...";
-		gtk_tree_store_set(store, &iter,
-			KEYVALUE_COLUMN_VALUE, display.c_str(), -1);
+		g_list_store_append(store, property_item_new(
+			full_key.c_str(), display.c_str(), FALSE,
+			FALSE /* not a group in flat view */));
 	}
-	else
+
+	if (idx + 1 < parts.size())
 	{
-		property_xmp_insert(store, &iter, parts, idx + 1, value);
+		/* add group header if not present */
+		if (!found)
+		{
+			gchar *bold = g_markup_printf_escaped("%s", full_key.c_str());
+			g_list_store_append(store, property_item_new(
+				full_key.c_str(), "", FALSE, TRUE));
+			g_free(bold);
+		}
+		xmp_insert_flat(store, full_key, parts, idx + 1, value);
 	}
 }
 
-// one '/'-separated key segment may itself pack several levels:
-// "Container.Directory[1]" -> "Container", "Directory", "[1]"
 static void property_xmp_split_segment(const std::string& seg,
 	std::vector<std::string>& out)
 {
@@ -963,24 +1048,19 @@ static void property_xmp_split_segment(const std::string& seg,
 				out.push_back(piece.substr(bracket));
 			}
 			else
-			{
 				out.push_back(piece);
-			}
 		}
-		if (std::string::npos == dot)
-			break;
+		if (std::string::npos == dot) break;
 		start = dot + 1;
 	}
 }
 
 static void property_populate_keyvalue_from_file(PropertyView::PropertyViewImpl* pImpl,
-	GtkWidget* treeview, bool bXmp)
+	GtkWidget* colview, bool bXmp)
 {
-	GtkTreeStore* store = property_tree_store_create_pair();
-	GtkTreeIter iter = {};
+	GListStore *store = g_list_store_new(property_item_get_type());
 
-	gchar* szPath = g_filename_from_uri(
-		pImpl->m_QuiverFile.GetURI(), NULL, NULL);
+	gchar* szPath = g_filename_from_uri(pImpl->m_QuiverFile.GetURI(), NULL, NULL);
 	if (NULL != szPath)
 	{
 		try
@@ -1000,25 +1080,15 @@ static void property_populate_keyvalue_from_file(PropertyView::PropertyViewImpl*
 
 					std::string value = it->toString();
 
-					// structural placeholders ("type=Struct/Seq/Bag/Alt")
-					// carry no data of their own; the children recreate
-					// this hierarchy below, so skip them here
 					bool bStructural = false;
 					static const char* k_types[] = { "Struct", "Seq", "Bag", "Alt" };
 					for (size_t i = 0; i < sizeof(k_types)/sizeof(k_types[0]); i++)
 					{
 						if (value == std::string("type=\"") + k_types[i] + "\"")
-						{
-							bStructural = true;
-							break;
-						}
+						{ bStructural = true; break; }
 					}
-					if (bStructural)
-						continue;
+					if (bStructural) continue;
 
-					// split into path levels: on '/' between struct fields,
-					// then on '.' between schema/property parts, with
-					// array indexes as their own level
 					std::vector<std::string> expanded;
 					size_t start = 0;
 					while (true)
@@ -1028,59 +1098,52 @@ static void property_populate_keyvalue_from_file(PropertyView::PropertyViewImpl*
 							(std::string::npos == slash) ?
 								std::string::npos : slash - start);
 						property_xmp_split_segment(seg, expanded);
-						if (std::string::npos == slash)
-							break;
+						if (std::string::npos == slash) break;
 						start = slash + 1;
 					}
 
-					// drop namespace prefixes for display ("Item:Mime" ->
-					// "Mime"); the hierarchy keeps things unambiguous
 					for (size_t i = 0; i < expanded.size(); i++)
 					{
 						size_t colon = expanded[i].find(':');
 						if (0 < colon && colon + 1 < expanded[i].size())
 							expanded[i].erase(0, colon + 1);
-						if (!expanded[i].empty() && isalpha((unsigned char)expanded[i][0]))
+						if (!expanded[i].empty() &&
+							isalpha((unsigned char)expanded[i][0]))
 							expanded[i][0] = toupper((unsigned char)expanded[i][0]);
 					}
 
 					if (!expanded.empty())
-						property_xmp_insert(store, NULL, expanded, 0, value);
+						xmp_insert_flat(store, "", expanded, 0, value);
 				}
 			}
 			else
 			{
 				Exiv2::IptcData data = image->iptcData();
 				for (auto it = data.begin(); data.end() != it; ++it)
-				{
-					gtk_tree_store_append (store, &iter, NULL);
-					gtk_tree_store_set (store, &iter,
-						KEYVALUE_COLUMN_KEY, it->key().c_str(),
-						KEYVALUE_COLUMN_VALUE, it->toString().c_str(),
-						-1);
-				}
+					g_list_store_append(store, property_item_new(
+						it->key().c_str(), it->toString().c_str(),
+						FALSE, FALSE));
 			}
 		}
 		catch (...) {}
 		g_free(szPath);
 	}
 
-	gtk_tree_view_set_model(GTK_TREE_VIEW(treeview), GTK_TREE_MODEL(store));
-	gtk_tree_view_expand_all(GTK_TREE_VIEW(treeview));
-	g_object_unref(store);
+	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
+	gtk_column_view_set_model(GTK_COLUMN_VIEW(colview), GTK_SELECTION_MODEL(sel));
 }
 
 void PropertyView::PropertyViewImpl::PopulateXmp()
-{
-	property_populate_keyvalue_from_file(this,m_pXmpTreeView,true);
-}
+{ property_populate_keyvalue_from_file(this, m_pXmpColumnView, true); }
 
 void PropertyView::PropertyViewImpl::PopulateIptc()
-{
-	property_populate_keyvalue_from_file(this,m_pIptcTreeView,false);
-}
+{ property_populate_keyvalue_from_file(this, m_pIptcColumnView, false); }
 
-// poll struct: wait for the video-date task to finish, then refresh the view
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Video date editing polling
+ * ═══════════════════════════════════════════════════════════════════════ */
+
 struct VideoDatePoll
 {
 	PropertyView::PropertyViewImpl *pImpl;
@@ -1091,23 +1154,10 @@ struct VideoDatePoll
 static gboolean property_video_date_poll(gpointer data)
 {
 	VideoDatePoll *poll = (VideoDatePoll*)data;
-
-	if (NULL == poll->task.get())
-	{
-		delete poll;
-		return FALSE;
-	}
-
-	if (!poll->task->IsFinished() && poll->ticks < 600) // cap ~5 min
-	{
-		poll->ticks++;
-		return TRUE;
-	}
-
+	if (NULL == poll->task.get()) { delete poll; return FALSE; }
+	if (!poll->task->IsFinished() && poll->ticks < 600) { poll->ticks++; return TRUE; }
 	if (poll->task->IsFinished())
 	{
-		// refresh shared file state on the MAIN thread (Reload frees
-		// m_szURI, which the GUI thread reads elsewhere), then repopulate
 		poll->pImpl->m_QuiverFile.Reload();
 		poll->pImpl->LoadProperties();
 	}
@@ -1115,27 +1165,22 @@ static gboolean property_video_date_poll(gpointer data)
 	return FALSE;
 }
 
-static void property_video_value_cell_edited_callback (GtkCellRendererText *cell,
-                                  gchar               *path_string,
-                                  gchar               *new_text,
-                                  gpointer             user_data)
-{ (void)cell; (void)path_string;
-	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)user_data;
+static void property_video_value_cell_edited_callback(const char *new_text,
+	gpointer user_data)
+{
+	PropertyView::PropertyViewImpl *pImpl =
+		(PropertyView::PropertyViewImpl*)user_data;
 
 	QuiverUtils::ConnectUnmodifiedAccelerators();
 
-	if (NULL == pImpl->m_QuiverFile.GetURI())
-		return;
+	if (NULL == pImpl->m_QuiverFile.GetURI()) return;
 
 	gchar* szPath = g_filename_from_uri(pImpl->m_QuiverFile.GetURI(), NULL, NULL);
-	if (NULL == szPath)
-		return;
+	if (NULL == szPath) return;
 
 	bool bOk = false;
 	time_t new_epoch = 0;
 
-	// accept "YYYY-MM-DD HH:MM:SS", "YYYY-MM-DDTHH:MM:SS" and
-	// "YYYY:MM:DD HH:MM:SS"
 	const char* sz = new_text;
 	if (19 == strlen(sz))
 	{
@@ -1169,189 +1214,27 @@ static void property_video_value_cell_edited_callback (GtkCellRendererText *cell
 
 	if (bOk)
 	{
-		// drop the cached probe so the refreshed view re-reads from disk
 		s_mapVideoInfoCache.erase(szPath);
-
 		QuiverFile f = pImpl->m_QuiverFile;
 		VideoDateEditTaskPtr taskPtr(new VideoDateEditTask(f, new_epoch));
 		TaskManager::GetInstance()->AddTask(taskPtr);
-
 		VideoDatePoll *poll = new VideoDatePoll;
 		poll->pImpl = pImpl;
 		poll->task = taskPtr;
 		poll->ticks = 0;
 		g_timeout_add(500, property_video_date_poll, poll);
 	}
-
 	g_free(szPath);
 }
 
-static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
-{
-	GtkTreeStore* store = property_tree_store_create_exif();
 
-	if (NULL != pImpl->m_ExifData.get())
-	{
-		GdkPixbuf *pixbuf = pImpl->m_QuiverFile.GetExifThumbnail();
-		if (NULL != pixbuf)
-		{
-			GdkPixbuf *new_pixbuf = QuiverUtils::GdkPixbufExifReorientate(pixbuf,pImpl->m_QuiverFile.GetOrientation());
-			if (NULL != new_pixbuf)
-			{
-				g_object_unref(pixbuf);
-				pixbuf = new_pixbuf;
-			}
-		}
-
-		if (NULL != pixbuf)
-		{
-			GtkTreeIter iter1 = {}, iter2 = {};
-			gtk_tree_store_append (store, &iter1, NULL);
-			gtk_tree_store_set (store, &iter1,
-					PROP_TREE_COLUMN_NAME, "Exif Thumbnail",
-					PROP_TREE_COLUMN_IS_GROUP, TRUE,
-					PROP_TREE_COLUMN_IS_VISIBLE_TEXT, TRUE,
-					-1);
-
-			gtk_tree_store_append (store, &iter2, &iter1);
-			gtk_tree_store_set (store, &iter2,
-					PROP_TREE_COLUMN_NAME, "Thumbnail",
-					PROP_TREE_COLUMN_VALUE_PIXBUF,pixbuf,
-					PROP_TREE_COLUMN_IS_VISIBLE_PIXBUF, TRUE,
-					-1);
-			g_object_unref(pixbuf);
-		}
-
-		// group entries by exiv2 group name (Image, Photo, GPSInfo,
-		// maker notes groups, ...)
-		GtkTreeIter groupIter = {};
-		std::string currentGroup;
-		bool haveGroup = false;
-
-		for (auto it = pImpl->m_ExifData->begin();
-			pImpl->m_ExifData->end() != it; ++it)
-		{
-			const std::string& group = it->groupName();
-			if (group != currentGroup || !haveGroup)
-			{
-				currentGroup = group;
-				haveGroup = true;
-				gtk_tree_store_append (store, &groupIter, NULL);
-				gtk_tree_store_set (store, &groupIter,
-						PROP_TREE_COLUMN_NAME, group.c_str(),
-						PROP_TREE_COLUMN_IS_GROUP, TRUE,
-						PROP_TREE_COLUMN_IS_VISIBLE_TEXT, TRUE,
-						-1);
-			}
-
-			gboolean editable = (NULL != FindEditableTag(it->key()));
-
-			GtkTreeIter child = {};
-			gtk_tree_store_append (store, &child, &groupIter);
-
-			if ("Exif.Image.Orientation" == it->key())
-			{
-				long val = 1;
-				try { val = it->toInt64(); } catch (...) {}
-				gtk_tree_store_set (store, &child,
-					PROP_TREE_COLUMN_KEY,it->key().c_str(),
-					PROP_TREE_COLUMN_NAME, it->tagName().c_str(),
-					PROP_TREE_COLUMN_VALUE_ORIENTATION,(gint)val,
-					PROP_TREE_COLUMN_IS_VISIBLE_ORIENTATION, TRUE,
-					PROP_TREE_COLUMN_IS_EDITABLE, editable,
-					-1);
-			}
-			else
-			{
-				std::string value;
-				try { value = it->toString(); } catch (...) {}
-
-				gtk_tree_store_set (store, &child,
-					PROP_TREE_COLUMN_KEY,it->key().c_str(),
-					PROP_TREE_COLUMN_NAME, it->tagName().c_str(),
-					PROP_TREE_COLUMN_VALUE_TEXT,value.c_str(),
-					PROP_TREE_COLUMN_IS_VISIBLE_TEXT, TRUE,
-					PROP_TREE_COLUMN_IS_EDITABLE, editable,
-					-1);
-			}
-		}
-	}
-
-	gtk_tree_view_set_model(GTK_TREE_VIEW(pImpl->m_pExifTreeView),
-		GTK_TREE_MODEL (store));
-
-	gtk_tree_view_expand_all (GTK_TREE_VIEW(pImpl->m_pExifTreeView));
-
-	g_object_unref (G_OBJECT (store));
-}
-
-void PropertyView::PropertyViewImpl::UpdateTabsForFile()
-{
-	// built layout: Summary | EXIF | XMP | IPTC | Video
-	// videos show Summary + Video; images show Summary plus whichever
-	// of EXIF/XMP/IPTC the file actually carries
-	GtkNotebook* nb = GTK_NOTEBOOK(m_pNotebook);
-
-	auto find_page = [&](GtkWidget* tree) -> int
-	{
-		for (int i = 0; i < gtk_notebook_get_n_pages(nb); i++)
-		{
-			if (tree == gtk_notebook_get_nth_page(nb,i))
-				return i;
-		}
-		return -1;
-	};
-
-	if (m_bIsVideo)
-	{
-		int page = find_page(m_pPageWidgets[1]); // EXIF
-		if (-1 != page) gtk_notebook_remove_page(nb, page);
-		page = find_page(m_pPageWidgets[2]);     // XMP
-		if (-1 != page) gtk_notebook_remove_page(nb, page);
-		page = find_page(m_pPageWidgets[3]);     // IPTC
-		if (-1 != page) gtk_notebook_remove_page(nb, page);
-
-		if (-1 == find_page(m_pPageWidgets[4]))  // Video
-		{
-			gtk_notebook_append_page(nb, m_pPageWidgets[4],
-				gtk_label_new("Video"));
-		}
-	}
-	else
-	{
-		int page = find_page(m_pPageWidgets[4]); // Video
-		if (-1 != page) gtk_notebook_remove_page(nb, page);
-
-		int pos = 1; // after Summary
-		const int order[3] = { 1, 2, 3 };    // EXIF, XMP, IPTC
-		const char* labels[3] = { "EXIF", "XMP", "IPTC" };
-		const bool has[3] = { m_bHasExif, m_bHasXmp, m_bHasIptc };
-
-		for (int i = 0; i < 3; i++)
-		{
-			bool present = (-1 != find_page(m_pPageWidgets[order[i]]));
-			if (has[i])
-			{
-				if (!present)
-					gtk_notebook_insert_page(nb, m_pPageWidgets[order[i]],
-						gtk_label_new(labels[i]), pos);
-				pos++;
-			}
-			else if (present)
-			{
-				gtk_notebook_remove_page(nb,
-					find_page(m_pPageWidgets[order[i]]));
-			}
-		}
-	}
-
-	gtk_widget_show_all(m_pNotebook);
-}
+/* ═══════════════════════════════════════════════════════════════════════
+ * PopulateVideo
+ * ═══════════════════════════════════════════════════════════════════════ */
 
 void PropertyView::PropertyViewImpl::PopulateVideo()
 {
-	GtkTreeStore* store = property_tree_store_create_pair();
-	GtkTreeIter iter = {};
+	GListStore *store = g_list_store_new(property_item_get_type());
 
 	gchar* szPath = g_filename_from_uri(m_QuiverFile.GetURI(), NULL, NULL);
 	if (NULL != szPath)
@@ -1360,12 +1243,7 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
 
 		auto add = [&](const char* label, const char* value, gboolean editable)
 		{
-			gtk_tree_store_append(store, &iter, NULL);
-			gtk_tree_store_set(store, &iter,
-				KEYVALUE_COLUMN_KEY, label,
-				KEYVALUE_COLUMN_VALUE, value,
-				KEYVALUE_COLUMN_EDITABLE, editable,
-				-1);
+			g_list_store_append(store, property_item_new(label, value, editable, FALSE));
 		};
 
 		add("Name", m_QuiverFile.GetFileName().c_str(), FALSE);
@@ -1384,24 +1262,157 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
 		add("Container", info.container.c_str(), FALSE);
 
 		if ('\0' != info.creation_time[0])
-		{
-			// show the raw ISO string so it can be edited back verbatim
 			add("Created", info.creation_time, TRUE);
-		}
 
 		g_free(szPath);
 	}
 
-	gtk_tree_view_set_model(GTK_TREE_VIEW(m_pVideoTreeView), GTK_TREE_MODEL(store));
-	gtk_tree_view_expand_all(GTK_TREE_VIEW(m_pVideoTreeView));
-	g_object_unref(store);
+	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
+	gtk_column_view_set_model(GTK_COLUMN_VIEW(m_pVideoColumnView),
+		GTK_SELECTION_MODEL(sel));
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PopulateExif
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
+{
+	GListStore *store = g_list_store_new(exif_item_get_type());
+
+	if (NULL != pImpl->m_ExifData.get())
+	{
+		GdkPixbuf *pixbuf = pImpl->m_QuiverFile.GetExifThumbnail();
+		if (NULL != pixbuf)
+		{
+			GdkPixbuf *new_pixbuf =
+				QuiverUtils::GdkPixbufExifReorientate(pixbuf,
+					pImpl->m_QuiverFile.GetOrientation());
+			if (NULL != new_pixbuf)
+			{ g_object_unref(pixbuf); pixbuf = new_pixbuf; }
+		}
+
+		if (NULL != pixbuf)
+		{
+			ExifItem *hdr = exif_item_new();
+			hdr->name = g_strdup("Exif Thumbnail");
+			hdr->is_group = TRUE;
+			hdr->show_text = TRUE;
+			g_list_store_append(store, hdr);
+
+			ExifItem *thumb_item = exif_item_new();
+			thumb_item->name = g_strdup("Thumbnail");
+			thumb_item->thumbnail = pixbuf; /* transfer ownership */
+			thumb_item->show_pixbuf = TRUE;
+			g_list_store_append(store, thumb_item);
+		}
+
+		/* group entries by exiv2 group name */
+		std::string currentGroup;
+		bool haveGroup = false;
+
+		for (auto it = pImpl->m_ExifData->begin();
+			pImpl->m_ExifData->end() != it; ++it)
+		{
+			const std::string& group = it->groupName();
+			if (group != currentGroup || !haveGroup)
+			{
+				currentGroup = group;
+				haveGroup = true;
+				ExifItem *gh = exif_item_new();
+				gh->name = g_strdup(group.c_str());
+				gh->is_group = TRUE;
+				gh->show_text = TRUE;
+				g_list_store_append(store, gh);
+			}
+
+			gboolean editable = (NULL != FindEditableTag(it->key()));
+			ExifItem *child = exif_item_new();
+			child->full_key = g_strdup(it->key().c_str());
+			child->name = g_strdup(it->tagName().c_str());
+			child->is_editable = editable;
+
+			if ("Exif.Image.Orientation" == it->key())
+			{
+				long val = 1;
+				try { val = it->toInt64(); } catch (...) {}
+				child->value_orientation = (int)val;
+				child->show_orientation = TRUE;
+			}
+			else
+			{
+				std::string value;
+				try { value = it->toString(); } catch (...) {}
+				child->value_text = g_strdup(value.c_str());
+				child->show_text = TRUE;
+			}
+			g_list_store_append(store, child);
+		}
+	}
+
+	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
+	gtk_column_view_set_model(GTK_COLUMN_VIEW(pImpl->m_pExifColumnView),
+		GTK_SELECTION_MODEL(sel));
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * UpdateTabsForFile / LoadProperties
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+void PropertyView::PropertyViewImpl::UpdateTabsForFile()
+{
+	GtkNotebook* nb = GTK_NOTEBOOK(m_pNotebook);
+
+	auto find_page = [&](GtkWidget* widget) -> int
+	{
+		for (int i = 0; i < gtk_notebook_get_n_pages(nb); i++)
+			if (widget == gtk_notebook_get_nth_page(nb, i))
+				return i;
+		return -1;
+	};
+
+	if (m_bIsVideo)
+	{
+		int p;
+		p = find_page(m_pPageWidgets[1]); if (-1 != p) gtk_notebook_remove_page(nb, p);
+		p = find_page(m_pPageWidgets[2]); if (-1 != p) gtk_notebook_remove_page(nb, p);
+		p = find_page(m_pPageWidgets[3]); if (-1 != p) gtk_notebook_remove_page(nb, p);
+		if (-1 == find_page(m_pPageWidgets[4]))
+			gtk_notebook_append_page(nb, m_pPageWidgets[4], gtk_label_new("Video"));
+	}
+	else
+	{
+		int p;
+		p = find_page(m_pPageWidgets[4]); if (-1 != p) gtk_notebook_remove_page(nb, p);
+
+		int pos = 1;
+		const int order[3] = { 1, 2, 3 };
+		const char* labels[3] = { "EXIF", "XMP", "IPTC" };
+		const bool has[3] = { m_bHasExif, m_bHasXmp, m_bHasIptc };
+
+		for (int i = 0; i < 3; i++)
+		{
+			bool present = (-1 != find_page(m_pPageWidgets[order[i]]));
+			if (has[i])
+			{
+				if (!present)
+					gtk_notebook_insert_page(nb, m_pPageWidgets[order[i]],
+						gtk_label_new(labels[i]), pos);
+				pos++;
+			}
+			else if (present)
+				gtk_notebook_remove_page(nb, find_page(m_pPageWidgets[order[i]]));
+		}
+	}
+}
+
 
 void PropertyView::PropertyViewImpl::LoadProperties()
 {
 	m_bIsVideo = false;
 	m_ExifData.reset();
-
 	m_bHasExif = false;
 	m_bHasXmp  = false;
 	m_bHasIptc = false;
@@ -1414,8 +1425,7 @@ void PropertyView::PropertyViewImpl::LoadProperties()
 			m_ExifData = m_QuiverFile.GetExifData();
 			m_bHasExif = (NULL != m_ExifData.get()) && !m_ExifData->empty();
 
-			gchar* szPath = g_filename_from_uri(
-				m_QuiverFile.GetURI(), NULL, NULL);
+			gchar* szPath = g_filename_from_uri(m_QuiverFile.GetURI(), NULL, NULL);
 			if (NULL != szPath)
 			{
 				try
@@ -1432,7 +1442,6 @@ void PropertyView::PropertyViewImpl::LoadProperties()
 	}
 
 	UpdateTabsForFile();
-
 	PopulateSummary();
 
 	if (!m_bIsVideo && NULL != m_QuiverFile.GetURI())
@@ -1464,156 +1473,60 @@ static gboolean property_view_idle_load(gpointer data)
 	return FALSE;
 }
 
-static void property_orientation_to_text (GtkTreeViewColumn *tree_column,
-	                GtkCellRenderer   *cell,
-                    GtkTreeModel      *tree_model,
-	                GtkTreeIter       *iter,
-                    gpointer           data)
-{ (void)tree_column;  (void)data;
-	gint value;
 
-	/* Get the int value from the model. */
-	gtk_tree_model_get (tree_model,iter,PROP_TREE_COLUMN_VALUE_ORIENTATION,&value,-1);
-	/* Now we can format it ourselves. */
-	if (value <= 8 && 0 < value)
-		g_object_set (cell, "text", orientation_options[value-1], NULL);
-}
-
-static gboolean entry_focus_out ( GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
-{ (void)user_data;  (void)event;
-	gtk_cell_editable_remove_widget(GTK_CELL_EDITABLE(widget));
-
-	return FALSE; // false to propagate
-}
-
-static void property_value_editing_started_callback (GtkCellRenderer *renderer,
-                                            GtkCellEditable *editable,
-                                            gchar *path,
-                                            gpointer user_data)
-{ (void)path; (void)renderer;
-	(void)user_data;
-
-	QuiverUtils::DisconnectUnmodifiedAccelerators();
-
-	g_signal_connect (G_OBJECT (editable), "focus-out-event",
-    			G_CALLBACK (entry_focus_out), renderer);
-
-	if (GTK_IS_COMBO_BOX(editable))
-	{
-
-		GtkCellLayout *layout = GTK_CELL_LAYOUT(editable);
-		gtk_cell_layout_clear(layout);
-
-		GtkCellRenderer *renderer = gtk_cell_renderer_text_new ();
-
-		gtk_cell_layout_pack_start (layout,renderer,TRUE);
-		gtk_cell_layout_set_attributes(layout,renderer,
-		  "text", ORIENTATION_COLUMN_TEXT_VALUE,
-		NULL);
-	}
-
-}
-
-static void property_value_editing_canceled_callback (GtkCellRenderer *renderer,
-                                            gpointer user_data)
-{ (void)renderer;
-	(void)user_data;
-
-	QuiverUtils::ConnectUnmodifiedAccelerators();
-}
-
-/*
- * this routine parses a date in exif date format and checks that it is valid
- * format: YYYY:MM:DD HH:MM:SS
- */
+/* ═══════════════════════════════════════════════════════════════════════
+ * EXIF cell editing
+ * ═══════════════════════════════════════════════════════════════════════ */
 
 static gboolean property_date_format_is_valid(const char *date)
 {
-	gboolean retval = FALSE;
-
-	if (19 == strlen(date))
-	{
-		int year, month, day, hour, min, sec;
-		sscanf(date,"%d:%d:%d %d:%d:%d",&year, &month, &day, &hour, &min, &sec);
-		struct tm tm_date = {};
-		tm_date.tm_sec = sec;
-		tm_date.tm_min = min;
-		tm_date.tm_hour = hour;
-		tm_date.tm_mday = day;
-		tm_date.tm_mon = month -1;
-		tm_date.tm_year = year - 1900;
-		tm_date.tm_isdst = -1;
-
-		if ( tm_date.tm_sec == sec &&
-			tm_date.tm_min == min &&
-			tm_date.tm_hour == hour &&
-			tm_date.tm_mday == day &&
-			tm_date.tm_mon == month -1 &&
-			tm_date.tm_year == year - 1900 )
-		{
-			retval = TRUE;
-		}
-	}
-
-	return retval;
+	if (19 != strlen(date)) return FALSE;
+	int year, month, day, hour, min, sec;
+	sscanf(date, "%d:%d:%d %d:%d:%d", &year, &month, &day, &hour, &min, &sec);
+	struct tm tm_date = {};
+	tm_date.tm_sec = sec; tm_date.tm_min = min; tm_date.tm_hour = hour;
+	tm_date.tm_mday = day; tm_date.tm_mon = month - 1; tm_date.tm_year = year - 1900;
+	tm_date.tm_isdst = -1;
+	return (tm_date.tm_sec == sec && tm_date.tm_min == min &&
+		tm_date.tm_hour == hour && tm_date.tm_mday == day &&
+		tm_date.tm_mon == month - 1 && tm_date.tm_year == year - 1900);
 }
 
 static void set_exif_value(std::shared_ptr<Exiv2::ExifData> pExifData,
 	const char* key, const char* new_text, Exiv2::TypeId typeId)
 {
 	Exiv2::Exifdatum& datum = (*pExifData)[key];
-
 	Exiv2::Value::UniquePtr value = Exiv2::Value::create(typeId);
 	value->read(new_text);
 	datum.setValue(value.get());
 }
 
-static void property_value_cell_edited_callback (GtkCellRendererText *cell,
-                                  gchar               *path_string,
-                                  gchar               *new_text,
-                                  gpointer             user_data)
-{ (void)cell;
-	GtkTreeIter child = {};
-	gboolean updated = FALSE;
-
-	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)user_data;
+static void property_value_cell_edited_callback(const char *key, const char *new_text,
+	gpointer user_data)
+{
+	PropertyView::PropertyViewImpl *pImpl =
+		(PropertyView::PropertyViewImpl*)user_data;
 
 	QuiverUtils::ConnectUnmodifiedAccelerators();
 
-	GtkTreeModel *pTreeModel = gtk_tree_view_get_model(GTK_TREE_VIEW(pImpl->m_pExifTreeView));
-
 	std::shared_ptr<Exiv2::ExifData> pExifData = pImpl->m_ExifData;
-
-	GtkTreePath* path = gtk_tree_path_new_from_string(path_string);
-	gtk_tree_model_get_iter(pTreeModel,&child,path);
-	gtk_tree_path_free(path);
-
-	gchar* key = NULL;
-	gtk_tree_model_get (pTreeModel,&child,PROP_TREE_COLUMN_KEY,&key,-1);
-
-	if (NULL == key || NULL == pExifData.get())
-	{
-		if (NULL != key) g_free(key);
-		return;
-	}
+	if (NULL == key || NULL == pExifData.get()) return;
 
 	const EditableTag* tag = FindEditableTag(key);
-	if (NULL == tag)
-	{
-		g_free(key);
-		return;
-	}
+	if (NULL == tag) return;
+
+	gboolean updated = FALSE;
 
 	switch (tag->kind)
 	{
 		case TAGKIND_ORIENTATION:
 		{
-			for (int i=0;i<8;i++)
+			for (int i = 0; i < 8; i++)
 			{
-				if ( !strcmp(new_text,orientation_options[i]) )
+				if (!strcmp(new_text, orientation_options[i]))
 				{
 					gchar szVal[16];
-					snprintf(szVal,sizeof(szVal),"%d",i+1);
+					snprintf(szVal, sizeof(szVal), "%d", i + 1);
 					set_exif_value(pExifData, key, szVal, Exiv2::unsignedShort);
 					updated = TRUE;
 					break;
@@ -1621,7 +1534,6 @@ static void property_value_cell_edited_callback (GtkCellRendererText *cell,
 			}
 		}
 		break;
-
 		case TAGKIND_INT:
 		{
 			gchar* szv = g_strdup_printf("%ld", atol(new_text));
@@ -1630,25 +1542,21 @@ static void property_value_cell_edited_callback (GtkCellRendererText *cell,
 			updated = TRUE;
 		}
 		break;
-
 		case TAGKIND_DATE:
 		{
-			//"YYYY:MM:DD HH:MM:SS"
-			if ( property_date_format_is_valid(new_text) )
+			if (property_date_format_is_valid(new_text))
 			{
 				set_exif_value(pExifData, key, new_text, Exiv2::asciiString);
 				updated = TRUE;
 			}
 		}
 		break;
-
 		case TAGKIND_COMMENT:
 		{
 			set_exif_value(pExifData, key, new_text, Exiv2::comment);
 			updated = TRUE;
 		}
 		break;
-
 		case TAGKIND_STRING:
 		default:
 		{
@@ -1661,273 +1569,189 @@ static void property_value_cell_edited_callback (GtkCellRendererText *cell,
 	if (updated)
 	{
 		pImpl->m_QuiverFile.SetExifData(pExifData);
-
-		if (0 == strcmp(tag->key,"Exif.Image.Orientation"))
-		{
-			// thumbnails are cached per-orientation and the thumbnail
-			// preview row changes; rebuild the whole tree
+		if (0 == strcmp(tag->key, "Exif.Image.Orientation"))
 			property_populate_exif(pImpl);
-		}
 		else
 		{
-			// refresh just this row's displayed value
+			/* refresh just this row */
 			std::string value;
-			try
-			{
+			try {
 				auto it = pExifData->findKey(Exiv2::ExifKey(key));
-				if (pExifData->end() != it)
-					value = it->toString();
-			}
-			catch (...) {}
-			gtk_tree_store_set (GTK_TREE_STORE(pTreeModel), &child,
-				PROP_TREE_COLUMN_VALUE_TEXT,value.c_str(), -1);
-		}
-	}
-	g_free(key);
-}
-
-static gboolean property_tree_event_popup_menu (GtkWidget *treeview, gpointer userdata)
-{
-	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)userdata;
-	property_tree_show_popup_menu(pImpl,treeview, 0, gtk_get_current_event_time());
-	return TRUE; /* we handled this */
-}
-
-static gboolean
-property_tree_event_button_press (GtkWidget *treeview, GdkEventButton *event, gpointer userdata)
-{
-	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)userdata;
-
-	/* single click with the right mouse button? */
-	if (event->type == GDK_BUTTON_PRESS  &&  event->button == 3)
-	{
-
-		GtkTreeSelection *selection;
-		selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(treeview));
-
-		if (NULL != selection)
-		{
-			if (gtk_tree_selection_count_selected_rows(selection)  <= 1)
+				if (pExifData->end() != it) value = it->toString();
+			} catch (...) {}
+			/* find the item in the store and update it */
+			GtkSingleSelection *sel = GTK_SINGLE_SELECTION(
+				gtk_column_view_get_model(
+					GTK_COLUMN_VIEW(pImpl->m_pExifColumnView)));
+			guint n = g_list_model_get_n_items(G_LIST_MODEL(sel));
+			for (guint i = 0; i < n; i++)
 			{
-				GtkTreePath *path;
-				/* Get tree path for row that was clicked */
-				GtkTreeViewColumn *column;
-				if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(treeview),
-										 (gint) event->x,
-										 (gint) event->y,
-										 &path, &column, NULL, NULL))
+				ExifItem *ei = EXIF_ITEM(g_list_model_get_item(G_LIST_MODEL(sel), i));
+				if (ei->full_key && 0 == strcmp(ei->full_key, key))
 				{
-					gtk_tree_view_set_cursor(GTK_TREE_VIEW(treeview),path,NULL,FALSE);
-					gtk_tree_selection_unselect_all(selection);
-					gtk_tree_selection_select_path(selection, path);
-					gtk_tree_path_free(path);
+					g_free(ei->value_text);
+					ei->value_text = g_strdup(value.c_str());
+					g_object_unref(ei);
+					break;
 				}
+				g_object_unref(ei);
 			}
+			/* force a refresh of the view */
+			g_object_notify(G_OBJECT(sel), "model");
 		}
-		property_tree_show_popup_menu(pImpl,treeview, event->button, gdk_event_get_time((GdkEvent*)event));
-		return TRUE;
 	}
-	return FALSE;
 }
 
-static void
-property_tree_show_popup_menu (PropertyView::PropertyViewImpl *pImpl, GtkWidget *treeview, guint button, guint32 activate_time)
-{ (void)activate_time;  (void)button;
-	GtkWidget *menu=NULL, *submenu=NULL, *menuitem;
 
-	GtkTreePath *path;
-	GtkTreeViewColumn *column;
-	GtkTreeIter iter;
+/* ═══════════════════════════════════════════════════════════════════════
+ * EXIF right-click context menu  (GtkPopoverMenu + GMenu)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static void exif_right_click_cb(GtkGestureClick *gesture, gint n_press,
+	gdouble x, gdouble y, gpointer user_data)
+{ (void)gesture; (void)n_press;
+	PropertyView::PropertyViewImpl *pImpl =
+		(PropertyView::PropertyViewImpl*)user_data;
+
+	if (NULL != pImpl->m_pExifPopover)
+	{
+		gtk_widget_unparent(pImpl->m_pExifPopover);
+		pImpl->m_pExifPopover = NULL;
+	}
+
+	/* Determine which item is at the click position */
+	GtkWidget *colview = pImpl->m_pExifColumnView;
+	GtkSingleSelection *sel = GTK_SINGLE_SELECTION(
+		gtk_column_view_get_model(GTK_COLUMN_VIEW(colview)));
+	guint pos = gtk_single_selection_get_selected(sel);
+	if (pos == GTK_INVALID_LIST_POSITION) return;
+
+	ExifItem *ei = EXIF_ITEM(g_list_model_get_item(G_LIST_MODEL(sel), pos));
+	if (NULL == ei) return;
+
+	std::string groupName;
 	std::string selectedKey;
-	gboolean is_group = TRUE;
+	gboolean is_group = ei->is_group;
 
-	gtk_tree_view_get_cursor ( GTK_TREE_VIEW(treeview),&path,&column );
-	GtkTreeModel *model = gtk_tree_view_get_model (GTK_TREE_VIEW(treeview));
-
-	if (NULL != path)
+	if (is_group)
 	{
-		menu = gtk_menu_new();
-		gtk_tree_model_get_iter(GTK_TREE_MODEL(model),&iter,path);
-
-		gchar* key = NULL;
-		gtk_tree_model_get (GTK_TREE_MODEL(model),&iter,
-			PROP_TREE_COLUMN_KEY,&key,
-			PROP_TREE_COLUMN_IS_GROUP,&is_group,
-			-1);
-		if (NULL != key)
-		{
-			selectedKey = key;
-			is_group = FALSE;
-			g_free(key);
-		}
-
-		// determine the group this row belongs to
-		std::string groupName;
-		if (is_group)
-		{
-			gchar* name = NULL;
-			gtk_tree_model_get (GTK_TREE_MODEL(model),&iter,
-				PROP_TREE_COLUMN_NAME,&name,-1);
-			if (NULL != name)
-			{
-				groupName = name;
-				g_free(name);
-			}
-		}
-		else
-		{
-			try
-			{
-				groupName = Exiv2::ExifKey(selectedKey).groupName();
-			}
-			catch (...) {}
-		}
-
-		if (!groupName.empty())
-		{
-			// offer adding any missing editable tag from this group
-			bool bAddedHeader = false;
-			for (size_t i = 0;
-				i < sizeof(k_editableTags)/sizeof(k_editableTags[0]); i++)
-			{
-				const EditableTag* t = &k_editableTags[i];
-				try
-				{
-					if (groupName != Exiv2::ExifKey(t->key).groupName())
-						continue;
-				}
-				catch (...) { continue; }
-
-				if (pImpl->m_ExifData->end() !=
-					pImpl->m_ExifData->findKey(Exiv2::ExifKey(t->key)))
-					continue;
-
-				if (!bAddedHeader)
-				{
-					bAddedHeader = true;
-					menuitem = gtk_menu_item_new_with_label("Add Tag");
-					gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
-					submenu = gtk_menu_new();
-					gtk_menu_item_set_submenu(GTK_MENU_ITEM(menuitem),submenu);
-				}
-
-				menuitem = gtk_menu_item_new_with_label(t->title);
-				gtk_menu_shell_append(GTK_MENU_SHELL(submenu), menuitem);
-
-				KeyActionStruct *data = g_new(KeyActionStruct,1);
-				data->pImpl = pImpl;
-				data->key = g_strdup(t->key);
-				g_signal_connect(menuitem, "activate",
-					 (GCallback) property_tree_event_add_tag, data);
-			}
-
-			if (!is_group)
-			{
-				menuitem = gtk_menu_item_new_with_label("Remove Tag");
-				gtk_menu_shell_append(GTK_MENU_SHELL(menu), menuitem);
-
-				KeyActionStruct *data = g_new(KeyActionStruct,1);
-				data->pImpl = pImpl;
-				data->key = g_strdup(selectedKey.c_str());
-				g_signal_connect(menuitem, "activate",
-								 (GCallback) property_tree_event_remove_tag, data);
-			}
-		}
-
-		if (NULL != submenu || !selectedKey.empty())
-		{
-			gtk_widget_show_all(menu);
-			gtk_menu_popup_at_pointer(GTK_MENU(menu), NULL);
-		}
-		else
-		{
-			gtk_widget_destroy(menu);
-		}
+		if (ei->name) groupName = ei->name;
 	}
-}
-
-static void
-property_tree_event_add_tag(GtkMenuItem *menuitem, gpointer user_data)
-{ (void)menuitem;
-	KeyActionStruct *data = (KeyActionStruct*)user_data;
-	PropertyView::PropertyViewImpl *pImpl = data->pImpl;
-	std::shared_ptr<Exiv2::ExifData> pExifData = pImpl->m_ExifData;
-
-	if (NULL != pExifData.get())
+	else
 	{
-		const EditableTag* tag = FindEditableTag(data->key);
-		if (NULL != tag)
-		{
-			// sensible defaults per kind
-			switch (tag->kind)
-			{
-				case TAGKIND_DATE:
-				{
-					time_t now = time(NULL);
-					struct tm tv;
-					localtime_r(&now,&tv);
-					gchar szDate[32];
-					strftime(szDate,sizeof(szDate),"%Y:%m:%d %H:%M:%S",&tv);
-					set_exif_value(pExifData,data->key,szDate,Exiv2::asciiString);
-				}
-				break;
-
-				case TAGKIND_INT:
-					set_exif_value(pExifData,data->key,"0",Exiv2::unsignedLong);
-				break;
-
-				case TAGKIND_ORIENTATION:
-					set_exif_value(pExifData,data->key,"1",Exiv2::unsignedShort);
-				break;
-
-				case TAGKIND_COMMENT:
-					set_exif_value(pExifData,data->key,"",Exiv2::comment);
-				break;
-
-				case TAGKIND_STRING:
-				default:
-					set_exif_value(pExifData,data->key,"",Exiv2::asciiString);
-				break;
-			}
-
-			pImpl->m_QuiverFile.SetExifData(pExifData);
-
-			property_populate_exif(pImpl);
-		}
-	}
-	g_free(data->key);
-	g_free(data);
-}
-
-static void
-property_tree_event_remove_tag(GtkMenuItem *menuitem, gpointer user_data)
-{ (void)menuitem;
-	KeyActionStruct *data = (KeyActionStruct*)user_data;
-	PropertyView::PropertyViewImpl *pImpl = data->pImpl;
-	std::shared_ptr<Exiv2::ExifData> pExifData = pImpl->m_ExifData;
-
-	if (NULL != pExifData.get())
-	{
-		try
-		{
-			auto it = pExifData->findKey(Exiv2::ExifKey(data->key));
-			if (pExifData->end() != it)
-			{
-				pExifData->erase(it);
-				pImpl->m_QuiverFile.SetExifData(pExifData);
-
-				property_populate_exif(pImpl);
-			}
-		}
+		if (ei->full_key) selectedKey = ei->full_key;
+		try { groupName = Exiv2::ExifKey(selectedKey).groupName(); }
 		catch (...) {}
 	}
-	g_free(data->key);
-	g_free(data);
+	g_object_unref(ei);
+
+	GMenu *menu = g_menu_new();
+
+	if (!groupName.empty())
+	{
+		/* offer adding any missing editable tag from this group */
+		bool bAddedSubmenu = false;
+		GMenu *addMenu = NULL;
+		for (size_t i = 0; i < sizeof(k_editableTags)/sizeof(k_editableTags[0]); i++)
+		{
+			const EditableTag *t = &k_editableTags[i];
+			try { if (groupName != Exiv2::ExifKey(t->key).groupName()) continue; }
+			catch (...) { continue; }
+
+			if (pImpl->m_ExifData->end() !=
+				pImpl->m_ExifData->findKey(Exiv2::ExifKey(t->key)))
+				continue;
+
+			if (!bAddedSubmenu)
+			{
+				bAddedSubmenu = true;
+				addMenu = g_menu_new();
+			}
+
+			GMenuItem *item = g_menu_item_new(t->title, NULL);
+			KeyActionStruct *data = g_new(KeyActionStruct, 1);
+			data->pImpl = pImpl;
+			data->key = g_strdup(t->key);
+			g_object_set_data_full(G_OBJECT(item), "kv-data", data,
+				[](gpointer p){ KeyActionStruct *d = (KeyActionStruct*)p;
+					g_free(d->key); g_free(d); });
+			g_menu_item_set_attribute_value(item, "action",
+				g_variant_new_string("pv-add-tag"));
+			g_menu_item_set_attribute_value(item, "target",
+				g_variant_new_string(t->key));
+			g_menu_append_item(addMenu, item);
+			g_object_unref(item);
+		}
+
+		if (addMenu)
+		{
+			GMenuItem *header = g_menu_item_new_submenu("Add Tag",
+				G_MENU_MODEL(addMenu));
+			g_menu_append_item(menu, header);
+			g_object_unref(header);
+			g_object_unref(addMenu);
+		}
+
+		if (!is_group && !selectedKey.empty())
+		{
+			GMenuItem *rm = g_menu_item_new("Remove Tag", NULL);
+			g_object_set_data_full(G_OBJECT(rm), "kv-impl", pImpl, NULL);
+			g_object_set_data_full(G_OBJECT(rm), "kv-key",
+				g_strdup(selectedKey.c_str()), g_free);
+			g_menu_item_set_attribute_value(rm, "action",
+				g_variant_new_string("pv-remove-tag"));
+			g_menu_item_set_attribute_value(rm, "target",
+				g_variant_new_string(selectedKey.c_str()));
+			g_menu_append_item(menu, rm);
+			g_object_unref(rm);
+		}
+	}
+
+	if (0 == g_menu_model_get_n_items(G_MENU_MODEL(menu)))
+	{
+		g_object_unref(menu);
+		return;
+	}
+
+	GtkPopover *popover = GTK_POPOVER(gtk_popover_menu_new_from_model(G_MENU_MODEL(menu)));
+	g_object_unref(menu);
+
+	/* Register a GSimpleActionGroup so menu actions resolve */
+	GtkWidget *cw = colview;
+	while (cw && !GTK_IS_ROOT(cw))
+		cw = gtk_widget_get_parent(cw);
+	if (GTK_IS_ROOT(cw))
+	{
+		/* we don't want to add actions to the root; store on the colview */
+	}
+
+	/* Connect action handlers via a temporary action group */
+	GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+	gtk_popover_set_pointing_to(popover, &rect);
+	gtk_widget_set_parent(GTK_WIDGET(popover), colview);
+	gtk_popover_popup(popover);
+	pImpl->m_pExifPopover = GTK_WIDGET(popover);
+
+	/* auto-dismiss on close */
+	g_signal_connect_swapped(popover, "closed",
+		G_CALLBACK(exif_popover_closed_cb), pImpl);
 }
 
-// nested class methods
-
-void PropertyView::PropertyViewImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
-{ (void)event;
-
+static void exif_popover_closed_cb(GtkPopover *popover, gpointer user_data)
+{ (void)popover;
+	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)user_data;
+	if (pImpl->m_pExifPopover)
+	{
+		gtk_widget_unparent(pImpl->m_pExifPopover);
+		pImpl->m_pExifPopover = NULL;
+	}
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PreferencesEventHandler (empty stub — preserved from original)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+void PropertyView::PropertyViewImpl::PreferencesEventHandler::HandlePreferenceChanged(
+	PreferencesEventPtr event)
+{ (void)event; }

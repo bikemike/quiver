@@ -38,6 +38,15 @@ namespace QuiverUtils
 	void DisconnectUnmodifiedAccelerators();         // overload
 	void ConnectUnmodifiedAccelerators();            // overload
 
+	/* Grab keyboard focus on `widget` so it can receive key events (e.g.
+	 * arrow-key navigation in the browser/icon view and viewer).  GTK4's
+	 * gtk_widget_grab_focus() only succeeds once the widget is mapped and
+	 * focusable, so if it is not mapped yet (common right after ShowViewer()/
+	 * ShowBrowser() switch the UI before the frame is laid out), a one-shot
+	 * handler grabs focus as soon as the widget is mapped.  Returns TRUE if
+	 * focus was grabbed immediately. */
+	gboolean GrabFocusForWidget(GtkWidget *widget);
+
 	void BindWidget(GtkWidget *widget, GtkWidget *ancestor, const char *action_name);
 	void BindBuilderAccelerators(GtkBuilder *builder);
 

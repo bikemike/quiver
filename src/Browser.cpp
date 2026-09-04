@@ -387,7 +387,7 @@ Browser::SetToolbar(GtkWidget *toolbar)
 void 
 Browser::GrabFocus()
 {
-	gtk_widget_grab_focus (m_BrowserImplPtr->m_pIconView);
+	QuiverUtils::GrabFocusForWidget (m_BrowserImplPtr->m_pIconView);
 }
 
 void 
@@ -1555,6 +1555,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	{
 		if( QuiverUtils::ToggleActionGetActive(szAction) )
 		{
+			gtk_widget_set_visible(pBrowserImpl->vpaned, TRUE);
 			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 			if (!bFullscreen)
 			{

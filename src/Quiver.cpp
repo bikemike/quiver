@@ -98,6 +98,13 @@ public:
 	
 	static void ShowViewerUIItems(QuiverImpl *pQuiverImpl, bool bShow);
 	static void ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow);
+	static void SetViewerNavigationAccelerators(bool bEnable);
+	static void CreateToolbarButtons(QuiverImpl *pQuiverImpl);
+	void RebuildMenubar();
+	/* Recursively clone a GMenuModel keeping only the items whose "location"
+	 * attribute matches the active state (plus the always-on bookmark/tools
+	 * placeholders).  Returns a new GMenu owned by the caller. */
+	GMenu* FilterMenuModel(GMenuModel *model, const std::string &state);
 
 // member variables
 	Quiver *m_pQuiver;
@@ -114,7 +121,16 @@ public:
 	GtkWidget *m_pQuiverWindow;
 
 	GtkWidget *m_pMenubar;
+	/* Pristine, never-mutated GtkBuilder of data/quiver-menus.ui.  The visible
+	 * menu model is a filtered clone produced on every mode switch. */
+	GtkBuilder *m_pMenubarBuilder;
+	GMenuModel *m_pAppMenuModel;
 	GtkWidget *m_pToolbar;
+	GtkWidget *m_pToolbarSharedBox;
+	GtkWidget *m_pToolbarBrowserBox;
+	GtkWidget *m_pToolbarViewerBox;
+	GtkWidget *m_pUIModeViewerBtn;
+	GtkWidget *m_pUIModeBrowserBtn;
 	GtkWidget *m_pNBProperties;
 	GtkWidget* m_pHPanedMainArea;
 	
@@ -248,6 +264,15 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pQuiver = parent;
 	m_pBuilder = NULL;
 	m_bViewerMode = false;
+	m_pMenubar = NULL;
+	m_pMenubarBuilder = NULL;
+	m_pAppMenuModel = NULL;
+	m_pToolbar = NULL;
+	m_pToolbarSharedBox = NULL;
+	m_pToolbarBrowserBox = NULL;
+	m_pToolbarViewerBox = NULL;
+	m_pUIModeViewerBtn = NULL;
+	m_pUIModeBrowserBtn = NULL;
 	
 	m_BookmarksPtr = Bookmarks::GetInstance();
 	m_BookmarksPtr->AddEventHandler(m_BookmarksEventHandler);
@@ -466,236 +491,137 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
 #define ACTION_QUIVER_CLOSE_4                                ACTION_QUIVER_CLOSE"_4"
 
-/* GMenu-based menu definition for GtkPopoverMenuBar (replaces GTK3 GtkMenuBar XML).
- * GTK4 draws a visual separator line automatically between consecutive,
- * non-empty sections, so each logical group of items is appended as its own
- * section rather than inserting an explicit (blank, clickable) separator item. */
-static GMenu* quiver_build_app_menu(GMenu *bookmarkMenu, GMenu *externalToolsMenu)
+/* GMenu-based menu handling for GtkPopoverMenuBar.
+
+ * The shared menu skeleton (including both states' items) is defined in
+ * data/quiver-menus.ui and loaded once into a pristine GMenuModel.  Every
+ * mode-specific item / column carries a custom "location" attribute naming the
+ * state it belongs to ("browser" or "viewer"), or a live placeholder
+ * ("bookmarks"/"tools").  RebuildMenubar() clones that pristine model on every
+ * mode switch via FilterMenuModel(), keeping shared items plus the items whose
+ * "location" matches the currently-active state.
+ *
+ * Because each state's items are tagged and the visible model is always a fresh
+ * clone of the pristine source, merge/unmerge never moves items across states
+ * and never corrupts the other state's layout: unmerging the no-longer-active
+ * state simply means the clone omits that state's tagged items.
+ */
+GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::string &state)
 {
-	/* Append a section (a GMenu) of items into a parent menu with no label,
-	 * so GTK renders a separator between adjacent non-empty sections. */
-	auto add_section = [](GMenu *parent, GMenu *section) {
-		g_menu_append_section(parent, NULL, G_MENU_MODEL(section));
-		g_object_unref(section);
-	};
+	GMenu *dst = g_menu_new();
+	const int count = g_menu_model_get_n_items(model);
 
-	GMenu *menu = g_menu_new();
-
-	// === File ===
+	for (int i = 0; i < count; ++i)
 	{
-		GMenu *fileMenu = g_menu_new();
-		add_section(fileMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Open", "quiver.FileOpen");
-			g_menu_append(s, "Open _Folder", "quiver.FileOpenFolder");
-			g_menu_append(s, "Open _Location", "quiver.BrowserOpenLocation");
-			s; }));
-		add_section(fileMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Save", "quiver.Save");
-			g_menu_append(s, "Save _As", "quiver.SaveAs");
-			s; }));
-		add_section(fileMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Close", "quiver.Close");
-			s; }));
-		add_section(fileMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Quit", "quiver.Close_3");
-			s; }));
-		g_menu_append_submenu(menu, "_File", G_MENU_MODEL(fileMenu));
-		g_object_unref(fileMenu);
-	}
+		g_autoptr(GMenuModel) section = g_menu_model_get_item_link(model, i, G_MENU_LINK_SECTION);
+		g_autoptr(GMenuModel) submenu = g_menu_model_get_item_link(model, i, G_MENU_LINK_SUBMENU);
 
-	// === Edit ===
-	{
-		GMenu *editMenu = g_menu_new();
-		add_section(editMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Copy (Browser)", "quiver.BrowserCopy");
-			g_menu_append(s, "_Copy (Viewer)", "quiver.ViewerCopy");
-			s; }));
-		add_section(editMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Move To Trash (Browser)", "quiver.BrowserTrash");
-			g_menu_append(s, "_Move To Trash (Viewer)", "quiver.ViewerTrash");
-			s; }));
-		add_section(editMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Preferences", "quiver.Preferences");
-			s; }));
-		g_menu_append_submenu(menu, "_Edit", G_MENU_MODEL(editMenu));
-		g_object_unref(editMenu);
-	}
+		g_autofree gchar *location = NULL;
+		g_menu_model_get_item_attribute(model, i, "location", "s", &location);
 
-	// === View ===
-	{
-		GMenu *viewMenu = g_menu_new();
-		add_section(viewMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Viewer", "quiver.UIModeViewer");
-			g_menu_append(s, "_Browser", "quiver.UIModeBrowser");
-			s; }));
-		add_section(viewMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Menubar", "quiver.ViewMenubar");
-			g_menu_append(s, "Toolbar", "quiver.ViewToolbarMain");
-			g_menu_append(s, "Properties", "quiver.ViewProperties");
-			g_menu_append(s, "Statusbar", "quiver.ViewStatusbar");
-			s; }));
-		add_section(viewMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Sidebar", "quiver.BrowserViewSidebar");
-			g_menu_append(s, "Preview", "quiver.BrowserViewPreview");
-			g_menu_append(s, "Film Strip", "quiver.ViewFilmStrip");
-			s; }));
+		gboolean bKeep = TRUE;
+		/* Which explicit submenu model to substitute (live placeholders). */
+		GMenu *replacement = NULL;
+
+		if (location != NULL)
 		{
-			// Sort submenu
-			GMenu *sortMenu = g_menu_new();
+			if (strcmp(location, "bookmarks") == 0)
+				replacement = m_pBookmarkMenu;
+			else if (strcmp(location, "tools") == 0)
+				replacement = m_pExternalToolsMenu;
+			else if (strcmp(location, state.c_str()) != 0)
+				bKeep = FALSE;
+		}
+
+		if (!bKeep)
+			continue;
+
+		/* Section: filter its contents, keep only if non-empty. */
+		if (section)
+		{
+			GMenu *newSection = FilterMenuModel(section, state);
+			if (g_menu_model_get_n_items(G_MENU_MODEL(newSection)) > 0)
+				g_menu_append_section(dst, NULL, G_MENU_MODEL(newSection));
+			g_object_unref(newSection);
+			continue;
+		}
+
+		GMenuItem *item = g_menu_item_new_from_model(model, i);
+
+		/* Live placeholders are referenced directly, never cloned, so the
+		 * bookmarks / external-tools submenus stay editable by
+		 * LoadBookmarks()/LoadExternalTools() across mode switches. */
+		if (replacement != NULL)
+		{
+			g_menu_item_set_submenu(item, G_MENU_MODEL(replacement));
+			g_menu_append_item(dst, item);
+			g_object_unref(item);
+			continue;
+		}
+
+		/* Regular submenu item: clone it, recursively filtering its contents,
+		 * and drop the item entirely if its (filtered) submenu is empty. */
+		if (submenu)
+		{
+			GMenu *newSub = FilterMenuModel(submenu, state);
+			if (g_menu_model_get_n_items(G_MENU_MODEL(newSub)) == 0)
 			{
-				GMenuItem *item;
-				const char *sortNames[] = {"By _Name", "By _Name (natural order)", "By _Date", "By Date _Modified", "_Randomize"};
-				const char *sortActions[] = {"quiver.SortByName", "quiver.SortByNameNatural", "quiver.SortByDate", "quiver.SortByDateModified", "quiver.SortByRandom"};
-				for (int i = 0; i < 5; i++) {
-					item = g_menu_item_new(sortNames[i], sortActions[i]);
-					g_menu_append_item(sortMenu, item);
-					g_object_unref(item);
-				}
-				item = g_menu_item_new("In _Descending Order", "quiver.SortDescending");
-				g_menu_append_item(sortMenu, item);
 				g_object_unref(item);
+				g_object_unref(newSub);
+				continue;
 			}
-			add_section(viewMenu, ({ GMenu *s = g_menu_new();
-				g_menu_append_submenu(s, "_Arrange Items", G_MENU_MODEL(sortMenu));
-				s; }));
-			g_object_unref(sortMenu);
+			g_menu_item_set_submenu(item, G_MENU_MODEL(newSub));
+			g_object_unref(newSub);
 		}
-		add_section(viewMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Full Screen", "quiver.FullScreen");
-			g_menu_append(s, "_Slide Show", "quiver.SlideShow");
-			s; }));
+
+		g_menu_append_item(dst, item);
+		g_object_unref(item);
+	}
+
+	return dst;
+}
+
+void QuiverImpl::RebuildMenubar()
+{
+	/* Load the pristine menu skeleton (with per-state "location" tags) once.
+	 * It is never mutated; every build is a fresh filtered clone so the two
+	 * states never collide in a shared placeholder. */
+	if (NULL == m_pMenubarBuilder)
+	{
+		m_pMenubarBuilder = gtk_builder_new_from_file(QUIVER_DATADIR "/" "quiver-menus.ui");
+		if (NULL == m_pMenubarBuilder)
 		{
-			// Zoom submenu
-			GMenu *zoomMenu = g_menu_new();
-			{
-				GMenuItem *item;
-				const char *zNames[] = {"Zoom _Fit", "Zoom Fit _Stretch", "_Actual Size", "_Fill Screen"};
-				const char *zActions[] = {"quiver.ZoomFit", "quiver.ZoomFitStretch", "quiver.Zoom100", "quiver.ZoomFillScreen"};
-				for (int i = 0; i < 4; i++) {
-					item = g_menu_item_new(zNames[i], zActions[i]);
-					g_menu_append_item(zoomMenu, item);
-					g_object_unref(item);
-				}
-				item = g_menu_item_new("Rotate to _Maximize View", "quiver.MaximizeForDisplay");
-				g_menu_append_item(zoomMenu, item);
-				g_object_unref(item);
-			}
-			add_section(viewMenu, ({ GMenu *s = g_menu_new();
-				g_menu_append_submenu(s, "Zoom", G_MENU_MODEL(zoomMenu));
-				s; }));
-			g_object_unref(zoomMenu);
+			g_warning("Failed to load menu UI file quiver-menus.ui");
+			return;
 		}
-		g_menu_append_submenu(menu, "_View", G_MENU_MODEL(viewMenu));
-		g_object_unref(viewMenu);
+		m_pAppMenuModel = G_MENU_MODEL(gtk_builder_get_object(m_pMenubarBuilder, "app_menu"));
+
+		/* The bookmarks / external-tools menus are persistent live placeholders
+		 * defined in the same file and populated by LoadBookmarks()/
+		 * LoadExternalTools(). */
+		m_pBookmarkMenu = G_MENU(gtk_builder_get_object(m_pMenubarBuilder, "bookmark_menu"));
+		m_pExternalToolsMenu = G_MENU(gtk_builder_get_object(m_pMenubarBuilder, "external_tools_menu"));
 	}
 
-	// === Image ===
+	const std::string state = m_bViewerMode ? "viewer" : "browser";
+	GMenu *appMenu = FilterMenuModel(m_pAppMenuModel, state);
+
+	if (NULL == m_pMenubar)
 	{
-		GMenu *imageMenu = g_menu_new();
-		add_section(imageMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Rotate Clockwise", "quiver.RotateCW");
-			g_menu_append(s, "Rotate _Counterclockwise", "quiver.RotateCCW");
-			s; }));
-		add_section(imageMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Flip _Horizontally", "quiver.FlipH");
-			g_menu_append(s, "Flip _Vertically", "quiver.FlipV");
-			s; }));
-		g_menu_append_submenu(menu, "_Image", G_MENU_MODEL(imageMenu));
-		g_object_unref(imageMenu);
+		m_pMenubar = gtk_popover_menu_bar_new_from_model(G_MENU_MODEL(appMenu));
+		/* Don't let the menubar steal focus on click, otherwise arrow-key
+		 * navigation in the browser/icon view and viewer is lost until the
+		 * user clicks back into the content area.  Also make it (and its
+		 * labels) completely non-focusable so Tab skips it, keeping keyboard
+		 * focus on the content for arrow-key navigation. */
+		gtk_widget_set_focus_on_click(m_pMenubar, FALSE);
+		gtk_widget_set_focusable(m_pMenubar, FALSE);
 	}
-
-	// === Video ===
+	else
 	{
-		GMenu *videoMenu = g_menu_new();
-		add_section(videoMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Play / Pause", "quiver.VideoPlay");
-			s; }));
-		add_section(videoMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Seek _Back 5s", "quiver.VideoSeekBack5");
-			g_menu_append(s, "Seek _Forward 5s", "quiver.VideoSeekFwd5");
-			s; }));
-		add_section(videoMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Skip Back _10s", "quiver.VideoSkipBack");
-			g_menu_append(s, "Skip Forward 1_0s", "quiver.VideoSkipForward");
-			s; }));
-		add_section(videoMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Previous Frame", "quiver.VideoFrameBack");
-			g_menu_append(s, "Next Frame", "quiver.VideoFrameFwd");
-			s; }));
-		{
-			// Speed submenu
-			GMenu *speedMenu = g_menu_new();
-			{
-				const char *speeds[] = {"0.25x", "0.5x", "1.0x (Normal)", "1.5x", "2.0x", "4.0x", "8.0x", "16.0x"};
-				const char *speedActions[] = {"quiver.VideoSpeed025", "quiver.VideoSpeed05", "quiver.VideoSpeed10", "quiver.VideoSpeed15", "quiver.VideoSpeed20", "quiver.VideoSpeed40", "quiver.VideoSpeed80", "quiver.VideoSpeed160"};
-				for (int i = 0; i < 8; i++) {
-					g_menu_append(speedMenu, speeds[i], speedActions[i]);
-				}
-			}
-			add_section(videoMenu, ({ GMenu *s = g_menu_new();
-				g_menu_append_submenu(s, "Playback _Speed", G_MENU_MODEL(speedMenu));
-				s; }));
-			g_object_unref(speedMenu);
-		}
-		add_section(videoMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_Take Snapshot", "quiver.VideoSnapshot");
-			s; }));
-		g_menu_append_submenu(menu, "V_ideo", G_MENU_MODEL(videoMenu));
-		g_object_unref(videoMenu);
+		gtk_popover_menu_bar_set_menu_model(GTK_POPOVER_MENU_BAR(m_pMenubar), G_MENU_MODEL(appMenu));
 	}
-
-	// === Go ===
-	{
-		GMenu *goMenu = g_menu_new();
-		add_section(goMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_First Image", "quiver.ImageFirst");
-			g_menu_append(s, "_Previous Image", "quiver.ImagePrevious");
-			g_menu_append(s, "_Next Image", "quiver.ImageNext");
-			g_menu_append(s, "_Last Image", "quiver.ImageLast");
-			s; }));
-		add_section(goMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Go _Back", "quiver.BrowserHistoryBack");
-			g_menu_append(s, "Go _Forward", "quiver.BrowserHistoryForward");
-			s; }));
-		add_section(goMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "Open _Parent", "quiver.GoFolderParent");
-			g_menu_append(s, "Open _Next Folder", "quiver.GoFolderNext");
-			g_menu_append(s, "Open _Previous Folder", "quiver.GoFolderPrev");
-			s; }));
-		g_menu_append_submenu(menu, "_Go", G_MENU_MODEL(goMenu));
-		g_object_unref(goMenu);
-	}
-
-	// === Bookmarks ===
-	// bookmarkMenu is passed in from QuiverImpl; static items go in their own
-	// section and dynamic bookmark items are added later in LoadBookmarks().
-	add_section(bookmarkMenu, ({ GMenu *s = g_menu_new();
-		g_menu_append(s, "_Add Bookmark", "quiver.BookmarksAdd");
-		g_menu_append(s, "_Edit Bookmarks...", "quiver.BookmarksEdit");
-		s; }));
-	g_menu_append_submenu(menu, "_Bookmarks", G_MENU_MODEL(bookmarkMenu));
-
-	// === Tools ===
-	// externalToolsMenu is passed in from QuiverImpl; static items go in their
-	// own section and dynamic external-tool items are added in LoadExternalTools().
-	add_section(externalToolsMenu, ({ GMenu *s = g_menu_new();
-		g_menu_append(s, "Adjust Date...", "quiver.AdjustDate");
-		g_menu_append(s, "Rename...", "quiver.Rename");
-		g_menu_append(s, "Organize...", "quiver.Organize");
-		g_menu_append(s, "External Tools...", "quiver.ExternalTools");
-		s; }));
-	g_menu_append_submenu(menu, "_Tools", G_MENU_MODEL(externalToolsMenu));
-
-	// === Help ===
-	{
-		GMenu *helpMenu = g_menu_new();
-		add_section(helpMenu, ({ GMenu *s = g_menu_new();
-			g_menu_append(s, "_About", "quiver.About");
-			s; }));
-		g_menu_append_submenu(menu, "_Help", G_MENU_MODEL(helpMenu));
-	}
-
-	return menu;
+	g_object_unref(appMenu);
 }
 
 /* drag-and-drop target table removed – GTK4 uses GtkDropTarget */
@@ -1074,16 +1000,10 @@ void Quiver::Init()
 
 	/* Set up GUI elements */
 
-	/* Build GMenu-based menubar (GTK4 replacement for GtkMenuBar) */
-	m_QuiverImplPtr->m_pBookmarkMenu = g_menu_new();
-	m_QuiverImplPtr->m_pExternalToolsMenu = g_menu_new();
-	GMenu *appMenu = quiver_build_app_menu(m_QuiverImplPtr->m_pBookmarkMenu, m_QuiverImplPtr->m_pExternalToolsMenu);
-	m_QuiverImplPtr->m_pMenubar = gtk_popover_menu_bar_new_from_model(G_MENU_MODEL(appMenu));
-	g_object_unref(appMenu);
-
-	/* Build toolbar as a GtkBox (replaces GtkToolbar) */
-	m_QuiverImplPtr->m_pToolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-	gtk_widget_set_name(m_QuiverImplPtr->m_pToolbar, "Quiver Toolbar");
+	/* Build GMenu-based menubar (GTK4 replacement for GtkMenuBar).  The menu
+	 * skeleton and the live bookmark / external-tools placeholder menus are
+	 * loaded from data/quiver-menus.ui inside RebuildMenubar(). */
+	m_QuiverImplPtr->RebuildMenubar();
 
 	/* GSimpleAction based action system (replaces GtkUIManager/GtkAction).
 	 * Actions are registered here and their widgets bound with
@@ -1151,13 +1071,14 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_BrowserPtr->RegisterActions();
 	m_QuiverImplPtr->m_ViewerPtr->RegisterActions();
 
+	/* Build the toolbar from data/quiver-toolbar.ui (JSON/XML UI file).  It is
+	 * a plain GtkBox whose widgets bind to GSimpleActions via action-name, and
+	 * is grouped into shared / browser-only / viewer-only boxes so the boxes
+	 * can be shown or hidden when the UI mode changes. */
+	QuiverImpl::CreateToolbarButtons(m_QuiverImplPtr.get());
+
 	/* Give the browser the shared toolbar so it can insert its thumb-size widget */
 	m_QuiverImplPtr->m_BrowserPtr->SetToolbar(m_QuiverImplPtr->m_pToolbar);
-
-	/* NOTE: BindWidget/BindToggleWidget/BindRadioWidget calls removed.
-	 * In GTK4, menu actions are bound via GMenu action names.
-	 * Toolbar buttons need to be created programmatically and bound
-	 * with gtk_actionable_set_action_name(). TODO: recreate toolbar buttons. */
 
 	m_QuiverImplPtr->m_BrowserPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
 	m_QuiverImplPtr->m_ViewerPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
@@ -1737,56 +1658,115 @@ static gboolean timeout_event_motion_notify (gpointer data)
 //== ShowViewer / ShowBrowser ===================================================
 //==============================================================================
 
-static void show_ui_items(GtkBuilder *builder, const char **ids, guint n, bool bShow)
+/* Recursively disable keyboard focus for every widget in a control bar
+ * (menubar / toolbar) so that:
+ *  - clicking a control never steals keyboard focus from the content area
+ *    (which would break arrow-key navigation in the browser/icon view and
+ *    viewer), and
+ *  - Tab skips the whole bar (no tab stop), keeping Tab focus in the content.
+ * The content grabs focus again explicitly, so removing the tab stop here does
+ * not strand keyboard input. */
+static void quiver_toolbar_set_focus_on_click(GtkWidget *widget, gboolean focus)
 {
-	for (guint i = 0; i < n; i++)
+	if (NULL == widget)
+		return;
+	gtk_widget_set_focus_on_click(widget, focus);
+	gtk_widget_set_focusable(widget, FALSE);
+	for (GtkWidget *child = gtk_widget_get_first_child(widget);
+	     child != NULL;
+	     child = gtk_widget_get_next_sibling(child))
 	{
-		GtkWidget *widget = GTK_WIDGET(gtk_builder_get_object(builder, ids[i]));
-		if (NULL != widget)
-		{
-			if (bShow)
-			{
-			}
-			else
-			{
-				gtk_widget_set_visible(widget, FALSE);
-			}
-		}
+		quiver_toolbar_set_focus_on_click(child, focus);
 	}
+}
+
+void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
+{
+	/* The toolbar (shared + browser + viewer control groups) is defined as
+	 * data/quiver-toolbar.ui, so its structure and action-name bindings live
+	 * in markup.  Merge/unmerge between the browser and viewer states is done
+	 * by toggling the visibility of the two distinct, per-state boxes
+	 * (browser_box / viewer_box); the shared box is always visible.  Because
+	 * they are separate boxes, one state's controls can never be removed while
+	 * the other state is active. */
+	GtkBuilder *builder = gtk_builder_new_from_file(QUIVER_DATADIR "/" "quiver-toolbar.ui");
+	if (NULL == builder)
+	{
+		g_error("Failed to load toolbar UI file");
+		return;
+	}
+
+	GtkWidget *toolbar = GTK_WIDGET(gtk_builder_get_object(builder, "QuiverToolbar"));
+	pQuiverImpl->m_pToolbarBrowserBox = GTK_WIDGET(gtk_builder_get_object(builder, "browser_box"));
+	pQuiverImpl->m_pToolbarSharedBox   = GTK_WIDGET(gtk_builder_get_object(builder, "shared_box"));
+	pQuiverImpl->m_pToolbarViewerBox   = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_box"));
+	pQuiverImpl->m_pUIModeViewerBtn    = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_viewer"));
+	pQuiverImpl->m_pUIModeBrowserBtn   = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_browser"));
+
+	/* Keep the builder alive so its objects stay referenced; the widgets are
+	 * later parented into the window tree. */
+	pQuiverImpl->m_pToolbar = toolbar;
+	g_object_set_data_full(G_OBJECT(pQuiverImpl->m_pQuiverWindow), "toolbar-builder",
+	                       builder, (GDestroyNotify)g_object_unref);
+
+	/* Toolbar buttons must not steal keyboard focus from the content area,
+	 * otherwise arrow-key navigation in the browser/icon view and viewer is
+	 * lost until the user clicks back in. */
+	quiver_toolbar_set_focus_on_click(toolbar, FALSE);
+
+	/* start in browser mode: hide the viewer controls until ShowViewer() */
+	gtk_widget_set_visible(pQuiverImpl->m_pToolbarViewerBox, FALSE);
 }
 
 void QuiverImpl::ShowViewerUIItems(QuiverImpl *pQuiverImpl, bool bShow)
 {
-	static const char *viewer_items[] = {
-		"MenuItemSave", "MenuItemSaveAs", "MenuItemClose",
-		"MenuItemViewerCopy", "MenuItemViewerTrash",
-		"MenuItemImageFirst", "MenuItemImagePrevious", "MenuItemImageNext", "MenuItemImageLast",
-		"MenuItemRotateCW", "MenuItemRotateCCW", "MenuItemFlipH", "MenuItemFlipV",
-		"CheckMenuItemViewFilmStrip",
-		"ToolButtonImagePrevious", "ToolButtonImageNext",
-		"ToolButtonZoomIn", "ToolButtonZoomOut", "ToolButtonZoom100", "ToolButtonZoomFit",
-		"ToolButtonRotateCCW", "ToolButtonRotateCW", "ToolButtonViewerTrash",
-		"ToolButtonUIModeBrowser" };
-	if (NULL != pQuiverImpl && NULL != pQuiverImpl->m_pBuilder)
+	if (NULL != pQuiverImpl)
 	{
-		show_ui_items(pQuiverImpl->m_pBuilder, viewer_items, G_N_ELEMENTS(viewer_items), bShow);
+		gtk_widget_set_visible(pQuiverImpl->m_pToolbarViewerBox, bShow);
 	}
 }
 
 void QuiverImpl::ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow)
 {
-	static const char *browser_items[] = {
-		"MenuItemBrowserOpenLocation", "MenuItemBrowserCopy", "MenuItemBrowserTrash",
-		"MenuItemBrowserHistoryBack", "MenuItemBrowserHistoryForward",
-		"MenuItemGoFolderParent", "MenuItemGoFolderNext", "MenuItemGoFolderPrev",
-		"CheckMenuItemBrowserSidebar", "CheckMenuItemBrowserPreview",
-		"CheckMenuItemSortDescending",
-		"ToolButtonBrowserHistoryBack", "ToolButtonBrowserHistoryForward",
-		"ToolButtonBrowserSidebar", "ToolButtonBrowserTrash",
-		"ToolButtonUIModeViewer" };
-	if (NULL != pQuiverImpl && NULL != pQuiverImpl->m_pBuilder)
+	if (NULL != pQuiverImpl)
 	{
-		show_ui_items(pQuiverImpl->m_pBuilder, browser_items, G_N_ELEMENTS(browser_items), bShow);
+		gtk_widget_set_visible(pQuiverImpl->m_pToolbarBrowserBox, bShow);
+	}
+}
+
+/* Enable/disable the naked "space" / "<Shift>space" accelerators that navigate
+ * the image list (ImageNext / ImagePrevious_2).  They are only meaningful in
+ * the viewer; in the browser the space key is reserved for the folder tree
+ * checkbox selection, so the global accelerators must not steal it. */
+void QuiverImpl::SetViewerNavigationAccelerators(bool bEnable)
+{
+	if (NULL == g_pApp)
+		return;
+	if (bEnable)
+	{
+		{
+			const gchar *detail = "quiver.ImageNext";
+			const gchar *accels[] = {"space", NULL};
+			gtk_application_set_accels_for_action(g_pApp, detail, accels);
+		}
+		{
+			const gchar *detail = "quiver.ImagePrevious_2";
+			const gchar *accels[] = {"<Shift>space", NULL};
+			gtk_application_set_accels_for_action(g_pApp, detail, accels);
+		}
+	}
+	else
+	{
+		{
+			const gchar *detail = "quiver.ImageNext";
+			const gchar *no_accels[] = {NULL};
+			gtk_application_set_accels_for_action(g_pApp, detail, no_accels);
+		}
+		{
+			const gchar *detail = "quiver.ImagePrevious_2";
+			const gchar *no_accels[] = {NULL};
+			gtk_application_set_accels_for_action(g_pApp, detail, no_accels);
+		}
 	}
 }
 
@@ -1798,6 +1778,10 @@ void Quiver::ShowViewer()
 	m_QuiverImplPtr->m_bViewerMode = true;
 	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), true);
 	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), false);
+	m_QuiverImplPtr->RebuildMenubar();
+
+	// Naked space/arrow navigation shortcuts are only active in the viewer.
+	QuiverImpl::SetViewerNavigationAccelerators(true);
 
 	m_QuiverImplPtr->m_ViewerPtr->GrabFocus();
 }
@@ -1810,6 +1794,12 @@ void Quiver::ShowBrowser()
 	m_QuiverImplPtr->m_bViewerMode = false;
 	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), false);
 	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), true);
+	m_QuiverImplPtr->RebuildMenubar();
+
+	// Naked space should not advance images while the browser (folder tree,
+	// image list) is visible - it is instead used for the folder tree
+	// checkbox selection.
+	QuiverImpl::SetViewerNavigationAccelerators(false);
 
 	m_QuiverImplPtr->m_BrowserPtr->GrabFocus();
 }

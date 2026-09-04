@@ -245,7 +245,7 @@ static gboolean quiver_icon_view_scroll_controller_cb (GtkEventControllerScroll 
 							double dx,
 							double dy,
 							QuiverIconView *iconview);
-static void quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
+static gboolean quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 						guint keyval,
 						guint keycode,
 						GdkModifierType state,
@@ -414,7 +414,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->cursor_cell_first = G_MAXULONG;
 
 
-	gtk_widget_set_can_focus(GTK_WIDGET(iconview),TRUE);
+	gtk_widget_set_focusable(GTK_WIDGET(iconview),TRUE);
 	
 	iconview->priv->n_cell_items = 0;
 	iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(iconview->priv->n_cell_items+1) );
@@ -2420,7 +2420,7 @@ quiver_icon_view_scroll_controller_cb (GtkEventControllerScroll *controller,
 	return quiver_icon_view_scroll_event_cb(NULL, dx, dy, iconview);
 }
 
-static void
+static gboolean
 quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 				    guint keyval,
 				    guint keycode,
@@ -2538,10 +2538,7 @@ quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 		}
 	}
 	
-	if (rval)
-	{
-		gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(controller), GTK_PHASE_CAPTURE);
-	}
+	return rval;
 }
 
 static void

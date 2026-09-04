@@ -1,0 +1,464 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <!--
+    Main application menubar for GtkPopoverMenuBar.
+
+    Merge/unmerge control: every mode-specific item / column carries a custom
+    "location" attribute naming the state (or live placeholder) it belongs to:
+
+      location="browser"   -> shown only in browser mode
+      location="viewer"    -> shown only in viewer mode
+      location="bookmarks" -> always shown; a live placeholder populated by
+                              LoadBookmarks(); never filtered out.
+      location="tools"     -> always shown; a live placeholder populated by
+                              LoadExternalTools(); never filtered out.
+      (no location)        -> shared, shown in both modes.
+
+    QuiverImpl::RebuildMenubar() clones this pristine model on every state
+    change, keeping shared items plus the items whose "location" matches the
+    currently-active state.  Because the clone always starts from this pristine
+    source, unmerging the no-longer-active state can never collide with or
+    corrupt the other state's items.
+  -->
+
+  <menu id="app_menu">
+
+    <!-- ============================= File ============================= -->
+    <submenu>
+      <attribute name="label">_File</attribute>
+      <section>
+        <item>
+          <attribute name="label">_Open</attribute>
+          <attribute name="action">quiver.FileOpen</attribute>
+        </item>
+        <item>
+          <attribute name="label">Open _Folder</attribute>
+          <attribute name="action">quiver.FileOpenFolder</attribute>
+        </item>
+        <item>
+          <attribute name="label">Open _Location</attribute>
+          <attribute name="action">quiver.BrowserOpenLocation</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">_Save</attribute>
+          <attribute name="action">quiver.Save</attribute>
+        </item>
+        <item>
+          <attribute name="label">Save _As</attribute>
+          <attribute name="action">quiver.SaveAs</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">_Close</attribute>
+          <attribute name="action">quiver.Close</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">_Quit</attribute>
+          <attribute name="action">quiver.Close_3</attribute>
+        </item>
+      </section>
+    </submenu>
+
+    <!-- ============================= Edit ============================= -->
+    <submenu>
+      <attribute name="label">_Edit</attribute>
+      <section>
+        <item>
+          <attribute name="label">_Copy</attribute>
+          <attribute name="action">quiver.ViewerCopy</attribute>
+          <attribute name="location">viewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">_Copy</attribute>
+          <attribute name="action">quiver.BrowserCopy</attribute>
+          <attribute name="location">browser</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">_Move To Trash</attribute>
+          <attribute name="action">quiver.ViewerTrash</attribute>
+          <attribute name="location">viewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">_Move To Trash</attribute>
+          <attribute name="action">quiver.BrowserTrash</attribute>
+          <attribute name="location">browser</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">_Preferences</attribute>
+          <attribute name="action">quiver.Preferences</attribute>
+        </item>
+      </section>
+    </submenu>
+
+    <!-- ============================= View ============================= -->
+    <submenu>
+      <attribute name="label">_View</attribute>
+      <section>
+        <item>
+          <attribute name="label">_Viewer</attribute>
+          <attribute name="action">quiver.UIModeViewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">_Browser</attribute>
+          <attribute name="action">quiver.UIModeBrowser</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">Menubar</attribute>
+          <attribute name="action">quiver.ViewMenubar</attribute>
+        </item>
+        <item>
+          <attribute name="label">Toolbar</attribute>
+          <attribute name="action">quiver.ViewToolbarMain</attribute>
+        </item>
+        <item>
+          <attribute name="label">Properties</attribute>
+          <attribute name="action">quiver.ViewProperties</attribute>
+        </item>
+        <item>
+          <attribute name="label">Statusbar</attribute>
+          <attribute name="action">quiver.ViewStatusbar</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">Film Strip</attribute>
+          <attribute name="action">quiver.ViewFilmStrip</attribute>
+          <attribute name="location">viewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">Sidebar</attribute>
+          <attribute name="action">quiver.BrowserViewSidebar</attribute>
+          <attribute name="location">browser</attribute>
+        </item>
+        <item>
+          <attribute name="label">Preview</attribute>
+          <attribute name="action">quiver.BrowserViewPreview</attribute>
+          <attribute name="location">browser</attribute>
+        </item>
+      </section>
+      <section>
+        <submenu>
+          <attribute name="label">_Arrange Items</attribute>
+          <attribute name="location">browser</attribute>
+          <item>
+            <attribute name="label">By _Name</attribute>
+            <attribute name="action">quiver.SortByName</attribute>
+          </item>
+          <item>
+            <attribute name="label">By _Name (natural order)</attribute>
+            <attribute name="action">quiver.SortByNameNatural</attribute>
+          </item>
+          <item>
+            <attribute name="label">By _Date</attribute>
+            <attribute name="action">quiver.SortByDate</attribute>
+          </item>
+          <item>
+            <attribute name="label">By Date _Modified</attribute>
+            <attribute name="action">quiver.SortByDateModified</attribute>
+          </item>
+          <item>
+            <attribute name="label">_Randomize</attribute>
+            <attribute name="action">quiver.SortByRandom</attribute>
+          </item>
+          <item>
+            <attribute name="label">In _Descending Order</attribute>
+            <attribute name="action">quiver.SortDescending</attribute>
+          </item>
+        </submenu>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">_Full Screen</attribute>
+          <attribute name="action">quiver.FullScreen</attribute>
+        </item>
+        <item>
+          <attribute name="label">_Slide Show</attribute>
+          <attribute name="action">quiver.SlideShow</attribute>
+        </item>
+      </section>
+      <section>
+        <submenu>
+          <attribute name="label">Zoom</attribute>
+          <attribute name="location">viewer</attribute>
+          <item>
+            <attribute name="label">Zoom _Fit</attribute>
+            <attribute name="action">quiver.ZoomFit</attribute>
+          </item>
+          <item>
+            <attribute name="label">Zoom Fit _Stretch</attribute>
+            <attribute name="action">quiver.ZoomFitStretch</attribute>
+          </item>
+          <item>
+            <attribute name="label">_Actual Size</attribute>
+            <attribute name="action">quiver.Zoom100</attribute>
+          </item>
+          <item>
+            <attribute name="label">_Fill Screen</attribute>
+            <attribute name="action">quiver.ZoomFillScreen</attribute>
+          </item>
+          <item>
+            <attribute name="label">Rotate to _Maximize View</attribute>
+            <attribute name="action">quiver.MaximizeForDisplay</attribute>
+          </item>
+        </submenu>
+      </section>
+    </submenu>
+
+    <!-- ==================== Image (viewer column) ===================== -->
+    <submenu>
+      <attribute name="label">_Image</attribute>
+      <attribute name="location">viewer</attribute>
+      <section>
+        <item>
+          <attribute name="label">_Rotate Clockwise</attribute>
+          <attribute name="action">quiver.RotateCW</attribute>
+        </item>
+        <item>
+          <attribute name="label">Rotate _Counterclockwise</attribute>
+          <attribute name="action">quiver.RotateCCW</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">Flip _Horizontally</attribute>
+          <attribute name="action">quiver.FlipH</attribute>
+        </item>
+        <item>
+          <attribute name="label">Flip _Vertically</attribute>
+          <attribute name="action">quiver.FlipV</attribute>
+        </item>
+      </section>
+    </submenu>
+
+    <!-- ==================== Video (viewer column) ===================== -->
+    <submenu>
+      <attribute name="label">V_ideo</attribute>
+      <attribute name="location">viewer</attribute>
+      <section>
+        <item>
+          <attribute name="label">_Play / Pause</attribute>
+          <attribute name="action">quiver.VideoPlay</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">Seek _Back 5s</attribute>
+          <attribute name="action">quiver.VideoSeekBack5</attribute>
+        </item>
+        <item>
+          <attribute name="label">Seek _Forward 5s</attribute>
+          <attribute name="action">quiver.VideoSeekFwd5</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">Skip Back _10s</attribute>
+          <attribute name="action">quiver.VideoSkipBack</attribute>
+        </item>
+        <item>
+          <attribute name="label">Skip Forward 1_0s</attribute>
+          <attribute name="action">quiver.VideoSkipForward</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">Previous Frame</attribute>
+          <attribute name="action">quiver.VideoFrameBack</attribute>
+        </item>
+        <item>
+          <attribute name="label">Next Frame</attribute>
+          <attribute name="action">quiver.VideoFrameFwd</attribute>
+        </item>
+      </section>
+      <section>
+        <submenu>
+          <attribute name="label">Playback _Speed</attribute>
+          <item>
+            <attribute name="label">0.25x</attribute>
+            <attribute name="action">quiver.VideoSpeed025</attribute>
+          </item>
+          <item>
+            <attribute name="label">0.5x</attribute>
+            <attribute name="action">quiver.VideoSpeed05</attribute>
+          </item>
+          <item>
+            <attribute name="label">1.0x (Normal)</attribute>
+            <attribute name="action">quiver.VideoSpeed10</attribute>
+          </item>
+          <item>
+            <attribute name="label">1.5x</attribute>
+            <attribute name="action">quiver.VideoSpeed15</attribute>
+          </item>
+          <item>
+            <attribute name="label">2.0x</attribute>
+            <attribute name="action">quiver.VideoSpeed20</attribute>
+          </item>
+          <item>
+            <attribute name="label">4.0x</attribute>
+            <attribute name="action">quiver.VideoSpeed40</attribute>
+          </item>
+          <item>
+            <attribute name="label">8.0x</attribute>
+            <attribute name="action">quiver.VideoSpeed80</attribute>
+          </item>
+          <item>
+            <attribute name="label">16.0x</attribute>
+            <attribute name="action">quiver.VideoSpeed160</attribute>
+          </item>
+        </submenu>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">_Take Snapshot</attribute>
+          <attribute name="action">quiver.VideoSnapshot</attribute>
+        </item>
+      </section>
+    </submenu>
+
+    <!-- ============================= Go =============================== -->
+    <submenu>
+      <attribute name="label">_Go</attribute>
+      <section>
+        <item>
+          <attribute name="label">_First Image</attribute>
+          <attribute name="action">quiver.ImageFirst</attribute>
+          <attribute name="location">viewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">_Previous Image</attribute>
+          <attribute name="action">quiver.ImagePrevious</attribute>
+          <attribute name="location">viewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">_Next Image</attribute>
+          <attribute name="action">quiver.ImageNext</attribute>
+          <attribute name="location">viewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">_Last Image</attribute>
+          <attribute name="action">quiver.ImageLast</attribute>
+          <attribute name="location">viewer</attribute>
+        </item>
+        <item>
+          <attribute name="label">Go _Back</attribute>
+          <attribute name="action">quiver.BrowserHistoryBack</attribute>
+          <attribute name="location">browser</attribute>
+        </item>
+        <item>
+          <attribute name="label">Go _Forward</attribute>
+          <attribute name="action">quiver.BrowserHistoryForward</attribute>
+          <attribute name="location">browser</attribute>
+        </item>
+      </section>
+      <section>
+        <item>
+          <attribute name="label">Open _Parent</attribute>
+          <attribute name="action">quiver.GoFolderParent</attribute>
+        </item>
+        <item>
+          <attribute name="label">Open _Next Folder</attribute>
+          <attribute name="action">quiver.GoFolderNext</attribute>
+        </item>
+        <item>
+          <attribute name="label">Open _Previous Folder</attribute>
+          <attribute name="action">quiver.GoFolderPrev</attribute>
+        </item>
+      </section>
+    </submenu>
+
+    <!-- ==================== Bookmarks (live placeholder) ============== -->
+    <submenu>
+      <attribute name="label">_Bookmarks</attribute>
+      <attribute name="location">bookmarks</attribute>
+      <!-- Inline content is a fallback; the C++ filter substitutes the live
+           m_pBookmarkMenu (populated by LoadBookmarks). -->
+      <item>
+        <attribute name="label">_Add Bookmark</attribute>
+        <attribute name="action">quiver.BookmarksAdd</attribute>
+      </item>
+      <item>
+        <attribute name="label">_Edit Bookmarks...</attribute>
+        <attribute name="action">quiver.BookmarksEdit</attribute>
+      </item>
+    </submenu>
+
+    <!-- ==================== Tools (live placeholder) ================== -->
+    <submenu>
+      <attribute name="label">_Tools</attribute>
+      <attribute name="location">tools</attribute>
+      <item>
+        <attribute name="label">Adjust Date...</attribute>
+        <attribute name="action">quiver.AdjustDate</attribute>
+      </item>
+      <item>
+        <attribute name="label">Rename...</attribute>
+        <attribute name="action">quiver.Rename</attribute>
+      </item>
+      <item>
+        <attribute name="label">Organize...</attribute>
+        <attribute name="action">quiver.Organize</attribute>
+      </item>
+      <item>
+        <attribute name="label">External Tools...</attribute>
+        <attribute name="action">quiver.ExternalTools</attribute>
+      </item>
+    </submenu>
+
+    <!-- ============================= Help ============================= -->
+    <submenu>
+      <attribute name="label">_Help</attribute>
+      <section>
+        <item>
+          <attribute name="label">_About</attribute>
+          <attribute name="action">quiver.About</attribute>
+        </item>
+      </section>
+    </submenu>
+
+  </menu>
+
+  <!-- Standalone, persistent live menus.  RebuildMenubar() pulls these objects
+       by id and the filter substitutes them for the Bookmarks / Tools
+       placeholders above.  They are populated at runtime by LoadBookmarks() /
+       LoadExternalTools(); the <item>s here are only runtime fallbacks. -->
+  <menu id="bookmark_menu">
+    <item>
+      <attribute name="label">_Add Bookmark</attribute>
+      <attribute name="action">quiver.BookmarksAdd</attribute>
+    </item>
+    <item>
+      <attribute name="label">_Edit Bookmarks...</attribute>
+      <attribute name="action">quiver.BookmarksEdit</attribute>
+    </item>
+  </menu>
+
+  <menu id="external_tools_menu">
+    <item>
+      <attribute name="label">Adjust Date...</attribute>
+      <attribute name="action">quiver.AdjustDate</attribute>
+    </item>
+    <item>
+      <attribute name="label">Rename...</attribute>
+      <attribute name="action">quiver.Rename</attribute>
+    </item>
+    <item>
+      <attribute name="label">Organize...</attribute>
+      <attribute name="action">quiver.Organize</attribute>
+    </item>
+    <item>
+      <attribute name="label">External Tools...</attribute>
+      <attribute name="action">quiver.ExternalTools</attribute>
+    </item>
+  </menu>
+</interface>

@@ -647,6 +647,7 @@ public:
 	int   m_iSlideShowDuration;
 	int   m_iSlideShowWaitCount;
 	bool  m_bSlideShowLoop;
+	bool  m_bVideoLoop;
 
 	bool m_bMaximizeViewableArea;
 	bool m_bMaximizeViewabe;
@@ -699,6 +700,7 @@ public:
 	gboolean    m_bVideoPanning;    // left-button pan drag in progress
 	gboolean    m_bVideoNeedsFirstFrame; // TRUE after switching videos: defer opacity restore until new frame is decoded
 	gboolean    m_bVideoFlushPending; // TRUE between the flushing seek and the next ASYNC_DONE
+	bool        m_bVideoPagePending; // TRUE: keep the image/preview page visible until the video's first frame is ready
 	gdouble     m_dVideoPanStartRootX; // pan drag start point, root (screen) coords
 	gdouble     m_dVideoPanStartRootY;
 	gdouble     m_dVideoPanStartPX; // crop window left/top at drag start
@@ -1439,7 +1441,7 @@ static void set_control_visible(GtkWidget* w, bool visible)
 {
 	if (!w) return;
 	gtk_widget_set_opacity(w, visible ? 1.0 : 0.0);
-	gtk_widget_set_can_focus(w, FALSE);
+	gtk_widget_set_focusable(w, FALSE);
 }
 
 #define CONTROLS_FADE_STEP  0.12
@@ -1903,6 +1905,9 @@ timeout_event_motion_notify (gpointer user_data)
 }
 
 
+/* Show/populate the seek-time popover positioned above the slider handle.
+ * value is in [0,1] (fraction of the clip).  bKeyboard is true for arrow-key
+ * seeks, which auto-hide after a short delay. */
 static gboolean
 viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble value, gpointer user_data)
 {
@@ -2711,6 +2716,13 @@ static void viewer_video_option_rotate_cb(GtkButton *button, gpointer user_data)
 	}
 }
 
+static void viewer_video_option_loop_cb(GtkButton *button, gpointer user_data)
+{
+	(void)button;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	p->m_bVideoLoop = !p->m_bVideoLoop;
+}
+
 static void viewer_video_options_popover_closed_cb(GtkPopover *popover, gpointer user_data)
 {
 	(void)user_data;
@@ -2817,6 +2829,17 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 		GtkWidget *item_rot = gtk_button_new_with_label("Rotate 90°");
 		g_signal_connect(item_rot, "clicked", G_CALLBACK(viewer_video_option_rotate_cb), p);
 		gtk_box_append(GTK_BOX(box), item_rot);
+	}
+
+	gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+	{
+		gchar *loop_label = g_strdup_printf("%s Loop",
+			p->m_bVideoLoop ? "✓" : "  ");
+		GtkWidget *item_loop = gtk_button_new_with_label(loop_label);
+		g_free(loop_label);
+		g_signal_connect(item_loop, "clicked",
+			G_CALLBACK(viewer_video_option_loop_cb), p);
+		gtk_box_append(GTK_BOX(box), item_loop);
 	}
 	
 	gtk_popover_popup(GTK_POPOVER(popover));
@@ -2988,9 +3011,23 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 
 		case GST_MESSAGE_EOS:
 			{
-				// reset state to ready
-				gst_element_set_state(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_STATE_READY);
-				pViewerImpl->StopVideo(true);
+				if (pViewerImpl->m_bVideoLoop)
+				{
+					/* Loop mode: seek back to start and keep playing */
+					gst_element_seek(GST_ELEMENT(pViewerImpl->m_pPipeline),
+						pViewerImpl->m_dPlaybackSpeed, GST_FORMAT_TIME,
+						GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+						GST_SEEK_TYPE_SET, 0,
+						GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+				}
+				else
+				{
+					/* No loop: pause at end, keep showing the video */
+					gst_element_set_state(GST_ELEMENT(pViewerImpl->m_pPipeline),
+						GST_STATE_PAUSED);
+					pViewerImpl->SetIsPlaying(false);
+					pViewerImpl->UpdateTimeline();
+				}
 			}
 			break;
 		case GST_MESSAGE_STATE_CHANGED:
@@ -3109,8 +3146,21 @@ void Viewer::ViewerImpl::UpdateTimeline()
 
 void Viewer::ViewerImpl::ShowVideoPage()
 {
-	if (m_pStack != NULL)
+	/* The video page is a transparent GtkFixed containing the GL sink, whose
+	 * opacity is kept at 0 until the first frame of the new video is decoded
+	 * (m_bVideoNeedsFirstFrame).  Switching the stack to that page before the
+	 * frame is ready would therefore show the viewer's background colour for a
+	 * frame or two — a flicker that overwrites the preview still on the image
+	 * page.  So defer the page switch until the first frame arrives (done in
+	 * video_paintable_invalidated_cb) and leave the image/preview page visible
+	 * meanwhile.  When the frame is already present, switch immediately. */
+	if (m_bVideoNeedsFirstFrame)
 	{
+		m_bVideoPagePending = TRUE;
+	}
+	else if (m_pStack != NULL)
+	{
+		m_bVideoPagePending = FALSE;
 		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
 	}
 	/* The picture is a child of the video fixed page; GtkStack shows the
@@ -3165,6 +3215,23 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 			else
 			{
 				SetIsPlaying(true);
+
+				/* If playback stopped at the end of the video (EOS leaves the
+				 * pipeline paused at the final position), resuming play from
+				 * there does nothing — it immediately re-hits the end.  Restart
+				 * from the beginning instead so pressing play always plays. */
+				gint64 pos = 0, dur = 0;
+				gst_element_query_position(GST_ELEMENT(m_pPipeline), GST_FORMAT_TIME, &pos);
+				gst_element_query_duration(GST_ELEMENT(m_pPipeline), GST_FORMAT_TIME, &dur);
+				if (dur > 0 && pos >= dur - 1000000) // within 1ms of the end, or past it
+				{
+					gst_element_seek(GST_ELEMENT(m_pPipeline),
+						m_dPlaybackSpeed, GST_FORMAT_TIME,
+						GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+						GST_SEEK_TYPE_SET, 0,
+						GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+				}
+
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
 				if (0 != m_iTimeoutMouseMotionNotify)
@@ -3290,7 +3357,18 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	 * opacity restore so the old frame is never shown. */
 	m_bVideoNeedsFirstFrame = TRUE;
 	m_bVideoFlushPending = FALSE;
+	m_bVideoPagePending = FALSE;
 	//gtk_widget_set_double_buffered (m_pImageView, TRUE); // Double buffering handled by gtk4sink
+
+	if (reloadImage && 0 != m_ImageListPtr->GetSize())
+	{
+		/* Load the image BEFORE switching the stack to avoid a grey flash
+		 * where the image page is visible but not yet rendered. */
+		if (gtk_widget_get_mapped(m_pImageView))
+			gtk_widget_queue_draw(m_pImageView);
+		if (0 == m_iTimeoutSlideshowID)
+			LoadImage(m_ImageListPtr->GetCurrent());
+	}
 	gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "image");
 
 	/* reset the digital zoom so the next video starts at fit, and drop the
@@ -3355,14 +3433,6 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	{
 		CancelControlsFade();
 		set_control_visible(m_pMediaControls, true);
-	}
-
-	if (reloadImage && 0 != m_ImageListPtr->GetSize())
-	{
-		if (gtk_widget_get_mapped(m_pImageView))
-			gtk_widget_queue_draw(m_pImageView);
-		if (0 == m_iTimeoutSlideshowID)
-			LoadImage(m_ImageListPtr->GetCurrent());
 	}
 }
 
@@ -3933,6 +4003,15 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 	{
 		p->m_bVideoNeedsFirstFrame = FALSE;
 		gtk_widget_set_opacity(p->m_pVideoSinkWidget, 1.0);
+		/* The first frame is now decoded, so the video page no longer shows
+		 * the transparent sink over the background.  Complete the deferred
+		 * page switch requested by ShowVideoPage() to avoid the background
+		 * flicker that would appear if we switched before the frame. */
+		if (p->m_bVideoPagePending && p->m_pStack != NULL)
+		{
+			p->m_bVideoPagePending = FALSE;
+			gtk_stack_set_visible_child_name(GTK_STACK(p->m_pStack), "video");
+		}
 	}
 }
 
@@ -4939,7 +5018,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	GtkWidget* scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.001);
 	m_pPlayProgress = scale;
 	gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
-	gtk_widget_set_can_focus(scale, FALSE);
+	gtk_widget_set_focusable(scale, FALSE);
 	gtk_widget_set_hexpand(scale, TRUE);
 
 	{
@@ -5175,6 +5254,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 
 	m_iSlideShowDuration = prefsPtr->GetInteger(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_DURATION, 3000);
 	m_bSlideShowLoop = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_LOOP,true);
+	m_bVideoLoop = false;
 
 	m_bMaximizeViewableArea = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, false);
 	m_bHideFilmstripFS = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_HIDE_FS, true);
@@ -5310,6 +5390,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	m_bVideoPanning = FALSE;
 	m_bVideoNeedsFirstFrame = FALSE;
 	m_bVideoFlushPending = FALSE;
+	m_bVideoPagePending = FALSE;
 	m_pVideoPaintable = NULL;
 	GstElement* video_sink = NULL;
 	GstElement* gtk4glsink = gst_element_factory_make("gtk4paintablesink", NULL);
@@ -5587,7 +5668,7 @@ bool Viewer::ResetViewMode()
 
 void Viewer::GrabFocus()
 {
-	gtk_widget_grab_focus(m_ViewerImplPtr->m_pImageView);
+	QuiverUtils::GrabFocusForWidget(m_ViewerImplPtr->m_pImageView);
 }
 
 

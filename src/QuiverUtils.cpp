@@ -509,4 +509,33 @@ void ConnectUnmodifiedAccelerators() {
 		radio_action_state_changed_cb(G_OBJECT(action), NULL, widget);
 	}
 
+	/* One-shot: grab focus on the widget once it becomes mapped, then drop the
+	 * handler so it only runs a single time. */
+	struct FocusOnMap { GtkWidget *widget; gulong handler_id; };
+	static void grab_focus_on_map(GtkWidget *widget, gpointer user_data)
+	{
+		FocusOnMap *f = (FocusOnMap *)user_data;
+		g_signal_handler_disconnect(widget, f->handler_id);
+		g_free(f);
+		if (gtk_widget_get_mapped(widget) && !gtk_widget_has_focus(widget))
+			gtk_widget_grab_focus(widget);
+	}
+
+	gboolean GrabFocusForWidget(GtkWidget *widget)
+	{
+		if (widget == NULL)
+			return FALSE;
+		/* If the widget is already mapped (and focusable), grab focus now. */
+		if (gtk_widget_get_mapped(widget) && gtk_widget_get_focusable(widget)
+			&& gtk_widget_grab_focus(widget))
+			return TRUE;
+		/* Otherwise defer until it is mapped — gtk_widget_grab_focus fails
+		 * silently on a not-yet-mapped widget, which is what happens when the
+		 * browser/viewer UI is switched just before the first layout pass. */
+		FocusOnMap *f = g_new0(FocusOnMap, 1);
+		f->widget = widget;
+		f->handler_id = g_signal_connect(widget, "map", G_CALLBACK(grab_focus_on_map), f);
+		return FALSE;
+	}
+
 }

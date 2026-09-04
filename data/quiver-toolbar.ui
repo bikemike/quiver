@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <!--
+    Main application toolbar.
+
+    The toolbar is a GtkBox made of three child boxes:
+      * browser_box - shown only in browser mode
+      * shared_box  - shown in both modes
+      * viewer_box  - shown only in viewer mode
+    C++ code toggles browser_box / viewer_box visibility on state change, so
+    each state's toolbar group is an independent, per-state container (its own
+    "placeholder").  Because they are distinct boxes, unmerging one state never
+    disturbs the other state's controls.
+
+    Toggle buttons bind to stateful boolean actions so GtkToggleButton reflects
+    the active state automatically.
+  -->
+  <object class="GtkBox" id="QuiverToolbar">
+    <property name="orientation">horizontal</property>
+    <property name="spacing">2</property>
+
+    <!-- ===================== Browser-only controls ===================== -->
+    <child>
+      <object class="GtkBox" id="browser_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">2</property>
+        <child>
+          <object class="GtkButton" id="button_uimode_viewer">
+            <property name="action-name">quiver.UIModeViewer</property>
+            <property name="tooltip-text">View Image</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">image-x-generic</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.BrowserHistoryBack</property>
+            <property name="tooltip-text">Go Back</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">go-previous</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.BrowserHistoryForward</property>
+            <property name="tooltip-text">Go Forward</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">go-next</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton">
+            <property name="action-name">quiver.BrowserViewSidebar</property>
+            <property name="tooltip-text">Show/Hide Sidebar (Folder Tree, Preview Window, etc)</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">folder</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.BrowserTrash</property>
+            <property name="tooltip-text">Move selected image(s) to the Trash</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">user-trash</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- ===================== Shared controls ===================== -->
+    <child>
+      <object class="GtkBox" id="shared_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">2</property>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton">
+            <property name="action-name">quiver.FullScreen</property>
+            <property name="tooltip-text">Toggle Full Screen Mode</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">view-fullscreen</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton">
+            <property name="action-name">quiver.SlideShow</property>
+            <property name="tooltip-text">Toggle Slide Show</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">media-playback-start</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+
+    <!-- ===================== Viewer-only controls ===================== -->
+    <child>
+      <object class="GtkBox" id="viewer_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">2</property>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.ImagePrevious</property>
+            <property name="tooltip-text">Go to previous image</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">go-previous</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.ImageNext</property>
+            <property name="tooltip-text">Go to next image</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">go-next</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.ZoomIn</property>
+            <property name="tooltip-text">Zoom In</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">zoom-in</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.ZoomOut</property>
+            <property name="tooltip-text">Zoom Out</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">zoom-out</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.Zoom100</property>
+            <property name="tooltip-text">Actual Size</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">zoom-original</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.ZoomFit</property>
+            <property name="tooltip-text">Fit to Window</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">zoom-fit-best</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.RotateCCW</property>
+            <property name="tooltip-text">Rotate Counterclockwise</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">object-rotate-left</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.RotateCW</property>
+            <property name="tooltip-text">Rotate Clockwise</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">object-rotate-right</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton">
+            <property name="action-name">quiver.ViewerTrash</property>
+            <property name="tooltip-text">Move image to the Trash</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">user-trash</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="button_uimode_browser">
+            <property name="action-name">quiver.UIModeBrowser</property>
+            <property name="tooltip-text">Browse Images</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">folder</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
