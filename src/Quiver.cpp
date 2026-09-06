@@ -121,6 +121,9 @@ public:
 
 	GtkWidget *m_pQuiverWindow;
 
+	GtkWidget *m_pHeaderBar;
+	GtkWidget *m_pMenuButton;
+	GtkWidget *m_pPrefButton;
 	GtkWidget *m_pMenubar;
 	/* Pristine, never-mutated GtkBuilder of data/quiver-menus.ui.  The visible
 	 * menu model is a filtered clone produced on every mode switch. */
@@ -265,6 +268,9 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pQuiver = parent;
 	m_pBuilder = NULL;
 	m_bViewerMode = false;
+	m_pHeaderBar = NULL;
+	m_pMenuButton = NULL;
+	m_pPrefButton = NULL;
 	m_pMenubar = NULL;
 	m_pMenubarBuilder = NULL;
 	m_pAppMenuModel = NULL;
@@ -607,21 +613,25 @@ void QuiverImpl::RebuildMenubar()
 	const std::string state = m_bViewerMode ? "viewer" : "browser";
 	GMenu *appMenu = FilterMenuModel(m_pAppMenuModel, state);
 
-	if (NULL == m_pMenubar)
+	if (NULL == m_pMenuButton)
 	{
-		m_pMenubar = gtk_popover_menu_bar_new_from_model(G_MENU_MODEL(appMenu));
-		/* Don't let the menubar steal focus on click, otherwise arrow-key
+		m_pMenuButton = gtk_menu_button_new();
+		gtk_widget_set_name(m_pMenuButton, "QuiverMenuButton");
+		gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pMenuButton), "open-menu-symbolic");
+		gtk_widget_set_tooltip_text(m_pMenuButton, "Main Menu");
+		/* Don't let the menu button steal focus on click, otherwise arrow-key
 		 * navigation in the browser/icon view and viewer is lost until the
-		 * user clicks back into the content area.  Also make it (and its
-		 * labels) completely non-focusable so Tab skips it, keeping keyboard
-		 * focus on the content for arrow-key navigation. */
-		gtk_widget_set_focus_on_click(m_pMenubar, FALSE);
-		gtk_widget_set_focusable(m_pMenubar, FALSE);
+		 * user clicks back into the content area.  Also make it completely
+		 * non-focusable so Tab skips it. */
+		gtk_widget_set_focus_on_click(m_pMenuButton, FALSE);
+		gtk_widget_set_focusable(m_pMenuButton, FALSE);
+		gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(m_pMenuButton), G_MENU_MODEL(appMenu));
 	}
 	else
 	{
-		gtk_popover_menu_bar_set_menu_model(GTK_POPOVER_MENU_BAR(m_pMenubar), G_MENU_MODEL(appMenu));
+		gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(m_pMenuButton), G_MENU_MODEL(appMenu));
 	}
+	m_pMenubar = m_pMenuButton;
 	g_object_unref(appMenu);
 }
 
@@ -986,6 +996,11 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_pQuiverWindow = gtk_application_window_new (g_pApp);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");
 
+	m_QuiverImplPtr->m_pHeaderBar = gtk_header_bar_new();
+	gtk_widget_set_name(m_QuiverImplPtr->m_pHeaderBar, "Quiver HeaderBar");
+	gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar), TRUE);
+	gtk_window_set_titlebar(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow), m_QuiverImplPtr->m_pHeaderBar);
+
 
 	if (LoadSettings())
 	{	
@@ -1078,8 +1093,23 @@ void Quiver::Init()
 	 * can be shown or hidden when the UI mode changes. */
 	QuiverImpl::CreateToolbarButtons(m_QuiverImplPtr.get());
 
-	/* Give the browser the shared toolbar so it can insert its thumb-size widget */
-	m_QuiverImplPtr->m_BrowserPtr->SetToolbar(m_QuiverImplPtr->m_pToolbar);
+	/* Move toolbar items to the headerbar (start side) */
+	gtk_header_bar_pack_start(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar), m_QuiverImplPtr->m_pToolbar);
+
+	/* Create preferences button with gear icon */
+	m_QuiverImplPtr->m_pPrefButton = gtk_button_new_from_icon_name("preferences-system-symbolic");
+	gtk_widget_set_name(m_QuiverImplPtr->m_pPrefButton, "Quiver Preferences Button");
+	gtk_actionable_set_action_name(GTK_ACTIONABLE(m_QuiverImplPtr->m_pPrefButton), "quiver.Preferences");
+	gtk_widget_set_tooltip_text(m_QuiverImplPtr->m_pPrefButton, "Preferences");
+	gtk_widget_set_focus_on_click(m_QuiverImplPtr->m_pPrefButton, FALSE);
+	gtk_widget_set_focusable(m_QuiverImplPtr->m_pPrefButton, FALSE);
+
+	/* Pack headerbar end items: hamburger menu button at far right, preferences gear to its left */
+	gtk_header_bar_pack_end(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar), m_QuiverImplPtr->m_pMenuButton);
+	gtk_header_bar_pack_end(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar), m_QuiverImplPtr->m_pPrefButton);
+
+	/* Give the browser the headerbar so it can insert its thumb-size widget at the end */
+	m_QuiverImplPtr->m_BrowserPtr->SetToolbar(m_QuiverImplPtr->m_pHeaderBar);
 
 	m_QuiverImplPtr->m_BrowserPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
 	m_QuiverImplPtr->m_ViewerPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
@@ -1171,11 +1201,15 @@ void Quiver::Init()
 	}
 	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, prefs_show);
 
-	// menubar
+	// menubar / hamburger menu button
 	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW, true);
 	if (prefs_show)
 	{
-		gtk_widget_set_visible(m_QuiverImplPtr->m_pMenubar, TRUE);
+		gtk_widget_set_visible(m_QuiverImplPtr->m_pMenuButton, TRUE);
+	}
+	else
+	{
+		gtk_widget_set_visible(m_QuiverImplPtr->m_pMenuButton, FALSE);
 	}
 	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_MENUBAR, prefs_show);
 	
@@ -1184,6 +1218,10 @@ void Quiver::Init()
 	if (prefs_show)
 	{
 		gtk_widget_set_visible(m_QuiverImplPtr->m_pToolbar, TRUE);
+	}
+	else
+	{
+		gtk_widget_set_visible(m_QuiverImplPtr->m_pToolbar, FALSE);
 	}
 	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, prefs_show);
 
@@ -1212,8 +1250,6 @@ void Quiver::Init()
 	gtk_paned_set_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),hpaned_pos);
 
 	// pack the main gui area with the rest of the gui components
-	gtk_box_append (GTK_BOX (vbox), m_QuiverImplPtr->m_pMenubar);
-	gtk_box_append (GTK_BOX (vbox), m_QuiverImplPtr->m_pToolbar);
 	gtk_box_append (GTK_BOX (vbox), m_QuiverImplPtr->m_pHPanedMainArea);
 	gtk_box_append (GTK_BOX (vbox), statusbar);
 
@@ -1764,10 +1800,14 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 	g_object_set_data_full(G_OBJECT(pQuiverImpl->m_pQuiverWindow), "toolbar-builder",
 	                       builder, (GDestroyNotify)g_object_unref);
 
-	/* Toolbar buttons must not steal keyboard focus from the content area,
+	/* Toolbar and headerbar buttons must not steal keyboard focus from the content area,
 	 * otherwise arrow-key navigation in the browser/icon view and viewer is
 	 * lost until the user clicks back in. */
 	quiver_toolbar_set_focus_on_click(toolbar, FALSE);
+	if (pQuiverImpl->m_pHeaderBar)
+	{
+		quiver_toolbar_set_focus_on_click(pQuiverImpl->m_pHeaderBar, FALSE);
+	}
 
 	/* start in browser mode: hide the viewer controls until ShowViewer() */
 	gtk_widget_set_visible(pQuiverImpl->m_pToolbarViewerBox, FALSE);
@@ -1905,6 +1945,10 @@ void QuiverImpl::UpdateUI()
 		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, FALSE);
 		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, FALSE);
 		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_PROPERTIES, FALSE);
+		if (m_pHeaderBar)
+		{
+			gtk_widget_set_visible(m_pHeaderBar, FALSE);
+		}
 	}
 	else
 	{
@@ -1916,14 +1960,19 @@ void QuiverImpl::UpdateUI()
 
 		if (GDK_WINDOW_STATE_FULLSCREEN & m_WindowState)
 		{
-			bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW_FS, false);
-			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, bShow);
+			bool bShowTB = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW_FS, false);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, bShowTB);
 
-			bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW_FS, false);
-			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_MENUBAR, bShow);
+			bool bShowMB = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW_FS, false);
+			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_MENUBAR, bShowMB);
 			
-			bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW_FS, false);
+			bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW_FS, false);
 			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, bShow);
+
+			if (m_pHeaderBar)
+			{
+				gtk_widget_set_visible(m_pHeaderBar, (bShowTB || bShowMB) ? TRUE : FALSE);
+			}
 		}
 		else
 		{
@@ -1938,6 +1987,11 @@ void QuiverImpl::UpdateUI()
 			
 			bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_STATUSBAR_SHOW);
 			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, bShow);
+
+			if (m_pHeaderBar)
+			{
+				gtk_widget_set_visible(m_pHeaderBar, TRUE);
+			}
 		}
 	}
 }
@@ -2194,13 +2248,25 @@ void Quiver::OnShowToolbar(bool bShow)
 		}
 	}
 
+	if (m_QuiverImplPtr->m_pToolbar)
+	{
+		gtk_widget_set_visible(m_QuiverImplPtr->m_pToolbar, bShow ? TRUE : FALSE);
+	}
+
 	if (bShow)
 	{
-		gtk_widget_set_visible(m_QuiverImplPtr->m_pToolbar, TRUE);
+		if (m_QuiverImplPtr->m_pHeaderBar)
+		{
+			gtk_widget_set_visible(m_QuiverImplPtr->m_pHeaderBar, TRUE);
+		}
 	}
-	else
+	else if (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState)
 	{
-		gtk_widget_set_visible(m_QuiverImplPtr->m_pToolbar, FALSE);
+		bool bShowMB = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_VIEW_MENUBAR);
+		if (!bShowMB && m_QuiverImplPtr->m_pHeaderBar)
+		{
+			gtk_widget_set_visible(m_QuiverImplPtr->m_pHeaderBar, FALSE);
+		}
 	}
 }
 
@@ -2249,13 +2315,25 @@ void Quiver::OnShowMenubar(bool bShow)
 		}
 	}
 
+	if (m_QuiverImplPtr->m_pMenuButton)
+	{
+		gtk_widget_set_visible(m_QuiverImplPtr->m_pMenuButton, bShow ? TRUE : FALSE);
+	}
+
 	if (bShow)
 	{
-		gtk_widget_set_visible(m_QuiverImplPtr->m_pMenubar, TRUE);
+		if (m_QuiverImplPtr->m_pHeaderBar)
+		{
+			gtk_widget_set_visible(m_QuiverImplPtr->m_pHeaderBar, TRUE);
+		}
 	}
-	else
+	else if (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState)
 	{
-		gtk_widget_set_visible(m_QuiverImplPtr->m_pMenubar, FALSE);
+		bool bShowTB = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN);
+		if (!bShowTB && m_QuiverImplPtr->m_pHeaderBar)
+		{
+			gtk_widget_set_visible(m_QuiverImplPtr->m_pHeaderBar, FALSE);
+		}
 	}
 }
 

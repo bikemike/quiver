@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "QuiverUtils.h"
+#include "test_helpers.h"
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
 TEST_CASE("QuiverUtils EXIF Reorientation", "[unit][pixbuf][fast]")
@@ -94,3 +95,40 @@ TEST_CASE("QuiverUtils Action Management", "[unit][actions][fast]")
         REQUIRE(QuiverUtils::GetRadioActionCurrent("sort_name") == 3);
     }
 }
+
+TEST_CASE("QuiverUtils SetWidgetBgColor", "[unit][gui][color]")
+{
+    REQUIRE_DISPLAY();
+
+    // NULL widget should be a safe no-op
+    GdkRGBA c1 = { 0.1f, 0.2f, 0.3f, 1.0f };
+    QuiverUtils::SetWidgetBgColor(nullptr, &c1);
+    QuiverUtils::SetWidgetBgColor(nullptr, nullptr);
+
+    GtkWidget *widget = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    g_object_ref_sink(widget);
+
+    // Initial color set
+    QuiverUtils::SetWidgetBgColor(widget, &c1);
+
+    // Change color (previously caused double free if old color existed)
+    GdkRGBA c2 = { 0.4f, 0.5f, 0.6f, 1.0f };
+    QuiverUtils::SetWidgetBgColor(widget, &c2);
+
+    // Change color again
+    GdkRGBA c3 = { 0.7f, 0.8f, 0.9f, 1.0f };
+    QuiverUtils::SetWidgetBgColor(widget, &c3);
+
+    // Reset to theme color (color == NULL) - was the crash trigger in user trace
+    QuiverUtils::SetWidgetBgColor(widget, nullptr);
+
+    // Reset again (redundant call should be safe)
+    QuiverUtils::SetWidgetBgColor(widget, nullptr);
+
+    // Set color again after reset
+    QuiverUtils::SetWidgetBgColor(widget, &c1);
+
+    // Destroy widget while custom color is still set (must clean up provider from display safely)
+    g_object_unref(widget);
+}
+

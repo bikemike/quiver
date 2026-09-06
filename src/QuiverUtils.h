@@ -57,6 +57,11 @@ namespace QuiverUtils
 	 * boolean stateful actions (which triggers a GTK warning and no-op). */
 	void BindToggleWidget(GtkWidget *widget, GtkWidget *ancestor, const char *action_name);
 	void BindRadioWidget(GtkWidget *widget, GtkWidget *ancestor, const char *action_name);
+
+	/* Set or clear custom background color on a widget via a scoped GTK4 CSS provider.
+	 * If color is NULL, any previously attached background provider and class are
+	 * removed, restoring default system theme styling. */
+	void SetWidgetBgColor(GtkWidget *widget, const GdkRGBA *color);
 }
 
 #endif

@@ -538,4 +538,72 @@ void ConnectUnmodifiedAccelerators() {
 		return FALSE;
 	}
 
+	static void bg_provider_cleanup(gpointer data)
+	{
+		GtkCssProvider *provider = GTK_CSS_PROVIDER(data);
+		GdkDisplay *display = gdk_display_get_default();
+		if (display != NULL)
+		{
+			gtk_style_context_remove_provider_for_display(display, GTK_STYLE_PROVIDER(provider));
+		}
+		g_object_unref(provider);
+	}
+
+	void SetWidgetBgColor(GtkWidget *widget, const GdkRGBA *color)
+	{
+		if (widget == NULL)
+			return;
+
+		static guint class_counter = 0;
+
+		GtkCssProvider *provider = (GtkCssProvider *)g_object_get_data(G_OBJECT(widget), "quiver-bg-provider");
+		gchar *class_name = (gchar *)g_object_get_data(G_OBJECT(widget), "quiver-bg-class");
+
+		if (color == NULL)
+		{
+			if (class_name != NULL)
+			{
+				gtk_widget_remove_css_class(widget, class_name);
+				g_object_steal_data(G_OBJECT(widget), "quiver-bg-class");
+				g_free(class_name);
+			}
+			if (provider != NULL)
+			{
+				g_object_set_data(G_OBJECT(widget), "quiver-bg-provider", NULL);
+			}
+			return;
+		}
+
+		gchar *color_str = gdk_rgba_to_string(color);
+
+		if (provider == NULL)
+		{
+			provider = gtk_css_provider_new();
+			class_name = g_strdup_printf("quiver-bg-%u", ++class_counter);
+
+			gchar *css = g_strdup_printf(".%s { background-color: %s; }", class_name, color_str);
+			gtk_css_provider_load_from_string(provider, css);
+			g_free(css);
+
+			GdkDisplay *display = gdk_display_get_default();
+			if (display != NULL)
+			{
+				gtk_style_context_add_provider_for_display(
+					display, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+			}
+
+			gtk_widget_add_css_class(widget, class_name);
+			g_object_set_data_full(G_OBJECT(widget), "quiver-bg-class", class_name, g_free);
+			g_object_set_data_full(G_OBJECT(widget), "quiver-bg-provider", provider, bg_provider_cleanup);
+		}
+		else
+		{
+			gchar *css = g_strdup_printf(".%s { background-color: %s; }", class_name, color_str);
+			gtk_css_provider_load_from_string(provider, css);
+			g_free(css);
+		}
+
+		g_free(color_str);
+	}
+
 }

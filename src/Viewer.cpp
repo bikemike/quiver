@@ -105,42 +105,8 @@ void navigation_control_button_release_event (GtkGestureClick *gesture, gint n_p
 
 
 
-static void set_widget_bg_color(GtkWidget *widget, GdkRGBA *color) {
-    static guint class_counter = 0;
-    gchar *old_class = (gchar *)g_object_get_data(G_OBJECT(widget), "quiver-bg-class");
-    
-    GtkCssProvider *old = (GtkCssProvider *)g_object_get_data(G_OBJECT(widget), "quiver-bg-provider");
-    if (old != NULL) {
-        gtk_style_context_remove_provider_for_display(
-            gdk_display_get_default(), GTK_STYLE_PROVIDER(old));
-        g_object_set_data(G_OBJECT(widget), "quiver-bg-provider", NULL);
-        g_object_unref(old);
-    }
-    
-    if (old_class != NULL) {
-        gtk_widget_remove_css_class(widget, old_class);
-        g_object_set_data(G_OBJECT(widget), "quiver-bg-class", NULL);
-        g_free(old_class);
-    }
-    
-    if (color == NULL)
-        return;
-    
-    GtkCssProvider *provider = gtk_css_provider_new();
-    
-    gchar *class_name = g_strdup_printf("quiver-bg-%u", ++class_counter);
-    gchar *color_str = gdk_rgba_to_string(color);
-    gchar *css = g_strdup_printf(".%s { background-color: %s; }", class_name, color_str);
-    gtk_css_provider_load_from_string(provider, css);
-    g_free(css);
-    g_free(color_str);
-    
-    gtk_style_context_add_provider_for_display(
-        gdk_display_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_set_data(G_OBJECT(widget), "quiver-bg-provider", provider);
-    
-    gtk_widget_add_css_class(widget, class_name);
-    g_object_set_data_full(G_OBJECT(widget), "quiver-bg-class", class_name, g_free);
+static void set_widget_bg_color(GtkWidget *widget, const GdkRGBA *color) {
+    QuiverUtils::SetWidgetBgColor(widget, color);
 }
 
 
@@ -6340,18 +6306,17 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 			{
 				GdkRGBA color;
 				
-				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
-				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);
+				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW, "#000");
+				string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW, "#444");
 						
 				if (!parent->m_bFilmstripOverlay)
 				{
-					gdk_rgba_parse(&color, strBGColorThumb.c_str());
-					set_widget_bg_color(parent->m_pIconView, &color);
+					if (gdk_rgba_parse(&color, strBGColorThumb.c_str()))
+						set_widget_bg_color(parent->m_pIconView, &color);
 				}
 				
-				gdk_rgba_parse(&color, strBGColorImg.c_str());
-				set_widget_bg_color(parent->m_pImageView, &color);
-				
+				if (gdk_rgba_parse(&color, strBGColorImg.c_str()))
+					set_widget_bg_color(parent->m_pImageView, &color);
 			}
 		}
 		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() )
@@ -6360,10 +6325,10 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 			{
 				GdkRGBA color;
 				
-				string strBGColorImg   = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW);
+				string strBGColorImg = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW, "#000");
 				
-				gdk_rgba_parse(&color, strBGColorImg.c_str());
-				set_widget_bg_color(parent->m_pImageView, &color);
+				if (gdk_rgba_parse(&color, strBGColorImg.c_str()))
+					set_widget_bg_color(parent->m_pImageView, &color);
 			}			
 		}
 		else if (QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
@@ -6374,10 +6339,10 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 				{
 					GdkRGBA color;
 					
-					string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW);						
+					string strBGColorThumb = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_ICONVIEW, "#444");						
 
-					gdk_rgba_parse(&color, strBGColorThumb.c_str());
-					set_widget_bg_color(parent->m_pIconView, &color);
+					if (gdk_rgba_parse(&color, strBGColorThumb.c_str()))
+						set_widget_bg_color(parent->m_pIconView, &color);
 				}
 			}
 		}

@@ -92,51 +92,27 @@
       </object>
     </child>
 
-    <!-- ===================== Shared controls ===================== -->
-    <child>
-      <object class="GtkBox" id="shared_box">
-        <property name="orientation">horizontal</property>
-        <property name="spacing">2</property>
-        <child>
-          <object class="GtkSeparator">
-            <property name="orientation">vertical</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkToggleButton">
-            <property name="action-name">quiver.FullScreen</property>
-            <property name="tooltip-text">Toggle Full Screen Mode</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">view-fullscreen</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkSeparator">
-            <property name="orientation">vertical</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkToggleButton">
-            <property name="action-name">quiver.SlideShow</property>
-            <property name="tooltip-text">Toggle Slide Show</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">media-playback-start</property>
-              </object>
-            </child>
-          </object>
-        </child>
-      </object>
-    </child>
-
     <!-- ===================== Viewer-only controls ===================== -->
     <child>
       <object class="GtkBox" id="viewer_box">
         <property name="orientation">horizontal</property>
         <property name="spacing">2</property>
+        <child>
+          <object class="GtkButton" id="button_uimode_browser">
+            <property name="action-name">quiver.UIModeBrowser</property>
+            <property name="tooltip-text">Browse Images</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">folder</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
         <child>
           <object class="GtkButton">
             <property name="action-name">quiver.ImagePrevious</property>
@@ -251,18 +227,42 @@
             </child>
           </object>
         </child>
+      </object>
+    </child>
+
+    <!-- ===================== Shared controls ===================== -->
+    <child>
+      <object class="GtkBox" id="shared_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">2</property>
         <child>
           <object class="GtkSeparator">
             <property name="orientation">vertical</property>
           </object>
         </child>
         <child>
-          <object class="GtkButton" id="button_uimode_browser">
-            <property name="action-name">quiver.UIModeBrowser</property>
-            <property name="tooltip-text">Browse Images</property>
+          <object class="GtkToggleButton">
+            <property name="action-name">quiver.FullScreen</property>
+            <property name="tooltip-text">Toggle Full Screen Mode</property>
             <child>
               <object class="GtkImage">
-                <property name="icon-name">folder</property>
+                <property name="icon-name">view-fullscreen</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">vertical</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton">
+            <property name="action-name">quiver.SlideShow</property>
+            <property name="tooltip-text">Toggle Slide Show</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">media-playback-start</property>
               </object>
             </child>
           </object>

@@ -29,6 +29,7 @@ set(UNIT_TEST_SOURCES
     unit/test_rename_task.cpp
     unit/test_organize_task.cpp
     unit/test_adjust_date_task.cpp
+    unit/test_headerbar_toolbar.cpp
 )
 
 add_executable(quiver_unit_tests ${UNIT_TEST_SOURCES})
