@@ -1,14 +1,13 @@
 # Generate marshallers
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.h
-    COMMAND ${GLIB_GENMARSHAL} --header --prefix=_quiver_marshal ${CMAKE_CURRENT_SOURCE_DIR}/quiver-marshallers.list > ${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.h
+    COMMAND ${GLIB_GENMARSHAL} --header --prefix=_quiver_marshal --output=${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.h ${CMAKE_CURRENT_SOURCE_DIR}/quiver-marshallers.list
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/quiver-marshallers.list
 )
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.c
-    COMMAND echo "\#include \"quiver-marshallers.h\"" > ${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.c
-    COMMAND ${GLIB_GENMARSHAL} --body --prefix=_quiver_marshal ${CMAKE_CURRENT_SOURCE_DIR}/quiver-marshallers.list >> ${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.c
+    COMMAND ${GLIB_GENMARSHAL} --body --prefix=_quiver_marshal --include-header=quiver-marshallers.h --output=${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.c ${CMAKE_CURRENT_SOURCE_DIR}/quiver-marshallers.list
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/quiver-marshallers.list ${CMAKE_CURRENT_BINARY_DIR}/quiver-marshallers.h
 )
 
