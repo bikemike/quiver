@@ -8,4 +8,7 @@
 #define PACKAGE_VERSION "0.2.0"
 #define PACKAGE_BUGREPORT "http://mike.yi.org/quiver"
 
+#cmakedefine01 HAVE_GLYCIN
+#cmakedefine01 HAVE_GDK_PIXBUF
+
 #endif

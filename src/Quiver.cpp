@@ -24,6 +24,7 @@ GtkApplication *g_pApp = NULL;
 
 
 #include "QuiverUtils.h"
+#include "ImageDecoder.h"
 
 #include "QuiverPrefs.h"
 #include "PreferencesDlg.h"
@@ -1433,6 +1434,20 @@ static void on_app_activate(GApplication* app, gpointer data)
 
 int main (int argc, char **argv)
 {
+	for (int i = 1; i < argc; ++i)
+	{
+		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
+		{
+			g_print("Usage: quiver [OPTIONS] [FILES or DIRECTORIES...]\n\n"
+			        "Options:\n"
+			        "  --decoder=glycin|pixbuf|auto   Select image decoding backend (default: auto)\n"
+			        "  -h, --help                     Show this help message\n\n"
+			        "Environment Variables:\n"
+			        "  QUIVER_DECODER=glycin|pixbuf|auto\n");
+			return 0;
+		}
+	}
+
 	(void)bindtextdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
 	(void)bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
 	(void)textdomain (GETTEXT_PACKAGE);
@@ -1440,12 +1455,9 @@ int main (int argc, char **argv)
  	/* init threads */
 	//g_type_init ();
 
-	
-
 	/* Initialize the widget set */
 	gtk_init ();
 
-	g_pApp = gtk_application_new("com.github.bikemike.quiver", G_APPLICATION_NON_UNIQUE);
 	g_pApp = gtk_application_new("com.github.bikemike.quiver", G_APPLICATION_NON_UNIQUE);
 	g_signal_connect(g_pApp, "activate", G_CALLBACK(on_app_activate), NULL);
 
@@ -1455,7 +1467,6 @@ int main (int argc, char **argv)
 	gst_init(&argc, &argv);
 
 	ThreadUtil::Init();
-
 
 	// set up global variables
 	// config directory
@@ -1473,9 +1484,47 @@ int main (int argc, char **argv)
 	// create config directory
 	g_mkdir_with_parents(g_szConfigDir,S_IRUSR|S_IWUSR|S_IXUSR);
 
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+
+	// 1. Decoder backend from preferences
+	if (prefsPtr->HasKey(QUIVER_PREFS_APP, QUIVER_PREFS_APP_IMAGE_DECODER))
+	{
+		string dec = prefsPtr->GetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_IMAGE_DECODER, "auto");
+		if (g_ascii_strcasecmp(dec.c_str(), "glycin") == 0)
+			ImageDecoder::SetBackend(ImageDecoder::Backend::GLYCIN);
+		else if (g_ascii_strcasecmp(dec.c_str(), "pixbuf") == 0)
+			ImageDecoder::SetBackend(ImageDecoder::Backend::PIXBUF);
+		else if (g_ascii_strcasecmp(dec.c_str(), "auto") == 0)
+			ImageDecoder::SetBackend(ImageDecoder::Backend::AUTO);
+	}
+
+	// 2. Decoder backend from environment variable QUIVER_DECODER
+	const char *env_decoder = g_getenv("QUIVER_DECODER");
+	if (env_decoder != NULL)
+	{
+		if (g_ascii_strcasecmp(env_decoder, "glycin") == 0)
+			ImageDecoder::SetBackend(ImageDecoder::Backend::GLYCIN);
+		else if (g_ascii_strcasecmp(env_decoder, "pixbuf") == 0)
+			ImageDecoder::SetBackend(ImageDecoder::Backend::PIXBUF);
+		else if (g_ascii_strcasecmp(env_decoder, "auto") == 0)
+			ImageDecoder::SetBackend(ImageDecoder::Backend::AUTO);
+	}
+
 	list<string> files;
-	for (int i =1;i<argc;i++)
-	{	
+	for (int i = 1; i < argc; i++)
+	{
+		if (g_str_has_prefix(argv[i], "--decoder="))
+		{
+			const char *dec = argv[i] + 10;
+			if (g_ascii_strcasecmp(dec, "glycin") == 0)
+				ImageDecoder::SetBackend(ImageDecoder::Backend::GLYCIN);
+			else if (g_ascii_strcasecmp(dec, "pixbuf") == 0)
+				ImageDecoder::SetBackend(ImageDecoder::Backend::PIXBUF);
+			else if (g_ascii_strcasecmp(dec, "auto") == 0)
+				ImageDecoder::SetBackend(ImageDecoder::Backend::AUTO);
+			continue;
+		}
+
 		gchar* filename = g_filename_from_uri(argv[i],NULL,NULL);
 		if (NULL != filename)
 		{
@@ -1491,12 +1540,11 @@ int main (int argc, char **argv)
 	CreateQuiverData cqd = {};
 	cqd.bRecursive = false;
 	
-	if (argc == 1)
+	if (files.empty())
 	{	
 		const gchar* dir;
 		// default to a directory
 		// specified in preferences
-		PreferencesPtr prefsPtr = Preferences::GetInstance();
 		dir = g_get_home_dir();
 		if (prefsPtr->HasKey(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY))
 		{	
@@ -1523,6 +1571,7 @@ int main (int argc, char **argv)
 		}
 
 	}
+
 	//pthread_setconcurrency(4);
 
 	cqd.pFiles = &files;
@@ -1538,9 +1587,11 @@ int main (int argc, char **argv)
 	g_type_ensure (gdk_pixbuf_animation_get_type ());
 	
 
+#if HAVE_GDK_PIXBUF
 	GdkPixbufLoader* loader = gdk_pixbuf_loader_new();
 	gdk_pixbuf_loader_close(loader, NULL);
 	g_object_unref(loader);
+#endif
 	
 	// END BUG FIX items
                                              

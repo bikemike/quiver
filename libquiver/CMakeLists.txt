@@ -34,3 +34,7 @@ target_link_libraries(quiver_lib PUBLIC
     PkgConfig::GTK4
     PkgConfig::GIO
 )
+
+if (TARGET PkgConfig::GLYCIN)
+    target_link_libraries(quiver_lib PUBLIC PkgConfig::GLYCIN)
+endif()

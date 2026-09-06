@@ -11,6 +11,7 @@ set(QUIVER_SOURCES
     ImageList.cpp
     ImageListEventSource.cpp
     ImageListFilter.cpp
+    ImageDecoder.cpp
     ImageLoader.cpp
     IconViewThumbLoader.cpp
     ImageSaveManager.cpp
@@ -84,3 +85,7 @@ target_link_libraries(quiver PRIVATE
     Threads::Threads
     Boost::boost
 )
+
+if (TARGET PkgConfig::GLYCIN)
+    target_link_libraries(quiver PRIVATE PkgConfig::GLYCIN)
+endif()

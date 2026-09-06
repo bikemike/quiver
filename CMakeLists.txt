@@ -6,10 +6,19 @@ project(quiver VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options(-Wall -Wextra)
 
 # Find pkg-config
 find_package(PkgConfig REQUIRED)
+
+# Image decoding backend options
+option(ENABLE_GLYCIN "Enable libglycin backend for image loading" ON)
+option(ENABLE_GDK_PIXBUF "Enable GdkPixbuf loader backend for image loading" ON)
+
+if (NOT ENABLE_GLYCIN AND NOT ENABLE_GDK_PIXBUF)
+  message(FATAL_ERROR "At least one image decoder backend (ENABLE_GLYCIN or ENABLE_GDK_PIXBUF) must be enabled.")
+endif()
 
 # Find Packages
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.12)
@@ -18,6 +27,19 @@ pkg_check_modules(EXIV2 REQUIRED IMPORTED_TARGET exiv2)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
 pkg_check_modules(LIBSQLITE REQUIRED IMPORTED_TARGET sqlite3)
 pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-app-1.0 gstreamer-pbutils-1.0)
+
+if (ENABLE_GLYCIN)
+  pkg_check_modules(GLYCIN REQUIRED IMPORTED_TARGET glycin-2)
+  set(HAVE_GLYCIN 1)
+else()
+  set(HAVE_GLYCIN 0)
+endif()
+
+if (ENABLE_GDK_PIXBUF)
+  set(HAVE_GDK_PIXBUF 1)
+else()
+  set(HAVE_GDK_PIXBUF 0)
+endif()
 
 # JPEG and Threads
 find_package(JPEG REQUIRED)
@@ -59,5 +81,6 @@ include(CTest)
 
 add_subdirectory(libquiver)
 add_subdirectory(src)
-# TODO: tests directory is not present; re-enable when it exists
-#add_subdirectory(tests)
+if (BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
