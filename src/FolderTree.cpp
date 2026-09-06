@@ -135,6 +135,7 @@ static gboolean view_on_key_press (GtkEventControllerKey *controller, guint keyv
 static void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y, gpointer userdata);
 static void signal_check_selected (GtkWidget *menuitem, gpointer userdata);
 static void signal_uncheck_selected (GtkWidget *menuitem, gpointer userdata);
+static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl);
 
 static gchar* folder_tree_get_icon_name(GFile* gfile);
 
@@ -168,9 +169,6 @@ public:
 	GtkMultiSelection* m_pSelectionModel;
 	GtkListView*     m_pListView;
 	gchar*           m_pScrollToURI;
-	bool             m_bButtonDown;
-	bool             m_bMouseSelect;
-	bool             m_bModifierClick;
 };
 
 
@@ -201,8 +199,7 @@ void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
 
 
 
-FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent) :
-	m_bButtonDown(false), m_bMouseSelect(false), m_bModifierClick(false)
+FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 {
 	m_pFolderTree = parent;
 	
@@ -229,7 +226,7 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 	 * resets us (m_FolderTreePtr.reset()) BEFORE it unparents the browser
 	 * subtree, so when the tree is destroyed a moment later it would fire the
 	 * "destroy" handler with this (already freed) object as user_data. */
-	if (NULL != m_pWidget)
+	if (NULL != m_pWidget && G_IS_OBJECT(m_pWidget))
 		g_signal_handlers_disconnect_matched(
 			m_pWidget,
 			G_SIGNAL_MATCH_DATA,
@@ -294,11 +291,24 @@ void FolderTree::FolderTreeImpl::ClearAllCheckboxes()
 		DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
 		dir_item_set_checked(item, FALSE);
 	}
+	if (m_pSelectionModel)
+		gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(m_pSelectionModel));
 }
 
 void FolderTree::FolderTreeImpl::SetCheckboxForItem(DirItem* item, gboolean value)
 {
 	dir_item_set_checked(item, value);
+	if (m_pSelectionModel)
+	{
+		guint pos = FindItemPosition(item);
+		if (pos != G_MAXUINT)
+		{
+			if (value)
+				gtk_selection_model_select_item(GTK_SELECTION_MODEL(m_pSelectionModel), pos, FALSE);
+			else
+				gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(m_pSelectionModel), pos);
+		}
+	}
 }
 
 guint FolderTree::FolderTreeImpl::FindItemPosition(DirItem* target)
@@ -559,6 +569,108 @@ static GListModel* create_subdirs (gpointer item_data, gpointer user_data)
 	return G_LIST_MODEL(children);
 }
 
+static void folder_tree_row_on_clicked(GtkGestureClick* gesture, int n_press, double x, double y)
+{
+	GtkWidget* w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+	FolderTree::FolderTreeImpl* impl = static_cast<FolderTree::FolderTreeImpl*>(
+		g_object_get_data(G_OBJECT(w), "dir-impl"));
+	DirItem* item = static_cast<DirItem*>(
+		g_object_get_data(G_OBJECT(w), "dir-item"));
+	GtkTreeListRow* row = static_cast<GtkTreeListRow*>(
+		g_object_get_data(G_OBJECT(w), "dir-row"));
+	if (!impl || !item) return;
+
+	// If the click is on the expander arrow of an expandable row, let GtkTreeExpander handle it
+	GtkWidget* target = gtk_widget_pick(w, x, y, GTK_PICK_DEFAULT);
+	if (target != NULL && g_strcmp0(G_OBJECT_TYPE_NAME(target), "GtkBuiltinIcon") == 0 &&
+	    row != NULL && gtk_tree_list_row_is_expandable(row))
+	{
+		return;
+	}
+
+	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
+	guint pos = row ? gtk_tree_list_row_get_position(row) : G_MAXUINT;
+
+	if (button == 1)
+	{
+		if (state & GDK_CONTROL_MASK)
+		{
+			// Ctrl pressed: adds/subtracts (toggle)
+			gboolean new_val = !item->checked;
+			dir_item_set_checked(item, new_val);
+			if (pos != G_MAXUINT && impl->m_pSelectionModel)
+			{
+				if (new_val)
+					gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos, FALSE);
+				else
+					gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos);
+			}
+		}
+		else if (state & GDK_SHIFT_MASK)
+		{
+			// Shift pressed: multi-selection range click
+			guint start = folder_tree_get_focused_position(impl);
+			if (start == G_MAXUINT)
+				start = pos;
+			guint min_pos = std::min(start, pos);
+			guint max_pos = std::max(start, pos);
+			guint count = max_pos - min_pos + 1;
+			if (pos != G_MAXUINT && impl->m_pSelectionModel)
+			{
+				gtk_selection_model_select_range(GTK_SELECTION_MODEL(impl->m_pSelectionModel), min_pos, count, TRUE);
+			}
+		}
+		else
+		{
+			// Plain click: check this item and uncheck all others
+			guint n = g_list_model_get_n_items(G_LIST_MODEL(impl->m_pTreeListModel));
+			for (guint i = 0; i < n; i++)
+			{
+				GtkTreeListRow* r = gtk_tree_list_model_get_row(impl->m_pTreeListModel, i);
+				if (!r) continue;
+				DirItem* it = DIR_ITEM(gtk_tree_list_row_get_item(r));
+				if (it)
+					dir_item_set_checked(it, (it == item));
+			}
+			if (pos != G_MAXUINT && impl->m_pSelectionModel)
+			{
+				gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos, TRUE);
+			}
+		}
+		if (n_press == 2 && row && gtk_tree_list_row_is_expandable(row))
+		{
+			gtk_tree_list_row_set_expanded(row, !gtk_tree_list_row_get_expanded(row));
+		}
+		gtk_widget_grab_focus(w);
+		impl->m_pFolderTree->EmitSelectionChangedEvent();
+	}
+	else if (button == 2)
+	{
+		// Middle click: toggle
+		gboolean new_val = !item->checked;
+		dir_item_set_checked(item, new_val);
+		if (pos != G_MAXUINT && impl->m_pSelectionModel)
+		{
+			if (new_val)
+				gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos, FALSE);
+			else
+				gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos);
+		}
+		gtk_widget_grab_focus(w);
+		impl->m_pFolderTree->EmitSelectionChangedEvent();
+	}
+	else if (button == 3)
+	{
+		if (pos != G_MAXUINT && impl->m_pSelectionModel &&
+		    !gtk_selection_model_is_selected(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos))
+		{
+			gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos, TRUE);
+		}
+		view_popup_menu_at(impl->m_pWidget, -1, -1, impl);
+	}
+}
+
 void FolderTree::FolderTreeImpl::CreateWidget()
 {
 	// single row factory: checkbox + expander + icon + name
@@ -579,6 +691,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 					g_object_get_data(G_OBJECT(w), "dir-impl"));
 			DirItem* item = static_cast<DirItem*>(
 				g_object_get_data(G_OBJECT(w), "dir-item"));
+			GtkTreeListRow* row = static_cast<GtkTreeListRow*>(
+				g_object_get_data(G_OBJECT(w), "dir-row"));
 			if (NULL != impl && NULL != item &&
 				!g_object_get_data(G_OBJECT(w), "set-active-guard"))
 			{
@@ -586,6 +700,14 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 				if (item->checked != active)
 				{
 					dir_item_set_checked(item, active);
+					if (row && impl->m_pSelectionModel)
+					{
+						guint pos = gtk_tree_list_row_get_position(row);
+						if (active)
+							gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos, FALSE);
+						else
+							gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos);
+					}
 					impl->m_pFolderTree->EmitSelectionChangedEvent();
 				}
 			}
@@ -594,7 +716,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(list_item), "f-check", check);
 
 		GtkWidget* expander = gtk_tree_expander_new();
+		gtk_widget_set_hexpand(expander, TRUE);
 		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+		gtk_widget_set_hexpand(row_box, TRUE);
 		GtkWidget* image = gtk_image_new();
 		gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
 		GtkWidget* label = gtk_label_new(NULL);
@@ -606,7 +730,25 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), row_box);
 		gtk_box_append(GTK_BOX(hbox), expander);
 
+		GtkGesture* row_click = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(row_click), 0);
+		g_signal_connect(row_click, "pressed", G_CALLBACK(+[](GtkGestureClick* gesture, int n_press, double x, double y, gpointer) {
+			g_object_set_data(G_OBJECT(gesture), "press-handled", GINT_TO_POINTER(1));
+			folder_tree_row_on_clicked(gesture, n_press, x, y);
+		}), NULL);
+		g_signal_connect(row_click, "released", G_CALLBACK(+[](GtkGestureClick* gesture, int n_press, double x, double y, gpointer) {
+			if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(gesture), "press-handled")))
+			{
+				g_object_set_data(G_OBJECT(gesture), "press-handled", GINT_TO_POINTER(0));
+				return;
+			}
+			folder_tree_row_on_clicked(gesture, n_press, x, y);
+		}), NULL);
+		gtk_widget_add_controller(expander, GTK_EVENT_CONTROLLER(row_click));
+
 		gtk_list_item_set_child(list_item, hbox);
+		g_object_set_data(G_OBJECT(list_item), "f-hbox", hbox);
+		g_object_set_data(G_OBJECT(list_item), "f-row-box", row_box);
 		g_object_set_data(G_OBJECT(list_item), "f-image", image);
 		g_object_set_data(G_OBJECT(list_item), "f-label", label);
 		g_object_set_data(G_OBJECT(list_item), "f-expander", expander);
@@ -619,6 +761,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		GtkTreeListRow* row = GTK_TREE_LIST_ROW(gtk_list_item_get_item(list_item));
 		DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
 		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-check"));
+		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-hbox"));
+		GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-row-box"));
 		GtkWidget* image = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-image"));
 		GtkWidget* label = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-label"));
 		GtkWidget* expander = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-expander"));
@@ -627,9 +771,24 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		else
 			gtk_image_set_from_icon_name(GTK_IMAGE(image), "folder");
 		gtk_label_set_text(GTK_LABEL(label), item->display_name);
+
 		g_object_set_data(G_OBJECT(check), "dir-item", item);
 		g_object_set_data(G_OBJECT(check), "dir-impl", impl);
+		g_object_set_data(G_OBJECT(check), "dir-row", row);
 		g_object_set_data(G_OBJECT(item), "bound-check", check);
+
+		g_object_set_data(G_OBJECT(hbox), "dir-item", item);
+		g_object_set_data(G_OBJECT(hbox), "dir-impl", impl);
+		g_object_set_data(G_OBJECT(hbox), "dir-row", row);
+		g_object_set_data(G_OBJECT(hbox), "list-item", list_item);
+
+		g_object_set_data(G_OBJECT(expander), "dir-item", item);
+		g_object_set_data(G_OBJECT(expander), "dir-impl", impl);
+		g_object_set_data(G_OBJECT(expander), "dir-row", row);
+
+		g_object_set_data(G_OBJECT(row_box), "dir-item", item);
+		g_object_set_data(G_OBJECT(row_box), "dir-impl", impl);
+		g_object_set_data(G_OBJECT(row_box), "dir-row", row);
 
 		if (!g_object_get_data(G_OBJECT(item), "checked-connected"))
 		{
@@ -658,8 +817,34 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	g_signal_connect(factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item) {
 		(void)fact;
 		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-check"));
-		g_object_set_data(G_OBJECT(check), "dir-item", NULL);
-		g_object_set_data(G_OBJECT(check), "dir-impl", NULL);
+		if (check)
+		{
+			g_object_set_data(G_OBJECT(check), "dir-item", NULL);
+			g_object_set_data(G_OBJECT(check), "dir-impl", NULL);
+			g_object_set_data(G_OBJECT(check), "dir-row", NULL);
+		}
+		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-hbox"));
+		if (hbox)
+		{
+			g_object_set_data(G_OBJECT(hbox), "dir-item", NULL);
+			g_object_set_data(G_OBJECT(hbox), "dir-impl", NULL);
+			g_object_set_data(G_OBJECT(hbox), "dir-row", NULL);
+			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
+		}
+		GtkWidget* expander = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-expander"));
+		if (expander)
+		{
+			g_object_set_data(G_OBJECT(expander), "dir-item", NULL);
+			g_object_set_data(G_OBJECT(expander), "dir-impl", NULL);
+			g_object_set_data(G_OBJECT(expander), "dir-row", NULL);
+		}
+		GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-row-box"));
+		if (row_box)
+		{
+			g_object_set_data(G_OBJECT(row_box), "dir-item", NULL);
+			g_object_set_data(G_OBJECT(row_box), "dir-impl", NULL);
+			g_object_set_data(G_OBJECT(row_box), "dir-row", NULL);
+		}
 	}), NULL);
 
 	// root model
@@ -779,6 +964,61 @@ void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y, gpointer use
 	}
 }
 
+static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl)
+{
+	if (!impl || !impl->m_pWidget)
+		return G_MAXUINT;
+
+	GtkWidget* lv = impl->m_pWidget;
+	GtkRoot* root = gtk_widget_get_root(lv);
+	GtkWidget* f = root ? gtk_root_get_focus(root) : NULL;
+	if (!f)
+		f = gtk_widget_get_focus_child(lv);
+
+	for (GtkWidget* w = f; w && w != lv; w = gtk_widget_get_parent(w))
+	{
+		GtkTreeListRow* row = static_cast<GtkTreeListRow*>(
+			g_object_get_data(G_OBJECT(w), "dir-row"));
+		if (row)
+			return gtk_tree_list_row_get_position(row);
+		GtkListItem* li = static_cast<GtkListItem*>(
+			g_object_get_data(G_OBJECT(w), "list-item"));
+		if (li)
+			return gtk_list_item_get_position(li);
+	}
+
+	GtkWidget* fc = gtk_widget_get_focus_child(lv);
+	if (fc)
+	{
+		for (GtkWidget* ch = gtk_widget_get_first_child(fc); ch; ch = gtk_widget_get_next_sibling(ch))
+		{
+			GtkTreeListRow* row = static_cast<GtkTreeListRow*>(
+				g_object_get_data(G_OBJECT(ch), "dir-row"));
+			if (row)
+				return gtk_tree_list_row_get_position(row);
+			GtkListItem* li = static_cast<GtkListItem*>(
+				g_object_get_data(G_OBJECT(ch), "list-item"));
+			if (li)
+				return gtk_list_item_get_position(li);
+		}
+	}
+
+	// Fallback to first selected item in selection model
+	if (impl->m_pSelectionModel && impl->m_pTreeListModel)
+	{
+		guint n = g_list_model_get_n_items(G_LIST_MODEL(impl->m_pTreeListModel));
+		for (guint i = 0; i < n; i++)
+		{
+			if (gtk_selection_model_is_selected(GTK_SELECTION_MODEL(impl->m_pSelectionModel), i))
+				return i;
+		}
+		if (n > 0)
+			return 0;
+	}
+
+	return G_MAXUINT;
+}
+
 /* While the folder tree has keyboard focus the global unmodified "space"
  * accelerator is disabled in browser mode (see Quiver::ShowBrowser), so
  * space/Enter reach this handler to toggle the checkbox selection instead of
@@ -788,8 +1028,6 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 	(void)keycode;
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
 	GtkWidget *treeview = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller)));
-	g_printerr("FOLDER TREE: key-press keyval=%u name=%s state=%u\n", keyval,
-		gdk_keyval_name(keyval), (guint)state);
 
 	if (GDK_KEY_Menu == keyval)
 	{
@@ -798,52 +1036,135 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 	}
 
 	GtkSelectionModel* sel = GTK_SELECTION_MODEL(pFolderTreeImpl->m_pSelectionModel);
+	guint cursor_pos = folder_tree_get_focused_position(pFolderTreeImpl);
 	guint n = g_list_model_get_n_items(G_LIST_MODEL(pFolderTreeImpl->m_pTreeListModel));
 
-	// find the first selected / focused row position
-	guint cursor_pos = G_MAXUINT;
+	guint sel_count = 0;
 	for (guint i = 0 ; i < n ; i++)
 	{
 		if (gtk_selection_model_is_selected(sel, i))
-		{
-			cursor_pos = i;
-			break;
-		}
+			sel_count++;
 	}
 
 	gboolean rval = FALSE;
 
 	if (GDK_KEY_space == keyval && !(state & GDK_CONTROL_MASK))
 	{
-		/* Toggle the checked state of the whole selection: if any selected
-		 * item is unchecked, check them all; otherwise (all checked)
-		 * uncheck them all. */
-		gboolean has_unchecked = FALSE;
-		for (guint i = 0 ; i < n ; i++)
+		if (sel_count > 1)
 		{
-			if (gtk_selection_model_is_selected(sel, i))
+			/* Multi-selection spacebar:
+			 * Check all items if any are unchecked; otherwise uncheck all items. */
+			gboolean has_unchecked = FALSE;
+			for (guint i = 0 ; i < n ; i++)
 			{
-				GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, i);
+				if (gtk_selection_model_is_selected(sel, i))
+				{
+					GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, i);
+					if (row)
+					{
+						DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
+						if (item && !item->checked)
+						{
+							has_unchecked = TRUE;
+							break;
+						}
+					}
+				}
+			}
+			folder_tree_set_checkbox_for_selected(pFolderTreeImpl, has_unchecked ? TRUE : FALSE);
+		}
+		else
+		{
+			if (G_MAXUINT != cursor_pos)
+			{
+				GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, cursor_pos);
 				if (NULL != row)
 				{
 					DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
-					if (NULL != item && !item->checked)
+					if (NULL != item)
 					{
-						has_unchecked = TRUE;
-						break;
+						gboolean new_val = !item->checked;
+						dir_item_set_checked(item, new_val);
+						if (new_val)
+							gtk_selection_model_select_item(sel, cursor_pos, FALSE);
+						else
+							gtk_selection_model_unselect_item(sel, cursor_pos);
+						pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
 					}
 				}
 			}
 		}
-		folder_tree_set_checkbox_for_selected(pFolderTreeImpl, has_unchecked ? TRUE : FALSE);
 		rval = TRUE;
 		return rval;
 	}
 
-	if (GDK_KEY_Return == keyval)
+	if (GDK_KEY_Return == keyval || GDK_KEY_KP_Enter == keyval)
 	{
-		/* Check off the checkbox for every selected item. */
-		folder_tree_set_checkbox_for_selected(pFolderTreeImpl, TRUE);
+		if (state & GDK_CONTROL_MASK)
+		{
+			/* Ctrl pressed: adds/subtracts (toggle checked state of focused row) */
+			if (G_MAXUINT != cursor_pos)
+			{
+				GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, cursor_pos);
+				DirItem* item = row ? DIR_ITEM(gtk_tree_list_row_get_item(row)) : NULL;
+				if (NULL != item)
+				{
+					gboolean new_val = !item->checked;
+					dir_item_set_checked(item, new_val);
+					if (new_val)
+						gtk_selection_model_select_item(sel, cursor_pos, FALSE);
+					else
+						gtk_selection_model_unselect_item(sel, cursor_pos);
+					pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+				}
+			}
+		}
+		else if (sel_count > 1)
+		{
+			/* Multi-selection plain Enter: all selected items become checked off */
+			for (guint i = 0 ; i < n ; i++)
+			{
+				GtkTreeListRow* r = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, i);
+				if (!r) continue;
+				DirItem* it = DIR_ITEM(gtk_tree_list_row_get_item(r));
+				if (!it) continue;
+
+				if (gtk_selection_model_is_selected(sel, i))
+				{
+					dir_item_set_checked(it, TRUE);
+				}
+				else
+				{
+					dir_item_set_checked(it, FALSE);
+				}
+			}
+			pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+		}
+		else
+		{
+			/* Single item plain Enter: check off focused item and uncheck all others */
+			if (G_MAXUINT != cursor_pos)
+			{
+				GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, cursor_pos);
+				DirItem* item = row ? DIR_ITEM(gtk_tree_list_row_get_item(row)) : NULL;
+				if (NULL != item)
+				{
+					for (guint i = 0 ; i < n ; i++)
+					{
+						GtkTreeListRow* r = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, i);
+						if (NULL == r)
+							continue;
+						DirItem* it = DIR_ITEM(gtk_tree_list_row_get_item(r));
+						if (NULL != it)
+						{
+							dir_item_set_checked(it, (i == cursor_pos));
+						}
+					}
+					gtk_selection_model_select_item(sel, cursor_pos, TRUE);
+					pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+				}
+			}
+		}
 		rval = TRUE;
 		return rval;
 	}
@@ -863,7 +1184,7 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 				else if (NULL != parent)
 				{
 					guint parent_pos = gtk_tree_list_row_get_position(parent);
-					gtk_selection_model_select_item(sel, parent_pos, FALSE);
+					gtk_selection_model_select_item(sel, parent_pos, TRUE);
 				}
 			}
 		}
@@ -888,7 +1209,7 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 					if (NULL != children && g_list_model_get_n_items(children) > 0)
 					{
 						guint child_pos = cursor_pos + 1;
-						gtk_selection_model_select_item(sel, child_pos, FALSE);
+						gtk_selection_model_select_item(sel, child_pos, TRUE);
 					}
 				}
 			}
@@ -903,51 +1224,11 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 static void
 view_onButtonPressed (GtkGestureClick *gesture, int n_press, double x, double y, gpointer userdata)
 {
+	(void)n_press;
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
+	(void)pFolderTreeImpl;
 	GtkWidget *treeview = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)));
-	guint button = gtk_gesture_single_get_button(GTK_GESTURE_SINGLE(gesture));
-
-	if (button == 2)
-	{
-		// toggle the checked state of the row at the clicked position
-		GtkSelectionModel* sel = GTK_SELECTION_MODEL(pFolderTreeImpl->m_pSelectionModel);
-		guint n = g_list_model_get_n_items(G_LIST_MODEL(pFolderTreeImpl->m_pTreeListModel));
-		// approximate: toggle the first selected row (or the row under cursor)
-		guint pos = G_MAXUINT;
-		for (guint i = 0 ; i < n ; i++)
-		{
-			if (gtk_selection_model_is_selected(sel, i))
-			{
-				pos = i;
-				break;
-			}
-		}
-		if (G_MAXUINT != pos)
-		{
-			GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, pos);
-			if (NULL != row)
-			{
-				DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
-				dir_item_set_checked(item, !item->checked);
-				pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
-			}
-		}
-		return;
-	}
-
-	if (button == 1)
-	{
-		pFolderTreeImpl->m_bButtonDown = TRUE;
-		pFolderTreeImpl->m_bMouseSelect = TRUE;
-
-		/* Capture whether Ctrl/Shift were held so the release handler can tell
-		 * a plain click (single-check the row) from a multi-select click. */
-		GdkModifierType mods = (GdkModifierType)0;
-		GdkEvent* ev = gtk_gesture_get_last_event(GTK_GESTURE(gesture), NULL);
-		if (NULL != ev)
-			mods = gdk_event_get_modifier_state(ev);
-		pFolderTreeImpl->m_bModifierClick = (0 != (mods & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)));
-	}
+	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 
 	if (button == 3 && n_press == 1)
 	{
@@ -957,53 +1238,7 @@ view_onButtonPressed (GtkGestureClick *gesture, int n_press, double x, double y,
 
 static void view_onButtonReleased (GtkGestureClick *gesture, int n_press, double x, double y, gpointer userdata)
 {
-	(void)n_press; (void)x; (void)y;
-	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
-	guint button = gtk_gesture_single_get_button(GTK_GESTURE_SINGLE(gesture));
-
-	if (pFolderTreeImpl->m_bButtonDown)
-	{
-		pFolderTreeImpl->m_bButtonDown = FALSE;
-		pFolderTreeImpl->m_bMouseSelect = FALSE;
-
-		/* Plain left click on an item body (not the checkbox/expander): check
-		 * the clicked row and uncheck all the others.  Shift/Ctrl clicks leave
-		 * the checked state alone and let GTK4's default multi-select stand. */
-		g_printerr("FOLDER TREE: released button=%u modifierClick=%s\n", button,
-			pFolderTreeImpl->m_bModifierClick ? "yes" : "no");
-		if (button == 1 && !pFolderTreeImpl->m_bModifierClick)
-		{
-			GtkSelectionModel* sel = GTK_SELECTION_MODEL(pFolderTreeImpl->m_pSelectionModel);
-			guint n = g_list_model_get_n_items(G_LIST_MODEL(pFolderTreeImpl->m_pTreeListModel));
-
-			guint clicked = G_MAXUINT;
-			guint count = 0;
-			for (guint i = 0; i < n; i++)
-			{
-				if (gtk_selection_model_is_selected(sel, i))
-				{
-					clicked = i;
-					count++;
-				}
-			}
-
-			g_printerr("FOLDER TREE: released click selectedCount=%u clicked=%u\n", count, clicked);
-			if (count == 1 && G_MAXUINT != clicked)
-			{
-				for (guint i = 0; i < n; i++)
-				{
-					GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, i);
-					if (NULL == row)
-						continue;
-					DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
-					if (NULL != item)
-						dir_item_set_checked(item, (i == clicked));
-				}
-				pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
-			}
-		}
-	}
-	pFolderTreeImpl->m_bModifierClick = FALSE;
+	(void)gesture; (void)n_press; (void)x; (void)y; (void)userdata;
 }
 
 void FolderTree::FolderTreeImpl::PopulateTreeModel(GListStore *roots)

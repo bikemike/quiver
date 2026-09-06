@@ -2707,6 +2707,27 @@ static void viewer_video_option_audio_cb(GtkButton *button, gpointer user_data)
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
 	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "track-id"));
 	g_object_set(G_OBJECT(p->m_pPipeline), "current-audio", track, NULL);
+
+	GtkWidget *box = gtk_widget_get_parent(GTK_WIDGET(button));
+	if (box != NULL)
+	{
+		for (GtkWidget *child = gtk_widget_get_first_child(box);
+		     child != NULL;
+		     child = gtk_widget_get_next_sibling(child))
+		{
+			if (g_object_get_data(G_OBJECT(child), "is-audio-track"))
+			{
+				gint tid = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "track-id"));
+				const gchar *track_lang = (const gchar*)g_object_get_data(G_OBJECT(child), "track-lang");
+				gchar *label = g_strdup_printf("%sTrack %d%s",
+					(tid == track) ? "✓ " : "   ",
+					tid + 1,
+					track_lang ? track_lang : "");
+				gtk_button_set_label(GTK_BUTTON(child), label);
+				g_free(label);
+			}
+		}
+	}
 }
 
 static void viewer_video_option_text_cb(GtkButton *button, gpointer user_data)
@@ -2717,12 +2738,43 @@ static void viewer_video_option_text_cb(GtkButton *button, gpointer user_data)
 	GstPlayFlags flags = (GstPlayFlags)0;
 	g_object_get(G_OBJECT(p->m_pPipeline), "flags", &flags, NULL);
 	
+	gboolean text_enabled = FALSE;
 	if (track < 0) {
 		flags = (GstPlayFlags)(flags & ~(1 << 2)); // disable GST_PLAY_FLAG_TEXT
 		g_object_set(G_OBJECT(p->m_pPipeline), "flags", flags, NULL);
+		text_enabled = FALSE;
 	} else {
 		flags = (GstPlayFlags)(flags | (1 << 2)); // enable GST_PLAY_FLAG_TEXT
 		g_object_set(G_OBJECT(p->m_pPipeline), "flags", flags, "current-text", track, NULL);
+		text_enabled = TRUE;
+	}
+
+	GtkWidget *box = gtk_widget_get_parent(GTK_WIDGET(button));
+	if (box != NULL)
+	{
+		for (GtkWidget *child = gtk_widget_get_first_child(box);
+		     child != NULL;
+		     child = gtk_widget_get_next_sibling(child))
+		{
+			if (g_object_get_data(G_OBJECT(child), "is-text-track"))
+			{
+				gint tid = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "track-id"));
+				if (tid < 0)
+				{
+					gtk_button_set_label(GTK_BUTTON(child), !text_enabled ? "✓ Off" : "   Off");
+				}
+				else
+				{
+					const gchar *track_lang = (const gchar*)g_object_get_data(G_OBJECT(child), "track-lang");
+					gchar *label = g_strdup_printf("%sTrack %d%s",
+						(text_enabled && tid == track) ? "✓ " : "   ",
+						tid + 1,
+						track_lang ? track_lang : "");
+					gtk_button_set_label(GTK_BUTTON(child), label);
+					g_free(label);
+				}
+			}
+		}
 	}
 }
 
@@ -2742,9 +2794,12 @@ static void viewer_video_option_rotate_cb(GtkButton *button, gpointer user_data)
 
 static void viewer_video_option_loop_cb(GtkButton *button, gpointer user_data)
 {
-	(void)button;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
 	p->m_bVideoLoop = !p->m_bVideoLoop;
+	gchar *loop_label = g_strdup_printf("%s Loop",
+		p->m_bVideoLoop ? "✓" : "  ");
+	gtk_button_set_label(button, loop_label);
+	g_free(loop_label);
 }
 
 static void viewer_video_options_popover_closed_cb(GtkPopover *popover, gpointer user_data)
@@ -2792,15 +2847,19 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 				gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
 				gst_tag_list_free(tags);
 			}
+			gchar *lang_str = lang ? g_strdup_printf(" (%s)", lang) : NULL;
 			gchar *label = g_strdup_printf("%sTrack %d%s", 
 				(i == current_audio) ? "✓ " : "   ", 
 				i + 1, 
-				lang ? g_strdup_printf(" (%s)", lang) : "");
+				lang_str ? lang_str : "");
 			GtkWidget *item = gtk_button_new_with_label(label);
 			g_free(label);
 			if (lang) g_free(lang);
 			
 			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
+			g_object_set_data(G_OBJECT(item), "is-audio-track", GINT_TO_POINTER(1));
+			if (lang_str)
+				g_object_set_data_full(G_OBJECT(item), "track-lang", lang_str, g_free);
 			g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_audio_cb), p);
 			gtk_box_append(GTK_BOX(box), item);
 		}
@@ -2822,6 +2881,7 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 	
 	GtkWidget *item_off = gtk_button_new_with_label(!text_enabled ? "✓ Off" : "   Off");
 	g_object_set_data(G_OBJECT(item_off), "track-id", GINT_TO_POINTER(-1));
+	g_object_set_data(G_OBJECT(item_off), "is-text-track", GINT_TO_POINTER(1));
 	g_signal_connect(item_off, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
 	gtk_box_append(GTK_BOX(box), item_off);
 	
@@ -2834,15 +2894,19 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 				gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
 				gst_tag_list_free(tags);
 			}
+			gchar *lang_str = lang ? g_strdup_printf(" (%s)", lang) : NULL;
 			gchar *label = g_strdup_printf("%sTrack %d%s", 
 				(text_enabled && i == current_text) ? "✓ " : "   ", 
 				i + 1, 
-				lang ? g_strdup_printf(" (%s)", lang) : "");
+				lang_str ? lang_str : "");
 			GtkWidget *item = gtk_button_new_with_label(label);
 			g_free(label);
 			if (lang) g_free(lang);
 			
 			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
+			g_object_set_data(G_OBJECT(item), "is-text-track", GINT_TO_POINTER(1));
+			if (lang_str)
+				g_object_set_data_full(G_OBJECT(item), "track-lang", lang_str, g_free);
 			g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
 			gtk_box_append(GTK_BOX(box), item);
 		}
@@ -4895,7 +4959,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	for (int i = 0; i < nSpeeds; i++)
 	{
 		GtkWidget* btn = gtk_button_new();
-		gchar* label = g_strdup_printf("<b>%.4g</b>", speeds[i]);
+		gchar* label = g_strdup_printf("<b>%.4gx</b>", speeds[i]);
 		GtkWidget* lbl = gtk_label_new(NULL);
 		gtk_label_set_use_markup(GTK_LABEL(lbl), TRUE);
 		gtk_label_set_markup(GTK_LABEL(lbl), label);
@@ -4944,6 +5008,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	GtkWidget* volLabel = gtk_label_new("Volume");
 	gtk_box_append(GTK_BOX(volBox), volLabel);
 	m_pVolumeScale = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, 0.0, 1.0, 0.05);
+	gtk_range_set_inverted(GTK_RANGE(m_pVolumeScale), TRUE);
 	gtk_widget_set_size_request(m_pVolumeScale, -1, 120);
 	gtk_range_set_value(GTK_RANGE(m_pVolumeScale), m_dVolume);
 	g_signal_connect(G_OBJECT(m_pVolumeScale), "value-changed", G_CALLBACK(viewer_volume_value_changed), this);
