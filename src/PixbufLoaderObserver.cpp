@@ -54,6 +54,13 @@ void PixbufLoaderObserver::SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint 
 	//printf("PixbufLoaderObserver::SetPixbuf\n");
 }
 
+void PixbufLoaderObserver::SetTexture(GdkTexture * texture)
+{ (void)texture; }
+
+void PixbufLoaderObserver::SetTextureAtSize(GdkTexture * texture, gint width, gint height, bool bResetViewMode /* = false */)
+{ (void)bResetViewMode;  (void)height;  (void)width;  (void)texture; }
+
+
 void PixbufLoaderObserver::SignalBytesRead(long bytes_read,long total)
 { (void)total;  (void)bytes_read; 
 }

@@ -24,6 +24,35 @@ public:
 	virtual void SetPixbuf(GdkPixbuf * pixbuf) = 0;
 	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf,gint width, gint height, bool bResetViewMode = true) = 0;
 
+	// modern texture calls (with default fallback to SetPixbuf / SetPixbufAtSize)
+	virtual void SetTexture(GdkTexture * texture)
+	{
+		GdkPixbuf *pb = NULL;
+		if (texture)
+		{
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+			pb = gdk_pixbuf_get_from_texture(texture);
+G_GNUC_END_IGNORE_DEPRECATIONS
+		}
+		SetPixbuf(pb);
+		if (pb)
+			g_object_unref(pb);
+	}
+
+	virtual void SetTextureAtSize(GdkTexture * texture, gint width, gint height, bool bResetViewMode = true)
+	{
+		GdkPixbuf *pb = NULL;
+		if (texture)
+		{
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+			pb = gdk_pixbuf_get_from_texture(texture);
+G_GNUC_END_IGNORE_DEPRECATIONS
+		}
+		SetPixbufAtSize(pb, width, height, bResetViewMode);
+		if (pb)
+			g_object_unref(pb);
+	}
+
 	virtual void SignalBytesRead(long bytes_read,long total) = 0;
 	
 	

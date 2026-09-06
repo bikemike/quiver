@@ -57,3 +57,24 @@ if (TARGET PkgConfig::GLYCIN)
 endif()
 
 add_test(NAME VideoLoaderTest COMMAND test_video_loader)
+
+add_executable(test_icon_view
+    test_icon_view.cpp
+    ${CMAKE_SOURCE_DIR}/src/ImageCache.cpp
+)
+
+target_include_directories(test_icon_view PRIVATE
+    ${CMAKE_SOURCE_DIR}/libquiver
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_BINARY_DIR}
+)
+
+target_link_libraries(test_icon_view PRIVATE
+    quiver_lib
+    PkgConfig::GTK4
+    PkgConfig::GIO
+    Threads::Threads
+)
+
+add_test(NAME IconViewTest COMMAND test_icon_view)

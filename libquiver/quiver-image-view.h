@@ -87,6 +87,11 @@ void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf)
 void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width, int height);
 void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode);
 
+GdkTexture* quiver_image_view_get_texture(QuiverImageView *imageview);
+void quiver_image_view_set_texture(QuiverImageView *imageview, GdkTexture *texture);
+void quiver_image_view_set_texture_at_size(QuiverImageView *imageview, GdkTexture *texture, int width, int height);
+void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTexture *texture, int width, int height, gboolean reset_view_mode);
+
 QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview);
 QuiverImageViewMode quiver_image_view_get_view_mode_unmagnified(QuiverImageView *imageview);
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode);

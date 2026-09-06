@@ -47,6 +47,47 @@ static int combine_matrix[9][9] =
 
 static int inverse_matrix[9] = {1,1,2,3,4,7,8,5,6};
 
+static GdkTexture* pixbuf_to_texture(GdkPixbuf *pb)
+{
+	if (!pb)
+		return NULL;
+
+	GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pb);
+	gboolean has_alpha = gdk_pixbuf_get_has_alpha(pb);
+	GdkMemoryFormat fmt = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
+	GdkTexture *tex = gdk_memory_texture_new(
+		gdk_pixbuf_get_width(pb),
+		gdk_pixbuf_get_height(pb),
+		fmt,
+		bytes,
+		gdk_pixbuf_get_rowstride(pb)
+	);
+	g_bytes_unref(bytes);
+	return tex;
+}
+
+static GdkTexture* reorient_texture(GdkTexture *tex, int orientation)
+{
+	if (!tex || orientation <= 1)
+		return tex;
+
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+	GdkPixbuf *pb = gdk_pixbuf_get_from_texture(tex);
+G_GNUC_END_IGNORE_DEPRECATIONS
+	if (!pb)
+		return tex;
+
+	GdkPixbuf *rotated = QuiverUtils::GdkPixbufExifReorientate(pb, orientation);
+	g_object_unref(pb);
+	if (!rotated)
+		return tex;
+
+	GdkTexture *new_tex = pixbuf_to_texture(rotated);
+	g_object_unref(rotated);
+	g_object_unref(tex);
+	return new_tex;
+}
+
 ImageLoader::ImageLoader() : m_ImageCache(4)
 {
 	//Timer t("ImageLoader::ImageLoader()");
@@ -278,6 +319,11 @@ GdkPixbuf* ImageLoader::GetCachedPixbuf(QuiverFile f)
 	return m_ImageCache.GetPixbuf(f.GetURI());
 }
 
+GdkTexture* ImageLoader::GetCachedTexture(QuiverFile f)
+{
+	return m_ImageCache.GetTexture(f.GetURI());
+}
+
 void ImageLoader::AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer)
 {
 	g_mutex_lock(&m_csObservers);
@@ -339,13 +385,23 @@ bool ImageLoader::LoadQuickPreview()
 				}
 			}
 			
+			GdkTexture *thumb_tex = pixbuf_to_texture(thumb_pixbuf);
 			list<IPixbufLoaderObserver*>::iterator itr;
 			g_mutex_lock(&m_csObservers);
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
-				(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
+				if (thumb_tex)
+				{
+					(*itr)->SetTextureAtSize(thumb_tex,width,height);
+				}
+				else
+				{
+					(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
+				}
 			}
 			g_mutex_unlock(&m_csObservers);
+			if (thumb_tex)
+				g_object_unref(thumb_tex);
 			g_object_unref(thumb_pixbuf);
 			
 			rval = true;
@@ -360,23 +416,23 @@ void ImageLoader::Load()
 	
 	if (m_Command.params.reload)
 	{
-		m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
+		m_ImageCache.RemoveTexture(m_Command.quiverFile.GetURI());
 	}
 
 	// check to see if the image should be removed from the cache
-	GdkPixbuf * pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
-	if (NULL != pixbuf)
+	GdkTexture * texture = m_ImageCache.GetTexture(m_Command.quiverFile.GetURI());
+	if (NULL != texture)
 	{
 		int real_width,real_height;
 
 		gint width,height;
-		width = gdk_pixbuf_get_width(pixbuf);
-		height = gdk_pixbuf_get_height(pixbuf);
+		width = gdk_texture_get_width(texture);
+		height = gdk_texture_get_height(texture);
 		
 		real_width = m_Command.quiverFile.GetWidth();
 		real_height = m_Command.quiverFile.GetHeight();
 		
-		const gint* pOrientation = (const gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
+		const gint* pOrientation = (const gint*)g_object_get_data(G_OBJECT (texture), "quiver-orientation");
 		if (NULL != pOrientation)
 		{
 			if(m_iLoadOrientation != *pOrientation)
@@ -405,62 +461,47 @@ void ImageLoader::Load()
 			 height < m_Command.params.max_height &&
 			 width < real_width && height < real_height))
 		{
-			m_ImageCache.RemovePixbuf(m_Command.quiverFile.GetURI());
+			m_ImageCache.RemoveTexture(m_Command.quiverFile.GetURI());
 		}
 				
-		g_object_unref(pixbuf);
+		g_object_unref(texture);
 	}
 
 	if (LOAD == m_Command.params.state)
 	{
-		pixbuf = m_ImageCache.GetPixbuf(m_Command.quiverFile.GetURI());
+		texture = m_ImageCache.GetTexture(m_Command.quiverFile.GetURI());
 		
-		if ( NULL == pixbuf)
+		if ( NULL == texture)
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),"") && !m_ImageCache.HasFailed(m_Command.quiverFile.GetURI()))
 			{
 				bool bLoadedQuickPreview = LoadQuickPreview();
 				bool bAborted = false;
+				bool bGlycinTransformed = false;
 
 				if (m_Command.quiverFile.IsVideo())
 				{
 					Timer loadTimer;
 					gint n=1, d=1;
-					GdkPixbuf* video_pixbuf = NULL;
-					video_pixbuf = ImageDecoder::DecodeVideoPreview(m_Command.quiverFile.GetURI(), &n, &d,
+					texture = ImageDecoder::DecodeVideoTexture(m_Command.quiverFile.GetURI(), &n, &d,
 						-1, m_Command.params.max_width, m_Command.params.max_height,
 						abort_video_load, this);
-					if (NULL == video_pixbuf && CommandsPending())
+					if (NULL == texture && CommandsPending())
 						bAborted = true;
-					if (NULL != video_pixbuf)
+					if (NULL != texture)
 					{
-						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
-						guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
+						guint tex_width  = gdk_texture_get_width(texture);
+						guint tex_height = gdk_texture_get_height(texture);
 
 						if (n > d)
-							pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
+							tex_width = (guint)((tex_width * n) / float(d) + .5);
 						else
-							pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
+							tex_height = (guint)((tex_height * d) / float(n) + .5);
 
 						if (!m_Command.quiverFile.IsWidthHeightSet())
 						{
-							m_Command.quiverFile.SetWidth(pixbuf_width);
-							m_Command.quiverFile.SetHeight(pixbuf_height);
-						}
-						
-						if (n != d)
-						{
-							pixbuf = gdk_pixbuf_scale_simple (
-								video_pixbuf,
-								pixbuf_width,
-								pixbuf_height,
-								GDK_INTERP_BILINEAR);
-
-							g_object_unref(video_pixbuf);
-						}
-						else
-						{
-							pixbuf = video_pixbuf;
+							m_Command.quiverFile.SetWidth(tex_width);
+							m_Command.quiverFile.SetHeight(tex_height);
 						}
 
 						m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
@@ -468,7 +509,6 @@ void ImageLoader::Load()
 				}
 				else
 				{
-
 					if (ImageDecoder::GetBackend() != ImageDecoderBackend::PIXBUF)
 					{
 						GFile* gfile = g_file_new_for_uri(m_Command.quiverFile.GetURI());
@@ -485,21 +525,19 @@ void ImageLoader::Load()
 								}
 							}
 
-							int max_w = (m_Command.params.fullsize) ? 0 : m_Command.params.max_width;
-							int max_h = (m_Command.params.fullsize) ? 0 : m_Command.params.max_height;
-
 							Timer loadTimer;
-							pixbuf = ImageDecoder::DecodeFilePixbuf(gfile, m_Command.quiverFile.GetMimeType(), max_w, max_h, NULL, NULL);
-							if (NULL != pixbuf)
+							texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, NULL);
+							if (NULL != texture)
 							{
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
+								bGlycinTransformed = (g_object_get_data(G_OBJECT(texture), "glycin-transformed") != NULL);
 							}
 							g_object_unref(gfile);
 						}
 					}
 
 #if HAVE_GDK_PIXBUF
-					if (NULL == pixbuf && !CommandsPending())
+					if (NULL == texture && !CommandsPending())
 					{
 						GdkPixbufLoader* loader = gdk_pixbuf_loader_new_with_mime_type (m_Command.quiverFile.GetMimeType(), NULL);	
 						
@@ -521,36 +559,38 @@ void ImageLoader::Load()
 
 						if (rval)
 						{
-							pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+							GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 							if (NULL != pixbuf)
-								g_object_ref(pixbuf);
+							{
+								texture = pixbuf_to_texture(pixbuf);
+							}
 						}
 						g_object_unref(loader);
 					}
 #endif
 				}
 					
-				if (NULL != pixbuf  )
+				if (NULL != texture)
 				{
-					// set up a temp orientation as m_iLoadOrientation could 
-					// change at any time
 					int orientation = m_iLoadOrientation;
-					if (1 < orientation)
+					if (bGlycinTransformed)
 					{
-						GdkPixbuf* pixbuf_rotated;
-						pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,orientation);
-						if (NULL != pixbuf_rotated)
+						int file_ori = m_Command.quiverFile.GetOrientation();
+						int needed_ori = reorientation_matrix[file_ori][orientation];
+						if (needed_ori > 1)
 						{
-							g_object_unref(pixbuf);
-							pixbuf = pixbuf_rotated;
+							texture = reorient_texture(texture, needed_ori);
 						}
+					}
+					else if (orientation > 1)
+					{
+						texture = reorient_texture(texture, orientation);
 					}
 					
 					list<IPixbufLoaderObserver*>::iterator itr;
 					g_mutex_lock(&m_csObservers);
 					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 					{
-
 						gint width,height;
 						width = m_Command.quiverFile.GetWidth();
 						height = m_Command.quiverFile.GetHeight();
@@ -560,32 +600,25 @@ void ImageLoader::Load()
 						}
 						if (m_Command.params.reload)
 						{
-							// FIXME: if the rotation changes at some point, we
-							// need to rotate this image
-							(*itr)->SetPixbufAtSize(pixbuf,width,height,false);
+							(*itr)->SetTextureAtSize(texture,width,height,false);
 						}
 						else
 						{
 							bool bResetViewMode = !bLoadedQuickPreview;
-							(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
+							(*itr)->SetTextureAtSize(texture,width,height,bResetViewMode);
 						}
 					}
 					g_mutex_unlock(&m_csObservers);
 
 					gint *pOrientation = g_new(int,1);
 					*pOrientation = orientation;
-					g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
+					g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pOrientation,g_free);
 
-					m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
-					g_object_unref(pixbuf);
+					m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(),texture);
+					g_object_unref(texture);
 				}
 				else
 				{
-					/* a load can also "fail" because a newer command arrived
-					 * while this one was still reading the file (quick user
-					 * navigation).  that is NOT a file problem, so do not
-					 * record the image as failed or blank the view - the
-					 * pending command will paint the new image. */
 					if (!bAborted)
 					{
 						m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
@@ -593,7 +626,7 @@ void ImageLoader::Load()
 						g_mutex_lock(&m_csObservers);
 						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 						{
-							(*itr)->SetPixbuf(NULL);
+							(*itr)->SetTexture(NULL);
 						}
 						g_mutex_unlock(&m_csObservers);
 					}
@@ -601,14 +634,11 @@ void ImageLoader::Load()
 			}
 			else
 			{
-				/* the image is already known to be unloadable (or the URI is
-				 * empty).  Let the view know so it does not keep showing the
-				 * previous image's content when the user navigates to it. */
 				list<IPixbufLoaderObserver*>::iterator itr;
 				g_mutex_lock(&m_csObservers);
 				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 				{
-					(*itr)->SetPixbuf(NULL);
+					(*itr)->SetTexture(NULL);
 				}
 				g_mutex_unlock(&m_csObservers);
 			}
@@ -616,25 +646,22 @@ void ImageLoader::Load()
 		else
 		{
 			// load from cache
-			// we do not need to free the data returned from this - it is not a copy
-			gint *pOrientation = (gint*)g_object_get_data(G_OBJECT (pixbuf), "quiver-orientation");
+			gint *pOrientation = (gint*)g_object_get_data(G_OBJECT (texture), "quiver-orientation");
 		
-			
 			if (NULL != pOrientation && m_Command.params.orientation != *pOrientation)
 			{
 				int new_orientation = reorientation_matrix[*pOrientation][m_Command.params.orientation];
 
-				GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,new_orientation);
-				if (NULL != pixbuf_rotated)
+				GdkTexture* texture_rotated = reorient_texture(texture, new_orientation);
+				if (NULL != texture_rotated)
 				{
-					g_object_unref(pixbuf);
-					pixbuf = pixbuf_rotated;
+					texture = texture_rotated;
 
 					gint *pNewOrientation = g_new(int,1);
 					*pNewOrientation = m_Command.params.orientation;
-					g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pNewOrientation,g_free);
+					g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pNewOrientation, g_free);
 
-					m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
+					m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), texture);
 				}
 			}
 
@@ -650,10 +677,10 @@ void ImageLoader::Load()
 					swap(width,height);
 				}
 				bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-				(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
+				(*itr)->SetTextureAtSize(texture,width,height,bResetViewMode);
 			}
 			g_mutex_unlock(&m_csObservers);
-			g_object_unref(pixbuf);
+			g_object_unref(texture);
 		}
 	}	
 	else if (CACHE == m_Command.params.state)
@@ -662,47 +689,33 @@ void ImageLoader::Load()
 		{
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
-				//cout << "cache : " << m_Command.filename << endl;
 				bool bAborted = false;
+				bool bGlycinTransformed = false;
+				GdkTexture *cache_texture = NULL;
+
 				if (m_Command.quiverFile.IsVideo())
 				{
 					Timer loadTimer;
 					gint n=1, d=1;
-					GdkPixbuf* video_pixbuf = NULL;
-					video_pixbuf = ImageDecoder::DecodeVideoPreview(m_Command.quiverFile.GetURI(), &n, &d,
+					cache_texture = ImageDecoder::DecodeVideoTexture(m_Command.quiverFile.GetURI(), &n, &d,
 						-1, m_Command.params.max_width, m_Command.params.max_height,
 						abort_video_load, this);
-					if (NULL == video_pixbuf && CommandsPending())
+					if (NULL == cache_texture && CommandsPending())
 						bAborted = true;
-					if (NULL != video_pixbuf)
+					if (NULL != cache_texture)
 					{
-						guint pixbuf_width  = gdk_pixbuf_get_width(video_pixbuf);
-						guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
+						guint tex_width  = gdk_texture_get_width(cache_texture);
+						guint tex_height = gdk_texture_get_height(cache_texture);
 
 						if (n > d)
-							pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
+							tex_width = (guint)((tex_width * n) / float(d) + .5);
 						else
-							pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
+							tex_height = (guint)((tex_height * d) / float(n) + .5);
 
 						if (!m_Command.quiverFile.IsWidthHeightSet())
 						{
-							m_Command.quiverFile.SetWidth(pixbuf_width);
-							m_Command.quiverFile.SetHeight(pixbuf_height);
-						}
-						
-						if (n != d)
-						{
-							pixbuf = gdk_pixbuf_scale_simple (
-								video_pixbuf,
-								pixbuf_width,
-								pixbuf_height,
-								GDK_INTERP_BILINEAR);
-
-							g_object_unref(video_pixbuf);
-						}
-						else
-						{
-							pixbuf = video_pixbuf;
+							m_Command.quiverFile.SetWidth(tex_width);
+							m_Command.quiverFile.SetHeight(tex_height);
 						}
 
 						m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
@@ -726,21 +739,19 @@ void ImageLoader::Load()
 								}
 							}
 
-							int max_w = (m_Command.params.fullsize) ? 0 : m_Command.params.max_width;
-							int max_h = (m_Command.params.fullsize) ? 0 : m_Command.params.max_height;
-
 							Timer loadTimer;
-							pixbuf = ImageDecoder::DecodeFilePixbuf(gfile, m_Command.quiverFile.GetMimeType(), max_w, max_h, NULL, NULL);
-							if (NULL != pixbuf)
+							cache_texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, NULL);
+							if (NULL != cache_texture)
 							{
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
+								bGlycinTransformed = (g_object_get_data(G_OBJECT(cache_texture), "glycin-transformed") != NULL);
 							}
 							g_object_unref(gfile);
 						}
 					}
 
 #if HAVE_GDK_PIXBUF
-					if (NULL == pixbuf && !CommandsPending())
+					if (NULL == cache_texture && !CommandsPending())
 					{
 						GdkPixbufLoader* ldr = gdk_pixbuf_loader_new_with_mime_type (m_Command.quiverFile.GetMimeType(), NULL);	
 					
@@ -759,39 +770,41 @@ void ImageLoader::Load()
 
 						if (rval)
 						{
-							pixbuf = gdk_pixbuf_loader_get_pixbuf(ldr);
-
-							if (NULL != pixbuf)
-								g_object_ref(pixbuf);
+							GdkPixbuf *pb = gdk_pixbuf_loader_get_pixbuf(ldr);
+							if (NULL != pb)
+							{
+								cache_texture = pixbuf_to_texture(pb);
+							}
 						}
 
 						g_object_unref(ldr);
 					}
 #endif
 
-					if (NULL != pixbuf)
+					if (NULL != cache_texture)
 					{
-						if (1 < m_Command.params.orientation) // TODO: change to get rotate option
+						int orientation = m_Command.params.orientation;
+						if (bGlycinTransformed)
 						{
-							GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(pixbuf,m_Command.params.orientation);
-							
-							if (NULL != pixbuf_rotated)
+							int file_ori = m_Command.quiverFile.GetOrientation();
+							int needed_ori = reorientation_matrix[file_ori][orientation];
+							if (needed_ori > 1)
 							{
-								g_object_unref(pixbuf);
-								pixbuf = pixbuf_rotated;
+								cache_texture = reorient_texture(cache_texture, needed_ori);
 							}
 						}
+						else if (orientation > 1)
+						{
+							cache_texture = reorient_texture(cache_texture, orientation);
+						}
 						
-						// save the orientation so we can find out later
-						// what orientation was performed 
 						gint *pOrientation = g_new(int,1);
 						*pOrientation = m_Command.params.orientation;
-
-						g_object_set_data_full (G_OBJECT (pixbuf), "quiver-orientation", pOrientation,g_free);
+						g_object_set_data_full (G_OBJECT (cache_texture), "quiver-orientation", pOrientation, g_free);
 					}
 				}
 
-				if (NULL != pixbuf)
+				if (NULL != cache_texture)
 				{
 					if (CACHE_LOAD == m_Command.params.state)
 					{
@@ -807,24 +820,19 @@ void ImageLoader::Load()
 								swap(width,height);
 							}
 							bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-							(*itr)->SetPixbufAtSize(pixbuf,width,height,bResetViewMode);
-
+							(*itr)->SetTextureAtSize(cache_texture,width,height,bResetViewMode);
 						}
 						g_mutex_unlock(&m_csObservers);
-						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf);
-						//cout << "cache loaded image" << endl;
+						m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(),cache_texture);
 					}
 					else
 					{
-						m_ImageCache.AddPixbuf(m_Command.quiverFile.GetURI(),pixbuf,0);
+						m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(),cache_texture,0);
 					}
-					g_object_unref(pixbuf);
+					g_object_unref(cache_texture);
 				}
 				else
 				{
-					/* an aborted load (user navigated away mid-read) is not a
-					 * file problem: do not mark the image as failed and do not
-					 * blank the view - the pending command paints the new image */
 					if (!bAborted)
 					{
 						m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
@@ -834,22 +842,14 @@ void ImageLoader::Load()
 							g_mutex_lock(&m_csObservers);
 							for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 							{
-								(*itr)->SetPixbuf(NULL);
+								(*itr)->SetTexture(NULL);
 							}
 							g_mutex_unlock(&m_csObservers);
 						}
 					}
 				}
 			}
-
 		}
-		else
-		{
-			//cout << "in cache : " << m_Command.filename << endl;
-		}
-	}
-	else
-	{
 	}
 }
 

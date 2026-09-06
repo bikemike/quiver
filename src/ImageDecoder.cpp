@@ -377,6 +377,10 @@ GdkTexture* ImageDecoder::GlycinDecodeFileTexture(GFile *file, GCancellable *can
 
     g_object_unref(image);
     g_object_unref(loader);
+    if (tex)
+    {
+        g_object_set_data(G_OBJECT(tex), "glycin-transformed", GINT_TO_POINTER(1));
+    }
     return tex;
 }
 #endif

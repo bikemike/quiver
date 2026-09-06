@@ -25,7 +25,7 @@ struct _QuiverNavigationControlPrivate
 
 	GdkPixbuf *pixbuf;
 
-	cairo_rectangle_int_t view_area_rect;
+	GdkRectangle view_area_rect;
 
 };
 G_DEFINE_TYPE_WITH_CODE(QuiverNavigationControl,quiver_navigation_control,GTK_TYPE_WIDGET, G_ADD_PRIVATE(QuiverNavigationControl) G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL));
@@ -179,14 +179,12 @@ quiver_navigation_control_init(QuiverNavigationControl *navcontrol)
 static void
 quiver_navigation_control_finalize(GObject *object)
 {
-	GObjectClass *parent,*obj_class;
- (void)obj_class;
+	GObjectClass *parent;
 	QuiverNavigationControlClass *klass; 
 	QuiverNavigationControl *navcontrol;
 
 	navcontrol = QUIVER_NAVIGATION_CONTROL(object);
 	klass = QUIVER_NAVIGATION_CONTROL_GET_CLASS(navcontrol);
-	obj_class = G_OBJECT_CLASS (klass);
 	
 	if (NULL != navcontrol->priv->hadjustment)
 	{
@@ -227,14 +225,7 @@ quiver_navigation_control_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	{
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 		GtkStyleContext *context = gtk_widget_get_style_context(widget);
-		graphene_rect_t gbounds;
-		gbounds.origin.x = 0;
-		gbounds.origin.y = 0;
-		gbounds.size.width = alloc_w;
-		gbounds.size.height = alloc_h;
-		cairo_t *cr = gtk_snapshot_append_cairo(snapshot, &gbounds);
-		gtk_render_background(context, cr, 0, 0, alloc_w, alloc_h);
-		cairo_destroy(cr);
+		gtk_snapshot_render_background(snapshot, context, 0, 0, alloc_w, alloc_h);
 G_GNUC_END_IGNORE_DEPRECATIONS
 	}
 
@@ -498,7 +489,7 @@ quiver_navigation_control_adjustment_changed (GtkAdjustment *adjustment, gpointe
 	h = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
 
 	
-	cairo_rectangle_int_t view_area_rect_old = navcontrol->priv->view_area_rect;
+	GdkRectangle view_area_rect_old = navcontrol->priv->view_area_rect;
 		
 	// calc box offsets and width
 	int b_x = w * (hval / gtk_adjustment_get_upper(hadj));

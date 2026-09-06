@@ -54,6 +54,7 @@ public:
 	void ReCacheImage(QuiverFile);
 
 	GdkPixbuf* GetCachedPixbuf(QuiverFile f);
+	GdkTexture* GetCachedTexture(QuiverFile f);
 	
 	// thread functions
 	static void* run(void *data);

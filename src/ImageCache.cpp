@@ -7,65 +7,73 @@
 #include <iostream>
 using namespace std;
 
-
 static unsigned long CurrentTimeInMilliseconds();
 
-ImageCache::ImageCache(unsigned int size)
+void ImageCache::FreeCacheItem(CacheItem &item)
 {
-	m_iCacheSize = size;
-	
-	pthread_mutex_init(&m_MutexImageCache, NULL);
+	if (item.pTexture != NULL)
+	{
+		g_object_unref(item.pTexture);
+		item.pTexture = NULL;
+	}
+	if (item.pPixbuf != NULL)
+	{
+		g_object_unref(item.pPixbuf);
+		item.pPixbuf = NULL;
+	}
+}
+
+ImageCache::ImageCache(unsigned int size)
+	: m_iCacheSize(size)
+{
 }
 
 ImageCache::~ImageCache()
 {
 	Clear();
-
-	pthread_mutex_destroy(&m_MutexImageCache);
 }
 
 bool ImageCache::RemovePixbuf(std::string filename)
 {
-	pthread_mutex_lock (&m_MutexImageCache);
-	
+	return RemoveTexture(filename);
+}
+
+bool ImageCache::RemoveTexture(std::string filename)
+{
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+
 	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
 	bool rval = false;
 	if (m_mapImageCache.end() != itr)
 	{
-		g_object_unref(itr->second.pPixbuf);
+		FreeCacheItem(itr->second);
 		m_mapImageCache.erase(itr);
 		rval = true;
 	}
-	pthread_mutex_unlock (&m_MutexImageCache);
 	return rval;
 }
 
-void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb)
+void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb)
 {
-	AddPixbuf(filename,pb,CurrentTimeInMilliseconds());
+	AddPixbuf(filename, pb, CurrentTimeInMilliseconds());
+}
+
+void ImageCache::AddTexture(string filename, GdkTexture * texture)
+{
+	AddTexture(filename, texture, CurrentTimeInMilliseconds());
 }
 
 unsigned int ImageCache::GetSize()
 {
-	unsigned int size;
-	
-	pthread_mutex_lock (&m_MutexImageCache);
-	
-	size = m_iCacheSize;
-	
-	pthread_mutex_unlock (&m_MutexImageCache);
-	
-	return size;
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+	return m_iCacheSize;
 }
 
 void ImageCache::SetSize(unsigned int size)
 {
-	// remove the oldest elements from the cache
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
 
-	ImageCacheMap::iterator oldest,itr;
-	
-	pthread_mutex_lock (&m_MutexImageCache);
-	
+	ImageCacheMap::iterator oldest, itr;
 	while (size < m_mapImageCache.size())
 	{
 		oldest = m_mapImageCache.begin();
@@ -78,48 +86,31 @@ void ImageCache::SetSize(unsigned int size)
 		}
 		if (oldest != m_mapImageCache.end())
 		{
-			g_object_unref(oldest->second.pPixbuf);
+			FreeCacheItem(oldest->second);
 			m_mapImageCache.erase(oldest);
 		}
 	}
-	
+
 	m_iCacheSize = size;
-
-	pthread_mutex_unlock (&m_MutexImageCache);
-
 }
 
-void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
+void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long time)
 {
-	// if item is already here, just update the time of it
-	pthread_mutex_lock (&m_MutexImageCache);
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
 
 	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
-
 	if (m_mapImageCache.end() != itr)
 	{
-		// adding the same file again so unref the old pixbuf 
-		// before setting the new one
-		g_object_ref( pb );
-		g_object_unref(itr->second.pPixbuf);
-		itr->second.pPixbuf = pb;
+		FreeCacheItem(itr->second);
+		itr->second.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
+		itr->second.pPixbuf = NULL;
 		itr->second.time = time;
-		pthread_mutex_unlock (&m_MutexImageCache);
-
 		return;
 	}
 
-	CacheItem c = {};
-	c.pPixbuf = pb;
-	c.time = time;
-	g_object_ref(c.pPixbuf);
-	
-
 	if (m_mapImageCache.size() >= m_iCacheSize)
 	{
-		//remove the oldest item
-		ImageCacheMap::iterator oldest;
-		oldest = m_mapImageCache.begin();
+		ImageCacheMap::iterator oldest = m_mapImageCache.begin();
 		for (itr = oldest; itr != m_mapImageCache.end(); ++itr)
 		{
 			if (itr->second.time < oldest->second.time)
@@ -129,93 +120,137 @@ void ImageCache::AddPixbuf(string filename,GdkPixbuf * pb, unsigned long time)
 		}
 
 		if (m_mapImageCache.end() != oldest)
-		{		
-			g_object_unref(oldest->second.pPixbuf);
-			m_mapImageCache.erase(oldest);	
+		{
+			FreeCacheItem(oldest->second);
+			m_mapImageCache.erase(oldest);
 		}
-		
 	}
-	//add the new item
-	m_mapImageCache.insert(pair<string,CacheItem>(filename,c));
 
-	pthread_mutex_unlock (&m_MutexImageCache);
+	CacheItem c = {};
+	c.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
+	c.pPixbuf = NULL;
+	c.time = time;
+	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
 }
 
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb, unsigned long time)
+{
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
+	if (m_mapImageCache.end() != itr)
+	{
+		FreeCacheItem(itr->second);
+		itr->second.pPixbuf = pb ? (GdkPixbuf*)g_object_ref(pb) : NULL;
+		itr->second.pTexture = pb ? gdk_texture_new_for_pixbuf(pb) : NULL;
+		itr->second.time = time;
+		return;
+	}
+
+	if (m_mapImageCache.size() >= m_iCacheSize)
+	{
+		ImageCacheMap::iterator oldest = m_mapImageCache.begin();
+		for (itr = oldest; itr != m_mapImageCache.end(); ++itr)
+		{
+			if (itr->second.time < oldest->second.time)
+			{
+				oldest = itr;
+			}
+		}
+
+		if (m_mapImageCache.end() != oldest)
+		{
+			FreeCacheItem(oldest->second);
+			m_mapImageCache.erase(oldest);
+		}
+	}
+
+	CacheItem c = {};
+	c.pPixbuf = pb ? (GdkPixbuf*)g_object_ref(pb) : NULL;
+	c.pTexture = pb ? gdk_texture_new_for_pixbuf(pb) : NULL;
+	c.time = time;
+	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
+}
 
 bool ImageCache::InCache(std::string filename)
 {
-	bool rval;
-	pthread_mutex_lock (&m_MutexImageCache);
-	
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
 	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
-	rval = (m_mapImageCache.end() != itr) || (m_setLoadFailures.find(filename) != m_setLoadFailures.end());
-	pthread_mutex_unlock (&m_MutexImageCache);
-	
-	return rval;
+	return (m_mapImageCache.end() != itr) || (m_setLoadFailures.find(filename) != m_setLoadFailures.end());
 }
 
-GdkPixbuf* ImageCache::GetPixbuf(string filename)
+GdkTexture* ImageCache::GetTexture(string filename)
 {
-	//get an item from the cache and update the time on it
-	GdkPixbuf *pixbuf = NULL;
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
 
-	pthread_mutex_lock (&m_MutexImageCache);
-	
 	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
 	if (m_mapImageCache.end() != itr)
 	{
 		itr->second.time = CurrentTimeInMilliseconds();
-		pixbuf = itr->second.pPixbuf;
-		
-		g_object_ref(pixbuf);
+		if (itr->second.pTexture == NULL && itr->second.pPixbuf != NULL)
+		{
+			itr->second.pTexture = gdk_texture_new_for_pixbuf(itr->second.pPixbuf);
+		}
+		if (itr->second.pTexture != NULL)
+		{
+			return (GdkTexture*)g_object_ref(itr->second.pTexture);
+		}
 	}
-	pthread_mutex_unlock (&m_MutexImageCache);
-
-	return pixbuf;
+	return NULL;
 }
+
+GdkPixbuf* ImageCache::GetPixbuf(string filename)
+{
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
+	if (m_mapImageCache.end() != itr)
+	{
+		itr->second.time = CurrentTimeInMilliseconds();
+		if (itr->second.pPixbuf == NULL && itr->second.pTexture != NULL)
+		{
+			itr->second.pPixbuf = gdk_pixbuf_get_from_texture(itr->second.pTexture);
+		}
+		if (itr->second.pPixbuf != NULL)
+		{
+			return (GdkPixbuf*)g_object_ref(itr->second.pPixbuf);
+		}
+	}
+	return NULL;
+}
+G_GNUC_END_IGNORE_DEPRECATIONS
 
 void ImageCache::Clear()
 {
-	pthread_mutex_lock (&m_MutexImageCache);
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
 
-	ImageCacheMap::iterator itr;
-	for (itr = m_mapImageCache.begin(); itr != m_mapImageCache.end(); ++itr)
+	for (auto &pair : m_mapImageCache)
 	{
-		g_object_unref(itr->second.pPixbuf);
+		FreeCacheItem(pair.second);
 	}
-	
+
 	m_mapImageCache.clear();
 	m_setLoadFailures.clear();
-	
-	pthread_mutex_unlock (&m_MutexImageCache);
 }
-
 
 void ImageCache::AddFailure(std::string filename)
 {
-	pthread_mutex_lock (&m_MutexImageCache);
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
 	m_setLoadFailures.insert(filename);
-	pthread_mutex_unlock (&m_MutexImageCache);
 }
 
 bool ImageCache::HasFailed(std::string filename)
 {
-	pthread_mutex_lock (&m_MutexImageCache);
-	bool rval = m_setLoadFailures.find(filename) != m_setLoadFailures.end();
-	pthread_mutex_unlock (&m_MutexImageCache);
-	return rval;
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+	return m_setLoadFailures.find(filename) != m_setLoadFailures.end();
 }
 
 static unsigned long CurrentTimeInMilliseconds()
 {
 	timeval tv_time;
-
-	// get time val
-	gettimeofday(&tv_time,NULL);
-
-	// convert to milliseconds and return
-	return (unsigned long)tv_time.tv_sec * 1000 + (unsigned long)tv_time.tv_usec/1000;
-
+	gettimeofday(&tv_time, NULL);
+	return (unsigned long)tv_time.tv_sec * 1000 + (unsigned long)tv_time.tv_usec / 1000;
 }
 
 

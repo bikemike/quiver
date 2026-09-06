@@ -28,6 +28,8 @@ public:
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf);
 	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height, bool bResetViewMode = true );
+	virtual void SetTexture(GdkTexture * texture);
+	virtual void SetTextureAtSize(GdkTexture * texture, gint width, gint height, bool bResetViewMode = true );
 
 	virtual void SignalBytesRead(long bytes_read,long total);
 protected:

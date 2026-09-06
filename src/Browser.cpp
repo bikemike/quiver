@@ -96,6 +96,14 @@ struct AsyncPixbufData {
 	bool bAtSize;
 };
 
+struct AsyncTextureData {
+	PixbufTarget *pTarget;
+	GdkTexture *texture;
+	gint width, height;
+	gboolean bReset;
+	bool bAtSize;
+};
+
 static gboolean idle_set_pixbuf_b(gpointer data) {
 	AsyncPixbufData *p = (AsyncPixbufData*)data;
 	/* the preview image view may already be gone (queued before teardown) */
@@ -108,6 +116,22 @@ static gboolean idle_set_pixbuf_b(gpointer data) {
 		}
 	}
 	if (p->pixbuf) g_object_unref(p->pixbuf);
+	pixbuf_target_unref(p->pTarget);
+	delete p;
+	return FALSE;
+}
+
+static gboolean idle_set_texture_b(gpointer data) {
+	AsyncTextureData *p = (AsyncTextureData*)data;
+	if (p->pTarget->pImageView != NULL)
+	{
+		if (p->bAtSize) {
+			quiver_image_view_set_texture_at_size_ex(p->pTarget->pImageView, p->texture, p->width, p->height, p->bReset);
+		} else {
+			quiver_image_view_set_texture(p->pTarget->pImageView, p->texture);
+		}
+	}
+	if (p->texture) g_object_unref(p->texture);
 	pixbuf_target_unref(p->pTarget);
 	delete p;
 	return FALSE;
@@ -146,6 +170,27 @@ public:
 			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, width, height, bReset, true};
 			pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_pixbuf_b, data, NULL);
+		}
+	};
+	virtual void SetTexture(GdkTexture * texture){
+		if (ThreadUtil::IsGUIThread()) {
+			quiver_image_view_set_texture(m_pTarget->pImageView, texture);
+		} else {
+			if (texture) g_object_ref(texture);
+			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, 0, 0, FALSE, false};
+			pixbuf_target_ref(m_pTarget);
+			g_idle_add_full(G_PRIORITY_HIGH, idle_set_texture_b, data, NULL);
+		}
+	};
+	virtual void SetTextureAtSize(GdkTexture *texture, gint width, gint height, bool bResetViewMode = true ){
+		gboolean bReset = bResetViewMode ? TRUE : FALSE;
+		if (ThreadUtil::IsGUIThread()) {
+			quiver_image_view_set_texture_at_size_ex(m_pTarget->pImageView, texture, width, height, bReset);
+		} else {
+			if (texture) g_object_ref(texture);
+			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, width, height, bReset, true};
+			pixbuf_target_ref(m_pTarget);
+			g_idle_add_full(G_PRIORITY_HIGH, idle_set_texture_b, data, NULL);
 		}
 	};
 	virtual void SignalBytesRead(long bytes_read,long total){ (void)total;  (void)bytes_read; };
@@ -436,6 +481,7 @@ Browser::GetWidget()
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data);
 static gchar* text_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data);
+static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data);
 static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, gulong cell, QuiverIconOverlayType type, gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
@@ -444,6 +490,7 @@ static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpo
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
 	static void iconview_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data);
+	static void iconview_leave_notify(GtkEventControllerMotion *controller, gpointer user_data);
 
 static void browser_button_press_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data); 
 static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, gpointer userdata);
@@ -727,6 +774,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH);
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
+	quiver_icon_view_set_thumbnail_texture_func(QUIVER_ICON_VIEW(m_pIconView),thumbnail_texture_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetIconPixbufFunc)icon_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetTextFunc)text_pixbuf_callback,this,NULL);
 
@@ -747,6 +795,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	{
 		GtkEventController *motion = gtk_event_controller_motion_new();
 		g_signal_connect(motion, "motion", G_CALLBACK(iconview_motion_notify), this);
+		g_signal_connect(motion, "leave", G_CALLBACK(iconview_leave_notify), this);
 		gtk_widget_add_controller(m_pIconView, motion);
 	}
 	g_signal_connect(G_OBJECT(m_pLocationEntry),"activate",G_CALLBACK(entry_activate),this);
@@ -1312,6 +1361,96 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cel
 	return pixbuf;
 }
 
+static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data)
+{
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+
+	GdkTexture *texture = NULL;
+	gboolean need_new_thumb = TRUE;
+	
+	guint width, height;
+	quiver_icon_view_get_icon_size(iconview,&width,&height);
+
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+
+	if (f.IsFolder())
+	{
+		gint x = 0, y = 0;
+		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
+
+		if (0 <= x && 0 <= y && x < gint(width) && y < gint(height))
+		{
+			double percent = double(x) / width;
+			// FIXME: this should be optimized. creating a new list
+			// every time the mouse moves can be quite slow.
+			ImageListPtr lstPtr(new ImageList());
+			lstPtr->SetImageList(f.GetURI());
+			unsigned int listSize = lstPtr->GetSize();
+			if (0 != listSize)
+			{
+				unsigned int index = (unsigned int)(listSize * percent);
+				index = std::min(index, listSize - 1);
+				GdkPixbuf *pixbuf = (*lstPtr)[index].GetThumbnail(std::max(width, height));
+				if (pixbuf)
+				{
+G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+					texture = gdk_texture_new_for_pixbuf(pixbuf);
+G_GNUC_END_IGNORE_DEPRECATIONS
+					g_object_unref(pixbuf);
+				}
+				*actual_width = (*lstPtr)[index].GetWidth();
+				*actual_height = (*lstPtr)[index].GetHeight();
+				if (4 < (*lstPtr)[index].GetOrientation())
+				{
+					swap(*actual_width,*actual_height);
+				}
+				need_new_thumb = FALSE;
+			}
+		}
+	}
+	else
+	{
+		texture = b->m_ThumbnailCache.GetTexture(f.GetURI());
+
+		if (texture)
+		{
+			*actual_width = f.GetWidth();
+			*actual_height = f.GetHeight();
+
+			if (4 < f.GetOrientation())
+			{
+				swap(*actual_width,*actual_height);
+			}
+
+			guint thumb_width, thumb_height;
+			thumb_width = gdk_texture_get_width(texture);
+			thumb_height = gdk_texture_get_height(texture);
+
+			guint bound_width, bound_height;
+			bound_width = *actual_width;
+			bound_height = *actual_height;
+			quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
+
+			if (bound_width == thumb_width && bound_height == thumb_height)
+			{
+				need_new_thumb = FALSE;
+			}
+			else if (thumb_width >= bound_width && thumb_height >= bound_height)
+			{
+				need_new_thumb = FALSE;
+			}
+		}
+	}
+	
+	if (need_new_thumb)
+	{
+		// add a timeout
+		b->QueueIconViewUpdate();
+	}
+	
+	return texture;
+}
+
 static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, gulong cell, QuiverIconOverlayType type, gpointer user_data)
 { (void)iconview; 
 	GdkPixbuf* pixbuf = NULL;
@@ -1402,7 +1541,14 @@ static void iconview_motion_notify(GtkEventControllerMotion *controller, gdouble
 	gulong cell =  quiver_icon_view_get_cell_for_xy(iconview, ix, iy);
 
 	if (G_MAXULONG == cell)
+	{
+		if (!b->m_mapFolderToFile.empty())
+		{
+			b->m_mapFolderToFile.clear();
+			gtk_widget_queue_draw(GTK_WIDGET(iconview));
+		}
 		return;
+	}
 
 	guint width, height;
 	quiver_icon_view_get_icon_size(iconview,&width,&height);
@@ -1412,12 +1558,18 @@ static void iconview_motion_notify(GtkEventControllerMotion *controller, gdouble
 	bool bClearMap = true;
 	if (f.IsFolder())
 	{
-		gint x = 0, y = 0;
-		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
-
-		if (0 <= x && 0 <= y && x < (gint)width && y < (gint)height)
+		/* If switching to a different folder, clear old preview mappings */
+		if (!b->m_mapFolderToFile.empty() && b->m_mapFolderToFile.find(f.GetURI()) == b->m_mapFolderToFile.end())
 		{
-			double percent = double(x) / width;
+			b->m_mapFolderToFile.clear();
+		}
+
+		gint cx = 0, cy = 0;
+		quiver_icon_view_get_cell_mouse_position(iconview, cell, &cx, &cy);
+
+		if (0 <= cx && 0 <= cy && cx < (gint)width && cy < (gint)height)
+		{
+			double percent = double(cx) / width;
 			ImageListPtr lstPtr(new ImageList());
 			lstPtr->SetImageList(f.GetURI());
 			unsigned int listSize = lstPtr->GetSize();
@@ -1443,7 +1595,25 @@ static void iconview_motion_notify(GtkEventControllerMotion *controller, gdouble
 
 	if (bClearMap)
 	{
+		if (!b->m_mapFolderToFile.empty())
+		{
+			b->m_mapFolderToFile.clear();
+			quiver_icon_view_invalidate_cell(iconview, cell);
+		}
+	}
+}
+
+static void iconview_leave_notify(GtkEventControllerMotion *controller, gpointer user_data)
+{
+	(void)controller;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	if (!b->m_mapFolderToFile.empty())
+	{
 		b->m_mapFolderToFile.clear();
+		if (b->m_pIconView)
+		{
+			gtk_widget_queue_draw(b->m_pIconView);
+		}
 	}
 }
 
@@ -1853,17 +2023,6 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 
 void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
 {
-	gint width=0, height=0;
- (void)width;
- (void)height;
-	QuiverImageViewMode mode = quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(parent->m_pImageView));
-	
-	if (mode != QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE && gtk_widget_get_realized(parent->m_pImageView))
-	{
-		width = gtk_widget_get_width(parent->m_pImageView);
-		height = gtk_widget_get_height(parent->m_pImageView);
-	}
-	
 	parent->SetImageIndex(event->GetIndex(),true);
 	
 	parent->m_BrowserParent->EmitCursorChangedEvent();

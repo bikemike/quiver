@@ -75,6 +75,7 @@ static int combine_matrix[9][9] =
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, gulong cell, gpointer user_data);
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data);
+static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
 
@@ -348,6 +349,14 @@ struct AsyncPixbufData {
 	bool bAtSize;
 };
 
+struct AsyncTextureData {
+	ViewPixbufTarget *pTarget;
+	GdkTexture *texture;
+	gint width, height;
+	gboolean bReset;
+	bool bAtSize;
+};
+
 /* toggle the "failed to load" indicator for the viewer image view.
  * SetPixbuf(NULL) is only ever dispatched by the image loader for a failed
  * load (or for a previously-failed image), so NULL == show the indicator. */
@@ -374,6 +383,23 @@ static gboolean idle_set_pixbuf_v(gpointer data) {
 		}
 	}
 	if (p->pixbuf) g_object_unref(p->pixbuf);
+	view_pixbuf_target_unref(p->pTarget);
+	delete p;
+	return FALSE;
+}
+
+static gboolean idle_set_texture_v(gpointer data) {
+	AsyncTextureData *p = (AsyncTextureData*)data;
+	if (p->pTarget->pImageView != NULL)
+	{
+		show_image_load_error(p->pTarget->pErrorLabel, p->texture == NULL);
+		if (p->bAtSize) {
+			quiver_image_view_set_texture_at_size_ex(p->pTarget->pImageView, p->texture, p->width, p->height, p->bReset);
+		} else {
+			quiver_image_view_set_texture(p->pTarget->pImageView, p->texture);
+		}
+	}
+	if (p->texture) g_object_unref(p->texture);
 	view_pixbuf_target_unref(p->pTarget);
 	delete p;
 	return FALSE;
@@ -415,6 +441,29 @@ public:
 			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, width, height, bReset, true};
 			view_pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_pixbuf_v, data, NULL);
+		}
+	};
+	virtual void SetTexture(GdkTexture * texture){
+		if (ThreadUtil::IsGUIThread()) {
+			show_image_load_error(m_pTarget->pErrorLabel, texture == NULL);
+			quiver_image_view_set_texture(m_pTarget->pImageView, texture);
+		} else {
+			if (texture) g_object_ref(texture);
+			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, 0, 0, FALSE, false};
+			view_pixbuf_target_ref(m_pTarget);
+			g_idle_add_full(G_PRIORITY_HIGH, idle_set_texture_v, data, NULL);
+		}
+	};
+	virtual void SetTextureAtSize(GdkTexture *texture, gint width, gint height, bool bResetViewMode = true ){
+		gboolean bReset = bResetViewMode ? TRUE : FALSE;
+		if (ThreadUtil::IsGUIThread()) {
+			show_image_load_error(m_pTarget->pErrorLabel, false);
+			quiver_image_view_set_texture_at_size_ex(m_pTarget->pImageView, texture, width, height, bReset);
+		} else {
+			if (texture) g_object_ref(texture);
+			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, width, height, bReset, true};
+			view_pixbuf_target_ref(m_pTarget);
+			g_idle_add_full(G_PRIORITY_HIGH, idle_set_texture_v, data, NULL);
 		}
 	};
 	
@@ -5286,6 +5335,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 
 	quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetNItemsFunc)n_cells_callback,this,NULL);
 	quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetThumbnailPixbufFunc)thumbnail_pixbuf_callback,this,NULL);
+	quiver_icon_view_set_thumbnail_texture_func(QUIVER_ICON_VIEW(m_pIconView),thumbnail_texture_callback,this,NULL);
 	quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetIconPixbufFunc)icon_pixbuf_callback,this,NULL);
 	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER);
 	int iIconSize = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
@@ -6110,6 +6160,56 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cel
 	}
 	
 	return pixbuf;
+}
+
+static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data)
+{
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;	
+
+	GdkTexture *texture = NULL;
+	gboolean need_new_thumb = TRUE;
+	
+	guint width, height;
+	guint thumb_width, thumb_height;
+	guint bound_width, bound_height;
+	quiver_icon_view_get_icon_size(iconview,&width,&height);
+	
+	texture = pViewerImpl->m_ThumbnailCache.GetTexture(pViewerImpl->m_ImageListPtr->Get(cell).GetURI());
+
+	if (texture)
+	{
+		*actual_width = pViewerImpl->m_ImageListPtr->Get(cell).GetWidth();
+		*actual_height = pViewerImpl->m_ImageListPtr->Get(cell).GetHeight();
+
+		if (4 < pViewerImpl->m_ImageListPtr->Get(cell).GetOrientation())
+		{
+			swap(*actual_width,*actual_height);
+		}
+
+		thumb_width = gdk_texture_get_width(texture);
+		thumb_height = gdk_texture_get_height(texture);
+
+		bound_width = *actual_width;
+		bound_height = *actual_height;
+		quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
+
+		if (bound_width == thumb_width && bound_height == thumb_height)
+		{
+			need_new_thumb = FALSE;
+		}
+		else if (thumb_width >= bound_width && thumb_height >= bound_height)
+		{
+			need_new_thumb = FALSE;
+		}
+	}
+	
+	if (need_new_thumb)
+	{
+		// add a timeout
+		pViewerImpl->QueueIconViewUpdate();
+	}
+	
+	return texture;
 }
 
 void Viewer::ViewerImpl::QueueIconViewUpdate(int timeout)
