@@ -1990,8 +1990,11 @@ viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble valu
 	g_free(str_len);
 	g_free(str_pos);
 
-	gst_element_seek_simple(GST_ELEMENT(p->m_pPipeline), format,
-		GstSeekFlags(GST_SEEK_FLAG_FLUSH), target);
+	gdouble speed = (p->m_dPlaybackSpeed > 0.0) ? p->m_dPlaybackSpeed : 1.0;
+	gst_element_seek(GST_ELEMENT(p->m_pPipeline), speed, format,
+		GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+		GST_SEEK_TYPE_SET, target,
+		GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 	return FALSE;
 }
 
@@ -2175,10 +2178,13 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 				gint64 pos = 0;
 				if (gst_element_query_position(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_FORMAT_TIME, &pos))
 				{
-					gst_element_seek_simple(GST_ELEMENT(pViewerImpl->m_pPipeline),
+					gdouble speed = (pViewerImpl->m_dPlaybackSpeed > 0.0) ? pViewerImpl->m_dPlaybackSpeed : 1.0;
+					gst_element_seek(GST_ELEMENT(pViewerImpl->m_pPipeline),
+						speed,
 						GST_FORMAT_TIME,
 						GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
-						pos);
+						GST_SEEK_TYPE_SET, pos,
+						GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 				}
 			}
 		}
@@ -2275,19 +2281,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		double speeds[] = { 0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0 };
 		if (idx >= 0 && idx < 8)
 		{
-			pViewerImpl->m_dPlaybackSpeed = speeds[idx];
-			gchar* label = g_strdup_printf("<b>%gx</b>", speeds[idx]);
-			if (pViewerImpl->m_pSpeedLabel) gtk_label_set_markup(GTK_LABEL(pViewerImpl->m_pSpeedLabel), label);
-			g_free(label);
-			if (pViewerImpl->m_pPipeline)
-			{
-				// We need to seek to apply speed
-				gint64 pos = 0;
-				gst_element_query_position(GST_ELEMENT(pViewerImpl->m_pPipeline), GST_FORMAT_TIME, &pos);
-				gst_element_seek(GST_ELEMENT(pViewerImpl->m_pPipeline), pViewerImpl->m_dPlaybackSpeed, GST_FORMAT_TIME,
-					(GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-					GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-			}
+			pViewerImpl->SetPlaybackSpeed(speeds[idx]);
 		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_FIRST))
@@ -3346,8 +3340,12 @@ void Viewer::ViewerImpl::SkipForward()
 		queried |= gst_element_query_position(m_pPipeline, format, &pos);
 		if (queried)
 		{
-			gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), std::min(clip_duration, pos + GST_SECOND*10));
- (void)seek_started;
+			gdouble speed = (m_dPlaybackSpeed > 0.0) ? m_dPlaybackSpeed : 1.0;
+			gboolean seek_started = gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
+				format, GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+				GST_SEEK_TYPE_SET, std::min(clip_duration, pos + GST_SECOND*10),
+				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+			(void)seek_started;
 			CancelControlsFade();
 			set_control_visible(m_pMediaControls, true);
 			if (0 != m_iTimeoutMouseMotionNotify)
@@ -3372,8 +3370,12 @@ void Viewer::ViewerImpl::SkipBack()
 		queried |= gst_element_query_position(m_pPipeline, format, &pos);
 		if (queried)
 		{
-			gboolean seek_started = gst_element_seek_simple(GST_ELEMENT(m_pPipeline), format, GstSeekFlags(GST_SEEK_FLAG_FLUSH), std::max((gint64)0,pos - GST_SECOND*10));
- (void)seek_started;
+			gdouble speed = (m_dPlaybackSpeed > 0.0) ? m_dPlaybackSpeed : 1.0;
+			gboolean seek_started = gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
+				format, GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+				GST_SEEK_TYPE_SET, std::max((gint64)0, pos - GST_SECOND*10),
+				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+			(void)seek_started;
 			CancelControlsFade();
 			set_control_visible(m_pMediaControls, true);
 			if (0 != m_iTimeoutMouseMotionNotify)
@@ -3495,20 +3497,14 @@ void Viewer::ViewerImpl::SetPlaybackSpeed(double speed)
 {
 	if (speed <= 0.0) speed = 1.0;
 	m_dPlaybackSpeed = speed;
-	gchar* label = g_strdup_printf("<b>%gx</b>", speed);
-	gtk_label_set_markup(GTK_LABEL(m_pSpeedLabel), label);
-	g_free(label);
-
-	if (IsPlaying())
+	if (m_pSpeedLabel)
 	{
-		gint64 pos = 0;
-		gst_element_query_position(m_pPipeline, GST_FORMAT_TIME, &pos);
-		gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
-			GST_FORMAT_TIME,
-			GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-			GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, 0);
+		gchar* label = g_strdup_printf("<b>%gx</b>", speed);
+		gtk_label_set_markup(GTK_LABEL(m_pSpeedLabel), label);
+		g_free(label);
 	}
-	else
+
+	if (m_pPipeline != NULL)
 	{
 		gint64 pos = 0;
 		if (gst_element_query_position(GST_ELEMENT(m_pPipeline), GST_FORMAT_TIME, &pos))
@@ -3516,7 +3512,7 @@ void Viewer::ViewerImpl::SetPlaybackSpeed(double speed)
 			gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
 				GST_FORMAT_TIME,
 				GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-				GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, 0);
+				GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 		}
 	}
 }
@@ -4667,10 +4663,11 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			gint64 pos = 0;
 			if (gst_element_query_position(m_pPipeline, GST_FORMAT_TIME, &pos))
 			{
-				gst_element_seek(GST_ELEMENT(m_pPipeline), 1.0,
+				gdouble speed = (m_dPlaybackSpeed > 0.0) ? m_dPlaybackSpeed : 1.0;
+				gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
 					GST_FORMAT_TIME,
 					GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-					GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, 0);
+					GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 			}
 		}
 	}

@@ -9,6 +9,7 @@
 #include <glib.h>
 #include <gtk/gtk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <gst/gst.h>
 
 // QuiverUtils references g_pApp
 GtkApplication *g_pApp = NULL;
@@ -114,6 +115,80 @@ int main(int argc, char** argv)
     std::cout << "  [GdkTexture] " << gdk_texture_get_width(video_texture) << "x"
               << gdk_texture_get_height(video_texture) << " -> PASS\n";
     g_object_unref(video_texture);
+
+    // 7. Test video playback rate preservation during seeking (SkipForward / SkipBack)
+    std::cout << "Testing video playback speed preservation during seeking...\n";
+    if (!gst_is_initialized())
+    {
+        gst_init(&argc, &argv);
+    }
+
+    GstElement *pipeline = gst_element_factory_make("playbin", "test_player");
+    assert(pipeline != NULL);
+
+    GstElement *vsink = gst_element_factory_make("fakesink", "vsink");
+    GstElement *asink = gst_element_factory_make("fakesink", "asink");
+    g_object_set(G_OBJECT(pipeline), "video-sink", vsink, "audio-sink", asink, "uri", uri, NULL);
+
+    GstStateChangeReturn sret = gst_element_set_state(pipeline, GST_STATE_PAUSED);
+    assert(sret != GST_STATE_CHANGE_FAILURE);
+    sret = gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
+    assert(sret == GST_STATE_CHANGE_SUCCESS);
+
+    auto query_playback_rate = [](GstElement* pipe) -> gdouble {
+        GstQuery *q = gst_query_new_segment(GST_FORMAT_TIME);
+        gdouble rate = -1.0;
+        if (gst_element_query(pipe, q)) {
+            gst_query_parse_segment(q, &rate, NULL, NULL, NULL);
+        }
+        gst_query_unref(q);
+        return rate;
+    };
+
+    gdouble current_rate = query_playback_rate(pipeline);
+    std::cout << "  [Initial Playback Rate] " << current_rate << " -> PASS\n";
+    assert(current_rate == 1.0);
+
+    // Set playback speed to 2.0x
+    gdouble target_speed = 2.0;
+    gint64 current_pos = 0;
+    gst_element_query_position(pipeline, GST_FORMAT_TIME, &current_pos);
+    gboolean seek_res = gst_element_seek(pipeline, target_speed, GST_FORMAT_TIME,
+        static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+        GST_SEEK_TYPE_SET, current_pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+    assert(seek_res);
+    gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
+
+    current_rate = query_playback_rate(pipeline);
+    std::cout << "  [Rate After Setting 2.0x] " << current_rate << " -> PASS\n";
+    assert(current_rate == target_speed);
+
+    // Simulate SkipForward with target_speed
+    gint64 forward_pos = current_pos + GST_SECOND * 5;
+    seek_res = gst_element_seek(pipeline, target_speed, GST_FORMAT_TIME,
+        static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+        GST_SEEK_TYPE_SET, forward_pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+    assert(seek_res);
+    gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
+
+    current_rate = query_playback_rate(pipeline);
+    std::cout << "  [Rate After SkipForward] " << current_rate << " (expected 2.0) -> PASS\n";
+    assert(current_rate == target_speed);
+
+    // Simulate SkipBack with target_speed
+    gint64 back_pos = std::max((gint64)0, forward_pos - GST_SECOND * 2);
+    seek_res = gst_element_seek(pipeline, target_speed, GST_FORMAT_TIME,
+        static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+        GST_SEEK_TYPE_SET, back_pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+    assert(seek_res);
+    gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
+
+    current_rate = query_playback_rate(pipeline);
+    std::cout << "  [Rate After SkipBack] " << current_rate << " (expected 2.0) -> PASS\n";
+    assert(current_rate == target_speed);
+
+    gst_element_set_state(pipeline, GST_STATE_NULL);
+    gst_object_unref(pipeline);
 
     if (final_pixbuf) g_object_unref(final_pixbuf);
     g_free(uri);

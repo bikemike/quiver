@@ -47,6 +47,7 @@ target_link_libraries(test_video_loader PRIVATE
     PkgConfig::GIO
     PkgConfig::EXIV2
     PkgConfig::FFMPEG
+    PkgConfig::GSTREAMER
     JPEG::JPEG
     Threads::Threads
     Boost::boost
