@@ -317,16 +317,21 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 	/* seek to a requested timestamp */
 	if (position_ns >= 0)
 	{
-		av_seek_frame(fmt, video_stream, position_ns, AVSEEK_FLAG_BACKWARD);
+		AVRational ns_base = {1, 1000000000};
+		int64_t seek_pts = av_rescale_q(position_ns, ns_base, st->time_base);
+		av_seek_frame(fmt, video_stream, seek_pts, AVSEEK_FLAG_BACKWARD);
 		avcodec_flush_buffers(ctx);
 	}
 
 	AVFrame* frame = av_frame_alloc();
+	AVFrame* last_frame = (position_ns >= 0) ? av_frame_alloc() : NULL;
 	AVPacket* pkt = av_packet_alloc();
-	if (frame == NULL || pkt == NULL)
+	if (frame == NULL || pkt == NULL || (position_ns >= 0 && last_frame == NULL))
 	{
 		av_packet_free(&pkt);
 		av_frame_free(&frame);
+		if (last_frame != NULL)
+			av_frame_free(&last_frame);
 		close_session(s);
 		return NULL;
 	}
@@ -368,8 +373,9 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 			{
 				/* seeks land on the nearest keyframe; decode forward until we
 				 * pass the desired timestamp, then keep that frame. */
+				AVRational ns_base = {1, 1000000000};
 				int64_t pts_ns = (frame->pts != AV_NOPTS_VALUE)
-					? av_rescale_q(frame->pts, st->time_base, AV_TIME_BASE_Q)
+					? av_rescale_q(frame->pts, st->time_base, ns_base)
 					: 0;
 				if (pts_ns >= position_ns)
 				{
@@ -378,14 +384,29 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 					av_frame_unref(frame);
 					goto done;
 				}
+				if (last_frame != NULL)
+				{
+					av_frame_unref(last_frame);
+					av_frame_ref(last_frame, frame);
+				}
 				av_frame_unref(frame);
 			}
 		}
 	}
 
 done:
+	if (result == NULL && last_frame != NULL && last_frame->width > 0)
+	{
+		int last_w = last_frame->width;
+		int last_h = last_frame->height;
+		int last_rotation = frame_rotation_deg(last_frame, st->metadata);
+		result = frame_to_pixbuf(last_frame, last_w, last_h,
+		                         target_width, target_height, last_rotation);
+	}
 	av_packet_free(&pkt);
 	av_frame_free(&frame);
+	if (last_frame != NULL)
+		av_frame_free(&last_frame);
 	close_session(s);
 	return result;
 }
@@ -416,7 +437,12 @@ gboolean Probe(const gchar *uri,
 		return FALSE;
 
 	if (duration_ns != NULL)
-		*duration_ns = (s.fmt->duration > 0) ? s.fmt->duration : 0;
+	{
+		AVRational ns_base = {1, 1000000000};
+		*duration_ns = (s.fmt->duration > 0)
+			? av_rescale_q(s.fmt->duration, AV_TIME_BASE_Q, ns_base)
+			: 0;
+	}
 
 	AVRational par = (s.st->sample_aspect_ratio.num != 0)
 		? s.st->sample_aspect_ratio : (AVRational){1, 1};

@@ -108,6 +108,10 @@ double AdjustDateTask::GetProgress() const
 	{
 		return 1.;
 	}
+	if (m_vectQuiverFiles.empty())
+	{
+		return 0.;
+	}
 	return m_iCurrentFile / (double)m_vectQuiverFiles.size() + m_dFileSavePercent;
 }
 
@@ -265,7 +269,92 @@ void AdjustDateTask::Run()
 	}
 	else // set date
 	{
+		char szDate[20];
+		g_snprintf(szDate, 20, "%04d:%02d:%02d %02d:%02d:%02d",
+			m_tmNewDate.tm_year + 1900,
+			m_tmNewDate.tm_mon + 1,
+			m_tmNewDate.tm_mday,
+			m_tmNewDate.tm_hour,
+			m_tmNewDate.tm_min,
+			m_tmNewDate.tm_sec);
 
+		if (exif_date_format_is_valid(szDate))
+		{
+			while ((size_t)m_iCurrentFile < m_vectQuiverFiles.size())
+			{
+				QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
+
+				GFileInfo* pInfo = f.GetFileInfo();
+
+				if ((DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields) ||
+					(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
+					(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
+				{
+					std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
+					if (NULL == pExifData.get())
+					{
+						pExifData.reset(new Exiv2::ExifData());
+					}
+
+					if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
+					{
+						(*pExifData)["Exif.Image.DateTime"] = szDate;
+					}
+					if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
+					{
+						(*pExifData)["Exif.Photo.DateTimeOriginal"] = szDate;
+					}
+					if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
+					{
+						(*pExifData)["Exif.Photo.DateTimeDigitized"] = szDate;
+					}
+
+					f.SetExifData(pExifData);
+
+					if (f.Modified())
+					{
+						ImageSaveManager::GetInstance()->SaveImage(f);
+					}
+				}
+
+				if (NULL != pInfo)
+				{
+					if (DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields)
+					{
+						GDateTime* pDateTimeNew = g_date_time_new_local(
+							m_tmNewDate.tm_year + 1900,
+							m_tmNewDate.tm_mon + 1,
+							m_tmNewDate.tm_mday,
+							m_tmNewDate.tm_hour,
+							m_tmNewDate.tm_min,
+							m_tmNewDate.tm_sec);
+						if (NULL != pDateTimeNew)
+						{
+							g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
+							GFile* file = g_file_new_for_uri(f.GetURI());
+							g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+							g_object_unref(file);
+							g_date_time_unref(pDateTimeNew);
+						}
+					}
+					g_object_unref(pInfo);
+				}
+
+				++m_iCurrentFile;
+
+				EmitTaskProgressUpdatedEvent();
+
+				if (ShouldPause())
+				{
+					break;
+				}
+
+				if (ShouldCancel())
+				{
+					break;
+				}
+			}
+		}
 	}
 
 }

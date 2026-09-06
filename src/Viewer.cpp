@@ -3034,11 +3034,11 @@ static void signal_drag_end(GtkDragSource *source, GdkDrag *drag, gpointer user_
 static gchar*
 gst_time_format(gint64 time)
 {
-	gint64 secs  = GST_TIME_AS_SECONDS(time);
-	gint64 mins  = secs / 60;
-	gint64 hours = mins / 60;
-	mins = mins - hours*60;
-	secs = secs - mins*60;
+	gint64 total_secs = GST_TIME_AS_SECONDS(time);
+	gint64 secs  = total_secs % 60;
+	gint64 total_mins = total_secs / 60;
+	gint64 mins  = total_mins % 60;
+	gint64 hours = total_mins / 60;
 
 	gchar* str = NULL;
 

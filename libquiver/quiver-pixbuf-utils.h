@@ -1,5 +1,8 @@
 #ifndef FILE_QUIVER_PIXBUF_UTILS_H
 #define FILE_QUIVER_PIXBUF_UTILS_H
+
+#include <gdk-pixbuf/gdk-pixbuf.h>
+
 G_BEGIN_DECLS
 void pixbuf_set_alpha(GdkPixbuf *src, guchar alpha);
 void pixbuf_set_grayscale(GdkPixbuf *src);

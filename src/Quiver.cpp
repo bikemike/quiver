@@ -2609,6 +2609,51 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 			}
 			else if (dlg.IsSetDate())
 			{
+				std::string strDate = dlg.GetDateString();
+				int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0;
+				if (sscanf(strDate.c_str(), "%04d:%02d:%02d %02d:%02d:%02d",
+				           &year, &month, &day, &hour, &min, &sec) == 6)
+				{
+					struct tm tmDate = {};
+					tmDate.tm_year = year - 1900;
+					tmDate.tm_mon = month - 1;
+					tmDate.tm_mday = day;
+					tmDate.tm_hour = hour;
+					tmDate.tm_min = min;
+					tmDate.tm_sec = sec;
+					tmDate.tm_isdst = -1;
+
+					AdjustDateTaskPtr adjustDateTaskPtr(new AdjustDateTask(tmDate));
+
+					if (dlg.ModifyModificationTime())
+					{
+						adjustDateTaskPtr->AddAdjustDateFields(AdjustDateTask::DATE_FIELD_MODIFICATION_TIME);
+					}
+
+					if (dlg.ModifyExifDate())
+					{
+						adjustDateTaskPtr->AddAdjustDateFields(AdjustDateTask::DATE_FIELD_EXIF_DATE_TIME);
+					}
+
+					if (dlg.ModifyExifDateOrig())
+					{
+						adjustDateTaskPtr->AddAdjustDateFields(AdjustDateTask::DATE_FIELD_EXIF_DATE_TIME_ORIG);
+					}
+					if (dlg.ModifyExifDateDig())
+					{
+						adjustDateTaskPtr->AddAdjustDateFields(AdjustDateTask::DATE_FIELD_EXIF_DATE_TIME_DIGITIZED);
+					}
+
+					std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
+					std::list<unsigned int>::iterator itr;
+					for (itr = items.begin(); items.end() != itr; ++itr)
+					{
+						QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[*itr];
+						adjustDateTaskPtr->AddFile(f);
+					}
+
+					TaskManager::GetInstance()->AddTask(adjustDateTaskPtr);
+				}
 			}
 		}
 	}

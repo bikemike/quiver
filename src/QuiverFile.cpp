@@ -1171,6 +1171,12 @@ bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pE
 
 		bSet = true;
 	}
+	else if (NULL != pExifData.get() && NULL == m_ExifDataOriginal.get())
+	{
+		m_ExifData = std::make_shared<Exiv2::ExifData>(*pExifData);
+		m_fDataModified = (QuiverDataFlags)(m_fDataModified|QUIVER_FILE_DATA_EXIF);
+		bSet = true;
+	}
 	return bSet;
 }
 

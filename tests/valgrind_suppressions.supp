@@ -1,0 +1,72 @@
+{
+   glib-type-register
+   Memcheck:Leak
+   match-leak-kinds: reachable,possible
+   fun:*alloc
+   ...
+   fun:g_type_register_*
+}
+{
+   glib-param-spec
+   Memcheck:Leak
+   match-leak-kinds: reachable,possible
+   fun:*alloc
+   ...
+   fun:g_param_spec_*
+}
+{
+   fontconfig-init
+   Memcheck:Leak
+   match-leak-kinds: reachable,possible
+   fun:*alloc
+   ...
+   fun:FcInit*
+}
+{
+   gtk-init
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_init*
+}
+{
+   glib-shared-lib
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   fun:*alloc
+   ...
+   obj:*/libglib-2.0.so*
+}
+{
+   gio-shared-lib
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   fun:*alloc
+   ...
+   obj:*/libgio-2.0.so*
+}
+{
+   gtk4-shared-lib
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   fun:*alloc
+   ...
+   obj:*/libgtk-4.so*
+}
+{
+   gstreamer-shared-lib
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   fun:*alloc
+   ...
+   obj:*/libgstreamer-1.0.so*
+}
+{
+   dl-tls-alloc
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:calloc
+   ...
+   fun:allocate_dtv
+}

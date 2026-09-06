@@ -1,4 +1,4 @@
-set(QUIVER_SOURCES
+set(QUIVER_CORE_SOURCES
     MD5.cpp
     PropertyView.cpp
     VideoDateEditTask.cpp
@@ -24,7 +24,6 @@ set(QUIVER_SOURCES
     Statusbar.cpp
     QuiverUtils.cpp
     QuiverStockIcons.cpp
-    Quiver.cpp
     QuiverVideoOps.cpp
     AbstractEventSource.cpp
     BrowserEventSource.cpp
@@ -59,21 +58,22 @@ set(QUIVER_SOURCES
     libjpeg/transupp.c
 )
 
-add_executable(quiver ${QUIVER_SOURCES})
+add_library(quiver_core STATIC ${QUIVER_CORE_SOURCES})
 
-target_compile_definitions(quiver PRIVATE
+target_compile_definitions(quiver_core PUBLIC
     PACKAGE_LOCALE_DIR="${PACKAGE_LOCALE_DIR}"
     PACKAGE_SRC_DIR="${PACKAGE_SRC_DIR}"
     PACKAGE_DATA_DIR="${PACKAGE_DATA_DIR}"
     QUIVER_DATADIR="${QUIVER_DATADIR}"
 )
 
-target_include_directories(quiver PRIVATE
+target_include_directories(quiver_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_BINARY_DIR}
 )
 
-target_link_libraries(quiver PRIVATE
+target_link_libraries(quiver_core PUBLIC
     quiver_lib
     PkgConfig::GTK4
     PkgConfig::GIO
@@ -87,5 +87,8 @@ target_link_libraries(quiver PRIVATE
 )
 
 if (TARGET PkgConfig::GLYCIN)
-    target_link_libraries(quiver PRIVATE PkgConfig::GLYCIN)
+    target_link_libraries(quiver_core PUBLIC PkgConfig::GLYCIN)
 endif()
+
+add_executable(quiver Quiver.cpp)
+target_link_libraries(quiver PRIVATE quiver_core)
