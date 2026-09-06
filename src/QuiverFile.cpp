@@ -313,6 +313,7 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 	{
 		GFile* file = g_file_new_for_uri(m_szURI);
 		gFileInfo = g_file_query_info(file,
+			G_FILE_ATTRIBUTE_STANDARD_TYPE ","
 			G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
 				G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
 				G_FILE_ATTRIBUTE_STANDARD_SIZE ","
@@ -362,6 +363,11 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 {
 	//Timer t("QuiverFile::GetExifThumbnail()");
 	GdkPixbuf *thumb_pixbuf = NULL;
+
+	if (IsVideo())
+	{
+		return NULL;
+	}
 
 	LoadExifData();
 
@@ -636,7 +642,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */,
 
 	if (!bSkipGeneration)
 	{
-	if (NULL == thumb_pixbuf && 128 >= thumbSize->size) // no thumbnail in the cache
+	if (NULL == thumb_pixbuf && 128 >= thumbSize->size && !IsVideo()) // no thumbnail in the cache
 	{
 		// unable to load from file, next try exif
 		thumb_pixbuf = GetExifThumbnail();
@@ -885,6 +891,12 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 {
 	if (NULL != m_szURI && !( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
 	{
+		if (IsVideo())
+		{
+			m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_EXIF);
+			return;
+		}
+
 		gchar* szPath = g_filename_from_uri(m_szURI, NULL, NULL);
 		if (NULL != szPath)
 		{
@@ -1180,7 +1192,40 @@ bool QuiverFile::QuiverFileImpl::IsFolder() const
 
 bool QuiverFile::QuiverFileImpl::IsVideo()
 {
-	return (g_strstr_len(GetMimeType(), 5, "video") == GetMimeType());
+	const char* mime = GetMimeType();
+	if (NULL != mime)
+	{
+		if (g_str_has_prefix(mime, "video/"))
+			return true;
+		if (0 == strcmp(mime, "application/x-matroska") ||
+		    0 == strcmp(mime, "application/ogg") ||
+		    0 == strcmp(mime, "application/vnd.rn-realmedia") ||
+		    0 == strcmp(mime, "application/vnd.ms-asf") ||
+		    0 == strcmp(mime, "application/x-ms-wmv"))
+		{
+			return true;
+		}
+	}
+
+	if (NULL != m_szURI)
+	{
+		const char* dot = strrchr(m_szURI, '.');
+		if (NULL != dot)
+		{
+			std::string ext = dot;
+			std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+			if (ext == ".mp4" || ext == ".mkv" || ext == ".avi" || ext == ".mov" ||
+			    ext == ".wmv" || ext == ".flv" || ext == ".webm" || ext == ".ts" ||
+			    ext == ".m2ts" || ext == ".mts" || ext == ".vob" || ext == ".ogv" ||
+			    ext == ".3gp" || ext == ".rm" || ext == ".rmvb" || ext == ".asf" ||
+			    ext == ".divx")
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 std::string QuiverFile::QuiverFileImpl::GetFilePath() const
@@ -1230,6 +1275,11 @@ int QuiverFile::QuiverFileImpl::GetHeight()
 
 int QuiverFile::QuiverFileImpl::GetOrientation()
 {
+	if (IsVideo())
+	{
+		return 1;
+	}
+
 	LoadExifData();
 
 	// if we have loaded the exif data or the orientation flag is set,

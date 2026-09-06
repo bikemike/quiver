@@ -13,6 +13,8 @@ extern "C" {
 #include <string.h>
 #include <string>
 #include <utility>
+#include <memory>
+#include <algorithm>
 
 #include <libquiver/quiver-pixbuf-utils.h>
 
@@ -70,6 +72,23 @@ static gboolean uri_to_path(const gchar* uri, std::string& path)
 	return TRUE;
 }
 
+struct VideoInterruptContext {
+	gint64 deadline_us = 0;
+	VideoAbortFn abort_fn = NULL;
+	gpointer abort_data = NULL;
+};
+
+static int video_interrupt_cb(void* opaque)
+{
+	if (opaque == NULL) return 0;
+	VideoInterruptContext* ctx = static_cast<VideoInterruptContext*>(opaque);
+	if (ctx->abort_fn != NULL && ctx->abort_fn(ctx->abort_data))
+		return 1;
+	if (ctx->deadline_us > 0 && g_get_monotonic_time() > ctx->deadline_us)
+		return 1;
+	return 0;
+}
+
 /* Open the file, find its first video stream and open a decoder for it.
  * On failure all members are reset and ok is FALSE. */
 struct VideoSession {
@@ -78,20 +97,41 @@ struct VideoSession {
 	AVStream* st = NULL;
 	AVCodecContext* ctx = NULL;
 	bool ok = false;
+	std::shared_ptr<VideoInterruptContext> cb_ctx;
 };
 
-static VideoSession open_session(const gchar* uri)
+static VideoSession open_session(const gchar* uri, VideoAbortFn abort_fn = NULL, gpointer abort_data = NULL)
 {
 	VideoSession s;
 	std::string path;
 	if (!uri_to_path(uri, path))
 		return s;
 
-	if (avformat_open_input(&s.fmt, path.c_str(), NULL, NULL) != 0)
+	s.cb_ctx = std::make_shared<VideoInterruptContext>();
+	s.cb_ctx->deadline_us = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+	s.cb_ctx->abort_fn = abort_fn;
+	s.cb_ctx->abort_data = abort_data;
+
+	s.fmt = avformat_alloc_context();
+	if (s.fmt == NULL)
+		return s;
+
+	s.fmt->interrupt_callback.callback = video_interrupt_cb;
+	s.fmt->interrupt_callback.opaque = s.cb_ctx.get();
+
+	AVDictionary* opts = NULL;
+	av_dict_set(&opts, "probesize", "5000000", 0); // 5 MB
+	av_dict_set(&opts, "analyzeduration", "2000000", 0); // 2 seconds
+
+	if (avformat_open_input(&s.fmt, path.c_str(), NULL, &opts) != 0)
 	{
+		av_dict_free(&opts);
 		s.fmt = NULL;
 		return s;
 	}
+	av_dict_free(&opts);
+
+	s.fmt->fps_probe_size = 0;
 	avformat_find_stream_info(s.fmt, NULL);
 
 	for (unsigned i = 0; i < s.fmt->nb_streams; ++i)
@@ -157,8 +197,9 @@ static int probe_rotation(VideoSession& s)
 	AVPacket* pkt = av_packet_alloc();
 	AVFrame* fr = av_frame_alloc();
 	int rotation = 0;
+	int packet_count = 0;
 
-	while (av_read_frame(s.fmt, pkt) >= 0)
+	while (packet_count++ < 50 && av_read_frame(s.fmt, pkt) >= 0)
 	{
 		if (pkt->stream_index != s.video_stream)
 		{
@@ -251,7 +292,7 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 {
 	GdkPixbuf* result = NULL;
 
-	VideoSession s = open_session(uri);
+	VideoSession s = open_session(uri, abort_fn, abort_data);
 	if (!s.ok)
 		return NULL;
 	if (abort_fn != NULL && abort_fn(abort_data))
@@ -260,7 +301,6 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 		return NULL;
 	}
 	AVStream* st = s.st;
-	AVCodecParameters* params = st->codecpar;
 	AVCodecContext* ctx = s.ctx;
 	AVFormatContext* fmt = s.fmt;
 	int video_stream = s.video_stream;
@@ -291,9 +331,6 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 		return NULL;
 	}
 
-	int frame_w = params->width;
-	int frame_h = params->height;
-
 	while (av_read_frame(fmt, pkt) >= 0)
 	{
 		if (pkt->stream_index != video_stream)
@@ -315,8 +352,8 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 				goto done;
 			}
 
-			frame_w = frame->width;
-			frame_h = frame->height;
+			int frame_w = frame->width;
+			int frame_h = frame->height;
 			int rotation = frame_rotation_deg(frame, st->metadata);
 
 			if (position_ns < 0)

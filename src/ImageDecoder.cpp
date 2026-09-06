@@ -48,6 +48,31 @@ ImageDecoderBackend ImageDecoder::GetBackend()
     return s_backend;
 }
 
+static bool is_video_mimetype(const char* mimetype)
+{
+    if (!mimetype) return false;
+    return g_str_has_prefix(mimetype, "video/") ||
+           strcmp(mimetype, "application/x-matroska") == 0 ||
+           strcmp(mimetype, "application/ogg") == 0 ||
+           strcmp(mimetype, "application/vnd.rn-realmedia") == 0 ||
+           strcmp(mimetype, "application/vnd.ms-asf") == 0 ||
+           strcmp(mimetype, "application/x-ms-wmv") == 0;
+}
+
+static bool is_file_too_large(GFile *file, GCancellable *cancellable = NULL)
+{
+    if (!file) return true;
+    GFileInfo *info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_SIZE, G_FILE_QUERY_INFO_NONE, cancellable, NULL);
+    if (info)
+    {
+        goffset sz = g_file_info_get_size(info);
+        g_object_unref(info);
+        if (sz > 500LL * 1024 * 1024)
+            return true;
+    }
+    return false;
+}
+
 // -------------------------------------------------------------------------
 // Fast Dimension Probing
 // -------------------------------------------------------------------------
@@ -59,6 +84,9 @@ bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, 
 
     *width = -1;
     *height = -1;
+
+    if (is_video_mimetype(mimetype) || is_file_too_large(file))
+        return false;
 
 #if HAVE_GLYCIN
     if (s_backend != ImageDecoderBackend::PIXBUF)
@@ -264,6 +292,9 @@ GdkPixbuf* ImageDecoder::DecodeFilePixbuf(GFile *file, const char *mimetype,
     if (!file)
         return NULL;
 
+    if (is_video_mimetype(mimetype) || is_file_too_large(file, cancellable))
+        return NULL;
+
 #if HAVE_GLYCIN
     if (s_backend != ImageDecoderBackend::PIXBUF)
     {
@@ -295,6 +326,9 @@ GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
                                            GError **error)
 {
     if (!file)
+        return NULL;
+
+    if (is_video_mimetype(mimetype) || is_file_too_large(file, cancellable))
         return NULL;
 
 #if HAVE_GLYCIN

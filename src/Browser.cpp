@@ -270,6 +270,14 @@ public:
 	IPixbufLoaderObserverPtr m_ImageViewPixbufLoaderObserverPtr;
 
 	map<string, string> m_mapFolderToFile;
+
+	std::string m_strPeekFolderURI;
+	ImageListPtr m_pPeekImageList;
+	GThreadPool* m_pFolderPeekThreadPool;
+	std::set<std::string> m_setFolderPeeksInFlight;
+	std::mutex m_mutexFolderPeeks;
+
+	void RequestFolderPeekAsync(QuiverIconView* iconview, gulong cell, const std::string& uri, int target_size);
 	
 /* nested classes */
 	//class ViewerEventHandler;
@@ -616,6 +624,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pToolbar = NULL;
 	m_bFolderTreeEvent = false;
 	m_bBrowserHistoryEvent = false;
+	m_pFolderPeekThreadPool = NULL;
 
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutHideLocationID = 0;
@@ -909,6 +918,12 @@ Browser::BrowserImpl::~BrowserImpl()
 	{
 		g_source_remove(m_iTimeoutUpdateListID);
 		m_iTimeoutUpdateListID = 0;
+	}
+
+	if (m_pFolderPeekThreadPool)
+	{
+		g_thread_pool_free(m_pFolderPeekThreadPool, TRUE, TRUE);
+		m_pFolderPeekThreadPool = NULL;
 	}
 
 	/* 1. the context-menu popover is parented to the icon view on demand;
@@ -1282,6 +1297,83 @@ void Browser::BrowserImpl::QueueIconViewUpdate(int timeout)
 }
 
 
+struct FolderPeekTaskData {
+	Browser::BrowserImpl* browser;
+	QuiverIconView* iconview;
+	gulong cell;
+	std::string uri;
+	int target_size;
+};
+
+static void FolderPeekWorker(gpointer data, gpointer user_data)
+{
+	(void)user_data;
+	std::unique_ptr<FolderPeekTaskData> task(static_cast<FolderPeekTaskData*>(data));
+
+	QuiverFile child(task->uri.c_str());
+	GdkPixbuf* pixbuf = child.GetThumbnail(task->target_size);
+
+	struct PeekResultData {
+		Browser::BrowserImpl* browser;
+		QuiverIconView* iconview;
+		gulong cell;
+		std::string uri;
+		GdkPixbuf* pixbuf;
+	};
+
+	PeekResultData* result = new PeekResultData{
+		task->browser,
+		task->iconview,
+		task->cell,
+		task->uri,
+		pixbuf
+	};
+
+	g_idle_add([](gpointer d) -> gboolean {
+		std::unique_ptr<PeekResultData> res(static_cast<PeekResultData*>(d));
+		{
+			std::lock_guard<std::mutex> lock(res->browser->m_mutexFolderPeeks);
+			res->browser->m_setFolderPeeksInFlight.erase(res->uri);
+		}
+		if (res->pixbuf)
+		{
+			res->browser->m_ThumbnailCache.AddPixbuf(res->uri, res->pixbuf);
+			g_object_unref(res->pixbuf);
+
+			if (GTK_IS_WIDGET(res->iconview))
+			{
+				quiver_icon_view_invalidate_cell(res->iconview, res->cell);
+			}
+		}
+		else
+		{
+			res->browser->m_ThumbnailCache.AddFailure(res->uri);
+		}
+		return G_SOURCE_REMOVE;
+	}, result);
+}
+
+void Browser::BrowserImpl::RequestFolderPeekAsync(QuiverIconView* iconview, gulong cell, const std::string& uri, int target_size)
+{
+	if (m_ThumbnailCache.HasFailed(uri))
+		return;
+
+	{
+		std::lock_guard<std::mutex> lock(m_mutexFolderPeeks);
+		if (m_setFolderPeeksInFlight.find(uri) != m_setFolderPeeksInFlight.end())
+			return;
+		m_setFolderPeeksInFlight.insert(uri);
+	}
+
+	if (!m_pFolderPeekThreadPool)
+	{
+		m_pFolderPeekThreadPool = g_thread_pool_new(FolderPeekWorker, this, 2, FALSE, NULL);
+	}
+
+	FolderPeekTaskData* task = new FolderPeekTaskData{this, iconview, cell, uri, target_size};
+	g_thread_pool_push(m_pFolderPeekThreadPool, task, NULL);
+}
+
 static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
@@ -1296,31 +1388,56 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cel
 
 	if (f.IsFolder())
 	{
-		gint x = 0, y = 0;
-		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
-
-		if (0 <= x && 0 <= y && x < gint(width) && y < gint(height))
+		gulong prelight = quiver_icon_view_get_prelight_cell(iconview);
+		if (prelight == cell)
 		{
-			double percent = double(x) / width;
-			// FIXME: this should be optimized. creating a new list
-			// every time the mouse moves can be quite slow.
-			ImageListPtr lstPtr(new ImageList());
-			lstPtr->SetImageList(f.GetURI());
-			unsigned int listSize = lstPtr->GetSize();
-			if (0 != listSize)
+			gint x = 0, y = 0;
+			quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
+
+			if (0 <= x && 0 <= y && x < gint(width) && y < gint(height))
 			{
-				unsigned int index = (unsigned int)(listSize * percent);
-				index = std::min(index, listSize - 1);
-				pixbuf = (*lstPtr)[index].GetThumbnail(std::max(width, height));
-				*actual_width = (*lstPtr)[index].GetWidth();
-				*actual_height = (*lstPtr)[index].GetHeight();
-				if (4 < (*lstPtr)[index].GetOrientation())
+				double percent = double(x) / width;
+				if (b->m_strPeekFolderURI != f.GetURI() || !b->m_pPeekImageList)
 				{
-					swap(*actual_width,*actual_height);
+					b->m_strPeekFolderURI = f.GetURI();
+					b->m_pPeekImageList.reset(new ImageList());
+					b->m_pPeekImageList->SetImageList(b->m_strPeekFolderURI.c_str());
 				}
-				need_new_thumb = FALSE;
+
+				unsigned int listSize = b->m_pPeekImageList ? b->m_pPeekImageList->GetSize() : 0;
+				if (0 != listSize)
+				{
+					unsigned int index = (unsigned int)(listSize * percent);
+					index = std::min(index, listSize - 1);
+					QuiverFile child = (*b->m_pPeekImageList)[index];
+					std::string child_uri = child.GetURI();
+
+					pixbuf = b->m_ThumbnailCache.GetPixbuf(child_uri);
+					if (pixbuf)
+					{
+						if (child.IsWidthHeightSet())
+						{
+							*actual_width = child.GetWidth();
+							*actual_height = child.GetHeight();
+							if (4 < child.GetOrientation())
+							{
+								swap(*actual_width,*actual_height);
+							}
+						}
+						else
+						{
+							*actual_width = gdk_pixbuf_get_width(pixbuf);
+							*actual_height = gdk_pixbuf_get_height(pixbuf);
+						}
+					}
+					else
+					{
+						b->RequestFolderPeekAsync(iconview, cell, child_uri, std::max(width, height));
+					}
+				}
 			}
 		}
+		need_new_thumb = FALSE;
 	}
 	else
 	{
@@ -1375,38 +1492,56 @@ static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong c
 
 	if (f.IsFolder())
 	{
-		gint x = 0, y = 0;
-		quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
-
-		if (0 <= x && 0 <= y && x < gint(width) && y < gint(height))
+		gulong prelight = quiver_icon_view_get_prelight_cell(iconview);
+		if (prelight == cell)
 		{
-			double percent = double(x) / width;
-			// FIXME: this should be optimized. creating a new list
-			// every time the mouse moves can be quite slow.
-			ImageListPtr lstPtr(new ImageList());
-			lstPtr->SetImageList(f.GetURI());
-			unsigned int listSize = lstPtr->GetSize();
-			if (0 != listSize)
+			gint x = 0, y = 0;
+			quiver_icon_view_get_cell_mouse_position(iconview, cell, &x, &y);
+
+			if (0 <= x && 0 <= y && x < gint(width) && y < gint(height))
 			{
-				unsigned int index = (unsigned int)(listSize * percent);
-				index = std::min(index, listSize - 1);
-				GdkPixbuf *pixbuf = (*lstPtr)[index].GetThumbnail(std::max(width, height));
-				if (pixbuf)
+				double percent = double(x) / width;
+				if (b->m_strPeekFolderURI != f.GetURI() || !b->m_pPeekImageList)
 				{
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-					texture = gdk_texture_new_for_pixbuf(pixbuf);
-G_GNUC_END_IGNORE_DEPRECATIONS
-					g_object_unref(pixbuf);
+					b->m_strPeekFolderURI = f.GetURI();
+					b->m_pPeekImageList.reset(new ImageList());
+					b->m_pPeekImageList->SetImageList(b->m_strPeekFolderURI.c_str());
 				}
-				*actual_width = (*lstPtr)[index].GetWidth();
-				*actual_height = (*lstPtr)[index].GetHeight();
-				if (4 < (*lstPtr)[index].GetOrientation())
+
+				unsigned int listSize = b->m_pPeekImageList ? b->m_pPeekImageList->GetSize() : 0;
+				if (0 != listSize)
 				{
-					swap(*actual_width,*actual_height);
+					unsigned int index = (unsigned int)(listSize * percent);
+					index = std::min(index, listSize - 1);
+					QuiverFile child = (*b->m_pPeekImageList)[index];
+					std::string child_uri = child.GetURI();
+
+					texture = b->m_ThumbnailCache.GetTexture(child_uri);
+					if (texture)
+					{
+						if (child.IsWidthHeightSet())
+						{
+							*actual_width = child.GetWidth();
+							*actual_height = child.GetHeight();
+							if (4 < child.GetOrientation())
+							{
+								swap(*actual_width,*actual_height);
+							}
+						}
+						else
+						{
+							*actual_width = gdk_texture_get_width(texture);
+							*actual_height = gdk_texture_get_height(texture);
+						}
+					}
+					else
+					{
+						b->RequestFolderPeekAsync(iconview, cell, child_uri, std::max(width, height));
+					}
 				}
-				need_new_thumb = FALSE;
 			}
 		}
+		need_new_thumb = FALSE;
 	}
 	else
 	{

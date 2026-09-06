@@ -274,6 +274,14 @@ int main(int argc, char **argv)
         assert(n_selected_after_release == n_selected_during_drag);
         g_list_free(sel);
         std::cout << " OK\n";
+
+        // Test 8: Mouse motion within prelight cell
+        std::cout << "  [8] Testing motion within cell updates prelight...";
+        g_signal_emit_by_name(motion_ctrl, "motion", (double)(cell_w / 2), (double)(cell_h / 2));
+        assert(quiver_icon_view_get_prelight_cell(QUIVER_ICON_VIEW(iconview)) == 0);
+        g_signal_emit_by_name(motion_ctrl, "motion", (double)(cell_w / 2 + 10), (double)(cell_h / 2));
+        assert(quiver_icon_view_get_prelight_cell(QUIVER_ICON_VIEW(iconview)) == 0);
+        std::cout << " OK\n";
     }
 
     // Cleanup widget

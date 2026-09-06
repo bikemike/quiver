@@ -2525,6 +2525,10 @@ quiver_icon_view_motion_controller_cb (GtkEventControllerMotion *controller,
 			quiver_icon_view_invalidate_cell(iconview,iconview->priv->prelight_cell);
 		}
 	}
+	else if (iconview->priv->prelight_cell != G_MAXULONG)
+	{
+		quiver_icon_view_invalidate_cell(iconview,iconview->priv->prelight_cell);
+	}
 }
 
 static void

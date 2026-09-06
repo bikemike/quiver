@@ -1170,10 +1170,36 @@ bool ImageList::ImageListImpl::ShouldAddFile(const gchar* uri, GFileInfo *info)
 	if (NULL != content_type)
 	{
 		gchar* mimetype = g_content_type_get_mime_type(content_type);
-		bool bSupported = (c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype))
-			|| (g_strstr_len(mimetype, 5, "video") == mimetype);
-		g_free(mimetype);
-		return bSupported;
+		bool bSupported = false;
+		if (NULL != mimetype)
+		{
+			bSupported = (c_setSupportedMimeTypes.end() != c_setSupportedMimeTypes.find(mimetype))
+				|| (g_str_has_prefix(mimetype, "video/"))
+				|| (0 == strcmp(mimetype, "application/x-matroska"))
+				|| (0 == strcmp(mimetype, "application/ogg"))
+				|| (0 == strcmp(mimetype, "application/vnd.rn-realmedia"))
+				|| (0 == strcmp(mimetype, "application/vnd.ms-asf"))
+				|| (0 == strcmp(mimetype, "application/x-ms-wmv"));
+			g_free(mimetype);
+		}
+		if (bSupported)
+			return true;
+	}
+
+	// Fallback to extension check for video files
+	const char* dot = strrchr(uri, '.');
+	if (NULL != dot)
+	{
+		std::string ext = dot;
+		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+		if (ext == ".mp4" || ext == ".mkv" || ext == ".avi" || ext == ".mov" ||
+		    ext == ".wmv" || ext == ".flv" || ext == ".webm" || ext == ".ts" ||
+		    ext == ".m2ts" || ext == ".mts" || ext == ".vob" || ext == ".ogv" ||
+		    ext == ".3gp" || ext == ".rm" || ext == ".rmvb" || ext == ".asf" ||
+		    ext == ".divx")
+		{
+			return true;
+		}
 	}
 
 	return false;
