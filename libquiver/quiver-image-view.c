@@ -2212,22 +2212,35 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 			if (native != NULL)
 			{
 				GdkSurface *surface = gtk_native_get_surface(native);
-				GdkDevice *device = gdk_seat_get_pointer(
-					gdk_display_get_default_seat(gdk_surface_get_display(surface)));
-				double px = 0, py = 0;
-				GdkModifierType mask = 0;
-				double sx = 0, sy = 0;
-				if (gdk_surface_get_device_position(surface, device, &px, &py, &mask))
+				if (surface != NULL)
 				{
-					gtk_native_get_surface_transform(native, &sx, &sy);
-					graphene_point_t pt_native = GRAPHENE_POINT_INIT(
-						(float)(px - sx), (float)(py - sy));
-					graphene_point_t pt_widget;
-					if (gtk_widget_compute_point(GTK_WIDGET(native), widget,
-							&pt_native, &pt_widget))
+					GdkDisplay *display = gdk_surface_get_display(surface);
+					if (display != NULL)
 					{
-						x = (gint)pt_widget.x;
-						y = (gint)pt_widget.y;
+						GdkSeat *seat = gdk_display_get_default_seat(display);
+						if (seat != NULL)
+						{
+							GdkDevice *device = gdk_seat_get_pointer(seat);
+							if (device != NULL)
+							{
+								double px = 0, py = 0;
+								GdkModifierType mask = 0;
+								double sx = 0, sy = 0;
+								if (gdk_surface_get_device_position(surface, device, &px, &py, &mask))
+								{
+									gtk_native_get_surface_transform(native, &sx, &sy);
+									graphene_point_t pt_native = GRAPHENE_POINT_INIT(
+										(float)(px - sx), (float)(py - sy));
+									graphene_point_t pt_widget;
+									if (gtk_widget_compute_point(GTK_WIDGET(native), widget,
+											&pt_native, &pt_widget))
+									{
+										x = (gint)pt_widget.x;
+										y = (gint)pt_widget.y;
+									}
+								}
+							}
+						}
 					}
 				}
 			}

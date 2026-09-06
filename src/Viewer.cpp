@@ -1607,12 +1607,17 @@ bool Viewer::ViewerImpl::IsPointerOverFilmstrip() const
 	GtkNative *native = GTK_NATIVE(gtk_widget_get_native(m_pFilmstripOverlayContainer));
 	if (!native) return false;
 	GdkSurface *surface = gtk_native_get_surface(native);
+	if (!surface) return false;
 
 	GdkDisplay *display = gtk_widget_get_display(m_pFilmstripOverlayContainer);
+	if (!display) return false;
 	GdkSeat *seat = gdk_display_get_default_seat(display);
+	if (!seat) return false;
 	GdkDevice *device = gdk_seat_get_pointer(seat);
-	double surface_x, surface_y;
-	gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL);
+	if (!device) return false;
+	double surface_x = 0., surface_y = 0.;
+	if (!gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL))
+		return false;
 
 	graphene_point_t src = GRAPHENE_POINT_INIT((float)surface_x, (float)surface_y);
 	graphene_point_t dest;
@@ -1629,12 +1634,17 @@ bool Viewer::ViewerImpl::IsPointerOverMediaControls() const
 	GtkNative *native = GTK_NATIVE(gtk_widget_get_native(m_pMediaControls));
 	if (!native) return false;
 	GdkSurface *surface = gtk_native_get_surface(native);
+	if (!surface) return false;
 
 	GdkDisplay *display = gtk_widget_get_display(m_pPlayButton);
+	if (!display) return false;
 	GdkSeat *seat = gdk_display_get_default_seat(display);
+	if (!seat) return false;
 	GdkDevice *device = gdk_seat_get_pointer(seat);
-	double surface_x, surface_y;
-	gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL);
+	if (!device) return false;
+	double surface_x = 0., surface_y = 0.;
+	if (!gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL))
+		return false;
 
 	graphene_point_t src = GRAPHENE_POINT_INIT((float)surface_x, (float)surface_y);
 	graphene_point_t dest;
@@ -2032,8 +2042,13 @@ viewer_scale_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x
  * those kept the controls visible forever while the pointer sat still. */
 static bool viewer_pointer_moved(Viewer::ViewerImpl *p)
 {
-	GdkDevice *dev = gdk_seat_get_pointer(gdk_display_get_default_seat(
-		gtk_widget_get_display(p->m_pMediaControls)));
+	if (!p->m_pMediaControls) return true;
+	GdkDisplay *disp = gtk_widget_get_display(p->m_pMediaControls);
+	if (!disp) return true;
+	GdkSeat *seat = gdk_display_get_default_seat(disp);
+	if (!seat) return true;
+	GdkDevice *dev = gdk_seat_get_pointer(seat);
+	if (!dev) return true;
 	double sx = 0., sy = 0.;
 	GdkSurface *surf = gdk_device_get_surface_at_position(dev, &sx, &sy);
 	if (NULL == surf)
@@ -4204,8 +4219,15 @@ static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *
 	GdkSurface *surface = gtk_native_get_surface(native);
 	if (surface == NULL)
 		return;
-	GdkDevice *device = gdk_seat_get_pointer(
-		gdk_display_get_default_seat(gdk_surface_get_display(surface)));
+	GdkDisplay *display = gdk_surface_get_display(surface);
+	if (display == NULL)
+		return;
+	GdkSeat *seat = gdk_display_get_default_seat(display);
+	if (seat == NULL)
+		return;
+	GdkDevice *device = gdk_seat_get_pointer(seat);
+	if (device == NULL)
+		return;
 	double surfx = 0, surfy = 0;
 	GdkModifierType mask;
 	gdk_surface_get_device_position(surface, device, &surfx, &surfy, &mask);

@@ -346,6 +346,8 @@ DirItem* FolderTree::FolderTreeImpl::FindRootForPath(const gchar* uri)
 			}
 			if (depth >= best_depth)
 			{
+				if (NULL != best)
+					g_object_unref(best);
 				best_depth = depth;
 				best = item;
 				g_object_ref(best);
@@ -405,7 +407,6 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 		// locating (creating is unnecessary: subdirs are enumerated on
 		// expansion) the target folder
 		DirItem* current = root;
-		g_object_ref(current);
 		ExpandItem(current);
 
 		gchar* remaining = g_strdup(itr->c_str());
@@ -479,7 +480,6 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 			}
 			else
 			{
-				g_object_unref(next);
 				done = TRUE;
 			}
 		}

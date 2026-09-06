@@ -1462,7 +1462,11 @@ int main (int argc, char **argv)
 	g_signal_connect(g_pApp, "activate", G_CALLBACK(on_app_activate), NULL);
 
 	// set dark theme
-	g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", TRUE, NULL);
+	GdkDisplay *default_display = gdk_display_get_default();
+	if (default_display != NULL)
+	{
+		g_object_set(gtk_settings_get_for_display(default_display), "gtk-application-prefer-dark-theme", TRUE, NULL);
+	}
 
 	gst_init(&argc, &argv);
 
