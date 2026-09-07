@@ -93,4 +93,25 @@ TEST_CASE("GStreamer Library Pipeline and Media Verification", "[lib][gstreamer]
         g_object_unref(discoverer);
         g_free(videoUri);
     }
+
+    SECTION("GStreamer Frame Stepping Behavior")
+    {
+        // gst_event_new_step strictly requires rate > 0.0
+        // Forward stepping creates a valid step event with rate = 1.0
+        GstEvent *fwd_event = gst_event_new_step(GST_FORMAT_BUFFERS, 1, 1.0, TRUE, FALSE);
+        REQUIRE(fwd_event != nullptr);
+        gst_event_unref(fwd_event);
+
+        // Frame duration calculation from framerate fraction (e.g. 30fps)
+        gint fps_n = 30, fps_d = 1;
+        gint64 frame_duration = (GST_SECOND * (gint64)fps_d) / (gint64)fps_n;
+        REQUIRE(frame_duration == GST_SECOND / 30);
+
+        // Stepping backward uses accurate seek to pos - frame_duration
+        gint64 pos = 5 * GST_SECOND;
+        gint64 target = (pos >= frame_duration) ? (pos - frame_duration) : 0;
+        REQUIRE(target < pos);
+        REQUIRE(target == pos - (GST_SECOND / 30));
+    }
 }
+

@@ -1,5 +1,6 @@
 #include <config.h>
 #include "QuiverUtils.h"
+#include "ShortcutManager.h"
 
 extern GtkApplication *g_pApp;
 
@@ -127,7 +128,6 @@ namespace QuiverUtils
 
 	static GPtrArray *g_accelEntries = NULL;
 	static GPtrArray *g_radioGroups = NULL;
-	static bool g_bAcceleratorsSuppressed = false;
 
 	static void free_accel_entry(gpointer data) {
 		AccelEntry *entry = (AccelEntry*)data;
@@ -153,6 +153,11 @@ static void register_accelerator(const char *action_name, const gchar *accel) {
 		gtk_accelerator_parse(accel, &keyval, &mods);
 		if (keyval == 0) return;
 
+		if (ShortcutManager::GetInstance().GetAction(action_name) != nullptr) {
+			ShortcutManager::GetInstance().ApplyShortcutsForAction(action_name);
+			return;
+		}
+
 		if (g_pApp) {
 			gchar *detailed_name = g_strdup_printf("quiver.%s", action_name);
 			const gchar *accels[] = {accel, NULL};
@@ -168,11 +173,6 @@ static void register_accelerator(const char *action_name, const gchar *accel) {
 		entry->suppressed = FALSE;
 
 		g_ptr_array_add(g_accelEntries, entry);
-	}
-
-	static gboolean accel_has_modifier(guint keyval, GdkModifierType mods) { (void)keyval; 
-		guint mask = GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_META_MASK | GDK_SUPER_MASK;
-		return 0 != (mask & mods);
 	}
 
 	static void radio_activate_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
@@ -382,41 +382,11 @@ void AddAccelGroup(GtkWindow* /*window*/) {
 	}
 
 void DisconnectUnmodifiedAccelerators() {
-		if (NULL == g_accelEntries) return;
-		if (g_bAcceleratorsSuppressed) return;
-		for (guint i = 0; i < g_accelEntries->len; i++) {
-			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
-			if (!accel_has_modifier(entry->keyval, entry->mods)) {
-				if (g_pApp) {
-					gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
-					const gchar *empty_accels[] = {NULL};
-					gtk_application_set_accels_for_action(g_pApp, detailed_name, empty_accels);
-					g_free(detailed_name);
-				}
-				entry->suppressed = TRUE;
-			}
-		}
-		g_bAcceleratorsSuppressed = true;
+		ShortcutManager::GetInstance().SuppressUnmodifiedAccelerators(true);
 	}
 
 void ConnectUnmodifiedAccelerators() {
-		if (NULL == g_accelEntries) return;
-		if (!g_bAcceleratorsSuppressed) return;
-		for (guint i = 0; i < g_accelEntries->len; i++) {
-			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
-			if (entry->suppressed) {
-				if (g_pApp) {
-					gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
-					gchar *accel_name = gtk_accelerator_name(entry->keyval, entry->mods);
-					const gchar *accels[] = {accel_name, NULL};
-					gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
-					g_free(accel_name);
-					g_free(detailed_name);
-				}
-				entry->suppressed = FALSE;
-			}
-		}
-		g_bAcceleratorsSuppressed = false;
+		ShortcutManager::GetInstance().SuppressUnmodifiedAccelerators(false);
 	}
 
 	void BindBuilderAccelerators(GtkBuilder *builder) {

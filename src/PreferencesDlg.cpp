@@ -1,6 +1,7 @@
 #include <config.h>
 
 #include "PreferencesDlg.h"
+#include "ShortcutManager.h"
 
 #include "QuiverPrefs.h"
 #include "IPreferencesEventHandler.h"
@@ -18,6 +19,8 @@ public:
 	void LoadWidgets();
 	void UpdateUI();
 	void ConnectSignals();
+	void PopulateShortcutsList();
+	void ShowKeyCaptureDialog(const std::string &action_name);
 
 // variables
 	PreferencesDlg*     m_pPreferencesDlg;
@@ -55,6 +58,12 @@ public:
 	
 	GtkLabel*              m_pLblBrowserColor;
 	GtkLabel*              m_pLblViewerColor;
+	
+	// Shortcuts widgets
+	GtkSearchEntry*        m_pSearchShortcuts;
+	GtkDropDown*           m_pDropdownShortcutCategory;
+	GtkListBox*            m_pListboxShortcuts;
+	GtkButton*             m_pBtnResetAllShortcuts;
 	
 // nested classes
 	class PreferencesEventHandler : public IPreferencesEventHandler
@@ -226,6 +235,16 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		m_pLblBrowserColor       = GTK_LABEL ( gtk_builder_get_object(m_pGtkBuilder,"label_general_bg_browser") );
 		m_pLblViewerColor        = GTK_LABEL ( gtk_builder_get_object(m_pGtkBuilder,"label_general_bg_viewer") );
 
+		m_pSearchShortcuts           = GTK_SEARCH_ENTRY        ( gtk_builder_get_object (m_pGtkBuilder, "search_shortcuts") );
+		m_pDropdownShortcutCategory  = GTK_DROP_DOWN           ( gtk_builder_get_object (m_pGtkBuilder, "dropdown_shortcut_category") );
+		m_pListboxShortcuts          = GTK_LIST_BOX            ( gtk_builder_get_object (m_pGtkBuilder, "listbox_shortcuts") );
+		m_pBtnResetAllShortcuts      = GTK_BUTTON              ( gtk_builder_get_object (m_pGtkBuilder, "btn_reset_all_shortcuts") );
+
+		if (NULL != m_pListboxShortcuts)
+		{
+			PopulateShortcutsList();
+		}
+
 		m_bLoadedDlg = (
 			NULL != m_pFCBtnPhotoLibrary &&
 			NULL != m_pComboFilmstripPos && 
@@ -362,6 +381,386 @@ static void on_photo_library_folder_selected(GObject *source, GAsyncResult *res,
 	g_object_unref(user_data);
 }
 
+struct KeyDeleteData {
+	PreferencesDlg::PreferencesDlgPriv *priv;
+	std::string action_name;
+	std::string accel;
+};
+
+static void on_shortcut_delete_clicked(GtkButton *btn, gpointer user_data)
+{
+	(void)btn;
+	KeyDeleteData *data = static_cast<KeyDeleteData*>(user_data);
+	std::string act = data->action_name;
+	std::string acc = data->accel;
+	PreferencesDlg::PreferencesDlgPriv *priv = data->priv;
+	ShortcutManager::GetInstance().RemoveAccelerator(act, acc);
+	priv->PopulateShortcutsList();
+}
+
+struct KeyAddData {
+	PreferencesDlg::PreferencesDlgPriv *priv;
+	std::string action_name;
+};
+
+static void on_shortcut_add_clicked(GtkButton *btn, gpointer user_data)
+{
+	(void)btn;
+	KeyAddData *data = static_cast<KeyAddData*>(user_data);
+	std::string act = data->action_name;
+	PreferencesDlg::PreferencesDlgPriv *priv = data->priv;
+	priv->ShowKeyCaptureDialog(act);
+}
+
+struct KeyResetData {
+	PreferencesDlg::PreferencesDlgPriv *priv;
+	std::string action_name;
+};
+
+static void on_shortcut_reset_clicked(GtkButton *btn, gpointer user_data)
+{
+	(void)btn;
+	KeyResetData *data = static_cast<KeyResetData*>(user_data);
+	std::string act = data->action_name;
+	PreferencesDlg::PreferencesDlgPriv *priv = data->priv;
+	ShortcutManager::GetInstance().ResetToDefault(act);
+	priv->PopulateShortcutsList();
+}
+
+struct KeyCaptureState {
+	PreferencesDlg::PreferencesDlgPriv *priv;
+	std::string action_name;
+	std::string captured_accel;
+	std::string conflicting_label;
+	GtkWidget *dialog;
+	GtkLabel *lbl_display;
+	GtkLabel *lbl_conflict;
+	GtkButton *btn_assign;
+};
+
+static gboolean on_capture_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data)
+{
+	(void)controller; (void)keycode;
+	KeyCaptureState *data = static_cast<KeyCaptureState*>(user_data);
+
+	if (keyval == GDK_KEY_Escape) {
+		gtk_window_destroy(GTK_WINDOW(data->dialog));
+		return TRUE;
+	}
+
+	if (keyval == GDK_KEY_Control_L || keyval == GDK_KEY_Control_R ||
+		keyval == GDK_KEY_Shift_L || keyval == GDK_KEY_Shift_R ||
+		keyval == GDK_KEY_Alt_L || keyval == GDK_KEY_Alt_R ||
+		keyval == GDK_KEY_Super_L || keyval == GDK_KEY_Super_R ||
+		keyval == GDK_KEY_Meta_L || keyval == GDK_KEY_Meta_R) {
+		return TRUE;
+	}
+
+	std::string accel = ShortcutManager::KeyvalAndModsToAccelString(keyval, state);
+	if (accel.empty()) return TRUE;
+
+	std::string human = ShortcutManager::AccelStringToHumanLabel(accel);
+	data->captured_accel = accel;
+
+	gchar *markup = g_markup_printf_escaped("<span size='xx-large'><b>%s</b></span>", human.c_str());
+	gtk_label_set_markup(data->lbl_display, markup);
+	g_free(markup);
+
+	std::string conflict = ShortcutManager::GetInstance().FindConflictingAction(accel, data->action_name);
+	data->conflicting_label = conflict;
+
+	if (!conflict.empty()) {
+		gchar *c_markup = g_markup_printf_escaped("<span foreground='#e67e22'>⚠️ Already assigned to '<b>%s</b>'. Assigning will reassign it.</span>", conflict.c_str());
+		gtk_label_set_markup(data->lbl_conflict, c_markup);
+		g_free(c_markup);
+		gtk_widget_set_visible(GTK_WIDGET(data->lbl_conflict), TRUE);
+	} else {
+		gtk_widget_set_visible(GTK_WIDGET(data->lbl_conflict), FALSE);
+	}
+
+	gtk_widget_set_sensitive(GTK_WIDGET(data->btn_assign), TRUE);
+	return TRUE;
+}
+
+static void on_capture_assign_clicked(GtkButton *btn, gpointer user_data)
+{
+	(void)btn;
+	KeyCaptureState *data = static_cast<KeyCaptureState*>(user_data);
+	if (!data->captured_accel.empty()) {
+		if (!data->conflicting_label.empty()) {
+			for (const auto &act : ShortcutManager::GetInstance().GetActions()) {
+				if (act.label == data->conflicting_label) {
+					ShortcutManager::GetInstance().RemoveAccelerator(act.action_name, data->captured_accel);
+				}
+			}
+		}
+		ShortcutManager::GetInstance().AddAccelerator(data->action_name, data->captured_accel);
+		data->priv->PopulateShortcutsList();
+	}
+	gtk_window_destroy(GTK_WINDOW(data->dialog));
+}
+
+static void on_capture_cancel_clicked(GtkButton *btn, gpointer user_data)
+{
+	(void)btn;
+	KeyCaptureState *data = static_cast<KeyCaptureState*>(user_data);
+	gtk_window_destroy(GTK_WINDOW(data->dialog));
+}
+
+static void on_capture_destroy(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	KeyCaptureState *data = static_cast<KeyCaptureState*>(user_data);
+	delete data;
+}
+
+void PreferencesDlg::PreferencesDlgPriv::ShowKeyCaptureDialog(const std::string &action_name)
+{
+	const ShortcutActionDef *def = ShortcutManager::GetInstance().GetAction(action_name);
+	if (!def) return;
+
+	GtkWidget *prefDlg = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "QuiverPreferencesDialog"));
+
+	KeyCaptureState *data = new KeyCaptureState();
+	data->priv = this;
+	data->action_name = action_name;
+	data->dialog = gtk_window_new();
+	gtk_window_set_title(GTK_WINDOW(data->dialog), ("Assign Shortcut - " + def->label).c_str());
+	gtk_window_set_modal(GTK_WINDOW(data->dialog), TRUE);
+	if (prefDlg != NULL) {
+		gtk_window_set_transient_for(GTK_WINDOW(data->dialog), GTK_WINDOW(prefDlg));
+	}
+	gtk_window_set_default_size(GTK_WINDOW(data->dialog), 380, 220);
+
+	GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+	gtk_widget_set_margin_start(vbox, 20);
+	gtk_widget_set_margin_end(vbox, 20);
+	gtk_widget_set_margin_top(vbox, 20);
+	gtk_widget_set_margin_bottom(vbox, 20);
+
+	gchar *prompt = g_markup_printf_escaped("Press the shortcut key combination for <b>%s</b>:", def->label.c_str());
+	GtkWidget *lbl_prompt = gtk_label_new(NULL);
+	gtk_label_set_markup(GTK_LABEL(lbl_prompt), prompt);
+	g_free(prompt);
+	gtk_label_set_xalign(GTK_LABEL(lbl_prompt), 0.0);
+	gtk_box_append(GTK_BOX(vbox), lbl_prompt);
+
+	GtkWidget *frame = gtk_frame_new(NULL);
+	data->lbl_display = GTK_LABEL(gtk_label_new(NULL));
+	gtk_label_set_markup(data->lbl_display, "<span size='large' foreground='#888888'>Press any key...</span>");
+	gtk_widget_set_margin_top(GTK_WIDGET(data->lbl_display), 16);
+	gtk_widget_set_margin_bottom(GTK_WIDGET(data->lbl_display), 16);
+	gtk_frame_set_child(GTK_FRAME(frame), GTK_WIDGET(data->lbl_display));
+	gtk_box_append(GTK_BOX(vbox), frame);
+
+	data->lbl_conflict = GTK_LABEL(gtk_label_new(NULL));
+	gtk_label_set_wrap(data->lbl_conflict, TRUE);
+	gtk_widget_set_visible(GTK_WIDGET(data->lbl_conflict), FALSE);
+	gtk_box_append(GTK_BOX(vbox), GTK_WIDGET(data->lbl_conflict));
+
+	GtkWidget *hbox_btns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+	gtk_widget_set_halign(hbox_btns, GTK_ALIGN_END);
+
+	GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
+	g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_capture_cancel_clicked), data);
+	gtk_box_append(GTK_BOX(hbox_btns), btn_cancel);
+
+	data->btn_assign = GTK_BUTTON(gtk_button_new_with_label("Assign"));
+	gtk_widget_add_css_class(GTK_WIDGET(data->btn_assign), "suggested-action");
+	gtk_widget_set_sensitive(GTK_WIDGET(data->btn_assign), FALSE);
+	g_signal_connect(data->btn_assign, "clicked", G_CALLBACK(on_capture_assign_clicked), data);
+	gtk_box_append(GTK_BOX(hbox_btns), GTK_WIDGET(data->btn_assign));
+
+	gtk_box_append(GTK_BOX(vbox), hbox_btns);
+
+	gtk_window_set_child(GTK_WINDOW(data->dialog), vbox);
+
+	GtkEventController *key_ctrl = gtk_event_controller_key_new();
+	g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(on_capture_key_pressed), data);
+	gtk_widget_add_controller(data->dialog, key_ctrl);
+
+	g_signal_connect(data->dialog, "destroy", G_CALLBACK(on_capture_destroy), data);
+
+	gtk_widget_set_visible(data->dialog, TRUE);
+}
+
+void PreferencesDlg::PreferencesDlgPriv::PopulateShortcutsList()
+{
+	if (!m_pListboxShortcuts) return;
+
+	GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(m_pListboxShortcuts));
+	while (child != NULL) {
+		GtkWidget *next = gtk_widget_get_next_sibling(child);
+		gtk_list_box_remove(m_pListboxShortcuts, child);
+		child = next;
+	}
+
+	const auto &actions = ShortcutManager::GetInstance().GetActions();
+	for (const auto &def : actions) {
+		GtkWidget *row = gtk_list_box_row_new();
+		gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+		gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+
+		g_object_set_data_full(G_OBJECT(row), "action-name", g_strdup(def.action_name.c_str()), g_free);
+		g_object_set_data_full(G_OBJECT(row), "category", g_strdup(def.category.c_str()), g_free);
+		g_object_set_data_full(G_OBJECT(row), "label", g_strdup(def.label.c_str()), g_free);
+
+		GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+		gtk_widget_set_margin_start(hbox, 8);
+		gtk_widget_set_margin_end(hbox, 8);
+		gtk_widget_set_margin_top(hbox, 6);
+		gtk_widget_set_margin_bottom(hbox, 6);
+
+		// Left: Title and description
+		GtkWidget *vbox_labels = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+		gtk_widget_set_hexpand(vbox_labels, TRUE);
+
+		GtkWidget *lbl_title = gtk_label_new(NULL);
+		gchar *markup = g_markup_printf_escaped("<b>%s</b> <small><span foreground='#888888'>(%s)</span></small>",
+			def.label.c_str(), def.category.c_str());
+		gtk_label_set_markup(GTK_LABEL(lbl_title), markup);
+		g_free(markup);
+		gtk_label_set_xalign(GTK_LABEL(lbl_title), 0.0);
+
+		GtkWidget *lbl_desc = gtk_label_new(def.description.c_str());
+		gtk_widget_add_css_class(lbl_desc, "dim-label");
+		gtk_label_set_xalign(GTK_LABEL(lbl_desc), 0.0);
+
+		gtk_box_append(GTK_BOX(vbox_labels), lbl_title);
+		gtk_box_append(GTK_BOX(vbox_labels), lbl_desc);
+		gtk_box_append(GTK_BOX(hbox), vbox_labels);
+
+		// Right: Key badges and buttons
+		GtkWidget *box_keys = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+		gtk_widget_set_valign(box_keys, GTK_ALIGN_CENTER);
+
+		for (const auto &accel : def.current_accels) {
+			GtkWidget *pill = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+			gtk_widget_add_css_class(pill, "card");
+
+			std::string human = ShortcutManager::AccelStringToHumanLabel(accel);
+			GtkWidget *lbl_k = gtk_label_new(human.c_str());
+			gtk_widget_set_margin_start(lbl_k, 6);
+			gtk_widget_set_margin_end(lbl_k, 2);
+			gtk_box_append(GTK_BOX(pill), lbl_k);
+
+			GtkWidget *btn_del = gtk_button_new_from_icon_name("window-close-symbolic");
+			gtk_button_set_has_frame(GTK_BUTTON(btn_del), FALSE);
+			gtk_widget_set_tooltip_text(btn_del, "Remove shortcut");
+
+			KeyDeleteData *del_data = new KeyDeleteData();
+			del_data->priv = this;
+			del_data->action_name = def.action_name;
+			del_data->accel = accel;
+			g_object_set_data_full(G_OBJECT(btn_del), "del-data", del_data, [](gpointer d){ delete static_cast<KeyDeleteData*>(d); });
+			g_signal_connect(btn_del, "clicked", G_CALLBACK(on_shortcut_delete_clicked), del_data);
+
+			gtk_box_append(GTK_BOX(pill), btn_del);
+			gtk_box_append(GTK_BOX(box_keys), pill);
+		}
+
+		// Add button
+		GtkWidget *btn_add = gtk_button_new_from_icon_name("list-add-symbolic");
+		gtk_widget_set_tooltip_text(btn_add, "Add shortcut");
+		KeyAddData *add_data = new KeyAddData();
+		add_data->priv = this;
+		add_data->action_name = def.action_name;
+		g_object_set_data_full(G_OBJECT(btn_add), "add-data", add_data, [](gpointer d){ delete static_cast<KeyAddData*>(d); });
+		g_signal_connect(btn_add, "clicked", G_CALLBACK(on_shortcut_add_clicked), add_data);
+		gtk_box_append(GTK_BOX(box_keys), btn_add);
+
+		// Reset to default button (only if customized)
+		if (def.current_accels != def.default_accels) {
+			GtkWidget *btn_reset = gtk_button_new_from_icon_name("edit-undo-symbolic");
+			gtk_widget_set_tooltip_text(btn_reset, "Reset to default");
+			KeyResetData *reset_data = new KeyResetData();
+			reset_data->priv = this;
+			reset_data->action_name = def.action_name;
+			g_object_set_data_full(G_OBJECT(btn_reset), "reset-data", reset_data, [](gpointer d){ delete static_cast<KeyResetData*>(d); });
+			g_signal_connect(btn_reset, "clicked", G_CALLBACK(on_shortcut_reset_clicked), reset_data);
+			gtk_box_append(GTK_BOX(box_keys), btn_reset);
+		}
+
+		gtk_box_append(GTK_BOX(hbox), box_keys);
+		gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), hbox);
+		gtk_list_box_append(m_pListboxShortcuts, row);
+	}
+
+	gtk_list_box_invalidate_filter(m_pListboxShortcuts);
+}
+
+static gboolean shortcut_filter_func(GtkListBoxRow *row, gpointer user_data)
+{
+	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+	if (!priv->m_pDropdownShortcutCategory || !priv->m_pSearchShortcuts) return TRUE;
+
+	const gchar *cat = (const gchar*)g_object_get_data(G_OBJECT(row), "category");
+	const gchar *label = (const gchar*)g_object_get_data(G_OBJECT(row), "label");
+	const gchar *action_name = (const gchar*)g_object_get_data(G_OBJECT(row), "action-name");
+
+	guint selected_cat = gtk_drop_down_get_selected(priv->m_pDropdownShortcutCategory);
+	if (selected_cat > 0) {
+		const char *categories[] = {
+			"All Categories",
+			"Viewer Navigation",
+			"Video Playback",
+			"Image Manipulation",
+			"Viewer Display",
+			"File & Window",
+			"Browser"
+		};
+		if (selected_cat < G_N_ELEMENTS(categories)) {
+			if (cat == NULL || strcmp(cat, categories[selected_cat]) != 0) {
+				return FALSE;
+			}
+		}
+	}
+
+	const gchar *query = gtk_editable_get_text(GTK_EDITABLE(priv->m_pSearchShortcuts));
+	if (query != NULL && query[0] != '\0') {
+		gchar *q_down = g_utf8_strdown(query, -1);
+		gchar *l_down = label ? g_utf8_strdown(label, -1) : g_strdup("");
+		gchar *c_down = cat ? g_utf8_strdown(cat, -1) : g_strdup("");
+		gchar *a_down = action_name ? g_utf8_strdown(action_name, -1) : g_strdup("");
+
+		gboolean match = (strstr(l_down, q_down) != NULL) ||
+		                 (strstr(c_down, q_down) != NULL) ||
+		                 (strstr(a_down, q_down) != NULL);
+		g_free(q_down);
+		g_free(l_down);
+		g_free(c_down);
+		g_free(a_down);
+		if (!match) return FALSE;
+	}
+
+	return TRUE;
+}
+
+static void on_shortcut_search_changed(GtkSearchEntry *entry, gpointer user_data)
+{
+	(void)entry;
+	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+	if (priv->m_pListboxShortcuts) {
+		gtk_list_box_invalidate_filter(priv->m_pListboxShortcuts);
+	}
+}
+
+static void on_shortcut_category_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data)
+{
+	(void)dropdown; (void)pspec;
+	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+	if (priv->m_pListboxShortcuts) {
+		gtk_list_box_invalidate_filter(priv->m_pListboxShortcuts);
+	}
+}
+
+static void on_reset_all_shortcuts_clicked(GtkButton *btn, gpointer user_data)
+{
+	(void)btn;
+	PreferencesDlg::PreferencesDlgPriv *priv = static_cast<PreferencesDlg::PreferencesDlgPriv*>(user_data);
+	ShortcutManager::GetInstance().ResetAllToDefaults();
+	priv->PopulateShortcutsList();
+}
 
 void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 {
@@ -422,6 +821,23 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 
 		g_signal_connect(m_pClrBtnViewer,
 			"notify::rgba",(GCallback)on_color_set,this);
+
+		if (NULL != m_pListboxShortcuts)
+		{
+			gtk_list_box_set_filter_func(m_pListboxShortcuts, shortcut_filter_func, this, NULL);
+		}
+		if (NULL != m_pSearchShortcuts)
+		{
+			g_signal_connect(m_pSearchShortcuts, "search-changed", G_CALLBACK(on_shortcut_search_changed), this);
+		}
+		if (NULL != m_pDropdownShortcutCategory)
+		{
+			g_signal_connect(m_pDropdownShortcutCategory, "notify::selected", G_CALLBACK(on_shortcut_category_changed), this);
+		}
+		if (NULL != m_pBtnResetAllShortcuts)
+		{
+			g_signal_connect(m_pBtnResetAllShortcuts, "clicked", G_CALLBACK(on_reset_all_shortcuts_clicked), this);
+		}
 	}
 }
 

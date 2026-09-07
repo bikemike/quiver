@@ -18,6 +18,7 @@
 
 
 #include "QuiverUtils.h"
+#include "ShortcutManager.h"
 #include "QuiverVideoOps.h"
 #include "ImageLoader.h"
 #include "ImageList.h"
@@ -558,6 +559,7 @@ public:
 	void PlayPauseVideo();
 	void SkipForward();
 	void SkipBack();
+	void SeekRelative(gint64 seconds);
 	void UpdateTimeline();
 	void StopVideo(bool reloadImage = true);
 	void SetPlaybackSpeed(double speed);
@@ -2238,11 +2240,11 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SEEK_FWD_5))
 	{
-		viewer_skip_fwd_cb(pViewerImpl);
+		pViewerImpl->SeekRelative(5);
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SEEK_BACK_5))
 	{
-		viewer_skip_back_cb(pViewerImpl);
+		pViewerImpl->SeekRelative(-5);
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_FRAME_FWD))
 	{
@@ -2593,87 +2595,21 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 }
 
 static gboolean viewer_imageview_key_press_event(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata)
-{ (void)controller; (void)keycode; (void)state; 
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)userdata;
-
-	gboolean rval = FALSE;
-	bool bPanMode = true;
-
-	GtkAdjustment *h = pViewerImpl->m_pAdjustmentH;
-	GtkAdjustment *v = pViewerImpl->m_pAdjustmentV;
-
-	if (gtk_adjustment_get_page_size(h) >= gtk_adjustment_get_upper(h) &&
-		gtk_adjustment_get_page_size(v) >= gtk_adjustment_get_upper(v))
+{ (void)controller; (void)keycode; (void)state; (void)userdata;
+	if (GDK_KEY_Left == keyval || GDK_KEY_Page_Up == keyval || GDK_KEY_Up == keyval)
 	{
-		bPanMode = false;
-
+		GAction* action = QuiverUtils::GetAction(ACTION_VIEWER_PREVIOUS);
+		if (action) g_action_activate(action, NULL);
+		return TRUE;
 	}
-	
-	GtkAdjustment *adjustment = NULL;
-	gdouble increment = 0.;
-
-	if (GDK_KEY_Left == keyval || GDK_KEY_Up == keyval)
+	else if (GDK_KEY_Right == keyval || GDK_KEY_Page_Down == keyval || GDK_KEY_Down == keyval)
 	{
-		if (bPanMode)
-		{
-			if (GDK_KEY_Left == keyval)
-			{
-				adjustment = h;
-			}
-			else
-			{
-				adjustment = v;
-			}
-			increment = -gtk_adjustment_get_step_increment(adjustment);
-			
-		}
-		else
-		{
-			GAction* action = QuiverUtils::GetAction( ACTION_VIEWER_PREVIOUS);
-			g_action_activate(action,NULL);
-		}
-		rval = TRUE;
-	}
-	else if (GDK_KEY_Right == keyval || GDK_KEY_Down == keyval)
-	{
-		if (bPanMode)
-		{
-			if (GDK_KEY_Right == keyval)
-			{
-				adjustment = h;
-			}
-			else
-			{
-				adjustment = v;
-			}
-			increment = gtk_adjustment_get_step_increment(adjustment);
-		}
-		else
-		{
-			GAction* action = QuiverUtils::GetAction( ACTION_VIEWER_NEXT);
-			g_action_activate(action,NULL);
-		}
-		rval = TRUE;
+		GAction* action = QuiverUtils::GetAction(ACTION_VIEWER_NEXT);
+		if (action) g_action_activate(action, NULL);
+		return TRUE;
 	}
 
-	if (NULL != adjustment)
-	{
-		gdouble value = gtk_adjustment_get_value(adjustment);
-		value += increment;
-
-		if (value < gtk_adjustment_get_lower(adjustment))
-		{
-			value = gtk_adjustment_get_lower(adjustment);
-		}
-		else if (value > gtk_adjustment_get_upper(adjustment) - gtk_adjustment_get_page_size(adjustment))
-		{
-			value = gtk_adjustment_get_upper(adjustment) - gtk_adjustment_get_page_size(adjustment);
-		}
-		gtk_adjustment_set_value(adjustment,value);
-	}
-
-	return rval;
+	return FALSE;
 }
 
 static void viewer_iconview_cell_activated(QuiverIconView *iconview,gulong cell,gpointer data)
@@ -3374,64 +3310,47 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	g_free(uri);
 }
 
+void Viewer::ViewerImpl::SeekRelative(gint64 seconds)
+{
+	if (!IsVideo() || m_pPipeline == NULL) return;
+	GstFormat format = GST_FORMAT_TIME;
+	gint64 clip_duration = 0;
+	gint64 pos = 0;
+
+	gboolean queried = gst_element_query_duration(GST_ELEMENT(m_pPipeline), format, &clip_duration);
+	queried |= gst_element_query_position(m_pPipeline, format, &pos);
+	if (queried)
+	{
+		gdouble speed = (m_dPlaybackSpeed > 0.0) ? m_dPlaybackSpeed : 1.0;
+		gint64 target = pos + seconds * GST_SECOND;
+		if (target < 0) target = 0;
+		if (clip_duration > 0 && target > clip_duration) target = clip_duration;
+
+		gboolean seek_started = gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
+			format, GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+			GST_SEEK_TYPE_SET, target,
+			GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+		(void)seek_started;
+		CancelControlsFade();
+		set_control_visible(m_pMediaControls, true);
+		if (0 != m_iTimeoutMouseMotionNotify)
+		{
+			g_source_remove(m_iTimeoutMouseMotionNotify);
+			m_iTimeoutMouseMotionNotify = 0;
+		}
+
+		m_iTimeoutMouseMotionNotify = g_timeout_add(1500, timeout_event_motion_notify, this);
+	}
+}
+
 void Viewer::ViewerImpl::SkipForward()
 {
-	{
-		GstFormat format = GST_FORMAT_TIME;
-		gint64 clip_duration = 0;
-		gint64 pos = 0;
-
-		gboolean queried = gst_element_query_duration(GST_ELEMENT(m_pPipeline), format, &clip_duration);
-		queried |= gst_element_query_position(m_pPipeline, format, &pos);
-		if (queried)
-		{
-			gdouble speed = (m_dPlaybackSpeed > 0.0) ? m_dPlaybackSpeed : 1.0;
-			gboolean seek_started = gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
-				format, GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-				GST_SEEK_TYPE_SET, std::min(clip_duration, pos + GST_SECOND*10),
-				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-			(void)seek_started;
-			CancelControlsFade();
-			set_control_visible(m_pMediaControls, true);
-			if (0 != m_iTimeoutMouseMotionNotify)
-			{
-				g_source_remove(m_iTimeoutMouseMotionNotify);
-				m_iTimeoutMouseMotionNotify = 0;
-			}
-
-			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
-		}
-	}
+	SeekRelative(10);
 }
 
 void Viewer::ViewerImpl::SkipBack()
 {
-	{
-		GstFormat format = GST_FORMAT_TIME;
-		gint64 clip_duration = 0;
-		gint64 pos = 0;
-
-		gboolean queried = gst_element_query_duration(GST_ELEMENT(m_pPipeline), format, &clip_duration);
-		queried |= gst_element_query_position(m_pPipeline, format, &pos);
-		if (queried)
-		{
-			gdouble speed = (m_dPlaybackSpeed > 0.0) ? m_dPlaybackSpeed : 1.0;
-			gboolean seek_started = gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
-				format, GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-				GST_SEEK_TYPE_SET, std::max((gint64)0, pos - GST_SECOND*10),
-				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-			(void)seek_started;
-			CancelControlsFade();
-			set_control_visible(m_pMediaControls, true);
-			if (0 != m_iTimeoutMouseMotionNotify)
-			{
-				g_source_remove(m_iTimeoutMouseMotionNotify);
-				m_iTimeoutMouseMotionNotify = 0;
-			}
-
-			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
-		}
-	}
+	SeekRelative(-10);
 }
 
 void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
@@ -4846,14 +4765,60 @@ static void viewer_skip_fwd_cb(gpointer user_data)
 	p->SkipForward();
 }
 
+static gint64 get_pipeline_frame_duration(GstElement *pipeline)
+{
+	gint fps_n = 0, fps_d = 0;
+	GstPad *pad = NULL;
+	g_signal_emit_by_name(pipeline, "get-video-pad", 0, &pad);
+	if (pad)
+	{
+		GstCaps *caps = gst_pad_get_current_caps(pad);
+		if (!caps)
+		{
+			caps = gst_pad_get_allowed_caps(pad);
+		}
+		if (caps)
+		{
+			for (guint i = 0; i < gst_caps_get_size(caps); i++)
+			{
+				GstStructure *s = gst_caps_get_structure(caps, i);
+				if (s && gst_structure_get_fraction(s, "framerate", &fps_n, &fps_d))
+				{
+					if (fps_n > 0 && fps_d > 0)
+						break;
+				}
+			}
+			gst_caps_unref(caps);
+		}
+		gst_object_unref(pad);
+	}
+
+	if (fps_n > 0 && fps_d > 0)
+	{
+		return (GST_SECOND * (gint64)fps_d) / (gint64)fps_n;
+	}
+	return GST_SECOND / 30; // default to 33.3ms (30fps)
+}
+
 static void viewer_frame_step_back_cb(gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	if (!p->IsVideo() || p->m_pPipeline == NULL) return;
 	p->SetIsPlaying(false);
 	gst_element_set_state(GST_ELEMENT(p->m_pPipeline), GST_STATE_PAUSED);
-	GstEvent *ev = gst_event_new_step(GST_FORMAT_BUFFERS, 1, -1.0, TRUE, FALSE);
-	gst_element_send_event(GST_ELEMENT(p->m_pPipeline), ev);
+
+	gint64 frame_duration = get_pipeline_frame_duration(GST_ELEMENT(p->m_pPipeline));
+	gint64 pos = 0;
+	if (gst_element_query_position(GST_ELEMENT(p->m_pPipeline), GST_FORMAT_TIME, &pos))
+	{
+		gint64 target = (pos >= frame_duration) ? (pos - frame_duration) : 0;
+		gst_element_seek(GST_ELEMENT(p->m_pPipeline), 1.0,
+			GST_FORMAT_TIME,
+			GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+			GST_SEEK_TYPE_SET, target,
+			GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+	}
+	p->UpdateTimeline();
 	p->RefreshAutoHideTimer();
 }
 
@@ -4864,7 +4829,23 @@ static void viewer_frame_step_fwd_cb(gpointer user_data)
 	p->SetIsPlaying(false);
 	gst_element_set_state(GST_ELEMENT(p->m_pPipeline), GST_STATE_PAUSED);
 	GstEvent *ev = gst_event_new_step(GST_FORMAT_BUFFERS, 1, 1.0, TRUE, FALSE);
-	gst_element_send_event(GST_ELEMENT(p->m_pPipeline), ev);
+	if (!gst_element_send_event(GST_ELEMENT(p->m_pPipeline), ev))
+	{
+		gint64 frame_duration = get_pipeline_frame_duration(GST_ELEMENT(p->m_pPipeline));
+		gint64 pos = 0, len = 0;
+		if (gst_element_query_position(GST_ELEMENT(p->m_pPipeline), GST_FORMAT_TIME, &pos))
+		{
+			gst_element_query_duration(GST_ELEMENT(p->m_pPipeline), GST_FORMAT_TIME, &len);
+			gint64 target = pos + frame_duration;
+			if (len > 0 && target > len) target = len;
+			gst_element_seek(GST_ELEMENT(p->m_pPipeline), 1.0,
+				GST_FORMAT_TIME,
+				GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+				GST_SEEK_TYPE_SET, target,
+				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+		}
+	}
+	p->UpdateTimeline();
 	p->RefreshAutoHideTimer();
 }
 
@@ -5830,10 +5811,10 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_COPY, "<Control>C", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_TRASH, "Delete", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS, "BackSpace", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS_2, "<Shift>space", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT, "space", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT_2, "<Shift>BackSpace", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS, "Left", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS_2, "Page_Up", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT, "Right", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT_2, "Page_Down", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FIRST, "Home", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_LAST, "End", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
@@ -5841,21 +5822,21 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ZOOM_OUT, "minus", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CW, "r", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CW_2, "<Shift>l", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CCW, "l", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CCW_2, "<Shift>r", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CW_2, "bracketright", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CCW, "<Shift>r", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CCW_2, "bracketleft", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_H, "h", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_H_2, "<Shift>v", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_V, "v", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_V_2, "<Shift>h", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY, "P", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY_2, "<Control>space", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_FORWARD, "period", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_BACK, "comma", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SEEK_FWD_5, "<Shift>period", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SEEK_BACK_5, "<Shift>comma", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_FWD, "", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_BACK, "", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY, "space", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY_2, "k", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_FORWARD, "l", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_BACK, "j", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SEEK_FWD_5, "period", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SEEK_BACK_5, "comma", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_FWD, "<Shift>greater", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_BACK, "<Shift>less", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SNAPSHOT, "", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	/* Viewer toggle actions */

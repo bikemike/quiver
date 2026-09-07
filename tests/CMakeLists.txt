@@ -32,6 +32,7 @@ set(UNIT_TEST_SOURCES
     unit/test_video_controls.cpp
     unit/test_folder_tree.cpp
     unit/test_headerbar_toolbar.cpp
+    unit/test_shortcut_manager.cpp
 )
 
 add_executable(quiver_unit_tests ${UNIT_TEST_SOURCES})

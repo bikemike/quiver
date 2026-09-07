@@ -7,6 +7,10 @@
 #include <sys/stat.h>
 #include "Preferences.h"
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) gchar g_szConfigFilePath[256] = "";
+#endif
+
 using namespace std;
 
 PreferencesPtr Preferences::c_pPreferencesPtr;

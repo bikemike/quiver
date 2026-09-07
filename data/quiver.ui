@@ -1584,6 +1584,92 @@
                 </property>
               </object>
             </child>
+            <child>
+              <object class="GtkNotebookPage">
+                <property name="position">4</property>
+                <property name="child">
+                  <object class="GtkBox" id="vbox_shortcuts">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-start">8</property>
+                    <property name="margin-end">8</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
+                    <child>
+                      <object class="GtkBox" id="hbox_shortcuts_filter">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkSearchEntry" id="search_shortcuts">
+                            <property name="hexpand">1</property>
+                            <property name="placeholder-text" translatable="1">Search shortcuts...</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkDropDown" id="dropdown_shortcut_category">
+                            <property name="model">
+                              <object class="GtkStringList">
+                                <items>
+                                  <item translatable="yes">All Categories</item>
+                                  <item translatable="yes">Viewer Navigation</item>
+                                  <item translatable="yes">Video Playback</item>
+                                  <item translatable="yes">Image Manipulation</item>
+                                  <item translatable="yes">Viewer Display</item>
+                                  <item translatable="yes">File &amp; Window</item>
+                                  <item translatable="yes">Browser</item>
+                                </items>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow" id="scrolled_shortcuts">
+                        <property name="vexpand">1</property>
+                        <property name="hexpand">1</property>
+                        <property name="min-content-height">280</property>
+                        <property name="has-frame">1</property>
+                        <child>
+                          <object class="GtkListBox" id="listbox_shortcuts">
+                            <property name="selection-mode">none</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="hbox_shortcuts_actions">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">end</property>
+                        <child>
+                          <object class="GtkButton" id="btn_reset_all_shortcuts">
+                            <property name="label" translatable="1">Reset All to Defaults</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <property name="tab">
+                  <object class="GtkBox" id="hbox_tab_shortcuts">
+                    <child>
+                      <object class="GtkImage" id="image_tab_shortcuts">
+                        <property name="hexpand">1</property>
+                        <property name="icon_name">preferences-desktop-keyboard-shortcuts</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="label_tab_shortcuts">
+                        <property name="hexpand">1</property>
+                        <property name="label" translatable="1">Shortcuts</property>
+                        <property name="use_markup">1</property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
           </object>
         </child>
       </object>

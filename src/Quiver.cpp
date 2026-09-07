@@ -24,6 +24,7 @@ GtkApplication *g_pApp = NULL;
 
 
 #include "QuiverUtils.h"
+#include "ShortcutManager.h"
 #include "ImageDecoder.h"
 
 #include "QuiverPrefs.h"
@@ -1025,6 +1026,7 @@ void Quiver::Init()
 	 * Actions are registered here and their widgets bound with
 	 * QuiverUtils::BindWidget() / BindToggleWidget() / BindRadioWidget(). */
 	QuiverUtils::InitActions();
+	ShortcutManager::GetInstance().Init();
 	gtk_widget_insert_action_group(m_QuiverImplPtr->m_pQuiverWindow, "quiver",
 		G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
 	QuiverUtils::AddAccelGroup(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
@@ -1835,34 +1837,7 @@ void QuiverImpl::ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow)
  * checkbox selection, so the global accelerators must not steal it. */
 void QuiverImpl::SetViewerNavigationAccelerators(bool bEnable)
 {
-	if (NULL == g_pApp)
-		return;
-	if (bEnable)
-	{
-		{
-			const gchar *detail = "quiver.ImageNext";
-			const gchar *accels[] = {"space", NULL};
-			gtk_application_set_accels_for_action(g_pApp, detail, accels);
-		}
-		{
-			const gchar *detail = "quiver.ImagePrevious_2";
-			const gchar *accels[] = {"<Shift>space", NULL};
-			gtk_application_set_accels_for_action(g_pApp, detail, accels);
-		}
-	}
-	else
-	{
-		{
-			const gchar *detail = "quiver.ImageNext";
-			const gchar *no_accels[] = {NULL};
-			gtk_application_set_accels_for_action(g_pApp, detail, no_accels);
-		}
-		{
-			const gchar *detail = "quiver.ImagePrevious_2";
-			const gchar *no_accels[] = {NULL};
-			gtk_application_set_accels_for_action(g_pApp, detail, no_accels);
-		}
-	}
+	ShortcutManager::GetInstance().SetViewerMode(bEnable);
 }
 
 void Quiver::ShowViewer()

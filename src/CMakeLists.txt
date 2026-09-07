@@ -23,6 +23,7 @@ set(QUIVER_CORE_SOURCES
     Viewer.cpp
     Statusbar.cpp
     QuiverUtils.cpp
+    ShortcutManager.cpp
     QuiverStockIcons.cpp
     QuiverVideoOps.cpp
     AbstractEventSource.cpp
