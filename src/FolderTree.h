@@ -16,10 +16,10 @@ public:
 	~FolderTree();
 
 	GtkWidget* GetWidget() const;
+	GtkWidget* GetTreeWidget() const;
+	GtkWidget* GetShortcutsWidget() const;
 
-	
 	void SetSelectedFolders(std::list<std::string> &uris);
-
 	std::list<std::string> GetSelectedFolders() const;
 
 	class FolderTreeImpl;

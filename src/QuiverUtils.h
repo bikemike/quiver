@@ -62,6 +62,20 @@ namespace QuiverUtils
 	 * If color is NULL, any previously attached background provider and class are
 	 * removed, restoring default system theme styling. */
 	void SetWidgetBgColor(GtkWidget *widget, const GdkRGBA *color);
+
+	/* Returns the Freedesktop themed icon name (e.g. "user-desktop", "folder-documents",
+	 * "folder-download", "folder-music", "folder-pictures", "folder-publicshare",
+	 * "folder-templates", "folder-videos", "user-home") if the given path or URI
+	 * corresponds to the user's home directory or an XDG user directory.
+	 * Returns NULL if the folder does not match a special user directory. */
+	const char* GetSpecialFolderIconName(const char* path_or_uri);
+	const char* GetSpecialFolderIconName(GFile* file);
+
+	/* Returns the Freedesktop symbolic themed icon name (e.g. "user-desktop-symbolic",
+	 * "folder-documents-symbolic", "folder-pictures-symbolic", "user-home-symbolic")
+	 * for XDG user directories and the user home directory, or NULL if not special. */
+	const char* GetSpecialFolderSymbolicIconName(const char* path_or_uri);
+	const char* GetSpecialFolderSymbolicIconName(GFile* file);
 }
 
 #endif

@@ -1553,6 +1553,15 @@ GdkPixbuf * QuiverFile::GetThumbnail(int iSize /* = 0 */,
 
 gchar* QuiverFile::GetIconName()
 {
+	if (IsFolder())
+	{
+		const char* special_name = QuiverUtils::GetSpecialFolderIconName(GetURI());
+		if (special_name)
+		{
+			return g_strdup(special_name);
+		}
+	}
+
 	gchar *icon_name = NULL;
 
 	GFileInfo *file_info = GetFileInfo();
@@ -1580,8 +1589,68 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 	gint size_wanted = MIN(width_desired,height_desired);
 		
 	GFileInfo* file_info = GetFileInfo();
-	const char* content_type = g_file_info_get_content_type(file_info);
-	GIcon* icon = g_content_type_get_icon(content_type);
+
+	if (IsFolder())
+	{
+		/* 1. Check custom-icon metadata if present (set via Nautilus properties) */
+		if (file_info)
+		{
+			const char* custom_icon = g_file_info_get_attribute_string(file_info, "metadata::custom-icon");
+			if (custom_icon && custom_icon[0])
+			{
+				GFile* cf = g_file_new_for_commandline_arg(custom_icon);
+				char* cpath = g_file_get_path(cf);
+				if (cpath)
+				{
+					pixbuf = gdk_pixbuf_new_from_file_at_size(cpath, size_wanted, size_wanted, NULL);
+					g_free(cpath);
+				}
+				g_object_unref(cf);
+				if (pixbuf)
+				{
+					g_object_unref(file_info);
+					return pixbuf;
+				}
+			}
+		}
+
+		/* 2. Check special folder icon name (Desktop, Documents, Downloads, etc.) */
+		const char* special_name = QuiverUtils::GetSpecialFolderIconName(GetURI());
+		if (special_name && gtk_icon_theme_has_icon(icon_theme, special_name))
+		{
+			GtkIconPaintable* paintable = gtk_icon_theme_lookup_icon(
+				icon_theme,
+				special_name,
+				NULL,
+				size_wanted,
+				1,
+				GTK_TEXT_DIR_NONE,
+				GTK_ICON_LOOKUP_FORCE_REGULAR);
+			if (paintable)
+			{
+				GFile* icon_file = gtk_icon_paintable_get_file(paintable);
+				if (icon_file)
+				{
+					char* path = g_file_get_path(icon_file);
+					if (path)
+					{
+						pixbuf = gdk_pixbuf_new_from_file_at_size(path, size_wanted, size_wanted, NULL);
+						g_free(path);
+					}
+					g_object_unref(icon_file);
+				}
+				g_object_unref(paintable);
+				if (pixbuf)
+				{
+					if (file_info) g_object_unref(file_info);
+					return pixbuf;
+				}
+			}
+		}
+	}
+
+	const char* content_type = file_info ? g_file_info_get_content_type(file_info) : NULL;
+	GIcon* icon = content_type ? g_content_type_get_icon(content_type) : NULL;
 
 	if (NULL != icon)
 	{

@@ -743,6 +743,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pBrowserWidget = hpaned;
 	
 	m_pSWFolderTree = gtk_scrolled_window_new();
+	gtk_widget_add_css_class(m_pSWFolderTree, "sidebar");
+	gtk_widget_add_css_class(m_pSWFolderTree, "quiver-sidebar");
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pSWFolderTree),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	GtkWidget *pFolderTree = m_FolderTreePtr->GetWidget();
 	

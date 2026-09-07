@@ -576,4 +576,170 @@ void ConnectUnmodifiedAccelerators() {
 		g_free(color_str);
 	}
 
+	const char* GetSpecialFolderIconName(const char* path_or_uri)
+	{
+		if (NULL == path_or_uri || '\0' == path_or_uri[0])
+			return NULL;
+
+		char* path = NULL;
+		if (g_str_has_prefix(path_or_uri, "file://"))
+		{
+			path = g_filename_from_uri(path_or_uri, NULL, NULL);
+		}
+		else
+		{
+			path = g_strdup(path_or_uri);
+		}
+
+		if (NULL == path)
+			return NULL;
+
+		// Strip trailing slashes (unless path is "/")
+		size_t len = strlen(path);
+		while (len > 1 && (path[len - 1] == '/' || path[len - 1] == '\\'))
+		{
+			path[len - 1] = '\0';
+			len--;
+		}
+
+		const char* home_dir = g_get_home_dir();
+		if (NULL != home_dir && 0 == g_strcmp0(path, home_dir))
+		{
+			g_free(path);
+			return "user-home";
+		}
+
+		struct SpecialDirMapping {
+			GUserDirectory dir_type;
+			const char* fallback_subdir;
+			const char* icon_name;
+		};
+
+		static const SpecialDirMapping mappings[] = {
+			{ G_USER_DIRECTORY_DESKTOP, "Desktop", "user-desktop" },
+			{ G_USER_DIRECTORY_DOCUMENTS, "Documents", "folder-documents" },
+			{ G_USER_DIRECTORY_DOWNLOAD, "Downloads", "folder-download" },
+			{ G_USER_DIRECTORY_MUSIC, "Music", "folder-music" },
+			{ G_USER_DIRECTORY_PICTURES, "Pictures", "folder-pictures" },
+			{ G_USER_DIRECTORY_PUBLIC_SHARE, "Public", "folder-publicshare" },
+			{ G_USER_DIRECTORY_TEMPLATES, "Templates", "folder-templates" },
+			{ G_USER_DIRECTORY_VIDEOS, "Videos", "folder-videos" }
+		};
+
+		const char* matched_icon = NULL;
+
+		for (const auto& m : mappings)
+		{
+			const char* special_dir = g_get_user_special_dir(m.dir_type);
+			if (NULL != special_dir && 0 != g_strcmp0(special_dir, home_dir))
+			{
+				char* norm_special = g_strdup(special_dir);
+				size_t slen = strlen(norm_special);
+				while (slen > 1 && (norm_special[slen - 1] == '/' || norm_special[slen - 1] == '\\'))
+				{
+					norm_special[slen - 1] = '\0';
+					slen--;
+				}
+				if (0 == g_strcmp0(path, norm_special))
+				{
+					matched_icon = m.icon_name;
+					g_free(norm_special);
+					break;
+				}
+				g_free(norm_special);
+			}
+
+			if (NULL != home_dir && NULL != m.fallback_subdir)
+			{
+				char* fallback_path = g_build_filename(home_dir, m.fallback_subdir, NULL);
+				if (0 == g_strcmp0(path, fallback_path))
+				{
+					matched_icon = m.icon_name;
+					g_free(fallback_path);
+					break;
+				}
+				g_free(fallback_path);
+			}
+		}
+
+		g_free(path);
+		return matched_icon;
+	}
+
+	const char* GetSpecialFolderIconName(GFile* file)
+	{
+		if (NULL == file)
+			return NULL;
+
+		char* path = g_file_get_path(file);
+		if (NULL != path)
+		{
+			const char* icon = GetSpecialFolderIconName(path);
+			g_free(path);
+			return icon;
+		}
+
+		char* uri = g_file_get_uri(file);
+		if (NULL != uri)
+		{
+			const char* icon = GetSpecialFolderIconName(uri);
+			g_free(uri);
+			return icon;
+		}
+
+		return NULL;
+	}
+
+	const char* GetSpecialFolderSymbolicIconName(const char* path_or_uri)
+	{
+		const char* icon = GetSpecialFolderIconName(path_or_uri);
+		if (NULL == icon)
+			return NULL;
+
+		if (0 == strcmp(icon, "user-home"))
+			return "user-home-symbolic";
+		if (0 == strcmp(icon, "user-desktop"))
+			return "user-desktop-symbolic";
+		if (0 == strcmp(icon, "folder-documents"))
+			return "folder-documents-symbolic";
+		if (0 == strcmp(icon, "folder-download"))
+			return "folder-download-symbolic";
+		if (0 == strcmp(icon, "folder-music"))
+			return "folder-music-symbolic";
+		if (0 == strcmp(icon, "folder-pictures"))
+			return "folder-pictures-symbolic";
+		if (0 == strcmp(icon, "folder-publicshare"))
+			return "folder-publicshare-symbolic";
+		if (0 == strcmp(icon, "folder-templates"))
+			return "folder-templates-symbolic";
+		if (0 == strcmp(icon, "folder-videos"))
+			return "folder-videos-symbolic";
+
+		return NULL;
+	}
+
+	const char* GetSpecialFolderSymbolicIconName(GFile* file)
+	{
+		if (NULL == file)
+			return NULL;
+
+		char* path = g_file_get_path(file);
+		if (NULL != path)
+		{
+			const char* icon = GetSpecialFolderSymbolicIconName(path);
+			g_free(path);
+			return icon;
+		}
+
+		char* uri = g_file_get_uri(file);
+		if (NULL != uri)
+		{
+			const char* icon = GetSpecialFolderSymbolicIconName(uri);
+			g_free(uri);
+			return icon;
+		}
+
+		return NULL;
+	}
+
 }

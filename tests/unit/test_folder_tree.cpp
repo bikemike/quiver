@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <gtk/gtk.h>
 #include "FolderTree.h"
+#include "QuiverFile.h"
+#include "Bookmarks.h"
 #include "test_helpers.h"
 
 TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gui]")
@@ -10,7 +12,11 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
     SECTION("Enter key on focused row checks it and unchecks others")
     {
         FolderTreePtr tree(new FolderTree());
-        GtkWidget* widget = tree->GetWidget();
+        GtkWidget* box = tree->GetWidget();
+        REQUIRE(box != nullptr);
+        REQUIRE(GTK_IS_BOX(box));
+
+        GtkWidget* widget = tree->GetTreeWidget();
         REQUIRE(widget != nullptr);
         REQUIRE(GTK_IS_LIST_VIEW(widget));
 
@@ -82,13 +88,17 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
     SECTION("Mouse click on a folder row checks it off")
     {
         FolderTreePtr tree(new FolderTree());
-        GtkWidget* widget = tree->GetWidget();
+        GtkWidget* box = tree->GetWidget();
+        REQUIRE(box != nullptr);
+        REQUIRE(GTK_IS_BOX(box));
+
+        GtkWidget* widget = tree->GetTreeWidget();
         REQUIRE(widget != nullptr);
         REQUIRE(GTK_IS_LIST_VIEW(widget));
 
         // Window presentation so list items are created and bound
         GtkWidget* win = gtk_window_new();
-        gtk_window_set_child(GTK_WINDOW(win), widget);
+        gtk_window_set_child(GTK_WINDOW(win), box);
         gtk_window_set_default_size(GTK_WINDOW(win), 400, 400);
         gtk_window_present(GTK_WINDOW(win));
 
@@ -143,11 +153,16 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
     SECTION("Focus moved independently of selection (e.g. Ctrl+Arrow navigation)")
     {
         FolderTreePtr tree(new FolderTree());
-        GtkWidget* widget = tree->GetWidget();
+        GtkWidget* box = tree->GetWidget();
+        REQUIRE(box != nullptr);
+        REQUIRE(GTK_IS_BOX(box));
+
+        GtkWidget* widget = tree->GetTreeWidget();
         REQUIRE(widget != nullptr);
+        REQUIRE(GTK_IS_LIST_VIEW(widget));
 
         GtkWidget* win = gtk_window_new();
-        gtk_window_set_child(GTK_WINDOW(win), widget);
+        gtk_window_set_child(GTK_WINDOW(win), box);
         gtk_window_set_default_size(GTK_WINDOW(win), 400, 400);
         gtk_window_present(GTK_WINDOW(win));
         while (g_main_context_iteration(NULL, FALSE));
@@ -223,11 +238,16 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
     SECTION("Multi-selection Spacebar and Enter behavior")
     {
         FolderTreePtr tree(new FolderTree());
-        GtkWidget* widget = tree->GetWidget();
+        GtkWidget* box = tree->GetWidget();
+        REQUIRE(box != nullptr);
+        REQUIRE(GTK_IS_BOX(box));
+
+        GtkWidget* widget = tree->GetTreeWidget();
         REQUIRE(widget != nullptr);
+        REQUIRE(GTK_IS_LIST_VIEW(widget));
 
         GtkWidget* win = gtk_window_new();
-        gtk_window_set_child(GTK_WINDOW(win), widget);
+        gtk_window_set_child(GTK_WINDOW(win), box);
         gtk_window_set_default_size(GTK_WINDOW(win), 400, 400);
         gtk_window_present(GTK_WINDOW(win));
         while (g_main_context_iteration(NULL, FALSE));
@@ -311,5 +331,229 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
 
         gtk_window_set_child(GTK_WINDOW(win), nullptr);
         gtk_window_destroy(GTK_WINDOW(win));
+    }
+
+    SECTION("Shortcuts list, separator, and roots layout")
+    {
+        FolderTreePtr tree(new FolderTree());
+        GtkWidget* box = tree->GetWidget();
+        REQUIRE(box != nullptr);
+        REQUIRE(GTK_IS_BOX(box));
+
+        GtkWidget* sc_widget = tree->GetShortcutsWidget();
+        REQUIRE(sc_widget != nullptr);
+        REQUIRE(GTK_IS_LIST_VIEW(sc_widget));
+
+        GtkWidget* tree_widget = tree->GetTreeWidget();
+        REQUIRE(tree_widget != nullptr);
+        REQUIRE(GTK_IS_LIST_VIEW(tree_widget));
+
+        // Children of box: shortcuts list view, separator, tree list view
+        GtkWidget* first_child = gtk_widget_get_first_child(box);
+        REQUIRE(first_child == sc_widget);
+        GtkWidget* sep = gtk_widget_get_next_sibling(first_child);
+        REQUIRE(sep != nullptr);
+        REQUIRE(GTK_IS_SEPARATOR(sep));
+        GtkWidget* third_child = gtk_widget_get_next_sibling(sep);
+        REQUIRE(third_child == tree_widget);
+
+        // Verify CSS classes and styling attributes
+        REQUIRE(gtk_widget_has_css_class(box, "sidebar"));
+        REQUIRE(gtk_widget_has_css_class(box, "quiver-sidebar"));
+        REQUIRE(gtk_widget_has_css_class(sc_widget, "navigation-sidebar"));
+        REQUIRE(gtk_widget_has_css_class(tree_widget, "compact-tree"));
+        REQUIRE(gtk_widget_has_css_class(sep, "sidebar-separator"));
+        REQUIRE(gtk_widget_get_margin_top(sep) >= 10);
+        REQUIRE(gtk_widget_get_margin_bottom(sep) >= 10);
+
+        // Verify shortcuts has items
+        GtkSelectionModel* sc_sel = gtk_list_view_get_model(GTK_LIST_VIEW(sc_widget));
+        REQUIRE(sc_sel != nullptr);
+        guint sc_count = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+        REQUIRE(sc_count >= 1);
+    }
+
+    SECTION("Shortcuts and Tree selection synchronization")
+    {
+        FolderTreePtr tree(new FolderTree());
+        const char* home_dir = g_get_home_dir();
+        REQUIRE(home_dir != nullptr);
+        GFile* home_f = g_file_new_for_path(home_dir);
+        char* home_uri = g_file_get_uri(home_f);
+        g_object_unref(home_f);
+
+        std::list<std::string> sel_uris;
+        sel_uris.push_back(home_uri);
+        tree->SetSelectedFolders(sel_uris);
+
+        std::list<std::string> res = tree->GetSelectedFolders();
+        REQUIRE(res.size() == 1);
+        REQUIRE(res.front() == home_uri);
+
+        g_free(home_uri);
+    }
+
+    SECTION("Bookmarks added to Bookmarks instance appear in Shortcuts")
+    {
+        FolderTreePtr tree(new FolderTree());
+        GtkWidget* sc_widget = tree->GetShortcutsWidget();
+        REQUIRE(sc_widget != nullptr);
+        GtkSelectionModel* sc_sel = gtk_list_view_get_model(GTK_LIST_VIEW(sc_widget));
+        guint count_before = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+
+        BookmarksPtr bm = Bookmarks::GetInstance();
+        std::string test_uri = "file:///tmp/quiver_test_bm_" + std::to_string(g_random_int());
+        std::list<std::string> uris = {test_uri};
+        Bookmark b("Custom Test Bookmark", "desc", "folder-symbolic", uris, false);
+        bm->AddBookmark(b);
+
+        guint count_after = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+        REQUIRE(count_after == count_before + 1);
+
+        int added_id = bm->GetBookmarks().back().GetID();
+        bm->Remove(added_id);
+    }
+
+    SECTION("Shortcuts multi-selection spacebar preserves selection when unchecking")
+    {
+        FolderTreePtr tree(new FolderTree());
+        GtkWidget* win = gtk_window_new();
+        GtkWidget* box = tree->GetWidget();
+        gtk_window_set_child(GTK_WINDOW(win), box);
+        gtk_window_set_default_size(GTK_WINDOW(win), 300, 500);
+        gtk_window_present(GTK_WINDOW(win));
+        while (g_main_context_iteration(NULL, FALSE));
+
+        GtkWidget* sc_widget = tree->GetShortcutsWidget();
+        REQUIRE(sc_widget != nullptr);
+        GtkSelectionModel* sc_sel = gtk_list_view_get_model(GTK_LIST_VIEW(sc_widget));
+        REQUIRE(sc_sel != nullptr);
+        guint sc_count = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+        REQUIRE(sc_count >= 2);
+
+        // Find key controller on sc_widget
+        GtkEventController* sc_key_ctrl = nullptr;
+        GListModel* controllers = gtk_widget_observe_controllers(sc_widget);
+        guint n_ctrl = g_list_model_get_n_items(controllers);
+        for (guint i = 0; i < n_ctrl; i++)
+        {
+            GObject* item = G_OBJECT(g_list_model_get_item(controllers, i));
+            if (GTK_IS_EVENT_CONTROLLER_KEY(item))
+            {
+                sc_key_ctrl = GTK_EVENT_CONTROLLER(item);
+                g_object_unref(item);
+                break;
+            }
+            g_object_unref(item);
+        }
+        g_object_unref(controllers);
+        REQUIRE(sc_key_ctrl != nullptr);
+
+        // Ensure tree below has no selection
+        GtkWidget* tree_widget = tree->GetTreeWidget();
+        GtkSelectionModel* tree_sel = gtk_list_view_get_model(GTK_LIST_VIEW(tree_widget));
+        gtk_selection_model_unselect_all(tree_sel);
+
+        // 1. Multi-select rows 0 and 1 in shortcuts
+        gtk_selection_model_select_range(sc_sel, 0, 2, TRUE);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 0) == TRUE);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 1) == TRUE);
+
+        // Press Spacebar: checks both items
+        gboolean handled = FALSE;
+        g_signal_emit_by_name(sc_key_ctrl, "key-pressed", GDK_KEY_space, 0, (GdkModifierType)0, &handled);
+        REQUIRE(handled == TRUE);
+        REQUIRE(tree->GetSelectedFolders().size() == 2);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 0) == TRUE);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 1) == TRUE);
+
+        // Press Spacebar again: unchecks both items, but preserves selection in shortcuts
+        g_signal_emit_by_name(sc_key_ctrl, "key-pressed", GDK_KEY_space, 0, (GdkModifierType)0, &handled);
+        REQUIRE(handled == TRUE);
+        REQUIRE(tree->GetSelectedFolders().size() == 0);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 0) == TRUE);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 1) == TRUE);
+
+        // Press Spacebar again: checks both items again
+        g_signal_emit_by_name(sc_key_ctrl, "key-pressed", GDK_KEY_space, 0, (GdkModifierType)0, &handled);
+        REQUIRE(handled == TRUE);
+        REQUIRE(tree->GetSelectedFolders().size() == 2);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 0) == TRUE);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 1) == TRUE);
+
+        // Single-select row 0 in shortcuts
+        gtk_selection_model_select_item(sc_sel, 0, TRUE);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 0) == TRUE);
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 1) == FALSE);
+
+        // Press Spacebar to uncheck row 0: row 0 is unchecked, but still selected in sc_sel
+        g_signal_emit_by_name(sc_key_ctrl, "key-pressed", GDK_KEY_space, 0, (GdkModifierType)0, &handled);
+        REQUIRE(handled == TRUE);
+        REQUIRE(tree->GetSelectedFolders().size() == 1); // row 1 is still checked
+        REQUIRE(gtk_selection_model_is_selected(sc_sel, 0) == TRUE);
+
+        gtk_window_set_child(GTK_WINDOW(win), nullptr);
+        gtk_window_destroy(GTK_WINDOW(win));
+    }
+}
+
+TEST_CASE("Special Folder Icons in FolderTree and QuiverFile", "[unit][foldertree][quiverfile][icons]")
+{
+    REQUIRE_DISPLAY();
+
+    SECTION("FolderTree root items have specific icons for special directories")
+    {
+        FolderTreePtr tree(new FolderTree());
+        GtkWidget* widget = tree->GetTreeWidget();
+        REQUIRE(widget != nullptr);
+        REQUIRE(GTK_IS_LIST_VIEW(widget));
+
+        GtkListView* lv = GTK_LIST_VIEW(widget);
+        GtkSelectionModel* sel = gtk_list_view_get_model(lv);
+        REQUIRE(sel != nullptr);
+
+        // Verify root items model has items (Home, Filesystem root, etc.)
+        guint n = g_list_model_get_n_items(G_LIST_MODEL(sel));
+        REQUIRE(n >= 2);
+    }
+
+    SECTION("QuiverFile returns special folder icon names and loads pixbufs")
+    {
+        const char* home = g_get_home_dir();
+        REQUIRE(home != nullptr);
+
+        // Test Pictures directory
+        std::string pic_path = std::string(home) + "/Pictures";
+        gchar* pic_uri = g_filename_to_uri(pic_path.c_str(), nullptr, nullptr);
+        REQUIRE(pic_uri != nullptr);
+
+        QuiverFile f_pic(pic_uri);
+        gchar* icon_name = f_pic.GetIconName();
+        REQUIRE(icon_name != nullptr);
+        REQUIRE(std::string(icon_name) == "folder-pictures");
+        g_free(icon_name);
+
+        GdkPixbuf* pb = f_pic.GetIcon(48, 48);
+        REQUIRE(pb != nullptr);
+        REQUIRE(gdk_pixbuf_get_width(pb) > 0);
+        REQUIRE(gdk_pixbuf_get_height(pb) > 0);
+        g_object_unref(pb);
+
+        // Test Home directory
+        gchar* home_uri = g_filename_to_uri(home, nullptr, nullptr);
+        REQUIRE(home_uri != nullptr);
+
+        QuiverFile f_home(home_uri);
+        gchar* home_icon = f_home.GetIconName();
+        REQUIRE(home_icon != nullptr);
+        REQUIRE(std::string(home_icon) == "user-home");
+        g_free(home_icon);
+
+        GdkPixbuf* pb_home = f_home.GetIcon(48, 48);
+        REQUIRE(pb_home != nullptr);
+        g_object_unref(pb_home);
+
+        g_free(pic_uri);
+        g_free(home_uri);
     }
 }
