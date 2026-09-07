@@ -92,8 +92,7 @@ static void bookmark_item_finalize (GObject* object)
 	BookmarkItem* item = BOOKMARK_ITEM(object);
 	g_free(item->icon);
 	g_free(item->name);
-	G_OBJECT_CLASS(g_type_class_peek_parent(
-		G_OBJECT_GET_CLASS(object)))->finalize(object);
+	G_OBJECT_CLASS(bookmark_item_parent_class)->finalize(object);
 }
 
 static void bookmark_item_class_init (BookmarkItemClass* klass)
@@ -118,8 +117,8 @@ static BookmarkItem* bookmark_item_new (int id, const gchar* icon, const gchar* 
 	return item;
 }
 
-static void bookmark_icon_setup (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void bookmark_icon_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	GtkWidget* image = gtk_image_new();
 	gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
 	gtk_widget_set_margin_start(image, 6);
@@ -127,50 +126,38 @@ static void bookmark_icon_setup (GtkListItem* list_item, gpointer user_data)
 	gtk_list_item_set_child(list_item, image);
 }
 
-static void bookmark_icon_bind (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void bookmark_icon_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	BookmarkItem* item = BOOKMARK_ITEM(gtk_list_item_get_item(list_item));
+	if (!item) return;
 	GtkWidget* image = gtk_list_item_get_child(list_item);
 	gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon);
 }
 
-static void bookmark_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
-	BookmarksDlg::BookmarksDlgPriv* priv);
-static void bookmark_name_setup (GtkListItem* list_item, gpointer user_data)
+static void bookmark_name_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
 {
-	BookmarksDlg::BookmarksDlgPriv* priv =
-		static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
-	GtkWidget* editable = gtk_editable_label_new(NULL);
-	gtk_widget_set_hexpand(editable, TRUE);
-	g_signal_connect(editable, "notify::text",
-		G_CALLBACK(bookmark_name_edited), priv);
-	gtk_list_item_set_child(list_item, editable);
+	(void)factory; (void)user_data;
+	GtkWidget* label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+	gtk_widget_set_hexpand(label, TRUE);
+	gtk_list_item_set_child(list_item, label);
 }
 
-static void bookmark_name_bind (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void bookmark_name_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{
+	(void)factory; (void)user_data;
 	BookmarkItem* item = BOOKMARK_ITEM(gtk_list_item_get_item(list_item));
-	GtkWidget* editable = gtk_list_item_get_child(list_item);
-	g_object_set_data(G_OBJECT(editable), "bookmark-id",
-		GINT_TO_POINTER(item->id));
-	gtk_editable_set_text(GTK_EDITABLE(editable), item->name);
-}
-
-static void bookmark_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
-	BookmarksDlg::BookmarksDlgPriv* priv)
-{ (void)pspec;
-	int id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(editable), "bookmark-id"));
-	const Bookmark* b = priv->m_BookmarksPtr->GetBookmark(id);
-	if (NULL != b)
+	GtkWidget* label = gtk_list_item_get_child(list_item);
+	if (!item)
 	{
-		Bookmark modified = *b;
-		modified.SetName(gtk_editable_get_text(GTK_EDITABLE(editable)));
-		priv->m_BookmarksPtr->UpdateBookmark(modified);
+		gtk_label_set_text(GTK_LABEL(label), "");
+		return;
 	}
+	gtk_label_set_text(GTK_LABEL(label), item->name ? item->name : "");
 }
 
-static GtkListItemFactory* bookmark_column_factory (int iCol,
-	BookmarksDlg::BookmarksDlgPriv* priv)
+static GtkListItemFactory* bookmark_column_factory (int iCol)
 {
 	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
 	if (COLUMN_ICON == iCol)
@@ -180,7 +167,7 @@ static GtkListItemFactory* bookmark_column_factory (int iCol,
 	}
 	else
 	{
-		g_signal_connect(factory, "setup", G_CALLBACK(bookmark_name_setup), priv);
+		g_signal_connect(factory, "setup", G_CALLBACK(bookmark_name_setup), NULL);
 		g_signal_connect(factory, "bind", G_CALLBACK(bookmark_name_bind), NULL);
 	}
 	return factory;
@@ -233,7 +220,7 @@ void BookmarksDlg::Run()
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer user_data);
-static void selection_changed (GtkSelectionModel* selection, gpointer user_data);
+static void selection_changed (GtkSelectionModel* selection, guint position, guint n_items, gpointer user_data);
 
 
 BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
@@ -258,16 +245,19 @@ BookmarksDlg::BookmarksDlgPriv::BookmarksDlgPriv(BookmarksDlg *parent) :
 BookmarksDlg::BookmarksDlgPriv::~BookmarksDlgPriv()
 {
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
+	if (NULL != m_pWidget)
+	{
+		GtkWidget* w = m_pWidget;
+		m_pWidget = NULL;
+		g_object_remove_weak_pointer(G_OBJECT(w), (gpointer*)&m_pWidget);
+		gtk_window_destroy(GTK_WINDOW(w));
+	}
 	if (NULL != m_pSelectionBookmarks)
 	{
 		g_object_unref(m_pSelectionBookmarks);
 		m_pSelectionBookmarks = NULL;
 	}
-	if (NULL != m_pListStoreBookmarks)
-	{
-		g_object_unref(m_pListStoreBookmarks);
-		m_pListStoreBookmarks = NULL;
-	}
+	m_pListStoreBookmarks = NULL;
 	if (NULL != m_pGtkBuilder)
 	{
 		g_object_unref(m_pGtkBuilder);
@@ -282,9 +272,21 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 	if (NULL != m_pGtkBuilder)
 	{
 		m_pWidget                = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, "BookmarksDialog"));
+		if (m_pWidget)
+		{
+			g_object_add_weak_pointer(G_OBJECT(m_pWidget), (gpointer*)&m_pWidget);
+		}
 		m_pTreeViewBookmarks     = GTK_WIDGET(     gtk_builder_get_object (m_pGtkBuilder, "treeview_bookmarks") );
 
 		m_pButtonClose           = GTK_BUTTON( gtk_button_new_with_mnemonic("_Close") );
+
+		if (m_pWidget)
+		{
+			GtkHeaderBar* hbar = GTK_HEADER_BAR(gtk_header_bar_new());
+			gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), TRUE);
+			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonClose));
+			gtk_window_set_titlebar(GTK_WINDOW(m_pWidget), GTK_WIDGET(hbar));
+		}
 
 		if (m_pTreeViewBookmarks)
 		{
@@ -296,11 +298,12 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 
 			GtkColumnViewColumn* column =
 				gtk_column_view_column_new("icon",
-					bookmark_column_factory(COLUMN_ICON, this));
+					bookmark_column_factory(COLUMN_ICON));
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewBookmarks), column);
 
 			column = gtk_column_view_column_new("bookmark",
-				bookmark_column_factory(COLUMN_NAME, this));
+				bookmark_column_factory(COLUMN_NAME));
+			gtk_column_view_column_set_expand(column, TRUE);
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewBookmarks), column);
 		}
 
@@ -325,6 +328,9 @@ void BookmarksDlg::BookmarksDlgPriv::LoadWidgets()
 
 void BookmarksDlg::BookmarksDlgPriv::SelectionChanged()
 {
+	if (!m_pSelectionBookmarks || !m_pListStoreBookmarks)
+		return;
+
 	GtkSelectionModel* sel = GTK_SELECTION_MODEL(m_pSelectionBookmarks);
 	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pListStoreBookmarks));
 	guint selection_count = 0;
@@ -431,6 +437,16 @@ void BookmarksDlg::BookmarksDlgPriv::ConnectSignals()
 
 		g_signal_connect(G_OBJECT(m_pSelectionBookmarks),
 			"selection-changed",G_CALLBACK(selection_changed),this);
+
+		g_signal_connect(m_pTreeViewBookmarks, "activate",
+			G_CALLBACK(+[](GtkColumnView*, guint, gpointer user_data) {
+				BookmarksDlg::BookmarksDlgPriv *priv =
+					static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
+				if (gtk_widget_is_sensitive(GTK_WIDGET(priv->m_pButtonEdit)))
+				{
+					g_signal_emit_by_name(priv->m_pButtonEdit, "clicked");
+				}
+			}), this);
 	}
 }
 
@@ -545,10 +561,16 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 }
 
-static void selection_changed (GtkSelectionModel* selection, gpointer user_data)
-{ (void)selection; 
+static void selection_changed (GtkSelectionModel* selection, guint position, guint n_items, gpointer user_data)
+{
+	(void)selection;
+	(void)position;
+	(void)n_items;
 	BookmarksDlg::BookmarksDlgPriv *priv = static_cast<BookmarksDlg::BookmarksDlgPriv*>(user_data);
-	priv->SelectionChanged();
+	if (priv)
+	{
+		priv->SelectionChanged();
+	}
 }
 
 

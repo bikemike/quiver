@@ -1,5 +1,10 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "IconViewThumbLoader.h"
+#include "ThreadUtil.h"
 #include <sched.h>
+#include <glib.h>
 
 IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 {
@@ -31,10 +36,17 @@ IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 		pthread_create(&m_pThreadIDs[i], NULL, run, &m_pThreadData[i]);
 	}
 }
-IconViewThumbLoader::~IconViewThumbLoader()
+
+void IconViewThumbLoader::Stop()
 {
 	pthread_mutex_lock (&m_ListMutex);
+	if (m_bStopThreads)
+	{
+		pthread_mutex_unlock (&m_ListMutex);
+		return;
+	}
 	m_bStopThreads = true;
+	m_listThumbItems.clear();
 
 	int i;
 	for (i = 0 ; i < m_iThreads; ++i)
@@ -45,10 +57,19 @@ IconViewThumbLoader::~IconViewThumbLoader()
 
 	for (i = 0 ; i < m_iThreads; ++i)
 	{
-		pthread_join(m_pThreadIDs[i], NULL);
+		if (m_pThreadIDs && m_pThreadIDs[i])
+		{
+			pthread_join(m_pThreadIDs[i], NULL);
+			m_pThreadIDs[i] = 0;
+		}
 	}
-	
-	for (i = 0 ; i < m_iThreads; ++i)
+}
+
+IconViewThumbLoader::~IconViewThumbLoader()
+{
+	Stop();
+
+	for (int i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_cond_destroy(&m_pConditions[i]);
 	}
@@ -67,6 +88,9 @@ void IconViewThumbLoader::SetNumCachePages(guint uiNumCachePages)
 
 void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 {
+	if (m_bStopThreads)
+		return;
+
 	gulong iNewStart,iNewEnd;
 
 	GetVisibleRange(&iNewStart, &iNewEnd);
@@ -192,7 +216,10 @@ void IconViewThumbLoader::Run(int iThreadID)
 		{
 			SetIsRunning(false);
 			pthread_cond_wait(&m_pConditions[iThreadID], &m_ListMutex);
-			SetIsRunning(true);
+			if (!m_bStopThreads)
+			{
+				SetIsRunning(true);
+			}
 		}
 
 		if (m_bStopThreads)

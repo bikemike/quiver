@@ -90,7 +90,11 @@ void ExternalToolAddEditDlg::Run()
 			m_PrivPtr->m_ExternalTool.SetCmd( gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryCmd)) );
 			m_PrivPtr->m_ExternalTool.SetSupportsMultiple( gtk_check_button_get_active(m_PrivPtr->m_pToggleMultiple) ? true : false );
 		}
-		gtk_window_destroy(GTK_WINDOW(m_PrivPtr->m_pWidget));
+		if (NULL != m_PrivPtr->m_pWidget)
+		{
+			gtk_window_destroy(GTK_WINDOW(m_PrivPtr->m_pWidget));
+			m_PrivPtr->m_pWidget = NULL;
+		}
 	}
 }
 
@@ -124,6 +128,11 @@ ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ExternalToolAddEditDlgPriv(E
 
 ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::~ExternalToolAddEditDlgPriv()
 {
+	if (NULL != m_pWidget)
+	{
+		gtk_window_destroy(GTK_WINDOW(m_pWidget));
+		m_pWidget = NULL;
+	}
 	if (NULL != m_pGtkBuilder)
 	{
 		g_object_unref(m_pGtkBuilder);
@@ -150,14 +159,16 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 			gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), TRUE);
 			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonCancel));
 			gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonOk));
+			gtk_widget_add_css_class(GTK_WIDGET(m_pButtonOk), "suggested-action");
+			gtk_window_set_default_widget(GTK_WINDOW(m_pWidget), GTK_WIDGET(m_pButtonOk));
 			gtk_window_set_titlebar(GTK_WINDOW(m_pWidget), GTK_WIDGET(hbar));
 		}
 
 		m_pToggleMultiple       = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_multiple"));
-		m_pEntryName             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_name"));
+		m_pEntryName            = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_name"));
 		m_pEntryCmd             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_cmd"));
-		m_pEntryTooltip          = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_tooltip"));
-		m_pEntryIcon             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_icon"));
+		m_pEntryTooltip         = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_tooltip"));
+		m_pEntryIcon            = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_icon"));
 
 		m_bLoadedDlg = (
 				NULL != m_pWidget && 
@@ -170,14 +181,20 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 				NULL != m_pToggleMultiple
 				); 
 
-	
-		gtk_editable_set_text(GTK_EDITABLE(m_pEntryName), m_ExternalTool.GetName().c_str());
-		gtk_editable_set_text(GTK_EDITABLE(m_pEntryCmd), m_ExternalTool.GetCmd().c_str());
-		gtk_editable_set_text(GTK_EDITABLE(m_pEntryTooltip), m_ExternalTool.GetTooltip().c_str());
-		gtk_editable_set_text(GTK_EDITABLE(m_pEntryIcon), m_ExternalTool.GetIcon().c_str());
+		if (m_bLoadedDlg)
+		{
+			gtk_editable_set_text(GTK_EDITABLE(m_pEntryName), m_ExternalTool.GetName().c_str());
+			gtk_editable_set_text(GTK_EDITABLE(m_pEntryCmd), m_ExternalTool.GetCmd().c_str());
+			gtk_editable_set_text(GTK_EDITABLE(m_pEntryTooltip), m_ExternalTool.GetTooltip().c_str());
+			gtk_editable_set_text(GTK_EDITABLE(m_pEntryIcon), m_ExternalTool.GetIcon().c_str());
 
-		gtk_check_button_set_active(m_pToggleMultiple, m_ExternalTool.GetSupportsMultiple() ? TRUE : FALSE );
+			gtk_entry_set_activates_default(m_pEntryName, TRUE);
+			gtk_entry_set_activates_default(m_pEntryCmd, TRUE);
+			gtk_entry_set_activates_default(m_pEntryTooltip, TRUE);
+			gtk_entry_set_activates_default(m_pEntryIcon, TRUE);
 
+			gtk_check_button_set_active(m_pToggleMultiple, m_ExternalTool.GetSupportsMultiple() ? TRUE : FALSE );
+		}
 	}
 }
 
@@ -202,14 +219,25 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ConnectSignals()
 				priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
 				if (NULL != priv->m_pRunLoop)
 					g_main_loop_quit(priv->m_pRunLoop);
-				return FALSE;
+				return TRUE;
 			}), this);
 
-		/*
-		g_signal_connect(m_pToggleMultiple,
-			"toggled",(GCallback)on_toggled,this);
+		GtkEventController *key_ctrl = gtk_event_controller_key_new();
+		g_signal_connect(key_ctrl, "key-pressed",
+			G_CALLBACK(+[](GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data) -> gboolean {
+				(void)controller; (void)keycode; (void)state;
+				if (keyval == GDK_KEY_Escape) {
+					ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv *priv =
+						static_cast<ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv*>(user_data);
+					priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
+					if (NULL != priv->m_pRunLoop)
+						g_main_loop_quit(priv->m_pRunLoop);
+					return GDK_EVENT_STOP;
+				}
+				return GDK_EVENT_PROPAGATE;
+			}), this);
+		gtk_widget_add_controller(m_pWidget, key_ctrl);
 
-		*/
 		g_signal_connect(m_pButtonOk,
 			"clicked",(GCallback)on_clicked,this);
 		g_signal_connect(m_pButtonCancel,

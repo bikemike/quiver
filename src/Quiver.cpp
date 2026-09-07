@@ -52,6 +52,7 @@ GtkApplication *g_pApp = NULL;
 
 #include "ExternalTools.h"
 #include "ExternalToolsDlg.h"
+#include "ExternalToolTask.h"
 #include "IExternalToolsEventHandler.h"
 
 #include "ImageSaveManager.h"
@@ -304,8 +305,23 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 }
 QuiverImpl::~QuiverImpl()
 {
+	if (0 != m_iTimeoutMouseMotionNotify)
+	{
+		g_source_remove(m_iTimeoutMouseMotionNotify);
+		m_iTimeoutMouseMotionNotify = 0;
+	}
+	if (0 != m_iTimeoutKeepScreenOn)
+	{
+		g_source_remove(m_iTimeoutKeepScreenOn);
+		m_iTimeoutKeepScreenOn = 0;
+	}
+
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
 	m_ImageListPtr->RemoveEventHandler(m_ImageListEventHandler);	
+	if (m_ExternalToolsPtr)
+	{
+		m_ExternalToolsPtr->RemoveEventHandler(m_ExternalToolsEventHandler);
+	}	
 
 	/* Sub-object destructors must run while the widget tree is still alive
 	 * (some of them, e.g. the browser thumb-sizer, unparent widgets before
@@ -381,6 +397,7 @@ void QuiverImpl::LoadExternalTools()
 	}
 
 	GMenu *staticSection = g_menu_new();
+	g_menu_append(staticSection, "Task Manager...", "quiver.TaskManager");
 	g_menu_append(staticSection, "Adjust Date...", "quiver.AdjustDate");
 	g_menu_append(staticSection, "Rename...", "quiver.Rename");
 	g_menu_append(staticSection, "Organize...", "quiver.Organize");
@@ -487,6 +504,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_BOOKMARKS_ADD                          "BookmarksAdd"
 #define ACTION_QUIVER_BOOKMARKS_EDIT                         "BookmarksEdit"
 #define ACTION_QUIVER_EXTERNAL_TOOLS                         "ExternalTools"
+#define ACTION_QUIVER_TASK_MANAGER                           "TaskManager"
 #define ACTION_QUIVER_ADJUST_DATE                            "AdjustDate"
 #define ACTION_QUIVER_ORGANIZE                               "Organize"
 #define ACTION_QUIVER_RENAME                                 "Rename"
@@ -838,7 +856,11 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);
 
 		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
-		g_timeout_add(1500, timeout_event_motion_notify,pQuiverImpl);
+		if (0 != pQuiverImpl->m_iTimeoutMouseMotionNotify)
+		{
+			g_source_remove(pQuiverImpl->m_iTimeoutMouseMotionNotify);
+		}
+		pQuiverImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500, timeout_event_motion_notify, pQuiverImpl);
 
 		/* hide the filmstrip on fullscreen (if preference says so) */
 		if (pQuiverImpl->m_bViewerMode)
@@ -894,21 +916,44 @@ void Quiver::Close()
 		return;
 	}
 	m_bClosing = true;
+
+	if (0 != m_iIdleInitID)
+	{
+		g_source_remove(m_iIdleInitID);
+		m_iIdleInitID = 0;
+	}
+
 	// Defer the teardown to an idle callback: Close() is often reached from a
 	// keyboard accelerator (e.g. "q" via gtk_accel_groups_activate), and
 	// destroying the window inside the accel-group dispatch would leave GTK
 	// walking freed accel-group state (SIGSEGV in gtk_accel_groups_activate).
-	g_idle_add(close_idle_cb, this);
+	if (0 == m_iCloseIdleID)
+	{
+		m_iCloseIdleID = g_idle_add(close_idle_cb, this);
+	}
 }
 
 gboolean Quiver::close_idle_cb(gpointer data)
 {
-	((Quiver*)data)->CloseReal();
+	Quiver *pQuiver = (Quiver*)data;
+	pQuiver->m_iCloseIdleID = 0;
+	pQuiver->CloseReal();
 	return FALSE;
 }
 
 void Quiver::CloseReal()
 {
+	if (0 != m_iCloseIdleID)
+	{
+		g_source_remove(m_iCloseIdleID);
+		m_iCloseIdleID = 0;
+	}
+	if (0 != m_iIdleInitID)
+	{
+		g_source_remove(m_iIdleInitID);
+		m_iIdleInitID = 0;
+	}
+
 	SaveSettings();
 	// force reference count to 0 for the quiverimplptr
 	m_QuiverImplPtr->m_BrowserPtr->RemoveEventHandler(m_QuiverImplPtr->m_BrowserEventHandler);
@@ -959,7 +1004,9 @@ gboolean Quiver::quiver_event_callback( GtkWidget *widget, GdkEvent *event, gpoi
  */
 Quiver::Quiver(std::list<std::string> &images, bool bRecursive/* = false*/)
 	: 	m_QuiverImplPtr(new QuiverImpl(this) ),
-		m_bClosing(false)
+		m_bClosing(false),
+		m_iIdleInitID(0),
+		m_iCloseIdleID(0)
 {
 	m_QuiverImplPtr->m_bListImagesRecursive = bRecursive;
 	m_QuiverImplPtr->m_listImages = images;
@@ -1053,6 +1100,7 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ORGANIZE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_RENAME, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_EXTERNAL_TOOLS, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_TASK_MANAGER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ABOUT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 
 	/* Global toggle actions */
@@ -1299,7 +1347,7 @@ void Quiver::Init()
 				G_CALLBACK (signal_drag_motion), this);
 */
 					
-	g_idle_add(idle_quiver_init,this);
+	m_iIdleInitID = g_idle_add(idle_quiver_init,this);
 	
 	gtk_widget_set_visible (GTK_WIDGET(m_QuiverImplPtr->m_pQuiverWindow), TRUE);
 
@@ -1322,7 +1370,16 @@ void Quiver::Init()
 
 Quiver::~Quiver()
 {
-	//destructor
+	if (0 != m_iIdleInitID)
+	{
+		g_source_remove(m_iIdleInitID);
+		m_iIdleInitID = 0;
+	}
+	if (0 != m_iCloseIdleID)
+	{
+		g_source_remove(m_iCloseIdleID);
+		m_iCloseIdleID = 0;
+	}
 }
 
 bool Quiver::LoadSettings()
@@ -1655,6 +1712,12 @@ gboolean Quiver::idle_quiver_init (gpointer data)
 }
 gboolean Quiver::IdleQuiverInit(gpointer data)
 { (void)data; 
+	m_iIdleInitID = 0;
+	if (m_bClosing || !m_QuiverImplPtr)
+	{
+		return FALSE;
+	}
+
 	// put process intenstive startup code in here 
 	// (loading image list, setting first image)
 
@@ -2812,17 +2875,11 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 				}
 			}
 
-			list<string>::iterator itr;
-			for (itr = commands.begin(); commands.end() != itr; ++itr)
+			if (!commands.empty())
 			{
-				string cmd = *itr; 
-				GError *error = NULL;
-				g_spawn_command_line_async (cmd.c_str(), &error);
-				if (NULL != error)
-				{
-					g_warning("%s\n", error->message);
-					g_error_free(error);
-				}
+				std::vector<std::string> vectCommands(commands.begin(), commands.end());
+				ExternalToolTaskPtr toolTaskPtr(new ExternalToolTask(extTool->GetName(), vectCommands));
+				TaskManager::GetInstance()->AddTask(toolTaskPtr);
 			}
 		}
 	}
@@ -2830,6 +2887,10 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	{
 		ExternalToolsDlg externalToolsDlg;
 		externalToolsDlg.Run();
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_TASK_MANAGER))
+	{
+		TaskManagerDlg::GetInstance()->Show();
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_BOOKMARKS_ADD))
 	{

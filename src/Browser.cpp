@@ -1,6 +1,8 @@
 #include <config.h>
 
 #include <pthread.h>
+#include <memory>
+#include <atomic>
 
 #include <gtk/gtk.h>
 #include <string.h>
@@ -85,7 +87,13 @@ static void pixbuf_target_ref(PixbufTarget *t)
 static void pixbuf_target_unref(PixbufTarget *t)
 {
 	if (g_atomic_int_dec_and_test(&t->iRefs))
+	{
+		if (t->pImageView && G_IS_OBJECT(t->pImageView))
+		{
+			g_signal_handlers_disconnect_by_func(t->pImageView, (gpointer)pixbuf_target_destroyed, t);
+		}
 		delete t;
+	}
 }
 
 struct AsyncPixbufData {
@@ -141,7 +149,14 @@ class ImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
 	ImageViewPixbufLoaderObserver(QuiverImageView *imageview){m_pTarget = pixbuf_target_new(imageview);};
-	virtual ~ImageViewPixbufLoaderObserver(){ pixbuf_target_unref(m_pTarget); };
+	virtual ~ImageViewPixbufLoaderObserver(){
+		if (m_pTarget && m_pTarget->pImageView && G_IS_OBJECT(m_pTarget->pImageView))
+		{
+			g_signal_handlers_disconnect_by_func(m_pTarget->pImageView, (gpointer)pixbuf_target_destroyed, m_pTarget);
+			m_pTarget->pImageView = NULL;
+		}
+		pixbuf_target_unref(m_pTarget);
+	};
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
 			quiver_image_view_connect_pixbuf_loader_signals(m_pTarget->pImageView,loader);
@@ -318,9 +333,23 @@ public:
 		BrowserThumbLoader(BrowserImpl* pBrowserImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
 		{
 			m_pBrowserImpl = pBrowserImpl;
+			m_bMapped.store(false, std::memory_order_relaxed);
+			m_uiThumbWidth.store(96, std::memory_order_relaxed);
+			m_uiThumbHeight.store(96, std::memory_order_relaxed);
 		}
 		
 		~BrowserThumbLoader(){}
+
+		void SetIconDimensions(guint uiWidth, guint uiHeight)
+		{
+			m_uiThumbWidth.store(uiWidth, std::memory_order_relaxed);
+			m_uiThumbHeight.store(uiHeight, std::memory_order_relaxed);
+		}
+
+		void SetMapped(bool bMapped)
+		{
+			m_bMapped.store(bMapped, std::memory_order_relaxed);
+		}
 		
 	protected:
 		
@@ -335,7 +364,9 @@ public:
 		
 	private:
 		BrowserImpl* m_pBrowserImpl; 
-		
+		std::atomic<bool> m_bMapped;
+		std::atomic<guint> m_uiThumbWidth;
+		std::atomic<guint> m_uiThumbHeight;
 	};
 
 
@@ -344,12 +375,15 @@ public:
 	IFolderTreeEventHandlerPtr m_FolderTreeEventHandlerPtr;
 	
 	BrowserThumbLoader m_ThumbnailLoader;
+	std::shared_ptr<bool> m_spAlive;
 	
 };
 // ============================================================================
 
 
 static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data);
+static void browser_icon_view_map_cb(GtkWidget *widget, gpointer user_data);
+static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 
 #define ACTION_BROWSER_OPEN_LOCATION                      "BrowserOpenLocation"
 #define ACTION_BROWSER_HISTORY_BACK                       "BrowserHistoryBack"
@@ -612,7 +646,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
 	m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
-	m_ThumbnailLoader(this,4)
+	m_ThumbnailLoader(this,4),
+	m_spAlive(std::make_shared<bool>(true))
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -680,6 +715,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 #endif
 	
 	m_pIconView = quiver_icon_view_new();
+	m_ThumbnailLoader.SetMapped(gtk_widget_get_mapped(m_pIconView));
+	g_signal_connect(G_OBJECT(m_pIconView), "map", G_CALLBACK(browser_icon_view_map_cb), this);
+	g_signal_connect(G_OBJECT(m_pIconView), "unmap", G_CALLBACK(browser_icon_view_unmap_cb), this);
 	m_pImageView = quiver_image_view_new();
 
 	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
@@ -877,11 +915,30 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		thumb_size = 128.;
 	}
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
+	m_ThumbnailLoader.SetIconDimensions((guint)thumb_size, (guint)thumb_size);
 
 }
 
 Browser::BrowserImpl::~BrowserImpl()
 {
+	if (m_spAlive)
+	{
+		*m_spAlive = false;
+	}
+	m_ThumbnailLoader.Stop();
+
+	if (m_pIconView && QUIVER_IS_ICON_VIEW(m_pIconView))
+	{
+		g_signal_handlers_disconnect_by_func(m_pIconView, (gpointer)browser_icon_view_map_cb, this);
+		g_signal_handlers_disconnect_by_func(m_pIconView, (gpointer)browser_icon_view_unmap_cb, this);
+		quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_thumbnail_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+	}
+
 	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
 	m_ImageLoader.RemovePixbufLoaderObserver(m_ImageViewPixbufLoaderObserverPtr.get());
 	
@@ -955,6 +1012,20 @@ Browser::BrowserImpl::~BrowserImpl()
 		}
 		g_object_unref(m_pToolItemThumbSizer);
 		m_pToolItemThumbSizer = NULL;
+	}
+
+	/* Disconnect all GObject signal handlers that captured `this` */
+	if (m_pImageView && G_IS_OBJECT(m_pImageView))
+	{
+		g_signal_handlers_disconnect_by_data(m_pImageView, this);
+	}
+	if (m_pIconView && G_IS_OBJECT(m_pIconView))
+	{
+		g_signal_handlers_disconnect_by_data(m_pIconView, this);
+	}
+	if (m_pLocationEntry && G_IS_OBJECT(m_pLocationEntry))
+	{
+		g_signal_handlers_disconnect_by_data(m_pLocationEntry, this);
 	}
 
 	/* 4. unparent the whole browser widget subtree: since it is owned through
@@ -1242,6 +1313,25 @@ static void icon_size_value_changed (GtkRange *range,gpointer  user_data)
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	gdouble value = gtk_range_get_value (range);
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), (gint)value,(gint)value);
+	b->m_ThumbnailLoader.SetIconDimensions((guint)value, (guint)value);
+}
+
+static void browser_icon_view_map_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	b->m_ThumbnailLoader.SetMapped(true);
+	/* The first UpdateList(true) often runs at startup before the
+	 * icon view is mapped, so every thumbnail was skipped.  Re-queue
+	 * the visible range now that the widget is mapped (and allocated). */
+	b->m_ThumbnailLoader.UpdateList(true);
+}
+
+static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	b->m_ThumbnailLoader.SetMapped(false);
 }
 
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data)
@@ -1328,12 +1418,17 @@ struct FolderPeekTaskData {
 	gulong cell;
 	std::string uri;
 	int target_size;
+	std::weak_ptr<bool> aliveToken;
 };
 
 static void FolderPeekWorker(gpointer data, gpointer user_data)
 {
 	(void)user_data;
 	std::unique_ptr<FolderPeekTaskData> task(static_cast<FolderPeekTaskData*>(data));
+
+	auto alive = task->aliveToken.lock();
+	if (!alive || !*alive)
+		return;
 
 	QuiverFile child(task->uri.c_str());
 	GdkPixbuf* pixbuf = child.GetThumbnail(task->target_size);
@@ -1344,6 +1439,7 @@ static void FolderPeekWorker(gpointer data, gpointer user_data)
 		gulong cell;
 		std::string uri;
 		GdkPixbuf* pixbuf;
+		std::weak_ptr<bool> aliveToken;
 	};
 
 	PeekResultData* result = new PeekResultData{
@@ -1351,28 +1447,36 @@ static void FolderPeekWorker(gpointer data, gpointer user_data)
 		task->iconview,
 		task->cell,
 		task->uri,
-		pixbuf
+		pixbuf,
+		task->aliveToken
 	};
 
 	g_idle_add([](gpointer d) -> gboolean {
 		std::unique_ptr<PeekResultData> res(static_cast<PeekResultData*>(d));
+		auto alive = res->aliveToken.lock();
+		if (alive && *alive)
 		{
-			std::lock_guard<std::mutex> lock(res->browser->m_mutexFolderPeeks);
-			res->browser->m_setFolderPeeksInFlight.erase(res->uri);
+			{
+				std::lock_guard<std::mutex> lock(res->browser->m_mutexFolderPeeks);
+				res->browser->m_setFolderPeeksInFlight.erase(res->uri);
+			}
+			if (res->pixbuf)
+			{
+				res->browser->m_ThumbnailCache.AddPixbuf(res->uri, res->pixbuf);
+
+				if (res->iconview && QUIVER_IS_ICON_VIEW(res->iconview))
+				{
+					quiver_icon_view_invalidate_cell(res->iconview, res->cell);
+				}
+			}
+			else
+			{
+				res->browser->m_ThumbnailCache.AddFailure(res->uri);
+			}
 		}
 		if (res->pixbuf)
 		{
-			res->browser->m_ThumbnailCache.AddPixbuf(res->uri, res->pixbuf);
 			g_object_unref(res->pixbuf);
-
-			if (GTK_IS_WIDGET(res->iconview))
-			{
-				quiver_icon_view_invalidate_cell(res->iconview, res->cell);
-			}
-		}
-		else
-		{
-			res->browser->m_ThumbnailCache.AddFailure(res->uri);
 		}
 		return G_SOURCE_REMOVE;
 	}, result);
@@ -1395,7 +1499,7 @@ void Browser::BrowserImpl::RequestFolderPeekAsync(QuiverIconView* iconview, gulo
 		m_pFolderPeekThreadPool = g_thread_pool_new(FolderPeekWorker, this, 2, FALSE, NULL);
 	}
 
-	FolderPeekTaskData* task = new FolderPeekTaskData{this, iconview, cell, uri, target_size};
+	FolderPeekTaskData* task = new FolderPeekTaskData{this, iconview, cell, uri, target_size, m_spAlive};
 	g_thread_pool_push(m_pFolderPeekThreadPool, task, NULL);
 }
 
@@ -2284,57 +2388,27 @@ struct BrowserThumbLoaderSyncData {
 	GtkWidget* iconview;
 	Statusbar* statusbar;
 	gulong index;
-	guint width;
-	guint height;
-	gulong start;
-	gulong end;
-	bool is_mapped;
-	GMutex mutex;
-	GCond cond;
-	bool done;
+	bool is_running;
+	std::weak_ptr<bool> aliveToken;
 };
 
 static gboolean idle_invalidate_cell(gpointer data) {
 	BrowserThumbLoaderSyncData* pData = (BrowserThumbLoaderSyncData*)data;
-	quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(pData->iconview), pData->index);
+	auto alive = pData->aliveToken.lock();
+	if (alive && *alive && pData->iconview && QUIVER_IS_ICON_VIEW(pData->iconview))
+	{
+		quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(pData->iconview), pData->index);
+	}
 	delete pData;
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean idle_get_visible_range(gpointer data) {
-	BrowserThumbLoaderSyncData* pData = (BrowserThumbLoaderSyncData*)data;
-	quiver_icon_view_get_visible_range(QUIVER_ICON_VIEW(pData->iconview), &pData->start, &pData->end);
-	g_mutex_lock(&pData->mutex);
-	pData->done = true;
-	g_cond_signal(&pData->cond);
-	g_mutex_unlock(&pData->mutex);
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean idle_get_icon_size(gpointer data) {
-	BrowserThumbLoaderSyncData* pData = (BrowserThumbLoaderSyncData*)data;
-	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(pData->iconview), &pData->width, &pData->height);
-	g_mutex_lock(&pData->mutex);
-	pData->done = true;
-	g_cond_signal(&pData->cond);
-	g_mutex_unlock(&pData->mutex);
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean idle_is_mapped(gpointer data) {
-	BrowserThumbLoaderSyncData* pData = (BrowserThumbLoaderSyncData*)data;
-	pData->is_mapped = gtk_widget_get_mapped(pData->iconview) ? true : false;
-	g_mutex_lock(&pData->mutex);
-	pData->done = true;
-	g_cond_signal(&pData->cond);
-	g_mutex_unlock(&pData->mutex);
 	return G_SOURCE_REMOVE;
 }
 
 static gboolean idle_set_is_running(gpointer data) {
 	BrowserThumbLoaderSyncData* pData = (BrowserThumbLoaderSyncData*)data;
-	if (pData->statusbar) {
-		if (pData->is_mapped) { // repurpose is_mapped for bIsRunning
+	auto alive = pData->aliveToken.lock();
+	if (alive && *alive && pData->statusbar)
+	{
+		if (pData->is_running) {
 			pData->statusbar->StartProgressPulse();
 		} else {
 			pData->statusbar->StopProgressPulse();
@@ -2343,21 +2417,13 @@ static gboolean idle_set_is_running(gpointer data) {
 	delete pData;
 	return G_SOURCE_REMOVE;
 }
+
 void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
+	if (IsStopped() || !m_pBrowserImpl->m_spAlive || !*m_pBrowserImpl->m_spAlive)
+		return;
 
-	BrowserThumbLoaderSyncData syncData;
-	syncData.iconview = m_pBrowserImpl->m_pIconView;
-	syncData.done = false;
-	g_mutex_init(&syncData.mutex);
-	g_cond_init(&syncData.cond);
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_is_mapped, &syncData, NULL);
-	g_mutex_lock(&syncData.mutex);
-	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
-	g_mutex_unlock(&syncData.mutex); } else { idle_is_mapped(&syncData); }
-	bool is_mapped = syncData.is_mapped;
-	g_mutex_clear(&syncData.mutex);
-	g_cond_clear(&syncData.cond);
+	bool is_mapped = m_bMapped.load(std::memory_order_relaxed);
 
 	if (is_mapped && item.m_ulIndex < m_pBrowserImpl->m_ImageListPtr->GetSize())
 	{
@@ -2439,6 +2505,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			BrowserThumbLoaderSyncData* pInvData = new BrowserThumbLoaderSyncData();
 			pInvData->iconview = m_pBrowserImpl->m_pIconView;
 			pInvData->index = item.m_ulIndex;
+			pInvData->aliveToken = m_pBrowserImpl->m_spAlive;
 			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_invalidate_cell, pInvData, NULL); } else { idle_invalidate_cell(pInvData); }
 		}
 	}
@@ -2446,37 +2513,22 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 
 void Browser::BrowserImpl::BrowserThumbLoader::GetVisibleRange(gulong* pulStart, gulong* pulEnd)
 {
-	BrowserThumbLoaderSyncData syncData;
-	syncData.iconview = m_pBrowserImpl->m_pIconView;
-	syncData.done = false;
-	g_mutex_init(&syncData.mutex);
-	g_cond_init(&syncData.cond);
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_get_visible_range, &syncData, NULL);
-	g_mutex_lock(&syncData.mutex);
-	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
-	g_mutex_unlock(&syncData.mutex); } else { idle_get_visible_range(&syncData); }
-	*pulStart = syncData.start;
-	*pulEnd = syncData.end;
-	g_mutex_clear(&syncData.mutex);
-	g_cond_clear(&syncData.cond);
+	if (pulStart) *pulStart = 0;
+	if (pulEnd) *pulEnd = 0;
+	if (IsStopped() || !m_pBrowserImpl->m_spAlive || !*m_pBrowserImpl->m_spAlive)
+	{
+		return;
+	}
+	if (m_pBrowserImpl->m_pIconView && QUIVER_IS_ICON_VIEW(m_pBrowserImpl->m_pIconView))
+	{
+		quiver_icon_view_get_visible_range(QUIVER_ICON_VIEW(m_pBrowserImpl->m_pIconView), pulStart, pulEnd);
+	}
 }
-
 
 void Browser::BrowserImpl::BrowserThumbLoader::GetIconSize(guint* puiWidth, guint* puiHeight)
 {
-	BrowserThumbLoaderSyncData syncData;
-	syncData.iconview = m_pBrowserImpl->m_pIconView;
-	syncData.done = false;
-	g_mutex_init(&syncData.mutex);
-	g_cond_init(&syncData.cond);
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_get_icon_size, &syncData, NULL);
-	g_mutex_lock(&syncData.mutex);
-	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
-	g_mutex_unlock(&syncData.mutex); } else { idle_get_icon_size(&syncData); }
-	*puiWidth = syncData.width;
-	*puiHeight = syncData.height;
-	g_mutex_clear(&syncData.mutex);
-	g_cond_clear(&syncData.cond);
+	if (puiWidth) *puiWidth = m_uiThumbWidth.load(std::memory_order_relaxed);
+	if (puiHeight) *puiHeight = m_uiThumbHeight.load(std::memory_order_relaxed);
 }
 
 gulong Browser::BrowserImpl::BrowserThumbLoader::GetNumItems()
@@ -2495,9 +2547,12 @@ QuiverFile Browser::BrowserImpl::BrowserThumbLoader::GetQuiverFile(gulong index)
 
 void Browser::BrowserImpl::BrowserThumbLoader::SetIsRunning(bool bIsRunning)
 {
+	if (IsStopped() || !m_pBrowserImpl->m_spAlive || !*m_pBrowserImpl->m_spAlive)
+		return;
 	BrowserThumbLoaderSyncData* pData = new BrowserThumbLoaderSyncData();
 	pData->statusbar = m_pBrowserImpl->m_StatusbarPtr.get();
-	pData->is_mapped = bIsRunning;
+	pData->is_running = bIsRunning;
+	pData->aliveToken = m_pBrowserImpl->m_spAlive;
 	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_set_is_running, pData, NULL); } else { idle_set_is_running(pData); }
 }
 

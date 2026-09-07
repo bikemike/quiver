@@ -52,6 +52,7 @@ public:
 	GtkButton*             m_pButtonEdit;
 	GtkButton*             m_pButtonRemove;
 	GtkButton*             m_pButtonClose;
+	bool                   m_bRunDone;
 
 // nested classes
 	class ExternalToolsEventHandler : public IExternalToolsEventHandler
@@ -90,8 +91,7 @@ static void externaltool_item_finalize (GObject* object)
 	ExternalToolItem* item = EXTERNALTOOL_ITEM(object);
 	g_free(item->icon);
 	g_free(item->name);
-	G_OBJECT_CLASS(g_type_class_peek_parent(
-		G_OBJECT_GET_CLASS(object)))->finalize(object);
+	G_OBJECT_CLASS(externaltool_item_parent_class)->finalize(object);
 }
 
 static void externaltool_item_class_init (ExternalToolItemClass* klass)
@@ -116,8 +116,8 @@ static ExternalToolItem* externaltool_item_new (int id, const gchar* icon, const
 	return item;
 }
 
-static void externaltool_icon_setup (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void externaltool_icon_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	GtkWidget* image = gtk_image_new();
 	gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
 	gtk_widget_set_margin_start(image, 6);
@@ -125,50 +125,40 @@ static void externaltool_icon_setup (GtkListItem* list_item, gpointer user_data)
 	gtk_list_item_set_child(list_item, image);
 }
 
-static void externaltool_icon_bind (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void externaltool_icon_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	ExternalToolItem* item = EXTERNALTOOL_ITEM(gtk_list_item_get_item(list_item));
 	GtkWidget* image = gtk_list_item_get_child(list_item);
-	gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon);
+	if (item && item->icon)
+		gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon);
+	else
+		gtk_image_clear(GTK_IMAGE(image));
 }
 
-static void externaltool_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
-	ExternalToolsDlg::ExternalToolsDlgPriv* priv);
-static void externaltool_name_setup (GtkListItem* list_item, gpointer user_data)
+static void externaltool_name_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
 {
-	ExternalToolsDlg::ExternalToolsDlgPriv* priv =
-		static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
-	GtkWidget* editable = gtk_editable_label_new(NULL);
-	gtk_widget_set_hexpand(editable, TRUE);
-	g_signal_connect(editable, "notify::text",
-		G_CALLBACK(externaltool_name_edited), priv);
-	gtk_list_item_set_child(list_item, editable);
+	(void)factory; (void)user_data;
+	GtkWidget* label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+	gtk_widget_set_hexpand(label, TRUE);
+	gtk_list_item_set_child(list_item, label);
 }
 
-static void externaltool_name_bind (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void externaltool_name_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{
+	(void)factory; (void)user_data;
 	ExternalToolItem* item = EXTERNALTOOL_ITEM(gtk_list_item_get_item(list_item));
-	GtkWidget* editable = gtk_list_item_get_child(list_item);
-	g_object_set_data(G_OBJECT(editable), "externaltool-id",
-		GINT_TO_POINTER(item->id));
-	gtk_editable_set_text(GTK_EDITABLE(editable), item->name);
-}
-
-static void externaltool_name_edited (GtkEditableLabel* editable, GParamSpec* pspec,
-	ExternalToolsDlg::ExternalToolsDlgPriv* priv)
-{ (void)pspec;
-	int id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(editable), "externaltool-id"));
-	const ExternalTool* ext = priv->m_ExternalToolsPtr->GetExternalTool(id);
-	if (NULL != ext)
+	GtkWidget* label = gtk_list_item_get_child(list_item);
+	if (!item)
 	{
-		ExternalTool modified = *ext;
-		modified.SetName(gtk_editable_get_text(GTK_EDITABLE(editable)));
-		priv->m_ExternalToolsPtr->UpdateExternalTool(modified);
+		gtk_label_set_text(GTK_LABEL(label), "");
+		return;
 	}
+	gtk_label_set_text(GTK_LABEL(label), item->name ? item->name : "");
 }
 
-static GtkListItemFactory* externaltool_column_factory (int iCol,
-	ExternalToolsDlg::ExternalToolsDlgPriv* priv)
+static GtkListItemFactory* externaltool_column_factory (int iCol)
 {
 	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
 	if (COLUMN_ICON == iCol)
@@ -178,7 +168,7 @@ static GtkListItemFactory* externaltool_column_factory (int iCol,
 	}
 	else
 	{
-		g_signal_connect(factory, "setup", G_CALLBACK(externaltool_name_setup), priv);
+		g_signal_connect(factory, "setup", G_CALLBACK(externaltool_name_setup), NULL);
 		g_signal_connect(factory, "bind", G_CALLBACK(externaltool_name_bind), NULL);
 	}
 	return factory;
@@ -201,13 +191,15 @@ void ExternalToolsDlg::Run()
 {
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-		g_object_set_data(G_OBJECT(m_PrivPtr->m_pWidget), "tools-loop", loop);
+		m_PrivPtr->m_bRunDone = false;
 		gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pWidget), TRUE);
 		gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
-		g_main_loop_run(loop);
-		g_main_loop_unref(loop);
-		gtk_window_destroy(GTK_WINDOW(m_PrivPtr->m_pWidget));
+
+		GMainContext* ctx = g_main_context_default();
+		while (!m_PrivPtr->m_bRunDone)
+		{
+			g_main_context_iteration(ctx, TRUE);
+		}
 	}
 }
 
@@ -216,7 +208,7 @@ void ExternalToolsDlg::Run()
 
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer user_data);
-static void selection_changed (GtkSelectionModel* selection, gpointer user_data);
+static void selection_changed (GtkSelectionModel* selection, guint position, guint n_items, gpointer user_data);
 
 
 ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *parent) :
@@ -242,16 +234,17 @@ ExternalToolsDlg::ExternalToolsDlgPriv::ExternalToolsDlgPriv(ExternalToolsDlg *p
 ExternalToolsDlg::ExternalToolsDlgPriv::~ExternalToolsDlgPriv()
 {
 	m_ExternalToolsPtr->RemoveEventHandler(m_ExternalToolsEventHandler);
+	if (NULL != m_pWidget)
+	{
+		gtk_window_destroy(GTK_WINDOW(m_pWidget));
+		m_pWidget = NULL;
+	}
 	if (NULL != m_pSelectionExternalTools)
 	{
 		g_object_unref(m_pSelectionExternalTools);
 		m_pSelectionExternalTools = NULL;
 	}
-	if (NULL != m_pListStoreExternalTools)
-	{
-		g_object_unref(m_pListStoreExternalTools);
-		m_pListStoreExternalTools = NULL;
-	}
+	m_pListStoreExternalTools = NULL;
 	if (NULL != m_pGtkBuilder)
 	{
 		g_object_unref(m_pGtkBuilder);
@@ -287,11 +280,12 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 
 			GtkColumnViewColumn* column =
 				gtk_column_view_column_new("icon",
-					externaltool_column_factory(COLUMN_ICON, this));
+					externaltool_column_factory(COLUMN_ICON));
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewExternalTools), column);
 
 			column = gtk_column_view_column_new("externaltool",
-				externaltool_column_factory(COLUMN_NAME, this));
+				externaltool_column_factory(COLUMN_NAME));
+			gtk_column_view_column_set_expand(column, TRUE);
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewExternalTools), column);
 		}
 
@@ -316,6 +310,9 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::LoadWidgets()
 
 void ExternalToolsDlg::ExternalToolsDlgPriv::SelectionChanged()
 {
+	if (!m_pSelectionExternalTools || !m_pListStoreExternalTools)
+		return;
+
 	GtkSelectionModel* sel = GTK_SELECTION_MODEL(m_pSelectionExternalTools);
 	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pListStoreExternalTools));
 	guint selection_count = 0;
@@ -408,12 +405,13 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::ConnectSignals()
 	if (m_bLoadedDlg)
 	{
 		g_signal_connect(m_pWidget, "close-request",
-			G_CALLBACK(+[](GtkWidget* widget, gpointer) -> gboolean {
-				GMainLoop *loop = (GMainLoop*)g_object_get_data(G_OBJECT(widget), "tools-loop");
-				if (loop)
-					g_main_loop_quit(loop);
-				return FALSE;
-			}), NULL);
+			G_CALLBACK(+[](GtkWidget* widget, gpointer user_data) -> gboolean {
+				ExternalToolsDlg::ExternalToolsDlgPriv *priv =
+					static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
+				priv->m_bRunDone = true;
+				gtk_widget_set_visible(widget, FALSE);
+				return TRUE;
+			}), this);
 
 		g_signal_connect(m_pButtonMoveUp,
 			"clicked",(GCallback)on_clicked,this);
@@ -430,6 +428,16 @@ void ExternalToolsDlg::ExternalToolsDlgPriv::ConnectSignals()
 
 		g_signal_connect(G_OBJECT(m_pSelectionExternalTools),
 			"selection-changed",G_CALLBACK(selection_changed),this);
+
+		g_signal_connect(m_pTreeViewExternalTools, "activate",
+			G_CALLBACK(+[](GtkColumnView*, guint, gpointer user_data) {
+				ExternalToolsDlg::ExternalToolsDlgPriv *priv =
+					static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
+				if (gtk_widget_is_sensitive(GTK_WIDGET(priv->m_pButtonEdit)))
+				{
+					g_signal_emit_by_name(priv->m_pButtonEdit, "clicked");
+				}
+			}), this);
 	}
 }
 
@@ -540,16 +548,21 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonClose)
 	{
-		GMainLoop *loop = (GMainLoop*)g_object_get_data(G_OBJECT(priv->m_pWidget), "tools-loop");
-		if (loop)
-			g_main_loop_quit(loop);
+		priv->m_bRunDone = true;
+		gtk_widget_set_visible(priv->m_pWidget, FALSE);
 	}
 }
 
-static void selection_changed (GtkSelectionModel* selection, gpointer user_data)
-{ (void)selection; 
+static void selection_changed (GtkSelectionModel* selection, guint position, guint n_items, gpointer user_data)
+{
+	(void)selection;
+	(void)position;
+	(void)n_items;
 	ExternalToolsDlg::ExternalToolsDlgPriv *priv = static_cast<ExternalToolsDlg::ExternalToolsDlgPriv*>(user_data);
-	priv->SelectionChanged();
+	if (priv)
+	{
+		priv->SelectionChanged();
+	}
 }
 
 

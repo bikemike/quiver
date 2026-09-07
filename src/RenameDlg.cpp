@@ -152,6 +152,7 @@ void RenameDlg::SetInputFolder(std::string folder)
 	if (m_PrivPtr->m_bLoadedDlg && NULL != m_PrivPtr->m_pBtnChooseFolder)
 	{
 		gtk_button_set_label(m_PrivPtr->m_pBtnChooseFolder, folder.c_str());
+		m_PrivPtr->UpdateUI();
 	}
 }
 
@@ -211,8 +212,7 @@ static void rename_preview_item_finalize (GObject* object)
 	g_free(item->type_desc);
 	g_free(item->dst_name);
 	g_free(item->conflict);
-	G_OBJECT_CLASS(g_type_class_peek_parent(
-		G_OBJECT_GET_CLASS(object)))->finalize(object);
+	G_OBJECT_CLASS(rename_preview_item_parent_class)->finalize(object);
 }
 
 static void rename_preview_item_class_init (RenamePreviewItemClass* klass)
@@ -242,8 +242,8 @@ static RenamePreviewItem* rename_preview_item_new (const gchar* icon,
 	return item;
 }
 
-static void preview_icon_setup (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void preview_icon_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	GtkWidget* image = gtk_image_new();
 	gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
 	gtk_widget_set_margin_start(image, 6);
@@ -251,16 +251,19 @@ static void preview_icon_setup (GtkListItem* list_item, gpointer user_data)
 	gtk_list_item_set_child(list_item, image);
 }
 
-static void preview_icon_bind (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void preview_icon_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	RenamePreviewItem* item =
 		RENAME_PREVIEW_ITEM(gtk_list_item_get_item(list_item));
 	GtkWidget* image = gtk_list_item_get_child(list_item);
-	gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon_name);
+	if (item && item->icon_name)
+		gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon_name);
+	else
+		gtk_image_clear(GTK_IMAGE(image));
 }
 
-static void preview_text_setup (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void preview_text_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	GtkWidget* label = gtk_label_new(NULL);
 	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
 	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
@@ -268,12 +271,17 @@ static void preview_text_setup (GtkListItem* list_item, gpointer user_data)
 	gtk_list_item_set_child(list_item, label);
 }
 
-static void preview_text_bind (GtkListItem* list_item, gpointer user_data)
-{
+static void preview_text_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory;
 	int iCol = GPOINTER_TO_INT(user_data);
 	RenamePreviewItem* item =
 		RENAME_PREVIEW_ITEM(gtk_list_item_get_item(list_item));
 	GtkWidget* label = gtk_list_item_get_child(list_item);
+	if (!item)
+	{
+		gtk_label_set_text(GTK_LABEL(label), "");
+		return;
+	}
 	const char* szText = NULL;
 	switch (iCol)
 	{
@@ -286,7 +294,7 @@ static void preview_text_bind (GtkListItem* list_item, gpointer user_data)
 		(NULL != item->conflict && '\0' != item->conflict[0]);
 	if (bConflicted && PREVIEW_COL_CONFLICT == iCol)
 	{
-		gchar* esc = g_markup_escape_text(szText, -1);
+		gchar* esc = g_markup_escape_text(szText ? szText : "", -1);
 		gchar* markup =
 			g_strdup_printf("<span foreground=\"#e01b24\">%s</span>", esc);
 		gtk_label_set_markup(GTK_LABEL(label), markup);
@@ -295,7 +303,7 @@ static void preview_text_bind (GtkListItem* list_item, gpointer user_data)
 	}
 	else
 	{
-		gtk_label_set_text(GTK_LABEL(label), szText);
+		gtk_label_set_text(GTK_LABEL(label), szText ? szText : "");
 	}
 }
 
@@ -358,23 +366,19 @@ RenameDlg::RenameDlgPriv::~RenameDlgPriv()
 		m_iConflictPollID = 0;
 	}
 
-	if (NULL != m_pGtkBuilder)
-	{
-		g_object_unref(m_pGtkBuilder);
-		m_pGtkBuilder = NULL;
-	}
-
 	if (NULL != m_pDialogRename)
 	{
 		gtk_window_destroy(GTK_WINDOW(m_pDialogRename));
 		m_pDialogRename = NULL;
 	}
 
-	if (NULL != m_pListStorePreview)
+	if (NULL != m_pGtkBuilder)
 	{
-		g_object_unref(m_pListStorePreview);
-		m_pListStorePreview = NULL;
+		g_object_unref(m_pGtkBuilder);
+		m_pGtkBuilder = NULL;
 	}
+
+	m_pListStorePreview = NULL;
 }
 
 
@@ -413,12 +417,20 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 		gtk_label_set_attributes(m_pLabelExample, attrs);
 		pango_attr_list_unref(attrs);
 
-		gtk_window_set_default_size(GTK_WINDOW(m_pDialogRename), 400,-1);
+		gtk_window_set_default_size(GTK_WINDOW(m_pDialogRename), 560, 520);
 
 		GtkWidget* content_area =
 			gtk_window_get_child(GTK_WINDOW(m_pDialogRename));
 
-		gtk_box_append(GTK_BOX(content_area), GTK_WIDGET(m_pBtnChooseFolder));
+		GtkWidget* align_folder = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "rename_align_source_folder"));
+		if (align_folder)
+		{
+			gtk_box_append(GTK_BOX(align_folder), GTK_WIDGET(m_pBtnChooseFolder));
+		}
+		else
+		{
+			gtk_box_append(GTK_BOX(content_area), GTK_WIDGET(m_pBtnChooseFolder));
+		}
 
 		m_pLabelPurpose = gtk_label_new(NULL);
 		gtk_label_set_markup(GTK_LABEL(m_pLabelPurpose),
@@ -433,6 +445,7 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 		m_pScrolledPreview = gtk_scrolled_window_new();
 		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pScrolledPreview),
 			GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+		gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(m_pScrolledPreview), TRUE);
 		gtk_widget_set_vexpand(m_pScrolledPreview, TRUE);
 		gtk_widget_set_size_request(m_pScrolledPreview, -1, 150);
 
@@ -441,7 +454,6 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 			gtk_single_selection_new(G_LIST_MODEL(m_pListStorePreview));
 		m_pTreeViewPreview =
 			gtk_column_view_new(GTK_SELECTION_MODEL(sel));
-		g_object_unref(sel);
 
 		{
 			GtkColumnViewColumn* column =
@@ -732,7 +744,7 @@ void RenameDlg::RenameDlgPriv::ConnectSignals()
 				priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
 				priv->m_bRunDone = true;
 				gtk_widget_set_visible(widget, FALSE);
-				return FALSE;
+				return TRUE;
 			}), this);
 
 		g_signal_connect(m_pBtnChooseFolder,

@@ -162,7 +162,6 @@ void ExternalTools::LoadFromPreferences()
 void ExternalTools::SaveToPreferences()
 {
 	ExternalToolMap::iterator itr;
-	vector<ExternalTool>::iterator itr2;
 
 	PreferencesPtr prefs = m_ExternalToolsImplPtr->m_PrefPtr;
 
@@ -226,6 +225,7 @@ bool ExternalTools::AddExternalTool(ExternalTool external_tool)
 		int sort_val = m_ExternalToolsImplPtr->GetNewSortOrderValue();
 		m_ExternalToolsImplPtr->m_mapExternalToolOrder[external_tool.GetID()] = sort_val;
 		m_mapExternalTools[external_tool.GetID()] = external_tool;
+		SaveToPreferences();
 		EmitExternalToolChangedEvent(ExternalToolsEvent::EXTERNAL_TOOL_ADDED);
 	}
 	else
@@ -262,6 +262,7 @@ bool ExternalTools::Remove(int id)
 		
 		m_mapExternalTools.erase(itr);
 		rval = true;
+		SaveToPreferences();
 		EmitExternalToolChangedEvent(ExternalToolsEvent::EXTERNAL_TOOL_REMOVED);
 	}
 
@@ -330,6 +331,7 @@ bool ExternalTools::UpdateExternalTool(ExternalTool external_tool)
 	{
 		itr->second = external_tool;
 		bUpdated = true;
+		SaveToPreferences();
 		EmitExternalToolChangedEvent(ExternalToolsEvent::EXTERNAL_TOOL_CHANGED);
 	}
 	return bUpdated;
@@ -362,6 +364,7 @@ bool ExternalTools::MoveUp (int id)
 			orderid = m_ExternalToolsImplPtr->m_mapExternalToolOrder[id];
 			m_ExternalToolsImplPtr->m_mapExternalToolOrder[id] = new_orderid;
 			m_ExternalToolsImplPtr->m_mapExternalToolOrder[swapID] = orderid;
+			SaveToPreferences();
 			EmitExternalToolChangedEvent(ExternalToolsEvent::EXTERNAL_TOOL_CHANGED);
 			return true;
 		}
@@ -397,6 +400,7 @@ bool ExternalTools::MoveDown (int id)
 			orderid = m_ExternalToolsImplPtr->m_mapExternalToolOrder[id];
 			m_ExternalToolsImplPtr->m_mapExternalToolOrder[id] = new_orderid;
 			m_ExternalToolsImplPtr->m_mapExternalToolOrder[swapID] = orderid;
+			SaveToPreferences();
 			EmitExternalToolChangedEvent(ExternalToolsEvent::EXTERNAL_TOOL_CHANGED);
 			return true;
 		}

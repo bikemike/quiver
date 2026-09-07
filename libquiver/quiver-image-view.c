@@ -220,6 +220,7 @@ static void      quiver_image_view_get_property (GObject    *object,
                     GValue     *value,
                     GParamSpec *pspec);
 
+static void     quiver_image_view_dispose(GObject *object);
 static void     quiver_image_view_finalize(GObject *object);
 
 /* start utility function prototypes*/
@@ -302,6 +303,7 @@ quiver_image_view_class_init (QuiverImageViewClass *klass)
 
 	//klass->set_scroll_adjustments      = quiver_image_view_set_scroll_adjustments;
 
+	obj_class->dispose                 = quiver_image_view_dispose;
 	obj_class->finalize                = quiver_image_view_finalize;
 	obj_class->set_property            = quiver_image_view_set_property;
 	obj_class->get_property            = quiver_image_view_get_property;
@@ -549,23 +551,137 @@ quiver_image_view_get_property (GObject    *object,
 
 
 static void
+quiver_image_view_dispose(GObject *object)
+{
+	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(object);
+
+	quiver_image_view_transition_stop(imageview);
+
+	if (0 != imageview->priv->magnification_timeout_id)
+	{
+		g_source_remove(imageview->priv->magnification_timeout_id);
+		imageview->priv->magnification_timeout_id = 0;
+	}
+
+	if (0 != imageview->priv->timeout_scale_hq_id)
+	{
+		g_source_remove(imageview->priv->timeout_scale_hq_id);
+		imageview->priv->timeout_scale_hq_id = 0;
+	}
+
+	if (0 != imageview->priv->scroll_timeout_id)
+	{
+		g_source_remove(imageview->priv->scroll_timeout_id);
+		imageview->priv->scroll_timeout_id = 0;
+	}
+
+	if (0 != imageview->priv->transition_timeout_id)
+	{
+		g_source_remove(imageview->priv->transition_timeout_id);
+		imageview->priv->transition_timeout_id = 0;
+	}
+
+	if (0 != imageview->priv->animation_timeout_id)
+	{
+		g_source_remove(imageview->priv->animation_timeout_id);
+		imageview->priv->animation_timeout_id = 0;
+	}
+
+	if (0 != imageview->priv->timeout_id_smooth_scroll_slowdown)
+	{
+		g_source_remove(imageview->priv->timeout_id_smooth_scroll_slowdown);
+		imageview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
+
+	if (imageview->priv->hadjustment)
+	{
+		g_signal_handlers_disconnect_by_func (imageview->priv->hadjustment,
+			quiver_image_view_adjustment_value_changed,
+			imageview);
+		g_clear_object (&imageview->priv->hadjustment);
+	}
+
+	if (imageview->priv->vadjustment)
+	{
+		g_signal_handlers_disconnect_by_func (imageview->priv->vadjustment,
+			quiver_image_view_adjustment_value_changed,
+			imageview);
+		g_clear_object (&imageview->priv->vadjustment);
+	}
+
+	if (imageview->priv->pixbuf_animation_iter)
+	{
+		g_clear_object (&imageview->priv->pixbuf_animation_iter);
+	}
+
+	if (imageview->priv->pixbuf_animation)
+	{
+		g_clear_object (&imageview->priv->pixbuf_animation);
+	}
+
+	if (imageview->priv->pixbuf_scaled)
+	{
+		g_clear_object (&imageview->priv->pixbuf_scaled);
+	}
+
+	if (imageview->priv->texture)
+	{
+		g_clear_object (&imageview->priv->texture);
+	}
+
+	if (imageview->priv->pixbuf)
+	{
+		g_clear_object (&imageview->priv->pixbuf);
+	}
+
+	if (imageview->priv->transition_texture_old)
+	{
+		g_clear_object (&imageview->priv->transition_texture_old);
+	}
+
+	if (imageview->priv->transition_pixbuf_old)
+	{
+		g_clear_object (&imageview->priv->transition_pixbuf_old);
+	}
+
+	if (imageview->priv->transition_pixbuf_new)
+	{
+		g_clear_object (&imageview->priv->transition_pixbuf_new);
+	}
+
+	if (imageview->priv->velocity_time_list)
+	{
+		g_list_free_full(imageview->priv->velocity_time_list, g_free);
+		imageview->priv->velocity_time_list = NULL;
+	}
+
+	if (imageview->priv->transition_pixbufs_intermediate)
+	{
+		g_list_free_full(imageview->priv->transition_pixbufs_intermediate, g_object_unref);
+		imageview->priv->transition_pixbufs_intermediate = NULL;
+	}
+
+	G_OBJECT_CLASS (quiver_image_view_parent_class)->dispose (object);
+}
+
+static void
 quiver_image_view_finalize(GObject *object)
 {
-	GObjectClass *parent;
-	QuiverImageViewClass *klass; 
-	QuiverImageView *imageview;
+	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(object);
 
-	imageview = QUIVER_IMAGE_VIEW(object);
-	klass = QUIVER_IMAGE_VIEW_GET_CLASS(imageview);
-
-	// remove timeout callbacks and unref data
-	quiver_image_view_prepare_for_new_pixbuf(imageview,0,0);
-
-	parent = g_type_class_peek_parent(klass);
-	if (parent)
+	if (imageview->priv->velocity_time_list)
 	{
-		parent->finalize(object);
+		g_list_free_full(imageview->priv->velocity_time_list, g_free);
+		imageview->priv->velocity_time_list = NULL;
 	}
+
+	if (imageview->priv->transition_pixbufs_intermediate)
+	{
+		g_list_free_full(imageview->priv->transition_pixbufs_intermediate, g_object_unref);
+		imageview->priv->transition_pixbufs_intermediate = NULL;
+	}
+
+	G_OBJECT_CLASS (quiver_image_view_parent_class)->finalize (object);
 }
 
 
@@ -854,8 +970,9 @@ quiver_image_view_gesture_drag_update (GtkGestureDrag *gesture,
 	if ( 3 == g_list_length(imageview->priv->velocity_time_list) )
 	{
 		GList* last = g_list_last(imageview->priv->velocity_time_list);
+		g_free(last->data);
 		imageview->priv->velocity_time_list =
-			g_list_remove_link(imageview->priv->velocity_time_list,last);
+			g_list_delete_link(imageview->priv->velocity_time_list,last);
 	}
 	imageview->priv->velocity_time_list =
 		g_list_prepend(imageview->priv->velocity_time_list, vt);
@@ -1679,7 +1796,7 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 	(void)new_height;
 	GtkWidget *widget = GTK_WIDGET(imageview);
 
-	if (!gtk_widget_get_mapped(widget))
+	if (gtk_widget_in_destruction(widget) || !gtk_widget_get_mapped(widget))
 	{
 		return;
 	}
@@ -1696,7 +1813,7 @@ static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview, 
 	(void)sub_rect;
 	GtkWidget *widget = GTK_WIDGET(imageview);
 
-	if (!gtk_widget_get_mapped(widget))
+	if (gtk_widget_in_destruction(widget) || !gtk_widget_get_mapped(widget))
 	{
 		return;
 	}

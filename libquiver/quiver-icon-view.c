@@ -196,6 +196,7 @@ static void      quiver_icon_view_get_property (GObject    *object,
                     GParamSpec *pspec);
 
 
+static void     quiver_icon_view_dispose(GObject *object);
 static void     quiver_icon_view_finalize(GObject *object);
 
 /* start utility function prototypes*/
@@ -298,6 +299,7 @@ quiver_icon_view_class_init (QuiverIconViewClass *klass)
 
 
 
+	obj_class->dispose                 = quiver_icon_view_dispose;
 	obj_class->finalize                = quiver_icon_view_finalize;
 
 	iconview_signals[SIGNAL_CELL_CLICKED] = g_signal_new (/*FIXME I_*/("cell_clicked"),
@@ -433,16 +435,10 @@ quiver_icon_view_init(QuiverIconView *iconview)
 }
 
 static void
-quiver_icon_view_finalize(GObject *object)
+quiver_icon_view_dispose(GObject *object)
 {
-	GObjectClass *parent;
-	QuiverIconViewClass *klass; 
-	QuiverIconView *iconview;
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(object);
 
-	iconview = QUIVER_ICON_VIEW(object);
-	klass = QUIVER_ICON_VIEW_GET_CLASS(iconview);
-
-	// remove timeout callbacks
 	remove_timeout_smooth_scroll(iconview);
 
 	if (iconview->priv->timeout_id_rubberband_scroll != 0)
@@ -451,25 +447,62 @@ quiver_icon_view_finalize(GObject *object)
 		iconview->priv->timeout_id_rubberband_scroll = 0;
 	}
 
-	if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
+	if (0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
 	{
 		g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
 		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
 	}
 
-	g_list_free_full(iconview->priv->velocity_time_list, g_free);
+	if (iconview->priv->hadjustment)
+	{
+		g_signal_handlers_disconnect_by_func (iconview->priv->hadjustment,
+			quiver_icon_view_adjustment_value_changed,
+			iconview);
+		g_clear_object (&iconview->priv->hadjustment);
+	}
+
+	if (iconview->priv->vadjustment)
+	{
+		g_signal_handlers_disconnect_by_func (iconview->priv->vadjustment,
+			quiver_icon_view_adjustment_value_changed,
+			iconview);
+		g_clear_object (&iconview->priv->vadjustment);
+	}
+
+	quiver_icon_view_set_n_items_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_thumbnail_pixbuf_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_thumbnail_texture_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_icon_pixbuf_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_text_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_overlay_pixbuf_func(iconview, NULL, NULL, NULL);
+
+	G_OBJECT_CLASS (quiver_icon_view_parent_class)->dispose (object);
+}
+
+static void
+quiver_icon_view_finalize(GObject *object)
+{
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(object);
+
+	if (iconview->priv->velocity_time_list)
+	{
+		g_list_free_full(iconview->priv->velocity_time_list, g_free);
+		iconview->priv->velocity_time_list = NULL;
+	}
+
 	if (iconview->priv->callback_get_thumbnail_texture_data_destroy)
 	{
 		(*iconview->priv->callback_get_thumbnail_texture_data_destroy)(iconview->priv->callback_get_thumbnail_texture_data);
+		iconview->priv->callback_get_thumbnail_texture_data_destroy = NULL;
 	}
 
-	g_free (iconview->priv->cell_items);
-
-	parent = g_type_class_peek_parent(klass);
-	if (parent)
+	if (iconview->priv->cell_items)
 	{
-		parent->finalize(object);
+		g_free (iconview->priv->cell_items);
+		iconview->priv->cell_items = NULL;
 	}
+
+	G_OBJECT_CLASS (quiver_icon_view_parent_class)->finalize (object);
 }
 
 static void
@@ -1344,6 +1377,12 @@ quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjustment,
            QuiverIconView *iconview)
 { (void)adjustment; 
 	GtkWidget *widget = GTK_WIDGET(iconview);
+
+	if (gtk_widget_in_destruction(widget) || !gtk_widget_get_mapped(widget))
+		return;
+
+	if (!iconview->priv->hadjustment || !iconview->priv->vadjustment)
+		return;
 
 	gdouble hadj,vadj;
 	hadj = (int)gtk_adjustment_get_value(iconview->priv->hadjustment);
@@ -2914,15 +2953,21 @@ void
 quiver_icon_view_invalidate_cell(QuiverIconView *iconview,
 		gulong cell)
 {
+	if (!iconview || !QUIVER_IS_ICON_VIEW(iconview))
+		return;
 
 	GtkWidget *widget = GTK_WIDGET (iconview);
-	
+	if (gtk_widget_in_destruction(widget) || !gtk_widget_get_mapped(widget))
+		return;
+
+	if (NULL == iconview->priv->callback_get_n_items)
+		return;
+
 	gulong n_cells = quiver_icon_view_get_n_items(iconview);
 	if (cell >= n_cells)
 		return;
 	
-	(void)widget;
-	gtk_widget_queue_draw(GTK_WIDGET(iconview));
+	gtk_widget_queue_draw(widget);
 }
 
 void

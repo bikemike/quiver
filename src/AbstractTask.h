@@ -44,7 +44,7 @@ public:
 	virtual bool                   CanCancel() const;
 	virtual bool                   CanPause() const;
 
-	void                           Cancel();
+	virtual void                   Cancel();
 
 	void                           Pause ();
 	void                           Resume();
@@ -60,6 +60,9 @@ public:
 
 	MessageType                    GetMessageType() const;
 	std::string                    GetMessage() const;
+
+	virtual bool                   HasDetails() const { return false; }
+	virtual std::string            GetDetails() const { return ""; }
 
 	// called by the task manager
 	// internally calls the virtual Run() method

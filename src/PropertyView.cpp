@@ -598,6 +598,12 @@ PropertyView::PropertyViewImpl::PropertyViewImpl() :
 
 PropertyView::PropertyViewImpl::~PropertyViewImpl()
 {
+	if (0 != m_iIdleLoadID)
+	{
+		g_source_remove(m_iIdleLoadID);
+		m_iIdleLoadID = 0;
+	}
+
 	PreferencesPtr prefPtr = Preferences::GetInstance();
 	prefPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 

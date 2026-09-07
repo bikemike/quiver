@@ -37,6 +37,8 @@
 
 #include "IPixbufLoaderObserver.h"
 #include "IconViewThumbLoader.h"
+#include <memory>
+#include <atomic>
 
 #include <gdk/gdkkeysyms.h>
 #include <exiv2/exiv2.hpp>
@@ -93,6 +95,8 @@ static gboolean viewer_imageview_key_press_event(GtkEventControllerKey *controll
 
 static void viewer_iconview_cell_activated(QuiverIconView *iconview,gulong cell,gpointer data);
 static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,gpointer data);
+static void viewer_icon_view_map_cb(GtkWidget *widget, gpointer user_data);
+static void viewer_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 
 static void viewer_volume_value_changed (GtkRange *range, gdouble value, gpointer user_data);
 static void viewer_volume_toggle_popover_cb(gpointer user_data, GtkWidget *widget);
@@ -305,7 +309,13 @@ static void view_pixbuf_target_ref(ViewPixbufTarget *t)
 static void view_pixbuf_target_unref(ViewPixbufTarget *t)
 {
 	if (g_atomic_int_dec_and_test(&t->iRefs))
+	{
+		if (t->pImageView && G_IS_OBJECT(t->pImageView))
+		{
+			g_signal_handlers_disconnect_by_func(t->pImageView, (gpointer)view_pixbuf_target_destroyed, t);
+		}
 		delete t;
+	}
 }
 
 struct AsyncPixbufData {
@@ -377,7 +387,15 @@ class ViewerImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 public:
 	ViewerImageViewPixbufLoaderObserver(QuiverImageView *imageview, GtkWidget *pErrorLabel)
 		: m_pTarget(view_pixbuf_target_new(imageview, pErrorLabel)) {};
-	virtual ~ViewerImageViewPixbufLoaderObserver(){ view_pixbuf_target_unref(m_pTarget); };
+	virtual ~ViewerImageViewPixbufLoaderObserver(){
+		if (m_pTarget && m_pTarget->pImageView && G_IS_OBJECT(m_pTarget->pImageView))
+		{
+			g_signal_handlers_disconnect_by_func(m_pTarget->pImageView, (gpointer)view_pixbuf_target_destroyed, m_pTarget);
+			m_pTarget->pImageView = NULL;
+			m_pTarget->pErrorLabel = NULL;
+		}
+		view_pixbuf_target_unref(m_pTarget);
+	};
 
 	virtual void ConnectSignals(GdkPixbufLoader *loader){
 		quiver_image_view_connect_pixbuf_loader_signals(m_pTarget->pImageView,loader);
@@ -801,9 +819,23 @@ public:
 		ViewerThumbLoader(ViewerImpl* pViewerImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
 		{
 			m_pViewerImpl = pViewerImpl;
+			m_bMapped.store(false, std::memory_order_relaxed);
+			m_uiThumbWidth.store(96, std::memory_order_relaxed);
+			m_uiThumbHeight.store(96, std::memory_order_relaxed);
 		}
 		
 		~ViewerThumbLoader(){}
+
+		void SetIconDimensions(guint uiWidth, guint uiHeight)
+		{
+			m_uiThumbWidth.store(uiWidth, std::memory_order_relaxed);
+			m_uiThumbHeight.store(uiHeight, std::memory_order_relaxed);
+		}
+
+		void SetMapped(bool bMapped)
+		{
+			m_bMapped.store(bMapped, std::memory_order_relaxed);
+		}
 		
 	protected:
 		
@@ -818,12 +850,15 @@ public:
 		
 	private:
 		ViewerImpl* m_pViewerImpl; 
-		
+		std::atomic<bool> m_bMapped;
+		std::atomic<guint> m_uiThumbWidth;
+		std::atomic<guint> m_uiThumbHeight;
 	};
 
 	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
 	IImageListEventHandlerPtr    m_ImageListEventHandlerPtr;
 	ViewerThumbLoader            m_ThumbnailLoader;      
+	std::shared_ptr<bool>        m_spAlive;
 
 };
 
@@ -1516,15 +1551,12 @@ void Viewer::ViewerImpl::ShowFilmstripOverlay()
 	if (!QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP)) return;
 	if (m_bFilmstripHiddenByFS) return;
 	if (IsVideo() && IsPlaying()) return;
-	g_printerr("[FILMSTRIP] ShowFilmstripOverlay: visible=%d opacity=%.2f\n",
-		gtk_widget_get_visible(m_pIconView), gtk_widget_get_opacity(m_pIconView));
 	/* The icon view is created hidden and never shown again after a
 	 * fade-out completes; a fade-in only animates opacity.  Reveal the
 	 * widget itself or the strip can never be displayed. */
 	if (!gtk_widget_get_visible(m_pIconView))
 	{
 		gtk_widget_set_visible(m_pIconView, TRUE);
-		g_printerr("[FILMSTRIP] ShowFilmstripOverlay: revealed icon view\n");
 	}
 	CancelFilmstripHide();
 	CancelFilmstripFade();
@@ -1654,10 +1686,6 @@ void Viewer::ViewerImpl::AddFilmstrip()
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	int iFilmstripPos = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
 	bool bOverlay = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
-
-	g_printerr("[FILMSTRIP] AddFilmstrip overlay=%d pos=%d toggle_active=%d\n",
-		bOverlay, iFilmstripPos,
-		QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP));
 
 	/* remove filmstrip from its current parent (if any) */
 	GtkWidget *current_parent = gtk_widget_get_parent(m_pIconView);
@@ -1867,12 +1895,6 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		 * ensure it is fully shown and opaque for docked mode */
 		gtk_widget_set_visible(m_pIconView, TRUE);
 		gtk_widget_set_opacity(m_pIconView, 1.0);
-		g_printerr("[FILMSTRIP] docked: box=%p visible=%d opacity=%.2f imglist=%lu parent=%p\n",
-			(void*)box,
-			gtk_widget_get_visible(m_pIconView),
-			gtk_widget_get_opacity(m_pIconView),
-			(unsigned long)m_ImageListPtr->GetSize(),
-			(void*)gtk_widget_get_parent(m_pIconView));
 	}
 
 	/* hand our reference over to the new parent container */
@@ -2637,6 +2659,24 @@ static void viewer_iconview_cursor_changed(QuiverIconView *iconview,gulong cell,
 
 }
 
+static void viewer_icon_view_map_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl* v = (Viewer::ViewerImpl*)user_data;
+	v->m_ThumbnailLoader.SetMapped(true);
+	/* The first UpdateList(true) often runs at startup before the
+	 * filmstrip is mapped, so every thumbnail was skipped.  Re-queue
+	 * the visible range now that the filmstrip is mapped (and allocated). */
+	v->m_ThumbnailLoader.UpdateList(true);
+}
+
+static void viewer_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl* v = (Viewer::ViewerImpl*)user_data;
+	v->m_ThumbnailLoader.SetMapped(false);
+}
+
 
 static void viewer_video_option_audio_cb(GtkButton *button, gpointer user_data)
 {
@@ -2671,16 +2711,16 @@ static void viewer_video_option_text_cb(GtkButton *button, gpointer user_data)
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
 	gint track = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "track-id"));
 	
-	GstPlayFlags flags = (GstPlayFlags)0;
+	guint flags = 0;
 	g_object_get(G_OBJECT(p->m_pPipeline), "flags", &flags, NULL);
 	
 	gboolean text_enabled = FALSE;
 	if (track < 0) {
-		flags = (GstPlayFlags)(flags & ~(1 << 2)); // disable GST_PLAY_FLAG_TEXT
+		flags &= ~(1 << 2); // disable GST_PLAY_FLAG_TEXT
 		g_object_set(G_OBJECT(p->m_pPipeline), "flags", flags, NULL);
 		text_enabled = FALSE;
 	} else {
-		flags = (GstPlayFlags)(flags | (1 << 2)); // enable GST_PLAY_FLAG_TEXT
+		flags |= (1 << 2); // enable GST_PLAY_FLAG_TEXT
 		g_object_set(G_OBJECT(p->m_pPipeline), "flags", flags, "current-text", track, NULL);
 		text_enabled = TRUE;
 	}
@@ -2807,7 +2847,7 @@ static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user
 	gint current_text = -1;
 	g_object_get(p->m_pPipeline, "current-text", &current_text, NULL);
 	
-	GstPlayFlags flags = (GstPlayFlags)0;
+	guint flags = 0;
 	g_object_get(p->m_pPipeline, "flags", &flags, NULL);
 	gboolean text_enabled = (flags & (1 << 2)) != 0; // GST_PLAY_FLAG_TEXT
 	
@@ -3648,6 +3688,24 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 
 Viewer::ViewerImpl::~ViewerImpl()
 {
+	if (m_spAlive)
+	{
+		*m_spAlive = false;
+	}
+	m_ThumbnailLoader.Stop();
+
+	if (m_pIconView && QUIVER_IS_ICON_VIEW(m_pIconView))
+	{
+		g_signal_handlers_disconnect_by_func(m_pIconView, (gpointer)viewer_icon_view_map_cb, this);
+		g_signal_handlers_disconnect_by_func(m_pIconView, (gpointer)viewer_icon_view_unmap_cb, this);
+		quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_thumbnail_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_overlay_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+	}
+
 	StopVideo(false);
 
 
@@ -3741,6 +3799,73 @@ Viewer::ViewerImpl::~ViewerImpl()
 		if (gtk_widget_get_parent(m_pContextMenuPopover))
 			gtk_widget_unparent(m_pContextMenuPopover);
 		m_pContextMenuPopover = NULL;
+	}
+
+	/* Disconnect all GObject signal handlers that captured `this` so no
+	 * callback fires into the freed ViewerImpl during widget tree teardown */
+	if (m_pAdjustmentH && G_IS_OBJECT(m_pAdjustmentH))
+	{
+		g_signal_handlers_disconnect_by_data(m_pAdjustmentH, this);
+	}
+	if (m_pAdjustmentV && G_IS_OBJECT(m_pAdjustmentV))
+	{
+		g_signal_handlers_disconnect_by_data(m_pAdjustmentV, this);
+	}
+	if (m_pImageView && G_IS_OBJECT(m_pImageView))
+	{
+		g_signal_handlers_disconnect_by_data(m_pImageView, this);
+	}
+	if (m_pIconView && G_IS_OBJECT(m_pIconView))
+	{
+		g_signal_handlers_disconnect_by_data(m_pIconView, this);
+	}
+	if (m_pVideoPaintable && G_IS_OBJECT(m_pVideoPaintable))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVideoPaintable, this);
+	}
+	if (m_pVideoSinkWidget && G_IS_OBJECT(m_pVideoSinkWidget))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVideoSinkWidget, this);
+	}
+	if (m_pVolumeScale && G_IS_OBJECT(m_pVolumeScale))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVolumeScale, this);
+	}
+	if (m_pVolumeButton && G_IS_OBJECT(m_pVolumeButton))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVolumeButton, this);
+	}
+	if (m_pSpeedButton && G_IS_OBJECT(m_pSpeedButton))
+	{
+		g_signal_handlers_disconnect_by_data(m_pSpeedButton, this);
+	}
+	if (m_pSnapBtn && G_IS_OBJECT(m_pSnapBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pSnapBtn, this);
+	}
+	if (m_pVideoOptionsBtn && G_IS_OBJECT(m_pVideoOptionsBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVideoOptionsBtn, this);
+	}
+	if (m_pFullscreenBtn && G_IS_OBJECT(m_pFullscreenBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pFullscreenBtn, this);
+	}
+	if (m_pRewindBtn && G_IS_OBJECT(m_pRewindBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pRewindBtn, this);
+	}
+	if (m_pFfBtn && G_IS_OBJECT(m_pFfBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pFfBtn, this);
+	}
+	if (m_pPlayButton && G_IS_OBJECT(m_pPlayButton))
+	{
+		g_signal_handlers_disconnect_by_data(m_pPlayButton, this);
+	}
+	if (m_pDragSource && G_IS_OBJECT(m_pDragSource))
+	{
+		g_signal_handlers_disconnect_by_data(m_pDragSource, this);
 	}
 
 	/* m_pHBox is parented into the window tree and owned by it; the window
@@ -4601,21 +4726,6 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	if (gtk_widget_get_visible(m_pVideoSinkWidget))
 		m_StatusbarPtr->SetMagnification((int)(m_dVideoZoom * 100. + 0.5));
 
-	g_printerr("[QLAYOUT applyzoom] mode=%d zoom=%.3f effZoom=%.3f widget=%dx%d area=%dx%d -> sink %dx%d@%d,%d\n",
-		(int)videoViewMode, m_dVideoZoom, effZoom,
-		(gint)(widgetW+0.5), (gint)(widgetH+0.5), areaW, areaH,
-		newW, newH, newX, newY);
-
-	{
-		GtkRoot *root = gtk_widget_get_root(m_pVideoFixed);
-		g_printerr("[QLAYOUT sizes] window=%dx%d fixed=%dx%d stack=%dx%d sinkreq=%dx%d\n",
-			root ? gtk_widget_get_width(GTK_WIDGET(root)) : -1,
-			root ? gtk_widget_get_height(GTK_WIDGET(root)) : -1,
-			gtk_widget_get_width(m_pVideoFixed), gtk_widget_get_height(m_pVideoFixed),
-			m_pStack ? gtk_widget_get_width(m_pStack) : -1, m_pStack ? gtk_widget_get_height(m_pStack) : -1,
-			newW, newH);
-	}
-
 	m_dVideoLastWidgetW = widgetW;
 	m_dVideoLastWidgetH = widgetH;
 	m_dVideoLastZc = zc;
@@ -4840,7 +4950,7 @@ static void viewer_frame_step_fwd_cb(gpointer user_data)
 			if (len > 0 && target > len) target = len;
 			gst_element_seek(GST_ELEMENT(p->m_pPipeline), 1.0,
 				GST_FORMAT_TIME,
-				GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+				static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
 				GST_SEEK_TYPE_SET, target,
 				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 		}
@@ -4891,7 +5001,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_bPointerPosValid(false),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
-	m_ThumbnailLoader(this,2)
+	m_ThumbnailLoader(this,2),
+	m_spAlive(std::make_shared<bool>(true))
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -5371,10 +5482,14 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER);
 	int iIconSize = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(m_pIconView),iIconSize,iIconSize);
+	m_ThumbnailLoader.SetIconDimensions(iIconSize, iIconSize);
+	m_ThumbnailLoader.SetMapped(gtk_widget_get_mapped(m_pIconView));
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(viewer_iconview_cell_activated),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"cursor_changed",G_CALLBACK(viewer_iconview_cursor_changed),this);
+	g_signal_connect(G_OBJECT(m_pIconView),"map",G_CALLBACK(viewer_icon_view_map_cb),this);
+	g_signal_connect(G_OBJECT(m_pIconView),"unmap",G_CALLBACK(viewer_icon_view_unmap_cb),this);
 
 	//popup menu stuff: GTK4 gesture controllers on the image view
 	{
@@ -5653,9 +5768,9 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 		g_object_set(G_OBJECT(m_pPipeline), "audio-filter", scaletempo, NULL);
 	}
 
-	GstPlayFlags flags = (GstPlayFlags)0;
+	guint flags = 0;
 	g_object_get(G_OBJECT(m_pPipeline), "flags", &flags, NULL);
-	flags = (GstPlayFlags)(flags & ~(1 << 2)); // Disable subtitles by default
+	flags &= ~(1 << 2); // Disable subtitles by default
 	/* do NOT enable GST_PLAY_FLAG_DEINTERLACE: playbin inserts a software
 	 * videoconvert for it, which cannot convert the hardware decoder's
 	 * VAMemory buffers and leaves the GL sink showing a black frame */
@@ -6116,14 +6231,7 @@ GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get)
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data)
 { (void)iconview; 
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	gulong n = pViewerImpl->m_ImageListPtr->GetSize();
-	static gulong last = (gulong)-1;
-	if (n != last)
-	{
-		g_printerr("[ICONVIEW] n_cells=%lu\n", n);
-		last = n;
-	}
-	return n;
+	return pViewerImpl->m_ImageListPtr->GetSize();
 }
 
 static GdkPixbuf* icon_pixbuf_callback(QuiverIconView *iconview, gulong cell, gpointer user_data)
@@ -6405,6 +6513,7 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE == event->GetKey() )
 		{
 			quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewInteger(), event->GetNewInteger());
+			parent->m_ThumbnailLoader.SetIconDimensions(event->GetNewInteger(), event->GetNewInteger());
 		}
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY == event->GetKey() )
 		{
@@ -6455,63 +6564,29 @@ QuiverFile Viewer::ViewerImpl::ViewerThumbLoader::GetQuiverFile(gulong index)
 
 struct ViewerThumbLoaderSyncData {
 	GtkWidget* iconview;
-	GtkWidget* imageview;
-	Statusbar* statusbar;
-	ImageLoader* imageloader;
 	gulong index;
-	guint width;
-	guint height;
-	gulong start;
-	gulong end;
-	bool is_mapped;
-	bool is_working;
-	GMutex mutex;
-	GCond cond;
-	bool done;
+	bool is_running;
+	Statusbar* statusbar;
+	std::weak_ptr<bool> aliveToken;
 };
 
 static gboolean idle_invalidate_cell_v(gpointer data) {
 	ViewerThumbLoaderSyncData* pData = (ViewerThumbLoaderSyncData*)data;
-	quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(pData->iconview), pData->index);
+	auto alive = pData->aliveToken.lock();
+	if (alive && *alive && pData->iconview && QUIVER_IS_ICON_VIEW(pData->iconview))
+	{
+		quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(pData->iconview), pData->index);
+	}
 	delete pData;
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean idle_get_visible_range_v(gpointer data) {
-	ViewerThumbLoaderSyncData* pData = (ViewerThumbLoaderSyncData*)data;
-	quiver_icon_view_get_visible_range(QUIVER_ICON_VIEW(pData->iconview), &pData->start, &pData->end);
-	g_mutex_lock(&pData->mutex);
-	pData->done = true;
-	g_cond_signal(&pData->cond);
-	g_mutex_unlock(&pData->mutex);
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean idle_get_icon_size_v(gpointer data) {
-	ViewerThumbLoaderSyncData* pData = (ViewerThumbLoaderSyncData*)data;
-	quiver_icon_view_get_icon_size(QUIVER_ICON_VIEW(pData->iconview), &pData->width, &pData->height);
-	g_mutex_lock(&pData->mutex);
-	pData->done = true;
-	g_cond_signal(&pData->cond);
-	g_mutex_unlock(&pData->mutex);
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean idle_is_mapped_v(gpointer data) {
-	ViewerThumbLoaderSyncData* pData = (ViewerThumbLoaderSyncData*)data;
-	pData->is_mapped = gtk_widget_get_mapped(pData->iconview) ? true : false;
-	pData->is_working = pData->imageloader->IsWorking() || quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(pData->imageview));
-	g_mutex_lock(&pData->mutex);
-	pData->done = true;
-	g_cond_signal(&pData->cond);
-	g_mutex_unlock(&pData->mutex);
 	return G_SOURCE_REMOVE;
 }
 
 static gboolean idle_set_is_running_v(gpointer data) {
 	ViewerThumbLoaderSyncData* pData = (ViewerThumbLoaderSyncData*)data;
-	if (pData->statusbar) {
-		if (pData->is_mapped) {
+	auto alive = pData->aliveToken.lock();
+	if (alive && *alive && pData->statusbar)
+	{
+		if (pData->is_running) {
 			pData->statusbar->StartProgressPulse();
 		} else {
 			pData->statusbar->StopProgressPulse();
@@ -6520,23 +6595,14 @@ static gboolean idle_set_is_running_v(gpointer data) {
 	delete pData;
 	return G_SOURCE_REMOVE;
 }
+
 void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
-	ViewerThumbLoaderSyncData syncData;
-	syncData.iconview = m_pViewerImpl->m_pIconView;
-	syncData.imageview = m_pViewerImpl->m_pImageView;
-	syncData.imageloader = &m_pViewerImpl->m_ImageLoader;
-	syncData.done = false;
-	g_mutex_init(&syncData.mutex);
-	g_cond_init(&syncData.cond);
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_is_mapped_v, &syncData, NULL);
-	g_mutex_lock(&syncData.mutex);
-	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
-	g_mutex_unlock(&syncData.mutex); } else { idle_is_mapped_v(&syncData); }
-	bool is_mapped = syncData.is_mapped;
-	bool is_working = syncData.is_working;
-	g_mutex_clear(&syncData.mutex);
-	g_cond_clear(&syncData.cond);
+	if (IsStopped() || !m_pViewerImpl->m_spAlive || !*m_pViewerImpl->m_spAlive)
+		return;
+
+	bool is_mapped = m_bMapped.load(std::memory_order_relaxed);
+	bool is_working = m_pViewerImpl->m_ImageLoader.IsWorking();
 
 	if (is_working)
 	{
@@ -6614,49 +6680,33 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 			m_pViewerImpl->m_ThumbnailCache.AddPixbuf(f.GetURI(),pixbuf);
 			g_object_unref(pixbuf);
 
-			
 			ViewerThumbLoaderSyncData* pInvData = new ViewerThumbLoaderSyncData();
 			pInvData->iconview = m_pViewerImpl->m_pIconView;
 			pInvData->index = item.m_ulIndex;
+			pInvData->aliveToken = m_pViewerImpl->m_spAlive;
 			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_invalidate_cell_v, pInvData, NULL); } else { idle_invalidate_cell_v(pInvData); }
-			
 		}
 	}
 }
 
 void Viewer::ViewerImpl::ViewerThumbLoader::GetVisibleRange(gulong* pulStart, gulong* pulEnd)
 {
-	ViewerThumbLoaderSyncData syncData;
-	syncData.iconview = m_pViewerImpl->m_pIconView;
-	syncData.done = false;
-	g_mutex_init(&syncData.mutex);
-	g_cond_init(&syncData.cond);
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_get_visible_range_v, &syncData, NULL);
-	g_mutex_lock(&syncData.mutex);
-	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
-	g_mutex_unlock(&syncData.mutex); } else { idle_get_visible_range_v(&syncData); }
-	*pulStart = syncData.start;
-	*pulEnd = syncData.end;
-	g_mutex_clear(&syncData.mutex);
-	g_cond_clear(&syncData.cond);
+	if (pulStart) *pulStart = 0;
+	if (pulEnd) *pulEnd = 0;
+	if (IsStopped() || !m_pViewerImpl->m_spAlive || !*m_pViewerImpl->m_spAlive)
+	{
+		return;
+	}
+	if (m_pViewerImpl->m_pIconView && QUIVER_IS_ICON_VIEW(m_pViewerImpl->m_pIconView))
+	{
+		quiver_icon_view_get_visible_range(QUIVER_ICON_VIEW(m_pViewerImpl->m_pIconView), pulStart, pulEnd);
+	}
 }
-
 
 void Viewer::ViewerImpl::ViewerThumbLoader::GetIconSize(guint* puiWidth, guint* puiHeight)
 {
-	ViewerThumbLoaderSyncData syncData;
-	syncData.iconview = m_pViewerImpl->m_pIconView;
-	syncData.done = false;
-	g_mutex_init(&syncData.mutex);
-	g_cond_init(&syncData.cond);
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_get_icon_size_v, &syncData, NULL);
-	g_mutex_lock(&syncData.mutex);
-	while(!syncData.done) g_cond_wait(&syncData.cond, &syncData.mutex);
-	g_mutex_unlock(&syncData.mutex); } else { idle_get_icon_size_v(&syncData); }
-	if (puiWidth) *puiWidth = syncData.width;
-	if (puiHeight) *puiHeight = syncData.height;
-	g_mutex_clear(&syncData.mutex);
-	g_cond_clear(&syncData.cond);
+	if (puiWidth) *puiWidth = m_uiThumbWidth.load(std::memory_order_relaxed);
+	if (puiHeight) *puiHeight = m_uiThumbHeight.load(std::memory_order_relaxed);
 }
 
 gulong Viewer::ViewerImpl::ViewerThumbLoader::GetNumItems()
@@ -6666,9 +6716,12 @@ gulong Viewer::ViewerImpl::ViewerThumbLoader::GetNumItems()
 
 void Viewer::ViewerImpl::ViewerThumbLoader::SetIsRunning(bool bIsRunning)
 {
+	if (IsStopped() || !m_pViewerImpl->m_spAlive || !*m_pViewerImpl->m_spAlive)
+		return;
 	ViewerThumbLoaderSyncData* pData = new ViewerThumbLoaderSyncData();
 	pData->statusbar = m_pViewerImpl->m_StatusbarPtr.get();
-	pData->is_mapped = bIsRunning;
+	pData->is_running = bIsRunning;
+	pData->aliveToken = m_pViewerImpl->m_spAlive;
 	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_set_is_running_v, pData, NULL); } else { idle_set_is_running_v(pData); }
 }
 

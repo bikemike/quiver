@@ -15,11 +15,12 @@ typedef boost::shared_ptr<ExternalTools> ExternalToolsPtr;
 class ExternalTool
 {
 public:
-	ExternalTool(){};
+	ExternalTool() : m_bSupportsMultiple(false), m_bShowOutput(false), m_bShowErrors(false), m_iID(-1) {};
 	ExternalTool(std::string name, std::string tooltip, std::string icon,
 		std::string cmd, bool bSupportsMult, bool bShowOutput, bool bShowErrors) :
 		m_strName(name), m_strTooltip(tooltip), m_strCmd(cmd), m_strIcon(icon),
-		m_bSupportsMultiple(bSupportsMult), m_bShowOutput(bShowOutput), m_bShowErrors(bShowErrors)
+		m_bSupportsMultiple(bSupportsMult), m_bShowOutput(bShowOutput), m_bShowErrors(bShowErrors),
+		m_iID(-1)
 		{};
 
 	~ExternalTool(){};

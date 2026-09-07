@@ -50,6 +50,7 @@ set(QUIVER_CORE_SOURCES
     ExternalToolsDlg.cpp
     ExternalToolAddEditDlg.cpp
     ExternalToolsEventSource.cpp
+    ExternalToolTask.cpp
     RenameDlg.cpp
     RenameTask.cpp
     FileConflictCheck.cpp

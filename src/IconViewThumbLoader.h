@@ -2,6 +2,7 @@
 #define FILE_THUMBNAIL_LOADER_H
 
 #include <pthread.h>
+#include <atomic>
 #include <list>
 #include <gtk/gtk.h>
 #include <string>
@@ -22,6 +23,9 @@ class IconViewThumbLoader
 public:
 	IconViewThumbLoader(gint nThreads);
 	virtual ~IconViewThumbLoader();
+
+	void Stop();
+	bool IsStopped() const { return m_bStopThreads.load(std::memory_order_relaxed); }
 
 	virtual void UpdateList(bool bForce = false);
 	void SetNumCachePages(guint uiNumCachePages);
@@ -48,7 +52,7 @@ private:
 
 	
 	gint                m_iThreads;
-	bool                m_bStopThreads;
+	std::atomic<bool>   m_bStopThreads;
 	ThreadData*         m_pThreadData;
 
 	pthread_t*          m_pThreadIDs;

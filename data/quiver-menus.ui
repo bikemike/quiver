@@ -398,6 +398,10 @@
       <attribute name="label">_Tools</attribute>
       <attribute name="location">tools</attribute>
       <item>
+        <attribute name="label">Task Manager...</attribute>
+        <attribute name="action">quiver.TaskManager</attribute>
+      </item>
+      <item>
         <attribute name="label">Adjust Date...</attribute>
         <attribute name="action">quiver.AdjustDate</attribute>
       </item>
@@ -444,6 +448,10 @@
   </menu>
 
   <menu id="external_tools_menu">
+    <item>
+      <attribute name="label">Task Manager...</attribute>
+      <attribute name="action">quiver.TaskManager</attribute>
+    </item>
     <item>
       <attribute name="label">Adjust Date...</attribute>
       <attribute name="action">quiver.AdjustDate</attribute>

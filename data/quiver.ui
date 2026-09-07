@@ -3,26 +3,35 @@
   <requires lib="gtk" version="4.0" />
   <object class="GtkWindow" id="BookmarkAddEditDialog">
     <property name="title" translatable="1">Add/Edit Bookmark</property>
+    <property name="default-width">600</property>
+    <property name="default-height">400</property>
     <child>
       <object class="GtkBox" id="dialog-vbox6">
-        <property name="spacing">2</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
           <object class="GtkBox" id="hbox12">
             <property name="hexpand">1</property>
-            <property name="spacing">10</property>
+            <property name="vexpand">1</property>
+            <property name="spacing">16</property>
             <child>
               <object class="GtkBox" id="vbox24">
                 <property name="orientation">vertical</property>
                 <property name="width_request">200</property>
+                <property name="spacing">8</property>
                 <child>
                   <object class="GtkBox" id="vbox25">
                     <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
                     <child>
                       <object class="GtkLabel" id="label21">
                         <property name="xalign">0</property>
                         <property name="label" translatable="1">&lt;b&gt;Name&lt;/b&gt;</property>
                         <property name="use_markup">1</property>
-                        <property name="use_underline">1</property>
                       </object>
                     </child>
                     <child>
@@ -35,12 +44,12 @@
                 <child>
                   <object class="GtkBox" id="vbox26">
                     <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
                     <child>
                       <object class="GtkLabel" id="label22">
                         <property name="xalign">0</property>
                         <property name="label" translatable="1">&lt;b&gt;Description&lt;/b&gt;</property>
                         <property name="use_markup">1</property>
-                        <property name="use_underline">1</property>
                       </object>
                     </child>
                     <child>
@@ -54,12 +63,12 @@
                 <child>
                   <object class="GtkBox" id="vbox27">
                     <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
                     <child>
                       <object class="GtkLabel" id="label23">
                         <property name="xalign">0</property>
                         <property name="label" translatable="1">&lt;b&gt;Icon&lt;/b&gt;</property>
                         <property name="use_markup">1</property>
-                        <property name="use_underline">1</property>
                       </object>
                     </child>
                     <child>
@@ -75,8 +84,9 @@
               <object class="GtkBox" id="vbox23">
                 <property name="orientation">vertical</property>
                 <property name="hexpand">1</property>
+                <property name="vexpand">1</property>
                 <property name="width_request">350</property>
-                <property name="spacing">5</property>
+                <property name="spacing">6</property>
                 <child>
                   <object class="GtkLabel" id="label20">
                     <property name="valign">center</property>
@@ -88,7 +98,10 @@
                 </child>
                 <child>
                   <object class="GtkScrolledWindow" id="scrolledwindow2">
+                    <property name="hexpand">1</property>
                     <property name="vexpand">1</property>
+                    <property name="min-content-height">180</property>
+                    <property name="has-frame">1</property>
                     <property name="focusable">1</property>
                     <property name="child">
                       <object class="GtkColumnView" id="bookmark_treeview_locations">
@@ -100,24 +113,25 @@
                 </child>
                 <child>
                   <object class="GtkCheckButton" id="bookmark_checkbutton_recursive">
-                    <property name="label" translatable="1">include subfolders</property>
+                    <property name="label" translatable="1">_Include subfolders</property>
                     <property name="focusable">1</property>
                     <property name="use_underline">1</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkBox" id="hbox13">
-                    <property name="spacing">5</property>
-                    <property name="homogeneous">1</property>
+                    <property name="spacing">6</property>
                     <child>
                       <object class="GtkButton" id="bookmark_button_add">
-                        <property name="label">+</property>
+                        <property name="label" translatable="1">_Add Folder…</property>
+                        <property name="use_underline">1</property>
                         <property name="focusable">1</property>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="bookmark_button_remove">
-                        <property name="label">-</property>
+                        <property name="label" translatable="1">_Remove</property>
+                        <property name="use_underline">1</property>
                         <property name="focusable">1</property>
                       </object>
                     </child>
@@ -132,79 +146,85 @@
   </object>
   <object class="GtkWindow" id="BookmarksDialog">
     <property name="title" translatable="1">Manage Bookmarks</property>
+    <property name="default-width">520</property>
+    <property name="default-height">360</property>
     <child>
       <object class="GtkBox" id="dialog-vbox5">
-        <property name="spacing">2</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
-          <object class="GtkBox" id="vbox16">
-            <property name="orientation">vertical</property>
+          <object class="GtkBox" id="hbox14">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">10</property>
             <property name="hexpand">1</property>
+            <property name="vexpand">1</property>
             <child>
-              <object class="GtkLabel" id="label15">
-                <property name="valign">center</property>
-                <property name="xalign">0</property>
-                <property name="label" translatable="1">&lt;b&gt;Bookmarks&lt;/b&gt;</property>
-                <property name="use_markup">1</property>
-                <property name="justify">fill</property>
+              <object class="GtkScrolledWindow" id="scrolledwindow3">
+                <property name="hexpand">1</property>
+                <property name="vexpand">1</property>
+                <property name="min-content-width">320</property>
+                <property name="min-content-height">220</property>
+                <property name="has-frame">1</property>
+                <property name="focusable">1</property>
+                <property name="child">
+                  <object class="GtkColumnView" id="treeview_bookmarks">
+                    <property name="focusable">1</property>
+                    <property name="show_row_separators">0</property>
+                  </object>
+                </property>
               </object>
             </child>
             <child>
-              <object class="GtkBox" id="hbox14">
-                <property name="vexpand">1</property>
-                <property name="spacing">5</property>
+              <object class="GtkBox" id="vbox17">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <property name="valign">start</property>
                 <child>
-                  <object class="GtkBox" id="vbox17">
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">5</property>
-                    <child>
-                      <object class="GtkButton" id="button_add">
-                        <property name="vexpand">1</property>
-                        <property name="label">+</property>
-                        <property name="focusable">1</property>
-                        <property name="receives_default">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="button_edit">
-                        <property name="vexpand">1</property>
-                        <property name="label">Edit</property>
-                        <property name="focusable">1</property>
-                        <property name="receives_default">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="button_remove">
-                        <property name="vexpand">1</property>
-                        <property name="label">-</property>
-                        <property name="focusable">1</property>
-                        <property name="receives_default">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="button_move_up">
-                        <property name="label">Up</property>
-                        <property name="focusable">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="button_move_down">
-                        <property name="label">Down</property>
-                        <property name="focusable">1</property>
-                      </object>
-                    </child>
+                  <object class="GtkButton" id="button_add">
+                    <property name="label" translatable="1">_Add…</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
+                    <property name="receives_default">1</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkScrolledWindow" id="scrolledwindow3">
-                    <property name="hexpand">1</property>
+                  <object class="GtkButton" id="button_edit">
+                    <property name="label" translatable="1">_Edit…</property>
+                    <property name="use_underline">1</property>
                     <property name="focusable">1</property>
-                    <property name="child">
-                      <object class="GtkColumnView" id="treeview_bookmarks">
-                        <property name="width_request">350</property>
-                        <property name="focusable">1</property>
-                        <property name="show_row_separators">0</property>
-                      </object>
-                    </property>
+                    <property name="receives_default">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="button_remove">
+                    <property name="label" translatable="1">_Remove</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
+                    <property name="receives_default">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSeparator" id="bookmarks_sep">
+                    <property name="margin-top">4</property>
+                    <property name="margin-bottom">4</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="button_move_up">
+                    <property name="label" translatable="1">Move _Up</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="button_move_down">
+                    <property name="label" translatable="1">Move _Down</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
                   </object>
                 </child>
               </object>
@@ -216,8 +236,15 @@
   </object>
   <object class="GtkWindow" id="ExternalToolAddEditDialog">
     <property name="title" translatable="1">External Tool Editor</property>
+    <property name="default-width">440</property>
     <child>
       <object class="GtkBox" id="dialog-vbox3">
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
           <object class="GtkBox" id="vbox12">
             <property name="orientation">vertical</property>
@@ -226,6 +253,7 @@
             <child>
               <object class="GtkBox" id="vbox15">
                 <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
                 <child>
                   <object class="GtkLabel" id="label53">
                     <property name="valign">center</property>
@@ -245,6 +273,7 @@
             <child>
               <object class="GtkBox" id="vbox14">
                 <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
                 <property name="valign">center</property>
                 <child>
                   <object class="GtkLabel" id="label52">
@@ -265,6 +294,7 @@
             <child>
               <object class="GtkBox" id="vbox22">
                 <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
                 <property name="valign">center</property>
                 <child>
                   <object class="GtkLabel" id="label29">
@@ -285,6 +315,7 @@
             <child>
               <object class="GtkBox" id="vbox28">
                 <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
                 <property name="valign">center</property>
                 <property name="sensitive">0</property>
                 <child>
@@ -306,40 +337,9 @@
             <child>
               <object class="GtkCheckButton" id="external_tools_edit_multiple">
                 <property name="valign">center</property>
-                <property name="label" translatable="1">command supports multiple files</property>
+                <property name="label" translatable="1">Command supports _multiple files</property>
                 <property name="focusable">1</property>
                 <property name="use_underline">1</property>
-                <property name="active">1</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox" id="vbox13">
-                <property name="orientation">vertical</property>
-                <property name="spacing">5</property>
-                <child>
-                  <object class="GtkCheckButton" id="external_tools_edit_show_output">
-                    <property name="valign">center</property>
-                    <property name="label" translatable="1">show command output (stdout/stderr)</property>
-                    <property name="focusable">1</property>
-                    <property name="use_underline">1</property>
-                    <property name="active">1</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkBox" id="alignment9">
-                    <property name="valign">center</property>
-                    <child>
-                      <object class="GtkCheckButton" id="external_tools_edit_show_errors">
-                        <property name="label" translatable="1">only if errors occur</property>
-                        <property name="focusable">1</property>
-                        <property name="use_underline">1</property>
-                        <property name="active">1</property>
-                      </object>
-                    </child>
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">0</property>
-                  </object>
-                </child>
               </object>
             </child>
           </object>
@@ -349,79 +349,85 @@
   </object>
   <object class="GtkWindow" id="ExternalToolsDialog">
     <property name="title" translatable="1">External Tools</property>
+    <property name="default-width">520</property>
+    <property name="default-height">360</property>
     <child>
       <object class="GtkBox" id="dialog-vbox10">
-        <property name="spacing">2</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
-          <object class="GtkBox" id="vbox19">
-            <property name="orientation">vertical</property>
+          <object class="GtkBox" id="hbox11">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">10</property>
             <property name="hexpand">1</property>
+            <property name="vexpand">1</property>
             <child>
-              <object class="GtkLabel" id="label27">
-                <property name="valign">center</property>
-                <property name="xalign">0</property>
-                <property name="label" translatable="1">&lt;b&gt;External Tools&lt;/b&gt;</property>
-                <property name="use_markup">1</property>
-                <property name="justify">fill</property>
+              <object class="GtkScrolledWindow" id="scrolledwindow5">
+                <property name="hexpand">1</property>
+                <property name="vexpand">1</property>
+                <property name="min-content-width">320</property>
+                <property name="min-content-height">220</property>
+                <property name="has-frame">1</property>
+                <property name="focusable">1</property>
+                <property name="child">
+                  <object class="GtkColumnView" id="externaltools_treeview">
+                    <property name="focusable">1</property>
+                    <property name="show_row_separators">0</property>
+                  </object>
+                </property>
               </object>
             </child>
             <child>
-              <object class="GtkBox" id="hbox11">
-                <property name="vexpand">1</property>
-                <property name="spacing">5</property>
+              <object class="GtkBox" id="vbox21">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <property name="valign">start</property>
                 <child>
-                  <object class="GtkBox" id="vbox21">
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">5</property>
-                    <child>
-                      <object class="GtkButton" id="externaltools_button_add">
-                        <property name="vexpand">1</property>
-                        <property name="label">+</property>
-                        <property name="focusable">1</property>
-                        <property name="receives_default">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="externaltools_button_edit">
-                        <property name="vexpand">1</property>
-                        <property name="label">Edit</property>
-                        <property name="focusable">1</property>
-                        <property name="receives_default">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="externaltools_button_remove">
-                        <property name="vexpand">1</property>
-                        <property name="label">-</property>
-                        <property name="focusable">1</property>
-                        <property name="receives_default">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="externaltools_button_move_up">
-                        <property name="label">Up</property>
-                        <property name="focusable">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="externaltools_button_move_down">
-                        <property name="label">Down</property>
-                        <property name="focusable">1</property>
-                      </object>
-                    </child>
+                  <object class="GtkButton" id="externaltools_button_add">
+                    <property name="label" translatable="1">_Add…</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
+                    <property name="receives_default">1</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkScrolledWindow" id="scrolledwindow5">
-                    <property name="hexpand">1</property>
+                  <object class="GtkButton" id="externaltools_button_edit">
+                    <property name="label" translatable="1">_Edit…</property>
+                    <property name="use_underline">1</property>
                     <property name="focusable">1</property>
-                    <property name="child">
-                      <object class="GtkColumnView" id="externaltools_treeview">
-                        <property name="width_request">350</property>
-                        <property name="focusable">1</property>
-                        <property name="show_row_separators">0</property>
-                      </object>
-                    </property>
+                    <property name="receives_default">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="externaltools_button_remove">
+                    <property name="label" translatable="1">_Remove</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
+                    <property name="receives_default">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSeparator" id="externaltools_sep">
+                    <property name="margin-top">4</property>
+                    <property name="margin-bottom">4</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="externaltools_button_move_up">
+                    <property name="label" translatable="1">Move _Up</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="externaltools_button_move_down">
+                    <property name="label" translatable="1">Move _Down</property>
+                    <property name="use_underline">1</property>
+                    <property name="focusable">1</property>
                   </object>
                 </child>
               </object>
@@ -433,27 +439,85 @@
   </object>
   <object class="GtkWindow" id="RenameDialog">
     <property name="title" translatable="1">Rename</property>
+    <property name="default-width">560</property>
+    <property name="default-height">520</property>
     <child>
       <object class="GtkBox" id="dialog-vbox12">
-        <property name="spacing">2</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
           <object class="GtkGrid" id="table4">
-            <property name="column-spacing">5</property>
-            <property name="row-spacing">3</property>
+            <property name="column-spacing">12</property>
+            <property name="row-spacing">8</property>
             <child>
-              <placeholder />
-            </child>
-            <child>
-              <object class="GtkBox" id="rename_align_source_folder">
-                <child>
-                  <placeholder />
-                </child>
-                <property name="orientation">vertical</property>
-                <property name="spacing">0</property>
+              <object class="GtkLabel" id="label_source_folder">
+                <property name="xalign">0</property>
+                <property name="label" translatable="1">&lt;b&gt;Folder:&lt;/b&gt;</property>
+                <property name="use_markup">1</property>
                 <layout>
                   <property name="column">0</property>
                   <property name="row">0</property>
-                  <property name="column-span">2</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="rename_align_source_folder">
+                <property name="orientation">horizontal</property>
+                <layout>
+                  <property name="column">1</property>
+                  <property name="row">0</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="label39">
+                <property name="xalign">0</property>
+                <property name="label" translatable="1">&lt;b&gt;Template:&lt;/b&gt;</property>
+                <property name="use_markup">1</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">1</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkEntry" id="rename_entry_template">
+                <property name="focusable">1</property>
+                <property name="hexpand">1</property>
+                <property name="text" translatable="1">%Y-%m-%d %H.%M.%S-##</property>
+                <layout>
+                  <property name="column">1</property>
+                  <property name="row">1</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="label_tempate_options">
+                <property name="xalign">0</property>
+                <property name="label" translatable="1">Template variables:
+%Y = Year, %m = month, %d = day, %H = hour, %M = minute, %S = second
+# = count (more # symbols will cause zero-padding)</property>
+                <attributes>
+                  <attribute name="scale" value="0.8" />
+                </attributes>
+                <layout>
+                  <property name="column">1</property>
+                  <property name="row">2</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="label34">
+                <property name="xalign">0</property>
+                <property name="label" translatable="1">&lt;b&gt;Example:&lt;/b&gt;</property>
+                <property name="use_markup">1</property>
+                <layout>
+                  <property name="column">0</property>
+                  <property name="row">3</property>
                 </layout>
               </object>
             </child>
@@ -463,60 +527,8 @@
                 <property name="use_markup">1</property>
                 <property name="ellipsize">start</property>
                 <layout>
-                  <property name="column">0</property>
-                  <property name="row">4</property>
-                  <property name="column-span">2</property>
-                </layout>
-                <property name="margin-start">10</property>
-                <property name="margin-end">10</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="label34">
-                <property name="xalign">0</property>
-                <property name="label" translatable="1">Example Output:</property>
-                <layout>
-                  <property name="column">0</property>
+                  <property name="column">1</property>
                   <property name="row">3</property>
-                  <property name="column-span">2</property>
-                </layout>
-                <property name="margin-top">10</property>
-                <property name="margin-bottom">10</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkEntry" id="rename_entry_template">
-                <property name="focusable">1</property>
-                <property name="text" translatable="1">%Y-%m-%d %H.%M.%S-##</property>
-                <layout>
-                  <property name="column">1</property>
-                  <property name="row">1</property>
-                </layout>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="label39">
-                <property name="xalign">0</property>
-                <property name="label" translatable="1">Template</property>
-                <layout>
-                  <property name="column">0</property>
-                  <property name="row">1</property>
-                </layout>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="label_tempate_options">
-                <property name="xalign">0</property>
-                <property name="label" translatable="1">Template variables:
-%Y = Year, %m  = month, %d = day, 
-%H = hour, %M = minute, %S = second
-# = count (more # symbols will cause padding)</property>
-                <attributes>
-                  <attribute name="scale" value="0.75" />
-                </attributes>
-                <layout>
-                  <property name="column">1</property>
-                  <property name="row">2</property>
                 </layout>
               </object>
             </child>
@@ -571,15 +583,23 @@
   </object>
   <object class="GtkWindow" id="AdjustDateDialog">
     <property name="title" translatable="1">Adjust Date</property>
+    <property name="resizable">0</property>
     <child>
       <object class="GtkBox" id="dialog-vbox4">
-        <property name="spacing">2</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
           <object class="GtkBox" id="vbox1">
             <property name="orientation">vertical</property>
+            <property name="spacing">12</property>
             <child>
               <object class="GtkBox" id="vbox5">
                 <property name="orientation">vertical</property>
+                <property name="spacing">10</property>
                 <child>
                   <object class="GtkLabel" id="label9">
                     <property name="xalign">0</property>
@@ -589,13 +609,16 @@
                 </child>
                 <child>
                   <object class="GtkBox" id="alignment4">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">10</property>
                     <child>
                       <object class="GtkBox" id="vbox7">
                         <property name="orientation">vertical</property>
-                        <property name="spacing">5</property>
+                        <property name="spacing">10</property>
                         <child>
                           <object class="GtkBox" id="vbox8">
                             <property name="orientation">vertical</property>
+                            <property name="spacing">6</property>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_radio_adjust_date">
                                 <property name="label" translatable="1">Adjust date by:</property>
@@ -605,84 +628,24 @@
                             </child>
                             <child>
                               <object class="GtkBox" id="alignment5">
-                                <property name="vexpand">1</property>
+                                <property name="orientation">vertical</property>
+                                <property name="margin-start">20</property>
                                 <child>
                                   <object class="GtkGrid" id="table1">
-                                    <property name="column-spacing">5</property>
-                                    <property name="row-spacing">5</property>
+                                    <property name="column-spacing">8</property>
+                                    <property name="row-spacing">6</property>
                                     <property name="column-homogeneous">True</property>
-                                    <child>
-                                      <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_minutes">
-                                        <property name="focusable">1</property>
-                                        <property name="adjustment">adjustment3</property>
-                                        <property name="snap_to_ticks">1</property>
-                                        <property name="numeric">1</property>
-                                        <layout>
-                                          <property name="column">2</property>
-                                          <property name="row">1</property>
-                                        </layout>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_seconds">
-                                        <property name="focusable">1</property>
-                                        <property name="adjustment">adjustment4</property>
-                                        <property name="snap_to_ticks">1</property>
-                                        <property name="numeric">1</property>
-                                        <layout>
-                                          <property name="column">4</property>
-                                          <property name="row">1</property>
-                                        </layout>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="label14">
-                                        <property name="xalign">0</property>
-                                        <property name="label" translatable="1">seconds</property>
-                                        <layout>
-                                          <property name="column">5</property>
-                                          <property name="row">1</property>
-                                        </layout>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="label13">
-                                        <property name="xalign">0</property>
-                                        <property name="label" translatable="1">minutes</property>
-                                        <layout>
-                                          <property name="column">3</property>
-                                          <property name="row">1</property>
-                                        </layout>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="label12">
-                                        <property name="xalign">0</property>
-                                        <property name="label" translatable="1">hours</property>
-                                        <layout>
-                                          <property name="column">1</property>
-                                          <property name="row">1</property>
-                                        </layout>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_hours">
-                                        <property name="focusable">1</property>
-                                        <property name="adjustment">adjustment5</property>
-                                        <property name="snap_to_ticks">1</property>
-                                        <property name="numeric">1</property>
-                                        <layout>
-                                          <property name="column">0</property>
-                                          <property name="row">1</property>
-                                        </layout>
-                                      </object>
-                                    </child>
+                                    <property name="row-homogeneous">True</property>
                                     <child>
                                       <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_years">
                                         <property name="focusable">1</property>
                                         <property name="adjustment">adjustment6</property>
                                         <property name="snap_to_ticks">1</property>
                                         <property name="numeric">1</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">0</property>
+                                        </layout>
                                       </object>
                                     </child>
                                     <child>
@@ -710,7 +673,7 @@
                                     <child>
                                       <object class="GtkLabel" id="label10">
                                         <property name="xalign">0</property>
-                                        <property name="label" translatable="1">days </property>
+                                        <property name="label" translatable="1">days</property>
                                         <layout>
                                           <property name="column">3</property>
                                           <property name="row">0</property>
@@ -718,11 +681,74 @@
                                         </layout>
                                       </object>
                                     </child>
-                                    <property name="row-homogeneous">True</property>
+                                    <child>
+                                      <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_hours">
+                                        <property name="focusable">1</property>
+                                        <property name="adjustment">adjustment5</property>
+                                        <property name="snap_to_ticks">1</property>
+                                        <property name="numeric">1</property>
+                                        <layout>
+                                          <property name="column">0</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="label12">
+                                        <property name="xalign">0</property>
+                                        <property name="label" translatable="1">hours</property>
+                                        <layout>
+                                          <property name="column">1</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_minutes">
+                                        <property name="focusable">1</property>
+                                        <property name="adjustment">adjustment3</property>
+                                        <property name="snap_to_ticks">1</property>
+                                        <property name="numeric">1</property>
+                                        <layout>
+                                          <property name="column">2</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="label13">
+                                        <property name="xalign">0</property>
+                                        <property name="label" translatable="1">minutes</property>
+                                        <layout>
+                                          <property name="column">3</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkSpinButton" id="adjustdatedlg_spinbutton_seconds">
+                                        <property name="focusable">1</property>
+                                        <property name="adjustment">adjustment4</property>
+                                        <property name="snap_to_ticks">1</property>
+                                        <property name="numeric">1</property>
+                                        <layout>
+                                          <property name="column">4</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="label14">
+                                        <property name="xalign">0</property>
+                                        <property name="label" translatable="1">seconds</property>
+                                        <layout>
+                                          <property name="column">5</property>
+                                          <property name="row">1</property>
+                                        </layout>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
-                                <property name="orientation">vertical</property>
-                                <property name="spacing">0</property>
                               </object>
                             </child>
                           </object>
@@ -730,6 +756,7 @@
                         <child>
                           <object class="GtkBox" id="vbox9">
                             <property name="orientation">vertical</property>
+                            <property name="spacing">6</property>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_radio_set_date">
                                 <property name="label" translatable="1">Set date to (YYYY:MM:DD HH:MM:SS):</property>
@@ -739,21 +766,19 @@
                             </child>
                             <child>
                               <object class="GtkBox" id="alignment7">
+                                <property name="orientation">vertical</property>
+                                <property name="margin-start">20</property>
                                 <child>
                                   <object class="GtkEntry" id="adjustdatedlg_entry_date">
                                     <property name="focusable">1</property>
                                   </object>
                                 </child>
-                                <property name="orientation">vertical</property>
-                                <property name="spacing">0</property>
                               </object>
                             </child>
                           </object>
                         </child>
                       </object>
                     </child>
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">0</property>
                   </object>
                 </child>
               </object>
@@ -764,10 +789,10 @@
                 <child>
                   <object class="GtkBox" id="vbox2">
                     <property name="orientation">vertical</property>
-                    <property name="spacing">5</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-top">6</property>
                     <child>
                       <object class="GtkLabel" id="label8">
-                        <property name="vexpand">1</property>
                         <property name="xalign">0</property>
                         <property name="label" translatable="1">&lt;b&gt;Modify the following fields:&lt;/b&gt;</property>
                         <property name="use_markup">1</property>
@@ -775,13 +800,14 @@
                     </child>
                     <child>
                       <object class="GtkBox" id="alignment2">
-                        <property name="vexpand">1</property>
+                        <property name="orientation">vertical</property>
+                        <property name="margin-start">20</property>
                         <child>
                           <object class="GtkBox" id="vbox3">
                             <property name="orientation">vertical</property>
+                            <property name="spacing">6</property>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_mtime">
-                                <property name="vexpand">1</property>
                                 <property name="label" translatable="1">File Modification TIme</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
@@ -789,7 +815,6 @@
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_exif_date">
-                                <property name="vexpand">1</property>
                                 <property name="label" translatable="1">EXIF Date and Time</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
@@ -797,7 +822,6 @@
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_exif_date_orig">
-                                <property name="vexpand">1</property>
                                 <property name="label" translatable="1">EXIF Date and Time (original)</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
@@ -805,7 +829,6 @@
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_exif_date_digitized">
-                                <property name="vexpand">1</property>
                                 <property name="label" translatable="1">EXIF Date and Time (digitized)</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
@@ -813,8 +836,6 @@
                             </child>
                           </object>
                         </child>
-                        <property name="orientation">vertical</property>
-                        <property name="spacing">0</property>
                       </object>
                     </child>
                   </object>
@@ -841,15 +862,20 @@
     <property name="title" translatable="1">Organize</property>
     <child>
       <object class="GtkBox" id="dialog-vbox8">
-        <property name="spacing">2</property>
+        <property name="orientation">vertical</property>
+        <property name="spacing">12</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
         <child>
           <object class="GtkBox" id="vbox20">
             <property name="orientation">vertical</property>
             <property name="spacing">10</property>
             <child>
               <object class="GtkGrid" id="table3">
-                <property name="column-spacing">5</property>
-                <property name="row-spacing">3</property>
+                <property name="column-spacing">12</property>
+                <property name="row-spacing">8</property>
                 <child>
                   <placeholder />
                 </child>

@@ -80,8 +80,7 @@ static void location_item_finalize (GObject* object)
 {
 	LocationItem* item = LOCATION_ITEM(object);
 	g_free(item->uri);
-	G_OBJECT_CLASS(g_type_class_peek_parent(
-		G_OBJECT_GET_CLASS(object)))->finalize(object);
+	G_OBJECT_CLASS(location_item_parent_class)->finalize(object);
 }
 
 static void location_item_class_init (LocationItemClass* klass)
@@ -104,44 +103,33 @@ static LocationItem* location_item_new (int index, const gchar* uri)
 	return item;
 }
 
-static void location_edited (GtkEditableLabel* editable, GParamSpec* pspec,
-	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv);
-static void location_text_setup (GtkListItem* list_item, gpointer user_data)
+static void location_text_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
 {
-	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv =
-		static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
-	GtkWidget* editable = gtk_editable_label_new(NULL);
-	gtk_widget_set_hexpand(editable, TRUE);
-	g_signal_connect(editable, "notify::text",
-		G_CALLBACK(location_edited), priv);
-	gtk_list_item_set_child(list_item, editable);
+	(void)factory; (void)user_data;
+	GtkWidget* label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
+	gtk_widget_set_hexpand(label, TRUE);
+	gtk_list_item_set_child(list_item, label);
 }
 
-static void location_text_bind (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void location_text_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{
+	(void)factory; (void)user_data;
 	LocationItem* item = LOCATION_ITEM(gtk_list_item_get_item(list_item));
-	GtkWidget* editable = gtk_list_item_get_child(list_item);
-	g_object_set_data(G_OBJECT(editable), "location-index",
-		GINT_TO_POINTER(item->index));
-	gtk_editable_set_text(GTK_EDITABLE(editable), item->uri);
-}
-
-static void location_edited (GtkEditableLabel* editable, GParamSpec* pspec,
-	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv)
-{ (void)pspec;
-	int index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(editable), "location-index"));
-	if (index >= 0 && (size_t)index < priv->m_vectURIs.size())
+	GtkWidget* label = gtk_list_item_get_child(list_item);
+	if (!item)
 	{
-		priv->m_vectURIs[index] = gtk_editable_get_text(GTK_EDITABLE(editable));
+		gtk_label_set_text(GTK_LABEL(label), "");
+		return;
 	}
-	priv->UpdateUI();
+	gtk_label_set_text(GTK_LABEL(label), item->uri ? item->uri : "");
 }
 
-static GtkListItemFactory* location_column_factory (
-	BookmarkAddEditDlg::BookmarkAddEditDlgPriv* priv)
+static GtkListItemFactory* location_column_factory ()
 {
 	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
-	g_signal_connect(factory, "setup", G_CALLBACK(location_text_setup), priv);
+	g_signal_connect(factory, "setup", G_CALLBACK(location_text_setup), NULL);
 	g_signal_connect(factory, "bind", G_CALLBACK(location_text_bind), NULL);
 	return factory;
 }
@@ -206,7 +194,7 @@ bool BookmarkAddEditDlg::Cancelled() const
 // prototypes
 static void  on_clicked (GtkButton *button, gpointer user_data);
 static void  on_toggled (GtkCheckButton *button, gpointer user_data);
-static void selection_changed (GtkSelectionModel* selection, gpointer user_data);
+static void selection_changed (GtkSelectionModel* selection, guint position, guint n_items, gpointer user_data);
 
 
 BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(Bookmark b, BookmarkAddEditDlg *parent) :
@@ -234,16 +222,17 @@ BookmarkAddEditDlg::BookmarkAddEditDlgPriv::BookmarkAddEditDlgPriv(Bookmark b, B
 
 BookmarkAddEditDlg::BookmarkAddEditDlgPriv::~BookmarkAddEditDlgPriv()
 {
+	if (NULL != m_pWidget)
+	{
+		gtk_window_destroy(GTK_WINDOW(m_pWidget));
+		m_pWidget = NULL;
+	}
 	if (NULL != m_pSelectionLocations)
 	{
 		g_object_unref(m_pSelectionLocations);
 		m_pSelectionLocations = NULL;
 	}
-	if (NULL != m_pListStoreLocations)
-	{
-		g_object_unref(m_pListStoreLocations);
-		m_pListStoreLocations = NULL;
-	}
+	m_pListStoreLocations = NULL;
 	if (NULL != m_pGtkBuilder)
 	{
 		g_object_unref(m_pGtkBuilder);
@@ -262,8 +251,7 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 
 		m_pButtonCancel          = GTK_BUTTON( gtk_button_new_with_mnemonic("_Cancel") );
 		m_pButtonOk              = GTK_BUTTON( gtk_button_new_with_mnemonic("_OK") );
-
-
+		gtk_widget_add_css_class(GTK_WIDGET(m_pButtonOk), "suggested-action");
 
 		if (m_pWidget)
 		{
@@ -284,7 +272,8 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 
 			GtkColumnViewColumn* column =
 				gtk_column_view_column_new("bookmark",
-					location_column_factory(this));
+					location_column_factory());
+			gtk_column_view_column_set_expand(column, TRUE);
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewLocations), column);
 		}
 
@@ -319,6 +308,9 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::LoadWidgets()
 
 void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::SelectionChanged()
 {
+	if (!m_pSelectionLocations || !m_pListStoreLocations || !m_pButtonRemove)
+		return;
+
 	GtkSelectionModel* sel = GTK_SELECTION_MODEL(m_pSelectionLocations);
 	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pListStoreLocations));
 	guint selection_count = 0;
@@ -369,12 +361,12 @@ void BookmarkAddEditDlg::BookmarkAddEditDlgPriv::ConnectSignals()
 	{
 		g_signal_connect(m_pWidget, "close-request",
 			G_CALLBACK(+[](GtkWidget* widget, gpointer user_data) -> gboolean {
-				(void)widget;
 				BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv =
 					static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
 				priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
 				priv->m_bRunDone = true;
-				return FALSE;
+				gtk_widget_set_visible(widget, FALSE);
+				return TRUE;
 			}), this);
 
 		g_signal_connect(m_pToggleRecursive,
@@ -406,20 +398,20 @@ static void  on_toggled (GtkCheckButton *togglebutton, gpointer user_data)
 }
 
 static GMainLoop *s_bookmark_loop = NULL;
-static BookmarkAddEditDlg::BookmarkAddEditDlgPriv *s_bookmark_loop_priv = NULL;
 
 static void on_folder_selected(GObject *source, GAsyncResult *result, gpointer user_data)
 {
-	(void)user_data;
+	BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv =
+		static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
 	GtkFileDialog *filedialog = GTK_FILE_DIALOG(source);
 	GError *error = NULL;
 	GFile *folder = gtk_file_dialog_select_folder_finish(filedialog, result, &error);
 	if (folder != NULL)
 	{
 		char* uri = g_file_get_uri(folder);
-		s_bookmark_loop_priv->m_vectURIs.push_back(std::string(uri));
+		priv->m_vectURIs.push_back(std::string(uri));
 		g_free(uri);
-		s_bookmark_loop_priv->UpdateUI();
+		priv->UpdateUI();
 		g_object_unref(folder);
 	}
 	else if (error != NULL)
@@ -457,9 +449,8 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 		gtk_file_dialog_set_title(filedialog, "Select Folder");
 
 		s_bookmark_loop = g_main_loop_new(NULL, FALSE);
-		gtk_file_dialog_select_folder(filedialog, NULL, NULL,
+		gtk_file_dialog_select_folder(filedialog, GTK_WINDOW(priv->m_pWidget), NULL,
 			on_folder_selected, priv);
-		s_bookmark_loop_priv = priv;
 		g_main_loop_run(s_bookmark_loop);
 		g_main_loop_unref(s_bookmark_loop);
 		s_bookmark_loop = NULL;
@@ -482,18 +473,26 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	{
 		priv->m_iRunResponse = GTK_RESPONSE_OK;
 		priv->m_bRunDone = true;
+		gtk_widget_set_visible(priv->m_pWidget, FALSE);
 	}
 	else if (button == priv->m_pButtonCancel)
 	{
 		priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
 		priv->m_bRunDone = true;
+		gtk_widget_set_visible(priv->m_pWidget, FALSE);
 	}
 }
 
-static void selection_changed (GtkSelectionModel* selection, gpointer user_data)
-{ (void)selection; 
+static void selection_changed (GtkSelectionModel* selection, guint position, guint n_items, gpointer user_data)
+{
+	(void)selection;
+	(void)position;
+	(void)n_items;
 	BookmarkAddEditDlg::BookmarkAddEditDlgPriv *priv = static_cast<BookmarkAddEditDlg::BookmarkAddEditDlgPriv*>(user_data);
-	priv->SelectionChanged();
+	if (priv)
+	{
+		priv->SelectionChanged();
+	}
 }
 
 

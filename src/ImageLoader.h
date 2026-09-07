@@ -2,7 +2,7 @@
 #define FILE_IMAGELOADER_H
 
 #include <pthread.h>
-
+#include <atomic>
 #include <string>
 #include <list>
 #include <iostream>
@@ -98,7 +98,7 @@ private:
 	Command m_Command;
 	
 	bool m_bStopThread;
-	bool m_bWorking;
+	std::atomic<bool> m_bWorking;
 	int m_iLoadOrientation;
 	bool m_bQuickPreview;
 };

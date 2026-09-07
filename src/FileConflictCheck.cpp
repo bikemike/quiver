@@ -190,8 +190,7 @@ static void conflict_item_finalize (GObject* object)
 	g_free(item->src_name);
 	g_free(item->dst_name);
 	g_free(item->conflict_with);
-	G_OBJECT_CLASS(g_type_class_peek_parent(
-		G_OBJECT_GET_CLASS(object)))->finalize(object);
+	G_OBJECT_CLASS(conflict_item_parent_class)->finalize(object);
 }
 
 static void conflict_item_class_init (ConflictItemClass* klass)
@@ -217,8 +216,8 @@ static ConflictItem* conflict_item_new (const gchar* src, const gchar* dst,
 	return item;
 }
 
-static void conflict_row_setup (GtkListItem* list_item, gpointer user_data)
-{ (void)user_data;
+static void conflict_row_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
 	GtkWidget* label = gtk_label_new(NULL);
 	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
 	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
@@ -226,11 +225,16 @@ static void conflict_row_setup (GtkListItem* list_item, gpointer user_data)
 	gtk_list_item_set_child(list_item, label);
 }
 
-static void conflict_row_bind (GtkListItem* list_item, gpointer user_data)
-{
+static void conflict_row_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory;
 	int iCol = GPOINTER_TO_INT(user_data);
 	ConflictItem* item = CONFLICT_ITEM(gtk_list_item_get_item(list_item));
 	GtkWidget* label = gtk_list_item_get_child(list_item);
+	if (!item)
+	{
+		gtk_label_set_text(GTK_LABEL(label), "");
+		return;
+	}
 	gboolean bConflicted = (NULL != item->conflict_with && '\0' != item->conflict_with[0]);
 	const char* szText = NULL;
 	switch (iCol)
@@ -239,12 +243,12 @@ static void conflict_row_bind (GtkListItem* list_item, gpointer user_data)
 		case 1: szText = item->dst_name; break;
 		default: szText = bConflicted ? item->conflict_with : "—"; break;
 	}
-	gtk_label_set_text(GTK_LABEL(label), szText);
+	gtk_label_set_text(GTK_LABEL(label), szText ? szText : "");
 	gtk_widget_set_margin_end(label, 6);
 	gtk_widget_remove_css_class(GTK_WIDGET(label), "dim-label");
 	if (bConflicted)
 	{
-		gchar* esc = g_markup_escape_text(szText, -1);
+		gchar* esc = g_markup_escape_text(szText ? szText : "", -1);
 		gchar* markup = g_strdup_printf("<span foreground=\"#e01b24\">%s</span>", esc);
 		gtk_label_set_markup(GTK_LABEL(label), markup);
 		g_free(markup);
@@ -272,12 +276,17 @@ void FileConflictCheck::ShowResultsDialog(GtkWindow* pParent,
 	if (pParent)
 		gtk_window_set_transient_for(GTK_WINDOW(dialog), pParent);
 
-	GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+	GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+	gtk_widget_set_margin_start(content, 16);
+	gtk_widget_set_margin_end(content, 16);
+	gtk_widget_set_margin_top(content, 16);
+	gtk_widget_set_margin_bottom(content, 16);
 	gtk_window_set_child(GTK_WINDOW(dialog), content);
 
 	GtkWidget* scrolled = gtk_scrolled_window_new();
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
 		GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(scrolled), TRUE);
 	gtk_widget_set_halign(scrolled, GTK_ALIGN_FILL);
 	gtk_widget_set_valign(scrolled, GTK_ALIGN_FILL);
 	gtk_widget_set_hexpand(scrolled, TRUE);
@@ -296,10 +305,7 @@ void FileConflictCheck::ShowResultsDialog(GtkWindow* pParent,
 	}
 
 	GtkSingleSelection* sel = gtk_single_selection_new(G_LIST_MODEL(store));
-	g_object_unref(store);
-
 	GtkWidget* view = gtk_column_view_new(GTK_SELECTION_MODEL(sel));
-	g_object_unref(sel);
 
 	static const char* szTitles[] = { "Original Name", "New Name", "Conflicts With" };
 	for (int c = 0 ; c < 3 ; c++)

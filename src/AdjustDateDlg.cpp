@@ -219,6 +219,7 @@ void AdjustDateDlg::AdjustDateDlgPriv::LoadWidgets()
 	m_pButtonOK               = gtk_button_new_with_mnemonic("_OK");
 	if (m_pDialogAdjustDate)
 	{
+		gtk_window_set_resizable(GTK_WINDOW(m_pDialogAdjustDate), FALSE);
 		GtkHeaderBar* hbar = GTK_HEADER_BAR(gtk_header_bar_new());
 		gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), TRUE);
 		gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pButtonOK));

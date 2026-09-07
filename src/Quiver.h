@@ -74,6 +74,8 @@ public:
 private:
 	QuiverImplPtr m_QuiverImplPtr;
 	bool m_bClosing;
+	guint m_iIdleInitID;
+	guint m_iCloseIdleID;
 
 };
 
