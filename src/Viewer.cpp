@@ -124,8 +124,8 @@ static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data
 static void viewer_speed_toggle_popover_cb(gpointer user_data, GtkWidget *widget);
 static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user_data);
 static void viewer_snapshot_button_clicked_cb(GtkButton *button, gpointer user_data);
-static void viewer_skip_back_cb(gpointer user_data);
-static void viewer_skip_fwd_cb(gpointer user_data);
+static void viewer_video_rw_cb(gpointer user_data);
+static void viewer_video_ff_cb(gpointer user_data);
 static void viewer_frame_step_back_cb(gpointer user_data);
 static void viewer_frame_step_fwd_cb(gpointer user_data);
 
@@ -162,6 +162,10 @@ static void attach_viewer_input_controllers(GtkWidget *widget, gpointer user_dat
 static gboolean timeout_play_position (gpointer data);
 static gboolean timeout_event_motion_notify (gpointer user_data);
 static void set_control_visible(GtkWidget* w, bool visible);
+static void viewer_set_controls_visible(Viewer::ViewerImpl *p, bool visible);
+static void viewer_controls_show(Viewer::ViewerImpl *p);
+static void viewer_set_controls_opacity(Viewer::ViewerImpl *p, double opacity);
+static void viewer_set_idle_cursor(Viewer::ViewerImpl *p, bool hidden);
 
 static gchar* gst_time_format(gint64 time);
 
@@ -537,6 +541,9 @@ public:
 			set_control_visible(m_pVolumeButton, true);
 			set_control_visible(m_pVideoOptionsBtn, true);
 			set_control_visible(m_pFullscreenBtn, true);
+			/* the fade-in below animates opacity, so first make the bars
+			 * visible (they may still be hidden from a prior auto-hide) */
+			viewer_controls_show(this);
 			StartControlsFade(true);
 
 			m_iTimeoutPlayProgress = g_timeout_add(200,timeout_play_position,this);
@@ -552,6 +559,8 @@ public:
 			}
 			CancelControlsFade();
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start");
+			/* a pause (click or keyboard) must not leave the pointer hidden */
+			viewer_set_idle_cursor(this, false);
 		}
 
 		UpdateFilmstripForPlayback();
@@ -622,6 +631,7 @@ public:
 	GtkWidget *m_pNavigationControl;
 
 	GtkWidget* m_pMediaControls;
+	GtkWidget* m_pTransportRow;   /* [rewind][play][ff] floating at the center of the video */
 	GtkWidget* m_pPlayImage;
 	GtkWidget* m_pPlayButton;
 	GtkWidget* m_pTimeline;
@@ -774,6 +784,10 @@ public:
 	double      m_dPointerRootX;
 	double      m_dPointerRootY;
 	bool        m_bPointerPosValid;
+
+	/* 1x1 transparent cursor, lazily created, used to hide the pointer when
+	 * it sits idly over a playing video (in step with the controls' auto-hide) */
+	GdkCursor*  m_pBlankCursor;
 
 	bool IsFilmstripOverlay() const { return m_bFilmstripOverlay; }
 	bool IsHideFilmstripFS() const { return m_bHideFilmstripFS; }
@@ -1257,7 +1271,8 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		if (IsVideo())
 		{
 			// show media controls but only the play button
-			set_control_visible(m_pMediaControls, true);
+			viewer_set_controls_visible(this, true);
+
 			set_control_visible(m_pTimeElapsedLabel, false);
 			set_control_visible(m_pTimeDurationLabel, false);
 			set_control_visible(m_pRewindBtn, false);
@@ -1271,7 +1286,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		else
 		{
 			// hide them
-			set_control_visible(m_pMediaControls, false);
+			viewer_set_controls_visible(this, false);
 		}
 
 		gtk_window_set_default_size (GTK_WINDOW (m_pNavigationWindow),1,1);
@@ -1487,13 +1502,95 @@ void Viewer::ViewerImpl::StartFilmstripFade(bool fadeIn)
 	m_iTimeoutFilmstripFade = g_timeout_add(FADE_INTERVAL, filmstrip_fade_cb, this);
 }
 
-/* ── media controls opacity-based visibility ────────────────────── */
+/* ── media controls visibility ────────────────────────────────────
+ * Controls are shown/hidden natively (gtk_widget_set_visible): a hidden
+ * control is not rendered and, vitally, is not a pointer pick target, so it
+ * can never swallow clicks meant for whatever is underneath (the old scheme
+ * faked "hidden" with an opacity of 0, which left the widget targetable and
+ * required an extra gtk_widget_set_can_target whack-a-mole for every control.
+ * When visible, the control is fully opaque. */
 
 static void set_control_visible(GtkWidget* w, bool visible)
 {
 	if (!w) return;
-	gtk_widget_set_opacity(w, visible ? 1.0 : 0.0);
-	gtk_widget_set_focusable(w, FALSE);
+	if (visible)
+	{
+		gtk_widget_set_opacity(w, 1.0);
+		gtk_widget_set_visible(w, TRUE);
+	}
+	else
+	{
+		gtk_widget_set_visible(w, FALSE);
+	}
+}
+
+/* The bottom controls bar and the centered transport row fade/show/hide as
+ * one unit, otherwise a fade-out could tuck the transport buttons away while
+ * the timeline stayed on screen (or vice versa). */
+static void viewer_set_controls_opacity(Viewer::ViewerImpl* p, double opacity)
+{
+	if (p->m_pMediaControls)
+		gtk_widget_set_opacity(p->m_pMediaControls, opacity);
+	if (p->m_pTransportRow)
+		gtk_widget_set_opacity(p->m_pTransportRow, opacity);
+}
+
+static void viewer_set_controls_visible(Viewer::ViewerImpl* p, bool visible)
+{
+	set_control_visible(p->m_pMediaControls, visible);
+	set_control_visible(p->m_pTransportRow, visible);
+}
+
+/* True when the controls should be (re-)shown: they are gone entirely, or a
+ * fade-out is mid-flight and user activity must not let them vanish.  This is
+ * the visibility-based replacement for the old "opacity < 0.5" heuristic. */
+static bool viewer_controls_need_reshow(Viewer::ViewerImpl* p)
+{
+	if (NULL == p->m_pMediaControls)
+		return false;
+	if (!gtk_widget_get_visible(p->m_pMediaControls))
+		return true;
+	return 0 != p->m_iTimeoutControlsFade && !p->m_bControlsFadingIn;
+}
+
+/* Make the bar and transport row pickable/rendered again WITHOUT touching
+ * opacity: used before a fade-in, which animates the (still low) opacity up
+ * to 1.0 to restore a smooth transition instead of a hard pop-in. */
+static void viewer_controls_show(Viewer::ViewerImpl* p)
+{
+	if (p->m_pMediaControls)
+		gtk_widget_set_visible(p->m_pMediaControls, TRUE);
+	if (p->m_pTransportRow)
+		gtk_widget_set_visible(p->m_pTransportRow, TRUE);
+}
+
+/* 1x1 fully-transparent cursor used to hide the pointer while watching a
+ * video.  GTK4 has no gdk_blank_cursor, so one is assembled from a blank
+ * texture (same trick the classic quiver code did, now in the GTK4 idiom). */
+static GdkCursor* viewer_blank_cursor(Viewer::ViewerImpl* p)
+{
+	if (NULL == p->m_pBlankCursor)
+	{
+		static const guint8 transparent_px[4] = { 0, 0, 0, 0 };
+		GBytes *bytes = g_bytes_new_static(transparent_px, sizeof(transparent_px));
+		GdkTexture *tex = gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4);
+		g_bytes_unref(bytes);
+		p->m_pBlankCursor = gdk_cursor_new_from_texture(tex, 0, 0, NULL);
+		g_object_unref(tex);
+	}
+	return p->m_pBlankCursor;
+}
+
+/* Show/hide the pointer over the whole window in step with the controls'
+ * auto-hide fade-out while a video is playing (the legacy Quiver.cpp
+ * version hid the cursor too, but only in fullscreen and the GTK2-era
+ * gdk_window_set_cursor call was commented out under a FIXME). */
+static void viewer_set_idle_cursor(Viewer::ViewerImpl* p, bool hidden)
+{
+	GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(p->m_pOverlay));
+	if (NULL == root)
+		return;
+	gtk_widget_set_cursor(root, hidden ? viewer_blank_cursor(p) : NULL);
 }
 
 #define CONTROLS_FADE_STEP  0.12
@@ -1506,7 +1603,7 @@ static gboolean controls_fade_cb(gpointer user_data)
 	if (p->m_bControlsFadingIn)
 	{
 		p->m_dControlsFadeOpacity = MIN(p->m_dControlsFadeOpacity + CONTROLS_FADE_STEP, 1.0);
-		gtk_widget_set_opacity(p->m_pMediaControls, p->m_dControlsFadeOpacity);
+		viewer_set_controls_opacity(p, p->m_dControlsFadeOpacity);
 		if (p->m_dControlsFadeOpacity >= 1.0)
 		{
 			p->m_iTimeoutControlsFade = 0;
@@ -1516,10 +1613,10 @@ static gboolean controls_fade_cb(gpointer user_data)
 	else
 	{
 		p->m_dControlsFadeOpacity = MAX(p->m_dControlsFadeOpacity - CONTROLS_FADE_STEP, 0.0);
-		gtk_widget_set_opacity(p->m_pMediaControls, p->m_dControlsFadeOpacity);
+		viewer_set_controls_opacity(p, p->m_dControlsFadeOpacity);
 		if (p->m_dControlsFadeOpacity <= 0.0)
 		{
-			set_control_visible(p->m_pMediaControls, false);
+			viewer_set_controls_visible(p, false);
 			p->m_iTimeoutControlsFade = 0;
 			return G_SOURCE_REMOVE;
 		}
@@ -1943,6 +2040,9 @@ timeout_event_motion_notify (gpointer user_data)
 		{
 			pViewerImpl->StartControlsFade(false);
 			pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
+			/* the controls faded away because the pointer went idle: hide the
+			 * pointer too, like a movie player */
+			viewer_set_idle_cursor(pViewerImpl, true);
 		}
 	}
 	else
@@ -2007,7 +2107,7 @@ viewer_scale_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, 
 	/* Keep the whole media bar (transport row + timeline + time labels)
 	 * visible while seeking by cancelling any in-flight fade-out. */
 	p->CancelControlsFade();
-	set_control_visible(p->m_pMediaControls, true);
+	viewer_set_controls_visible(p, true);
 	/* ensure the transport row is not left hidden from a prior seek */
 	if (p->m_pControlsBox)
 		gtk_widget_set_visible(p->m_pControlsBox, TRUE);
@@ -2062,18 +2162,20 @@ static void controls_show_on_event_cb(GtkEventControllerMotion *controller, gdou
 {
 	(void)controller; (void)x; (void)y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	/* Only re-show the media controls while the current item is a video.
-	 * Otherwise hovering the transport buttons after navigating to a plain
-	 * image would resurrect the controls over the image. */
-	if (p->IsVideo())
-	{
-		if (!viewer_pointer_moved(p))
+/* Only re-show the media controls while the current item is a video.
+		 * Otherwise hovering the transport buttons after navigating to a plain
+		 * image would resurrect the controls over the image. */
+		if (p->IsVideo())
 		{
-			return;
-		}
-		gboolean was_hidden = gtk_widget_get_opacity(p->m_pMediaControls) < 0.5;
+			if (!viewer_pointer_moved(p))
+			{
+				return;
+			}
+			gboolean was_hidden = viewer_controls_need_reshow(p);
 		if (was_hidden)
-			set_control_visible(p->m_pMediaControls, true);
+			viewer_set_controls_visible(p, true);
+		/* hovering a control button counts as pointer activity too */
+		viewer_set_idle_cursor(p, false);
 		p->RefreshAutoHideTimer();
 	}
 }
@@ -2105,6 +2207,8 @@ viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y,
 		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (y - pViewerImpl->m_dVideoPanStartRootY) * srcPerPxY;
 		pViewerImpl->ApplyVideoZoom();
 		pViewerImpl->RefreshAutoHideTimer();
+		/* dragging needs the pointer visible */
+		viewer_set_idle_cursor(pViewerImpl, false);
 		return;
 	}
 
@@ -2115,6 +2219,9 @@ viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y,
 		{
 			return;
 		}
+
+		/* motion anywhere over the viewer brings the pointer back */
+		viewer_set_idle_cursor(pViewerImpl, false);
 
 		if (0 != pViewerImpl->m_iTimeoutMouseMotionNotify)
 		{
@@ -2130,10 +2237,10 @@ viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y,
 			 * timer, so a fade-out that has started is allowed to complete
 			 * instead of being cancelled on every motion event (which is why
 			 * the controls never hid while the cursor stayed in the viewer). */
-			if (gtk_widget_get_opacity(pViewerImpl->m_pMediaControls) < 0.5)
+			if (viewer_controls_need_reshow(pViewerImpl))
 			{
 				pViewerImpl->CancelControlsFade();
-				set_control_visible(pViewerImpl->m_pMediaControls, true);
+				viewer_set_controls_visible(pViewerImpl, true);
 				pViewerImpl->UpdateTimelineVisibility();
 			}
 		}
@@ -3272,7 +3379,7 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 			{
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PAUSED);
 				CancelControlsFade();
-				set_control_visible(m_pMediaControls, true);
+				viewer_set_controls_visible(this, true);
 				UpdateTimelineVisibility();
 				SetIsPlaying(false);
 			}
@@ -3372,7 +3479,7 @@ void Viewer::ViewerImpl::SeekRelative(gint64 seconds)
 			GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 		(void)seek_started;
 		CancelControlsFade();
-		set_control_visible(m_pMediaControls, true);
+		viewer_set_controls_visible(this, true);
 		if (0 != m_iTimeoutMouseMotionNotify)
 		{
 			g_source_remove(m_iTimeoutMouseMotionNotify);
@@ -3487,7 +3594,7 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	if (IsVideo())
 	{
 		CancelControlsFade();
-		set_control_visible(m_pMediaControls, true);
+		viewer_set_controls_visible(this, true);
 	}
 }
 
@@ -3615,9 +3722,34 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 				pViewerImpl->m_dVideoPanStartRootY = y;
 				pViewerImpl->m_dVideoPanStartPX = pViewerImpl->m_dVideoPanX;
 				pViewerImpl->m_dVideoPanStartPY = pViewerImpl->m_dVideoPanY;
-				set_control_visible(pViewerImpl->m_pMediaControls, true);
+				viewer_set_controls_visible(pViewerImpl, true);
 				pViewerImpl->RefreshAutoHideTimer();
 				return;
+			}
+		}
+	}
+	else if (widget == pViewerImpl->m_pTransportRow)
+	{
+		/* The transport row floats over the video, so pressing the row's own
+		 * background would otherwise swallow the video's click-to-pause.
+		 * Treat a press that does not land on one of the control buttons as
+		 * a press on the video itself.  (Button presses are left to the
+		 * buttons: seeking for rewind/ff, play/pause for the play button.) */
+		if (3 == button)
+		{
+			viewer_show_context_menu(widget, x, y, 0, user_data);
+			return;
+		}
+		if (1 == button)
+		{
+			GtkWidget *under = gtk_widget_pick(widget, x, y, GTK_PICK_DEFAULT);
+			if (NULL == under || under == widget)
+			{
+				if (pViewerImpl->IsVideo())
+				{
+					pViewerImpl->RefreshAutoHideTimer();
+					pViewerImpl->PlayPauseVideo();
+				}
 			}
 		}
 	}
@@ -3881,6 +4013,12 @@ Viewer::ViewerImpl::~ViewerImpl()
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
+
+	if (m_pBlankCursor)
+	{
+		g_object_unref(m_pBlankCursor);
+		m_pBlankCursor = NULL;
+	}
 }
 
 static gboolean video_apply_zoom_idle(gpointer user_data)
@@ -4853,10 +4991,10 @@ static void viewer_snapshot_button_clicked_cb(GtkButton *button, gpointer user_d
 	p->Snapshot();
 }
 
-static void viewer_skip_back_cb(gpointer user_data)
+static void viewer_video_rw_cb(gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	p->SkipBack();
+	p->SeekRelative(-5);
 }
 
 static void viewer_play_button_clicked_cb(gpointer user_data)
@@ -4869,10 +5007,10 @@ static void viewer_play_button_clicked_cb(gpointer user_data)
 	}
 }
 
-static void viewer_skip_fwd_cb(gpointer user_data)
+static void viewer_video_ff_cb(gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	p->SkipForward();
+	p->SeekRelative(5);
 }
 
 static gint64 get_pipeline_frame_duration(GstElement *pipeline)
@@ -4999,6 +5137,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_dPointerRootX(0.0),
 	m_dPointerRootY(0.0),
 	m_bPointerPosValid(false),
+	m_pBlankCursor(NULL),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_ThumbnailLoader(this,2),
@@ -5147,7 +5286,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_box_append(GTK_BOX(extraBtns), m_pVideoOptionsBtn);
 	gtk_box_append(GTK_BOX(extraBtns), m_pFullscreenBtn);
 	gtk_widget_set_halign(extraBtns, GTK_ALIGN_END);
-	gtk_widget_set_valign(extraBtns, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(extraBtns, GTK_ALIGN_END);
 
 	/* Rewind button */
 	m_pRewindBtn = gtk_button_new_from_icon_name("media-seek-backward");
@@ -5157,8 +5296,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		gtk_widget_add_controller(m_pRewindBtn, motion);
 	}
 	gtk_button_set_has_frame(GTK_BUTTON(m_pRewindBtn), FALSE);
-	g_signal_connect_swapped(G_OBJECT(m_pRewindBtn), "clicked", G_CALLBACK(viewer_skip_back_cb), this);
+	g_signal_connect_swapped(G_OBJECT(m_pRewindBtn), "clicked", G_CALLBACK(viewer_video_rw_cb), this);
 	gtk_widget_add_css_class(m_pRewindBtn, "media-btn");
+	gtk_widget_set_valign(m_pRewindBtn, GTK_ALIGN_CENTER);
 
 	/* Fast-forward button */
 	m_pFfBtn = gtk_button_new_from_icon_name("media-seek-forward");
@@ -5168,8 +5308,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		gtk_widget_add_controller(m_pFfBtn, motion);
 	}
 	gtk_button_set_has_frame(GTK_BUTTON(m_pFfBtn), FALSE);
-	g_signal_connect_swapped(G_OBJECT(m_pFfBtn), "clicked", G_CALLBACK(viewer_skip_fwd_cb), this);
+	g_signal_connect_swapped(G_OBJECT(m_pFfBtn), "clicked", G_CALLBACK(viewer_video_ff_cb), this);
 	gtk_widget_add_css_class(m_pFfBtn, "media-btn");
+	gtk_widget_set_valign(m_pFfBtn, GTK_ALIGN_CENTER);
 
 	/* Play button */
 	m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start");
@@ -5183,27 +5324,29 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_button_set_child(GTK_BUTTON(m_pPlayButton), m_pPlayImage);
 	g_signal_connect_swapped(G_OBJECT(m_pPlayButton), "clicked", G_CALLBACK(viewer_play_button_clicked_cb), this);
 	gtk_widget_add_css_class(m_pPlayButton, "media-btn");
+	gtk_widget_add_css_class(m_pPlayButton, "media-btn-play");
 
-	/* Centered group: [rewind][play][ff] */
-	GtkWidget* centerGroup = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_append(GTK_BOX(centerGroup), m_pRewindBtn);
-	gtk_box_append(GTK_BOX(centerGroup), m_pPlayButton);
-	gtk_box_append(GTK_BOX(centerGroup), m_pFfBtn);
-
-	/* GtkCenterBox keeps the [rewind][play][ff] transport group pinned to the
-	 * visual center while the far-right controls sit at the end. The start
-	 * side is deliberately empty so the transport group stays centered
-	 * instead of being shifted by the asymmetric right-hand group.
-	 * GtkCenterBox requires GTK 4.4+ (we require 4.12). */
-	GtkWidget *controlsInner = gtk_center_box_new();
-	gtk_widget_set_hexpand(controlsInner, TRUE);
-	gtk_center_box_set_center_widget(GTK_CENTER_BOX(controlsInner), centerGroup);
-	gtk_center_box_set_end_widget(GTK_CENTER_BOX(controlsInner), extraBtns);
+	/* --- Centered transport row: [rewind][play][ff] ------------------------
+	 * These float at the center of the video/image area rather than in the
+	 * bottom controls bar (which keeps the far-right speed/snap/volume/
+	 * options/fullscreen buttons plus the timeline). */
+	m_pTransportRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_box_append(GTK_BOX(m_pTransportRow), m_pRewindBtn);
+	gtk_box_append(GTK_BOX(m_pTransportRow), m_pPlayButton);
+	gtk_box_append(GTK_BOX(m_pTransportRow), m_pFfBtn);
+	gtk_widget_set_halign(m_pTransportRow, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pTransportRow, GTK_ALIGN_CENTER);
+	/* The row floats over the video, so give it the same  button/press input
+	 * handling as the image/video surfaces: a press on the row itself (i.e.
+	 * not on one of its control buttons) toggles play/pause, restoring
+	 * click-to-pause across the centre of the picture. */
+	attach_viewer_input_controllers(m_pTransportRow, this);
 
 	m_pControlsBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_set_margin_start(m_pControlsBox, 6);
 	gtk_widget_set_margin_end(m_pControlsBox, 6);
-	gtk_box_append(GTK_BOX(m_pControlsBox), controlsInner);
+	gtk_widget_set_halign(m_pControlsBox, GTK_ALIGN_END);
+	gtk_box_append(GTK_BOX(m_pControlsBox), extraBtns);
 
 	/* ── Row 2: Timeline scale ─────────────────────────────────── */
 	GtkWidget* scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.001);
@@ -5271,7 +5414,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_css_provider_load_from_string(cssProvider,
 		".speed-active { background-image: none; background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n"
 		".filmstrip-overlay { background-color: transparent; }\n"
-".media-btn { border-radius: 8px; min-width: 36px; min-height: 36px; padding: 4px; background-image: none; background-color: transparent; border: none; outline: none; }\n"
+".media-btn { border-radius: 8px; min-width: 2.4em; min-height: 2.4em; padding: 4px; background-image: none; background-color: transparent; border: none; outline: none; }\n"
+		".media-btn-play { border-radius: 50%; font-size: 2.5em; -gtk-icon-size: 1em; }\n"
 		".media-btn:hover { background-image: none; background-color: alpha(@theme_bg_color, 0.60); border: none; }\n"
 		".media-btn:focus, .media-btn:focus-visible { outline: none; box-shadow: none; }\n"
 		".time-label { color: rgba(255, 255, 255, 0.85); font-size: 12px; }\n"
@@ -5371,6 +5515,19 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	// spans exactly the viewer's actual width.
 	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), alignment, FALSE);
 
+	// Play/ff/rewind float at the center of the video; the row only spans its
+	// buttons (not the whole viewer) so pointer events elsewhere pass through.
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pTransportRow);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pTransportRow, FALSE);
+	/* only a video navigation reveals the transport row */
+	set_control_visible(m_pTransportRow, false);
+	{
+		GtkEventController *scroll = gtk_event_controller_scroll_new(
+			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
+		gtk_widget_add_controller(m_pTransportRow, scroll);
+	}
+
 	// the image/video stack is the overlay's single main widget
 	gtk_widget_set_hexpand(m_pImageView, TRUE);
 	gtk_widget_set_vexpand(m_pImageView, TRUE);
@@ -5455,7 +5612,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	quiver_image_view_set_magnification_mode(QUIVER_IMAGE_VIEW(m_pImageView),QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_SMOOTH);
 	
 	QuiverImageViewMode view_mode =
-		(QuiverImageViewMode)prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+		(QuiverImageViewMode)prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
 
 	quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), view_mode);
 
@@ -5808,7 +5965,17 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 		quiver_freelayout_put(m_pVideoFixed, m_pVideoSinkWidget, 0, 0);
 
 		attach_viewer_input_controllers(m_pVideoFixed, this);
-		attach_viewer_input_controllers(m_pVideoSinkWidget, this);
+		/* NOTE: do NOT also attach the click gesture to m_pVideoSinkWidget here.
+		 * The sink is a CHILD of the fixed, and pointer gestures bubble by
+		 * default, so a click on the video would fire the gesture on BOTH the
+		 * sink and the fixed.  The sink's press (deeper → runs first) overwrites
+		 * the pan-origin with sink-relative coords and its release (also first)
+		 * compares those against the fixed-relative origin, which differ by the
+		 * sink's (nonzero, letterboxed) offset — every video click was treated as
+		 * a drag of >5px, no toggle, and m_bVideoPanning got cleared so the
+		 * fixed's release skipped too.  Long story short: never click-to-pause
+		 * the actual video pixels.  One gesture on the fixed (which covers the
+		 * sink and any surrounding bars via bubbling) is the correct wiring. */
 		// whenever the video appears, make sure the media controls stack above
 		g_signal_connect(G_OBJECT(m_pVideoSinkWidget), "map", G_CALLBACK(video_zoom_sink_map_cb), this);
 	}

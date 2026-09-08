@@ -11,6 +11,8 @@
 
 #include "QuiverStockIcons.h"
 
+extern GtkApplication *g_pApp;
+
 using namespace std;
 
 enum 
@@ -192,8 +194,16 @@ void ExternalToolsDlg::Run()
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		m_PrivPtr->m_bRunDone = false;
-		gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pWidget), TRUE);
+		/* Keep the dialog above its parent window without grabbing input,
+		 * so the user can still interact with the Quiver window behind it. */
+		if (NULL != g_pApp)
+		{
+			GtkWindow *mainWin = gtk_application_get_active_window(g_pApp);
+			if (mainWin != NULL)
+				gtk_window_set_transient_for(GTK_WINDOW(m_PrivPtr->m_pWidget), mainWin);
+		}
 		gtk_widget_set_visible(m_PrivPtr->m_pWidget, TRUE);
+		gtk_window_present(GTK_WINDOW(m_PrivPtr->m_pWidget));
 
 		GMainContext* ctx = g_main_context_default();
 		while (!m_PrivPtr->m_bRunDone)
@@ -201,6 +211,21 @@ void ExternalToolsDlg::Run()
 			g_main_context_iteration(ctx, TRUE);
 		}
 	}
+}
+
+/* The single live ExternalToolsDlg instance, or NULL.  Prevents the user from
+ * opening several External Tools windows at once.  The instance lives for the
+ * whole application run: Run() shows it and returns once it is dismissed, but
+ * the (previously stack-allocated) object is kept alive so a later ShowDialog()
+ * can simply re-present the same window instead of stacking duplicates. */
+static ExternalToolsDlg *g_pExternalToolsDlg = NULL;
+
+void ExternalToolsDlg::ShowDialog()
+{
+	if (g_pExternalToolsDlg == NULL)
+		g_pExternalToolsDlg = new ExternalToolsDlg();
+
+	g_pExternalToolsDlg->Run();
 }
 
 // private stuff

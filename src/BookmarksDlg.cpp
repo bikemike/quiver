@@ -193,10 +193,37 @@ static gboolean bookmarks_dlg_delete_idle(gpointer user_data)
 	return G_SOURCE_REMOVE;
 }
 
+/* The single live BookmarksDlg instance, or NULL.  Prevents the user from
+ * opening several Bookmarks windows at once. */
+static BookmarksDlg *g_pBookmarksDlg = NULL;
+
 static void bookmarks_dlg_destroy_cb(GtkWidget *widget, gpointer user_data)
 {
 	(void)widget;
-	g_idle_add(bookmarks_dlg_delete_idle, user_data);
+	BookmarksDlg *dlg = static_cast<BookmarksDlg*>(user_data);
+	if (g_pBookmarksDlg == dlg)
+		g_pBookmarksDlg = NULL;
+	g_idle_add(bookmarks_dlg_delete_idle, dlg);
+}
+
+void BookmarksDlg::ShowDialog()
+{
+	/* Reuse the existing instance if one is already alive: bring it to the
+	 * front instead of stacking a duplicate window.  The window is hidden (not
+	 * destroyed) when the user dismisses it, so presenting it again merely
+	 * re-shows the same dialog. */
+	if (g_pBookmarksDlg != NULL)
+	{
+		if (g_pBookmarksDlg->m_PrivPtr->m_pWidget != NULL)
+		{
+			gtk_window_present(GTK_WINDOW(g_pBookmarksDlg->m_PrivPtr->m_pWidget));
+			return;
+		}
+		g_pBookmarksDlg = NULL;
+	}
+
+	g_pBookmarksDlg = new BookmarksDlg();
+	g_pBookmarksDlg->Run();
 }
 
 void BookmarksDlg::Run()
@@ -447,6 +474,16 @@ void BookmarksDlg::BookmarksDlgPriv::ConnectSignals()
 					g_signal_emit_by_name(priv->m_pButtonEdit, "clicked");
 				}
 			}), this);
+
+		/* Dismissing via the header-bar close button hides the window instead
+		 * of destroying it, so the singleton survives and can be re-presented
+		 * by the next ShowDialog(). */
+		g_signal_connect(m_pWidget, "close-request",
+			G_CALLBACK(+[](GtkWidget* widget, gpointer user_data) -> gboolean {
+				(void)user_data;
+				gtk_widget_set_visible(widget, FALSE);
+				return TRUE;
+			}), this);
 	}
 }
 
@@ -557,7 +594,9 @@ static void  on_clicked (GtkButton *button, gpointer user_data)
 	}
 	else if (button == priv->m_pButtonClose)
 	{
-		gtk_window_destroy(GTK_WINDOW(priv->m_pWidget));
+		/* Hide (don't destroy) so the singleton window can be re-presented
+		 * by the next ShowDialog(). */
+		gtk_widget_set_visible(priv->m_pWidget, FALSE);
 	}
 }
 

@@ -15,6 +15,9 @@ public:
 	//member functions
 	GtkWidget *GetWidget();
 	void Run();
+	/* Opens the (single, shared) bookmarks dialog; reuses the existing
+	 * window if one is already open. */
+	static void ShowDialog();
 
 	class BookmarksDlgPriv;
 	typedef boost::shared_ptr<BookmarksDlgPriv> BookmarksDlgPrivPtr;

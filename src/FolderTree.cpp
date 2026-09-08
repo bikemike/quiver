@@ -144,6 +144,7 @@ static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl);
 static guint shortcuts_get_focused_position(FolderTree::FolderTreeImpl* impl);
 static void folder_tree_set_checkbox_for_selected(FolderTree::FolderTreeImpl* impl, gboolean value);
 static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, double x, double y);
+static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, double x, double y);
 static gboolean shortcuts_on_key_press(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata);
 
 static gchar* folder_tree_get_icon_name(GFile* gfile);
@@ -159,6 +160,8 @@ public:
 // methods
 	void CreateWidget();
 	void PopulateShortcutsModel(GListStore *store);
+	void PopulateBookmarksModel(GListStore *store);
+	void UpdateBookmarkSectionVisibility();
 	void ReloadShortcuts();
 	void PopulateTreeModel(GListStore *roots);
 
@@ -184,6 +187,13 @@ public:
 	GtkMultiSelection* m_pShortcutsSelectionModel;
 	GtkListView*       m_pShortcutsListView;
 	GtkWidget*         m_pSeparator;
+
+	// Bookmarks (dedicated section between the shortcuts list and the tree)
+	GListStore*        m_pBookmarkStore;
+	GtkMultiSelection* m_pBookmarkSelectionModel;
+	GtkListView*       m_pBookmarkListView;
+	GtkWidget*         m_pBookmarkSection;
+	GtkWidget*         m_pBookmarkHeader;
 
 	// Folder Tree
 	GListStore*        m_pListStoreRoots;
@@ -235,6 +245,11 @@ GtkWidget* FolderTree::GetShortcutsWidget() const
 	return GTK_WIDGET(m_FolderTreeImplPtr->m_pShortcutsListView);
 }
 
+GtkWidget* FolderTree::GetBookmarksWidget() const
+{
+	return GTK_WIDGET(m_FolderTreeImplPtr->m_pBookmarkListView);
+}
+
 std::list<std::string> FolderTree::GetSelectedFolders() const
 {
 	return m_FolderTreeImplPtr->GetSelectedFolders();	
@@ -258,6 +273,11 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 	m_pShortcutsSelectionModel = NULL;
 	m_pShortcutsListView = NULL;
 	m_pSeparator = NULL;
+	m_pBookmarkStore = NULL;
+	m_pBookmarkSelectionModel = NULL;
+	m_pBookmarkListView = NULL;
+	m_pBookmarkSection = NULL;
+	m_pBookmarkHeader = NULL;
 	m_pListStoreRoots = NULL;
 	m_pTreeListModel = NULL;
 	m_pSelectionModel = NULL;
@@ -312,6 +332,12 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 	m_pShortcutsStore = NULL;
 	m_pShortcutsListView = NULL;
 
+	m_pBookmarkSelectionModel = NULL;
+	m_pBookmarkStore = NULL;
+	m_pBookmarkListView = NULL;
+	m_pBookmarkSection = NULL;
+	m_pBookmarkHeader = NULL;
+
 	m_pSelectionModel = NULL;
 	m_pTreeListModel = NULL;
 	m_pListStoreRoots = NULL;
@@ -330,6 +356,24 @@ std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedFolders() const
 		for (guint i = 0 ; i < n ; i++)
 		{
 			DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pShortcutsStore), i));
+			if (item)
+			{
+				if (item->checked && item->uri)
+				{
+					if (seen.insert(item->uri).second)
+						listSelectedFolders.push_back(item->uri);
+				}
+				g_object_unref(item);
+			}
+		}
+	}
+
+	if (m_pBookmarkStore)
+	{
+		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+		for (guint i = 0 ; i < n ; i++)
+		{
+			DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
 			if (item)
 			{
 				if (item->checked && item->uri)
@@ -380,6 +424,22 @@ void FolderTree::FolderTreeImpl::ClearAllCheckboxes()
 			gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(m_pShortcutsSelectionModel));
 	}
 
+	if (m_pBookmarkStore)
+	{
+		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+		for (guint i = 0 ; i < n ; i++)
+		{
+			DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+			if (item)
+			{
+				dir_item_set_checked(item, FALSE);
+				g_object_unref(item);
+			}
+		}
+		if (m_pBookmarkSelectionModel)
+			gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(m_pBookmarkSelectionModel));
+	}
+
 	if (m_pTreeListModel)
 	{
 		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pTreeListModel));
@@ -413,6 +473,23 @@ void FolderTree::FolderTreeImpl::SyncShortcutSelectionForURI(const gchar* uri, g
 				dir_item_set_checked(it, value);
 			}
 			g_object_unref(it);
+		}
+	}
+
+	if (m_pBookmarkStore)
+	{
+		guint bn = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+		for (guint i = 0; i < bn; i++)
+		{
+			DirItem* it = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+			if (it)
+			{
+				if (it->uri && 0 == g_strcmp0(it->uri, uri))
+				{
+					dir_item_set_checked(it, value);
+				}
+				g_object_unref(it);
+			}
 		}
 	}
 }
@@ -923,6 +1000,75 @@ static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 	}
 }
 
+static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, double x, double y)
+{
+	(void)n_press; (void)x; (void)y;
+	GtkWidget* w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+	FolderTree::FolderTreeImpl* impl = static_cast<FolderTree::FolderTreeImpl*>(
+		g_object_get_data(G_OBJECT(w), "bm-impl"));
+	DirItem* item = static_cast<DirItem*>(
+		g_object_get_data(G_OBJECT(w), "bm-item"));
+	guint pos = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(w), "bm-pos"));
+	if (!impl || !item) return;
+
+	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
+
+	if (button == 1)
+	{
+		if (state & GDK_CONTROL_MASK)
+		{
+			gboolean new_val = !item->checked;
+			dir_item_set_checked(item, new_val);
+			if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
+			{
+				if (new_val)
+					gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, FALSE);
+				else
+					gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos);
+			}
+			impl->SyncTreeSelectionForURI(item->uri, new_val);
+			impl->SyncShortcutSelectionForURI(item->uri, new_val);
+		}
+		else
+		{
+			impl->ClearAllCheckboxes();
+			dir_item_set_checked(item, TRUE);
+			if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
+			{
+				gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, TRUE);
+			}
+			impl->SyncTreeSelectionForURI(item->uri, TRUE);
+		}
+		gtk_widget_grab_focus(w);
+		impl->m_pFolderTree->EmitSelectionChangedEvent();
+	}
+	else if (button == 2)
+	{
+		gboolean new_val = !item->checked;
+		dir_item_set_checked(item, new_val);
+		if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
+		{
+			if (new_val)
+				gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, FALSE);
+			else
+				gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos);
+		}
+		impl->SyncTreeSelectionForURI(item->uri, new_val);
+		gtk_widget_grab_focus(w);
+		impl->m_pFolderTree->EmitSelectionChangedEvent();
+	}
+	else if (button == 3)
+	{
+		if (pos != G_MAXUINT && impl->m_pBookmarkSelectionModel &&
+		    !gtk_selection_model_is_selected(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos))
+		{
+			gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, TRUE);
+		}
+		view_popup_menu_at(impl->m_pWidget, -1, -1, impl);
+	}
+}
+
 static gboolean shortcuts_on_key_press(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata)
 {
 	(void)keycode; (void)controller;
@@ -1201,6 +1347,12 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			"    padding: 2px 6px;\n"
 			"    border-radius: 6px;\n"
 			"}\n"
+			".sidebar-section-title {\n"
+			"    font-size: 11px;\n"
+			"    font-weight: bold;\n"
+			"    opacity: 0.6;\n"
+			"    color: @theme_fg_color;\n"
+			"}\n"
 			".compact-tree row {\n"
 			"    padding: 0 4px;\n"
 			"    margin: 0;\n"
@@ -1407,6 +1559,203 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	gtk_widget_set_margin_bottom(m_pSeparator, 10);
 	gtk_widget_set_margin_start(m_pSeparator, 12);
 	gtk_widget_set_margin_end(m_pSeparator, 12);
+
+	// --- Bookmarks list view factory (dedicated section) ---
+	GtkListItemFactory* bm_factory = gtk_signal_list_item_factory_new();
+
+	g_signal_connect(bm_factory, "setup", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item) {
+		(void)fact;
+		// build: hbox [ check, row_box[ image, label ] ] (mirrors shortcuts)
+		GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+		gtk_widget_add_css_class(hbox, "sidebar-row");
+
+		GtkWidget* check = gtk_check_button_new();
+		gtk_widget_set_margin_start(check, 4);
+		gtk_widget_set_margin_end(check, 6);
+		gtk_widget_set_valign(check, GTK_ALIGN_CENTER);
+		g_signal_connect(check, "toggled", G_CALLBACK(+[](GtkWidget* w, gpointer) {
+			FolderTree::FolderTreeImpl* impl =
+				static_cast<FolderTree::FolderTreeImpl*>(
+					g_object_get_data(G_OBJECT(w), "bm-impl"));
+			DirItem* item = static_cast<DirItem*>(
+				g_object_get_data(G_OBJECT(w), "bm-item"));
+			if (NULL != impl && NULL != item &&
+				!g_object_get_data(G_OBJECT(w), "set-active-guard"))
+			{
+				gboolean active = gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
+				if (item->checked != active)
+				{
+					dir_item_set_checked(item, active);
+					guint pos = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(w), "bm-pos"));
+					if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
+					{
+						if (active)
+							gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, FALSE);
+						else
+							gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos);
+					}
+					impl->SyncTreeSelectionForURI(item->uri, active);
+					impl->m_pFolderTree->EmitSelectionChangedEvent();
+				}
+			}
+		}), NULL);
+		gtk_box_append(GTK_BOX(hbox), check);
+
+		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+		gtk_widget_set_hexpand(row_box, TRUE);
+		gtk_widget_set_valign(row_box, GTK_ALIGN_CENTER);
+		GtkWidget* image = gtk_image_new();
+		gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
+		gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
+		GtkWidget* label = gtk_label_new(NULL);
+		gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+		gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+		gtk_widget_set_hexpand(label, TRUE);
+		gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+		gtk_box_append(GTK_BOX(row_box), image);
+		gtk_box_append(GTK_BOX(row_box), label);
+		gtk_box_append(GTK_BOX(hbox), row_box);
+
+		GtkGesture* row_click = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(row_click), 0);
+		g_signal_connect(row_click, "pressed", G_CALLBACK(+[](GtkGestureClick* gesture, int n_press, double x, double y, gpointer) {
+			g_object_set_data(G_OBJECT(gesture), "press-handled", GINT_TO_POINTER(1));
+			bookmark_row_on_clicked(gesture, n_press, x, y);
+		}), NULL);
+		g_signal_connect(row_click, "released", G_CALLBACK(+[](GtkGestureClick* gesture, int n_press, double x, double y, gpointer) {
+			if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(gesture), "press-handled")))
+			{
+				g_object_set_data(G_OBJECT(gesture), "press-handled", GINT_TO_POINTER(0));
+				return;
+			}
+			bookmark_row_on_clicked(gesture, n_press, x, y);
+		}), NULL);
+		gtk_widget_add_controller(row_box, GTK_EVENT_CONTROLLER(row_click));
+
+		gtk_list_item_set_child(list_item, hbox);
+		g_object_set_data(G_OBJECT(list_item), "bm-check", check);
+		g_object_set_data(G_OBJECT(list_item), "bm-hbox", hbox);
+		g_object_set_data(G_OBJECT(list_item), "bm-row-box", row_box);
+		g_object_set_data(G_OBJECT(list_item), "bm-image", image);
+		g_object_set_data(G_OBJECT(list_item), "bm-label", label);
+	}), NULL);
+
+	g_signal_connect(bm_factory, "bind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item, gpointer user_data) {
+		(void)fact;
+		FolderTree::FolderTreeImpl* impl =
+			static_cast<FolderTree::FolderTreeImpl*>(user_data);
+		DirItem* item = DIR_ITEM(gtk_list_item_get_item(list_item));
+		guint pos = gtk_list_item_get_position(list_item);
+		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-check"));
+		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-hbox"));
+		GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-row-box"));
+		GtkWidget* image = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-image"));
+		GtkWidget* label = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-label"));
+
+		if (NULL != item->icon_name && '\0' != item->icon_name[0])
+			gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon_name);
+		else
+			gtk_image_set_from_icon_name(GTK_IMAGE(image), "folder-symbolic");
+		gtk_label_set_text(GTK_LABEL(label), item->display_name);
+
+		g_object_set_data(G_OBJECT(check), "bm-item", item);
+		g_object_set_data(G_OBJECT(check), "bm-impl", impl);
+		g_object_set_data(G_OBJECT(check), "bm-pos", GUINT_TO_POINTER(pos));
+		g_object_set_data(G_OBJECT(item), "bound-check", check);
+
+		g_object_set_data(G_OBJECT(hbox), "bm-item", item);
+		g_object_set_data(G_OBJECT(hbox), "bm-impl", impl);
+		g_object_set_data(G_OBJECT(hbox), "bm-pos", GUINT_TO_POINTER(pos));
+		g_object_set_data(G_OBJECT(hbox), "list-item", list_item);
+
+		g_object_set_data(G_OBJECT(row_box), "bm-item", item);
+		g_object_set_data(G_OBJECT(row_box), "bm-impl", impl);
+		g_object_set_data(G_OBJECT(row_box), "bm-pos", GUINT_TO_POINTER(pos));
+
+		if (!g_object_get_data(G_OBJECT(item), "checked-connected"))
+		{
+			g_object_set_data(G_OBJECT(item), "checked-connected", GINT_TO_POINTER(1));
+			/* Keep the checkbox widget in sync when "checked" changes. */
+			g_signal_connect(item, "notify::checked", G_CALLBACK(+[](GObject* obj, GParamSpec* ps, gpointer user_data) {
+				(void)ps; (void)user_data;
+				DirItem* it = DIR_ITEM(obj);
+				GtkWidget* cb = GTK_WIDGET(g_object_get_data(G_OBJECT(it), "bound-check"));
+				if (NULL == cb)
+					return;
+				g_object_set_data(G_OBJECT(cb), "set-active-guard", GINT_TO_POINTER(1));
+				gtk_check_button_set_active(GTK_CHECK_BUTTON(cb), it->checked);
+				g_object_set_data(G_OBJECT(cb), "set-active-guard", GINT_TO_POINTER(0));
+			}), NULL);
+		}
+
+		g_object_set_data(G_OBJECT(check), "set-active-guard", GINT_TO_POINTER(1));
+		gtk_check_button_set_active(GTK_CHECK_BUTTON(check), item->checked);
+		g_object_set_data(G_OBJECT(check), "set-active-guard", GINT_TO_POINTER(0));
+	}), this);
+
+	g_signal_connect(bm_factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item) {
+		(void)fact;
+		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-check"));
+		if (check)
+		{
+			DirItem* old_item = static_cast<DirItem*>(g_object_get_data(G_OBJECT(check), "bm-item"));
+			if (old_item && g_object_get_data(G_OBJECT(old_item), "bound-check") == check)
+				g_object_set_data(G_OBJECT(old_item), "bound-check", NULL);
+			g_object_set_data(G_OBJECT(check), "bm-item", NULL);
+			g_object_set_data(G_OBJECT(check), "bm-impl", NULL);
+		}
+		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-hbox"));
+		if (hbox)
+		{
+			g_object_set_data(G_OBJECT(hbox), "bm-item", NULL);
+			g_object_set_data(G_OBJECT(hbox), "bm-impl", NULL);
+			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
+		}
+		GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-row-box"));
+		if (row_box)
+		{
+			g_object_set_data(G_OBJECT(row_box), "bm-item", NULL);
+			g_object_set_data(G_OBJECT(row_box), "bm-impl", NULL);
+		}
+	}), NULL);
+
+	m_pBookmarkStore = g_list_store_new(DIR_ITEM_TYPE);
+	PopulateBookmarksModel(m_pBookmarkStore);
+	m_pBookmarkSelectionModel = gtk_multi_selection_new(G_LIST_MODEL(m_pBookmarkStore));
+	m_pBookmarkListView = GTK_LIST_VIEW(gtk_list_view_new(GTK_SELECTION_MODEL(m_pBookmarkSelectionModel), bm_factory));
+	gtk_widget_add_css_class(GTK_WIDGET(m_pBookmarkListView), "navigation-sidebar");
+
+	/* right-click context menu on the bookmarks list too */
+	{
+		GtkGesture *bm_gesture = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(bm_gesture), 0);
+		g_signal_connect(bm_gesture, "pressed", G_CALLBACK(view_onButtonPressed), this);
+		gtk_widget_add_controller(GTK_WIDGET(m_pBookmarkListView), GTK_EVENT_CONTROLLER(bm_gesture));
+	}
+
+	// --- Bookmarks section: header + list, hidden when empty ---
+	m_pBookmarkSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	m_pBookmarkHeader = gtk_label_new("Bookmarks");
+	gtk_widget_add_css_class(m_pBookmarkHeader, "sidebar-section-title");
+	gtk_widget_set_halign(m_pBookmarkHeader, GTK_ALIGN_START);
+	gtk_widget_set_margin_top(m_pBookmarkHeader, 8);
+	gtk_widget_set_margin_bottom(m_pBookmarkHeader, 2);
+	gtk_widget_set_margin_start(m_pBookmarkHeader, 18);
+	gtk_widget_set_margin_end(m_pBookmarkHeader, 12);
+	gtk_box_append(GTK_BOX(m_pBookmarkSection), m_pBookmarkHeader);
+	gtk_box_append(GTK_BOX(m_pBookmarkSection), GTK_WIDGET(m_pBookmarkListView));
+
+	/* Separator below the bookmark rows (before the folder tree). It lives
+	 * inside the section so it vanishes with it when there are no bookmarks. */
+	GtkWidget* bm_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+	gtk_widget_add_css_class(bm_separator, "sidebar-separator");
+	gtk_widget_set_margin_top(bm_separator, 10);
+	gtk_widget_set_margin_bottom(bm_separator, 10);
+	gtk_widget_set_margin_start(bm_separator, 12);
+	gtk_widget_set_margin_end(bm_separator, 12);
+	gtk_box_append(GTK_BOX(m_pBookmarkSection), bm_separator);
+
+	UpdateBookmarkSectionVisibility();
 
 	// --- Folder tree list view factory ---
 	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
@@ -1626,6 +1975,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	gtk_widget_add_css_class(GTK_WIDGET(m_pListView), "compact-tree");
 	gtk_box_append(GTK_BOX(m_pWidget), GTK_WIDGET(m_pShortcutsListView));
 	gtk_box_append(GTK_BOX(m_pWidget), m_pSeparator);
+	gtk_box_append(GTK_BOX(m_pWidget), m_pBookmarkSection);
 	gtk_box_append(GTK_BOX(m_pWidget), GTK_WIDGET(m_pListView));
 	gtk_widget_set_vexpand(GTK_WIDGET(m_pListView), TRUE);
 
@@ -1698,6 +2048,24 @@ static void folder_tree_set_checkbox_for_selected(FolderTree::FolderTreeImpl* im
 			if (gtk_selection_model_is_selected(sc_sel, i))
 			{
 				DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(impl->m_pShortcutsStore), i));
+				if (item)
+				{
+					dir_item_set_checked(item, value);
+					impl->SyncTreeSelectionForURI(item->uri, value);
+					g_object_unref(item);
+				}
+			}
+		}
+	}
+	if (impl->m_pBookmarkSelectionModel && impl->m_pBookmarkStore)
+	{
+		GtkSelectionModel* bm_sel = GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel);
+		guint bm_n = g_list_model_get_n_items(G_LIST_MODEL(impl->m_pBookmarkStore));
+		for (guint i = 0; i < bm_n; i++)
+		{
+			if (gtk_selection_model_is_selected(bm_sel, i))
+			{
+				DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(impl->m_pBookmarkStore), i));
 				if (item)
 				{
 					dir_item_set_checked(item, value);
@@ -2097,23 +2465,6 @@ void FolderTree::FolderTreeImpl::PopulateShortcutsModel(GListStore *store)
 	}
 	g_free(fallback_download);
 
-	// Music
-	const char* music_dir = g_get_user_special_dir(G_USER_DIRECTORY_MUSIC);
-	char* fallback_music = g_build_filename(home_dir, "Music", NULL);
-	const char* actual_music = (music_dir && music_dir[0] && 0 != g_strcmp0(music_dir, home_dir))
-		? music_dir : fallback_music;
-	if (g_file_test(actual_music, G_FILE_TEST_IS_DIR))
-	{
-		GFile* f = g_file_new_for_path(actual_music);
-		char* uri = g_file_get_uri(f);
-		const char* icon = QuiverUtils::GetSpecialFolderSymbolicIconName(uri);
-		g_list_store_append(store,
-			G_OBJECT(dir_item_new(uri, "Music", icon ? icon : "folder-music-symbolic", TRUE, order++, 0)));
-		g_free(uri);
-		g_object_unref(f);
-	}
-	g_free(fallback_music);
-
 	// Pictures
 	const char* pictures_dir = g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
 	char* fallback_pictures = g_build_filename(home_dir, "Pictures", NULL);
@@ -2148,38 +2499,37 @@ void FolderTree::FolderTreeImpl::PopulateShortcutsModel(GListStore *store)
 	}
 	g_free(fallback_videos);
 
-	// User Bookmarks
+	return;
+}
+
+void FolderTree::FolderTreeImpl::PopulateBookmarksModel(GListStore *store)
+{
+	if (!store)
+		return;
 	try {
 		BookmarksPtr bmPtr = Bookmarks::GetInstance();
-		if (bmPtr)
+		if (!bmPtr)
+			return;
+		std::vector<Bookmark> bms = bmPtr->GetBookmarks();
+		int order = 0;
+		for (const auto& bm : bms)
 		{
-			std::vector<Bookmark> bms = bmPtr->GetBookmarks();
-			for (const auto& bm : bms)
-			{
-				if (bm.GetURIs().empty()) continue;
-				std::string bm_uri = bm.GetURIs().front();
-				bool duplicate = false;
-				guint n = g_list_model_get_n_items(G_LIST_MODEL(store));
-				for (guint i = 0; i < n; i++)
-				{
-					DirItem* it = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(store), i));
-					if (it && it->uri && bm_uri == it->uri)
-					{
-						duplicate = true;
-						g_object_unref(it);
-						break;
-					}
-					if (it) g_object_unref(it);
-				}
-				if (duplicate) continue;
-
-				const char* icon = QuiverUtils::GetSpecialFolderSymbolicIconName(bm_uri.c_str());
-				std::string icon_name = icon ? icon : (!bm.GetIcon().empty() ? bm.GetIcon() : "folder-symbolic");
-				g_list_store_append(store,
-					G_OBJECT(dir_item_new(bm_uri.c_str(), bm.GetName().c_str(), icon_name.c_str(), FALSE, order++, 0)));
-			}
+			if (bm.GetURIs().empty()) continue;
+			std::string bm_uri = bm.GetURIs().front();
+			const char* icon = QuiverUtils::GetSpecialFolderSymbolicIconName(bm_uri.c_str());
+			std::string icon_name = icon ? icon : (!bm.GetIcon().empty() ? bm.GetIcon() : "folder-symbolic");
+			g_list_store_append(store,
+				G_OBJECT(dir_item_new(bm_uri.c_str(), bm.GetName().c_str(), icon_name.c_str(), FALSE, order++, 0)));
 		}
 	} catch (...) {}
+}
+
+void FolderTree::FolderTreeImpl::UpdateBookmarkSectionVisibility()
+{
+	bool any = m_pBookmarkStore &&
+		g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore)) > 0;
+	if (m_pBookmarkSection)
+		gtk_widget_set_visible(m_pBookmarkSection, any);
 }
 
 void FolderTree::FolderTreeImpl::ReloadShortcuts()
@@ -2210,8 +2560,42 @@ void FolderTree::FolderTreeImpl::ReloadShortcuts()
 		}
 	}
 
+	/* Bookmarks live in their own store/section; preserve their checked state
+	 * across a reload just like the shortcuts. */
+	std::set<std::string> bm_checked_uris;
+	if (m_pBookmarkStore)
+	{
+		guint bn = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+		for (guint i = 0; i < bn; i++)
+		{
+			DirItem* it = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+			if (it && it->checked && it->uri)
+				bm_checked_uris.insert(it->uri);
+			if (it) g_object_unref(it);
+		}
+	}
+
 	g_list_store_remove_all(m_pShortcutsStore);
 	PopulateShortcutsModel(m_pShortcutsStore);
+
+	if (m_pBookmarkStore && m_pBookmarkSelectionModel)
+	{
+		g_list_store_remove_all(m_pBookmarkStore);
+		PopulateBookmarksModel(m_pBookmarkStore);
+		gtk_selection_model_unselect_all(GTK_SELECTION_MODEL(m_pBookmarkSelectionModel));
+		guint bn = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+		for (guint i = 0; i < bn; i++)
+		{
+			DirItem* it = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+			if (it && it->uri && bm_checked_uris.count(it->uri))
+			{
+				dir_item_set_checked(it, TRUE);
+				gtk_selection_model_select_item(GTK_SELECTION_MODEL(m_pBookmarkSelectionModel), i, FALSE);
+			}
+			if (it) g_object_unref(it);
+		}
+		UpdateBookmarkSectionVisibility();
+	}
 
 	n = g_list_model_get_n_items(G_LIST_MODEL(m_pShortcutsStore));
 	for (guint i = 0; i < n; i++)

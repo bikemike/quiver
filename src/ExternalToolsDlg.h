@@ -15,6 +15,9 @@ public:
 	//member functions
 	GtkWidget* GetWidget();
 	void       Run();
+	/* Opens the (single, shared) external-tools dialog; reuses the existing
+	 * window if one is already open. */
+	static void ShowDialog();
 
 	class ExternalToolsDlgPriv;
 	typedef boost::shared_ptr<ExternalToolsDlgPriv> ExternalToolsDlgPrivPtr;

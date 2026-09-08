@@ -8,6 +8,8 @@
 
 #include "QuiverStockIcons.h"
 
+extern GtkApplication *g_pApp;
+
 #include <gio/gio.h>
 #include <gtk/gtk.h>
 
@@ -126,7 +128,13 @@ bool OrganizeDlg::Run()
 
 	m_PrivPtr->m_bRunDone = false;
 	m_PrivPtr->m_iRunResponse = GTK_RESPONSE_NONE;
-	gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pDialogOrganize), TRUE);
+	/* Keep the dialog above its parent window without grabbing input. */
+	if (NULL != g_pApp)
+	{
+		GtkWindow *mainWin = gtk_application_get_active_window(g_pApp);
+		if (mainWin != NULL)
+			gtk_window_set_transient_for(GTK_WINDOW(m_PrivPtr->m_pDialogOrganize), mainWin);
+	}
 	gtk_widget_set_visible(m_PrivPtr->m_pDialogOrganize, TRUE);
 
 	GMainContext* ctx = g_main_context_default();

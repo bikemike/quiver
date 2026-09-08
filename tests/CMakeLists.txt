@@ -33,6 +33,7 @@ set(UNIT_TEST_SOURCES
     unit/test_folder_tree.cpp
     unit/test_headerbar_toolbar.cpp
     unit/test_shortcut_manager.cpp
+    unit/test_dialog_singleton.cpp
 )
 
 add_executable(quiver_unit_tests ${UNIT_TEST_SOURCES})

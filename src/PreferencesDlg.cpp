@@ -98,13 +98,56 @@ static gboolean preferences_dlg_delete_idle(gpointer user_data)
 	return G_SOURCE_REMOVE;
 }
 
+/* The single live PreferencesDlg instance, or NULL.  Prevents the user from
+ * opening several Preferences windows at once. */
+static PreferencesDlg *g_pPreferencesDlg = NULL;
+
 static void preferences_dlg_destroy_cb(GtkWidget *widget, gpointer user_data)
 {
 	(void)widget;
-	/* The dialog is heap-allocated (see the ACTION_QUIVER_PREFERENCES
-	 * handler) so that its signal handlers outlive the show-and-return
-	 * Run().  Delete it only after the destroy emission has finished. */
-	g_idle_add(preferences_dlg_delete_idle, user_data);
+	PreferencesDlg *dlg = static_cast<PreferencesDlg*>(user_data);
+	if (g_pPreferencesDlg == dlg)
+		g_pPreferencesDlg = NULL;
+	/* The dialog is heap-allocated (see ACTION_QUIVER_PREFERENCES) so that its
+	 * signal handlers outlive the show-and-return Run().  Delete it only after
+	 * the destroy emission has finished. */
+	g_idle_add(preferences_dlg_delete_idle, dlg);
+}
+
+void PreferencesDlg::ShowDialog()
+{
+	/* Reuse the existing instance if one is already alive: bring it to the
+	 * front instead of stacking a duplicate window.  The window is hidden (not
+	 * destroyed) when the user dismisses it, so presenting it again merely
+	 * re-shows the same dialog. */
+	if (g_pPreferencesDlg != NULL)
+	{
+		GtkWidget *dlg = GTK_WIDGET(gtk_builder_get_object(
+			g_pPreferencesDlg->m_PrivPtr->m_pGtkBuilder, "QuiverPreferencesDialog"));
+		if (dlg != NULL)
+		{
+			gtk_window_present(GTK_WINDOW(dlg));
+			return;
+		}
+		g_pPreferencesDlg = NULL;
+	}
+
+	g_pPreferencesDlg = new PreferencesDlg();
+	g_pPreferencesDlg->Run();
+}
+
+static void preferences_dlg_response_cb(GtkDialog *dialog, gint response_id, gpointer user_data)
+{
+	(void)response_id;
+	(void)user_data;
+	gtk_widget_set_visible(GTK_WIDGET(dialog), FALSE);
+}
+
+static gboolean preferences_dlg_close_request_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)user_data;
+	gtk_widget_set_visible(widget, FALSE);
+	return TRUE;
 }
 
 void PreferencesDlg::Run()
@@ -115,9 +158,14 @@ void PreferencesDlg::Run()
 		GtkWindow *mainWin = gtk_application_get_active_window(g_pApp);
 		if (mainWin != NULL)
 			gtk_window_set_transient_for(GTK_WINDOW(prefDlg), mainWin);
-		g_signal_connect_swapped(prefDlg, "response", G_CALLBACK(gtk_window_destroy), prefDlg);
+		/* Dismissing the dialog (a response, the window-closer, or Escape)
+		 * hides it instead of destroying the window, so the singleton survives
+		 * and can be re-presented by the next ShowDialog(). */
+		g_signal_connect(prefDlg, "response", G_CALLBACK(preferences_dlg_response_cb), NULL);
+		g_signal_connect(prefDlg, "close-request", G_CALLBACK(preferences_dlg_close_request_cb), NULL);
 		g_signal_connect(prefDlg, "destroy", G_CALLBACK(preferences_dlg_destroy_cb), this);
 		gtk_widget_set_visible(prefDlg, TRUE);
+		gtk_window_present(GTK_WINDOW(prefDlg));
 	}
 }
 

@@ -60,6 +60,8 @@ GtkApplication *g_pApp = NULL;
 #include <boost/algorithm/string.hpp>
 #include "quiver-i18n.h"
 
+#include <set>
+
 
 // globals needed for preferences
 
@@ -94,6 +96,11 @@ public:
 	
 	void Save();
 	void SaveAs();
+	/* Save the current (modified) file, either silently or via a prompt,
+	 * depending on the "ask"/"always" preference.  When bAllowCancel is true
+	 * (called from the close path) a Cancel button is included and returns
+	 * false to abort the close.  On navigation bAllowCancel is false. */
+	bool MaybeSaveModified(bool bAllowCancel = false);
 	
 	bool CanClose();
 
@@ -105,9 +112,9 @@ public:
 	static void CreateToolbarButtons(QuiverImpl *pQuiverImpl);
 	void RebuildMenubar();
 	/* Recursively clone a GMenuModel keeping only the items whose "location"
-	 * attribute matches the active state (plus the always-on bookmark/tools
-	 * placeholders).  Returns a new GMenu owned by the caller. */
-	GMenu* FilterMenuModel(GMenuModel *model, const std::string &state);
+	 * attribute matches one of the active contexts (plus the always-on
+	 * bookmark/tools placeholders).  Returns a new GMenu owned by the caller. */
+	GMenu* FilterMenuModel(GMenuModel *model, const std::set<std::string> &contexts);
 
 // member variables
 	Quiver *m_pQuiver;
@@ -127,6 +134,13 @@ public:
 	GtkWidget *m_pMenuButton;
 	GtkWidget *m_pPrefButton;
 	GtkWidget *m_pMenubar;
+	/* Persistent GtkPopoverMenu backing the hamburger button.  It is created
+	 * once; RebuildMenubar() swaps the filtered menu model on it and the
+	 * zoom/rotate rows are registered once as custom children ("zoom-row" /
+	 * "rotate-row", referenced by <item custom="..."> in quiver-menus.ui). */
+	GtkWidget *m_pMenuPopover;
+	GtkWidget *m_pMenuZoomRow;
+	GtkWidget *m_pMenuRotateRow;
 	/* Pristine, never-mutated GtkBuilder of data/quiver-menus.ui.  The visible
 	 * menu model is a filtered clone produced on every mode switch. */
 	GtkBuilder *m_pMenubarBuilder;
@@ -144,13 +158,18 @@ public:
 	bool m_bFilmStripVisibleBeforeFS;
 			
 	ImageListPtr m_ImageListPtr;
-	
+
 	int m_iAppX;
 	int m_iAppY;
 	int m_iAppWidth;
 	int m_iAppHeight;
 	
 	bool m_bInitialized;
+	/* True when the current viewer item is a video.  RebuildMenubar() uses this
+	 * (together with m_bViewerMode) to pick the active menu contexts; it is
+	 * updated in ImageChanged() so switching still <-> video re-filters the
+	 * hamburger menu. */
+	bool m_bCurrentIsVideo;
 	
 	bool m_bTimeoutEventMotionNotifyRunning;
 	bool m_bTimeoutEventMotionNotifyMouseMoved;
@@ -270,10 +289,14 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pQuiver = parent;
 	m_pBuilder = NULL;
 	m_bViewerMode = false;
+	m_bCurrentIsVideo = false;
 	m_pHeaderBar = NULL;
 	m_pMenuButton = NULL;
 	m_pPrefButton = NULL;
 	m_pMenubar = NULL;
+	m_pMenuPopover = NULL;
+	m_pMenuZoomRow = NULL;
+	m_pMenuRotateRow = NULL;
 	m_pMenubarBuilder = NULL;
 	m_pAppMenuModel = NULL;
 	m_pToolbar = NULL;
@@ -437,6 +460,136 @@ void QuiverImpl::Save()
 	}
 }
 
+bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
+{
+	/* Only offer to save a modified file we can write back to. */
+	if (!m_CurrentQuiverFile.Modified() || !m_CurrentQuiverFile.IsWriteable())
+	{
+		return true;
+	}
+
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	const std::string mode = prefsPtr->GetString(QUIVER_PREFS_APP, QUIVER_PREFS_SAVE_ON_NAVIGATE, "ask");
+	if (mode == "always")
+	{
+		Save();
+		return true;
+	}
+
+	/* Build a custom prompt window with a "don't ask again" check box,
+	 * because GtkAlertDialog in this GTK version lacks extra_child. */
+
+	struct PromptData {
+		gint response; /* -1 = waiting, 0 = save, 1 = discard, 2 = cancel */
+		gboolean neverAsk;
+		GMainLoop *loop;
+	};
+
+	PromptData data = { -1, FALSE, g_main_loop_new(NULL, FALSE) };
+
+	GtkWidget *dlg = gtk_window_new();
+	gtk_window_set_title(GTK_WINDOW(dlg), _("Save changes?"));
+	gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(m_pQuiverWindow));
+	gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
+	gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+
+	GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+	gtk_widget_set_margin_start(vbox, 18);
+	gtk_widget_set_margin_end(vbox, 18);
+	gtk_widget_set_margin_top(vbox, 18);
+	gtk_widget_set_margin_bottom(vbox, 18);
+	gtk_window_set_child(GTK_WINDOW(dlg), vbox);
+
+	GtkWidget *label = gtk_label_new(
+		_("This image has unsaved changes.\nDo you want to save your changes?"));
+	gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+	gtk_box_append(GTK_BOX(vbox), label);
+
+	GtkWidget *check = gtk_check_button_new_with_label(
+		_("Always save automatically - don't ask again"));
+	g_signal_connect(check, "toggled",
+		G_CALLBACK(+[](GtkCheckButton *btn, gpointer ud) {
+			auto *d = static_cast<PromptData*>(ud);
+			d->neverAsk = gtk_check_button_get_active(btn) ? TRUE : FALSE;
+		}), &data);
+	gtk_box_append(GTK_BOX(vbox), check);
+
+	GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+	gtk_widget_set_halign(hbox, GTK_ALIGN_END);
+	gtk_box_append(GTK_BOX(vbox), hbox);
+
+	/* Pack Cancel on the left, Discard, Save on the right. */
+	if (bAllowCancel)
+	{
+		GtkWidget *btnCancel = gtk_button_new_with_label(_("Cancel"));
+		g_signal_connect(btnCancel, "clicked",
+			G_CALLBACK(+[](gpointer ud) {
+				auto *d = static_cast<PromptData*>(ud);
+				d->response = 2;
+				g_main_loop_quit(d->loop);
+			}), &data);
+		gtk_box_append(GTK_BOX(hbox), btnCancel);
+	}
+
+	GtkWidget *btnDiscard = gtk_button_new_with_label(_("Discard Changes"));
+	g_signal_connect(btnDiscard, "clicked",
+		G_CALLBACK(+[](gpointer ud) {
+			auto *d = static_cast<PromptData*>(ud);
+			d->response = 1;
+			g_main_loop_quit(d->loop);
+		}), &data);
+	gtk_box_append(GTK_BOX(hbox), btnDiscard);
+
+	GtkWidget *btnSave = gtk_button_new_with_label(_("Save"));
+	g_signal_connect(btnSave, "clicked",
+		G_CALLBACK(+[](gpointer ud) {
+			auto *d = static_cast<PromptData*>(ud);
+			d->response = 0;
+			g_main_loop_quit(d->loop);
+		}), &data);
+	gtk_box_append(GTK_BOX(hbox), btnSave);
+
+	/* Treat the close button as Cancel / Discard. */
+	g_signal_connect(dlg, "close-request",
+		G_CALLBACK(+[](GtkWidget *, gpointer ud) -> gboolean {
+			auto *d = static_cast<PromptData*>(ud);
+			d->response = 1;
+			g_main_loop_quit(d->loop);
+			return TRUE;
+		}), &data);
+
+	gtk_window_present(GTK_WINDOW(dlg));
+	g_main_loop_run(data.loop);
+	g_main_loop_unref(data.loop);
+
+	/* Read checkbox before destroying the window. */
+	const gboolean bNeverAsk = data.neverAsk;
+	const gint response = data.response;
+
+	gtk_window_destroy(GTK_WINDOW(dlg));
+
+	if (bNeverAsk)
+	{
+		prefsPtr->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_SAVE_ON_NAVIGATE, "always");
+	}
+
+	if (response == 0)
+	{
+		Save();
+	}
+	else if (response == 1)
+	{
+		/* Discard: nothing to do. */
+	}
+	else
+	{
+		/* Cancel: abort the operation that led here. */
+		return false;
+	}
+
+	return true;
+}
+
 void QuiverImpl::SaveAs()
 {
 	GtkFileDialog* dialog = gtk_file_dialog_new();
@@ -527,12 +680,12 @@ bool QuiverImpl::CanClose()
  * mode switch via FilterMenuModel(), keeping shared items plus the items whose
  * "location" matches the currently-active state.
  *
- * Because each state's items are tagged and the visible model is always a fresh
- * clone of the pristine source, merge/unmerge never moves items across states
- * and never corrupts the other state's layout: unmerging the no-longer-active
- * state simply means the clone omits that state's tagged items.
+ * Because each context's items are tagged and the visible model is always a fresh
+ * clone of the pristine source, merge/unmerge never moves items across contexts
+ * and never corrupts the other context's layout: unmerging the no-longer-active
+ * context simply means the clone omits that context's tagged items.
  */
-GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::string &state)
+GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::set<std::string> &contexts)
 {
 	GMenu *dst = g_menu_new();
 	const int count = g_menu_model_get_n_items(model);
@@ -555,7 +708,7 @@ GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::string &state)
 				replacement = m_pBookmarkMenu;
 			else if (strcmp(location, "tools") == 0)
 				replacement = m_pExternalToolsMenu;
-			else if (strcmp(location, state.c_str()) != 0)
+			else if (contexts.find(location) == contexts.end())
 				bKeep = FALSE;
 		}
 
@@ -565,7 +718,7 @@ GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::string &state)
 		/* Section: filter its contents, keep only if non-empty. */
 		if (section)
 		{
-			GMenu *newSection = FilterMenuModel(section, state);
+			GMenu *newSection = FilterMenuModel(section, contexts);
 			if (g_menu_model_get_n_items(G_MENU_MODEL(newSection)) > 0)
 				g_menu_append_section(dst, NULL, G_MENU_MODEL(newSection));
 			g_object_unref(newSection);
@@ -589,7 +742,7 @@ GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::string &state)
 		 * and drop the item entirely if its (filtered) submenu is empty. */
 		if (submenu)
 		{
-			GMenu *newSub = FilterMenuModel(submenu, state);
+			GMenu *newSub = FilterMenuModel(submenu, contexts);
 			if (g_menu_model_get_n_items(G_MENU_MODEL(newSub)) == 0)
 			{
 				g_object_unref(item);
@@ -605,6 +758,47 @@ GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::string &state)
 	}
 
 	return dst;
+}
+
+/* Build a horizontal row for the hamburger popover: a caption label on the
+ * left (e.g. "Zoom" / "Rotate") followed by one icon button per entry.
+ * icons/actions/tips are parallel arrays of length n.  Clicking a button only
+ * activates its action — the popover stays open so zoom/rotate can be applied
+ * repeatedly without reopening the menu. */
+static GtkWidget *BuildPopoverButtonRow(const gchar *pszCaption,
+                                        const gchar *const icons[],
+                                        const gchar *const actions[],
+                                        const gchar *const tips[],
+                                        gint n)
+{
+	GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+	gtk_widget_set_margin_top(row, 4);
+	gtk_widget_set_margin_bottom(row, 4);
+	gtk_widget_add_css_class(row, "wide");
+
+	GtkWidget *label = gtk_label_new(pszCaption);
+	/* Left-align the caption with the menu labels above/below it and keep it
+	 * vertically centered against the icon buttons.  Give it a fixed character
+	 * width so the "Zoom" and "Rotate" rows start their button groups at the
+	 * same column, keeping the rows tidily aligned with each other. */
+	gtk_widget_set_halign(label, GTK_ALIGN_START);
+	gtk_label_set_width_chars(GTK_LABEL(label), 6);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+	gtk_widget_set_margin_end(label, 8);
+	gtk_box_append(GTK_BOX(row), label);
+
+	for (gint i = 0; i < n; ++i)
+	{
+		GtkWidget *button = gtk_button_new_from_icon_name(icons[i]);
+		gtk_widget_add_css_class(button, "image-button");
+		gtk_widget_set_focus_on_click(button, FALSE);
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(button), actions[i]);
+		if (tips[i] != NULL && tips[i][0] != '\0')
+			gtk_widget_set_tooltip_text(button, tips[i]);
+		gtk_box_append(GTK_BOX(row), button);
+	}
+
+	return row;
 }
 
 void QuiverImpl::RebuildMenubar()
@@ -629,8 +823,22 @@ void QuiverImpl::RebuildMenubar()
 		m_pExternalToolsMenu = G_MENU(gtk_builder_get_object(m_pMenubarBuilder, "external_tools_menu"));
 	}
 
-	const std::string state = m_bViewerMode ? "viewer" : "browser";
-	GMenu *appMenu = FilterMenuModel(m_pAppMenuModel, state);
+	/* Active menu contexts for the current state: "browser", or "viewer" plus
+	 * either "viewer-image" or "viewer-video" depending on the current item.
+	 * FilterMenuModel() drops everything not in this set, so the "_Browser"
+	 * switch entry (location="viewer") and the zoom/rotate rows only appear in
+	 * the modes where they belong. */
+	std::set<std::string> contexts;
+	if (m_bViewerMode)
+	{
+		contexts.insert("viewer");
+		contexts.insert(m_bCurrentIsVideo ? "viewer-video" : "viewer-image");
+	}
+	else
+	{
+		contexts.insert("browser");
+	}
+	GMenu *appMenu = FilterMenuModel(m_pAppMenuModel, contexts);
 
 	if (NULL == m_pMenuButton)
 	{
@@ -644,12 +852,86 @@ void QuiverImpl::RebuildMenubar()
 		 * non-focusable so Tab skips it. */
 		gtk_widget_set_focus_on_click(m_pMenuButton, FALSE);
 		gtk_widget_set_focusable(m_pMenuButton, FALSE);
-		gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(m_pMenuButton), G_MENU_MODEL(appMenu));
+
+		/* Use an explicit GtkPopoverMenu so the zoom/rotate rows can be
+		 * attached as custom children (Nautilus-style inline rows) and only
+		 * the filtered GMenu is swapped on context changes.  The rows are
+		 * registered against the model below via add_child() (which only
+		 * resolves ids present in the model at call time), so the model is
+		 * re-set and the rows re-added on every rebuild. */
+		m_pMenuPopover = gtk_popover_menu_new_from_model(G_MENU_MODEL(appMenu));
+
+		/* Zoom row: fit-stretch, 1:1, zoom in, zoom out. */
+		static const gchar *const zoomIcons[] = {
+			"zoom-fit-best-symbolic",
+			"zoom-original-symbolic",
+			"zoom-in-symbolic",
+			"zoom-out-symbolic"
+		};
+		static const gchar *const zoomActions[] = {
+			"quiver.ZoomFitStretch",
+			"quiver.Zoom100",
+			"quiver.ZoomIn",
+			"quiver.ZoomOut"
+		};
+		static const gchar *const zoomTips[] = {
+			"Zoom to Fit Window (Stretch)",
+			"Actual Size (100%)",
+			"Zoom In",
+			"Zoom Out"
+		};
+		m_pMenuZoomRow = BuildPopoverButtonRow("Zoom",
+			zoomIcons, zoomActions, zoomTips, G_N_ELEMENTS(zoomIcons));
+		/* Take a strong reference on each row so it survives the content
+		 * rebuild that gtk_popover_menu_set_menu_model() performs.  Every
+		 * rebuild below destroys the old slots (which would otherwise drain the
+		 * rows' only reference and leave the members dangling, crashing
+		 * add_child() on the next rebuild — brackets re-parent warnings).
+		 * with our own ref the row is merely unparented; add_child() can then
+		 * attach it to the freshly-created slot. */
+
+		/* Rotate row: clockwise, counterclockwise, flip horizontal, flip
+		 * vertical.  Still images only (location="viewer-image"). */
+		static const gchar *const rotateIcons[] = {
+			"object-rotate-right-symbolic",
+			"object-rotate-left-symbolic",
+			"object-flip-horizontal-symbolic",
+			"object-flip-vertical-symbolic"
+		};
+		static const gchar *const rotateActions[] = {
+			"quiver.RotateCW",
+			"quiver.RotateCCW",
+			"quiver.FlipH",
+			"quiver.FlipV"
+		};
+		static const gchar *const rotateTips[] = {
+			"Rotate Clockwise",
+			"Rotate Counterclockwise",
+			"Flip Horizontally",
+			"Flip Vertically"
+		};
+		m_pMenuRotateRow = BuildPopoverButtonRow("Rotate",
+			rotateIcons, rotateActions, rotateTips, G_N_ELEMENTS(rotateIcons));
+
+		/* Own both rows (see note above) so menu-model rebuilds can never free
+		 * them underneath us. */
+		g_object_ref_sink(m_pMenuZoomRow);
+		g_object_ref_sink(m_pMenuRotateRow);
+
+		gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pMenuButton), m_pMenuPopover);
 	}
-	else
-	{
-		gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(m_pMenuButton), G_MENU_MODEL(appMenu));
-	}
+
+	/* Set the filtered model, then (re-)register the custom rows.  These two
+	 * must go together: gtk_popover_menu_add_child() only resolves ids that are
+	 * present in the popover's *current* model, so starting up in browser mode
+	 * (whose model has no zoom/rotate rows) would otherwise leave the rows
+	 * unregistered forever.  add_child() returns FALSE harmlessly whenever the
+	 * current model lacks the row's slot, and — because we own the rows via
+	 * g_object_ref_sink() above — each rebuild finds them still alive and simply
+	 * re-attaches them to the freshly-created slots. */
+	gtk_popover_menu_set_menu_model(GTK_POPOVER_MENU(m_pMenuPopover), G_MENU_MODEL(appMenu));
+	gtk_popover_menu_add_child(GTK_POPOVER_MENU(m_pMenuPopover), m_pMenuZoomRow, "zoom-row");
+	gtk_popover_menu_add_child(GTK_POPOVER_MENU(m_pMenuPopover), m_pMenuRotateRow, "rotate-row");
 	m_pMenubar = m_pMenuButton;
 	g_object_unref(appMenu);
 }
@@ -820,9 +1102,21 @@ void Quiver::ImageChanged()
 	{
 		QuiverFile f = m_QuiverImplPtr->m_ImageListPtr->GetCurrent();
 		
-		m_QuiverImplPtr->Save();
+		/* Save the outgoing file: per-preference, either silently or with a
+		 * confirmation prompt.  Dialog is a message box because the File menu
+		 * was removed. */
+		m_QuiverImplPtr->MaybeSaveModified();
 		
 		m_QuiverImplPtr->m_CurrentQuiverFile = f;
+		
+		/* Rebuild the hamburger menu when the still <-> video context flips
+		 * so its Image / Video submenus match the current file. */
+		bool bIsVideo = f.IsVideo();
+		if (bIsVideo != m_QuiverImplPtr->m_bCurrentIsVideo)
+		{
+			m_QuiverImplPtr->m_bCurrentIsVideo = bIsVideo;
+			m_QuiverImplPtr->RebuildMenubar();
+		}
 		
 		SetWindowTitle( f.GetFilePath() );
 		
@@ -915,6 +1209,13 @@ void Quiver::Close()
 	{
 		return;
 	}
+
+	/* Ask to save unsaved changes before closing (File menu is gone). */
+	if (m_QuiverImplPtr && !m_QuiverImplPtr->MaybeSaveModified(true))
+	{
+		/* Cancel - keep the window open. */
+		return;
+	}
 	m_bClosing = true;
 
 	if (0 != m_iIdleInitID)
@@ -982,6 +1283,11 @@ gboolean Quiver::EventCloseRequest( GtkWindow *window, gpointer data )
 { (void)data;  (void)window; 
 	if (m_QuiverImplPtr->CanClose())
 	{
+		if (!m_QuiverImplPtr->MaybeSaveModified(true))
+		{
+			/* Cancel - keep the window open. */
+			return TRUE;
+		}
 		Close();
 	}
 	
@@ -2471,12 +2777,9 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_PREFERENCES))
 	{
-		/* heap-allocated: PreferencesDlg::Run() shows the dialog and
-		 * returns immediately, so a stack object would be destroyed while
-		 * the dialog's signal handlers (which use it as user_data) are still
-		 * live.  The dialog self-deletes when it is destroyed. */
-		PreferencesDlg *prefDlg = new PreferencesDlg();
-		prefDlg->Run();
+		/* PreferencesDialog is a singleton: ShowDialog() reuses an already-open
+		 * window instead of stacking duplicates. */
+		PreferencesDlg::ShowDialog();
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_SAVE))
 	{
@@ -2885,8 +3188,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_EXTERNAL_TOOLS))
 	{
-		ExternalToolsDlg externalToolsDlg;
-		externalToolsDlg.Run();
+		ExternalToolsDlg::ShowDialog();
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_TASK_MANAGER))
 	{
@@ -2958,11 +3260,9 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_BOOKMARKS_EDIT))
 	{
-		/* heap-allocated: Run() shows the dialog and returns immediately,
-		 * so a stack object would be destroyed while the dialog's signal
-		 * handlers (which use it as user_data) are still live. */
-		BookmarksDlg *bookmarkDlg = new BookmarksDlg();
-		bookmarkDlg->Run();
+		/* BookmarksDialog is a singleton: ShowDialog() reuses an already-open
+		 * window instead of stacking duplicates. */
+		BookmarksDlg::ShowDialog();
 	}
 }
 

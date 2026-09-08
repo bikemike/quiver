@@ -3,6 +3,8 @@
 
 #include "QuiverStockIcons.h"
 
+extern GtkApplication *g_pApp;
+
 static void show_error_dialog(GtkWindow* parent, const char* message)
 {
 	GtkWidget* dialog = gtk_window_new();
@@ -102,6 +104,15 @@ bool AdjustDateDlg::Run()
 {
 	m_PrivPtr->m_bRunDone = false;
 	m_PrivPtr->m_iRunResponse = GTK_RESPONSE_NONE;
+	/* This dialog edits the current selection, so it must be modal to keep
+	 * the selection unchanged while it is open.  It must also stay above the
+	 * main window, so it is made transient for it as well. */
+	if (NULL != g_pApp)
+	{
+		GtkWindow *mainWin = gtk_application_get_active_window(g_pApp);
+		if (mainWin != NULL)
+			gtk_window_set_transient_for(GTK_WINDOW(m_PrivPtr->m_pDialogAdjustDate), mainWin);
+	}
 	gtk_window_set_modal(GTK_WINDOW(m_PrivPtr->m_pDialogAdjustDate), TRUE);
 	gtk_widget_set_visible(GTK_WIDGET(m_PrivPtr->m_pDialogAdjustDate), TRUE);
 

@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <gtk/gtk.h>
+#include <glib/gstdio.h>
 #include "FolderTree.h"
 #include "QuiverFile.h"
 #include "Bookmarks.h"
+#include "Preferences.h"
 #include "test_helpers.h"
 
 TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gui]")
@@ -348,14 +350,27 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
         REQUIRE(tree_widget != nullptr);
         REQUIRE(GTK_IS_LIST_VIEW(tree_widget));
 
-        // Children of box: shortcuts list view, separator, tree list view
+        // Children of box: shortcuts list view, separator, bookmarks
+        // section, tree list view
         GtkWidget* first_child = gtk_widget_get_first_child(box);
         REQUIRE(first_child == sc_widget);
         GtkWidget* sep = gtk_widget_get_next_sibling(first_child);
         REQUIRE(sep != nullptr);
         REQUIRE(GTK_IS_SEPARATOR(sep));
-        GtkWidget* third_child = gtk_widget_get_next_sibling(sep);
-        REQUIRE(third_child == tree_widget);
+        GtkWidget* bm_section = gtk_widget_get_next_sibling(sep);
+        REQUIRE(bm_section != nullptr);
+        GtkWidget* bm_widget = tree->GetBookmarksWidget();
+        REQUIRE(bm_widget != nullptr);
+        REQUIRE(GTK_IS_LIST_VIEW(bm_widget));
+        GtkWidget* walk = gtk_widget_get_first_child(bm_section);
+        REQUIRE(walk != nullptr);
+        REQUIRE(GTK_IS_LABEL(walk));
+        GtkWidget* bm_list = gtk_widget_get_next_sibling(walk);
+        REQUIRE(bm_list == bm_widget);
+        GtkWidget* tree_sibling = gtk_widget_get_next_sibling(bm_section);
+        while (tree_sibling != tree_widget && tree_sibling != nullptr)
+            tree_sibling = gtk_widget_get_next_sibling(tree_sibling);
+        REQUIRE(tree_sibling == tree_widget);
 
         // Verify CSS classes and styling attributes
         REQUIRE(gtk_widget_has_css_class(box, "sidebar"));
@@ -393,13 +408,17 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
         g_free(home_uri);
     }
 
-    SECTION("Bookmarks added to Bookmarks instance appear in Shortcuts")
+    SECTION("Bookmarks added to Bookmarks instance appear in Bookmarks section")
     {
         FolderTreePtr tree(new FolderTree());
+        GtkWidget* bm_widget = tree->GetBookmarksWidget();
+        REQUIRE(bm_widget != nullptr);
+        GtkSelectionModel* bm_sel = gtk_list_view_get_model(GTK_LIST_VIEW(bm_widget));
+        guint count_before = g_list_model_get_n_items(G_LIST_MODEL(bm_sel));
+
         GtkWidget* sc_widget = tree->GetShortcutsWidget();
-        REQUIRE(sc_widget != nullptr);
         GtkSelectionModel* sc_sel = gtk_list_view_get_model(GTK_LIST_VIEW(sc_widget));
-        guint count_before = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+        guint sc_count_before = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
 
         BookmarksPtr bm = Bookmarks::GetInstance();
         std::string test_uri = "file:///tmp/quiver_test_bm_" + std::to_string(g_random_int());
@@ -407,11 +426,104 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
         Bookmark b("Custom Test Bookmark", "desc", "folder-symbolic", uris, false);
         bm->AddBookmark(b);
 
-        guint count_after = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+        guint count_after = g_list_model_get_n_items(G_LIST_MODEL(bm_sel));
         REQUIRE(count_after == count_before + 1);
+
+        /* The dedicated bookmarks section must render the new row while the
+         * shortcuts list (Home/Desktop/...) is untouched by bookmarks. */
+        guint sc_count_after = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+        REQUIRE(sc_count_after == sc_count_before);
 
         int added_id = bm->GetBookmarks().back().GetID();
         bm->Remove(added_id);
+    }
+
+    SECTION("Bookmarks loaded from the config file appear in Bookmarks section")
+    {
+        REQUIRE(g_szConfigFilePath[0] != '\0');
+
+        // Preserve the pre-existing config so other tests are unaffected.
+        gchar* prev_contents = nullptr;
+        gsize prev_len = 0;
+        bool had_config = g_file_get_contents(g_szConfigFilePath, &prev_contents, &prev_len, nullptr);
+
+        auto write_config = [](const char* name) {
+            GKeyFile* kf = g_key_file_new();
+            if (name != nullptr)
+            {
+                const gchar* ids[] = { "0" };
+                g_key_file_set_string_list(kf, "Bookmarks", "default", ids, 1);
+                g_key_file_set_string(kf, "Bookmark_0", "name", name);
+                g_key_file_set_string(kf, "Bookmark_0", "description", "startup-load test");
+                g_key_file_set_string(kf, "Bookmark_0", "icon", "folder-symbolic");
+                g_key_file_set_boolean(kf, "Bookmark_0", "recursive", FALSE);
+                const gchar* uris[] = { "file:///tmp/quiver_startup_bm_dir" };
+                g_key_file_set_string_list(kf, "Bookmark_0", "uris", uris, 1);
+            }
+            gsize len = 0;
+            gchar* data = g_key_file_to_data(kf, &len, nullptr);
+            g_key_file_free(kf);
+            g_file_set_contents(g_szConfigFilePath, data, (gssize)len, nullptr);
+            g_free(data);
+        };
+
+        // Baseline: a FolderTree with a config that contains no bookmarks.
+        write_config(nullptr);
+        Bookmarks::Reset();
+        Preferences::Reset();
+        FolderTreePtr tree_a(new FolderTree());
+        GtkWidget* sc_a = tree_a->GetShortcutsWidget();
+        REQUIRE(sc_a != nullptr);
+        GtkSelectionModel* sel_a = gtk_list_view_get_model(GTK_LIST_VIEW(sc_a));
+        guint count_a = g_list_model_get_n_items(G_LIST_MODEL(sel_a));
+        REQUIRE(count_a >= 1);
+        GtkWidget* bm_a = tree_a->GetBookmarksWidget();
+        REQUIRE(bm_a != nullptr);
+        GtkSelectionModel* bm_sel_a = gtk_list_view_get_model(GTK_LIST_VIEW(bm_a));
+        guint bm_count_a = g_list_model_get_n_items(G_LIST_MODEL(bm_sel_a));
+        REQUIRE(bm_count_a == 0);
+        tree_a.reset();
+        Bookmarks::Reset();
+        Preferences::Reset();
+
+        // Now the same config plus one pre-existing bookmark: must gain a row.
+        write_config("Startup Load Bookmark");
+        Bookmarks::Reset();
+        Preferences::Reset();
+        FolderTreePtr tree_b(new FolderTree());
+        GtkWidget* sc_b = tree_b->GetShortcutsWidget();
+        REQUIRE(sc_b != nullptr);
+        GtkSelectionModel* sel_b = gtk_list_view_get_model(GTK_LIST_VIEW(sc_b));
+        guint count_b = g_list_model_get_n_items(G_LIST_MODEL(sel_b));
+        GtkWidget* bm_b = tree_b->GetBookmarksWidget();
+        REQUIRE(bm_b != nullptr);
+        GtkSelectionModel* bm_sel_b = gtk_list_view_get_model(GTK_LIST_VIEW(bm_b));
+        guint bm_count_b = g_list_model_get_n_items(G_LIST_MODEL(bm_sel_b));
+        REQUIRE(bm_count_b == 1);
+        REQUIRE(count_b == count_a);
+        tree_b.reset();
+
+        // Clean up: drop the test bookmark and restore the original config.
+        BookmarksPtr bm = Bookmarks::GetInstance();
+        if (bm)
+        {
+            std::vector<Bookmark> bms = bm->GetBookmarks();
+            for (const auto& b : bms)
+                if (b.GetName() == "Startup Load Bookmark")
+                    bm->Remove(b.GetID());
+        }
+        Bookmarks::Reset();
+        Preferences::Reset();
+
+        if (had_config)
+        {
+            g_file_set_contents(g_szConfigFilePath, prev_contents, (gssize)prev_len, nullptr);
+            g_free(prev_contents);
+        }
+        else
+        {
+            g_unlink(g_szConfigFilePath);
+        }
     }
 
     SECTION("Shortcuts multi-selection spacebar preserves selection when unchecking")

@@ -18,6 +18,7 @@ public:
 	GtkWidget* GetWidget() const;
 	GtkWidget* GetTreeWidget() const;
 	GtkWidget* GetShortcutsWidget() const;
+	GtkWidget* GetBookmarksWidget() const;
 
 	void SetSelectedFolders(std::list<std::string> &uris);
 	std::list<std::string> GetSelectedFolders() const;
