@@ -93,8 +93,8 @@ struct _QuiverImageViewPrivate
 
 
 	QuiverImageViewMouseMode mouse_move_mode;
-	gint mouse_x1, mouse_y1;
-	gint mouse_x2, mouse_y2;
+	gdouble mouse_x1, mouse_y1;
+	gdouble mouse_x2, mouse_y2;
 	gboolean mouse_move_capture;
 
 	gboolean scroll_draw;
@@ -927,8 +927,8 @@ quiver_image_view_gesture_pressed (GtkGestureClick *gesture,
 	(void)gesture;
 	GtkWidget *widget = GTK_WIDGET(imageview);
 
-	imageview->priv->mouse_x1 = imageview->priv->mouse_x2 = (gint)x;
-	imageview->priv->mouse_y1 = imageview->priv->mouse_y2 = (gint)y;
+	imageview->priv->mouse_x1 = imageview->priv->mouse_x2 = x;
+	imageview->priv->mouse_y1 = imageview->priv->mouse_y2 = y;
 
 	if ( 0 != imageview->priv->timeout_id_smooth_scroll_slowdown)
 	{
@@ -957,8 +957,8 @@ quiver_image_view_gesture_drag_begin (GtkGestureDrag *gesture,
 				      QuiverImageView *imageview)
 {
 	(void)gesture;
-	imageview->priv->mouse_x1 = (gint)x;
-	imageview->priv->mouse_y1 = (gint)y;
+	imageview->priv->mouse_x1 = x;
+	imageview->priv->mouse_y1 = y;
 	imageview->priv->mouse_move_capture = TRUE;
 }
 
@@ -972,6 +972,18 @@ quiver_image_view_gesture_drag_update (GtkGestureDrag *gesture,
 	if (QUIVER_IMAGE_VIEW_MOUSE_MODE_DRAG != imageview->priv->mouse_move_mode)
 		return;
 
+	/* GTK4's drag-update passes the pointer as an OFFSET from the drag start
+	 * point (the docs name them offset_x/offset_y), unlike drag-begin which
+	 * passes widget-relative absolute coordinates.  Re-base on the start point
+	 * so the pan math below compares like-for-like. */
+	gdouble abs_x = x, abs_y = y;
+	{
+		gdouble start_x, start_y;
+		gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);
+		abs_x += start_x;
+		abs_y += start_y;
+	}
+
 	struct timeval new_motion_time = {0};
 	gettimeofday(&new_motion_time,NULL);
 	gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
@@ -980,8 +992,8 @@ quiver_image_view_gesture_drag_update (GtkGestureDrag *gesture,
 #define MAX_VELOCITY 12000
 	VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
 
-	gint xdist = (gint)x - imageview->priv->mouse_x1;
-	gint ydist = (gint)y - imageview->priv->mouse_y1;
+	gdouble xdist = abs_x - imageview->priv->mouse_x1;
+	gdouble ydist = abs_y - imageview->priv->mouse_y1;
 
 	vt->time     = new_time - old_time;
 	vt->angle    = atan2(ydist, xdist);
@@ -1003,14 +1015,14 @@ quiver_image_view_gesture_drag_update (GtkGestureDrag *gesture,
 
 	gdouble hadjust = gtk_adjustment_get_value(imageview->priv->hadjustment);
 	gdouble vadjust = gtk_adjustment_get_value(imageview->priv->vadjustment);
-	hadjust += imageview->priv->mouse_x1 - (gint)x;
+	hadjust += imageview->priv->mouse_x1 - abs_x;
 	hadjust = MAX(0,MIN(gtk_adjustment_get_upper(imageview->priv->hadjustment) - gtk_adjustment_get_page_size(imageview->priv->hadjustment),hadjust));
-	vadjust += imageview->priv->mouse_y1 - (gint)y;
+	vadjust += imageview->priv->mouse_y1 - abs_y;
 	vadjust = MAX(0,MIN(gtk_adjustment_get_upper(imageview->priv->vadjustment) - gtk_adjustment_get_page_size(imageview->priv->vadjustment),vadjust));
 	gtk_adjustment_set_value(imageview->priv->hadjustment,hadjust);
 	gtk_adjustment_set_value(imageview->priv->vadjustment,vadjust);
-	imageview->priv->mouse_x1 = (gint)x;
-	imageview->priv->mouse_y1 = (gint)y;
+	imageview->priv->mouse_x1 = abs_x;
+	imageview->priv->mouse_y1 = abs_y;
 }
 
 static void

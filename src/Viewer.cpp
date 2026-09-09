@@ -5944,6 +5944,15 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 		g_object_set_data(G_OBJECT(m_pVideoFixed), "quiver-viewer-impl", this);
 		gtk_stack_add_named(GTK_STACK(m_pStack), m_pVideoFixed, "video");
 
+		/* Match the video background to the image viewer background setting */
+		if (!prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_USE_THEME_COLOR,true))
+		{
+			GdkRGBA color;
+			string strBGColorImg = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW,"#000");
+			if (!strBGColorImg.empty() && gdk_rgba_parse(&color, strBGColorImg.c_str()))
+				set_widget_bg_color(m_pVideoFixed, &color);
+		}
+
 		gtk_widget_set_size_request(m_pVideoSinkWidget, 1, 1);
 		quiver_freelayout_put(m_pVideoFixed, m_pVideoSinkWidget, 0, 0);
 
@@ -6618,6 +6627,7 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 				// use theme color
 				set_widget_bg_color(parent->m_pIconView, NULL);
 				set_widget_bg_color(parent->m_pImageView, NULL);
+				set_widget_bg_color(parent->m_pVideoFixed, NULL);
 			}
 			else
 			{
@@ -6633,7 +6643,10 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 				}
 				
 				if (gdk_rgba_parse(&color, strBGColorImg.c_str()))
+				{
 					set_widget_bg_color(parent->m_pImageView, &color);
+					set_widget_bg_color(parent->m_pVideoFixed, &color);
+				}
 			}
 		}
 		else if (QUIVER_PREFS_APP_BG_IMAGEVIEW == event->GetKey() )
@@ -6645,7 +6658,10 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 				string strBGColorImg = prefsPtr->GetString(QUIVER_PREFS_APP,QUIVER_PREFS_APP_BG_IMAGEVIEW, "#000");
 				
 				if (gdk_rgba_parse(&color, strBGColorImg.c_str()))
+				{
 					set_widget_bg_color(parent->m_pImageView, &color);
+					set_widget_bg_color(parent->m_pVideoFixed, &color);
+				}
 			}			
 		}
 		else if (QUIVER_PREFS_APP_BG_ICONVIEW == event->GetKey() )
