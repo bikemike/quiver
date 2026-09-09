@@ -44,6 +44,7 @@
 #include <exiv2/exiv2.hpp>
 #include <memory>
 #include <math.h>
+#include <iostream>
 
 using namespace std;
 
@@ -99,7 +100,6 @@ static void viewer_icon_view_map_cb(GtkWidget *widget, gpointer user_data);
 static void viewer_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 
 static void viewer_volume_value_changed (GtkRange *range, gdouble value, gpointer user_data);
-static void viewer_volume_toggle_popover_cb(gpointer user_data, GtkWidget *widget);
 
 static gboolean viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble value, gpointer user_data);
 
@@ -121,7 +121,8 @@ static void viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdoub
 static void viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
 static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble y_root, guint32 time, gpointer userdata);
 static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data);
-static void viewer_speed_toggle_popover_cb(gpointer user_data, GtkWidget *widget);
+static void viewer_speed_create_popup_cb(GtkMenuButton *button, gpointer user_data);
+static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer user_data);
 static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user_data);
 static void viewer_snapshot_button_clicked_cb(GtkButton *button, gpointer user_data);
 static void viewer_video_rw_cb(gpointer user_data);
@@ -2010,18 +2011,25 @@ timeout_event_motion_notify (gpointer user_data)
 	gboolean bKeepVisible = FALSE;
 
 	// keep visible while the volume popup is open (it floats above the bar)
+	if (!bKeepVisible && pViewerImpl->m_pVolumeButton != NULL)
 	{
-		GtkWidget* popup = pViewerImpl->m_pVolumePopover;
-		if (popup != NULL && gtk_widget_get_visible(popup))
+		GtkPopover* volPop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(pViewerImpl->m_pVolumeButton));
+		if (volPop != NULL && gtk_widget_get_visible(GTK_WIDGET(volPop)))
 			bKeepVisible = TRUE;
 	}
 
-	/* Note: gtk_menu_popup_at_widget grabs the pointer, so we don't need explicit keep visible for the gear menu */
+	// keep visible while the video options popover is open
+	if (!bKeepVisible && pViewerImpl->m_pVideoOptionsBtn != NULL)
+	{
+		GtkPopover* pop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(pViewerImpl->m_pVideoOptionsBtn));
+		if (pop != NULL && gtk_widget_get_visible(GTK_WIDGET(pop)))
+			bKeepVisible = TRUE;
+	}
 
 	// ...and while the speed popover is open
 	if (!bKeepVisible && pViewerImpl->m_pSpeedButton != NULL)
 	{
-		GtkPopover* speedPop = (GtkPopover*)g_object_get_data(G_OBJECT(pViewerImpl->m_pSpeedButton), "speed-popover");
+		GtkPopover* speedPop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(pViewerImpl->m_pSpeedButton));
 		if (speedPop != NULL && gtk_widget_get_visible(GTK_WIDGET(speedPop)))
 			bKeepVisible = TRUE;
 	}
@@ -2162,18 +2170,20 @@ static void controls_show_on_event_cb(GtkEventControllerMotion *controller, gdou
 {
 	(void)controller; (void)x; (void)y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-/* Only re-show the media controls while the current item is a video.
-		 * Otherwise hovering the transport buttons after navigating to a plain
-		 * image would resurrect the controls over the image. */
-		if (p->IsVideo())
+	/* Only re-show the media controls while the current item is a video.
+	 * Otherwise hovering the transport buttons after navigating to a plain
+	 * image would resurrect the controls over the image. */
+	if (p->IsVideo())
+	{
+		if (!viewer_pointer_moved(p))
 		{
-			if (!viewer_pointer_moved(p))
-			{
-				return;
-			}
-			gboolean was_hidden = viewer_controls_need_reshow(p);
+			return;
+		}
+		gboolean was_hidden = viewer_controls_need_reshow(p);
 		if (was_hidden)
+		{
 			viewer_set_controls_visible(p, true);
+		}
 		/* hovering a control button counts as pointer activity too */
 		viewer_set_idle_cursor(p, false);
 		p->RefreshAutoHideTimer();
@@ -2885,135 +2895,159 @@ static void viewer_video_option_loop_cb(GtkButton *button, gpointer user_data)
 	g_free(loop_label);
 }
 
-static void viewer_video_options_popover_closed_cb(GtkPopover *popover, gpointer user_data)
+static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer user_data)
 {
-	(void)user_data;
-	/* each options popover is created on click and parented to the button;
-	 * on close, unparent it so it is destroyed and cannot linger as a child
-	 * of the button (a later button finalize would leave a dangling parent
-	 * pointer in the child). */
-	GtkWidget *w = GTK_WIDGET(popover);
-	if (gtk_widget_get_parent(w))
-		gtk_widget_unparent(w);
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
-	if (p != NULL && p->m_pVideoOptionsPopover == w)
-		p->m_pVideoOptionsPopover = NULL;
-}
-
-static void viewer_video_options_btn_clicked_cb(GtkButton *button, gpointer user_data)
-{
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	(void)button;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p == NULL) return;
 
 	GtkWidget *popover = gtk_popover_new();
-	gtk_widget_set_parent(popover, GTK_WIDGET(button));
+	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
 	gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
-	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	gtk_popover_set_child(GTK_POPOVER(popover), box);
-	g_signal_connect(G_OBJECT(popover), "closed", G_CALLBACK(viewer_video_options_popover_closed_cb), p);
 	p->m_pVideoOptionsPopover = popover;
 
-	gint n_audio = 0;
-	g_object_get(p->m_pPipeline, "n-audio", &n_audio, NULL);
-	gint current_audio = -1;
-	g_object_get(p->m_pPipeline, "current-audio", &current_audio, NULL);
-	
-	if (n_audio > 0) {
-		GtkWidget *mi = gtk_button_new_with_label("Audio Tracks:");
-		gtk_widget_set_sensitive(mi, FALSE);
+	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+	gtk_widget_set_margin_start(box, 6);
+	gtk_widget_set_margin_end(box, 6);
+	gtk_widget_set_margin_top(box, 6);
+	gtk_widget_set_margin_bottom(box, 6);
+
+	if (p->m_pPipeline != NULL)
+	{
+		gint n_audio = 0;
+		g_object_get(p->m_pPipeline, "n-audio", &n_audio, NULL);
+		gint current_audio = -1;
+		g_object_get(p->m_pPipeline, "current-audio", &current_audio, NULL);
+
+		if (n_audio > 0)
+		{
+			GtkWidget *mi = gtk_label_new(NULL);
+			gtk_label_set_markup(GTK_LABEL(mi), "<b>Audio Tracks:</b>");
+			gtk_widget_set_halign(mi, GTK_ALIGN_START);
+			gtk_widget_set_margin_top(mi, 2);
+			gtk_widget_set_margin_bottom(mi, 2);
+			gtk_box_append(GTK_BOX(box), mi);
+
+			for (gint i = 0; i < n_audio; ++i)
+			{
+				GstTagList *tags = NULL;
+				g_signal_emit_by_name(p->m_pPipeline, "get-audio-tags", i, &tags);
+				gchar *lang = NULL;
+				if (tags)
+				{
+					gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
+					gst_tag_list_free(tags);
+				}
+				gchar *lang_str = lang ? g_strdup_printf(" (%s)", lang) : NULL;
+				gchar *label = g_strdup_printf("%sTrack %d%s",
+					(i == current_audio) ? "✓ " : "   ",
+					i + 1,
+					lang_str ? lang_str : "");
+				GtkWidget *item = gtk_button_new_with_label(label);
+				gtk_button_set_has_frame(GTK_BUTTON(item), FALSE);
+				gtk_widget_set_halign(item, GTK_ALIGN_FILL);
+				g_free(label);
+				if (lang) g_free(lang);
+
+				g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
+				g_object_set_data(G_OBJECT(item), "is-audio-track", GINT_TO_POINTER(1));
+				if (lang_str)
+					g_object_set_data_full(G_OBJECT(item), "track-lang", lang_str, g_free);
+				g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_audio_cb), p);
+				gtk_box_append(GTK_BOX(box), item);
+			}
+			gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+		}
+
+		gint n_text = 0;
+		g_object_get(p->m_pPipeline, "n-text", &n_text, NULL);
+		gint current_text = -1;
+		g_object_get(p->m_pPipeline, "current-text", &current_text, NULL);
+
+		guint flags = 0;
+		g_object_get(p->m_pPipeline, "flags", &flags, NULL);
+		gboolean text_enabled = (flags & (1 << 2)) != 0; // GST_PLAY_FLAG_TEXT
+
+		GtkWidget *mi = gtk_label_new(NULL);
+		gtk_label_set_markup(GTK_LABEL(mi), "<b>Subtitles:</b>");
+		gtk_widget_set_halign(mi, GTK_ALIGN_START);
+		gtk_widget_set_margin_top(mi, 2);
+		gtk_widget_set_margin_bottom(mi, 2);
 		gtk_box_append(GTK_BOX(box), mi);
-		
-		for (gint i = 0; i < n_audio; ++i) {
-			GstTagList *tags = NULL;
-			g_signal_emit_by_name(p->m_pPipeline, "get-audio-tags", i, &tags);
-			gchar *lang = NULL;
-			if (tags) {
-				gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
-				gst_tag_list_free(tags);
+
+		GtkWidget *item_off = gtk_button_new_with_label(!text_enabled ? "✓ Off" : "   Off");
+		gtk_button_set_has_frame(GTK_BUTTON(item_off), FALSE);
+		gtk_widget_set_halign(item_off, GTK_ALIGN_FILL);
+		g_object_set_data(G_OBJECT(item_off), "track-id", GINT_TO_POINTER(-1));
+		g_object_set_data(G_OBJECT(item_off), "is-text-track", GINT_TO_POINTER(1));
+		g_signal_connect(item_off, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
+		gtk_box_append(GTK_BOX(box), item_off);
+
+		if (n_text > 0)
+		{
+			for (gint i = 0; i < n_text; ++i)
+			{
+				GstTagList *tags = NULL;
+				g_signal_emit_by_name(p->m_pPipeline, "get-text-tags", i, &tags);
+				gchar *lang = NULL;
+				if (tags)
+				{
+					gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
+					gst_tag_list_free(tags);
+				}
+				gchar *lang_str = lang ? g_strdup_printf(" (%s)", lang) : NULL;
+				gchar *label = g_strdup_printf("%sTrack %d%s",
+					(text_enabled && i == current_text) ? "✓ " : "   ",
+					i + 1,
+					lang_str ? lang_str : "");
+				GtkWidget *item = gtk_button_new_with_label(label);
+				gtk_button_set_has_frame(GTK_BUTTON(item), FALSE);
+				gtk_widget_set_halign(item, GTK_ALIGN_FILL);
+				g_free(label);
+				if (lang) g_free(lang);
+
+				g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
+				g_object_set_data(G_OBJECT(item), "is-text-track", GINT_TO_POINTER(1));
+				if (lang_str)
+					g_object_set_data_full(G_OBJECT(item), "track-lang", lang_str, g_free);
+				g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
+				gtk_box_append(GTK_BOX(box), item);
 			}
-			gchar *lang_str = lang ? g_strdup_printf(" (%s)", lang) : NULL;
-			gchar *label = g_strdup_printf("%sTrack %d%s", 
-				(i == current_audio) ? "✓ " : "   ", 
-				i + 1, 
-				lang_str ? lang_str : "");
-			GtkWidget *item = gtk_button_new_with_label(label);
-			g_free(label);
-			if (lang) g_free(lang);
-			
-			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
-			g_object_set_data(G_OBJECT(item), "is-audio-track", GINT_TO_POINTER(1));
-			if (lang_str)
-				g_object_set_data_full(G_OBJECT(item), "track-lang", lang_str, g_free);
-			g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_audio_cb), p);
-			gtk_box_append(GTK_BOX(box), item);
 		}
-		gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-	}
-	
-	gint n_text = 0;
-	g_object_get(p->m_pPipeline, "n-text", &n_text, NULL);
-	gint current_text = -1;
-	g_object_get(p->m_pPipeline, "current-text", &current_text, NULL);
-	
-	guint flags = 0;
-	g_object_get(p->m_pPipeline, "flags", &flags, NULL);
-	gboolean text_enabled = (flags & (1 << 2)) != 0; // GST_PLAY_FLAG_TEXT
-	
-	GtkWidget *mi = gtk_button_new_with_label("Subtitles:");
-	gtk_widget_set_sensitive(mi, FALSE);
-	gtk_box_append(GTK_BOX(box), mi);
-	
-	GtkWidget *item_off = gtk_button_new_with_label(!text_enabled ? "✓ Off" : "   Off");
-	g_object_set_data(G_OBJECT(item_off), "track-id", GINT_TO_POINTER(-1));
-	g_object_set_data(G_OBJECT(item_off), "is-text-track", GINT_TO_POINTER(1));
-	g_signal_connect(item_off, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
-	gtk_box_append(GTK_BOX(box), item_off);
-	
-	if (n_text > 0) {
-		for (gint i = 0; i < n_text; ++i) {
-			GstTagList *tags = NULL;
-			g_signal_emit_by_name(p->m_pPipeline, "get-text-tags", i, &tags);
-			gchar *lang = NULL;
-			if (tags) {
-				gst_tag_list_get_string(tags, GST_TAG_LANGUAGE_CODE, &lang);
-				gst_tag_list_free(tags);
-			}
-			gchar *lang_str = lang ? g_strdup_printf(" (%s)", lang) : NULL;
-			gchar *label = g_strdup_printf("%sTrack %d%s", 
-				(text_enabled && i == current_text) ? "✓ " : "   ", 
-				i + 1, 
-				lang_str ? lang_str : "");
-			GtkWidget *item = gtk_button_new_with_label(label);
-			g_free(label);
-			if (lang) g_free(lang);
-			
-			g_object_set_data(G_OBJECT(item), "track-id", GINT_TO_POINTER(i));
-			g_object_set_data(G_OBJECT(item), "is-text-track", GINT_TO_POINTER(1));
-			if (lang_str)
-				g_object_set_data_full(G_OBJECT(item), "track-lang", lang_str, g_free);
-			g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
-			gtk_box_append(GTK_BOX(box), item);
+
+		if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL)
+		{
+			gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+			GtkWidget *item_rot = gtk_button_new_with_label("Rotate 90°");
+			gtk_button_set_has_frame(GTK_BUTTON(item_rot), FALSE);
+			gtk_widget_set_halign(item_rot, GTK_ALIGN_FILL);
+			g_signal_connect(item_rot, "clicked", G_CALLBACK(viewer_video_option_rotate_cb), p);
+			gtk_box_append(GTK_BOX(box), item_rot);
 		}
-	}
-	
-	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL) {
+
 		gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-		GtkWidget *item_rot = gtk_button_new_with_label("Rotate 90°");
-		g_signal_connect(item_rot, "clicked", G_CALLBACK(viewer_video_option_rotate_cb), p);
-		gtk_box_append(GTK_BOX(box), item_rot);
+		{
+			gchar *loop_label = g_strdup_printf("%s Loop",
+				p->m_bVideoLoop ? "✓" : "  ");
+			GtkWidget *item_loop = gtk_button_new_with_label(loop_label);
+			gtk_button_set_has_frame(GTK_BUTTON(item_loop), FALSE);
+			gtk_widget_set_halign(item_loop, GTK_ALIGN_FILL);
+			g_free(loop_label);
+			g_signal_connect(item_loop, "clicked",
+				G_CALLBACK(viewer_video_option_loop_cb), p);
+			gtk_box_append(GTK_BOX(box), item_loop);
+		}
 	}
 
-	gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-	{
-		gchar *loop_label = g_strdup_printf("%s Loop",
-			p->m_bVideoLoop ? "✓" : "  ");
-		GtkWidget *item_loop = gtk_button_new_with_label(loop_label);
-		g_free(loop_label);
-		g_signal_connect(item_loop, "clicked",
-			G_CALLBACK(viewer_video_option_loop_cb), p);
-		gtk_box_append(GTK_BOX(box), item_loop);
-	}
-	
-	gtk_popover_popup(GTK_POPOVER(popover));
+	GtkWidget *scrolled = gtk_scrolled_window_new();
+	gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scrolled), 350);
+	gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scrolled), TRUE);
+	gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scrolled), TRUE);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), box);
+
+	gtk_popover_set_child(GTK_POPOVER(popover), scrolled);
+	gtk_menu_button_set_popover(button, popover);
+	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
 }
 
 static void
@@ -3023,34 +3057,6 @@ viewer_volume_value_changed (GtkRange *range, gdouble value, gpointer user_data)
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	pViewerImpl->m_dVolume = gtk_range_get_value(range);
 	g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", pViewerImpl->m_dVolume, NULL);
-}
-
-static void viewer_volume_popover_closed_cb(GtkPopover *popover, gpointer user_data)
-{
-	(void)popover;
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	if (p->m_pVolumeButton != NULL)
-	{
-		/* reset the toggle so it doesn't stay visually pressed.  set_active
-		 * re-emits "toggled", but our toggle handler sees active==FALSE and
-		 * only hides an already-hidden popover, so there is no recursion. */
-		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->m_pVolumeButton), FALSE);
-	}
-}
-
-static void viewer_volume_toggle_popover_cb(gpointer user_data, GtkWidget *widget)
-{
-	(void)widget;
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	if (p->m_pVolumeButton == NULL || p->m_pVolumePopover == NULL) return;
-	/* The volume button is a GtkToggleButton, so GTK already flipped its
-	 * active state when the user clicked it.  Show or hide the (parented,
-	 * anchored) popover to match.  Never call set_active() here: a toggle
-	 * button emits "toggled" (and this handler) again, recursing to a crash. */
-	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->m_pVolumeButton)))
-		gtk_popover_popup(GTK_POPOVER(p->m_pVolumePopover));
-	else
-		gtk_widget_set_visible(p->m_pVolumePopover, FALSE);
 }
 
 
@@ -3916,15 +3922,11 @@ Viewer::ViewerImpl::~ViewerImpl()
 			gtk_widget_unparent(m_pVideoOptionsPopover);
 		m_pVideoOptionsPopover = NULL;
 	}
-	if (m_pSpeedButton)
+	if (m_pSpeedButton && GTK_IS_MENU_BUTTON(m_pSpeedButton))
 	{
-		GtkWidget *speedPop = (GtkWidget*)g_object_get_data(G_OBJECT(m_pSpeedButton), "speed-popover");
-		if (speedPop)
-		{
-			if (gtk_widget_get_parent(speedPop))
-				gtk_widget_unparent(speedPop);
-			g_object_set_data(G_OBJECT(m_pSpeedButton), "speed-popover", NULL);
-		}
+		GtkPopover *speedPop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(m_pSpeedButton));
+		if (speedPop && gtk_widget_get_parent(GTK_WIDGET(speedPop)))
+			gtk_widget_unparent(GTK_WIDGET(speedPop));
 	}
 	if (m_pContextMenuPopover)
 	{
@@ -4932,46 +4934,53 @@ static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data
 	GtkWidget *speedBtn = p->m_pSpeedButton;
 	if (speedBtn != NULL)
 	{
-		GtkPopover *popover = (GtkPopover *)g_object_get_data(G_OBJECT(speedBtn), "speed-popover");
+		GtkPopover *popover = gtk_menu_button_get_popover(GTK_MENU_BUTTON(speedBtn));
 		if (popover != NULL)
-			gtk_widget_set_visible(GTK_WIDGET(popover), FALSE);
+			gtk_popover_popdown(popover);
 	}
 }
 
-static void viewer_speed_toggle_popover_cb(gpointer user_data, GtkWidget *widget)
+static void viewer_speed_create_popup_cb(GtkMenuButton *button, gpointer user_data)
 {
-	(void)widget;
+	(void)button;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	GtkWidget *speedBtn = p->m_pSpeedButton;
-	if (speedBtn == NULL) return;
-	GtkPopover *popover = (GtkPopover *)g_object_get_data(G_OBJECT(speedBtn), "speed-popover");
-	if (popover == NULL) return;
-	if (gtk_widget_get_visible(GTK_WIDGET(popover)))
+	if (p == NULL) return;
+
+	GtkWidget *popover = gtk_popover_new();
+	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
+	gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
+	gtk_widget_set_size_request(popover, 100, -1);
+
+	GtkWidget *speedBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+	gtk_widget_set_margin_start(speedBox, 3);
+	gtk_widget_set_margin_end(speedBox, 3);
+	gtk_widget_set_margin_top(speedBox, 3);
+	gtk_widget_set_margin_bottom(speedBox, 3);
+
+	const double speeds[] = { 0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0 };
+	const int nSpeeds = sizeof(speeds) / sizeof(speeds[0]);
+	for (int i = 0; i < nSpeeds; i++)
 	{
-		gtk_widget_set_visible(GTK_WIDGET(popover), FALSE);
-	}
-		else
+		GtkWidget* btn = gtk_button_new();
+		gchar* label = g_strdup_printf("<b>%.4gx</b>", speeds[i]);
+		GtkWidget* lbl = gtk_label_new(NULL);
+		gtk_label_set_use_markup(GTK_LABEL(lbl), TRUE);
+		gtk_label_set_markup(GTK_LABEL(lbl), label);
+		gtk_button_set_child(GTK_BUTTON(btn), lbl);
+		g_free(label);
+		if (speeds[i] == p->m_dPlaybackSpeed)
 		{
-			/* highlight current speed */
-			GtkWidget *box = (GtkWidget *)g_object_get_data(G_OBJECT(popover), "speed-box");
-			if (box != NULL)
-			{
-				gdouble current = p->m_dPlaybackSpeed;
-				for (GtkWidget *child = gtk_widget_get_first_child(box);
-					 child != NULL;
-					 child = gtk_widget_get_next_sibling(child))
-				{
-					int val2 = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(child), "speed-value"));
-					gdouble spd = val2 / 1000.0;
-					if (spd == current)
-						gtk_widget_add_css_class(child, "speed-active");
-					else
-						gtk_widget_remove_css_class(child, "speed-active");
-				}
-			}
-			gtk_popover_popup(popover);
+			gtk_widget_add_css_class(btn, "speed-active");
 		}
+		g_object_set_data(G_OBJECT(btn), "speed-value", GINT_TO_POINTER((int)(speeds[i] * 1000)));
+		g_signal_connect(G_OBJECT(btn), "clicked", G_CALLBACK(viewer_speed_button_clicked_cb), p);
+		gtk_box_append(GTK_BOX(speedBox), btn);
 	}
+
+	gtk_popover_set_child(GTK_POPOVER(popover), speedBox);
+	gtk_menu_button_set_popover(button, popover);
+	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
+}
 
 static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user_data)
 {
@@ -5173,48 +5182,17 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	 * The spacers have natural size 0 and hexpand=TRUE, so they each get
 	 * exactly half the remaining space — guaranteeing true centering. */
 
-	/* Speed button — bold label, manual popover */
+	/* Speed button — using GtkMenuButton with custom label child */
 	m_dPlaybackSpeed = 1.0;
-	GtkWidget* speedPopover = gtk_popover_new();
-	gtk_popover_set_autohide(GTK_POPOVER(speedPopover), TRUE);
-	gtk_widget_set_size_request(speedPopover, 100, -1);
-	GtkWidget* speedBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-	gtk_widget_set_margin_start(speedBox, 3);
-	gtk_widget_set_margin_end(speedBox, 3);
-	gtk_widget_set_margin_top(speedBox, 3);
-	gtk_widget_set_margin_bottom(speedBox, 3);
-	g_object_set_data(G_OBJECT(speedPopover), "speed-box", speedBox);
-
-	const double speeds[] = { 0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0 };
-	const int nSpeeds = sizeof(speeds) / sizeof(speeds[0]);
-	for (int i = 0; i < nSpeeds; i++)
-	{
-		GtkWidget* btn = gtk_button_new();
-		gchar* label = g_strdup_printf("<b>%.4gx</b>", speeds[i]);
-		GtkWidget* lbl = gtk_label_new(NULL);
-		gtk_label_set_use_markup(GTK_LABEL(lbl), TRUE);
-		gtk_label_set_markup(GTK_LABEL(lbl), label);
-		gtk_button_set_child(GTK_BUTTON(btn), lbl);
-		g_free(label);
-		g_object_set_data(G_OBJECT(btn), "speed-value", GINT_TO_POINTER((int)(speeds[i] * 1000)));
-		g_signal_connect(G_OBJECT(btn), "clicked", G_CALLBACK(viewer_speed_button_clicked_cb), this);
-		gtk_box_append(GTK_BOX(speedBox), btn);
-	}
-
-	gtk_popover_set_child(GTK_POPOVER(speedPopover), speedBox);
-
-	m_pSpeedButton = gtk_button_new();
-	gtk_button_set_has_frame(GTK_BUTTON(m_pSpeedButton), FALSE);
+	m_pSpeedButton = gtk_menu_button_new();
+	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pSpeedButton), GTK_ARROW_UP);
+	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pSpeedButton), FALSE);
 	m_pSpeedLabel = gtk_label_new(NULL);
 	gtk_label_set_use_markup(GTK_LABEL(m_pSpeedLabel), TRUE);
 	gtk_label_set_markup(GTK_LABEL(m_pSpeedLabel), "<b>1x</b>");
-	gtk_button_set_child(GTK_BUTTON(m_pSpeedButton), m_pSpeedLabel);
-	g_object_set_data(G_OBJECT(m_pSpeedButton), "speed-popover", speedPopover);
-	/* Anchor the popover to the speed button (GTK4 takes ownership by parenting) */
-	gtk_widget_set_parent(speedPopover, m_pSpeedButton);
-	gtk_popover_set_position(GTK_POPOVER(speedPopover), GTK_POS_TOP);
-	g_signal_connect_swapped(G_OBJECT(m_pSpeedButton), "clicked", G_CALLBACK(viewer_speed_toggle_popover_cb), this);
+	gtk_menu_button_set_child(GTK_MENU_BUTTON(m_pSpeedButton), m_pSpeedLabel);
 	gtk_widget_add_css_class(m_pSpeedButton, "media-btn");
+	gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(m_pSpeedButton), viewer_speed_create_popup_cb, this, NULL);
 
 	/* Snapshot button */
 	m_pSnapBtn = gtk_button_new_from_icon_name("camera-photo");
@@ -5222,14 +5200,15 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	g_signal_connect(G_OBJECT(m_pSnapBtn), "clicked", G_CALLBACK(viewer_snapshot_button_clicked_cb), this);
 	gtk_widget_add_css_class(m_pSnapBtn, "media-btn");
 
-	/* Volume button */
-	m_pVolumeButton = gtk_toggle_button_new();
-	gtk_button_set_has_frame(GTK_BUTTON(m_pVolumeButton), FALSE);
-	GtkWidget* volIcon = gtk_image_new_from_icon_name("audio-volume-high");
-	gtk_button_set_child(GTK_BUTTON(m_pVolumeButton), volIcon);
+	/* Volume button — using GtkMenuButton */
+	m_pVolumeButton = gtk_menu_button_new();
+	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pVolumeButton), "audio-volume-high");
+	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVolumeButton), GTK_ARROW_UP);
+	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pVolumeButton), FALSE);
 	gtk_widget_add_css_class(m_pVolumeButton, "media-btn");
 
 	m_pVolumePopover = gtk_popover_new();
+	gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_TOP);
 	gtk_popover_set_autohide(GTK_POPOVER(m_pVolumePopover), TRUE);
 	GtkWidget* volBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
 	gtk_widget_set_margin_start(volBox, 8);
@@ -5245,19 +5224,15 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	g_signal_connect(G_OBJECT(m_pVolumeScale), "value-changed", G_CALLBACK(viewer_volume_value_changed), this);
 	gtk_box_append(GTK_BOX(volBox), m_pVolumeScale);
 	gtk_popover_set_child(GTK_POPOVER(m_pVolumePopover), volBox);
-	/* Anchor the popover to the volume button (GTK4 takes ownership via
-	 * parenting) */
-	gtk_widget_set_parent(m_pVolumePopover, m_pVolumeButton);
-	gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_TOP);
-	g_signal_connect_swapped(G_OBJECT(m_pVolumeButton), "toggled", G_CALLBACK(viewer_volume_toggle_popover_cb), this);
-	/* when the popover auto-hides, reset the toggle button's pressed state */
-	g_signal_connect(m_pVolumePopover, "closed", G_CALLBACK(viewer_volume_popover_closed_cb), this);
+	gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pVolumeButton), m_pVolumePopover);
 
-		/* Video Options button */
-	m_pVideoOptionsBtn = gtk_button_new_from_icon_name("emblem-system-symbolic");
-	gtk_button_set_has_frame(GTK_BUTTON(m_pVideoOptionsBtn), FALSE);
-	g_signal_connect(G_OBJECT(m_pVideoOptionsBtn), "clicked", G_CALLBACK(viewer_video_options_btn_clicked_cb), this);
+	/* Video Options button — using GtkMenuButton */
+	m_pVideoOptionsBtn = gtk_menu_button_new();
+	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pVideoOptionsBtn), "emblem-system-symbolic");
+	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_UP);
+	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pVideoOptionsBtn), FALSE);
 	gtk_widget_add_css_class(m_pVideoOptionsBtn, "media-btn");
+	gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(m_pVideoOptionsBtn), viewer_video_options_create_popup_cb, this, NULL);
 
 	/* Fullscreen button */
 	m_pFullscreenBtn = gtk_button_new_from_icon_name("view-fullscreen");
