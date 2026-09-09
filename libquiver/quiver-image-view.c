@@ -33,10 +33,12 @@
 struct _QuiverImageViewPrivate
 {
 	GdkTexture *texture;
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf *pixbuf;
 	GdkPixbuf *pixbuf_scaled;
 	GdkPixbufAnimation *pixbuf_animation;
 	GdkPixbufAnimationIter *pixbuf_animation_iter;
+#endif
 	
 	gint pixbuf_width;
 	gint pixbuf_height;
@@ -58,10 +60,12 @@ struct _QuiverImageViewPrivate
 	gint transition_old_w;
 	gint transition_old_h;
 	gint transition_n_frames;
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf *transition_pixbuf_old;
 	GdkPixbuf *transition_pixbuf_new;
 	// list of intermediate pixbufs for the transition
 	GList *transition_pixbufs_intermediate;
+#endif
 	guint transition_timeout_id;
 	guint idle_transition_create_id;
 	
@@ -242,9 +246,11 @@ static gboolean quiver_image_view_timeout_scroll(gpointer data);
 static void quiver_image_view_add_scroll_timeout(QuiverImageView *imageview);
 static void quiver_image_view_scroll(QuiverImageView *imageview);
 
+#if HAVE_GDK_PIXBUF
 static void quiver_image_view_start_animation(QuiverImageView *imageview);
 static void quiver_image_view_add_animation_timeout(QuiverImageView *imageview);
 static gboolean quiver_image_view_timeout_animation(gpointer data);
+#endif
 
 static void quiver_image_view_transition_start(QuiverImageView *imageview);
 static void quiver_image_view_transition_stop(QuiverImageView *imageview);
@@ -269,12 +275,14 @@ static void quiver_image_view_update_size(QuiverImageView *imageview);
 
 static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview, gint new_width, gint new_height);
 
+#if HAVE_GDK_PIXBUF
 /* start pixbuf loader callbacks */
 static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint height,gpointer userdata);
 static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdata);
 static void pixbuf_loader_area_updated (GdkPixbufLoader *loader,gint x, gint y, gint width,gint height,gpointer userdata);
 static void pixbuf_loader_closed(GdkPixbufLoader *loader,gpointer userdata);
 /* end pixbuf loader callbacks */
+#endif
 
 /* end utility function prototypes*/
 
@@ -386,10 +394,12 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv = QUIVER_IMAGE_VIEW_GET_PRIVATE(imageview);
 
 	imageview->priv->texture       = NULL;
+#if HAVE_GDK_PIXBUF
 	imageview->priv->pixbuf        = NULL;
 	imageview->priv->pixbuf_scaled = NULL;
 	imageview->priv->pixbuf_animation = NULL;
 	imageview->priv->pixbuf_animation_iter = NULL;
+#endif
 	
 	imageview->priv->pixbuf_width  = 0;
 	imageview->priv->pixbuf_height = 0;
@@ -409,9 +419,11 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->transition_old_w = 0;
 	imageview->priv->transition_old_h = 0;
 	imageview->priv->transition_n_frames = (gint)(TRANSITION_TIME * TRANSITION_FPS);
+#if HAVE_GDK_PIXBUF
 	imageview->priv->transition_pixbuf_old = NULL;
 	imageview->priv->transition_pixbuf_new = NULL;
 	imageview->priv->transition_pixbufs_intermediate = NULL;
+#endif
 	imageview->priv->transition_timeout_id = 0;
 	imageview->priv->idle_transition_create_id = 0;
 
@@ -609,6 +621,7 @@ quiver_image_view_dispose(GObject *object)
 		g_clear_object (&imageview->priv->vadjustment);
 	}
 
+#if HAVE_GDK_PIXBUF
 	if (imageview->priv->pixbuf_animation_iter)
 	{
 		g_clear_object (&imageview->priv->pixbuf_animation_iter);
@@ -623,22 +636,26 @@ quiver_image_view_dispose(GObject *object)
 	{
 		g_clear_object (&imageview->priv->pixbuf_scaled);
 	}
+#endif
 
 	if (imageview->priv->texture)
 	{
 		g_clear_object (&imageview->priv->texture);
 	}
 
+#if HAVE_GDK_PIXBUF
 	if (imageview->priv->pixbuf)
 	{
 		g_clear_object (&imageview->priv->pixbuf);
 	}
+#endif
 
 	if (imageview->priv->transition_texture_old)
 	{
 		g_clear_object (&imageview->priv->transition_texture_old);
 	}
 
+#if HAVE_GDK_PIXBUF
 	if (imageview->priv->transition_pixbuf_old)
 	{
 		g_clear_object (&imageview->priv->transition_pixbuf_old);
@@ -648,6 +665,7 @@ quiver_image_view_dispose(GObject *object)
 	{
 		g_clear_object (&imageview->priv->transition_pixbuf_new);
 	}
+#endif
 
 	if (imageview->priv->velocity_time_list)
 	{
@@ -655,11 +673,13 @@ quiver_image_view_dispose(GObject *object)
 		imageview->priv->velocity_time_list = NULL;
 	}
 
+#if HAVE_GDK_PIXBUF
 	if (imageview->priv->transition_pixbufs_intermediate)
 	{
 		g_list_free_full(imageview->priv->transition_pixbufs_intermediate, g_object_unref);
 		imageview->priv->transition_pixbufs_intermediate = NULL;
 	}
+#endif
 
 	G_OBJECT_CLASS (quiver_image_view_parent_class)->dispose (object);
 }
@@ -675,11 +695,13 @@ quiver_image_view_finalize(GObject *object)
 		imageview->priv->velocity_time_list = NULL;
 	}
 
+#if HAVE_GDK_PIXBUF
 	if (imageview->priv->transition_pixbufs_intermediate)
 	{
 		g_list_free_full(imageview->priv->transition_pixbufs_intermediate, g_object_unref);
 		imageview->priv->transition_pixbufs_intermediate = NULL;
 	}
+#endif
 
 	G_OBJECT_CLASS (quiver_image_view_parent_class)->finalize (object);
 }
@@ -783,17 +805,17 @@ quiver_image_view_handle_size_change (QuiverImageView *imageview)
 static void quiver_image_view_send_reload_event(QuiverImageView *imageview)
 {
 	// send reload signal if current display size is 
-	// greater than the actual pixbuf size and the actual
-	// pixbuf size is less than the "set_pixbuf_at_size" size
-	if (NULL != imageview->priv->pixbuf && !imageview->priv->reload_event_sent)
+	// greater than the actual texture size and the actual
+	// texture size is less than the "set_texture_at_size" size
+	if (NULL != imageview->priv->texture && !imageview->priv->reload_event_sent)
 	{
 		gint aw, ah;
 		gint width,height;
 	
 		quiver_image_view_get_pixbuf_display_size(imageview,&width,&height);
 
-		aw = gdk_pixbuf_get_width(imageview->priv->pixbuf);
-		ah = gdk_pixbuf_get_height(imageview->priv->pixbuf);
+		aw = gdk_texture_get_width(imageview->priv->texture);
+		ah = gdk_texture_get_height(imageview->priv->texture);
 
 		if (imageview->priv->pixbuf_width > aw || imageview->priv->pixbuf_height > ah)
 		{
@@ -856,12 +878,12 @@ quiver_image_view_snapshot(GtkWidget* widget, GtkSnapshot* snapshot)
 {
 	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(widget);
 
+#if HAVE_GDK_PIXBUF
 	if (NULL == imageview->priv->texture && NULL != imageview->priv->pixbuf)
 	{
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-		imageview->priv->texture = gdk_texture_new_for_pixbuf(imageview->priv->pixbuf);
-G_GNUC_END_IGNORE_DEPRECATIONS
+		imageview->priv->texture = quiver_pixbuf_to_texture(imageview->priv->pixbuf);
 	}
+#endif
 
 	if (!imageview->priv->texture && !imageview->priv->transition_texture_old)
 		return;
@@ -1491,7 +1513,7 @@ quiver_image_view_update_size(QuiverImageView *imageview)
 	
 }
 
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+#if HAVE_GDK_PIXBUF
 static void quiver_image_view_start_animation(QuiverImageView *imageview)
 {
 
@@ -1559,7 +1581,7 @@ static gboolean quiver_image_view_timeout_animation(gpointer data)
 			g_object_unref(imageview->priv->texture);
 			imageview->priv->texture = NULL;
 		}
-		imageview->priv->texture = gdk_texture_new_for_pixbuf(imageview->priv->pixbuf);
+		imageview->priv->texture = quiver_pixbuf_to_texture(imageview->priv->pixbuf);
 		if (gtk_widget_get_mapped (widget))
 		{
 			gtk_widget_queue_draw(widget);
@@ -1569,7 +1591,7 @@ static gboolean quiver_image_view_timeout_animation(gpointer data)
 	
 	return FALSE;
 }
-G_GNUC_END_IGNORE_DEPRECATIONS
+#endif
 
 static gboolean
 quiver_image_view_transition_tick(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer user_data)
@@ -1841,6 +1863,7 @@ GdkTexture* quiver_image_view_get_texture(QuiverImageView *imageview)
 	return imageview->priv->texture;
 }
 
+#if HAVE_GDK_PIXBUF
 GdkPixbuf* quiver_image_view_get_pixbuf(QuiverImageView *imageview)
 {
 	if (NULL != imageview->priv->pixbuf)
@@ -1848,13 +1871,12 @@ GdkPixbuf* quiver_image_view_get_pixbuf(QuiverImageView *imageview)
 
 	if (NULL != imageview->priv->texture)
 	{
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 		imageview->priv->pixbuf = gdk_pixbuf_get_from_texture(imageview->priv->texture);
-G_GNUC_END_IGNORE_DEPRECATIONS
 		return imageview->priv->pixbuf;
 	}
 	return NULL;
 }
+#endif
 
 void quiver_image_view_set_texture(QuiverImageView *imageview, GdkTexture *texture)
 {
@@ -1899,11 +1921,13 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 			g_object_unref(imageview->priv->texture);
 			imageview->priv->texture = NULL;
 		}
+#if HAVE_GDK_PIXBUF
 		if (NULL != imageview->priv->pixbuf)
 		{
 			g_object_unref(imageview->priv->pixbuf);
 			imageview->priv->pixbuf = NULL;
 		}
+#endif
 	}
 
 	if (NULL != old_texture)
@@ -1962,6 +1986,7 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 	}
 }
 
+#if HAVE_GDK_PIXBUF
 void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf)
 {
 	gint width = 0, height = 0;
@@ -1983,9 +2008,7 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 	GdkTexture *texture = NULL;
 	if (NULL != pixbuf)
 	{
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-		texture = gdk_texture_new_for_pixbuf(pixbuf);
-G_GNUC_END_IGNORE_DEPRECATIONS
+		texture = quiver_pixbuf_to_texture(pixbuf);
 	}
 
 	quiver_image_view_set_texture_at_size_ex(imageview, texture, width, height, reset_view_mode);
@@ -2005,6 +2028,7 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 		g_object_unref(texture);
 	}
 }
+#endif
 
 void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
 {
@@ -2144,7 +2168,11 @@ gdouble quiver_image_view_get_magnification(QuiverImageView *imageview)
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
 			magnification = 1.;
-			if (NULL != imageview->priv->pixbuf || NULL != imageview->priv->texture)
+			if (NULL != imageview->priv->texture
+#if HAVE_GDK_PIXBUF
+			    || NULL != imageview->priv->pixbuf
+#endif
+			)
 			{
 				quiver_image_view_get_pixbuf_display_size(imageview,&display_width,&display_height);
 				magnification = display_width/(gdouble)imageview->priv->pixbuf_width;
@@ -2481,6 +2509,51 @@ void quiver_image_view_set_magnification_mode(QuiverImageView *imageview,QuiverI
 
 void quiver_image_view_rotate(QuiverImageView *imageview, gboolean clockwise)
 {
+	GdkTexture *current_texture = quiver_image_view_get_texture(imageview);
+	if (NULL != current_texture)
+	{
+		int src_w = gdk_texture_get_width(current_texture);
+		int src_h = gdk_texture_get_height(current_texture);
+		int dst_w = src_h;
+		int dst_h = src_w;
+		gsize src_stride = (gsize)src_w * 4;
+		gsize dst_stride = (gsize)dst_w * 4;
+		guint32 *src_buf = (guint32*)g_malloc(src_stride * src_h);
+		guint32 *dst_buf = (guint32*)g_malloc(dst_stride * dst_h);
+		GdkTextureDownloader *dl = gdk_texture_downloader_new(current_texture);
+		gdk_texture_downloader_set_format(dl, GDK_MEMORY_R8G8B8A8);
+		gdk_texture_downloader_download_into(dl, (guchar*)src_buf, src_stride);
+		gdk_texture_downloader_free(dl);
+
+		for (int y = 0; y < dst_h; ++y)
+		{
+			for (int x = 0; x < dst_w; ++x)
+			{
+				int sx, sy;
+				if (clockwise)
+				{
+					sx = y;
+					sy = src_h - 1 - x;
+				}
+				else
+				{
+					sx = src_w - 1 - y;
+					sy = x;
+				}
+				if (sx >= 0 && sx < src_w && sy >= 0 && sy < src_h)
+					dst_buf[y * dst_w + x] = src_buf[sy * src_w + sx];
+			}
+		}
+		g_free(src_buf);
+		GBytes *bytes = g_bytes_new_take(dst_buf, dst_stride * dst_h);
+		GdkTexture *rotated = gdk_memory_texture_new(dst_w, dst_h, GDK_MEMORY_R8G8B8A8, bytes, dst_stride);
+		g_bytes_unref(bytes);
+		quiver_image_view_set_texture_at_size(imageview, rotated, imageview->priv->pixbuf_height, imageview->priv->pixbuf_width);
+		g_object_unref(rotated);
+		return;
+	}
+
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf * pixbuf_rotated = NULL;
 	GdkPixbuf * current_pixbuf = quiver_image_view_get_pixbuf(imageview);
 	
@@ -2500,10 +2573,43 @@ void quiver_image_view_rotate(QuiverImageView *imageview, gboolean clockwise)
 		quiver_image_view_set_pixbuf_at_size(imageview, pixbuf_rotated, imageview->priv->pixbuf_height, imageview->priv->pixbuf_width);
 		g_object_unref(pixbuf_rotated);
 	}
+#endif
 }
 
 void quiver_image_view_flip(QuiverImageView *imageview, gboolean horizontal)
 {
+	GdkTexture *current_texture = quiver_image_view_get_texture(imageview);
+	if (NULL != current_texture)
+	{
+		int src_w = gdk_texture_get_width(current_texture);
+		int src_h = gdk_texture_get_height(current_texture);
+		gsize stride = (gsize)src_w * 4;
+		guint32 *src_buf = (guint32*)g_malloc(stride * src_h);
+		guint32 *dst_buf = (guint32*)g_malloc(stride * src_h);
+		GdkTextureDownloader *dl = gdk_texture_downloader_new(current_texture);
+		gdk_texture_downloader_set_format(dl, GDK_MEMORY_R8G8B8A8);
+		gdk_texture_downloader_download_into(dl, (guchar*)src_buf, stride);
+		gdk_texture_downloader_free(dl);
+
+		for (int y = 0; y < src_h; ++y)
+		{
+			for (int x = 0; x < src_w; ++x)
+			{
+				int sx = horizontal ? (src_w - 1 - x) : x;
+				int sy = horizontal ? y : (src_h - 1 - y);
+				dst_buf[y * src_w + x] = src_buf[sy * src_w + sx];
+			}
+		}
+		g_free(src_buf);
+		GBytes *bytes = g_bytes_new_take(dst_buf, stride * src_h);
+		GdkTexture *flipped = gdk_memory_texture_new(src_w, src_h, GDK_MEMORY_R8G8B8A8, bytes, stride);
+		g_bytes_unref(bytes);
+		quiver_image_view_set_texture_at_size(imageview, flipped, imageview->priv->pixbuf_width, imageview->priv->pixbuf_height);
+		g_object_unref(flipped);
+		return;
+	}
+
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf * pixbuf_flipped = NULL;
 	GdkPixbuf * current_pixbuf = quiver_image_view_get_pixbuf(imageview);
 
@@ -2524,8 +2630,10 @@ void quiver_image_view_flip(QuiverImageView *imageview, gboolean horizontal)
 		quiver_image_view_set_pixbuf_at_size(imageview, pixbuf_flipped, imageview->priv->pixbuf_width, imageview->priv->pixbuf_height);
 		g_object_unref(pixbuf_flipped);
 	}
+#endif
 }
 
+#if HAVE_GDK_PIXBUF
 void quiver_image_view_connect_pixbuf_loader_signals(QuiverImageView *imageview,GdkPixbufLoader *loader)
 {
 	g_signal_connect(G_OBJECT(loader),"size-prepared",G_CALLBACK(pixbuf_loader_size_prepared),imageview);
@@ -2538,6 +2646,7 @@ void quiver_image_view_connect_pixbuf_size_prepared_signal(QuiverImageView *imag
 {
 	g_signal_connect(G_OBJECT(loader),"size-prepared",G_CALLBACK(pixbuf_loader_size_prepared),imageview);
 }
+#endif
 
 GtkAdjustment * quiver_image_view_get_hadjustment(QuiverImageView *imageview)
 {
@@ -2588,6 +2697,7 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 		imageview->priv->animation_timeout_id = 0;
 	}
 	
+#if HAVE_GDK_PIXBUF
 	if (NULL != imageview->priv->pixbuf_animation_iter)
 	{
 		g_object_unref(imageview->priv->pixbuf_animation_iter);
@@ -2605,13 +2715,19 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 		g_object_unref(imageview->priv->pixbuf_scaled);
 		imageview->priv->pixbuf_scaled = NULL;
 	}
+#endif
 
 	if (NULL != imageview->priv->texture)
 	{
+		if (!imageview->priv->transitions_enabled)
+		{
+			quiver_image_view_invalidate_old_image_area(imageview,new_width,new_height);
+		}
 		g_object_unref(imageview->priv->texture);
 		imageview->priv->texture = NULL;
 	}
 
+#if HAVE_GDK_PIXBUF
 	if (NULL != imageview->priv->pixbuf)
 	{
 		if (!imageview->priv->transitions_enabled)
@@ -2621,12 +2737,14 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 		g_object_unref(imageview->priv->pixbuf);
 		imageview->priv->pixbuf = NULL;
 	}
+#endif
 	
 	imageview->priv->reload_event_sent = FALSE;
 	imageview->priv->needs_recenter = FALSE;
 	
 }
 
+#if HAVE_GDK_PIXBUF
 static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint height,gpointer userdata)
 { (void)loader; 
 	GtkWidget *widget;
@@ -2647,7 +2765,6 @@ static void pixbuf_loader_size_prepared(GdkPixbufLoader *loader,gint width, gint
 		return;
 	}
 }
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdata)
 {
 	QuiverImageView *imageview;
@@ -2678,7 +2795,7 @@ static void pixbuf_loader_area_prepared(GdkPixbufLoader *loader,gpointer userdat
 	}
 	if (NULL != pixbuf)
 	{
-		imageview->priv->texture = gdk_texture_new_for_pixbuf(pixbuf);
+		imageview->priv->texture = quiver_pixbuf_to_texture(pixbuf);
 	}
 	
 	quiver_image_view_transition_stop(imageview);
@@ -2801,4 +2918,4 @@ static void pixbuf_loader_closed(GdkPixbufLoader *loader,gpointer userdata)
 //	printf("closed\n");
 
 }
-G_GNUC_END_IGNORE_DEPRECATIONS
+#endif

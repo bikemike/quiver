@@ -47,43 +47,12 @@ static int combine_matrix[9][9] =
 
 static int inverse_matrix[9] = {1,1,2,3,4,7,8,5,6};
 
-static GdkTexture* pixbuf_to_texture(GdkPixbuf *pb)
-{
-	if (!pb)
-		return NULL;
-
-	GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pb);
-	gboolean has_alpha = gdk_pixbuf_get_has_alpha(pb);
-	GdkMemoryFormat fmt = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
-	GdkTexture *tex = gdk_memory_texture_new(
-		gdk_pixbuf_get_width(pb),
-		gdk_pixbuf_get_height(pb),
-		fmt,
-		bytes,
-		gdk_pixbuf_get_rowstride(pb)
-	);
-	g_bytes_unref(bytes);
-	return tex;
-}
-
 static GdkTexture* reorient_texture(GdkTexture *tex, int orientation)
 {
 	if (!tex || orientation <= 1)
 		return tex;
 
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-	GdkPixbuf *pb = gdk_pixbuf_get_from_texture(tex);
-G_GNUC_END_IGNORE_DEPRECATIONS
-	if (!pb)
-		return tex;
-
-	GdkPixbuf *rotated = QuiverUtils::GdkPixbufExifReorientate(pb, orientation);
-	g_object_unref(pb);
-	if (!rotated)
-		return tex;
-
-	GdkTexture *new_tex = pixbuf_to_texture(rotated);
-	g_object_unref(rotated);
+	GdkTexture *new_tex = QuiverUtils::TextureExifReorientate(tex, orientation);
 	g_object_unref(tex);
 	return new_tex;
 }
@@ -314,10 +283,12 @@ void ImageLoader::LoadImage(QuiverFile f,LoadParams load_params)
 }
 
 
+#if HAVE_GDK_PIXBUF
 GdkPixbuf* ImageLoader::GetCachedPixbuf(QuiverFile f)
 {
 	return m_ImageCache.GetPixbuf(f.GetURI());
 }
+#endif
 
 GdkTexture* ImageLoader::GetCachedTexture(QuiverFile f)
 {
@@ -345,23 +316,19 @@ bool ImageLoader::LoadQuickPreview()
 	bool rval = false;
 	if (m_bQuickPreview && !m_Command.params.no_thumb_preview)
 	{
-		GdkPixbuf *thumb_pixbuf = NULL;
+		GdkTexture *thumb_tex = NULL;
 		
-		//FIXME: should not hard code 128/256. make a new
-		// function to get the largest available thumbnail
 		if (m_Command.quiverFile.HasThumbnail(256))
 		{
-			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(256);
+			thumb_tex = m_Command.quiverFile.GetThumbnailTexture(256);
 		}
-		if (NULL == thumb_pixbuf && m_Command.quiverFile.HasThumbnail(128))
+		if (NULL == thumb_tex && m_Command.quiverFile.HasThumbnail(128))
 		{
-			thumb_pixbuf = m_Command.quiverFile.GetThumbnail(128);
+			thumb_tex = m_Command.quiverFile.GetThumbnailTexture(128);
 		}
 	
-	
-		if (NULL != thumb_pixbuf)
+		if (NULL != thumb_tex)
 		{
-			
 			int width = m_Command.quiverFile.GetWidth();
 			int height = m_Command.quiverFile.GetHeight();
 			
@@ -372,37 +339,27 @@ bool ImageLoader::LoadQuickPreview()
 
 			if (m_iLoadOrientation != m_Command.quiverFile.GetOrientation())
 			{
-				// thumbnail has already been rotated by the exif orientaiton
+				// thumbnail has already been rotated by the exif orientation
 				// so we must revert that and calculate the new rotation 
 				int orientation = inverse_matrix[m_Command.quiverFile.GetOrientation()];
 				int new_orientation = combine_matrix[m_iLoadOrientation][orientation];
 
-				GdkPixbuf* pixbuf_rotated = QuiverUtils::GdkPixbufExifReorientate(thumb_pixbuf, new_orientation);
-				if (NULL != pixbuf_rotated)
+				GdkTexture* tex_rotated = QuiverUtils::TextureExifReorientate(thumb_tex, new_orientation);
+				if (NULL != tex_rotated)
 				{
-					g_object_unref(thumb_pixbuf);
-					thumb_pixbuf = pixbuf_rotated;
+					g_object_unref(thumb_tex);
+					thumb_tex = tex_rotated;
 				}
 			}
 			
-			GdkTexture *thumb_tex = pixbuf_to_texture(thumb_pixbuf);
 			list<IPixbufLoaderObserver*>::iterator itr;
 			g_mutex_lock(&m_csObservers);
 			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 			{
-				if (thumb_tex)
-				{
-					(*itr)->SetTextureAtSize(thumb_tex,width,height);
-				}
-				else
-				{
-					(*itr)->SetPixbufAtSize(thumb_pixbuf,width,height);
-				}
+				(*itr)->SetTextureAtSize(thumb_tex,width,height);
 			}
 			g_mutex_unlock(&m_csObservers);
-			if (thumb_tex)
-				g_object_unref(thumb_tex);
-			g_object_unref(thumb_pixbuf);
+			g_object_unref(thumb_tex);
 			
 			rval = true;
 		}
@@ -562,7 +519,7 @@ void ImageLoader::Load()
 							GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
 							if (NULL != pixbuf)
 							{
-								texture = pixbuf_to_texture(pixbuf);
+								texture = QuiverUtils::PixbufToTexture(pixbuf);
 							}
 						}
 						g_object_unref(loader);
@@ -773,7 +730,7 @@ void ImageLoader::Load()
 							GdkPixbuf *pb = gdk_pixbuf_loader_get_pixbuf(ldr);
 							if (NULL != pb)
 							{
-								cache_texture = pixbuf_to_texture(pb);
+								cache_texture = QuiverUtils::PixbufToTexture(pb);
 							}
 						}
 
@@ -853,6 +810,7 @@ void ImageLoader::Load()
 	}
 }
 
+#if HAVE_GDK_PIXBUF
 bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader, bool* bAborted /* = NULL */)
 {
 	//cout << "Loading: " <<  m_Command.quiverFile.GetURI() << endl;
@@ -954,25 +912,6 @@ bool ImageLoader::LoadPixbuf(GdkPixbufLoader *loader, bool* bAborted /* = NULL *
 	return retval;
 }
 
-#if (GTK_MAJOR_VERSION < 2) \
-	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 12) \
-	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION == 12 && GTK_MICRO_VERSION < 3) 
-// the following is a temporary work around for bug:
-// http://bugzilla.gnome.org/show_bug.cgi?id=494515
-static gint hack_calculate_size(gdouble ratio, gint size, gint new_size)
-{
-	int nw = new_size;
-	int size_calc = (int)(size * ratio);
-	while ( size_calc < nw)
-	{
-		ratio = (gdouble)new_size/size;
-		size_calc = (int)(size * ratio);
-		++new_size;
-	}
-	return new_size;
-}
-#endif
-
 void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 {
 	if (0 == width || 0 == height)
@@ -1011,36 +950,11 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 				swap(new_width,new_height);
 				swap(width,height);
 			}
-#if (GTK_MAJOR_VERSION < 2) \
-	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION < 12) \
-	|| (GTK_MAJOR_VERSION == 2 && GTK_MINOR_VERSION == 12 && GTK_MICRO_VERSION < 3)
-// the following is a temporary work around for bug:
-// http://bugzilla.gnome.org/show_bug.cgi?id=494515
-			int scale_factor = 2;
-			
-			if (m_Command.quiverFile.GetMimeType() && 0 == strncmp("image/jpeg",m_Command.quiverFile.GetMimeType() , 11) )
-			{
-				for (scale_factor=2; scale_factor <=8; scale_factor*=2)
-				{
-					if (width/scale_factor < (gint)new_width || height/scale_factor < (gint)new_height)
-					{
-						scale_factor /= 2;
-						break;
-					}
-				}
-				width = width/scale_factor;
-				height = height/scale_factor;
-			}
-
-			gdouble xscale = (gdouble)new_width/width;
-			new_width = hack_calculate_size(xscale, width, new_width);
-			gdouble yscale = (gdouble)new_height/height;
-			new_height = hack_calculate_size(yscale, height, new_height);
-#endif	
 			gdk_pixbuf_loader_set_size(loader,new_width,new_height);
 		}
 	}
 }
+#endif
 
 void* ImageLoader::run(void * data)
 {

@@ -2,61 +2,172 @@
 #include "QuiverUtils.h"
 #include "ShortcutManager.h"
 
+extern "C" {
+#include <libswscale/swscale.h>
+}
+#include <vector>
+#include <cstdint>
+
 extern GtkApplication *g_pApp;
-
-
 
 #define N_LOOPS 10
 
 namespace QuiverUtils
 {
-	
+	GdkTexture * TextureExifReorientate(GdkTexture * texture, int orientation)
+	{
+		if (!texture || orientation <= 1)
+			return texture ? (GdkTexture*)g_object_ref(texture) : NULL;
+
+		int src_w = gdk_texture_get_width(texture);
+		int src_h = gdk_texture_get_height(texture);
+		if (src_w <= 0 || src_h <= 0)
+			return NULL;
+
+		gsize src_stride = (gsize)src_w * 4;
+		std::vector<guint32> src_buf((size_t)src_w * src_h);
+		GdkTextureDownloader *dl = gdk_texture_downloader_new(texture);
+		gdk_texture_downloader_set_format(dl, GDK_MEMORY_R8G8B8A8);
+		gdk_texture_downloader_download_into(dl, (guchar*)src_buf.data(), src_stride);
+		gdk_texture_downloader_free(dl);
+
+		int dst_w = (orientation >= 5) ? src_h : src_w;
+		int dst_h = (orientation >= 5) ? src_w : src_h;
+		gsize dst_stride = (gsize)dst_w * 4;
+		guint32 *dst_raw = (guint32*)g_malloc0((size_t)dst_w * dst_h * 4);
+
+		for (int y = 0; y < dst_h; ++y)
+		{
+			for (int x = 0; x < dst_w; ++x)
+			{
+				int sx = 0, sy = 0;
+				switch (orientation)
+				{
+					case 2: // Flip H
+						sx = src_w - 1 - x;
+						sy = y;
+						break;
+					case 3: // Rotate 180
+						sx = src_w - 1 - x;
+						sy = src_h - 1 - y;
+						break;
+					case 4: // Flip V
+						sx = x;
+						sy = src_h - 1 - y;
+						break;
+					case 5: // Transpose (Flip V + Rot 90)
+						sx = y;
+						sy = x;
+						break;
+					case 6: // Rotate 90 CW
+						sx = y;
+						sy = src_h - 1 - x;
+						break;
+					case 7: // Transverse (Flip V + Rot 270)
+						sx = src_w - 1 - y;
+						sy = src_h - 1 - x;
+						break;
+					case 8: // Rotate 270 CW (90 CCW)
+						sx = src_w - 1 - y;
+						sy = x;
+						break;
+					default:
+						sx = x;
+						sy = y;
+						break;
+				}
+				if (sx >= 0 && sx < src_w && sy >= 0 && sy < src_h)
+				{
+					dst_raw[y * dst_w + x] = src_buf[sy * src_w + sx];
+				}
+			}
+		}
+
+		GBytes *bytes = g_bytes_new_take(dst_raw, (gsize)dst_w * dst_h * 4);
+		GdkTexture *result = gdk_memory_texture_new(dst_w, dst_h, GDK_MEMORY_R8G8B8A8, bytes, dst_stride);
+		g_bytes_unref(bytes);
+		return result;
+	}
+
+	GdkTexture * ScaleTexture(GdkTexture * texture, int dest_w, int dest_h)
+	{
+		if (!texture || dest_w <= 0 || dest_h <= 0)
+			return NULL;
+
+		int src_w = gdk_texture_get_width(texture);
+		int src_h = gdk_texture_get_height(texture);
+		if (src_w == dest_w && src_h == dest_h)
+			return (GdkTexture*)g_object_ref(texture);
+
+		gsize src_stride = (gsize)src_w * 4;
+		std::vector<uint8_t> src_buf((size_t)src_w * src_h * 4);
+		GdkTextureDownloader *dl = gdk_texture_downloader_new(texture);
+		gdk_texture_downloader_set_format(dl, GDK_MEMORY_R8G8B8A8);
+		gdk_texture_downloader_download_into(dl, src_buf.data(), src_stride);
+		gdk_texture_downloader_free(dl);
+
+		struct SwsContext *sws = sws_getContext(
+			src_w, src_h, AV_PIX_FMT_RGBA,
+			dest_w, dest_h, AV_PIX_FMT_RGBA,
+			SWS_BILINEAR, NULL, NULL, NULL);
+		if (!sws)
+			return NULL;
+
+		gsize dst_stride = (gsize)dest_w * 4;
+		uint8_t *dst_data = (uint8_t*)g_malloc((size_t)dest_w * dest_h * 4);
+
+		const uint8_t *src_slice[1] = { src_buf.data() };
+		int src_stride_arr[1] = { (int)src_stride };
+		uint8_t *dst_slice[1] = { dst_data };
+		int dst_stride_arr[1] = { (int)dst_stride };
+
+		sws_scale(sws, src_slice, src_stride_arr, 0, src_h, dst_slice, dst_stride_arr);
+		sws_freeContext(sws);
+
+		GBytes *bytes = g_bytes_new_take(dst_data, (gsize)dest_w * dest_h * 4);
+		GdkTexture *result = gdk_memory_texture_new(dest_w, dest_h, GDK_MEMORY_R8G8B8A8, bytes, dst_stride);
+		g_bytes_unref(bytes);
+		return result;
+	}
+
+#if HAVE_GDK_PIXBUF
+	GdkTexture * PixbufToTexture(GdkPixbuf * pixbuf)
+	{
+		if (!pixbuf)
+			return NULL;
+
+		GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
+		gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
+		GdkMemoryFormat fmt = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
+		GdkTexture *tex = gdk_memory_texture_new(
+			gdk_pixbuf_get_width(pixbuf),
+			gdk_pixbuf_get_height(pixbuf),
+			fmt,
+			bytes,
+			gdk_pixbuf_get_rowstride(pixbuf)
+		);
+		g_bytes_unref(bytes);
+		return tex;
+	}
 	
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation)
 	{
-		//printf("orientation is: %d\n",orientation);
-
-		/*
-		  1        2       3      4         5            6           7          8
-		888888  888888      88  88      8888888888  88                  88  8888888888
-		88          88      88  88      88  88      88  88          88  88      88  88
-		8888      8888    8888  8888    88          8888888888  8888888888          88
-		88          88      88  88
-		88          88  888888  888888
-		1 = no rotation
-		2 = flip h
-		3 = rotate 180
-		4 = flip v
-		5 = flip v, rotate 90
-		6 = rotate 90
-		7 = flip v, rotate 270
-		8 = rotae 270 
-
-
-		*/
-		//get rotaiton
-		
 		GdkPixbuf * modified = NULL;
 
 		switch (orientation)
 		{
 			case 1:
-				//1 = no rotation
 				break;
 			case 2:
-				//2 = flip h
 				modified = gdk_pixbuf_flip(pixbuf,TRUE);
 				break;
 			case 3:
-				//3 = rotate 180
 				modified = gdk_pixbuf_rotate_simple(pixbuf,(GdkPixbufRotation)180);
 				break;
 			case 4:
-				//4 = flip v
 				modified = gdk_pixbuf_flip(pixbuf,FALSE);
 				break;
 			case 5:
-				//5 = flip v, rotate 90
 				{
 					GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
 					modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_CLOCKWISE);
@@ -67,7 +178,6 @@ namespace QuiverUtils
 				modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_CLOCKWISE);
 				break;
 			case 7:
-				//7 = flip v, rotate 270
 				{
 					GdkPixbuf *tmp = gdk_pixbuf_flip(pixbuf,FALSE);
 					modified = gdk_pixbuf_rotate_simple(tmp,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
@@ -75,15 +185,13 @@ namespace QuiverUtils
 				}
 				break;
 			case 8:
-				//8 = rotae 270 
 				modified = gdk_pixbuf_rotate_simple(pixbuf,GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
 			default:
 				break;
 		}
 		return modified;
 	}
-
-
+#endif
 }
 
 #include "QuiverUtils.h"

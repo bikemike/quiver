@@ -82,10 +82,12 @@ void quiver_image_view_set_smooth_scroll(QuiverImageView *imageview,gboolean smo
 
 void quiver_image_view_set_size(QuiverImageView *imageview, guint width,guint height);
 
+#if HAVE_GDK_PIXBUF
 GdkPixbuf* quiver_image_view_get_pixbuf(QuiverImageView *imageview);
 void quiver_image_view_set_pixbuf(QuiverImageView *imageview, GdkPixbuf *pixbuf);
 void quiver_image_view_set_pixbuf_at_size(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width, int height);
 void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixbuf *pixbuf,int width , int height, gboolean reset_view_mode);
+#endif
 
 GdkTexture* quiver_image_view_get_texture(QuiverImageView *imageview);
 void quiver_image_view_set_texture(QuiverImageView *imageview, GdkTexture *texture);
@@ -114,8 +116,10 @@ void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *ima
 void quiver_image_view_rotate(QuiverImageView *imageview, gboolean clockwise);
 void quiver_image_view_flip(QuiverImageView *imageview, gboolean horizontal);
 
+#if HAVE_GDK_PIXBUF
 void quiver_image_view_connect_pixbuf_loader_signals(QuiverImageView *imageview,GdkPixbufLoader *loader);
 void quiver_image_view_connect_pixbuf_size_prepared_signal(QuiverImageView *imageview,GdkPixbufLoader *loader);
+#endif
 
 GtkAdjustment * quiver_image_view_get_hadjustment(QuiverImageView *imageview);
 GtkAdjustment * quiver_image_view_get_vadjustment(QuiverImageView *imageview);

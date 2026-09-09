@@ -53,14 +53,18 @@ public:
 	
 	void ReCacheImage(QuiverFile);
 
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf* GetCachedPixbuf(QuiverFile f);
+#endif
 	GdkTexture* GetCachedTexture(QuiverFile f);
 	
 	// thread functions
 	static void* run(void *data);
 	int Run();
 	
+#if HAVE_GDK_PIXBUF
 	void SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height);
+#endif
 	void AddPixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 	void RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_observer);
 
@@ -70,7 +74,9 @@ public:
 	
 private:	
 	void Load();
+#if HAVE_GDK_PIXBUF
 	bool LoadPixbuf(GdkPixbufLoader *loader, bool* bAborted = NULL);
+#endif
 	bool CommandsPending();
 	static gboolean abort_video_load(gpointer data);
 	

@@ -1,3 +1,4 @@
+#include <config.h>
 #include "QuiverFile.h"
 #include "QuiverVideoOps.h"
 #include "ImageDecoder.h"
@@ -8,7 +9,9 @@
 #include <cstring>
 #include <glib.h>
 #include <gtk/gtk.h>
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
 #include <gst/gst.h>
 
 // QuiverUtils references g_pApp
@@ -50,40 +53,19 @@ int main(int argc, char** argv)
 
     // 3. Measure extraction + decode time via ImageDecoder backend abstraction
     Timer loadTimer;
-    gint n = 1, d = 1;
-    GdkPixbuf* video_pixbuf = ImageDecoder::DecodeVideoPreview(uri, &n, &d, -1, 640, 480);
-    assert(video_pixbuf != NULL);
+    GdkTexture* video_tex = ImageDecoder::DecodeVideoTexture(uri);
+    assert(video_tex != NULL);
 
-    guint pixbuf_width = gdk_pixbuf_get_width(video_pixbuf);
-    guint pixbuf_height = gdk_pixbuf_get_height(video_pixbuf);
+    guint tex_width = gdk_texture_get_width(video_tex);
+    guint tex_height = gdk_texture_get_height(video_tex);
 
-    if (n > d)
-        pixbuf_width = (guint)((pixbuf_width * n) / float(d) + .5);
-    else
-        pixbuf_height = (guint)((pixbuf_height * d) / float(n) + .5);
-
-    qf.SetWidth(pixbuf_width);
-    qf.SetHeight(pixbuf_height);
-
-    GdkPixbuf* final_pixbuf = NULL;
-    if (n != d)
-    {
-        final_pixbuf = gdk_pixbuf_scale_simple(
-            video_pixbuf,
-            pixbuf_width,
-            pixbuf_height,
-            GDK_INTERP_BILINEAR);
-        g_object_unref(video_pixbuf);
-    }
-    else
-    {
-        final_pixbuf = video_pixbuf;
-    }
+    qf.SetWidth(tex_width);
+    qf.SetHeight(tex_height);
 
     double elapsed_seconds = loadTimer.GetRunningTimeInSeconds();
     qf.SetLoadTimeInSeconds(elapsed_seconds);
 
-    std::cout << "  [Extracted Frame] " << pixbuf_width << "x" << pixbuf_height
+    std::cout << "  [Extracted Frame] " << tex_width << "x" << tex_height
               << " in " << std::fixed << std::setprecision(4)
               << elapsed_seconds << " s\n";
 
@@ -102,19 +84,17 @@ int main(int argc, char** argv)
 
     // 5. Test thumbnail generation
     std::cout << "Testing video thumbnail generation and caching...\n";
+    GdkTexture* thumb_tex = qf.GetThumbnailTexture(256);
+    assert(thumb_tex != NULL);
+    std::cout << "  [Thumbnail] " << gdk_texture_get_width(thumb_tex) << "x"
+              << gdk_texture_get_height(thumb_tex) << " -> PASS\n";
+    g_object_unref(thumb_tex);
+
+#if HAVE_GDK_PIXBUF
     GdkPixbuf* thumb = qf.GetThumbnail(256);
     assert(thumb != NULL);
-    std::cout << "  [Thumbnail] " << gdk_pixbuf_get_width(thumb) << "x"
-              << gdk_pixbuf_get_height(thumb) << " -> PASS\n";
     g_object_unref(thumb);
-
-    // 6. Test modern GdkTexture video preview decoding
-    std::cout << "Testing modern GdkTexture video preview decoding...\n";
-    GdkTexture* video_texture = ImageDecoder::DecodeVideoTexture(uri);
-    assert(video_texture != NULL);
-    std::cout << "  [GdkTexture] " << gdk_texture_get_width(video_texture) << "x"
-              << gdk_texture_get_height(video_texture) << " -> PASS\n";
-    g_object_unref(video_texture);
+#endif
 
     // 7. Test video playback rate preservation during seeking (SkipForward / SkipBack)
     std::cout << "Testing video playback speed preservation during seeking...\n";
@@ -190,7 +170,7 @@ int main(int argc, char** argv)
     gst_element_set_state(pipeline, GST_STATE_NULL);
     gst_object_unref(pipeline);
 
-    if (final_pixbuf) g_object_unref(final_pixbuf);
+    g_object_unref(video_tex);
     g_free(uri);
 
     std::cout << "\n>>> ALL VIDEO PREVIEW LOAD TIMING TESTS PASSED! <<<\n\n";

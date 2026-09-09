@@ -17,6 +17,7 @@ extern "C" {
 #include <algorithm>
 
 #include <libquiver/quiver-pixbuf-utils.h>
+#include "QuiverUtils.h"
 
 namespace QuiverVideoOps
 {
@@ -221,9 +222,42 @@ out:
 	return rotation;
 }
 
-static GdkPixbuf* frame_to_pixbuf(AVFrame* frame, int width, int height,
-                                  gint target_width, gint target_height,
-                                  int rotation)
+static void configure_sws_colorspace(struct SwsContext* sws, AVFrame* frame)
+{
+	int in_full, out_full, brightness, contrast, saturation;
+	const int* inv_table;
+	const int* table;
+
+	if (sws_getColorspaceDetails(sws, (int**)&inv_table, &in_full,
+	                             (int**)&table, &out_full,
+	                             &brightness, &contrast, &saturation) < 0)
+	{
+		return;
+	}
+
+	const int* in_table = inv_table;
+	if (frame->colorspace == AVCOL_SPC_BT709)
+		in_table = sws_getCoefficients(SWS_CS_ITU709);
+	else if (frame->colorspace == AVCOL_SPC_BT2020_NCL || frame->colorspace == AVCOL_SPC_BT2020_CL)
+		in_table = sws_getCoefficients(SWS_CS_BT2020);
+	else if (frame->colorspace == AVCOL_SPC_SMPTE170M || frame->colorspace == AVCOL_SPC_BT470BG)
+		in_table = sws_getCoefficients(SWS_CS_ITU601);
+	else if (frame->width >= 1280 || frame->height >= 720)
+		in_table = sws_getCoefficients(SWS_CS_ITU709);
+	else
+		in_table = sws_getCoefficients(SWS_CS_ITU601);
+
+	in_full = (frame->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
+	out_full = 1; // RGB target is full-range
+
+	sws_setColorspaceDetails(sws, in_table, in_full,
+	                         table, out_full,
+	                         brightness, contrast, saturation);
+}
+
+static GdkTexture* frame_to_texture(AVFrame* frame, int width, int height,
+                                    gint target_width, gint target_height,
+                                    int rotation)
 {
 	if (frame == NULL || frame->data[0] == NULL || width < 1 || height < 1)
 		return NULL;
@@ -242,14 +276,16 @@ static GdkPixbuf* frame_to_pixbuf(AVFrame* frame, int width, int height,
 
 	struct SwsContext* sws = sws_getContext(
 		width, height, (AVPixelFormat)frame->format,
-		out_w, out_h, AV_PIX_FMT_RGB24,
+		out_w, out_h, AV_PIX_FMT_RGBA,
 		SWS_BILINEAR, NULL, NULL, NULL);
 	if (sws == NULL)
 		return NULL;
 
+	configure_sws_colorspace(sws, frame);
+
 	uint8_t* dst_data[4] = { NULL, NULL, NULL, NULL };
 	int dst_linesize[4] = { 0, 0, 0, 0 };
-	int ret = av_image_alloc(dst_data, dst_linesize, out_w, out_h, AV_PIX_FMT_RGB24, 32);
+	int ret = av_image_alloc(dst_data, dst_linesize, out_w, out_h, AV_PIX_FMT_RGBA, 32);
 	if (ret < 0 || dst_data[0] == NULL)
 	{
 		sws_freeContext(sws);
@@ -260,44 +296,62 @@ static GdkPixbuf* frame_to_pixbuf(AVFrame* frame, int width, int height,
 	          0, height, dst_data, dst_linesize);
 	sws_freeContext(sws);
 
-	GdkPixbuf* out = gdk_pixbuf_new_from_data(
-		dst_data[0], GDK_COLORSPACE_RGB, FALSE, 8,
-		out_w, out_h, dst_linesize[0],
-		[](guchar* pixels, gpointer data) {
-			(void)data;
-			av_free(pixels);
-		}, NULL);
-
-	if (out == NULL)
-	{
-		av_free(dst_data[0]);
-		return NULL;
-	}
-
-	/* apply display-matrix / rotation so the still matches playback */
 	if (rotation != 0)
 	{
-		GdkPixbufRotation rot =
-			(rotation == 90)  ? GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE :
-			(rotation == 270) ? GDK_PIXBUF_ROTATE_CLOCKWISE :
-			GDK_PIXBUF_ROTATE_UPSIDEDOWN;
-		GdkPixbuf* rotated = gdk_pixbuf_rotate_simple(out, rot);
-		g_object_unref(out);
-		if (rotated != NULL)
-			out = rotated;
-	}
+		int rot_w = (rotation == 90 || rotation == 270) ? out_h : out_w;
+		int rot_h = (rotation == 90 || rotation == 270) ? out_w : out_h;
+		gsize rot_stride = (gsize)rot_w * 4;
+		uint32_t *src_pixels = (uint32_t*)dst_data[0];
+		uint32_t *rot_pixels = (uint32_t*)g_malloc0((size_t)rot_w * rot_h * 4);
 
-	return out;
+		for (int y = 0; y < rot_h; ++y)
+		{
+			for (int x = 0; x < rot_w; ++x)
+			{
+				int sx = 0, sy = 0;
+				if (rotation == 90)
+				{
+					sx = y;
+					sy = out_h - 1 - x;
+				}
+				else if (rotation == 180)
+				{
+					sx = out_w - 1 - x;
+					sy = out_h - 1 - y;
+				}
+				else if (rotation == 270)
+				{
+					sx = out_w - 1 - y;
+					sy = x;
+				}
+				if (sx >= 0 && sx < out_w && sy >= 0 && sy < out_h)
+				{
+					rot_pixels[y * rot_w + x] = src_pixels[sy * (dst_linesize[0] / 4) + sx];
+				}
+			}
+		}
+		av_free(dst_data[0]);
+
+		GBytes *bytes = g_bytes_new_take(rot_pixels, (gsize)rot_w * rot_h * 4);
+		GdkTexture *tex = gdk_memory_texture_new(rot_w, rot_h, GDK_MEMORY_R8G8B8A8, bytes, rot_stride);
+		g_bytes_unref(bytes);
+		return tex;
+	}
+	else
+	{
+		GBytes *bytes = g_bytes_new_with_free_func(dst_data[0], (gsize)dst_linesize[0] * out_h, (GDestroyNotify)av_free, dst_data[0]);
+		GdkTexture *tex = gdk_memory_texture_new(out_w, out_h, GDK_MEMORY_R8G8B8A8, bytes, dst_linesize[0]);
+		g_bytes_unref(bytes);
+		return tex;
+	}
 }
 
-/* Open the file, find the video stream, decode the requested frame and
- * return a new pixbuf (or NULL).  Frees all libav resources it allocates. */
-static GdkPixbuf* grab_frame(const gchar* uri,
+static GdkTexture* grab_frame_texture(const gchar* uri,
 	gint64 position_ns, gint target_width, gint target_height,
 	gint* aspect_n, gint* aspect_d,
 	VideoAbortFn abort_fn, gpointer abort_data)
 {
-	GdkPixbuf* result = NULL;
+	GdkTexture* result = NULL;
 
 	VideoSession s = open_session(uri, abort_fn, abort_data);
 	if (!s.ok)
@@ -312,7 +366,6 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 	AVFormatContext* fmt = s.fmt;
 	int video_stream = s.video_stream;
 
-	/* pixel aspect ratio */
 	if (aspect_n != NULL && aspect_d != NULL)
 	{
 		AVRational par = (st->sample_aspect_ratio.num != 0)
@@ -321,7 +374,6 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 		*aspect_d = par.den;
 	}
 
-	/* seek to a requested timestamp */
 	if (position_ns >= 0)
 	{
 		AVRational ns_base = {1, 1000000000};
@@ -356,7 +408,6 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 
 		while (avcodec_receive_frame(ctx, frame) == 0)
 		{
-			/* mid-decode cancellation */
 			if (abort_fn != NULL && abort_fn(abort_data))
 			{
 				av_frame_unref(frame);
@@ -370,24 +421,21 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 
 			if (position_ns < 0)
 			{
-				/* first frame: grab it and stop */
-				result = frame_to_pixbuf(frame, frame_w, frame_h,
-				                         target_width, target_height, rotation);
+				result = frame_to_texture(frame, frame_w, frame_h,
+				                          target_width, target_height, rotation);
 				av_frame_unref(frame);
 				goto done;
 			}
 			else
 			{
-				/* seeks land on the nearest keyframe; decode forward until we
-				 * pass the desired timestamp, then keep that frame. */
 				AVRational ns_base = {1, 1000000000};
 				int64_t pts_ns = (frame->pts != AV_NOPTS_VALUE)
 					? av_rescale_q(frame->pts, st->time_base, ns_base)
 					: 0;
 				if (pts_ns >= position_ns)
 				{
-					result = frame_to_pixbuf(frame, frame_w, frame_h,
-					                         target_width, target_height, rotation);
+					result = frame_to_texture(frame, frame_w, frame_h,
+					                          target_width, target_height, rotation);
 					av_frame_unref(frame);
 					goto done;
 				}
@@ -402,6 +450,197 @@ static GdkPixbuf* grab_frame(const gchar* uri,
 	}
 
 done:
+	if (result == NULL && last_frame != NULL && last_frame->width > 0)
+	{
+		int last_w = last_frame->width;
+		int last_h = last_frame->height;
+		int last_rotation = frame_rotation_deg(last_frame, st->metadata);
+		result = frame_to_texture(last_frame, last_w, last_h,
+		                          target_width, target_height, last_rotation);
+	}
+	av_packet_free(&pkt);
+	av_frame_free(&frame);
+	if (last_frame != NULL)
+		av_frame_free(&last_frame);
+	close_session(s);
+	return result;
+}
+
+#if HAVE_GDK_PIXBUF
+static GdkPixbuf* frame_to_pixbuf(AVFrame* frame, int width, int height,
+                                  gint target_width, gint target_height,
+                                  int rotation)
+{
+	if (frame == NULL || frame->data[0] == NULL || width < 1 || height < 1)
+		return NULL;
+
+	int out_w = width;
+	int out_h = height;
+	if (target_width > 0 && target_height > 0 &&
+	    (width > target_width || height > target_height))
+	{
+		guint new_w = width, new_h = height;
+		quiver_rect_get_bound_size(target_width, target_height,
+		                           &new_w, &new_h, FALSE);
+		out_w = (int)new_w;
+		out_h = (int)new_h;
+	}
+
+	struct SwsContext* sws = sws_getContext(
+		width, height, (AVPixelFormat)frame->format,
+		out_w, out_h, AV_PIX_FMT_RGB24,
+		SWS_BILINEAR, NULL, NULL, NULL);
+	if (sws == NULL)
+		return NULL;
+
+	configure_sws_colorspace(sws, frame);
+
+	uint8_t* dst_data[4] = { NULL, NULL, NULL, NULL };
+	int dst_linesize[4] = { 0, 0, 0, 0 };
+	int ret = av_image_alloc(dst_data, dst_linesize, out_w, out_h, AV_PIX_FMT_RGB24, 32);
+	if (ret < 0 || dst_data[0] == NULL)
+	{
+		sws_freeContext(sws);
+		return NULL;
+	}
+
+	sws_scale(sws, (const uint8_t* const*)frame->data, frame->linesize,
+	          0, height, dst_data, dst_linesize);
+	sws_freeContext(sws);
+
+	GdkPixbuf* out = gdk_pixbuf_new_from_data(
+		dst_data[0], GDK_COLORSPACE_RGB, FALSE, 8,
+		out_w, out_h, dst_linesize[0],
+		[](guchar* pixels, gpointer data) {
+			(void)data;
+			av_free(pixels);
+		}, NULL);
+
+	if (out == NULL)
+	{
+		av_free(dst_data[0]);
+		return NULL;
+	}
+
+	if (rotation != 0)
+	{
+		GdkPixbufRotation rot =
+			(rotation == 90)  ? GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE :
+			(rotation == 270) ? GDK_PIXBUF_ROTATE_CLOCKWISE :
+			GDK_PIXBUF_ROTATE_UPSIDEDOWN;
+		GdkPixbuf* rotated = gdk_pixbuf_rotate_simple(out, rot);
+		g_object_unref(out);
+		if (rotated != NULL)
+			out = rotated;
+	}
+
+	return out;
+}
+
+static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
+	gint64 position_ns, gint target_width, gint target_height,
+	gint* aspect_n, gint* aspect_d,
+	VideoAbortFn abort_fn, gpointer abort_data)
+{
+	GdkPixbuf* result = NULL;
+
+	VideoSession s = open_session(uri, abort_fn, abort_data);
+	if (!s.ok)
+		return NULL;
+	if (abort_fn != NULL && abort_fn(abort_data))
+	{
+		close_session(s);
+		return NULL;
+	}
+	AVStream* st = s.st;
+	AVCodecContext* ctx = s.ctx;
+	AVFormatContext* fmt = s.fmt;
+	int video_stream = s.video_stream;
+
+	if (aspect_n != NULL && aspect_d != NULL)
+	{
+		AVRational par = (st->sample_aspect_ratio.num != 0)
+			? st->sample_aspect_ratio : (AVRational){1, 1};
+		*aspect_n = par.num;
+		*aspect_d = par.den;
+	}
+
+	if (position_ns >= 0)
+	{
+		AVRational ns_base = {1, 1000000000};
+		int64_t seek_pts = av_rescale_q(position_ns, ns_base, st->time_base);
+		av_seek_frame(fmt, video_stream, seek_pts, AVSEEK_FLAG_BACKWARD);
+		avcodec_flush_buffers(ctx);
+	}
+
+	AVFrame* frame = av_frame_alloc();
+	AVFrame* last_frame = (position_ns >= 0) ? av_frame_alloc() : NULL;
+	AVPacket* pkt = av_packet_alloc();
+	if (frame == NULL || pkt == NULL || (position_ns >= 0 && last_frame == NULL))
+	{
+		av_packet_free(&pkt);
+		av_frame_free(&frame);
+		if (last_frame != NULL)
+			av_frame_free(&last_frame);
+		close_session(s);
+		return NULL;
+	}
+
+	while (av_read_frame(fmt, pkt) >= 0)
+	{
+		if (pkt->stream_index != video_stream)
+		{
+			av_packet_unref(pkt);
+			continue;
+		}
+
+		avcodec_send_packet(ctx, pkt);
+		av_packet_unref(pkt);
+
+		while (avcodec_receive_frame(ctx, frame) == 0)
+		{
+			if (abort_fn != NULL && abort_fn(abort_data))
+			{
+				av_frame_unref(frame);
+				result = NULL;
+				goto done_pixbuf;
+			}
+
+			int frame_w = frame->width;
+			int frame_h = frame->height;
+			int rotation = frame_rotation_deg(frame, st->metadata);
+
+			if (position_ns < 0)
+			{
+				result = frame_to_pixbuf(frame, frame_w, frame_h,
+				                         target_width, target_height, rotation);
+				av_frame_unref(frame);
+				goto done_pixbuf;
+			}
+			else
+			{
+				AVRational ns_base = {1, 1000000000};
+				int64_t pts_ns = (frame->pts != AV_NOPTS_VALUE)
+					? av_rescale_q(frame->pts, st->time_base, ns_base)
+					: 0;
+				if (pts_ns >= position_ns)
+				{
+					result = frame_to_pixbuf(frame, frame_w, frame_h,
+					                         target_width, target_height, rotation);
+					av_frame_unref(frame);
+					goto done_pixbuf;
+				}
+				if (last_frame != NULL)
+				{
+					av_frame_unref(last_frame);
+					av_frame_ref(last_frame, frame);
+				}
+				av_frame_unref(frame);
+			}
+		}
+	}
+
+done_pixbuf:
 	if (result == NULL && last_frame != NULL && last_frame->width > 0)
 	{
 		int last_w = last_frame->width;
@@ -427,9 +666,24 @@ GdkPixbuf* LoadPixbuf(const gchar *uri,
 	VideoAbortFn abort_fn,
 	gpointer abort_data)
 {
-	return grab_frame(uri, position_ns, target_width, target_height,
-	                  pixel_aspect_ratio_numerator, pixel_aspect_ratio_denominator,
-	                  abort_fn, abort_data);
+	return grab_frame_pixbuf(uri, position_ns, target_width, target_height,
+	                         pixel_aspect_ratio_numerator, pixel_aspect_ratio_denominator,
+	                         abort_fn, abort_data);
+}
+#endif
+
+GdkTexture* LoadTexture(const gchar *uri,
+	gint* pixel_aspect_ratio_numerator,
+	gint* pixel_aspect_ratio_denominator,
+	gint64 position_ns,
+	gint target_width,
+	gint target_height,
+	VideoAbortFn abort_fn,
+	gpointer abort_data)
+{
+	return grab_frame_texture(uri, position_ns, target_width, target_height,
+	                          pixel_aspect_ratio_numerator, pixel_aspect_ratio_denominator,
+	                          abort_fn, abort_data);
 }
 
 gboolean Probe(const gchar *uri,

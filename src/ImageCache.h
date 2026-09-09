@@ -6,15 +6,19 @@
 #include <unordered_map>
 #include <mutex>
 
+#if HAVE_GDK_PIXBUF
 struct _GdkPixbuf;
 typedef struct _GdkPixbuf GdkPixbuf;
+#endif
 struct _GdkTexture;
 typedef struct _GdkTexture GdkTexture;
 
 typedef struct _CacheItem
 {
 	GdkTexture * pTexture;
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf * pPixbuf;
+#endif
 	unsigned long time;
 } CacheItem;
 
@@ -27,12 +31,14 @@ public:
 	ImageCache(unsigned int size);
 	~ImageCache();
 
+#if HAVE_GDK_PIXBUF
 	// request a pixbuf (backward compatibility)
 	// returns null if not in cache
 	GdkPixbuf * GetPixbuf(std::string filename);
 	void AddPixbuf(std::string filename, GdkPixbuf * pb);
 	void AddPixbuf(std::string filename, GdkPixbuf * pb, unsigned long time);
 	bool RemovePixbuf(std::string filename);
+#endif
 
 	// request a texture (modern fast path)
 	// returns null if not in cache

@@ -7,8 +7,10 @@
 
 #include <set>
 
+#if HAVE_GDK_PIXBUF
 struct _GdkPixbufLoader;
 typedef _GdkPixbufLoader GdkPixbufLoader;
+#endif
 
 class PixbufLoaderObserver : public IPixbufLoaderObserver
 {
@@ -17,6 +19,7 @@ public:
 	PixbufLoaderObserver();
 	virtual ~PixbufLoaderObserver();
 
+#if HAVE_GDK_PIXBUF
 	virtual void ConnectSignals(GdkPixbufLoader *loader);
 	virtual void ConnectSignalSizePrepared(GdkPixbufLoader * loader);
 
@@ -28,6 +31,7 @@ public:
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf);
 	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height, bool bResetViewMode = true );
+#endif
 	virtual void SetTexture(GdkTexture * texture);
 	virtual void SetTextureAtSize(GdkTexture * texture, gint width, gint height, bool bResetViewMode = true );
 

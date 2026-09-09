@@ -1,8 +1,12 @@
+#include <config.h>
 #include <gtk/gtk.h>
 #include "quiver-icon-view.h"
+#include "quiver-pixbuf-utils.h"
 #include "ImageCache.h"
 #include <iostream>
 #include <cassert>
+
+GtkApplication *g_pApp = nullptr;
 
 static gulong test_n_items_cb(QuiverIconView *iconview, gpointer user_data)
 {
@@ -13,13 +17,11 @@ static gulong test_n_items_cb(QuiverIconView *iconview, gpointer user_data)
 
 static GdkTexture* create_test_texture(int width, int height, guint32 color_rgba)
 {
-    GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, width, height);
-    assert(pb != NULL);
-    gdk_pixbuf_fill(pb, color_rgba);
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    GdkTexture *tex = gdk_texture_new_for_pixbuf(pb);
-G_GNUC_END_IGNORE_DEPRECATIONS
-    g_object_unref(pb);
+    guint32 *buf = (guint32*)g_malloc((gsize)width * height * 4);
+    for (int i = 0; i < width * height; i++) buf[i] = color_rgba;
+    GBytes *bytes = g_bytes_new_take(buf, (gsize)width * height * 4);
+    GdkTexture *tex = gdk_memory_texture_new(width, height, GDK_MEMORY_R8G8B8A8, bytes, width * 4);
+    g_bytes_unref(bytes);
     return tex;
 }
 
@@ -45,6 +47,7 @@ static GdkTexture* test_thumbnail_texture_cb(QuiverIconView *iconview, gulong ce
     return tex;
 }
 
+#if HAVE_GDK_PIXBUF
 static GdkPixbuf* test_thumbnail_pixbuf_cb(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data)
 {
     (void)iconview;
@@ -60,6 +63,7 @@ static GdkPixbuf* test_thumbnail_pixbuf_cb(QuiverIconView *iconview, gulong cell
     }
     return pb;
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -83,13 +87,16 @@ int main(int argc, char **argv)
     assert(gdk_texture_get_height(got_t0) == 96);
     g_object_unref(got_t0);
 
+#if HAVE_GDK_PIXBUF
     // Also verify backward compatibility: GetPixbuf on an item added as Texture
     GdkPixbuf *got_pb0 = testData.cache.GetPixbuf("item_0");
     assert(got_pb0 != NULL);
     assert(gdk_pixbuf_get_width(got_pb0) == 128);
     g_object_unref(got_pb0);
+#endif
     std::cout << " OK\n";
 
+#if HAVE_GDK_PIXBUF
     // Test 2: Add item as Pixbuf, verify GetTexture works lazily
     std::cout << "  [2] Verifying ImageCache Pixbuf->Texture lazy conversion...";
     GdkPixbuf *pb1 = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 64, 64);
@@ -102,6 +109,7 @@ int main(int argc, char **argv)
     assert(gdk_texture_get_height(got_t1) == 64);
     g_object_unref(got_t1);
     std::cout << " OK\n";
+#endif
 
     // Test 3: Create QuiverIconView in a GtkScrolledWindow and attach texture callback
     std::cout << "  [3] Testing QuiverIconView with GdkTexture callback...";
@@ -127,6 +135,7 @@ int main(int argc, char **argv)
     assert(testData.texture_called == true);
     std::cout << " OK\n";
 
+#if HAVE_GDK_PIXBUF
     // Test 4: QuiverIconView fallback to pixbuf callback if texture callback is not set
     std::cout << "  [4] Testing QuiverIconView fallback to Pixbuf callback...";
     testData.texture_called = false;
@@ -144,6 +153,7 @@ int main(int argc, char **argv)
 
     assert(testData.pixbuf_called == true);
     std::cout << " OK\n";
+#endif
 
     // Test 5: Rubber band drag selection and GPU rendering
     std::cout << "  [5] Testing Rubber Band selection and GPU snapshot...";

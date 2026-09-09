@@ -7,7 +7,10 @@
 
 #include <gio/gio.h>
 
+#include <gdk/gdk.h>
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
 
 #include <boost/shared_ptr.hpp>
 
@@ -49,10 +52,19 @@ public:
 	bool IsFolder() const;
 	bool IsVideo();
 
+	GdkTexture *GetThumbnailTexture(int iSize = 0,
+		QuiverVideoOps::VideoAbortFn abort_fn = NULL,
+		gpointer abort_data = NULL);
+	GdkTexture *GetExifThumbnailTexture();
+	GdkTexture *GetIconTexture(int width_desired, int height_desired);
+
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf *GetExifThumbnail();
 	GdkPixbuf *GetThumbnail(int iSize = 0,
 		QuiverVideoOps::VideoAbortFn abort_fn = NULL,
 		gpointer abort_data = NULL);
+	GdkPixbuf* GetIcon(int width_desired,int height_desired);
+#endif
 	
 	void RemoveCachedThumbnail(int iSize = 0);
 
@@ -64,7 +76,6 @@ public:
 
 	unsigned long long GetFileSize();
 	
-	GdkPixbuf* GetIcon(int width_desired,int height_desired);
 	gchar* GetIconName();
 	
 	void Reload();

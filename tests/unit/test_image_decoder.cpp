@@ -1,9 +1,12 @@
+#include <config.h>
 #include <catch2/catch_test_macros.hpp>
 #include "ImageDecoder.h"
 #include "test_helpers.h"
 #include <glib.h>
 #include <glib/gstdio.h>
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
 #include <string>
 #include <vector>
 
@@ -15,6 +18,7 @@ TEST_CASE("ImageDecoder Dimensions Probing and Backend Selection", "[unit][decod
     REQUIRE(file != nullptr);
 
     std::vector<ImageDecoder::Backend> backends;
+    backends.push_back(ImageDecoder::Backend::AUTO);
     if (ImageDecoder::IsBackendSupported(ImageDecoder::Backend::PIXBUF))
         backends.push_back(ImageDecoder::Backend::PIXBUF);
     if (ImageDecoder::IsBackendSupported(ImageDecoder::Backend::GLYCIN))
@@ -24,7 +28,11 @@ TEST_CASE("ImageDecoder Dimensions Probing and Backend Selection", "[unit][decod
 
     for (auto backend : backends)
     {
-        DYNAMIC_SECTION("Backend: " << (backend == ImageDecoder::Backend::GLYCIN ? "GLYCIN" : "PIXBUF"))
+        std::string name = "AUTO";
+        if (backend == ImageDecoder::Backend::GLYCIN) name = "GLYCIN";
+        else if (backend == ImageDecoder::Backend::PIXBUF) name = "PIXBUF";
+
+        DYNAMIC_SECTION("Backend: " << name)
         {
             ImageDecoder::SetBackend(backend);
             REQUIRE(ImageDecoder::GetBackend() == backend);
@@ -47,6 +55,7 @@ TEST_CASE("ImageDecoder Full Pixbuf and Texture Decoding", "[unit][decoder]")
     GFile* file = g_file_new_for_path(sampleJpg.c_str());
     REQUIRE(file != nullptr);
 
+#if HAVE_GDK_PIXBUF
     SECTION("DecodeFilePixbuf returns valid pixbuf matching probe dimensions")
     {
         int probe_w = 0, probe_h = 0;
@@ -59,6 +68,7 @@ TEST_CASE("ImageDecoder Full Pixbuf and Texture Decoding", "[unit][decoder]")
 
         g_object_unref(pb);
     }
+#endif
 
     SECTION("DecodeFileTexture returns valid GdkTexture")
     {
@@ -70,6 +80,7 @@ TEST_CASE("ImageDecoder Full Pixbuf and Texture Decoding", "[unit][decoder]")
         g_object_unref(tex);
     }
 
+#if HAVE_GDK_PIXBUF
     SECTION("DecodeBytesPixbuf in-memory buffer decode")
     {
         char* contents = nullptr;
@@ -85,6 +96,23 @@ TEST_CASE("ImageDecoder Full Pixbuf and Texture Decoding", "[unit][decoder]")
         g_object_unref(mem_pb);
         g_bytes_unref(bytes);
     }
+#endif
+
+    SECTION("DecodeBytesTexture in-memory buffer decode to GdkTexture")
+    {
+        char* contents = nullptr;
+        gsize length = 0;
+        REQUIRE(g_file_load_contents(file, NULL, &contents, &length, NULL, NULL));
+        GBytes* bytes = g_bytes_new_take(contents, length);
+
+        GdkTexture* mem_tex = ImageDecoder::DecodeBytesTexture(bytes, "image/jpeg");
+        REQUIRE(mem_tex != nullptr);
+        REQUIRE(gdk_texture_get_width(mem_tex) > 0);
+        REQUIRE(gdk_texture_get_height(mem_tex) > 0);
+
+        g_object_unref(mem_tex);
+        g_bytes_unref(bytes);
+    }
 
     g_object_unref(file);
 }
@@ -96,15 +124,40 @@ TEST_CASE("ImageDecoder FreeDesktop Thumbnail Specification Metadata", "[unit][d
     REQUIRE(fd >= 0);
     close(fd);
 
+    guint32 *buf = (guint32*)g_malloc(64 * 64 * 4);
+    for (int i = 0; i < 64 * 64; i++) buf[i] = 0xFF00FF88;
+    GBytes *b = g_bytes_new_take(buf, 64 * 64 * 4);
+    GdkTexture *tex = gdk_memory_texture_new(64, 64, GDK_MEMORY_R8G8B8A8, b, 64 * 4);
+    g_bytes_unref(b);
+    REQUIRE(tex != nullptr);
+
+    bool saved = ImageDecoder::TextureSaveThumbnail(tex, tmpThumb, "file:///path/to/test.jpg", 1234567890, 4096, 1920, 1080, 1);
+    REQUIRE(saved);
+
+    gchar *content = nullptr;
+    gsize len = 0;
+    REQUIRE(g_file_get_contents(tmpThumb, &content, &len, NULL));
+    REQUIRE(len > 0);
+    g_free(content);
+
+    g_object_unref(tex);
+    g_unlink(tmpThumb);
+
+#if HAVE_GDK_PIXBUF
+    char tmpThumbPb[] = "/tmp/quiver_thumb_pb_XXXXXX.png";
+    fd = g_mkstemp(tmpThumbPb);
+    REQUIRE(fd >= 0);
+    close(fd);
+
     GdkPixbuf* thumb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 64, 64);
     REQUIRE(thumb != nullptr);
     gdk_pixbuf_fill(thumb, 0xFF00FF88);
 
-    bool saved = ImageDecoder::SaveThumbnail(thumb, tmpThumb, "file:///path/to/test.jpg", 1234567890, 4096, 1920, 1080, 1);
+    saved = ImageDecoder::SaveThumbnail(thumb, tmpThumbPb, "file:///path/to/test.jpg", 1234567890, 4096, 1920, 1080, 1);
     REQUIRE(saved);
 
     // Reopen thumbnail and verify specification keys
-    GdkPixbuf* check = gdk_pixbuf_new_from_file(tmpThumb, NULL);
+    GdkPixbuf* check = gdk_pixbuf_new_from_file(tmpThumbPb, NULL);
     REQUIRE(check != nullptr);
 
     const char* uriTag = gdk_pixbuf_get_option(check, "tEXt::Thumb::URI");
@@ -112,11 +165,11 @@ TEST_CASE("ImageDecoder FreeDesktop Thumbnail Specification Metadata", "[unit][d
 
     REQUIRE(uriTag != nullptr);
     REQUIRE(std::string(uriTag) == "file:///path/to/test.jpg");
-
     REQUIRE(mtimeTag != nullptr);
     REQUIRE(std::string(mtimeTag) == "1234567890");
 
     g_object_unref(check);
     g_object_unref(thumb);
-    g_unlink(tmpThumb);
+    g_unlink(tmpThumbPb);
+#endif
 }

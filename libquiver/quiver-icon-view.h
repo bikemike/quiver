@@ -54,10 +54,14 @@ typedef enum _QuiverIconViewDragBehavior QuiverIconViewDragBehavior;
 
 typedef gulong (*QuiverIconViewGetNItemsFunc) (QuiverIconView *iconview,gpointer user_data);
 typedef gchar* (*QuiverIconViewGetTextFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
+typedef GdkTexture* (*QuiverIconViewGetThumbnailTextureFunc) (QuiverIconView *iconview,gulong cell,gint* actual_width, gint *actual_height, gpointer user_data);
+typedef GdkTexture* (*QuiverIconViewGetIconTextureFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
+typedef GdkTexture* (*QuiverIconViewGetOverlayTextureFunc) (QuiverIconView *iconview,gulong cell, QuiverIconOverlayType type,gpointer user_data);
+#if HAVE_GDK_PIXBUF
 typedef GdkPixbuf* (*QuiverIconViewGetIconPixbufFunc) (QuiverIconView *iconview,gulong cell,gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetThumbnailPixbufFunc) (QuiverIconView *iconview,gulong cell,gint* actual_width, gint *actual_height, gpointer user_data);
-typedef GdkTexture* (*QuiverIconViewGetThumbnailTextureFunc) (QuiverIconView *iconview,gulong cell,gint* actual_width, gint *actual_height, gpointer user_data);
 typedef GdkPixbuf* (*QuiverIconViewGetOverlayPixbufFunc) (QuiverIconView *iconview,gulong cell, QuiverIconOverlayType type,gpointer user_data);
+#endif
 
 struct _QuiverIconView
 {
@@ -128,20 +132,28 @@ void quiver_icon_view_invalidate_cell(QuiverIconView *iconview,gulong cell);
 void quiver_icon_view_set_n_items_func (QuiverIconView *iconview, 
          QuiverIconViewGetNItemsFunc func,gpointer data,GDestroyNotify destroy);
 
+void quiver_icon_view_set_thumbnail_texture_func (QuiverIconView *iconview,
+         QuiverIconViewGetThumbnailTextureFunc func,gpointer data,GDestroyNotify destroy);
+
+void quiver_icon_view_set_icon_texture_func (QuiverIconView *iconview,
+         QuiverIconViewGetIconTextureFunc func,gpointer data,GDestroyNotify destroy);
+
+void quiver_icon_view_set_overlay_texture_func (QuiverIconView *iconview,
+         QuiverIconViewGetOverlayTextureFunc func,gpointer data,GDestroyNotify destroy);
+
+void quiver_icon_view_set_text_func (QuiverIconView *iconview,
+         QuiverIconViewGetTextFunc func,gpointer data,GDestroyNotify destroy);
+
+#if HAVE_GDK_PIXBUF
 void quiver_icon_view_set_icon_pixbuf_func (QuiverIconView *iconview,
          QuiverIconViewGetIconPixbufFunc func,gpointer data,GDestroyNotify destroy);
 
 void quiver_icon_view_set_thumbnail_pixbuf_func (QuiverIconView *iconview,
          QuiverIconViewGetThumbnailPixbufFunc func,gpointer data,GDestroyNotify destroy);
 
-void quiver_icon_view_set_thumbnail_texture_func (QuiverIconView *iconview,
-         QuiverIconViewGetThumbnailTextureFunc func,gpointer data,GDestroyNotify destroy);
-
-void quiver_icon_view_set_text_func (QuiverIconView *iconview,
-         QuiverIconViewGetTextFunc func,gpointer data,GDestroyNotify destroy);
-
 void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
          QuiverIconViewGetOverlayPixbufFunc func,gpointer data,GDestroyNotify destroy);
+#endif
 
 G_END_DECLS
 

@@ -6,7 +6,12 @@
 
 namespace QuiverUtils
 {
+	GdkTexture * TextureExifReorientate(GdkTexture * texture, int orientation);
+	GdkTexture * ScaleTexture(GdkTexture * texture, int dest_w, int dest_h);
+#if HAVE_GDK_PIXBUF
+	GdkTexture * PixbufToTexture(GdkPixbuf * pixbuf);
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation);
+#endif
 
 	/* New GSimpleAction based action system (replaces GtkUIManager/GtkAction).
 	 *

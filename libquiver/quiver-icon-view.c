@@ -90,6 +90,23 @@ struct _QuiverIconViewPrivate
 	gpointer callback_get_n_items_data;
 	GDestroyNotify callback_get_n_items_data_destroy;
 
+	QuiverIconViewGetThumbnailTextureFunc callback_get_thumbnail_texture;
+	gpointer callback_get_thumbnail_texture_data;
+	GDestroyNotify callback_get_thumbnail_texture_data_destroy;
+
+	QuiverIconViewGetIconTextureFunc callback_get_icon_texture;
+	gpointer callback_get_icon_texture_data;
+	GDestroyNotify callback_get_icon_texture_data_destroy;
+
+	QuiverIconViewGetOverlayTextureFunc callback_get_overlay_texture;
+	gpointer callback_get_overlay_texture_data;
+	GDestroyNotify callback_get_overlay_texture_data_destroy;
+
+	QuiverIconViewGetTextFunc callback_get_text;
+	gpointer callback_get_text_data;
+	GDestroyNotify callback_get_text_data_destroy;
+
+#if HAVE_GDK_PIXBUF
 	QuiverIconViewGetIconPixbufFunc callback_get_icon_pixbuf;
 	gpointer callback_get_icon_pixbuf_data;
 	GDestroyNotify callback_get_icon_pixbuf_data_destroy;
@@ -98,17 +115,10 @@ struct _QuiverIconViewPrivate
 	gpointer callback_get_thumbnail_pixbuf_data;
 	GDestroyNotify callback_get_thumbnail_pixbuf_data_destroy;
 
-	QuiverIconViewGetThumbnailTextureFunc callback_get_thumbnail_texture;
-	gpointer callback_get_thumbnail_texture_data;
-	GDestroyNotify callback_get_thumbnail_texture_data_destroy;
-
-	QuiverIconViewGetTextFunc callback_get_text;
-	gpointer callback_get_text_data;
-	GDestroyNotify callback_get_text_data_destroy;
-
 	QuiverIconViewGetOverlayPixbufFunc callback_get_overlay_pixbuf;
 	gpointer callback_get_overlay_pixbuf_data;
 	GDestroyNotify callback_get_overlay_pixbuf_data_destroy;
+#endif
 
 	CellItem *cell_items;
 	gulong n_cell_items;
@@ -216,9 +226,13 @@ static void quiver_icon_view_update_rubber_band(QuiverIconView *iconview, gint x
 static void quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview);
 static void quiver_icon_view_update_icon_size(QuiverIconView *iconview);
 static gulong quiver_icon_view_get_n_items(QuiverIconView* iconview);
-static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height);
 static GdkTexture* quiver_icon_view_get_thumbnail_texture(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height);
+static GdkTexture* quiver_icon_view_get_icon_texture(QuiverIconView* iconview,gulong cell);
+static GdkTexture* quiver_icon_view_get_overlay_texture(QuiverIconView* iconview, gulong cell, QuiverIconOverlayType type);
+#if HAVE_GDK_PIXBUF
+static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height);
 static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulong cell);
+#endif
 
 static void quiver_icon_view_click_cell(QuiverIconView *iconview,gulong cell);
 static void quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot);
@@ -353,6 +367,19 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->callback_get_n_items_data = NULL;
 	iconview->priv->callback_get_n_items_data_destroy = NULL;
 
+	iconview->priv->callback_get_thumbnail_texture = NULL;
+	iconview->priv->callback_get_thumbnail_texture_data = NULL;
+	iconview->priv->callback_get_thumbnail_texture_data_destroy = NULL;
+
+	iconview->priv->callback_get_icon_texture = NULL;
+	iconview->priv->callback_get_icon_texture_data = NULL;
+	iconview->priv->callback_get_icon_texture_data_destroy = NULL;
+
+	iconview->priv->callback_get_overlay_texture = NULL;
+	iconview->priv->callback_get_overlay_texture_data = NULL;
+	iconview->priv->callback_get_overlay_texture_data_destroy = NULL;
+
+#if HAVE_GDK_PIXBUF
 	iconview->priv->callback_get_icon_pixbuf = NULL;
 	iconview->priv->callback_get_icon_pixbuf_data = NULL;
 	iconview->priv->callback_get_icon_pixbuf_data_destroy = NULL;
@@ -361,17 +388,14 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->callback_get_thumbnail_pixbuf_data = NULL;
 	iconview->priv->callback_get_thumbnail_pixbuf_data_destroy = NULL;
 
-	iconview->priv->callback_get_thumbnail_texture = NULL;
-	iconview->priv->callback_get_thumbnail_texture_data = NULL;
-	iconview->priv->callback_get_thumbnail_texture_data_destroy = NULL;
+	iconview->priv->callback_get_overlay_pixbuf = NULL;
+	iconview->priv->callback_get_overlay_pixbuf_data = NULL;
+	iconview->priv->callback_get_overlay_pixbuf_data_destroy = NULL;
+#endif
 
 	iconview->priv->callback_get_text = NULL;
 	iconview->priv->callback_get_text_data = NULL;
 	iconview->priv->callback_get_text_data_destroy = NULL;
-	
-	iconview->priv->callback_get_overlay_pixbuf = NULL;
-	iconview->priv->callback_get_overlay_pixbuf_data = NULL;
-	iconview->priv->callback_get_overlay_pixbuf_data_destroy = NULL;
 
 	iconview->priv->hadjustment = NULL;
 	iconview->priv->vadjustment = NULL;
@@ -470,11 +494,15 @@ quiver_icon_view_dispose(GObject *object)
 	}
 
 	quiver_icon_view_set_n_items_func(iconview, NULL, NULL, NULL);
-	quiver_icon_view_set_thumbnail_pixbuf_func(iconview, NULL, NULL, NULL);
 	quiver_icon_view_set_thumbnail_texture_func(iconview, NULL, NULL, NULL);
-	quiver_icon_view_set_icon_pixbuf_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_icon_texture_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_overlay_texture_func(iconview, NULL, NULL, NULL);
 	quiver_icon_view_set_text_func(iconview, NULL, NULL, NULL);
+#if HAVE_GDK_PIXBUF
+	quiver_icon_view_set_thumbnail_pixbuf_func(iconview, NULL, NULL, NULL);
+	quiver_icon_view_set_icon_pixbuf_func(iconview, NULL, NULL, NULL);
 	quiver_icon_view_set_overlay_pixbuf_func(iconview, NULL, NULL, NULL);
+#endif
 
 	G_OBJECT_CLASS (quiver_icon_view_parent_class)->dispose (object);
 }
@@ -517,10 +545,8 @@ quiver_icon_view_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	graphene_rect_init(&clip_rect, 0, 0, (float)alloc_w, (float)alloc_h);
 	gtk_snapshot_push_clip(snapshot, &clip_rect);
 
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 	GtkStyleContext *context = gtk_widget_get_style_context(widget);
 	gtk_snapshot_render_background(snapshot, context, 0, 0, alloc_w, alloc_h);
-G_GNUC_END_IGNORE_DEPRECATIONS
 
 	quiver_icon_view_snapshot_icons (widget, snapshot);
 
@@ -680,10 +706,8 @@ quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot)
 	gulong n_cells = quiver_icon_view_get_n_items(iconview);
 
 	GdkRGBA sel_color = { 0.21f, 0.52f, 0.89f, 1.0f };
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 	GtkStyleContext* context = gtk_widget_get_style_context(widget);
 	gtk_style_context_lookup_color(context, "theme_selected_bg_color", &sel_color);
-G_GNUC_END_IGNORE_DEPRECATIONS
 
 	for (guint j = row_start; j <= row_end; j++)
 	{
@@ -736,29 +760,36 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 			gboolean stock = FALSE;
 			gint aw = 0, ah = 0;
 			GdkTexture *texture = quiver_icon_view_get_thumbnail_texture(iconview, current_cell, &aw, &ah);
+#if HAVE_GDK_PIXBUF
 			if (NULL == texture)
 			{
 				GdkPixbuf *pb = quiver_icon_view_get_thumbnail_pixbuf(iconview, current_cell, &aw, &ah);
 				if (NULL != pb)
 				{
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-					texture = gdk_texture_new_for_pixbuf(pb);
-G_GNUC_END_IGNORE_DEPRECATIONS
+					texture = quiver_pixbuf_to_texture(pb);
 					g_object_unref(pb);
 				}
 			}
+#endif
 
 			if (NULL == texture)
 			{
-				GdkPixbuf *pb = quiver_icon_view_get_icon_pixbuf(iconview, current_cell);
-				if (NULL != pb)
+				texture = quiver_icon_view_get_icon_texture(iconview, current_cell);
+#if HAVE_GDK_PIXBUF
+				if (NULL == texture)
 				{
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-					texture = gdk_texture_new_for_pixbuf(pb);
-G_GNUC_END_IGNORE_DEPRECATIONS
-					g_object_unref(pb);
+					GdkPixbuf *pb = quiver_icon_view_get_icon_pixbuf(iconview, current_cell);
+					if (NULL != pb)
+					{
+						texture = quiver_pixbuf_to_texture(pb);
+						g_object_unref(pb);
+					}
 				}
-				stock = TRUE;
+#endif
+				if (NULL != texture)
+				{
+					stock = TRUE;
+				}
 			}
 
 			if (NULL != texture)
@@ -815,7 +846,9 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 			/* draw overlay icons */
 			for (guint k = 0; k < QUIVER_ICON_OVERLAY_COUNT; k++)
 			{
-				if (iconview->priv->callback_get_overlay_pixbuf)
+				GdkTexture *overlay_tex = quiver_icon_view_get_overlay_texture(iconview, current_cell, (QuiverIconOverlayType)k);
+#if HAVE_GDK_PIXBUF
+				if (NULL == overlay_tex && iconview->priv->callback_get_overlay_pixbuf)
 				{
 					GdkPixbuf *overlay = (*iconview->priv->callback_get_overlay_pixbuf)(iconview,
 							current_cell, (QuiverIconOverlayType)k,
@@ -823,25 +856,22 @@ G_GNUC_END_IGNORE_DEPRECATIONS
 							
 					if (overlay)
 					{
-						guint overlay_w = gdk_pixbuf_get_width(overlay);
-						guint overlay_h = gdk_pixbuf_get_height(overlay);
-
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-						GdkTexture *overlay_tex = gdk_texture_new_for_pixbuf(overlay);
-G_GNUC_END_IGNORE_DEPRECATIONS
+						overlay_tex = quiver_pixbuf_to_texture(overlay);
 						g_object_unref(overlay);
-
-						if (overlay_tex)
-						{
-							graphene_rect_t overlay_bounds;
-							graphene_rect_init(&overlay_bounds,
-								(float)(x_cell_offset + (gint)padding / 2 + 2 + 16 * k),
-								(float)(y_cell_offset + (gint)padding / 2 + 2),
-								(float)overlay_w, (float)overlay_h);
-							gtk_snapshot_append_texture(snapshot, overlay_tex, &overlay_bounds);
-							g_object_unref(overlay_tex);
-						}
 					}
+				}
+#endif
+				if (overlay_tex)
+				{
+					guint overlay_w = gdk_texture_get_width(overlay_tex);
+					guint overlay_h = gdk_texture_get_height(overlay_tex);
+					graphene_rect_t overlay_bounds;
+					graphene_rect_init(&overlay_bounds,
+						(float)(x_cell_offset + (gint)padding / 2 + 2 + 16 * k),
+						(float)(y_cell_offset + (gint)padding / 2 + 2),
+						(float)overlay_w, (float)overlay_h);
+					gtk_snapshot_append_texture(snapshot, overlay_tex, &overlay_bounds);
+					g_object_unref(overlay_tex);
 				}
 			}
 
@@ -1975,6 +2005,31 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 	return n_items;
 }
 
+static GdkTexture* quiver_icon_view_get_thumbnail_texture(QuiverIconView* iconview, gulong cell, gint* actual_width, gint *actual_height)
+{
+	GdkTexture *texture = NULL;
+	if (iconview->priv->callback_get_thumbnail_texture)
+		texture = (*iconview->priv->callback_get_thumbnail_texture)(iconview, cell, actual_width, actual_height, iconview->priv->callback_get_thumbnail_texture_data);
+	return texture;
+}
+
+static GdkTexture* quiver_icon_view_get_icon_texture(QuiverIconView* iconview, gulong cell)
+{
+	GdkTexture *texture = NULL;
+	if (iconview->priv->callback_get_icon_texture)
+		texture = (*iconview->priv->callback_get_icon_texture)(iconview, cell, iconview->priv->callback_get_icon_texture_data);
+	return texture;
+}
+
+static GdkTexture* quiver_icon_view_get_overlay_texture(QuiverIconView* iconview, gulong cell, QuiverIconOverlayType type)
+{
+	GdkTexture *texture = NULL;
+	if (iconview->priv->callback_get_overlay_texture)
+		texture = (*iconview->priv->callback_get_overlay_texture)(iconview, cell, type, iconview->priv->callback_get_overlay_texture_data);
+	return texture;
+}
+
+#if HAVE_GDK_PIXBUF
 static GdkPixbuf* quiver_icon_view_get_thumbnail_pixbuf(QuiverIconView* iconview,gulong cell, gint* actual_width, gint *actual_height)
 {
 	GdkPixbuf *pixbuf = NULL;
@@ -1990,15 +2045,7 @@ static GdkPixbuf* quiver_icon_view_get_icon_pixbuf(QuiverIconView* iconview,gulo
 		pixbuf = (*iconview->priv->callback_get_icon_pixbuf)(iconview,cell,iconview->priv->callback_get_icon_pixbuf_data);
 	return pixbuf;
 }
-
-
-static GdkTexture* quiver_icon_view_get_thumbnail_texture(QuiverIconView* iconview, gulong cell, gint* actual_width, gint *actual_height)
-{
-	GdkTexture *texture = NULL;
-	if (iconview->priv->callback_get_thumbnail_texture)
-		texture = (*iconview->priv->callback_get_thumbnail_texture)(iconview, cell, actual_width, actual_height, iconview->priv->callback_get_thumbnail_texture_data);
-	return texture;
-}
+#endif
 
 
 /* end utility functions*/
@@ -2986,6 +3033,67 @@ quiver_icon_view_set_n_items_func (QuiverIconView *iconview,
 }
 
 void
+quiver_icon_view_set_thumbnail_texture_func (QuiverIconView *iconview,
+         QuiverIconViewGetThumbnailTextureFunc func,gpointer data,GDestroyNotify destroy)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	if (iconview->priv->callback_get_thumbnail_texture_data_destroy)
+		(*iconview->priv->callback_get_thumbnail_texture_data_destroy)(iconview->priv->callback_get_thumbnail_texture_data);
+
+	iconview->priv->callback_get_thumbnail_texture = func;
+	iconview->priv->callback_get_thumbnail_texture_data = data;
+	iconview->priv->callback_get_thumbnail_texture_data_destroy = destroy;
+
+}
+
+void
+quiver_icon_view_set_icon_texture_func (QuiverIconView *iconview,
+         QuiverIconViewGetIconTextureFunc func,gpointer data,GDestroyNotify destroy)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	if (iconview->priv->callback_get_icon_texture_data_destroy)
+		(*iconview->priv->callback_get_icon_texture_data_destroy)(iconview->priv->callback_get_icon_texture_data);
+
+	iconview->priv->callback_get_icon_texture = func;
+	iconview->priv->callback_get_icon_texture_data = data;
+	iconview->priv->callback_get_icon_texture_data_destroy = destroy;
+
+}
+
+void
+quiver_icon_view_set_overlay_texture_func (QuiverIconView *iconview,
+         QuiverIconViewGetOverlayTextureFunc func,gpointer data,GDestroyNotify destroy)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	if (iconview->priv->callback_get_overlay_texture_data_destroy)
+		(*iconview->priv->callback_get_overlay_texture_data_destroy)(iconview->priv->callback_get_overlay_texture_data);
+
+	iconview->priv->callback_get_overlay_texture = func;
+	iconview->priv->callback_get_overlay_texture_data = data;
+	iconview->priv->callback_get_overlay_texture_data_destroy = destroy;
+
+}
+
+void
+quiver_icon_view_set_text_func (QuiverIconView *iconview,
+         QuiverIconViewGetTextFunc func,gpointer data,GDestroyNotify destroy)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	if (iconview->priv->callback_get_text_data_destroy)
+		(*iconview->priv->callback_get_text_data_destroy)(iconview->priv->callback_get_text_data);
+
+	iconview->priv->callback_get_text = func;
+	iconview->priv->callback_get_text_data = data;
+	iconview->priv->callback_get_text_data_destroy = destroy;
+
+}
+
+#if HAVE_GDK_PIXBUF
+void
 quiver_icon_view_set_icon_pixbuf_func (QuiverIconView *iconview,
          QuiverIconViewGetIconPixbufFunc func,gpointer data,GDestroyNotify destroy)
 {
@@ -3015,36 +3123,6 @@ quiver_icon_view_set_thumbnail_pixbuf_func (QuiverIconView *iconview,
 
 }
 
-void
-quiver_icon_view_set_thumbnail_texture_func (QuiverIconView *iconview,
-         QuiverIconViewGetThumbnailTextureFunc func,gpointer data,GDestroyNotify destroy)
-{
-	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
-
-	if (iconview->priv->callback_get_thumbnail_texture_data_destroy)
-		(*iconview->priv->callback_get_thumbnail_texture_data_destroy)(iconview->priv->callback_get_thumbnail_texture_data);
-
-	iconview->priv->callback_get_thumbnail_texture = func;
-	iconview->priv->callback_get_thumbnail_texture_data = data;
-	iconview->priv->callback_get_thumbnail_texture_data_destroy = destroy;
-
-}
-
-void
-quiver_icon_view_set_text_func (QuiverIconView *iconview,
-         QuiverIconViewGetTextFunc func,gpointer data,GDestroyNotify destroy)
-{
-	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
-
-	if (iconview->priv->callback_get_text_data_destroy)
-		(*iconview->priv->callback_get_text_data_destroy)(iconview->priv->callback_get_text_data);
-
-	iconview->priv->callback_get_text = func;
-	iconview->priv->callback_get_text_data = data;
-	iconview->priv->callback_get_text_data_destroy = destroy;
-
-}
-
 void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
          QuiverIconViewGetOverlayPixbufFunc func,gpointer data,GDestroyNotify destroy)
 {
@@ -3058,4 +3136,5 @@ void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
 	iconview->priv->callback_get_overlay_pixbuf_data_destroy = destroy;
 
 }
+#endif
 /* end public functions */

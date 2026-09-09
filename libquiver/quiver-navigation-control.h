@@ -46,7 +46,10 @@ GType	   quiver_navigation_control_get_type (void) G_GNUC_CONST;
 GtkWidget *quiver_navigation_control_new ();
 GtkWidget *quiver_navigation_control_new_with_adjustments (GtkAdjustment *hadjust, GtkAdjustment *vadjust);
 
+void       quiver_navigation_control_set_texture(QuiverNavigationControl *navcontrol, GdkTexture *texture);
+#if HAVE_GDK_PIXBUF
 void       quiver_navigation_control_set_pixbuf(QuiverNavigationControl *navcontrol, GdkPixbuf *pixbuf);
+#endif
 
 
 G_END_DECLS

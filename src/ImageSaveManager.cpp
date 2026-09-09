@@ -1,3 +1,4 @@
+#include <config.h>
 #include "ImageSaveManager.h"
 
 #include <glib.h>
@@ -23,14 +24,26 @@ public:
 	virtual std::string GetMimeType();
 
 	virtual bool SaveImage(QuiverFile quiverFile,
-			GdkPixbuf *pixbuf = NULL,
+			GdkTexture *texture = NULL,
 			ImageSaveProgressCallback cb = NULL,
 			void* user_data = NULL);
 
 	virtual bool SaveImageAs(QuiverFile quiverFile, std::string strFileName,
-			GdkPixbuf *pixbuf = NULL,
+			GdkTexture *texture = NULL,
 			ImageSaveProgressCallback cb = NULL,
 			void* user_data = NULL);
+
+#if HAVE_GDK_PIXBUF
+	virtual bool SaveImage(QuiverFile quiverFile,
+			GdkPixbuf *pixbuf,
+			ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL);
+
+	virtual bool SaveImageAs(QuiverFile quiverFile, std::string strFileName,
+			GdkPixbuf *pixbuf,
+			ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL);
+#endif
 };
 
 
@@ -39,28 +52,55 @@ std::string ImageSaverJPEG::GetMimeType()
 	return "image/jpeg";
 }
 
-static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf,
+static int save_jpeg_file(std::string filename, GdkTexture* texture,
 		std::shared_ptr<Exiv2::ExifData> exifData,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data);
 
+#if HAVE_GDK_PIXBUF
+static int save_jpeg_file_pixbuf(std::string filename, GdkPixbuf* pixbuf,
+		std::shared_ptr<Exiv2::ExifData> exifData,
+		IImageSaver::ImageSaveProgressCallback callback, void* user_data);
+#endif
+
 bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
-			GdkPixbuf *pixbuf /* = NULL */,
+			GdkTexture *texture /* = NULL */,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
 {
 	std::shared_ptr<Exiv2::ExifData> exifData = quiverFile.GetExifData();
-	int rval = save_jpeg_file(quiverFile.GetURI(), pixbuf, exifData, cb, user_data);
+	int rval = save_jpeg_file(quiverFile.GetURI(), texture, exifData, cb, user_data);
 	quiverFile.Reload();
 	return (0 == rval);
 }
 
 bool ImageSaverJPEG::SaveImageAs(QuiverFile quiverFile, std::string strFileName, 
-			GdkPixbuf *pixbuf /* = NULL */,
+			GdkTexture *texture /* = NULL */,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
+{ (void)quiverFile; (void)strFileName;  (void)texture;  (void)cb;  (void)user_data; 
+	return true;
+}
+
+#if HAVE_GDK_PIXBUF
+bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
+			GdkPixbuf *pixbuf,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
+{
+	std::shared_ptr<Exiv2::ExifData> exifData = quiverFile.GetExifData();
+	int rval = save_jpeg_file_pixbuf(quiverFile.GetURI(), pixbuf, exifData, cb, user_data);
+	quiverFile.Reload();
+	return (0 == rval);
+}
+
+bool ImageSaverJPEG::SaveImageAs(QuiverFile quiverFile, std::string strFileName, 
+			GdkPixbuf *pixbuf,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
 { (void)quiverFile; (void)strFileName;  (void)pixbuf;  (void)cb;  (void)user_data; 
 	return true;
 }
+#endif
 
 
 ImageSaveManager::ImageSaveManager()
@@ -92,7 +132,7 @@ bool ImageSaveManager::IsFormatSupported(std::string strMimeType)
 }
 
 bool ImageSaveManager::SaveImage(QuiverFile quiverFile, 
-			GdkPixbuf *pixbuf /* = NULL */,
+			GdkTexture *texture /* = NULL */,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
 { (void)cb;  (void)user_data; 
@@ -102,13 +142,46 @@ bool ImageSaveManager::SaveImage(QuiverFile quiverFile,
 	if (m_mapImageSavers.end() != itr)
 	{
 		// found the mime type
-		bRetVal = itr->second->SaveImage(quiverFile,pixbuf);
+		bRetVal = itr->second->SaveImage(quiverFile, texture);
 	}
 	return bRetVal;
 }
 
 bool ImageSaveManager::SaveImageAs(QuiverFile quiverFile, std::string strFileName,
-			GdkPixbuf *pixbuf /* = NULL */,
+			GdkTexture *texture /* = NULL */,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
+{ (void)cb;  (void)user_data; 
+	bool bRetVal = false;
+	ImageSaverMap::iterator itr;
+	itr = m_mapImageSavers.find(quiverFile.GetMimeType());
+	if (m_mapImageSavers.end() != itr)
+	{
+		// found the mime type
+		bRetVal = itr->second->SaveImageAs(quiverFile, strFileName, texture);
+	}
+	return bRetVal;
+}
+
+#if HAVE_GDK_PIXBUF
+bool ImageSaveManager::SaveImage(QuiverFile quiverFile, 
+			GdkPixbuf *pixbuf,
+			ImageSaveProgressCallback cb /* = NULL */,
+			void* user_data /*= NULL*/)
+{ (void)cb;  (void)user_data; 
+	bool bRetVal = false;
+	ImageSaverMap::iterator itr;
+	itr = m_mapImageSavers.find(quiverFile.GetMimeType());
+	if (m_mapImageSavers.end() != itr)
+	{
+		// found the mime type
+		bRetVal = itr->second->SaveImage(quiverFile, pixbuf);
+	}
+	return bRetVal;
+}
+
+bool ImageSaveManager::SaveImageAs(QuiverFile quiverFile, std::string strFileName,
+			GdkPixbuf *pixbuf,
 			ImageSaveProgressCallback cb /* = NULL */,
 			void* user_data /*= NULL*/)
 { (void)cb;  (void)user_data; 
@@ -122,6 +195,7 @@ bool ImageSaveManager::SaveImageAs(QuiverFile quiverFile, std::string strFileNam
 	}
 	return bRetVal;
 }
+#endif
 
 
 
@@ -180,18 +254,10 @@ EXTERN(void) jpeg_gio_dest JPP((j_compress_ptr cinfo, GOutputStream * outfile));
 EXTERN(void) jpeg_gio_src JPP((j_decompress_ptr cinfo, GInputStream * infile));
 }
 
-static int save_jpeg_file(std::string filename, GdkPixbuf* pixbuf,
+static int save_jpeg_file(std::string filename, GdkTexture* texture,
 		std::shared_ptr<Exiv2::ExifData> exifData,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data)
 {
-/*
-int jpeg_transform_files(char *infile, char *outfile,
-			 JXFORM_CODE transform,
-			 unsigned char *comment,
-			 char *thumbnail, int tsize,
-			 unsigned int flags)
-{
-*/
 	int rc = 0;
 	GFile* ginfile;
 	GFile* goutfile;
@@ -230,7 +296,6 @@ int jpeg_transform_files(char *infile, char *outfile,
 	in = G_INPUT_STREAM(g_file_read(ginfile, NULL, NULL));
 	if (NULL == in)
 	{
-		//fprintf(stderr,"open %s: %s\n",infile,strerror(errno));
 		g_object_unref(ginfile);
 		g_object_unref(goutfile);
 		return -1;
@@ -240,22 +305,16 @@ int jpeg_transform_files(char *infile, char *outfile,
 	out = G_OUTPUT_STREAM(g_file_replace(goutfile, NULL, FALSE, G_FILE_CREATE_PRIVATE, NULL, NULL));
 	if (NULL == out)
 	{
-		//fprintf(stderr,"open %s: %s\n",outfile,strerror(errno));
 		g_object_unref(ginfile);
 		g_object_unref(goutfile);
 		g_object_unref(in);
 		return -1;
 	}
 
-	/* go! */
-
-	//rc = jpeg_transform_fp(in,out,transform,comment,thumbnail,tsize,flags);
-	//
-
 	struct jpeg_decompress_struct src;
 	struct jpeg_compress_struct   dst;
 
-	// sett up the progress monitors
+	// set up the progress monitors
 	struct jpeg_progress comp_progress;
 	struct jpeg_progress dcomp_progress;
 
@@ -268,43 +327,26 @@ int jpeg_transform_files(char *infile, char *outfile,
 	comp_progress.user_data = user_data;
 	dcomp_progress.user_data = user_data;
 
-    comp_progress.progress_mgr.progress_monitor = jpeg_progress_cb;
-    dcomp_progress.progress_mgr.progress_monitor = jpeg_progress_cb;
-
+	comp_progress.progress_mgr.progress_monitor = jpeg_progress_cb;
+	dcomp_progress.progress_mgr.progress_monitor = jpeg_progress_cb;
 
 	struct jpeg_error_mgr jdsterr;
-	//struct longjmp_error_mgr jsrcerr;
 
 	src.err = jpeg_std_error(&jdsterr);
-	/* setup src */
-	/*
-	jsrcerr.jpeg.error_exit = longjmp_error_exit;
-	if (setjmp(jsrcerr.setjmp_buffer))
-		printf("ouch\n");
-	*/
-
-
 	jpeg_create_decompress(&src);
-
 	jpeg_gio_src(&src, in);
 
 	/* setup dst */
 	dst.err = jpeg_std_error(&jdsterr);
 	jpeg_create_compress(&dst);
 
-
 	// hook up the progress monitors
-    src.progress = &dcomp_progress.progress_mgr;
-    dst.progress = &comp_progress.progress_mgr;
+	src.progress = &dcomp_progress.progress_mgr;
+	dst.progress = &comp_progress.progress_mgr;
 
 	jpeg_gio_dest(&dst, out);
 
-	/* transform image */
-
 	jvirt_barray_ptr* src_coef_arrays;
-	//jvirt_barray_ptr * dst_coef_arrays;
-	//jpeg_transform_info transformoption;
-
 
 	jcopy_markers_setup(&src, JCOPYOPT_ALL_BUT_EXIF);
 	if (JPEG_HEADER_OK != jpeg_read_header(&src, TRUE))
@@ -342,20 +384,11 @@ int jpeg_transform_files(char *infile, char *outfile,
 		}
 	}
 
-	/* Any space needed by a transform option must be requested before
-	 * jpeg_read_coefficients so that memory allocation will be done right.
-	 */
-	//jtransform_request_workspace(&src, &transformoption);
 	src_coef_arrays = jpeg_read_coefficients(&src);
 
-	if (NULL == pixbuf)
+	if (NULL == texture)
 	{
 		jpeg_copy_critical_parameters(&src, &dst);
-
-		/*dst_coef_arrays = jtransform_adjust_parameters
-		(&src, &dst, src_coef_arrays, &transformoption);
-		*/
-		/* Start compressor (note no image data is actually written here) */
 		jpeg_write_coefficients(&dst, src_coef_arrays);
 
 		/* Copy to the output file any extra markers that we want to preserve */
@@ -365,52 +398,41 @@ int jpeg_transform_files(char *infile, char *outfile,
 	}
 	else
 	{
-		// copy in pixbuf
-		dst.image_width = gdk_pixbuf_get_width(pixbuf); 	/* image width and height, in pixels */
-		dst.image_height = gdk_pixbuf_get_height(pixbuf);
-		dst.input_components = 3;	/* # of color components per pixel */
-		dst.in_color_space = JCS_RGB; /* colorspace of input image */
+		int width = gdk_texture_get_width(texture);
+		int height = gdk_texture_get_height(texture);
+		dst.image_width = width;
+		dst.image_height = height;
+		dst.input_components = 3;
+		dst.in_color_space = JCS_RGB;
 
 		jpeg_set_defaults(&dst);
-		/* Make optional parameter settings here */
-		// FIXME: allow setting quality
-		// jpeg_set_quality (j_compress_ptr cinfo, int quality, boolean force_baseline)	
-
-		JSAMPROW row_pointer[1];	/* pointer to a single row */
-
-		int row_stride = gdk_pixbuf_get_rowstride (pixbuf);
-		guchar *pixels;
-
-		pixels = gdk_pixbuf_get_pixels (pixbuf);
-
-		int n_channels = gdk_pixbuf_get_n_channels (pixbuf);
-
-		g_assert(n_channels == 3);
-		g_assert (gdk_pixbuf_get_bits_per_sample (pixbuf) == 8);
-
 
 		jpeg_start_compress(&dst, TRUE);
 
-		/* Copy to the output file any extra markers that we want to preserve */
 		if (!exif_app1_payload.empty())
 			jpeg_write_marker(&dst, JPEG_APP0+1, exif_app1_payload.data(), exif_app1_payload.size());
 		jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL_BUT_EXIF);
 
-		if (gdk_pixbuf_get_has_alpha(pixbuf))
+		std::vector<guchar> rgba(width * height * 4);
+		GdkTextureDownloader *dl = gdk_texture_downloader_new(texture);
+		gdk_texture_downloader_set_format(dl, GDK_MEMORY_R8G8B8A8);
+		gdk_texture_downloader_download_into(dl, rgba.data(), width * 4);
+		gdk_texture_downloader_free(dl);
+
+		std::vector<JSAMPLE> row_buffer(width * 3);
+		JSAMPROW row_pointer[1] = { row_buffer.data() };
+
+		while (dst.next_scanline < dst.image_height)
 		{
-			//FIXME implement alpha code
-		}
-		else
-		{
-			while (dst.next_scanline < dst.image_height)
+			const guchar* src_row = &rgba[dst.next_scanline * width * 4];
+			for (int x = 0; x < width; ++x)
 			{
-				//p = pixels + y * row_stride + x * n_channels;
-				row_pointer[0] = & pixels[dst.next_scanline * row_stride];
-				jpeg_write_scanlines(&dst, row_pointer, 1);
+				row_buffer[x * 3 + 0] = src_row[x * 4 + 0];
+				row_buffer[x * 3 + 1] = src_row[x * 4 + 1];
+				row_buffer[x * 3 + 2] = src_row[x * 4 + 2];
 			}
+			jpeg_write_scanlines(&dst, row_pointer, 1);
 		}
-
-
 	}
 
 
@@ -451,4 +473,31 @@ int jpeg_transform_files(char *infile, char *outfile,
 
 	return rc;
 }
+
+#if HAVE_GDK_PIXBUF
+static int save_jpeg_file_pixbuf(std::string filename, GdkPixbuf* pixbuf,
+		std::shared_ptr<Exiv2::ExifData> exifData,
+		IImageSaver::ImageSaveProgressCallback callback, void* user_data)
+{
+	if (NULL != pixbuf)
+	{
+		GBytes* bytes = g_bytes_new(gdk_pixbuf_get_pixels(pixbuf),
+			static_cast<gsize>(gdk_pixbuf_get_rowstride(pixbuf)) * gdk_pixbuf_get_height(pixbuf));
+		GdkMemoryFormat format = gdk_pixbuf_get_has_alpha(pixbuf) ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
+		GdkTexture* tex = gdk_memory_texture_new(
+			gdk_pixbuf_get_width(pixbuf),
+			gdk_pixbuf_get_height(pixbuf),
+			format,
+			bytes,
+			gdk_pixbuf_get_rowstride(pixbuf));
+		g_bytes_unref(bytes);
+
+		int rval = save_jpeg_file(filename, tex, exifData, callback, user_data);
+		g_object_unref(tex);
+		return rval;
+	}
+	return save_jpeg_file(filename, static_cast<GdkTexture*>(NULL), exifData, callback, user_data);
+}
+#endif
+
 

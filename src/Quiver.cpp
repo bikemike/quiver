@@ -6,8 +6,9 @@
 
 GtkApplication *g_pApp = NULL;
 
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf-animation.h>
-//#include "QuiverUI.h"
+#endif
 
 #include <glib.h>
 #include <glib/gstdio.h>
@@ -1019,11 +1020,11 @@ void  Quiver::SignalDragEnd(GtkWidget *widget,GdkDragContext *drag_context,gpoin
 /*
 void  Quiver::SignalDragBegin (GtkWidget *widget,GdkDragContext *drag_context,gpointer user_data)
 {
-	
+	(void)widget; (void)drag_context; (void)user_data;
 	// disable drop 
 	gtk_drag_dest_unset(m_QuiverImplPtr->m_pQuiverWindow);
 	
-	// TODO
+#if HAVE_GDK_PIXBUF
 	// set icon
 	GdkPixbuf *thumb = m_QuiverImplPtr->m_ImageListPtr->GetCurrent().GetThumbnail();
 
@@ -1032,7 +1033,7 @@ void  Quiver::SignalDragBegin (GtkWidget *widget,GdkDragContext *drag_context,gp
 		gtk_drag_set_icon_pixbuf(drag_context,thumb,-2,-2);
 		g_object_unref(thumb);
 	}
-
+#endif
 }
 
 void Quiver::signal_drag_data_received(GtkWidget *widget,GdkDragContext *drag_context, gint x,gint y,
@@ -1982,6 +1983,7 @@ int main (int argc, char **argv)
 	cqd.pFiles = &files;
 	g_pCreateData = new CreateQuiverData(cqd);
 	
+#if HAVE_GDK_PIXBUF
 	// FIX FOR BUG: http://bugzilla.gnome.org/show_bug.cgi?id=65041
 	// race condition when registering types
 	// we have many threads that create pixbuf loaders
@@ -1991,14 +1993,11 @@ int main (int argc, char **argv)
 	// ensure the GdkPixbufAnimation type is registered to avoid races with pixbuf loaders
 	g_type_ensure (gdk_pixbuf_animation_get_type ());
 	
-
-#if HAVE_GDK_PIXBUF
 	GdkPixbufLoader* loader = gdk_pixbuf_loader_new();
 	gdk_pixbuf_loader_close(loader, NULL);
 	g_object_unref(loader);
-#endif
-	
 	// END BUG FIX items
+#endif
                                              
 	g_application_run (G_APPLICATION (g_pApp), 0, NULL);
 

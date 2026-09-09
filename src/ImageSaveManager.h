@@ -6,6 +6,8 @@
 
 #include "QuiverFile.h"
 
+#include <gdk/gdk.h>
+
 class ImageSaveManager;
 typedef boost::shared_ptr<ImageSaveManager> ImageSaveManagerPtr;
 
@@ -20,14 +22,26 @@ public:
 	virtual std::string GetMimeType() = 0;
 
 	virtual bool SaveImage(QuiverFile quiverFile,
-			GdkPixbuf *pixbuf = NULL,
+			GdkTexture *texture = NULL,
 			ImageSaveProgressCallback cb = NULL,
 			void* user_data = NULL) = 0;
 
 	virtual bool SaveImageAs(QuiverFile quiverFile, std::string strFileName,
-			GdkPixbuf *pixbuf = NULL,
+			GdkTexture *texture = NULL,
 			ImageSaveProgressCallback cb = NULL,
 			void* user_data = NULL) = 0;
+
+#if HAVE_GDK_PIXBUF
+	virtual bool SaveImage(QuiverFile quiverFile,
+			GdkPixbuf *pixbuf,
+			ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL) = 0;
+
+	virtual bool SaveImageAs(QuiverFile quiverFile, std::string strFileName,
+			GdkPixbuf *pixbuf,
+			ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL) = 0;
+#endif
 private:
 };
 
@@ -46,14 +60,26 @@ public:
 	virtual std::string GetMimeType(){return "";}
 
 	bool SaveImage(QuiverFile quiverFile,
-			GdkPixbuf *pixbuf = NULL,
+			GdkTexture *texture = NULL,
 			ImageSaveProgressCallback cb = NULL,
 			void* user_data = NULL);
 
 	bool SaveImageAs(QuiverFile quiverFile, std::string strFileName,
-			GdkPixbuf *pixbuf = NULL,
+			GdkTexture *texture = NULL,
 		   	ImageSaveProgressCallback cb = NULL,
 			void* user_data = NULL);
+
+#if HAVE_GDK_PIXBUF
+	bool SaveImage(QuiverFile quiverFile,
+			GdkPixbuf *pixbuf,
+			ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL);
+
+	bool SaveImageAs(QuiverFile quiverFile, std::string strFileName,
+			GdkPixbuf *pixbuf,
+		   	ImageSaveProgressCallback cb = NULL,
+			void* user_data = NULL);
+#endif
 
 	~ImageSaveManager();
 

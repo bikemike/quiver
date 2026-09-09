@@ -1,5 +1,6 @@
 #include <config.h>
 #include "ImageCache.h"
+#include "QuiverUtils.h"
 
 #include <gtk/gtk.h>
 #include <sys/time.h>
@@ -16,11 +17,13 @@ void ImageCache::FreeCacheItem(CacheItem &item)
 		g_object_unref(item.pTexture);
 		item.pTexture = NULL;
 	}
+#if HAVE_GDK_PIXBUF
 	if (item.pPixbuf != NULL)
 	{
 		g_object_unref(item.pPixbuf);
 		item.pPixbuf = NULL;
 	}
+#endif
 }
 
 ImageCache::ImageCache(unsigned int size)
@@ -33,10 +36,12 @@ ImageCache::~ImageCache()
 	Clear();
 }
 
+#if HAVE_GDK_PIXBUF
 bool ImageCache::RemovePixbuf(std::string filename)
 {
 	return RemoveTexture(filename);
 }
+#endif
 
 bool ImageCache::RemoveTexture(std::string filename)
 {
@@ -53,10 +58,12 @@ bool ImageCache::RemoveTexture(std::string filename)
 	return rval;
 }
 
+#if HAVE_GDK_PIXBUF
 void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb)
 {
 	AddPixbuf(filename, pb, CurrentTimeInMilliseconds());
 }
+#endif
 
 void ImageCache::AddTexture(string filename, GdkTexture * texture)
 {
@@ -103,7 +110,9 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long
 	{
 		FreeCacheItem(itr->second);
 		itr->second.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
+#if HAVE_GDK_PIXBUF
 		itr->second.pPixbuf = NULL;
+#endif
 		itr->second.time = time;
 		return;
 	}
@@ -128,12 +137,14 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long
 
 	CacheItem c = {};
 	c.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
+#if HAVE_GDK_PIXBUF
 	c.pPixbuf = NULL;
+#endif
 	c.time = time;
 	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
 }
 
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+#if HAVE_GDK_PIXBUF
 void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb, unsigned long time)
 {
 	std::lock_guard<std::mutex> lock(m_MutexImageCache);
@@ -143,7 +154,7 @@ void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb, unsigned long time)
 	{
 		FreeCacheItem(itr->second);
 		itr->second.pPixbuf = pb ? (GdkPixbuf*)g_object_ref(pb) : NULL;
-		itr->second.pTexture = pb ? gdk_texture_new_for_pixbuf(pb) : NULL;
+		itr->second.pTexture = pb ? QuiverUtils::PixbufToTexture(pb) : NULL;
 		itr->second.time = time;
 		return;
 	}
@@ -168,10 +179,11 @@ void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb, unsigned long time)
 
 	CacheItem c = {};
 	c.pPixbuf = pb ? (GdkPixbuf*)g_object_ref(pb) : NULL;
-	c.pTexture = pb ? gdk_texture_new_for_pixbuf(pb) : NULL;
+	c.pTexture = pb ? QuiverUtils::PixbufToTexture(pb) : NULL;
 	c.time = time;
 	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
 }
+#endif
 
 bool ImageCache::InCache(std::string filename)
 {
@@ -188,10 +200,12 @@ GdkTexture* ImageCache::GetTexture(string filename)
 	if (m_mapImageCache.end() != itr)
 	{
 		itr->second.time = CurrentTimeInMilliseconds();
+#if HAVE_GDK_PIXBUF
 		if (itr->second.pTexture == NULL && itr->second.pPixbuf != NULL)
 		{
-			itr->second.pTexture = gdk_texture_new_for_pixbuf(itr->second.pPixbuf);
+			itr->second.pTexture = QuiverUtils::PixbufToTexture(itr->second.pPixbuf);
 		}
+#endif
 		if (itr->second.pTexture != NULL)
 		{
 			return (GdkTexture*)g_object_ref(itr->second.pTexture);
@@ -200,6 +214,7 @@ GdkTexture* ImageCache::GetTexture(string filename)
 	return NULL;
 }
 
+#if HAVE_GDK_PIXBUF
 GdkPixbuf* ImageCache::GetPixbuf(string filename)
 {
 	std::lock_guard<std::mutex> lock(m_MutexImageCache);
@@ -210,7 +225,20 @@ GdkPixbuf* ImageCache::GetPixbuf(string filename)
 		itr->second.time = CurrentTimeInMilliseconds();
 		if (itr->second.pPixbuf == NULL && itr->second.pTexture != NULL)
 		{
-			itr->second.pPixbuf = gdk_pixbuf_get_from_texture(itr->second.pTexture);
+			int w = gdk_texture_get_width(itr->second.pTexture);
+			int h = gdk_texture_get_height(itr->second.pTexture);
+			if (w > 0 && h > 0)
+			{
+				GdkPixbuf* pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, w, h);
+				if (pb)
+				{
+					GdkTextureDownloader *dl = gdk_texture_downloader_new(itr->second.pTexture);
+					gdk_texture_downloader_set_format(dl, GDK_MEMORY_R8G8B8A8);
+					gdk_texture_downloader_download_into(dl, gdk_pixbuf_get_pixels(pb), (gsize)gdk_pixbuf_get_rowstride(pb));
+					gdk_texture_downloader_free(dl);
+					itr->second.pPixbuf = pb;
+				}
+			}
 		}
 		if (itr->second.pPixbuf != NULL)
 		{
@@ -219,7 +247,7 @@ GdkPixbuf* ImageCache::GetPixbuf(string filename)
 	}
 	return NULL;
 }
-G_GNUC_END_IGNORE_DEPRECATIONS
+#endif
 
 void ImageCache::Clear()
 {

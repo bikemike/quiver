@@ -6,12 +6,17 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
+#include <vector>
 #include <utility>
+#include <zlib.h>
+#include "QuiverUtils.h"
 
 #if HAVE_GLYCIN
 ImageDecoderBackend ImageDecoder::s_backend = ImageDecoderBackend::AUTO;
-#else
+#elif HAVE_GDK_PIXBUF
 ImageDecoderBackend ImageDecoder::s_backend = ImageDecoderBackend::PIXBUF;
+#else
+ImageDecoderBackend ImageDecoder::s_backend = ImageDecoderBackend::AUTO;
 #endif
 
 bool ImageDecoder::IsBackendSupported(ImageDecoderBackend backend)
@@ -102,6 +107,14 @@ bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, 
     return PixbufGetDimensions(file, mimetype, width, height);
 #else
     (void)mimetype;
+    GdkTexture *tex = gdk_texture_new_from_file(file, NULL);
+    if (tex)
+    {
+        *width = gdk_texture_get_width(tex);
+        *height = gdk_texture_get_height(tex);
+        g_object_unref(tex);
+        return true;
+    }
     return false;
 #endif
 }
@@ -227,6 +240,7 @@ static GdkTexture* frame_to_texture(GlyFrame *frame)
     return gdk_memory_texture_new(w, h, (GdkMemoryFormat)gly_fmt, bytes, stride);
 }
 
+#if HAVE_GDK_PIXBUF
 static GdkPixbuf* frame_to_pixbuf(GlyFrame *frame)
 {
     if (!frame)
@@ -253,37 +267,25 @@ static GdkPixbuf* frame_to_pixbuf(GlyFrame *frame)
     if (!tex)
         return NULL;
 
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    GdkPixbuf *pb = gdk_pixbuf_get_from_texture(tex);
-G_GNUC_END_IGNORE_DEPRECATIONS
+    GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, w, h);
+    if (pb)
+    {
+        GdkTextureDownloader *dl = gdk_texture_downloader_new(tex);
+        gdk_texture_downloader_set_format(dl, GDK_MEMORY_R8G8B8A8);
+        gdk_texture_downloader_download_into(dl, gdk_pixbuf_get_pixels(pb), (gsize)gdk_pixbuf_get_rowstride(pb));
+        gdk_texture_downloader_free(dl);
+    }
     g_object_unref(tex);
     return pb;
 }
 #endif
-
-static GdkTexture* pixbuf_to_texture(GdkPixbuf *pb)
-{
-    if (!pb)
-        return NULL;
-
-    GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pb);
-    gboolean has_alpha = gdk_pixbuf_get_has_alpha(pb);
-    GdkMemoryFormat fmt = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
-    GdkTexture *tex = gdk_memory_texture_new(
-        gdk_pixbuf_get_width(pb),
-        gdk_pixbuf_get_height(pb),
-        fmt,
-        bytes,
-        gdk_pixbuf_get_rowstride(pb)
-    );
-    g_bytes_unref(bytes);
-    return tex;
-}
+#endif
 
 // -------------------------------------------------------------------------
 // File Decoding
 // -------------------------------------------------------------------------
 
+#if HAVE_GDK_PIXBUF
 GdkPixbuf* ImageDecoder::DecodeFilePixbuf(GFile *file, const char *mimetype,
                                          int max_width, int max_height,
                                          GCancellable *cancellable,
@@ -309,17 +311,9 @@ GdkPixbuf* ImageDecoder::DecodeFilePixbuf(GFile *file, const char *mimetype,
     }
 #endif
 
-#if HAVE_GDK_PIXBUF
     return PixbufDecodeFilePixbuf(file, mimetype, max_width, max_height, cancellable, error);
-#else
-    (void)mimetype;
-    (void)max_width;
-    (void)max_height;
-    (void)cancellable;
-    (void)error;
-    return NULL;
-#endif
 }
+#endif
 
 GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
                                            GCancellable *cancellable,
@@ -345,17 +339,31 @@ GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
     }
 #endif
 
+#if HAVE_GDK_PIXBUF
     GdkPixbuf *pb = DecodeFilePixbuf(file, mimetype, 0, 0, cancellable, error);
     if (pb)
     {
-        GdkTexture *tex = pixbuf_to_texture(pb);
+        GdkTexture *tex = QuiverUtils::PixbufToTexture(pb);
         g_object_unref(pb);
         return tex;
+    }
+#endif
+
+    GError *err = NULL;
+    GdkTexture *tex = gdk_texture_new_from_file(file, &err);
+    if (tex)
+        return tex;
+    if (err)
+    {
+        if (error)
+            *error = err;
+        else
+            g_error_free(err);
     }
     return NULL;
 }
 
-#if HAVE_GLYCIN
+#if HAVE_GLYCIN && HAVE_GDK_PIXBUF
 GdkPixbuf* ImageDecoder::GlycinDecodeFilePixbuf(GFile *file, GCancellable *cancellable, GError **error)
 {
     GlyLoader *loader = gly_loader_new(file);
@@ -512,6 +520,7 @@ GdkPixbuf* ImageDecoder::PixbufDecodeFilePixbuf(GFile *file, const char *mimetyp
 // Bytes Decoding (EXIF Thumbnails)
 // -------------------------------------------------------------------------
 
+#if HAVE_GDK_PIXBUF
 GdkPixbuf* ImageDecoder::DecodeBytesPixbuf(GBytes *bytes, const char *mimetype,
                                           GCancellable *cancellable, GError **error)
 {
@@ -532,19 +541,15 @@ GdkPixbuf* ImageDecoder::DecodeBytesPixbuf(GBytes *bytes, const char *mimetype,
     }
 #endif
 
-#if HAVE_GDK_PIXBUF
     return PixbufDecodeBytesPixbuf(bytes, mimetype, cancellable, error);
-#else
-    (void)mimetype;
-    (void)cancellable;
-    (void)error;
-    return NULL;
-#endif
 }
+#endif
 
 GdkTexture* ImageDecoder::DecodeBytesTexture(GBytes *bytes, const char *mimetype,
                                             GCancellable *cancellable, GError **error)
 {
+    (void)mimetype;
+    (void)cancellable;
     if (!bytes)
         return NULL;
 
@@ -562,17 +567,31 @@ GdkTexture* ImageDecoder::DecodeBytesTexture(GBytes *bytes, const char *mimetype
     }
 #endif
 
+#if HAVE_GDK_PIXBUF
     GdkPixbuf *pb = DecodeBytesPixbuf(bytes, mimetype, cancellable, error);
     if (pb)
     {
-        GdkTexture *tex = pixbuf_to_texture(pb);
+        GdkTexture *tex = QuiverUtils::PixbufToTexture(pb);
         g_object_unref(pb);
         return tex;
+    }
+#endif
+
+    GError *err = NULL;
+    GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &err);
+    if (tex)
+        return tex;
+    if (err)
+    {
+        if (error)
+            *error = err;
+        else
+            g_error_free(err);
     }
     return NULL;
 }
 
-#if HAVE_GLYCIN
+#if HAVE_GLYCIN && HAVE_GDK_PIXBUF
 GdkPixbuf* ImageDecoder::GlycinDecodeBytesPixbuf(GBytes *bytes, GCancellable *cancellable, GError **error)
 {
     GlyLoader *loader = gly_loader_new_for_bytes(bytes);
@@ -667,6 +686,124 @@ GdkPixbuf* ImageDecoder::PixbufDecodeBytesPixbuf(GBytes *bytes, const char *mime
 // FreeDesktop Thumbnail Saving
 // -------------------------------------------------------------------------
 
+static void write_be32(std::vector<uint8_t> &out, uint32_t val)
+{
+    out.push_back((val >> 24) & 0xFF);
+    out.push_back((val >> 16) & 0xFF);
+    out.push_back((val >> 8) & 0xFF);
+    out.push_back(val & 0xFF);
+}
+
+static void append_text_chunk(std::vector<uint8_t> &out, const char *key, const char *value)
+{
+    if (!key || !value) return;
+    size_t key_len = strlen(key);
+    size_t val_len = strlen(value);
+    uint32_t data_len = (uint32_t)(key_len + 1 + val_len);
+
+    write_be32(out, data_len);
+
+    size_t crc_start = out.size();
+    out.push_back('t');
+    out.push_back('E');
+    out.push_back('X');
+    out.push_back('t');
+
+    out.insert(out.end(), key, key + key_len);
+    out.push_back('\0');
+    out.insert(out.end(), value, value + val_len);
+
+    uLong crc = crc32(0L, Z_NULL, 0);
+    crc = crc32(crc, out.data() + crc_start, data_len + 4);
+    write_be32(out, (uint32_t)crc);
+}
+
+bool ImageDecoder::TextureSaveThumbnail(GdkTexture *texture, const char *dest_path,
+                                        const char *uri, time_t mtime, gint64 file_size,
+                                        int orig_w, int orig_h, int orientation)
+{
+    if (!texture || !dest_path)
+        return false;
+
+    GBytes *png_bytes = gdk_texture_save_to_png_bytes(texture);
+    if (!png_bytes)
+        return false;
+
+    gsize raw_png_size = 0;
+    const uint8_t *raw_png = (const uint8_t*)g_bytes_get_data(png_bytes, &raw_png_size);
+    if (!raw_png || raw_png_size < 33)
+    {
+        g_bytes_unref(png_bytes);
+        return false;
+    }
+
+    gchar *thumb_dir = g_path_get_dirname(dest_path);
+    g_mkdir_with_parents(thumb_dir, S_IRUSR | S_IWUSR | S_IXUSR);
+    g_free(thumb_dir);
+
+    gchar *temp_file_name = g_strconcat(dest_path, ".XXXXXX", NULL);
+    gint fhandle = g_mkstemp(temp_file_name);
+    if (fhandle == -1)
+    {
+        g_free(temp_file_name);
+        g_bytes_unref(png_bytes);
+        return false;
+    }
+
+    const size_t ihdr_end = 8 + 4 + 4 + 13 + 4; // 33 bytes
+    std::vector<uint8_t> enriched_png;
+    enriched_png.reserve(raw_png_size + 512);
+    enriched_png.insert(enriched_png.end(), raw_png, raw_png + ihdr_end);
+
+    char str_mtime[32];
+    char str_size[32];
+    char str_width[32];
+    char str_height[32];
+    char str_orientation[4];
+
+    g_snprintf(str_mtime, sizeof(str_mtime), "%lu", (unsigned long)mtime);
+    g_snprintf(str_size, sizeof(str_size), "%" G_GINT64_FORMAT, file_size);
+    g_snprintf(str_width, sizeof(str_width), "%d", orig_w);
+    g_snprintf(str_height, sizeof(str_height), "%d", orig_h);
+    g_snprintf(str_orientation, sizeof(str_orientation), "%d", orientation);
+
+    append_text_chunk(enriched_png, "Thumb::URI", uri);
+    append_text_chunk(enriched_png, "Thumb::MTime", str_mtime);
+    append_text_chunk(enriched_png, "Thumb::Size", str_size);
+    append_text_chunk(enriched_png, "Thumb::Image::Width", str_width);
+    append_text_chunk(enriched_png, "Thumb::Image::Height", str_height);
+    append_text_chunk(enriched_png, "Thumb::Image::Orientation", str_orientation);
+    append_text_chunk(enriched_png, "Software", PACKAGE_STRING);
+
+    enriched_png.insert(enriched_png.end(), raw_png + ihdr_end, raw_png + raw_png_size);
+    g_bytes_unref(png_bytes);
+
+    ssize_t bytes_written = write(fhandle, enriched_png.data(), enriched_png.size());
+    bool written = (bytes_written == (ssize_t)enriched_png.size());
+    close(fhandle);
+
+    if (written)
+    {
+        g_chmod(temp_file_name, 0600);
+        g_rename(temp_file_name, dest_path);
+    }
+    else
+    {
+        unlink(temp_file_name);
+    }
+
+    g_free(temp_file_name);
+    return written;
+}
+
+bool ImageDecoder::SaveThumbnail(GdkTexture *texture, const char *dest_path,
+                                const char *uri, time_t mtime, gint64 file_size,
+                                int orig_w, int orig_h, int orientation)
+{
+    return TextureSaveThumbnail(texture, dest_path, uri, mtime, file_size, orig_w, orig_h, orientation);
+}
+
+#if HAVE_GDK_PIXBUF
 bool ImageDecoder::SaveThumbnail(GdkPixbuf *pixbuf, const char *dest_path,
                                 const char *uri, time_t mtime, gint64 file_size,
                                 int orig_w, int orig_h, int orientation)
@@ -798,6 +935,7 @@ bool ImageDecoder::GlycinSaveThumbnail(GdkPixbuf *pixbuf, const char *dest_path,
 }
 #endif
 
+#if HAVE_GDK_PIXBUF
 bool ImageDecoder::PixbufSaveThumbnail(GdkPixbuf *pixbuf, const char *dest_path,
                                       const char *uri, time_t mtime, gint64 file_size,
                                       int orig_w, int orig_h, int orientation)
@@ -851,6 +989,7 @@ bool ImageDecoder::PixbufSaveThumbnail(GdkPixbuf *pixbuf, const char *dest_path,
     g_free(temp_file_name);
     return saved;
 }
+#endif
 
 GdkPixbuf* ImageDecoder::DecodeVideoPreview(const gchar *uri,
                                             gint *aspect_n,
@@ -865,6 +1004,7 @@ GdkPixbuf* ImageDecoder::DecodeVideoPreview(const gchar *uri,
                                       target_width, target_height,
                                       abort_fn, abort_data);
 }
+#endif
 
 GdkTexture* ImageDecoder::DecodeVideoTexture(const gchar *uri,
                                              gint *aspect_n,
@@ -875,15 +1015,10 @@ GdkTexture* ImageDecoder::DecodeVideoTexture(const gchar *uri,
                                              QuiverVideoOps::VideoAbortFn abort_fn,
                                              gpointer abort_data)
 {
-    GdkPixbuf *pb = DecodeVideoPreview(uri, aspect_n, aspect_d, position_ns,
+    return QuiverVideoOps::LoadTexture(uri, aspect_n, aspect_d, position_ns,
                                        target_width, target_height,
                                        abort_fn, abort_data);
-    if (!pb)
-        return NULL;
-
-    GdkTexture *tex = pixbuf_to_texture(pb);
-    g_object_unref(pb);
-    return tex;
 }
+
 
 

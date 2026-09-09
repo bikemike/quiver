@@ -31,25 +31,25 @@ TEST_CASE("FFmpeg Video Decoding and Probing via QuiverVideoOps", "[lib][ffmpeg]
     SECTION("Decode video preview frame at natural size")
     {
         gint num = 0, den = 0;
-        GdkPixbuf* pb = QuiverVideoOps::LoadPixbuf(videoUri, &num, &den, -1, 0, 0);
-        REQUIRE(pb != nullptr);
+        GdkTexture* tex = QuiverVideoOps::LoadTexture(videoUri, &num, &den, -1, 0, 0);
+        REQUIRE(tex != nullptr);
 
-        int w = gdk_pixbuf_get_width(pb);
-        int h = gdk_pixbuf_get_height(pb);
+        int w = gdk_texture_get_width(tex);
+        int h = gdk_texture_get_height(tex);
         REQUIRE(w > 0);
         REQUIRE(h > 0);
 
-        g_object_unref(pb);
+        g_object_unref(tex);
     }
 
     SECTION("Decode video preview frame scaled to thumbnail dimensions")
     {
         gint num = 0, den = 0;
-        GdkPixbuf* thumb = QuiverVideoOps::LoadPixbuf(videoUri, &num, &den, -1, 160, 120);
+        GdkTexture* thumb = QuiverVideoOps::LoadTexture(videoUri, &num, &den, -1, 160, 120);
         REQUIRE(thumb != nullptr);
 
-        int w = gdk_pixbuf_get_width(thumb);
-        int h = gdk_pixbuf_get_height(thumb);
+        int w = gdk_texture_get_width(thumb);
+        int h = gdk_texture_get_height(thumb);
         REQUIRE(w <= 160);
         REQUIRE(h <= 120);
 
@@ -60,17 +60,17 @@ TEST_CASE("FFmpeg Video Decoding and Probing via QuiverVideoOps", "[lib][ffmpeg]
     {
         // 0.5 seconds in nanoseconds
         gint64 pos_ns = 500000000;
-        GdkPixbuf* frame = QuiverVideoOps::LoadPixbuf(videoUri, nullptr, nullptr, pos_ns, 320, 240);
+        GdkTexture* frame = QuiverVideoOps::LoadTexture(videoUri, nullptr, nullptr, pos_ns, 320, 240);
         REQUIRE(frame != nullptr);
         g_object_unref(frame);
     }
 
     SECTION("Decode video preview frame with arbitrary target bounds and aspect scaling")
     {
-        GdkPixbuf* frame = QuiverVideoOps::LoadPixbuf(videoUri, nullptr, nullptr, -1, 925, 585);
+        GdkTexture* frame = QuiverVideoOps::LoadTexture(videoUri, nullptr, nullptr, -1, 925, 585);
         REQUIRE(frame != nullptr);
-        int w = gdk_pixbuf_get_width(frame);
-        int h = gdk_pixbuf_get_height(frame);
+        int w = gdk_texture_get_width(frame);
+        int h = gdk_texture_get_height(frame);
         REQUIRE(w <= 925);
         REQUIRE(h <= 585);
         g_object_unref(frame);
@@ -81,9 +81,23 @@ TEST_CASE("FFmpeg Video Decoding and Probing via QuiverVideoOps", "[lib][ffmpeg]
         gboolean ok = QuiverVideoOps::Probe("file:///does/not/exist.mp4");
         REQUIRE(ok == FALSE);
 
-        GdkPixbuf* pb = QuiverVideoOps::LoadPixbuf("file:///does/not/exist.mp4");
-        REQUIRE(pb == nullptr);
+        GdkTexture* tex = QuiverVideoOps::LoadTexture("file:///does/not/exist.mp4");
+        REQUIRE(tex == nullptr);
     }
+
+#if HAVE_GDK_PIXBUF
+    SECTION("Legacy LoadPixbuf tests")
+    {
+        gint num = 0, den = 0;
+        GdkPixbuf* pb = QuiverVideoOps::LoadPixbuf(videoUri, &num, &den, -1, 0, 0);
+        REQUIRE(pb != nullptr);
+        g_object_unref(pb);
+
+        GdkPixbuf* thumb = QuiverVideoOps::LoadPixbuf(videoUri, &num, &den, -1, 160, 120);
+        REQUIRE(thumb != nullptr);
+        g_object_unref(thumb);
+    }
+#endif
 
     g_free(videoUri);
 }

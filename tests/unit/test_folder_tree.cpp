@@ -528,6 +528,14 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
 
     SECTION("Shortcuts multi-selection spacebar preserves selection when unchecking")
     {
+        const char* home = g_get_home_dir();
+        if (home) {
+            std::string pic = std::string(home) + "/Pictures";
+            std::string vid = std::string(home) + "/Videos";
+            g_mkdir_with_parents(pic.c_str(), 0755);
+            g_mkdir_with_parents(vid.c_str(), 0755);
+        }
+
         FolderTreePtr tree(new FolderTree());
         GtkWidget* win = gtk_window_new();
         GtkWidget* box = tree->GetWidget();
@@ -636,6 +644,7 @@ TEST_CASE("Special Folder Icons in FolderTree and QuiverFile", "[unit][foldertre
 
         // Test Pictures directory
         std::string pic_path = std::string(home) + "/Pictures";
+        g_mkdir_with_parents(pic_path.c_str(), 0755);
         gchar* pic_uri = g_filename_to_uri(pic_path.c_str(), nullptr, nullptr);
         REQUIRE(pic_uri != nullptr);
 
@@ -645,11 +654,11 @@ TEST_CASE("Special Folder Icons in FolderTree and QuiverFile", "[unit][foldertre
         REQUIRE(std::string(icon_name) == "folder-pictures");
         g_free(icon_name);
 
-        GdkPixbuf* pb = f_pic.GetIcon(48, 48);
-        REQUIRE(pb != nullptr);
-        REQUIRE(gdk_pixbuf_get_width(pb) > 0);
-        REQUIRE(gdk_pixbuf_get_height(pb) > 0);
-        g_object_unref(pb);
+        GdkTexture* tex = f_pic.GetIconTexture(48, 48);
+        REQUIRE(tex != nullptr);
+        REQUIRE(gdk_texture_get_width(tex) > 0);
+        REQUIRE(gdk_texture_get_height(tex) > 0);
+        g_object_unref(tex);
 
         // Test Home directory
         gchar* home_uri = g_filename_to_uri(home, nullptr, nullptr);
@@ -661,9 +670,9 @@ TEST_CASE("Special Folder Icons in FolderTree and QuiverFile", "[unit][foldertre
         REQUIRE(std::string(home_icon) == "user-home");
         g_free(home_icon);
 
-        GdkPixbuf* pb_home = f_home.GetIcon(48, 48);
-        REQUIRE(pb_home != nullptr);
-        g_object_unref(pb_home);
+        GdkTexture* tex_home = f_home.GetIconTexture(48, 48);
+        REQUIRE(tex_home != nullptr);
+        g_object_unref(tex_home);
 
         g_free(pic_uri);
         g_free(home_uri);

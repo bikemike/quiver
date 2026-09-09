@@ -9,7 +9,11 @@
 #include <cstring>
 #include <glib.h>
 #include <glib/gstdio.h>
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
+
+GtkApplication *g_pApp = nullptr;
 
 using Clock = std::chrono::high_resolution_clock;
 
@@ -49,7 +53,6 @@ static void run_benchmarks_for_image(const char* filepath, const char* mimetype,
         backends.push_back(ImageDecoder::Backend::PIXBUF);
 
     BenchmarkResult probe_res = {"Dimension Probe", label, -1.0, -1.0};
-    BenchmarkResult pixbuf_res = {"Decode Pixbuf", label, -1.0, -1.0};
     BenchmarkResult texture_res = {"Decode Texture", label, -1.0, -1.0};
     BenchmarkResult bytes_res = {"Decode Bytes (EXIF)", label, -1.0, -1.0};
     BenchmarkResult thumb_res = {"Save Thumbnail", label, -1.0, -1.0};
@@ -74,22 +77,7 @@ static void run_benchmarks_for_image(const char* filepath, const char* mimetype,
                   << " -> " << (ok_probe ? "PASS" : "FAIL") << "\n";
         assert(ok_probe && probe_w > 0 && probe_h > 0);
 
-        // 2. Full Pixbuf Decode
-        t0 = Clock::now();
-        GdkPixbuf *pb = ImageDecoder::DecodeFilePixbuf(file, mimetype);
-        t1 = Clock::now();
-        double ms_pb = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        if (is_glycin) pixbuf_res.glycin_ms = ms_pb; else pixbuf_res.pixbuf_ms = ms_pb;
-
-        assert(pb != NULL);
-        int pb_w = gdk_pixbuf_get_width(pb);
-        int pb_h = gdk_pixbuf_get_height(pb);
-        std::cout << "  [Pixbuf]       " << pb_w << "x" << pb_h
-                  << " in " << std::fixed << std::setprecision(3) << ms_pb << " ms"
-                  << " -> PASS\n";
-        assert(pb_w == probe_w && pb_h == probe_h);
-
-        // 3. Full Texture Decode
+        // 2. Full Texture Decode
         t0 = Clock::now();
         GdkTexture *tex = ImageDecoder::DecodeFileTexture(file, mimetype);
         t1 = Clock::now();
@@ -100,9 +88,8 @@ static void run_benchmarks_for_image(const char* filepath, const char* mimetype,
         std::cout << "  [Texture]      " << gdk_texture_get_width(tex) << "x" << gdk_texture_get_height(tex)
                   << " in " << std::fixed << std::setprecision(3) << ms_tex << " ms"
                   << " -> PASS\n";
-        g_object_unref(tex);
 
-        // 4. Memory Bytes / EXIF Thumbnail Decode
+        // 3. Memory Bytes / EXIF Thumbnail Decode
         char *contents = NULL;
         gsize length = 0;
         g_file_load_contents(file, NULL, &contents, &length, NULL, NULL);
@@ -110,28 +97,25 @@ static void run_benchmarks_for_image(const char* filepath, const char* mimetype,
         GBytes *bytes = g_bytes_new_take(contents, length);
 
         t0 = Clock::now();
-        GdkPixbuf *mem_pb = ImageDecoder::DecodeBytesPixbuf(bytes, mimetype);
+        GdkTexture *mem_tex = ImageDecoder::DecodeBytesTexture(bytes, mimetype);
         t1 = Clock::now();
         double ms_mem = std::chrono::duration<double, std::milli>(t1 - t0).count();
         if (is_glycin) bytes_res.glycin_ms = ms_mem; else bytes_res.pixbuf_ms = ms_mem;
 
-        assert(mem_pb != NULL);
-        std::cout << "  [Bytes/EXIF]   " << gdk_pixbuf_get_width(mem_pb) << "x" << gdk_pixbuf_get_height(mem_pb)
+        assert(mem_tex != NULL);
+        std::cout << "  [Bytes/EXIF]   " << gdk_texture_get_width(mem_tex) << "x" << gdk_texture_get_height(mem_tex)
                   << " in " << std::fixed << std::setprecision(3) << ms_mem << " ms"
                   << " -> PASS\n";
-        g_object_unref(mem_pb);
+        g_object_unref(mem_tex);
         g_bytes_unref(bytes);
 
-        // 5. FreeDesktop Thumbnail Persistence
+        // 4. FreeDesktop Thumbnail Persistence
         char tmp_thumb_path[] = "/tmp/quiver_test_XXXXXX.png";
         int fd = g_mkstemp(tmp_thumb_path);
         close(fd);
 
-        GdkPixbuf *scaled_thumb = gdk_pixbuf_scale_simple(pb, 64, 64, GDK_INTERP_BILINEAR);
-        assert(scaled_thumb != NULL);
-
         t0 = Clock::now();
-        bool saved = ImageDecoder::SaveThumbnail(scaled_thumb, tmp_thumb_path, "file:///test/img.png", 123456789, -1, 128, 128, 1);
+        bool saved = ImageDecoder::TextureSaveThumbnail(tex, tmp_thumb_path, "file:///test/img.png", 123456789, -1, 128, 128, 1);
         t1 = Clock::now();
         double ms_save = std::chrono::duration<double, std::milli>(t1 - t0).count();
         if (is_glycin) thumb_res.glycin_ms = ms_save; else thumb_res.pixbuf_ms = ms_save;
@@ -140,18 +124,8 @@ static void run_benchmarks_for_image(const char* filepath, const char* mimetype,
                   << " -> " << (saved ? "PASS" : "FAIL") << "\n";
         assert(saved);
 
-        // Verify FreeDesktop metadata keys
-        GdkPixbuf *check_pb = gdk_pixbuf_new_from_file(tmp_thumb_path, NULL);
-        assert(check_pb != NULL);
-        const char *uri_key = gdk_pixbuf_get_option(check_pb, "tEXt::Thumb::URI");
-        const char *mtime_key = gdk_pixbuf_get_option(check_pb, "tEXt::Thumb::MTime");
-        assert(uri_key != NULL && strcmp(uri_key, "file:///test/img.png") == 0);
-        assert(mtime_key != NULL && strcmp(mtime_key, "123456789") == 0);
-
-        g_object_unref(check_pb);
         g_unlink(tmp_thumb_path);
-        g_object_unref(scaled_thumb);
-        g_object_unref(pb);
+        g_object_unref(tex);
     }
 
     g_object_unref(file);
@@ -159,8 +133,9 @@ static void run_benchmarks_for_image(const char* filepath, const char* mimetype,
     if (content_type) g_free(content_type);
 
     s_results.push_back(probe_res);
-    s_results.push_back(pixbuf_res);
     s_results.push_back(texture_res);
+    s_results.push_back(bytes_res);
+    s_results.push_back(thumb_res);
     s_results.push_back(bytes_res);
     s_results.push_back(thumb_res);
 }

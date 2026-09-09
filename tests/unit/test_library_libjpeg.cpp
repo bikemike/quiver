@@ -2,10 +2,14 @@
 #include "ImageSaveManager.h"
 #include "QuiverFile.h"
 #include "test_helpers.h"
+#include <gdk/gdk.h>
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <string>
+#include <vector>
 
 extern "C" {
 #include <jpeglib.h>
@@ -22,6 +26,65 @@ TEST_CASE("libjpeg and ImageSaveManager Integration", "[lib][libjpeg]")
         REQUIRE(sm->IsFormatSupported("image/jpeg"));
     }
 
+    SECTION("Saving texture as JPEG in-place via ImageSaveManager")
+    {
+        std::string imagesDir = QuiverTest_GetImagesDir();
+        std::string sampleJpg = imagesDir + "/sample_4k.jpg";
+
+        // Create temporary copy of sample_4k.jpg
+        char tmpCopy[] = "/tmp/quiver_save_test_XXXXXX.jpg";
+        int fd = g_mkstemp(tmpCopy);
+        REQUIRE(fd >= 0);
+        close(fd);
+
+        char* contents = nullptr;
+        gsize length = 0;
+        REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+        REQUIRE(g_file_set_contents(tmpCopy, contents, length, NULL));
+        g_free(contents);
+
+        gchar* tmpUri = g_filename_to_uri(tmpCopy, NULL, NULL);
+        REQUIRE(tmpUri != NULL);
+
+        QuiverFile qf(tmpUri);
+
+        // Create 120x80 test texture (RGBA)
+        std::vector<guint8> pixels(120 * 80 * 4, 0);
+        for (size_t i = 0; i < 120 * 80; ++i) {
+            pixels[i * 4 + 1] = 255; // Green
+            pixels[i * 4 + 3] = 255; // Alpha
+        }
+        GBytes* bytes = g_bytes_new(pixels.data(), pixels.size());
+        GdkTexture* tex = gdk_memory_texture_new(120, 80, GDK_MEMORY_R8G8B8A8, bytes, 120 * 4);
+        g_bytes_unref(bytes);
+        REQUIRE(tex != nullptr);
+
+        bool saved = sm->SaveImage(qf, tex, nullptr, nullptr);
+        REQUIRE(saved);
+
+        // Verify the saved file is a valid JPEG with 120x80 dimensions
+        FILE* fp = fopen(tmpCopy, "rb");
+        REQUIRE(fp != nullptr);
+
+        struct jpeg_decompress_struct cinfo;
+        struct jpeg_error_mgr jerr;
+        cinfo.err = jpeg_std_error(&jerr);
+        jpeg_create_decompress(&cinfo);
+        jpeg_stdio_src(&cinfo, fp);
+        int header_res = jpeg_read_header(&cinfo, TRUE);
+        REQUIRE(header_res == JPEG_HEADER_OK);
+        REQUIRE(cinfo.image_width == 120);
+        REQUIRE(cinfo.image_height == 80);
+
+        jpeg_destroy_decompress(&cinfo);
+        fclose(fp);
+
+        g_unlink(tmpCopy);
+        g_object_unref(tex);
+        g_free(tmpUri);
+    }
+
+#if HAVE_GDK_PIXBUF
     SECTION("Saving pixbuf as JPEG in-place via ImageSaveManager")
     {
         std::string imagesDir = QuiverTest_GetImagesDir();
@@ -73,6 +136,7 @@ TEST_CASE("libjpeg and ImageSaveManager Integration", "[lib][libjpeg]")
         g_object_unref(pb);
         g_free(tmpUri);
     }
+#endif
 
     SECTION("Direct libjpeg compress and decompress pipeline")
     {

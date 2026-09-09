@@ -1,5 +1,8 @@
+#include <config.h>
 #include <catch2/catch_test_macros.hpp>
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
 #include "quiver-pixbuf-utils.h"
 
 TEST_CASE("quiver_rect_get_bound_size Aspect Ratio Calculations", "[unit][pixbuf][fast]")
@@ -55,6 +58,7 @@ TEST_CASE("quiver_rect_get_bound_size Aspect Ratio Calculations", "[unit][pixbuf
     }
 }
 
+#if HAVE_GDK_PIXBUF
 TEST_CASE("pixbuf pixel manipulation functions", "[unit][pixbuf][fast]")
 {
     SECTION("pixbuf_set_alpha scales existing alpha")
@@ -98,3 +102,4 @@ TEST_CASE("pixbuf pixel manipulation functions", "[unit][pixbuf][fast]")
         g_object_unref(pb);
     }
 }
+#endif

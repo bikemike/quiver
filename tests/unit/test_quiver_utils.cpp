@@ -1,9 +1,65 @@
 #include <catch2/catch_test_macros.hpp>
 #include "QuiverUtils.h"
 #include "test_helpers.h"
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
+#include <gtk/gtk.h>
 
-TEST_CASE("QuiverUtils EXIF Reorientation", "[unit][pixbuf][fast]")
+static GdkTexture* CreateTestTex(int w, int h)
+{
+    gsize size = (gsize)w * h * 4;
+    guint32* data = (guint32*)g_malloc0(size);
+    GBytes* bytes = g_bytes_new_take(data, size);
+    GdkTexture* tex = gdk_memory_texture_new(w, h, GDK_MEMORY_DEFAULT, bytes, (gsize)w * 4);
+    g_bytes_unref(bytes);
+    return tex;
+}
+
+TEST_CASE("QuiverUtils Texture EXIF Reorientation", "[unit][texture][fast]")
+{
+    GdkTexture* orig = CreateTestTex(100, 50);
+    REQUIRE(orig != nullptr);
+
+    SECTION("Orientation 1: No change")
+    {
+        GdkTexture* mod = QuiverUtils::TextureExifReorientate(orig, 1);
+        REQUIRE(mod == orig);
+        g_object_unref(mod);
+    }
+
+    SECTION("Orientation 2: Horizontal flip preserves dimensions")
+    {
+        GdkTexture* mod = QuiverUtils::TextureExifReorientate(orig, 2);
+        REQUIRE(mod != nullptr);
+        REQUIRE(gdk_texture_get_width(mod) == 100);
+        REQUIRE(gdk_texture_get_height(mod) == 50);
+        g_object_unref(mod);
+    }
+
+    SECTION("Orientation 3: 180 rotation preserves dimensions")
+    {
+        GdkTexture* mod = QuiverUtils::TextureExifReorientate(orig, 3);
+        REQUIRE(mod != nullptr);
+        REQUIRE(gdk_texture_get_width(mod) == 100);
+        REQUIRE(gdk_texture_get_height(mod) == 50);
+        g_object_unref(mod);
+    }
+
+    SECTION("Orientation 6: 90 CW rotation swaps width and height")
+    {
+        GdkTexture* mod = QuiverUtils::TextureExifReorientate(orig, 6);
+        REQUIRE(mod != nullptr);
+        REQUIRE(gdk_texture_get_width(mod) == 50);
+        REQUIRE(gdk_texture_get_height(mod) == 100);
+        g_object_unref(mod);
+    }
+
+    g_object_unref(orig);
+}
+
+#if HAVE_GDK_PIXBUF
+TEST_CASE("QuiverUtils Legacy Pixbuf EXIF Reorientation", "[unit][pixbuf][fast]")
 {
     // Create an asymmetric 100x50 pixbuf
     GdkPixbuf* orig = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 100, 50);
@@ -63,6 +119,7 @@ TEST_CASE("QuiverUtils EXIF Reorientation", "[unit][pixbuf][fast]")
 
     g_object_unref(orig);
 }
+#endif
 
 TEST_CASE("QuiverUtils Action Management", "[unit][actions][fast]")
 {

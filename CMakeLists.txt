@@ -20,12 +20,8 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 # Image decoding backend options
-option(ENABLE_GLYCIN "Enable libglycin backend for image loading" ON)
+option(ENABLE_GLYCIN "Enable libglycin backend for image loading" OFF)
 option(ENABLE_GDK_PIXBUF "Enable GdkPixbuf loader backend for image loading" ON)
-
-if (NOT ENABLE_GLYCIN AND NOT ENABLE_GDK_PIXBUF)
-  message(FATAL_ERROR "At least one image decoder backend (ENABLE_GLYCIN or ENABLE_GDK_PIXBUF) must be enabled.")
-endif()
 
 # Find Packages
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.12)
@@ -43,13 +39,15 @@ else()
 endif()
 
 if (ENABLE_GDK_PIXBUF)
+  pkg_check_modules(GDK_PIXBUF REQUIRED IMPORTED_TARGET gdk-pixbuf-2.0)
   set(HAVE_GDK_PIXBUF 1)
 else()
   set(HAVE_GDK_PIXBUF 0)
 endif()
 
-# JPEG and Threads
+# JPEG, ZLIB and Threads
 find_package(JPEG REQUIRED)
+find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
 # Boost (using header-only components/base)

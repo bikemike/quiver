@@ -84,6 +84,7 @@ target_link_libraries(quiver_core PUBLIC
     PkgConfig::GSTREAMER
     PkgConfig::FFMPEG
     JPEG::JPEG
+    ZLIB::ZLIB
     Threads::Threads
     Boost::boost
 )

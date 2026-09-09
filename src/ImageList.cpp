@@ -732,6 +732,7 @@ void ImageList::ImageListImpl::LoadMimeTypes()
 {
 	if ( c_setSupportedMimeTypes.empty())
 	{
+#if HAVE_GDK_PIXBUF
 		GSList *formats = gdk_pixbuf_get_formats ();
 		GdkPixbufFormat * fmt;
 		while ( NULL != formats )
@@ -748,7 +749,23 @@ void ImageList::ImageListImpl::LoadMimeTypes()
 			formats = g_slist_next(formats);
 		}
 		g_slist_free (formats);
-
+#else
+		static const char* const default_mimes[] = {
+			"image/jpeg", "image/png", "image/gif", "image/webp", "image/tiff",
+			"image/bmp", "image/svg+xml", "image/x-icon", "image/vnd.microsoft.icon",
+			"image/heif", "image/heic", "image/avif", "image/x-tga",
+			"image/x-portable-pixmap", "image/x-portable-graymap", "image/x-portable-bitmap",
+			"image/x-portable-anymap", "image/x-xbitmap", "image/x-xpixmap",
+			"image/x-canon-cr2", "image/x-canon-crw", "image/x-nikon-nef",
+			"image/x-sony-arw", "image/x-adobe-dng", "image/x-olympus-orf",
+			"image/x-fuji-raf", "image/x-panasonic-rw2", "image/x-pentax-pef",
+			NULL
+		};
+		for (int i = 0; default_mimes[i] != NULL; ++i)
+		{
+			c_setSupportedMimeTypes.insert(default_mimes[i]);
+		}
+#endif
 	}
 }
 

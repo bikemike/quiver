@@ -2,6 +2,7 @@
 #include <gtk/gtk.h>
 #include "quiver-pixbuf-utils.h"
 
+#if HAVE_GDK_PIXBUF
 void pixbuf_set_alpha(GdkPixbuf *src, guchar alpha)
 {
 	g_return_if_fail (GDK_IS_PIXBUF (src));
@@ -139,6 +140,7 @@ void pixbuf_brighten(const GdkPixbuf *src, GdkPixbuf *dest, gint amount)
 		}
 	}
 }
+#endif
 
 void quiver_rect_get_bound_size(guint bound_width,guint bound_height,guint *width,guint *height,gboolean fill_if_smaller)
 {
@@ -170,5 +172,26 @@ void quiver_rect_get_bound_size(guint bound_width,guint bound_height,guint *widt
 			*height = bound_height;
 		}
 	}
-}	
+}
+
+#if HAVE_GDK_PIXBUF
+GdkTexture *quiver_pixbuf_to_texture(GdkPixbuf *pb)
+{
+	if (!pb)
+		return NULL;
+
+	GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pb);
+	gboolean has_alpha = gdk_pixbuf_get_has_alpha(pb);
+	GdkMemoryFormat fmt = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
+	GdkTexture *tex = gdk_memory_texture_new(
+		gdk_pixbuf_get_width(pb),
+		gdk_pixbuf_get_height(pb),
+		fmt,
+		bytes,
+		gdk_pixbuf_get_rowstride(pb)
+	);
+	g_bytes_unref(bytes);
+	return tex;
+}
+#endif
 

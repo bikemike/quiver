@@ -73,12 +73,12 @@ typedef struct _ExifItem
 	char       *name;
 	char       *value_text;
 	int         value_orientation;
-	GdkPixbuf  *thumbnail;
+	GdkTexture *thumbnail;
 	gboolean    is_group;
 	gboolean    is_editable;
 	gboolean    show_text;
 	gboolean    show_orientation;
-	gboolean    show_pixbuf;
+	gboolean    show_thumbnail;
 } ExifItem;
 
 typedef struct _ExifItemClass { GObjectClass parent_class; } ExifItemClass;
@@ -92,13 +92,15 @@ static void exif_item_init(ExifItem *s)
 	s->full_key = NULL; s->name = NULL; s->value_text = NULL;
 	s->thumbnail = NULL; s->value_orientation = 0;
 	s->is_group = FALSE; s->is_editable = FALSE;
-	s->show_text = FALSE; s->show_orientation = FALSE; s->show_pixbuf = FALSE;
+	s->show_text = FALSE; s->show_orientation = FALSE; s->show_thumbnail = FALSE;
 }
 
 static void exif_item_finalize(GObject *o)
 {
 	ExifItem *s = EXIF_ITEM(o);
-	g_free(s->full_key); g_free(s->name); g_free(s->value_text);
+	if (s->full_key) g_free(s->full_key);
+	if (s->name) g_free(s->name);
+	if (s->value_text) g_free(s->value_text);
 	if (s->thumbnail) g_object_unref(s->thumbnail);
 	G_OBJECT_CLASS(exif_item_parent_class)->finalize(o);
 }
@@ -435,18 +437,14 @@ static void exif_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpoi
 		return;
 	}
 
-	if (ei->show_pixbuf && ei->thumbnail)
+	if (ei->show_thumbnail && ei->thumbnail)
 	{
 		char buf[48];
 		snprintf(buf, sizeof(buf), "%dx%d",
-			gdk_pixbuf_get_width(ei->thumbnail),
-			gdk_pixbuf_get_height(ei->thumbnail));
+			gdk_texture_get_width(ei->thumbnail),
+			gdk_texture_get_height(ei->thumbnail));
 		gtk_label_set_text(GTK_LABEL(label), buf);
-		{
-			GdkTexture *tex = gdk_texture_new_for_pixbuf(ei->thumbnail);
-			gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(tex));
-			g_object_unref(tex);
-		}
+		gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(ei->thumbnail));
 		gtk_widget_set_visible(label, FALSE);
 		gtk_widget_set_visible(picture, TRUE);
 		gtk_widget_set_visible(entry, FALSE);
@@ -858,37 +856,37 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 	g_free(szMarkup);
 
 	/* preview: EXIF thumbnail for photos, poster frame for videos */
-	GdkPixbuf* pixbuf = NULL;
+	GdkTexture* preview_tex = NULL;
 	if (m_bIsVideo)
-		pixbuf = QuiverVideoOps::LoadPixbuf(m_QuiverFile.GetURI());
+		preview_tex = QuiverVideoOps::LoadTexture(m_QuiverFile.GetURI());
 	else
-		pixbuf = m_QuiverFile.GetExifThumbnail();
+		preview_tex = m_QuiverFile.GetExifThumbnailTexture();
 
-	if (NULL != pixbuf)
+	if (NULL != preview_tex)
 	{
 		const int maxDim = 128;
-		int w = gdk_pixbuf_get_width(pixbuf);
-		int h = gdk_pixbuf_get_height(pixbuf);
+		int w = gdk_texture_get_width(preview_tex);
+		int h = gdk_texture_get_height(preview_tex);
 		if (maxDim < w || maxDim < h)
 		{
 			double scale = ((double)w / (double)h > 1.0) ?
 				((double)maxDim / (double)w) : ((double)maxDim / (double)h);
-			GdkPixbuf* scaled = gdk_pixbuf_scale_simple(pixbuf,
-				(w > 0) ? (int)(w * scale + 0.5) : 1,
-				(h > 0) ? (int)(h * scale + 0.5) : 1,
-				GDK_INTERP_BILINEAR);
-			g_object_unref(pixbuf);
-			pixbuf = scaled;
+			int sw = (w > 0) ? (int)(w * scale + 0.5) : 1;
+			int sh = (h > 0) ? (int)(h * scale + 0.5) : 1;
+			GdkTexture* scaled = QuiverUtils::ScaleTexture(preview_tex, sw, sh);
+			if (scaled)
+			{
+				g_object_unref(preview_tex);
+				preview_tex = scaled;
+			}
 		}
 	}
 
-	if (NULL != pixbuf)
+	if (NULL != preview_tex)
 	{
-		GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
-		gtk_picture_set_paintable(GTK_PICTURE(m_pSummaryPreview), GDK_PAINTABLE(tex));
-		g_object_unref(tex);
+		gtk_picture_set_paintable(GTK_PICTURE(m_pSummaryPreview), GDK_PAINTABLE(preview_tex));
 		gtk_widget_set_visible(m_pSummaryPreview, TRUE);
-		g_object_unref(pixbuf);
+		g_object_unref(preview_tex);
 	}
 	else
 	{
@@ -1289,17 +1287,17 @@ static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
 
 	if (NULL != pImpl->m_ExifData.get())
 	{
-		GdkPixbuf *pixbuf = pImpl->m_QuiverFile.GetExifThumbnail();
-		if (NULL != pixbuf)
+		GdkTexture *tex = pImpl->m_QuiverFile.GetExifThumbnailTexture();
+		if (NULL != tex)
 		{
-			GdkPixbuf *new_pixbuf =
-				QuiverUtils::GdkPixbufExifReorientate(pixbuf,
+			GdkTexture *new_tex =
+				QuiverUtils::TextureExifReorientate(tex,
 					pImpl->m_QuiverFile.GetOrientation());
-			if (NULL != new_pixbuf)
-			{ g_object_unref(pixbuf); pixbuf = new_pixbuf; }
+			if (NULL != new_tex)
+			{ g_object_unref(tex); tex = new_tex; }
 		}
 
-		if (NULL != pixbuf)
+		if (NULL != tex)
 		{
 			ExifItem *hdr = exif_item_new();
 			hdr->name = g_strdup("Exif Thumbnail");
@@ -1309,8 +1307,8 @@ static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
 
 			ExifItem *thumb_item = exif_item_new();
 			thumb_item->name = g_strdup("Thumbnail");
-			thumb_item->thumbnail = pixbuf; /* transfer ownership */
-			thumb_item->show_pixbuf = TRUE;
+			thumb_item->thumbnail = tex; /* transfer ownership */
+			thumb_item->show_thumbnail = TRUE;
 			g_list_store_append(store, thumb_item);
 		}
 

@@ -3,6 +3,7 @@
 
 //using namespace std;
 
+#if HAVE_GDK_PIXBUF
 static void signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data);
 
 static void signal_area_updated(GdkPixbufLoader *loader,
@@ -19,7 +20,7 @@ static void signal_size_prepared(GdkPixbufLoader *loader,
                                         gint width,
                                         gint height,
                                         gpointer user_data);
-
+#endif
 
 PixbufLoaderObserver::PixbufLoaderObserver()
 {
@@ -29,7 +30,7 @@ PixbufLoaderObserver::~PixbufLoaderObserver()
 {
 }
 
-
+#if HAVE_GDK_PIXBUF
 void PixbufLoaderObserver::ConnectSignalSizePrepared(GdkPixbufLoader * loader)
 {
 	g_signal_connect (loader,"size-prepared",G_CALLBACK (signal_size_prepared), this);	
@@ -46,13 +47,12 @@ void PixbufLoaderObserver::ConnectSignals(GdkPixbufLoader *loader)
 
 void PixbufLoaderObserver::SetPixbuf(GdkPixbuf * pixbuf)
 { (void)pixbuf; 
-	//printf("PixbufLoaderObserver::SetPixbuf\n");
 }
 
 void PixbufLoaderObserver::SetPixbufAtSize(GdkPixbuf * pixbuf, gint width, gint height, bool bResetViewMode /* = false */)
 { (void)bResetViewMode;  (void)height;  (void)width;  (void)pixbuf; 
-	//printf("PixbufLoaderObserver::SetPixbuf\n");
 }
+#endif
 
 void PixbufLoaderObserver::SetTexture(GdkTexture * texture)
 { (void)texture; }
@@ -65,21 +65,18 @@ void PixbufLoaderObserver::SignalBytesRead(long bytes_read,long total)
 { (void)total;  (void)bytes_read; 
 }
 
+#if HAVE_GDK_PIXBUF
 void PixbufLoaderObserver::SignalAreaPrepared(GdkPixbufLoader *loader)
 { (void)loader; 
-	//printf("PixbufLoaderObserver::SignalAreaPrepared\n");
 }
 void PixbufLoaderObserver::SignalAreaUpdated(GdkPixbufLoader *loader,gint x, gint y, gint width,gint height)
 { (void)height;  (void)width;  (void)y;  (void)x;  (void)loader; 
-	//printf("PixbufLoaderObserver::SignalAreaUpdated x=%d, y=%d, width=%d, height=%d\n",x,y,width,height);
 }
 void PixbufLoaderObserver::SignalClosed(GdkPixbufLoader *loader)
 { (void)loader; 
-	//printf("PixbufLoaderObserver::SignalClosed\n");
 }
 void PixbufLoaderObserver::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint height)
 { (void)height;  (void)width;  (void)loader; 
-	//printf("PixbufLoaderObserver::SignalSizePrepared: width=%d, height=%d\n",width,height);
 }
 
 static void signal_area_prepared (GdkPixbufLoader *loader,gpointer user_data)
@@ -110,6 +107,7 @@ static void signal_size_prepared(GdkPixbufLoader *loader,
 {
 	((PixbufLoaderObserver*)user_data)->SignalSizePrepared(loader,width,height);
 }                                           
+#endif                                           
 
 
 

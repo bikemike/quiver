@@ -1,7 +1,10 @@
 #ifndef QUIVER_VIDEO_OPS_H
 #define QUIVER_VIDEO_OPS_H
 
+#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#endif
+#include <gdk/gdk.h>
 
 typedef enum {
   GST_PLAY_FLAG_VIDEO         = (1 << 0),
@@ -39,7 +42,18 @@ namespace QuiverVideoOps
 	 *
 	 * Returns a newly-referenced GdkPixbuf, or NULL on failure/cancel.
 	 */
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf* LoadPixbuf(const gchar *uri,
+		gint* pixel_aspect_ratio_numerator = NULL,
+		gint* pixel_aspect_ratio_denominator = NULL,
+		gint64 position_ns = -1,
+		gint target_width = 0,
+		gint target_height = 0,
+		VideoAbortFn abort_fn = NULL,
+		gpointer abort_data = NULL);
+#endif
+
+	GdkTexture* LoadTexture(const gchar *uri,
 		gint* pixel_aspect_ratio_numerator = NULL,
 		gint* pixel_aspect_ratio_denominator = NULL,
 		gint64 position_ns = -1,

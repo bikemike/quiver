@@ -23,7 +23,10 @@ struct _QuiverNavigationControlPrivate
 	guint hscroll_policy : 1;
 	guint vscroll_policy : 1;
 
+	GdkTexture *texture;
+#if HAVE_GDK_PIXBUF
 	GdkPixbuf *pixbuf;
+#endif
 
 	GdkRectangle view_area_rect;
 
@@ -165,7 +168,9 @@ quiver_navigation_control_init(QuiverNavigationControl *navcontrol)
 	navcontrol->priv->hscroll_policy = 0;
 	navcontrol->priv->vscroll_policy = 0;
 
+#if HAVE_GDK_PIXBUF
 	navcontrol->priv->pixbuf = NULL;
+#endif
 
 	navcontrol->priv->view_area_rect.x = -1;
 
@@ -207,6 +212,19 @@ quiver_navigation_control_finalize(GObject *object)
 	}
 
 		
+	if (NULL != navcontrol->priv->texture)
+	{
+		g_object_unref(navcontrol->priv->texture);
+		navcontrol->priv->texture = NULL;
+	}
+#if HAVE_GDK_PIXBUF
+	if (NULL != navcontrol->priv->pixbuf)
+	{
+		g_object_unref(navcontrol->priv->pixbuf);
+		navcontrol->priv->pixbuf = NULL;
+	}
+#endif
+
 	parent = g_type_class_peek_parent(klass);
 	if (parent)
 	{
@@ -223,13 +241,38 @@ quiver_navigation_control_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	int alloc_h = gtk_widget_get_height(widget);
 
 	{
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 		GtkStyleContext *context = gtk_widget_get_style_context(widget);
 		gtk_snapshot_render_background(snapshot, context, 0, 0, alloc_w, alloc_h);
-G_GNUC_END_IGNORE_DEPRECATIONS
 	}
 
-	(void)navcontrol;
+	if (navcontrol->priv->texture)
+	{
+		graphene_rect_t bounds;
+		graphene_rect_init(&bounds, 0, 0, (float)alloc_w, (float)alloc_h);
+		gtk_snapshot_append_texture(snapshot, navcontrol->priv->texture, &bounds);
+	}
+
+	if (navcontrol->priv->view_area_rect.x >= 0)
+	{
+		graphene_rect_t view_rect;
+		graphene_rect_init(&view_rect,
+			(float)navcontrol->priv->view_area_rect.x,
+			(float)navcontrol->priv->view_area_rect.y,
+			(float)navcontrol->priv->view_area_rect.width,
+			(float)navcontrol->priv->view_area_rect.height);
+
+		GskRoundedRect rounded_rect;
+		gsk_rounded_rect_init_from_rect(&rounded_rect, &view_rect, 0.0f);
+
+		float widths[4] = { 1.5f, 1.5f, 1.5f, 1.5f };
+		GdkRGBA colors[4] = {
+			{ 1.0f, 0.0f, 0.0f, 0.8f },
+			{ 1.0f, 0.0f, 0.0f, 0.8f },
+			{ 1.0f, 0.0f, 0.0f, 0.8f },
+			{ 1.0f, 0.0f, 0.0f, 0.8f }
+		};
+		gtk_snapshot_append_border(snapshot, &rounded_rect, widths, colors);
+	}
 }
 
 static void
@@ -348,20 +391,31 @@ quiver_navigation_control_get_property (GObject    *object,
 
 void quiver_navigation_control_update_adjustments(QuiverNavigationControl *navcontrol, gint x, gint y)
 {
-	int w,h;
+	int w = 0, h = 0;
 	double xval, yval;
 
 	GtkAdjustment *hadj = navcontrol->priv->hadjustment;
 	GtkAdjustment *vadj = navcontrol->priv->vadjustment;
 	
-	
-	if (NULL != navcontrol->priv->pixbuf)
+	if (NULL != navcontrol->priv->texture)
+	{
+		w = gdk_texture_get_width(navcontrol->priv->texture);
+		h = gdk_texture_get_height(navcontrol->priv->texture);
+	}
+#if HAVE_GDK_PIXBUF
+	else if (NULL != navcontrol->priv->pixbuf)
 	{	
-	
-		w  = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-		h  = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
-		
-		
+		w = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
+		h = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
+	}
+#endif
+	else
+	{
+		return;
+	}
+
+	if (w > 0 && h > 0)
+	{
 		xval = x/(double)w*gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj)/2;
 		yval = y/(double)h*gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj)/2;
 	
@@ -393,6 +447,31 @@ GtkWidget *quiver_navigation_control_new_with_adjustments (GtkAdjustment *hadjus
 	return g_object_new(QUIVER_TYPE_NAVIGATION_CONTROL,"hadjustment", hadjust, "vadjustment" , vadjust , NULL);
 }
 
+void quiver_navigation_control_set_texture (QuiverNavigationControl *navcontrol, GdkTexture *texture)
+{
+	GtkWidget *widget = GTK_WIDGET(navcontrol);
+	gint width, height;
+	if (NULL != navcontrol->priv->texture)
+	{
+		g_object_unref(navcontrol->priv->texture);
+		navcontrol->priv->texture = NULL;
+	}
+
+	if (NULL != texture)
+	{
+		g_object_ref(texture);
+		navcontrol->priv->texture = texture;
+		
+		width  = gdk_texture_get_width(texture);
+		height = gdk_texture_get_height(texture);
+	
+		gtk_widget_set_size_request(GTK_WIDGET(navcontrol),width,height);
+
+		gtk_widget_queue_draw(widget);
+	}
+}
+
+#if HAVE_GDK_PIXBUF
 void quiver_navigation_control_set_pixbuf (QuiverNavigationControl *navcontrol, GdkPixbuf *pixbuf)
 {
 	GtkWidget *widget = GTK_WIDGET(navcontrol);
@@ -413,9 +492,16 @@ void quiver_navigation_control_set_pixbuf (QuiverNavigationControl *navcontrol, 
 	
 		gtk_widget_set_size_request(GTK_WIDGET(navcontrol),width,height);
 
+		if (navcontrol->priv->texture)
+		{
+			g_object_unref(navcontrol->priv->texture);
+		}
+		navcontrol->priv->texture = quiver_pixbuf_to_texture(pixbuf);
+
 		gtk_widget_queue_draw(widget);
 	}
 }
+#endif
 
 
 static void
@@ -472,7 +558,20 @@ quiver_navigation_control_adjustment_changed (GtkAdjustment *adjustment, gpointe
 	QuiverNavigationControl *navcontrol;
 	navcontrol = QUIVER_NAVIGATION_CONTROL(userdata);
 
-	if (NULL == navcontrol->priv->pixbuf)
+	int w = 0, h = 0;
+	if (NULL != navcontrol->priv->texture)
+	{
+		w = gdk_texture_get_width(navcontrol->priv->texture);
+		h = gdk_texture_get_height(navcontrol->priv->texture);
+	}
+#if HAVE_GDK_PIXBUF
+	else if (NULL != navcontrol->priv->pixbuf)
+	{
+		w = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
+		h = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
+	}
+#endif
+	else
 	{
 		return;
 	}
@@ -483,10 +582,6 @@ quiver_navigation_control_adjustment_changed (GtkAdjustment *adjustment, gpointe
 	
 	gint hval = (gint)(gtk_adjustment_get_value(hadj) + .5);
 	gint vval = (gint)(gtk_adjustment_get_value(vadj) + .5);
-
-	int w,h;
-	w = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-	h = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
 
 	
 	GdkRectangle view_area_rect_old = navcontrol->priv->view_area_rect;
