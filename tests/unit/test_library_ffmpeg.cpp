@@ -65,6 +65,17 @@ TEST_CASE("FFmpeg Video Decoding and Probing via QuiverVideoOps", "[lib][ffmpeg]
         g_object_unref(frame);
     }
 
+    SECTION("Decode video preview frame with arbitrary target bounds and aspect scaling")
+    {
+        GdkPixbuf* frame = QuiverVideoOps::LoadPixbuf(videoUri, nullptr, nullptr, -1, 925, 585);
+        REQUIRE(frame != nullptr);
+        int w = gdk_pixbuf_get_width(frame);
+        int h = gdk_pixbuf_get_height(frame);
+        REQUIRE(w <= 925);
+        REQUIRE(h <= 585);
+        g_object_unref(frame);
+    }
+
     SECTION("Error handling on invalid or non-video URI")
     {
         gboolean ok = QuiverVideoOps::Probe("file:///does/not/exist.mp4");

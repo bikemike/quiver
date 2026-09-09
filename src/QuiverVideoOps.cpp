@@ -228,43 +228,50 @@ static GdkPixbuf* frame_to_pixbuf(AVFrame* frame, int width, int height,
 	if (frame == NULL || frame->data[0] == NULL || width < 1 || height < 1)
 		return NULL;
 
-	struct SwsContext* sws = sws_getContext(
-		width, height, (AVPixelFormat)frame->format,
-		width, height, AV_PIX_FMT_RGB24,
-		SWS_BILINEAR, NULL, NULL, NULL);
-	if (sws == NULL)
-		return NULL;
-
-	GdkPixbuf* raw = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, width, height);
-	if (raw == NULL)
-	{
-		sws_freeContext(sws);
-		return NULL;
-	}
-
-	uint8_t* dst = gdk_pixbuf_get_pixels(raw);
-	int dst_stride = gdk_pixbuf_get_rowstride(raw);
-
-	sws_scale(sws, (const uint8_t* const*)frame->data, frame->linesize,
-	          0, height, &dst, &dst_stride);
-	sws_freeContext(sws);
-
-	GdkPixbuf* out;
+	int out_w = width;
+	int out_h = height;
 	if (target_width > 0 && target_height > 0 &&
 	    (width > target_width || height > target_height))
 	{
 		guint new_w = width, new_h = height;
 		quiver_rect_get_bound_size(target_width, target_height,
 		                           &new_w, &new_h, FALSE);
-		out = gdk_pixbuf_scale_simple(
-			raw, new_w, new_h, GDK_INTERP_BILINEAR);
-		g_object_unref(raw);
-		if (out == NULL)
-			return NULL;
+		out_w = (int)new_w;
+		out_h = (int)new_h;
 	}
-	else
+
+	struct SwsContext* sws = sws_getContext(
+		width, height, (AVPixelFormat)frame->format,
+		out_w, out_h, AV_PIX_FMT_RGB24,
+		SWS_BILINEAR, NULL, NULL, NULL);
+	if (sws == NULL)
+		return NULL;
+
+	uint8_t* dst_data[4] = { NULL, NULL, NULL, NULL };
+	int dst_linesize[4] = { 0, 0, 0, 0 };
+	int ret = av_image_alloc(dst_data, dst_linesize, out_w, out_h, AV_PIX_FMT_RGB24, 32);
+	if (ret < 0 || dst_data[0] == NULL)
 	{
-		out = raw;
+		sws_freeContext(sws);
+		return NULL;
+	}
+
+	sws_scale(sws, (const uint8_t* const*)frame->data, frame->linesize,
+	          0, height, dst_data, dst_linesize);
+	sws_freeContext(sws);
+
+	GdkPixbuf* out = gdk_pixbuf_new_from_data(
+		dst_data[0], GDK_COLORSPACE_RGB, FALSE, 8,
+		out_w, out_h, dst_linesize[0],
+		[](guchar* pixels, gpointer data) {
+			(void)data;
+			av_free(pixels);
+		}, NULL);
+
+	if (out == NULL)
+	{
+		av_free(dst_data[0]);
+		return NULL;
 	}
 
 	/* apply display-matrix / rotation so the still matches playback */
