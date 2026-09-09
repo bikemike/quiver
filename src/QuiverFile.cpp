@@ -377,12 +377,21 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 		{
 			Exiv2::DataBuf buf = Exiv2::ExifThumbC(*m_ExifData).copy();
 
+#if EXIV2_TEST_VERSION(0,28,0)
 			if (0 < buf.size())
 			{
 				GBytes *bytes = g_bytes_new_static(buf.c_data(), buf.size());
 				thumb_pixbuf = ImageDecoder::DecodeBytesPixbuf(bytes);
 				g_bytes_unref(bytes);
 			}
+#else
+			if (0 < buf.size_)
+			{
+				GBytes *bytes = g_bytes_new_static(buf.pData_, buf.size_);
+				thumb_pixbuf = ImageDecoder::DecodeBytesPixbuf(bytes);
+				g_bytes_unref(bytes);
+			}
+#endif
 		}
 		catch (...)
 		{
@@ -1306,7 +1315,11 @@ int QuiverFile::QuiverFileImpl::GetOrientation()
 						Exiv2::ExifKey("Exif.Image.Orientation"));
 					if (pExifData->end() != it)
 					{
+#if EXIV2_TEST_VERSION(0,28,0)
 						orientation = it->toInt64();
+#else
+						orientation = it->toLong();
+#endif
 					}
 				}
 				catch (...)

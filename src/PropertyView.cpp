@@ -1342,7 +1342,11 @@ static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
 			if ("Exif.Image.Orientation" == it->key())
 			{
 				long val = 1;
+#if EXIV2_TEST_VERSION(0,28,0)
 				try { val = it->toInt64(); } catch (...) {}
+#else
+				try { val = it->toLong(); } catch (...) {}
+#endif
 				child->value_orientation = (int)val;
 				child->show_orientation = TRUE;
 			}
@@ -1502,7 +1506,11 @@ static void set_exif_value(std::shared_ptr<Exiv2::ExifData> pExifData,
 	const char* key, const char* new_text, Exiv2::TypeId typeId)
 {
 	Exiv2::Exifdatum& datum = (*pExifData)[key];
+#if EXIV2_TEST_VERSION(0,28,0)
 	Exiv2::Value::UniquePtr value = Exiv2::Value::create(typeId);
+#else
+	Exiv2::Value::AutoPtr value = Exiv2::Value::create(typeId);
+#endif
 	value->read(new_text);
 	datum.setValue(value.get());
 }
