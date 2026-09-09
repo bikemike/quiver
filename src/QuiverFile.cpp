@@ -943,6 +943,11 @@ void QuiverFile::QuiverFileImpl::Reload()
 
 void QuiverFile::QuiverFileImpl::LoadExifData()
 {
+	static std::once_flag s_exiv2_init;
+	std::call_once(s_exiv2_init, []() {
+		Exiv2::LogMsg::setLevel(Exiv2::LogMsg::mute);
+	});
+
 	if (NULL != m_szURI && !( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
 	{
 		if (IsVideo())

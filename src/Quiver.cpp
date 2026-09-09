@@ -14,6 +14,7 @@ GtkApplication *g_pApp = NULL;
 #include <glib/gstdio.h>
 
 #include <errno.h>
+#include <exiv2/error.hpp>
 
 #include "QuiverStockIcons.h"
 
@@ -1853,6 +1854,9 @@ int main (int argc, char **argv)
 	(void)bindtextdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR);
 	(void)bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
 	(void)textdomain (GETTEXT_PACKAGE);
+
+	/* Suppress Exiv2 stderr spam for corrupt/truncated metadata */
+	Exiv2::LogMsg::setLevel(Exiv2::LogMsg::mute);
 
  	/* init threads */
 	//g_type_init ();
