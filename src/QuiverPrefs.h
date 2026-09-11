@@ -24,6 +24,7 @@
 #define QUIVER_PREFS_APP_WIDTH                     "width"
 #define QUIVER_PREFS_APP_HEIGHT                    "height"
 #define QUIVER_PREFS_APP_USE_THEME_COLOR           "use_theme_color"
+#define QUIVER_PREFS_APP_FORCE_DARK_THEME          "force_dark_theme"
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW              "bgcolor_imageview"
 #define QUIVER_PREFS_APP_BG_ICONVIEW               "bgcolor_iconview"
 #define QUIVER_PREFS_APP_PHOTO_LIBRARY             "photo_library"

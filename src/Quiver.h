@@ -43,6 +43,8 @@ public:
 	
 	bool LoadSettings();
 	void SaveSettings();
+
+	void ApplyForceDarkTheme();
 	
 	void ShowBrowser();
 	void ShowViewer();

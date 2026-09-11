@@ -358,6 +358,46 @@ new_default_adjustment (void)
   return GTK_ADJUSTMENT (gtk_adjustment_new (0.0, 0.0, 0.0, 0.0, 0.0, 0.0));
 }
 
+static void
+quiver_icon_view_map_add_accent_class (GtkWidget *widget)
+{
+	GtkWidget *parent = gtk_widget_get_parent (widget);
+	if (parent && !gtk_widget_has_css_class (parent, "quiver-selection-accent"))
+		gtk_widget_add_css_class (parent, "quiver-selection-accent");
+}
+
+static void
+quiver_icon_view_get_selection_color (GtkWidget *widget, GdkRGBA *color)
+{
+	GtkWidget *src = widget;
+	GtkWidget *parent = gtk_widget_get_parent (widget);
+	if (parent && gtk_widget_has_css_class (parent, "quiver-selection-accent"))
+		src = parent;
+	if (gtk_widget_has_css_class (src, "quiver-selection-accent"))
+		gtk_widget_get_color (src, color);
+}
+
+static void
+quiver_icon_view_install_accent_css (void)
+{
+	static gsize installed = 0;
+	if (g_once_init_enter (&installed))
+	{
+		GdkDisplay *display = gdk_display_get_default ();
+		if (display != NULL)
+		{
+			GtkCssProvider *provider = gtk_css_provider_new ();
+			gtk_css_provider_load_from_string (provider,
+				".quiver-selection-accent { color: @theme_selected_bg_color; }\n"
+				".quiver-icon-view { color: @theme_fg_color; }");
+			gtk_style_context_add_provider_for_display (display,
+				GTK_STYLE_PROVIDER (provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+			g_object_unref (provider);
+		}
+		g_once_init_leave (&installed, 1);
+	}
+}
+
 static void 
 quiver_icon_view_init(QuiverIconView *iconview)
 {
@@ -451,9 +491,16 @@ quiver_icon_view_init(QuiverIconView *iconview)
 
 
 	gtk_widget_set_focusable(GTK_WIDGET(iconview),TRUE);
+
+	gtk_widget_add_css_class (GTK_WIDGET (iconview), "quiver-icon-view");
 	
 	iconview->priv->n_cell_items = 0;
 	iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(iconview->priv->n_cell_items+1) );
+
+	quiver_icon_view_install_accent_css ();
+
+	g_signal_connect(GTK_WIDGET(iconview), "map",
+		G_CALLBACK(quiver_icon_view_map_add_accent_class), NULL);
 
 	quiver_icon_view_setup_controllers(iconview);
 }
@@ -544,9 +591,6 @@ quiver_icon_view_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	graphene_rect_t clip_rect;
 	graphene_rect_init(&clip_rect, 0, 0, (float)alloc_w, (float)alloc_h);
 	gtk_snapshot_push_clip(snapshot, &clip_rect);
-
-	GtkStyleContext *context = gtk_widget_get_style_context(widget);
-	gtk_snapshot_render_background(snapshot, context, 0, 0, alloc_w, alloc_h);
 
 	quiver_icon_view_snapshot_icons (widget, snapshot);
 
@@ -706,8 +750,7 @@ quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot)
 	gulong n_cells = quiver_icon_view_get_n_items(iconview);
 
 	GdkRGBA sel_color = { 0.21f, 0.52f, 0.89f, 1.0f };
-	GtkStyleContext* context = gtk_widget_get_style_context(widget);
-	gtk_style_context_lookup_color(context, "theme_selected_bg_color", &sel_color);
+	quiver_icon_view_get_selection_color (widget, &sel_color);
 
 	for (guint j = row_start; j <= row_end; j++)
 	{
@@ -2908,6 +2951,7 @@ void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *select
 			quiver_icon_view_invalidate_cell(iconview,item);
 			selection_changed = TRUE;
 		}
+		selection_iter = selection_iter->next;
 	}
 	if (selection_changed)
 	{

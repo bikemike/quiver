@@ -503,11 +503,31 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetExifThumbnailTexture()
 }
 
 #if HAVE_GDK_PIXBUF
+static void pixbuf_data_destroy(guint8 *pixels, gpointer data)
+{
+	(void)pixels;
+	g_free(data);
+}
+
+static GdkPixbuf *texture_to_pixbuf(GdkTexture *tex)
+{
+	if (!tex) return NULL;
+	gint w = gdk_texture_get_width(tex);
+	gint h = gdk_texture_get_height(tex);
+	gsize stride = (gsize)w * 4;
+	guint8 *data = (guint8 *)g_malloc(stride * h);
+	gdk_texture_download(tex, data, stride);
+	return gdk_pixbuf_new_from_data(data, GDK_COLORSPACE_RGB, TRUE, 8, w, h,
+		stride, pixbuf_data_destroy, data);
+}
+#endif
+
+#if HAVE_GDK_PIXBUF
 GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 {
 	GdkTexture *tex = GetExifThumbnailTexture();
 	if (!tex) return NULL;
-	GdkPixbuf *pb = gdk_pixbuf_get_from_texture(tex);
+	GdkPixbuf *pb = texture_to_pixbuf(tex);
 	g_object_unref(tex);
 	return pb;
 }
@@ -890,7 +910,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetThumbnail(int iSize /* = 0 */,
 {
 	GdkTexture *tex = GetThumbnailTexture(iSize, abort_fn, abort_data);
 	if (!tex) return NULL;
-	GdkPixbuf *pb = gdk_pixbuf_get_from_texture(tex);
+	GdkPixbuf *pb = texture_to_pixbuf(tex);
 	g_object_unref(tex);
 	return pb;
 }
@@ -1770,7 +1790,7 @@ GdkPixbuf* QuiverFile::GetIcon(int width_desired,int height_desired)
 {
 	GdkTexture *tex = GetIconTexture(width_desired, height_desired);
 	if (!tex) return NULL;
-	GdkPixbuf *pb = gdk_pixbuf_get_from_texture(tex);
+	GdkPixbuf *pb = texture_to_pixbuf(tex);
 	g_object_unref(tex);
 	return pb;
 }

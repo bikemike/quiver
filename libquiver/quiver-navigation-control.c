@@ -240,11 +240,6 @@ quiver_navigation_control_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	int alloc_w = gtk_widget_get_width(widget);
 	int alloc_h = gtk_widget_get_height(widget);
 
-	{
-		GtkStyleContext *context = gtk_widget_get_style_context(widget);
-		gtk_snapshot_render_background(snapshot, context, 0, 0, alloc_w, alloc_h);
-	}
-
 	if (navcontrol->priv->texture)
 	{
 		graphene_rect_t bounds;

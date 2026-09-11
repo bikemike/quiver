@@ -1210,6 +1210,14 @@
                           </object>
                         </child>
                         <child>
+                          <object class="GtkCheckButton" id="chkbtn_general_force_dark_theme">
+                            <property name="valign">center</property>
+                            <property name="label" translatable="1">Prefer dark theme</property>
+                            <property name="focusable">1</property>
+                            <property name="use_underline">1</property>
+                          </object>
+                        </child>
+                        <child>
                           <object class="GtkCheckButton" id="chkbtn_general_reorientate">
                             <property name="valign">center</property>
                             <property name="label" translatable="1">Automatically reorientate images containing an exif orientation tag</property>

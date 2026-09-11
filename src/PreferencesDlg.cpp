@@ -37,7 +37,8 @@ public:
 	GtkCheckButton*        m_pToggleUseThemeColor;
 	GtkCheckButton*	   m_pToggleSlideShowLoop;
 	GtkCheckButton*	   m_pToggleSlideShowFS;
-	GtkCheckButton*	   m_pToggleStartFS;
+GtkCheckButton*        m_pToggleStartFS;
+	GtkCheckButton*	   m_pToggleForceDarkTheme;
 	GtkCheckButton*	   m_pToggleQuickPreview;
 	GtkCheckButton*	   m_pToggleViewerHideScrollbars;
 	GtkCheckButton*	   m_pToggleBrowserHideFolderTreeFS;
@@ -254,6 +255,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		
 		m_pToggleAskBeforeDelete = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_ask_before_delete") );
 		m_pToggleStartFS     = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_start_fullscreen") );
+		m_pToggleForceDarkTheme = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_force_dark_theme") );
 		m_pToggleUseThemeColor   = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_theme_color") );
 		m_pToggleQuickPreview    = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_quickpreview") );
 		m_pToggleViewerHideScrollbars    = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_hide_scrollbars") );
@@ -299,6 +301,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 			NULL != m_pComboDefaultViewMode && 
 			NULL != m_pToggleAskBeforeDelete && 
 			NULL != m_pToggleStartFS && 
+			NULL != m_pToggleForceDarkTheme && 
 			NULL != m_pToggleUseThemeColor && 
 			NULL != m_pToggleQuickPreview && 
 			NULL != m_pToggleViewerHideScrollbars && 
@@ -354,6 +357,9 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 
 		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_START_FULLSCREEN, false);
 		gtk_check_button_set_active(m_pToggleStartFS, bValue);
+
+		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_FORCE_DARK_THEME, false);
+		gtk_check_button_set_active(m_pToggleForceDarkTheme, bValue);
 
 		bValue = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FILMSTRIP_HIDE, true);
 		gtk_check_button_set_active(m_pToggleSlideShowHideFilmStrip, bValue);	
@@ -834,6 +840,9 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 		g_signal_connect(m_pToggleStartFS,
 			"toggled",(GCallback)on_toggled,this);
 
+		g_signal_connect(m_pToggleForceDarkTheme,
+			"toggled",(GCallback)on_toggled,this);
+
 		g_signal_connect(m_pToggleSlideShowHideFilmStrip,
 			"toggled",(GCallback)on_toggled,this);
 
@@ -939,6 +948,11 @@ static void  on_toggled (GtkCheckButton *togglebutton, gpointer user_data)
 	{
 		gboolean bBool = gtk_check_button_get_active(togglebutton);
 		prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_START_FULLSCREEN, bool(bBool));
+	}
+	else if (priv->m_pToggleForceDarkTheme == togglebutton)
+	{
+		gboolean bBool = gtk_check_button_get_active(togglebutton);
+		prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_FORCE_DARK_THEME, bool(bBool));
 	}
 	else if (priv->m_pToggleSlideShowRotateToMaximize == togglebutton)
 	{

@@ -1364,6 +1364,8 @@ void Quiver::Init()
 		gtk_window_set_default_size (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),m_QuiverImplPtr->m_iAppWidth,m_QuiverImplPtr->m_iAppHeight);
 
 	}
+
+	ApplyForceDarkTheme();
 	
 	gchar *icon_path = g_build_filename(QUIVER_DATADIR, "icons", "48x48", "quiver-icon-app.png", NULL);
 	(void)icon_path;
@@ -1731,6 +1733,20 @@ bool Quiver::LoadSettings()
 	return (m_QuiverImplPtr->m_iAppWidth && m_QuiverImplPtr->m_iAppHeight);
 }
 
+void Quiver::ApplyForceDarkTheme()
+{
+	GdkDisplay *display = gdk_display_get_default();
+	if (display == NULL)
+		return;
+
+	GtkSettings *settings = gtk_settings_get_for_display(display);
+
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	bool bForceDark = prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_FORCE_DARK_THEME, false);
+
+	g_object_set(settings, "gtk-application-prefer-dark-theme", bForceDark, NULL);
+}
+
 void Quiver::SaveSettings()
 {
 	//Timer t("Quiver::SaveSettings()");
@@ -1866,13 +1882,6 @@ int main (int argc, char **argv)
 
 	g_pApp = gtk_application_new("com.github.bikemike.quiver", G_APPLICATION_NON_UNIQUE);
 	g_signal_connect(g_pApp, "activate", G_CALLBACK(on_app_activate), NULL);
-
-	// set dark theme
-	GdkDisplay *default_display = gdk_display_get_default();
-	if (default_display != NULL)
-	{
-		g_object_set(gtk_settings_get_for_display(default_display), "gtk-application-prefer-dark-theme", TRUE, NULL);
-	}
 
 	gst_init(&argc, &argv);
 
@@ -2443,8 +2452,13 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 
 
 void QuiverImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
-{ (void)event; 
-
+{
+	if (event != NULL &&
+		event->GetSection() == QUIVER_PREFS_APP &&
+		event->GetKey() == QUIVER_PREFS_APP_FORCE_DARK_THEME)
+	{
+		parent->m_pQuiver->ApplyForceDarkTheme();
+	}
 }
 
 void QuiverImpl::BookmarksEventHandler::HandleBookmarkChanged(BookmarksEventPtr event)

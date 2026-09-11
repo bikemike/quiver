@@ -267,7 +267,9 @@ static void quiver_image_view_get_pixbuf_display_size_alt(QuiverImageView *image
 static void quiver_image_view_set_default_adjustment_values(QuiverImageView *imageview);
 
 static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imageview,gint new_width, gint new_height);
+#if HAVE_GDK_PIXBUF
 static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,GdkRectangle *rect);
+#endif
 
 static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,QuiverImageViewMode mode,gboolean invalidate);
 
@@ -1842,6 +1844,7 @@ static void quiver_image_view_invalidate_old_image_area(QuiverImageView *imagevi
 /* by default , this function will intersect the two rects and only invalidate
  * the area that is in both 
  */
+#if HAVE_GDK_PIXBUF
 static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview, GdkRectangle *sub_rect)
 {
 	(void)sub_rect;
@@ -1854,6 +1857,7 @@ static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview, 
 
 	gtk_widget_queue_draw(widget);
 }
+#endif
 
 
 /* end private functions */
