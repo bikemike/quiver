@@ -6,6 +6,7 @@
 
 #include <string>
 #include <cstring>
+#include <cmath>
 #include <ctime>
 #include <map>
 #include <memory>
@@ -14,9 +15,12 @@
 
 #include <exiv2/exiv2.hpp>
 
+#include <sys/stat.h>
+
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/pixdesc.h>
 }
 
 #include "QuiverUtils.h"
@@ -155,9 +159,27 @@ struct VideoInfo
 	double duration_seconds;
 	int width, height;
 	long long bit_rate;
+	long long file_size;
+	double frame_rate;
+	int video_bit_depth;
+	std::string video_aspect;
+	std::string stream_rotate;
+	std::string color_primaries, color_transfer, color_matrix, color_range;
+	std::string audio_format;
+	int audio_channels;
+	int audio_sample_rate;
+	int audio_bit_depth;
+	std::string video_compressor;
+	std::string audio_format_fourcc;
+	std::string video_handler, audio_handler;
+	long long video_time_scale;
 	char creation_time[64];
+	std::string camera_make, camera_model, gps_location;
+	std::vector<std::pair<std::string,std::string>> extra_tags;
 	VideoInfo() : ok(false), duration_seconds(0.), width(0), height(0),
-		bit_rate(0) { creation_time[0] = '\0'; }
+		bit_rate(0), file_size(0), frame_rate(0.), video_bit_depth(0),
+		audio_channels(0), audio_sample_rate(0), audio_bit_depth(0),
+		video_time_scale(0) { creation_time[0] = '\0'; }
 };
 
 static std::map<std::string, VideoInfo> s_mapVideoInfoCache;
@@ -187,6 +209,151 @@ static double ParseRationalTriple(const std::string& str)
 	return degrees;
 }
 
+// Formats ISO 6709 coordinates used in the container "location" tag
+// (e.g. "+48.4541-123.4718/") into "lat, lon" text.
+static std::string FormatGpsLocation(const std::string& raw)
+{
+	if (raw.empty() || ('+' != raw[0] && '-' != raw[0]))
+		return raw;
+
+	size_t split = std::string::npos;
+	for (size_t j = 1; j < raw.size(); j++)
+	{
+		if (('+' == raw[j] || '-' == raw[j]) && j > 1)
+		{
+			split = j;
+			break;
+		}
+	}
+	if (std::string::npos == split)
+		return raw;
+
+	std::string lat = raw.substr(0, split);
+	std::string lon = raw.substr(split);
+	size_t slash = lon.find('/');
+	if (std::string::npos != slash)
+		lon = lon.substr(0, slash);
+	return lat + ", " + lon;
+}
+
+// Human-readable names for the color properties exiftool reports.
+static const char* ColorPrimariesName(enum AVColorPrimaries v)
+{
+	switch (v)
+	{
+		case AVCOL_PRI_BT709:      return "BT.709";
+		case AVCOL_PRI_BT470M:     return "BT.470M";
+		case AVCOL_PRI_BT470BG:    return "BT.601 (BT.470BG)";
+		case AVCOL_PRI_SMPTE170M:  return "SMPTE 170M";
+		case AVCOL_PRI_SMPTE240M:  return "SMPTE 240M";
+		case AVCOL_PRI_FILM:       return "Film";
+		case AVCOL_PRI_BT2020:     return "BT.2020, BT.2100";
+		case AVCOL_PRI_SMPTE431:   return "SMPTE 431";
+		case AVCOL_PRI_SMPTE432:   return "SMPTE 432";
+		case AVCOL_PRI_EBU3213:    return "EBU 3213";
+		default:                   return NULL;
+	}
+}
+
+static const char* ColorTransferName(enum AVColorTransferCharacteristic v)
+{
+	switch (v)
+	{
+		case AVCOL_TRC_BT709:      return "BT.709";
+		case AVCOL_TRC_GAMMA22:    return "Gamma 2.2";
+		case AVCOL_TRC_GAMMA28:    return "Gamma 2.8";
+		case AVCOL_TRC_SMPTE170M:  return "SMPTE 170M";
+		case AVCOL_TRC_SMPTE240M:  return "SMPTE 240M";
+		case AVCOL_TRC_LINEAR:     return "Linear";
+		case AVCOL_TRC_LOG:        return "Log";
+		case AVCOL_TRC_LOG_SQRT:   return "Log Sqrt";
+		case AVCOL_TRC_IEC61966_2_1: return "sRGB IEC 61966-2.1";
+		case AVCOL_TRC_BT2020_10:  return "BT.2020 10-bit";
+		case AVCOL_TRC_BT2020_12:  return "BT.2020 12-bit";
+		case AVCOL_TRC_SMPTE2084:  return "SMPTE 2084";
+		case AVCOL_TRC_ARIB_STD_B67: return "BT.2100 HLG (ARIB STD-B67)";
+		default:                   return NULL;
+	}
+}
+
+static const char* ColorSpaceName(enum AVColorSpace v)
+{
+	switch (v)
+	{
+		case AVCOL_SPC_RGB:        return "RGB";
+		case AVCOL_SPC_BT709:      return "BT.709";
+		case AVCOL_SPC_FCC:        return "FCC";
+		case AVCOL_SPC_BT470BG:    return "BT.470BG";
+		case AVCOL_SPC_SMPTE170M:  return "SMPTE 170M";
+		case AVCOL_SPC_SMPTE240M:  return "SMPTE 240M";
+		case AVCOL_SPC_YCGCO:      return "YCGCO";
+		case AVCOL_SPC_BT2020_NCL: return "BT.2020 non-constant luminance, BT.2100 YCbCr";
+		case AVCOL_SPC_BT2020_CL:  return "BT.2020 constant luminance";
+		case AVCOL_SPC_SMPTE2085:  return "SMPTE 2085";
+		case AVCOL_SPC_CHROMA_DERIVED_NCL: return "Chroma-derived non-constant luminance";
+		case AVCOL_SPC_CHROMA_DERIVED_CL:  return "Chroma-derived constant luminance";
+		case AVCOL_SPC_ICTCP:      return "ICtCp";
+		default:                   return NULL;
+	}
+}
+
+static const char* ColorRangeName(enum AVColorRange v)
+{
+	switch (v)
+	{
+		case AVCOL_RANGE_MPEG:     return "Limited";
+		case AVCOL_RANGE_JPEG:     return "Full";
+		default:                   return NULL;
+	}
+}
+
+static std::string FormatFileSize(long long bytes)
+{
+	char buf[64];
+	if (bytes >= 1000)
+		g_snprintf(buf, sizeof(buf), "%.0f kB", bytes / 1000.0);
+	else
+		g_snprintf(buf, sizeof(buf), "%lld bytes", bytes);
+	return buf;
+}
+
+// Renders the little-endian fourcc stored in AVCodecParameters::codec_tag
+// (e.g. 'mp4a', 'hvc1') the way exiftool prints Compressor ID.
+static std::string FourccToString(uint32_t tag)
+{
+	char buf[5] = {0, 0, 0, 0, 0};
+	for (int i = 0; i < 4; i++)
+	{
+		char c = (char)((tag >> (i * 8)) & 0xFF);
+		if (c < 32 || c > 126) break;
+		buf[i] = c;
+	}
+	return buf;
+}
+
+static std::string FormatBitrate(long long bps)
+{
+	char buf[64];
+	if (bps >= 1000000)
+		g_snprintf(buf, sizeof(buf), "%.1f Mbps", bps / 1000000.0);
+	else if (bps >= 1000)
+		g_snprintf(buf, sizeof(buf), "%.1f kbps", bps / 1000.0);
+	else
+		g_snprintf(buf, sizeof(buf), "%lld bps", bps);
+	return buf;
+}
+
+static std::string FormatFps(double fps)
+{
+	if (fps < 1.0 || fps > 1000.0) return "";
+	char buf[64];
+	if (fabs(fps - rint(fps)) < 0.01)
+		g_snprintf(buf, sizeof(buf), "%.0f", fps);
+	else
+		g_snprintf(buf, sizeof(buf), "%.2f", fps);
+	return buf;
+}
+
 static VideoInfo ProbeVideoInfo(const gchar* szPath)
 {
 	VideoInfo info;
@@ -214,8 +381,50 @@ static VideoInfo ProbeVideoInfo(const gchar* szPath)
 			if (NULL != e)
 				g_strlcpy(info.creation_time, e->value, sizeof(info.creation_time));
 
+			auto get_tag = [&](const char* key) -> const char*
+			{
+				AVDictionaryEntry* pTag =
+					av_dict_get(pFmt->metadata, key, NULL, 0);
+				return (NULL != pTag) ? pTag->value : NULL;
+			};
+
+			const char* pMake = get_tag("make");
+			if (NULL == pMake) pMake = get_tag("com.android.manufacturer");
+			if (NULL != pMake) info.camera_make = pMake;
+
+			const char* pModel = get_tag("model");
+			if (NULL == pModel) pModel = get_tag("com.android.model");
+			if (NULL != pModel) info.camera_model = pModel;
+
+			const char* pLoc = get_tag("location");
+			if (NULL == pLoc) pLoc = get_tag("location-eng");
+			if (NULL != pLoc) info.gps_location = pLoc;
+
+			/* Collect every remaining container-level tag so the property
+			 * view matches exiftool's full listing.  Keys already surfaced
+			 * as dedicated rows are skipped to avoid redundancy. */
+			static const char* k_curatedKeys[] = {
+				"creation_time", "date",
+				"com.apple.quicktime.creationdate", "creation_date",
+				"make", "model",
+				"com.android.manufacturer", "com.android.model",
+				"location", "location-eng",
+			};
+			const AVDictionaryEntry* pTag = NULL;
+			while (NULL != (pTag = av_dict_iterate(pFmt->metadata, pTag)))
+			{
+				bool curated = false;
+				for (const char* key : k_curatedKeys)
+					if (0 == strcmp(key, pTag->key)) { curated = true; break; }
+				if (curated) continue;
+				info.extra_tags.emplace_back(pTag->key, pTag->value);
+			}
+
 			if (pFmt->duration > 0) info.duration_seconds = pFmt->duration / (double)AV_TIME_BASE;
 			if (pFmt->bit_rate > 0) info.bit_rate = pFmt->bit_rate;
+
+			struct stat st;
+			if (0 == stat(szPath, &st)) info.file_size = st.st_size;
 
 			for (unsigned int i = 0; i < pFmt->nb_streams; i++)
 			{
@@ -223,7 +432,62 @@ static VideoInfo ProbeVideoInfo(const gchar* szPath)
 				if (NULL == pStream || NULL == pStream->codecpar) continue;
 				AVCodecParameters* pPar = pStream->codecpar;
 				if (AVMEDIA_TYPE_VIDEO == pPar->codec_type)
-				{ info.width = pPar->width; info.height = pPar->height; }
+				{
+					info.width = pPar->width;
+					info.height = pPar->height;
+					info.video_time_scale = pStream->time_base.den;
+
+					if (pStream->avg_frame_rate.num > 0 && pStream->avg_frame_rate.den > 0)
+						info.frame_rate = av_q2d(pStream->avg_frame_rate);
+					else if (pStream->r_frame_rate.num > 0 && pStream->r_frame_rate.den > 0)
+						info.frame_rate = av_q2d(pStream->r_frame_rate);
+
+					info.video_bit_depth = pPar->bits_per_coded_sample;
+					if (0 == info.video_bit_depth)
+					{
+						const AVPixFmtDescriptor* pDesc =
+							av_pix_fmt_desc_get((AVPixelFormat)pPar->format);
+						if (NULL != pDesc)
+							info.video_bit_depth = pDesc->comp[0].depth * pDesc->nb_components;
+					}
+
+					if (pPar->sample_aspect_ratio.num > 0 && pPar->sample_aspect_ratio.den > 0)
+					{
+						info.video_aspect = std::to_string(pPar->sample_aspect_ratio.num) + ":" +
+							std::to_string(pPar->sample_aspect_ratio.den);
+					}
+
+					AVDictionaryEntry* pRotate =
+						av_dict_get(pStream->metadata, "rotate", NULL, 0);
+					if (NULL != pRotate) info.stream_rotate = pRotate->value;
+
+					const char* c = ColorPrimariesName(pPar->color_primaries);
+					if (NULL != c) info.color_primaries = c;
+					c = ColorTransferName(pPar->color_trc);
+					if (NULL != c) info.color_transfer = c;
+					c = ColorSpaceName(pPar->color_space);
+					if (NULL != c) info.color_matrix = c;
+					c = ColorRangeName(pPar->color_range);
+					if (NULL != c) info.color_range = c;
+
+					AVDictionaryEntry* pH = av_dict_get(pStream->metadata, "handler_name", NULL, 0);
+					if (NULL != pH) info.video_handler = pH->value;
+
+					if (0 != pPar->codec_tag)
+						info.video_compressor = FourccToString(pPar->codec_tag);
+				}
+				else if (AVMEDIA_TYPE_AUDIO == pPar->codec_type)
+				{
+					info.audio_format = avcodec_get_name(pPar->codec_id);
+					if (0 != pPar->codec_tag)
+						info.audio_format_fourcc = FourccToString(pPar->codec_tag);
+					info.audio_channels = pPar->ch_layout.nb_channels;
+					info.audio_sample_rate = pPar->sample_rate;
+					info.audio_bit_depth = pPar->bits_per_raw_sample;
+					if (0 == info.audio_bit_depth) info.audio_bit_depth = pPar->bits_per_coded_sample;
+					AVDictionaryEntry* pH = av_dict_get(pStream->metadata, "handler_name", NULL, 0);
+					if (NULL != pH) info.audio_handler = pH->value;
+				}
 				if (AV_CODEC_ID_NONE != pPar->codec_id && 0 != pPar->codec_id)
 				{
 					if (!info.codecs.empty()) info.codecs += ", ";
@@ -316,7 +580,9 @@ public:
 
 static void kv_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
 { (void)factory; (void)user_data;
-	gtk_list_item_set_child(item, gtk_label_new(NULL)); }
+	GtkWidget *label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+	gtk_list_item_set_child(item, label); }
 
 static void kv_key_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
 { (void)factory; (void)user_data;
@@ -346,23 +612,38 @@ static void kv_unbind(GtkListItemFactory *factory, GtkListItem *item, gpointer u
 
 static void entry_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
 { (void)factory; (void)user_data;
-	gtk_list_item_set_child(item, gtk_entry_new()); }
+	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+	GtkWidget *label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+	gtk_widget_set_hexpand(label, TRUE);
+	GtkWidget *entry = gtk_entry_new();
+	gtk_widget_set_hexpand(entry, TRUE);
+	gtk_widget_set_visible(entry, FALSE);
+	gtk_box_append(GTK_BOX(box), label);
+	gtk_box_append(GTK_BOX(box), entry);
+	gtk_list_item_set_child(item, box);
+}
 
 static void video_entry_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
 { (void)factory; (void)user_data;
 	PropertyItem *pi = PROPERTY_ITEM(gtk_list_item_get_item(item));
-	GtkWidget *entry = gtk_list_item_get_child(item);
+	GtkWidget *box = gtk_list_item_get_child(item);
+	GtkWidget *label = gtk_widget_get_first_child(box);
+	GtkWidget *entry = gtk_widget_get_next_sibling(label);
 
 	if (pi->editable)
 	{
 		gtk_editable_set_text(GTK_EDITABLE(entry), pi->value ? pi->value : "");
+		gtk_widget_set_visible(entry, TRUE);
 		gtk_widget_set_sensitive(entry, TRUE);
 		gtk_widget_add_css_class(entry, "dim-label");
+		gtk_widget_set_visible(label, FALSE);
 	}
 	else
 	{
-		gtk_editable_set_text(GTK_EDITABLE(entry), pi->value ? pi->value : "");
-		gtk_widget_set_sensitive(entry, FALSE);
+		gtk_label_set_text(GTK_LABEL(label), pi->value ? pi->value : "");
+		gtk_widget_set_visible(label, TRUE);
+		gtk_widget_set_visible(entry, FALSE);
 	}
 }
 
@@ -773,6 +1054,21 @@ PropertyView::PropertyView()
 				gtk_column_view_column_set_expand(cval, TRUE);
 				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cval);
 
+				/* Compact rows and left-aligned text for the properties */
+				gtk_widget_add_css_class(colview_widget, "quiver-props");
+				GdkDisplay* display = gdk_display_get_default();
+				if (NULL != display)
+				{
+					GtkCssProvider *css = gtk_css_provider_new();
+					gtk_css_provider_load_from_string(css,
+						".quiver-props row { min-height: 0; padding-top: 0; padding-bottom: 0; } "
+						".quiver-props entry { min-height: 0; padding-top: 0; padding-bottom: 0; }");
+					gtk_style_context_add_provider_for_display(display,
+						GTK_STYLE_PROVIDER(css),
+						GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+					g_object_unref(css);
+				}
+
 				gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), colview_widget);
 			}
 			break;
@@ -938,6 +1234,16 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 
 			add_row("Codecs", info.codecs);
 			add_row("Container", info.container);
+
+			if (!info.camera_make.empty())
+				add_row("Camera Make", info.camera_make.c_str());
+			if (!info.camera_model.empty())
+				add_row("Camera Model", info.camera_model.c_str());
+			if (!info.gps_location.empty())
+			{
+				std::string gps = FormatGpsLocation(info.gps_location);
+				add_row("GPS Location", gps.c_str());
+			}
 		}
 	}
 	else
@@ -1252,21 +1558,126 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
 
 		add("Name", m_QuiverFile.GetFileName().c_str(), FALSE);
 
+		if (info.file_size > 0)
+			add("File Size", FormatFileSize(info.file_size).c_str(), FALSE);
+
 		int secs = (int)(info.duration_seconds + 0.5);
 		gchar* dur = g_strdup_printf("%d:%02d:%02d", secs / 3600,
 			(secs / 60) % 60, secs % 60);
 		add("Duration", dur, FALSE);
 		g_free(dur);
 
-		gchar* dims = g_strdup_printf("%d x %d", info.width, info.height);
-		add("Dimensions", dims, FALSE);
-		g_free(dims);
+		if (info.width > 0 && info.height > 0)
+		{
+			gchar* dims = g_strdup_printf("%d x %d", info.width, info.height);
+			add("Dimensions", dims, FALSE);
+			g_free(dims);
+
+			double megapixels = (info.width * info.height) / 1000000.0;
+			gchar* mp = g_strdup_printf("%.1f", megapixels);
+			add("Megapixels", mp, FALSE);
+			g_free(mp);
+		}
 
 		add("Codecs", info.codecs.c_str(), FALSE);
 		add("Container", info.container.c_str(), FALSE);
 
+		if (info.bit_rate > 0)
+			add("Avg Bitrate", FormatBitrate(info.bit_rate).c_str(), FALSE);
+
+		if (!info.camera_make.empty())
+			add("Camera Make", info.camera_make.c_str(), FALSE);
+		if (!info.camera_model.empty())
+			add("Camera Model", info.camera_model.c_str(), FALSE);
+		if (!info.gps_location.empty())
+		{
+			std::string gps = FormatGpsLocation(info.gps_location);
+			add("GPS Location", gps.c_str(), FALSE);
+		}
+
 		if ('\0' != info.creation_time[0])
 			add("Created", info.creation_time, TRUE);
+
+		auto group = [&](const char* label)
+		{
+			g_list_store_append(store,
+				property_item_new(label, "", FALSE, TRUE));
+		};
+
+		if (info.frame_rate > 0. || !info.stream_rotate.empty() ||
+			info.video_bit_depth > 0 || !info.video_aspect.empty() ||
+			!info.video_handler.empty() || info.video_time_scale > 0)
+		{
+			group("Video Stream");
+			if (info.frame_rate > 0.)
+			{
+				std::string fps = FormatFps(info.frame_rate);
+				if (!fps.empty()) add("Frame Rate", fps.c_str(), FALSE);
+			}
+			if (!info.stream_rotate.empty())
+				add("Rotation", info.stream_rotate.c_str(), FALSE);
+			if (info.video_bit_depth > 0)
+			{
+				gchar* bd = g_strdup_printf("%d", info.video_bit_depth);
+				add("Bit Depth", bd, FALSE);
+				g_free(bd);
+			}
+			if (!info.video_aspect.empty())
+				add("Pixel Aspect Ratio", info.video_aspect.c_str(), FALSE);
+			if (!info.color_primaries.empty())
+				add("Color Primaries", info.color_primaries.c_str(), FALSE);
+			if (!info.color_transfer.empty())
+				add("Transfer Characteristics", info.color_transfer.c_str(), FALSE);
+			if (!info.color_matrix.empty())
+				add("Matrix Coefficients", info.color_matrix.c_str(), FALSE);
+			if (!info.color_range.empty())
+				add("Video Full Range", info.color_range.c_str(), FALSE);
+			if (!info.video_compressor.empty())
+				add("Compressor ID", info.video_compressor.c_str(), FALSE);
+			if (!info.video_handler.empty())
+				add("Handler Description", info.video_handler.c_str(), FALSE);
+			if (info.video_time_scale > 0)
+			{
+				gchar* ts = g_strdup_printf("%lld", info.video_time_scale);
+				add("Media Time Scale", ts, FALSE);
+				g_free(ts);
+			}
+		}
+
+		if (!info.audio_format.empty())
+		{
+			group("Audio Stream");
+			const std::string& audioFmt = info.audio_format_fourcc.empty()
+				? info.audio_format : info.audio_format_fourcc;
+			add("Format", audioFmt.c_str(), FALSE);
+			if (info.audio_channels > 0)
+			{
+				gchar* ch = g_strdup_printf("%d", info.audio_channels);
+				add("Channels", ch, FALSE);
+				g_free(ch);
+			}
+			if (info.audio_sample_rate > 0)
+			{
+				gchar* sr = g_strdup_printf("%d", info.audio_sample_rate);
+				add("Sample Rate", sr, FALSE);
+				g_free(sr);
+			}
+			if (info.audio_bit_depth > 0)
+			{
+				gchar* bd = g_strdup_printf("%d", info.audio_bit_depth);
+				add("Bits Per Sample", bd, FALSE);
+				g_free(bd);
+			}
+			if (!info.audio_handler.empty())
+				add("Handler Description", info.audio_handler.c_str(), FALSE);
+		}
+
+		if (!info.extra_tags.empty())
+		{
+			group("Container Metadata");
+			for (const auto& tag : info.extra_tags)
+				add(tag.first.c_str(), tag.second.c_str(), FALSE);
+		}
 
 		g_free(szPath);
 	}

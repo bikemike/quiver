@@ -241,18 +241,11 @@ bool OrganizeTask::ComputeMappings(const Options& opts,
 		if (opts.bRenameFiles)
 		{
 			std::string strExtension;
-			std::string strFilenameLower = boost::algorithm::to_lower_copy(strFilename);
 
 			std::string::size_type pos = strFilename.find_last_of(".");
 			if (std::string::npos != pos)
 			{
 				strExtension = strFilename.substr(pos+1);
-			}
-
-			std::string strSpecialCase;
-			if (f.IsVideo() && strFilenameLower.find("pxl") != std::string::npos)
-			{
-				strSpecialCase = ".pxl";
 			}
 
 			std::string strDstNameTmp = RenameTask::DoVariableSubstitution(opts.strFileTemplate, datetime, 0);
@@ -262,7 +255,7 @@ bool OrganizeTask::ComputeMappings(const Options& opts,
 				count = mapFileCounter[strDstNameTmp];
 			}
 			strFilename = RenameTask::DoVariableSubstitution(opts.strFileTemplate, datetime, ++count);
-			strFilename += strSpecialCase + "." + strExtension;
+			strFilename += "." + strExtension;
 
 			mapFileCounter[strDstNameTmp] = count;
 		}
@@ -356,19 +349,11 @@ void OrganizeTask::Run()
 		if (m_bRenameFiles)
 		{
 			std::string strExtension;
-			std::string strFilenameLower = boost::algorithm::to_lower_copy(strFilename);
 
 			std::string::size_type pos = strFilename.find_last_of(".");
 			if (std::string::npos != pos)
 			{
 				strExtension = strFilename.substr(pos+1);
-			}
-
-			std::string strSpecialCase;
-			if (f.IsVideo() && strFilenameLower.find("pxl") != std::string::npos)
-			{
-				// add pxl to rename
-				strSpecialCase = ".pxl";
 			}
 
 			std::string strDstNameTmp = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, 0);
@@ -378,7 +363,7 @@ void OrganizeTask::Run()
 				count = mapFileCounter[strDstNameTmp];
 			}
 			strFilename = RenameTask::DoVariableSubstitution(m_strFileTemplate, datetime, ++count);
-			strFilename += strSpecialCase + "." + strExtension;
+			strFilename += "." + strExtension;
 
 			mapFileCounter[strDstNameTmp] = count;
 		}

@@ -1015,8 +1015,8 @@ std::shared_ptr<Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifData()
 
 // Parses a container date string ("creation_time"/"date" metadata).
 // ISO-8601 strings with an explicit zone ('+' offset or 'Z' suffix) are
-// flagged as zoned; exiftool-style "YYYY-MM-DD HH:MM:SS" strings come
-// back unzoned.
+// flagged as zoned; unzoned "YYYY-MM-DD HH:MM:SS" or
+// "YYYY-MM-DDTHH:MM:SS" strings come back as local wall clock.
 static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbExplicitTZ)
 {
 	*pbExplicitTZ = false;
@@ -1033,14 +1033,84 @@ static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbExplici
 		return pDate;
 	}
 
+	// GLib's ISO-8601 parser requires a zone, so manually handle unzoned
+	// container timestamps with either a space or 'T' separator.
 	int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
-	if (6 == sscanf(szValue, "%04d-%02d-%02d %02d:%02d:%02d",
-			&y, &mo, &d, &h, &mi, &s) &&
+	char cSep = '\0';
+	if (7 == sscanf(szValue, "%04d-%02d-%02d%c%02d:%02d:%02d",
+			&y, &mo, &d, &cSep, &h, &mi, &s) &&
+		(' ' == cSep || 'T' == cSep) &&
 		y >= 1970 && y < 2100)
 	{
 		return g_date_time_new_local(y, mo, d, h, mi, s);
 	}
 	return NULL;
+}
+
+// True for phones that follow the ISO/QuickTime UTC standard and write
+// true UTC container times: Google Pixels, other Android devices
+// (recognised by the com.android.* tags) and Apple iPhones/iPads.
+static bool ContainerIsKnownUTCSource(const AVFormatContext* pFmt)
+{
+	if (NULL == pFmt || NULL == pFmt->metadata)
+		return false;
+
+	const AVDictionary* pMeta = pFmt->metadata;
+
+	// Android/Google devices tag the container even when the plain
+	// make/model keys are absent
+	if (NULL != av_dict_get(pMeta, "com.android.version", NULL, 0) ||
+		NULL != av_dict_get(pMeta, "com.android.manufacturer", NULL, 0) ||
+		NULL != av_dict_get(pMeta, "com.android.model", NULL, 0))
+	{
+		return true;
+	}
+
+	AVDictionaryEntry* pMake = av_dict_get(pMeta, "make", NULL, 0);
+	if (NULL == pMake || NULL == pMake->value)
+		return false;
+
+	gchar* make_low = g_ascii_strdown(pMake->value, -1);
+	std::string strMake = (NULL != make_low) ? make_low : "";
+	g_free(make_low);
+
+	AVDictionaryEntry* pModel = av_dict_get(pMeta, "model", NULL, 0);
+	gchar* model_low = (NULL != pModel && NULL != pModel->value)
+		? g_ascii_strdown(pModel->value, -1) : NULL;
+	std::string strModel = (NULL != model_low) ? model_low : "";
+	g_free(model_low);
+
+	return (std::string::npos != strMake.find("google") &&
+			std::string::npos != strModel.find("pixel")) ||
+		(std::string::npos != strMake.find("apple") &&
+			(std::string::npos != strModel.find("iphone") ||
+			 std::string::npos != strModel.find("ipad")));
+}
+
+// Soft hint for containers whose device tags were stripped: Google
+// camera files carry a "PXL_" (Pixel) or "VID_" prefix, either at the
+// start of the name or after the numeric camera id Google prepends for
+// specialty captures (e.g. "1773602849-PXL_...").
+static bool FileNameHasCameraPrefix(const gchar* szURI)
+{
+	if (NULL == szURI)
+		return false;
+
+	const char* base = strrchr(szURI, '/');
+	const char* name = (NULL != base) ? base + 1 : szURI;
+
+	gchar* low = g_ascii_strdown(name, -1);
+	std::string strName = (NULL != low) ? low : "";
+	g_free(low);
+
+	size_t pos = 0;
+	while (pos < strName.size() && g_ascii_isdigit(strName[pos]))
+		pos++;
+	if (pos < strName.size() && '-' == strName[pos])
+		pos++;
+
+	return (0 == strName.compare(pos, 4, "pxl_")) ||
+		(0 == strName.compare(pos, 4, "vid_"));
 }
 
 time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
@@ -1103,56 +1173,82 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 			if (avformat_open_input(&pFmt, szPath, NULL, NULL) >= 0 &&
 				NULL != pFmt)
 			{
-				AVDictionaryEntry* e =
-					av_dict_get(pFmt->metadata, "creation_time", NULL, 0);
-				if (NULL == e) // some muxers store a plain "date" tag
-					e = av_dict_get(pFmt->metadata, "date", NULL, 0);
-				for (unsigned i = 0; NULL == e && i < pFmt->nb_streams; i++)
-				{
-					// some muxers only tag the streams
-					e = av_dict_get(pFmt->streams[i]->metadata,
-						"creation_time", NULL, 0);
-				}
+				// Prefer tags that usually carry an explicit timezone
+				// (QuickTime/Android) before the unzoned container
+				// creation_time; first parseable value wins.
+				static const char* const kContainerDateTags[] = {
+					"com.apple.quicktime.creationdate",
+					"creation_date",
+					"date",
+					"creation_time",
+				};
 
 				bool bExplicitTZ = false;
-				GDateTime* pGDate =
-					ParseContainerDateString(e ? e->value : NULL, &bExplicitTZ);
+				GDateTime* pGDate = NULL;
+				for (size_t i = 0; NULL == pGDate &&
+					i < G_N_ELEMENTS(kContainerDateTags); i++)
+				{
+					AVDictionaryEntry* pTag = av_dict_get(
+						pFmt->metadata, kContainerDateTags[i], NULL, 0);
+					if (NULL != pTag)
+					{
+						pGDate = ParseContainerDateString(
+							pTag->value, &bExplicitTZ);
+					}
+				}
+				for (unsigned i = 0; NULL == pGDate &&
+					i < pFmt->nb_streams; i++)
+				{
+					// some muxers only tag the streams
+					AVDictionaryEntry* pTag = av_dict_get(
+						pFmt->streams[i]->metadata,
+						"creation_time", NULL, 0);
+					if (NULL != pTag)
+					{
+						pGDate = ParseContainerDateString(
+							pTag->value, &bExplicitTZ);
+					}
+				}
+
 				if (NULL != pGDate)
 				{
+					// Explicitly zoned tags are trusted as-is.  Unzoned
 					// container times (mvhd etc.) carry no usable zone;
-					// match the legacy exiftool behaviour by reading the
-					// fields as local wall clock.  Explicitly zoned tags
-					// are trusted as-is, and camera files whose names
-					// contain "pxl" store true UTC (as before).
+					// phones that follow the ISO/QuickTime UTC standard
+					// (Google Pixel, Android, iPhone/iPad) store true
+					// UTC, so detect those from the container metadata
+					// and fall back to the PXL_/VID_ camera name prefix
+					// as a soft hint.  Otherwise read the fields as
+					// local wall clock to match the legacy exiftool
+					// behaviour.
 					if (bExplicitTZ)
 					{
+						// zoned tags parse to an absolute instant
 						m_cachedTimeT = g_date_time_to_unix(pGDate);
+					}
+					else if (ContainerIsKnownUTCSource(pFmt) ||
+						FileNameHasCameraPrefix(m_szURI))
+					{
+						// unzoned container times are parsed above as
+						// local wall clock; these devices store the
+						// fields in true UTC, so rebuild them as UTC
+						GDateTime* pUtc = g_date_time_new_utc(
+							g_date_time_get_year(pGDate),
+							g_date_time_get_month(pGDate),
+							g_date_time_get_day_of_month(pGDate),
+							g_date_time_get_hour(pGDate),
+							g_date_time_get_minute(pGDate),
+							g_date_time_get_seconds(pGDate));
+						if (NULL != pUtc)
+						{
+							m_cachedTimeT = g_date_time_to_unix(pUtc);
+							g_date_time_unref(pUtc);
+						}
 					}
 					else
 					{
-						const char* base = strrchr(m_szURI, '/');
-						std::string low = g_ascii_strdown(
-							(NULL != base) ? base + 1 : m_szURI, -1);
-						if (std::string::npos != low.find("pxl"))
-						{
-							m_cachedTimeT = g_date_time_to_unix(pGDate);
-						}
-						else
-						{
-							GDateTime* pLocal = g_date_time_new_local(
-								g_date_time_get_year(pGDate),
-								g_date_time_get_month(pGDate),
-								g_date_time_get_day_of_month(pGDate),
-								g_date_time_get_hour(pGDate),
-								g_date_time_get_minute(pGDate),
-								g_date_time_get_seconds(pGDate));
-							if (NULL != pLocal)
-							{
-								m_cachedTimeT =
-									g_date_time_to_unix(pLocal);
-								g_date_time_unref(pLocal);
-							}
-						}
+						// treat the fields as local wall clock
+						m_cachedTimeT = g_date_time_to_unix(pGDate);
 					}
 					g_date_time_unref(pGDate);
 				}
