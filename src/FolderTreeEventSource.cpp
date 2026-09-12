@@ -17,3 +17,11 @@ void FolderTreeEventSource::EmitSelectionChangedEvent()
 	m_sigSelectionChanged(n);
 }
 
+void FolderTreeEventSource::EmitBookmarkOpenEvent(const std::list<std::string>& uris, bool bRecursive)
+{
+	FolderTreeEventPtr n( new FolderTreeEvent(shared_from_this()) );
+	n->SetURIs(uris);
+	n->SetRecursive(bRecursive);
+	m_sigSelectionChanged(n);
+}
+

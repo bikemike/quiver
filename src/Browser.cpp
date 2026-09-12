@@ -2472,10 +2472,18 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 
 
 void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(FolderTreeEventPtr event)
-{ (void)event; 
-	list<string> listFolders = parent->m_FolderTreePtr->GetSelectedFolders();
-
+{
 	parent->m_bFolderTreeEvent = true;
+
+	if (event && event->HasBookmarkData())
+	{
+		const std::list<std::string>& uris = event->GetURIs();
+		// landing on the first item mirrors the bookmark menu behavior
+		parent->m_ImageListPtr->UpdateImageListAsync(&uris, event->GetRecursive(), true);
+		return;
+	}
+
+	list<string> listFolders = parent->m_FolderTreePtr->GetSelectedFolders();
 	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders);
 }
 

@@ -5,7 +5,45 @@
 #include "QuiverFile.h"
 #include "Bookmarks.h"
 #include "Preferences.h"
+#include "IFolderTreeEventHandler.h"
 #include "test_helpers.h"
+
+static std::string folder_tree_test_make_temp_dir()
+{
+    char tpl[] = "/tmp/quiver_ftree_test_XXXXXX";
+    char* dir = g_mkdtemp(tpl);
+    REQUIRE(dir != nullptr);
+    return std::string(dir);
+}
+
+static std::string folder_tree_test_path_to_uri(const std::string& path)
+{
+    gchar* uri = g_filename_to_uri(path.c_str(), nullptr, nullptr);
+    REQUIRE(uri != nullptr);
+    std::string str(uri);
+    g_free(uri);
+    return str;
+}
+
+// Records bookmark-open events (with bookmark URIs and recursion flag) that
+// the folder tree emits, mirroring what the browser listens for.
+class FolderTreeTestBookmarkHandler : public IFolderTreeEventHandler
+{
+public:
+    int bookmarkOpens = 0;
+    bool lastRecursive = false;
+    std::list<std::string> lastUris;
+
+    void HandleSelectionChanged(FolderTreeEventPtr event) override
+    {
+        if (event && event->HasBookmarkData())
+        {
+            bookmarkOpens++;
+            lastRecursive = event->GetRecursive();
+            lastUris = event->GetURIs();
+        }
+    }
+};
 
 TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gui]")
 {
@@ -677,4 +715,110 @@ TEST_CASE("Special Folder Icons in FolderTree and QuiverFile", "[unit][foldertre
         g_free(pic_uri);
         g_free(home_uri);
     }
+}
+
+TEST_CASE("FolderTree reveals and checks a plain-path folder argument",
+          "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    // Build a nested temp directory tree the tree must expand to reach.
+    std::string base = folder_tree_test_make_temp_dir();
+    std::string level1 = base + "/level1";
+    std::string level2 = level1 + "/level2";
+    g_mkdir_with_parents(level2.c_str(), 0755);
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), tree->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 600);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Pass the folder the exact way a command line argument arrives: a plain
+    // filesystem path with no file:// scheme. It must still resolve to the
+    // right row (expanding the parents) and become checked.
+    std::list<std::string> sel;
+    sel.push_back(level2);
+    tree->SetSelectedFolders(sel);
+
+    std::list<std::string> res = tree->GetSelectedFolders();
+    REQUIRE(res.size() == 1);
+    REQUIRE(res.front() == folder_tree_test_path_to_uri(level2));
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+}
+
+TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
+          "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    // Two sibling temp folders under a temporary parent; both are reachable
+    // through the Filesystem root and must both get checked.
+    std::string base = folder_tree_test_make_temp_dir();
+    std::string subA = base + "/subA";
+    std::string subB = base + "/subB";
+    g_mkdir_with_parents(subA.c_str(), 0755);
+    g_mkdir_with_parents(subB.c_str(), 0755);
+    std::string uriA = folder_tree_test_path_to_uri(subA);
+    std::string uriB = folder_tree_test_path_to_uri(subB);
+
+    BookmarksPtr bm = Bookmarks::GetInstance();
+    std::list<std::string> uris = { uriA, uriB };
+    Bookmark b("Multi Folder Check Test", "desc", "folder-symbolic", uris, true);
+    REQUIRE(bm->AddBookmark(b));
+    int added_id = bm->GetBookmarks().back().GetID();
+
+    FolderTreePtr tree(new FolderTree());
+    boost::shared_ptr<FolderTreeTestBookmarkHandler> handler(
+        new FolderTreeTestBookmarkHandler());
+    tree->AddEventHandler(boost::static_pointer_cast<IEventHandler>(handler));
+
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), tree->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 600);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Grab the bookmark row's checkbox (bound to the row's DirItem once
+    // the list item is realized).
+    GtkWidget* bm_widget = tree->GetBookmarksWidget();
+    REQUIRE(bm_widget != nullptr);
+    GtkSelectionModel* bm_sel = gtk_list_view_get_model(GTK_LIST_VIEW(bm_widget));
+    REQUIRE(bm_sel != nullptr);
+    REQUIRE(g_list_model_get_n_items(G_LIST_MODEL(bm_sel)) == 1);
+    GObject* item = (GObject*)g_list_model_get_item(G_LIST_MODEL(bm_sel), 0);
+    REQUIRE(item != nullptr);
+    GtkWidget* check = GTK_WIDGET(g_object_get_data(item, "bound-check"));
+    g_object_unref(item);
+    REQUIRE(check != nullptr);
+
+    // Toggling the bookmark checkbox must behave like opening the bookmark:
+    // both folders checked in the tree and a bookmark-open event emitted with
+    // all URIs and the bookmark's recursion flag.
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check), TRUE);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    std::list<std::string> res = tree->GetSelectedFolders();
+    REQUIRE(res.size() == 2);
+    REQUIRE(std::find(res.begin(), res.end(), uriA) != res.end());
+    REQUIRE(std::find(res.begin(), res.end(), uriB) != res.end());
+
+    REQUIRE(handler->bookmarkOpens == 1);
+    REQUIRE(handler->lastRecursive == true);
+    REQUIRE(handler->lastUris.size() == 2);
+    REQUIRE(std::find(handler->lastUris.begin(), handler->lastUris.end(), uriA) != handler->lastUris.end());
+    REQUIRE(std::find(handler->lastUris.begin(), handler->lastUris.end(), uriB) != handler->lastUris.end());
+
+    // Unchecking must clear the bookmark's folders from the tree selection.
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check), FALSE);
+    while (g_main_context_iteration(NULL, FALSE));
+    REQUIRE(tree->GetSelectedFolders().size() == 0);
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+
+    bm->Remove(added_id);
 }

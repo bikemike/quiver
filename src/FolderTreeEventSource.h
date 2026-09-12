@@ -1,6 +1,9 @@
 #ifndef FILE_FOLDER_TREE_EVENT_SOURCE_H
 #define FILE_FOLDER_TREE_EVENT_SOURCE_H
 
+#include <list>
+#include <string>
+
 #include "AbstractEventSource.h"
 #include "FolderTreeEvent.h"
 
@@ -14,6 +17,7 @@ public:
 	void AddEventHandler(IEventHandlerPtr handler);
 
 	void EmitSelectionChangedEvent();
+	void EmitBookmarkOpenEvent(const std::list<std::string>& uris, bool bRecursive);
 private:
 	FolderTreeSignal m_sigSelectionChanged;
 	

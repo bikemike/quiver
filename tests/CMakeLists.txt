@@ -15,6 +15,7 @@ set(UNIT_TEST_SOURCES
     unit/test_bookmarks.cpp
     unit/test_external_tools.cpp
     unit/test_image_list_filter.cpp
+    unit/test_image_list_async.cpp
     unit/test_quiver_file.cpp
     unit/test_pixbuf_utils.cpp
     unit/test_quiver_utils.cpp
