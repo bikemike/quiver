@@ -34,6 +34,10 @@ public:
 
 	std::string GetCurrentFolderChild();
 
+	/* Overlay wrapping the icon view; floating chrome (e.g. the undo-delete
+	 * toast) can be parented on top of the image grid. */
+	GtkWidget *GetIconViewOverlay();
+
 	class BrowserImpl;
 private:
 	boost::shared_ptr<BrowserImpl> m_BrowserImplPtr;

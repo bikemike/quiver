@@ -29,10 +29,17 @@ void ImageListFilter::RebuildIfNeeded() const
 	unsigned int n = m_pSource ? m_pSource->GetSize() : 0;
 	for (unsigned int i = 0 ; i < n ; i++)
 	{
-		if (m_pred(m_pSource->Get(i)))
+		if (m_pred(SourceGet(i)))
 			m_vectMap.push_back(i);
 	}
 	m_bMapValid = true;
+}
+
+QuiverFile ImageListFilter::SourceGet(unsigned int iSourceIdx) const
+{
+	if (!m_pSource || iSourceIdx >= m_pSource->GetSize())
+		return QuiverFile();
+	return m_pSource->Get(iSourceIdx);
 }
 
 bool ImageListFilter::MapPosOfSource(unsigned int iSourceIdx, unsigned int& iPos) const
@@ -69,7 +76,7 @@ int ImageListFilter::ResolveViewIndex() const
 		for (unsigned int v = 0 ; v < n ; v++)
 		{
 			unsigned int iCur = (iStart + v) % n;
-			if (m_szCurrentURI == m_pSource->Get(m_vectMap[iCur]).GetURI())
+			if (m_szCurrentURI == SourceGet(m_vectMap[iCur]).GetURI())
 			{
 				m_iLastEmittedView = (int)iCur;
 				return m_iLastEmittedView;
@@ -89,7 +96,7 @@ int ImageListFilter::ResolveViewIndex() const
 			iPos = 0;
 	}
 
-	m_szCurrentURI = m_pSource->Get(m_vectMap[iPos]).GetURI();
+	m_szCurrentURI = SourceGet(m_vectMap[iPos]).GetURI();
 	m_iLastEmittedView = (int)iPos;
 	return m_iLastEmittedView;
 }
@@ -149,7 +156,7 @@ bool ImageListFilter::SetCurrentIndex(unsigned int iIndex)
 		return false;
 	bool bOk = m_pSource->SetCurrentIndex(m_vectMap[iIndex]);
 	if (bOk)
-		m_szCurrentURI = m_pSource->Get(m_vectMap[iIndex]).GetURI();
+		m_szCurrentURI = SourceGet(m_vectMap[iIndex]).GetURI();
 	return bOk;
 }
 
@@ -158,7 +165,7 @@ QuiverFile ImageListFilter::GetCurrent() const
 	int i = ResolveViewIndex();
 	if (0 > i)
 		return QuiverFile();
-	return m_pSource->Get(m_vectMap[(size_t)i]);
+	return SourceGet(m_vectMap[(size_t)i]);
 }
 
 QuiverFile ImageListFilter::GetNext() const
@@ -194,7 +201,7 @@ QuiverFile ImageListFilter::Get(unsigned int nIndex) const
 	RebuildIfNeeded();
 	if (nIndex >= m_vectMap.size())
 		return QuiverFile();
-	return m_pSource->Get(m_vectMap[nIndex]);
+	return SourceGet(m_vectMap[nIndex]);
 }
 
 void ImageListFilter::Remove(unsigned int nIndex)
@@ -219,10 +226,10 @@ void ImageListFilter::HandleCurrentIndexChanged(ImageListEventPtr event)
 
 	// a selection on a filtered-out item (e.g. a folder clicked in the
 	// browser) must not move this view
-	if (!m_pred(m_pSource->Get(event->GetIndex())))
+	if (!m_pred(SourceGet(event->GetIndex())))
 		return;
 
-	m_szCurrentURI = m_pSource->Get(event->GetIndex()).GetURI();
+	m_szCurrentURI = SourceGet(event->GetIndex()).GetURI();
 	int iNew = ResolveViewIndex();
 
 	if (iNew != iOld)
@@ -235,7 +242,7 @@ void ImageListFilter::HandleCurrentIndexChanged(ImageListEventPtr event)
 
 void ImageListFilter::HandleItemAdded(ImageListEventPtr event)
 {
-	bool bVisible = m_pred(m_pSource->Get(event->GetIndex()));
+	bool bVisible = m_pred(SourceGet(event->GetIndex()));
 	m_bMapValid = false;
 	if (bVisible)
 	{
@@ -265,7 +272,7 @@ void ImageListFilter::HandleItemChanged(ImageListEventPtr event)
 	bool bWasVisible = MapPosOfSource(event->GetIndex(), iOldPos);
 	// a change can alter folder-ness, so the map may be stale too
 	m_bMapValid = false;
-	bool bIsVisible = m_pred(m_pSource->Get(event->GetIndex()));
+	bool bIsVisible = m_pred(SourceGet(event->GetIndex()));
 	if (bWasVisible || bIsVisible)
 	{
 		unsigned int iPos = iOldPos;

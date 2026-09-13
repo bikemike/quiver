@@ -2623,6 +2623,10 @@ void FolderTree::FolderTreeImpl::PopulateShortcutsModel(GListStore *store)
 	}
 	g_free(fallback_videos);
 
+	// Trash (gvfs trash:/// — enumerate works when gvfs is running)
+	g_list_store_append(store,
+		G_OBJECT(dir_item_new("trash:///", "Trash", "user-trash-symbolic", TRUE, order++, 0)));
+
 	return;
 }
 

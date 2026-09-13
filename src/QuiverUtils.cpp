@@ -616,6 +616,55 @@ void ConnectUnmodifiedAccelerators() {
 		return FALSE;
 	}
 
+	bool ConfirmDialog(const char *title, const std::string& message,
+		const char *accept_label, const char *cancel_label)
+	{
+		GtkWidget* dialog = gtk_window_new();
+		gtk_window_set_title(GTK_WINDOW(dialog), title);
+		gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+		gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+		GtkWidget* dlgBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+		GtkWidget* dlgLabel = gtk_label_new(message.c_str());
+		gtk_label_set_wrap(GTK_LABEL(dlgLabel), TRUE);
+		gtk_label_set_xalign(GTK_LABEL(dlgLabel), 0.0);
+		gtk_widget_set_margin_start(dlgLabel, 12);
+		gtk_widget_set_margin_end(dlgLabel, 12);
+		gtk_widget_set_margin_top(dlgLabel, 12);
+		gtk_widget_set_margin_bottom(dlgLabel, 4);
+		GtkWidget* btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+		gtk_widget_set_halign(btnBox, GTK_ALIGN_END);
+		gtk_widget_set_margin_start(btnBox, 12);
+		gtk_widget_set_margin_end(btnBox, 12);
+		gtk_widget_set_margin_bottom(btnBox, 12);
+		gtk_box_append(GTK_BOX(dlgBox), dlgLabel);
+		gtk_box_append(GTK_BOX(dlgBox), btnBox);
+		gtk_window_set_child(GTK_WINDOW(dialog), dlgBox);
+		GtkWidget* btnCancel = gtk_button_new_with_label(cancel_label);
+		GtkWidget* btnAccept = gtk_button_new_with_label(accept_label);
+		gtk_box_append(GTK_BOX(btnBox), btnCancel);
+		gtk_box_append(GTK_BOX(btnBox), btnAccept);
+
+		bool bConfirmed = false;
+		GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+		struct { bool confirmed; GMainLoop *loop; } d = { false, loop };
+		g_signal_connect(btnCancel, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer user_data){
+			auto *d2 = (decltype(&d))user_data;
+			d2->confirmed = false;
+			g_main_loop_quit(d2->loop);
+		}), &d);
+		g_signal_connect(btnAccept, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer user_data){
+			auto *d2 = (decltype(&d))user_data;
+			d2->confirmed = true;
+			g_main_loop_quit(d2->loop);
+		}), &d);
+		gtk_window_present(GTK_WINDOW(dialog));
+		g_main_loop_run(loop);
+		bConfirmed = d.confirmed;
+		g_main_loop_unref(loop);
+		gtk_window_destroy(GTK_WINDOW(dialog));
+		return bConfirmed;
+	}
+
 	static void bg_provider_cleanup(gpointer data)
 	{
 		GtkCssProvider *provider = GTK_CSS_PROVIDER(data);

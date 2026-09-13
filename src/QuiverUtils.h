@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 #include <gio/gio.h>
+#include <string>
 
 namespace QuiverUtils
 {
@@ -42,6 +43,13 @@ namespace QuiverUtils
 	void AddAccelGroup(GtkWindow *window);
 	void DisconnectUnmodifiedAccelerators();         // overload
 	void ConnectUnmodifiedAccelerators();            // overload
+
+	/* Modal "OK / Cancel style" confirmation dialog.  Shows `message` (wrapped)
+	 * with `accept_label` on the accept button.  Returns TRUE when accepted.
+	 * GTK4 has no gtk_dialog_run(), so this runs its own nested GMainLoop.
+	 * Must be called from the GUI thread. */
+	bool ConfirmDialog(const char *title, const std::string& message,
+		const char *accept_label = "OK", const char *cancel_label = "Cancel");
 
 	/* Grab keyboard focus on `widget` so it can receive key events (e.g.
 	 * arrow-key navigation in the browser/icon view and viewer).  GTK4's

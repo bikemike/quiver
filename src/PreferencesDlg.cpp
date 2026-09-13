@@ -33,7 +33,6 @@ public:
 	GtkDropDown*           m_pComboFilmstripPos;
 	GtkDropDown*           m_pComboDefaultViewMode;
 	
-	GtkCheckButton*        m_pToggleAskBeforeDelete;
 	GtkCheckButton*        m_pToggleUseThemeColor;
 	GtkCheckButton*	   m_pToggleSlideShowLoop;
 	GtkCheckButton*	   m_pToggleSlideShowFS;
@@ -253,7 +252,6 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		}
 		
 		
-		m_pToggleAskBeforeDelete = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_ask_before_delete") );
 		m_pToggleStartFS     = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_start_fullscreen") );
 		m_pToggleForceDarkTheme = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_force_dark_theme") );
 		m_pToggleUseThemeColor   = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_general_theme_color") );
@@ -299,7 +297,6 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 			NULL != m_pFCBtnPhotoLibrary &&
 			NULL != m_pComboFilmstripPos && 
 			NULL != m_pComboDefaultViewMode && 
-			NULL != m_pToggleAskBeforeDelete && 
 			NULL != m_pToggleStartFS && 
 			NULL != m_pToggleForceDarkTheme && 
 			NULL != m_pToggleUseThemeColor && 

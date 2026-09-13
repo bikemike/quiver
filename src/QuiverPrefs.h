@@ -28,7 +28,6 @@
 #define QUIVER_PREFS_APP_BG_IMAGEVIEW              "bgcolor_imageview"
 #define QUIVER_PREFS_APP_BG_ICONVIEW               "bgcolor_iconview"
 #define QUIVER_PREFS_APP_PHOTO_LIBRARY             "photo_library"
-#define QUIVER_PREFS_APP_ASK_BEFORE_DELETE         "ask_before_delete"
 #define QUIVER_PREFS_SAVE_ON_NAVIGATE              "save_on_navigate"
 
 // browser preferences

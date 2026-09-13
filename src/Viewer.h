@@ -42,6 +42,9 @@ public:
 	bool IsFilmstripOverlay() const;
 	bool IsHideFilmstripFS() const;
 	GtkWidget *GetFilmstripWidget() const;
+	/* Overlay wrapping the image/video area; floating chrome (e.g. the
+	 * undo-delete toast) can be parented on top of the current image. */
+	GtkWidget *GetOverlay();
 	void ShowFilmstripOverlay();
 	void HideFilmstripOverlay();
 	void CancelFilmstripHide();

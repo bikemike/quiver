@@ -206,6 +206,11 @@ void ShortcutManager::RegisterDefaultActions()
         "Open Preferences dialog",
         {"<Control>p"}, {"<Control>p"}, false
     });
+    m_actions.push_back({
+        "UndoDelete", "File & Window", "Undo Delete",
+        "Restore the most recently deleted item(s) from trash",
+        {"<Control>z"}, {"<Control>z"}, false
+    });
 
     // Browser
     m_actions.push_back({

@@ -70,6 +70,12 @@ protected:
 	int ResolveViewIndex() const; // resolves + refreshes m_iLastEmittedView / m_szCurrentURI
 	bool MapPosOfSource(unsigned int iSourceIdx, unsigned int& iPos) const;
 
+	// Bounds-checked read of the source list.  Defends ResolveViewIndex()
+	// against a stale map (when the source dropped entries without emitting
+	// an ItemRemoved/ContentsChanged event): an out-of-range index yields a
+	// default QuiverFile() instead of tripping ImageList::Get()'s assert.
+	QuiverFile SourceGet(unsigned int iSourceIdx) const;
+
 	void HandleContentsChanged(ImageListEventPtr event);
 	void HandleCurrentIndexChanged(ImageListEventPtr event);
 	void HandleItemAdded(ImageListEventPtr event);

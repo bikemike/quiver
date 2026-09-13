@@ -184,6 +184,8 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 #define ACTION_VIEWER_CUT              "ViewerCut"
 #define ACTION_VIEWER_COPY             "ViewerCopy"
 #define ACTION_VIEWER_TRASH            "ViewerTrash"
+#define ACTION_VIEWER_TRASH_FORCE      "ViewerTrashForce"
+#define ACTION_VIEWER_RESTORE          "ViewerRestore"
 #define ACTION_VIEWER_PREVIOUS         "ImagePrevious"
 #define ACTION_VIEWER_NEXT             "ImageNext"
 #define ACTION_VIEWER_FIRST            "ImageFirst"
@@ -718,6 +720,8 @@ public:
 	GtkDragSource* m_pDragSource = nullptr;
 	GtkDropTarget* m_pDropTarget;
 	GtkWidget* m_pContextMenuPopover;
+	GtkWidget* m_pContextMenuTrashBtn = nullptr;
+	GtkWidget* m_pContextMenuRestoreBtn = nullptr;
 
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline;
@@ -2472,39 +2476,70 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			prefsPtr->SetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW,QuiverUtils::ToggleActionGetActive(g_action_get_name(G_ACTION(action))));
 		}
 	}
-	else if (0 == strcmp(szAction, ACTION_VIEWER_TRASH))
+	else if (0 == strcmp(szAction, ACTION_VIEWER_TRASH)
+			|| 0 == strcmp(szAction, ACTION_VIEWER_TRASH_FORCE))
 	{
-		gint rval = GTK_RESPONSE_YES;
+		bool bForce = (0 == strcmp(szAction, ACTION_VIEWER_TRASH_FORCE));
+
+		if (0 == pViewerImpl->m_ImageListPtr->GetSize())
+		{
+			/* Nothing loaded; pressing Delete with an empty list would crash
+			 * GetCurrent() below. */
+			return;
+		}
 
 		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
 
-/*
-		string strDlgText;
-		strDlgText = "Move the selected image to the trash?";
-		GtkWidget* dialog = gtk_message_dialog_new (NULL,GTK_DIALOG_MODAL,
-								GTK_MESSAGE_QUESTION,GTK_BUTTONS_YES_NO,strDlgText.c_str());
-		rval = gtk_dialog_run(GTK_DIALOG(dialog));
-
-		gtk_widget_destroy(dialog);
-	
-*/
-		switch (rval)
+		if (QuiverFileOps::IsTrashURI(f.GetURI()))
 		{
-			case GTK_RESPONSE_YES:
+			/* Browsing the trash: Delete removes the file permanently.
+			 * Confirm unless the user held Shift. */
+			bool bProceed = bForce;
+			if (!bProceed)
 			{
-				// delete the items!
-				if (QuiverFileOps::MoveToTrash(f))
+				std::string strDlgText = "Permanently delete this item from the trash?";
+				bProceed = QuiverUtils::ConfirmDialog("Delete Permanently?",
+					strDlgText, "Delete Permanently", "Cancel");
+			}
+			if (bProceed)
+			{
+				if (QuiverFileOps::PermanentlyDeleteTrashItem(f))
 				{
 					pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
 					pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex(),true);
 				}
-				break;
 			}
-			case GTK_RESPONSE_NO:
-				//fall through
-			default:
-				// do not delete
-				break;
+		}
+		else
+		{
+			/* Normal folder: move to trash without asking, then allow undo. */
+			if (QuiverFileOps::MoveToTrash(f))
+			{
+				std::list<QuiverFile> trashed;
+				trashed.push_back(f);
+				QuiverFileOps::UndoStackRecord(trashed);
+
+				pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
+				pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex(),true);
+			}
+		}
+	}
+	else if (0 == strcmp(szAction, ACTION_VIEWER_RESTORE))
+	{
+		/* Restore the current item from the trash to its original location. */
+		if (0 == pViewerImpl->m_ImageListPtr->GetSize())
+		{
+			return;
+		}
+
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		if (QuiverFileOps::IsTrashURI(f.GetURI()))
+		{
+			if (QuiverFileOps::RestoreTrashItem(f))
+			{
+				pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
+				pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex(),true);
+			}
 		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_COPY))
@@ -3808,10 +3843,30 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 		item = gtk_button_new_with_label("Move To Trash");
 		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_TRASH);
 		gtk_box_append(GTK_BOX(menu_box), item);
+		pViewerImpl->m_pContextMenuTrashBtn = item;
+
+		item = gtk_button_new_with_label("Restore From Trash");
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_RESTORE);
+		gtk_box_append(GTK_BOX(menu_box), item);
+		pViewerImpl->m_pContextMenuRestoreBtn = item;
+
+		item = gtk_button_new_with_label("Undo Delete");
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver.UndoDelete");
+		gtk_box_append(GTK_BOX(menu_box), item);
 
 		gtk_popover_set_child(GTK_POPOVER(popover), menu_box);
 		pViewerImpl->m_pContextMenuPopover = popover;
 		gtk_widget_set_parent(popover, widget);
+	}
+
+	/* relabel / show-hide menu items depending on the current folder */
+	if (NULL != pViewerImpl->m_pContextMenuTrashBtn)
+	{
+		const bool bTrash = (0 != pViewerImpl->m_ImageListPtr->GetSize())
+			&& QuiverFileOps::IsTrashURI(pViewerImpl->m_ImageListPtr->GetCurrent().GetURI());
+		gtk_button_set_label(GTK_BUTTON(pViewerImpl->m_pContextMenuTrashBtn),
+			bTrash ? "Delete Permanently" : "Move To Trash");
+		gtk_widget_set_visible(pViewerImpl->m_pContextMenuRestoreBtn, bTrash);
 	}
 
 	if (x_root >= 0 && y_root >= 0)
@@ -6084,6 +6139,8 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_CUT, "<Control>X", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_COPY, "<Control>C", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_TRASH, "Delete", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_TRASH_FORCE, "<Shift>Delete", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_RESTORE, "<Control>r", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS, "Left", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS_2, "Page_Up", viewer_action_handler_cb, m_ViewerImplPtr.get());
@@ -6185,6 +6242,11 @@ bool Viewer::IsHideFilmstripFS() const
 GtkWidget *Viewer::GetFilmstripWidget() const
 {
 	return m_ViewerImplPtr->m_pIconView;
+}
+
+GtkWidget *Viewer::GetOverlay()
+{
+	return m_ViewerImplPtr->m_pOverlay;
 }
 
 void Viewer::ShowFilmstripOverlay()

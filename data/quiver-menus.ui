@@ -13,6 +13,10 @@
                                   LoadBookmarks(); never filtered out.
       location="tools"        -> always shown; a live placeholder populated by
                                   LoadExternalTools(); never filtered out.
+      location="recent_deletions" -> always shown; a live placeholder populated by
+                                  QuiverImpl::RebuildRecentDeletionsMenu() from
+                                  QuiverFileOps's trash undo stack; never filtered
+                                  out.
       (no location)           -> shared, shown in both modes and both file types.
 
     Because only the *other* mode needs a switch entry, the "_Browser" item
@@ -199,6 +203,18 @@
       </submenu>
     </section>
 
+    <!-- ============ Recent Deletions (live placeholder) =============== -->
+    <section>
+      <submenu>
+        <attribute name="label">_Recently Deleted</attribute>
+        <attribute name="location">recent_deletions</attribute>
+        <item>
+          <attribute name="label">_Undo Delete</attribute>
+          <attribute name="action">quiver.UndoDelete</attribute>
+        </item>
+      </submenu>
+    </section>
+
     <!-- ============================ About =============================== -->
     <section>
       <item>
@@ -244,6 +260,13 @@
     <item>
       <attribute name="label">External Tools...</attribute>
       <attribute name="action">quiver.ExternalTools</attribute>
+    </item>
+  </menu>
+
+  <menu id="recent_deletions_menu">
+    <item>
+      <attribute name="label">_Undo Delete</attribute>
+      <attribute name="action">quiver.UndoDelete</attribute>
     </item>
   </menu>
 </interface>

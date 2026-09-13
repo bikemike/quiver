@@ -258,7 +258,15 @@ ImageList::Remove(unsigned int iIndex)
 {
 	unsigned int iOldIndex = GetCurrentIndex();	
 
-	m_ImageListImplPtr->RemoveFile(iIndex);
+	// Removing an entry without an ItemRemoved event leaves any
+	// ImageListFilter's lazy view->source map stale: the next ResolveViewIndex()
+	// will query the freed slot and trip ImageList::Get()'s bounds assert.
+	// Emit the removal with the PRE-removal index so the filter can re-anchor
+	// itself before anyone re-reads the list.
+	if (m_ImageListImplPtr->RemoveFile(iIndex))
+	{
+		EmitItemRemovedEvent(iIndex);
+	}
 
 	if (iOldIndex != GetCurrentIndex())
 	{
@@ -557,29 +565,41 @@ static gboolean timeout_path_changed(gpointer user_data)
 		switch (event_type)
 		{
 			case G_FILE_MONITOR_EVENT_DELETED:
-				if (impl->RemoveMonitor(itr->first))
 				{
-					unsigned int iOldSize = impl->m_QuiverFileList.size();
+					// Snapshot the size before touching the lists so every
+					// remove path can decide whether it really changed the
+					// list (and thus must notify observers).  The old code
+					// compared size() to itself and never fired events for
+					// externally deleted files, leaving filters stale.
+					unsigned int iSizeBefore = impl->m_QuiverFileList.size();
 
-					if (iOldSize != impl->m_QuiverFileList.size())
+					if (impl->RemoveMonitor(itr->first))
 					{
-						// FIXME: if this is just a file, we should 
-						// emit an item removed event rather than
-						// a contents changed event
-						bContentsChanged = true;
-					}
-				}
-				else
-				{
-					QuiverFileList::iterator qitr;
-					QuiverFile f(itr->first.c_str());
-					qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
-					int iIndex = qitr - impl->m_QuiverFileList.begin();
-					if (impl->RemoveFile(iIndex))
-					{
-						if (!bContentsChanged)
+						// The watched path itself went away (a file removed
+						// externally, or a whole monitored folder deleted).
+						// RemoveMonitor() erases one or many entries without
+						// emitting events, so use a safe superset event when
+						// the list actually shrank.
+						if (impl->m_QuiverFileList.size() != iSizeBefore)
 						{
-							impl->m_pImageList->EmitItemRemovedEvent(iIndex);
+							bContentsChanged = true;
+						}
+					}
+					else
+					{
+						QuiverFileList::iterator qitr;
+						QuiverFile f(itr->first.c_str());
+						qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
+						if (impl->m_QuiverFileList.end() != qitr)
+						{
+							int iIndex = qitr - impl->m_QuiverFileList.begin();
+							if (impl->RemoveFile(iIndex))
+							{
+								if (!bContentsChanged)
+								{
+									impl->m_pImageList->EmitItemRemovedEvent(iIndex);
+								}
+							}
 						}
 					}
 				}

@@ -295,6 +295,18 @@ public:
 	std::mutex m_mutexFolderPeeks;
 
 	void RequestFolderPeekAsync(QuiverIconView* iconview, gulong cell, const std::string& uri, int target_size);
+
+	/* True when the browser is currently showing the trash folder
+	 * (trash:///).  Delete then permanently removes items instead of moving
+	 * them to trash. */
+	bool IsTrashMode() const;
+
+	/* Context-menu widgets that depend on the current folder (trash vs.
+	 * normal), labelled/hidden in browser_show_context_menu(). */
+	GtkWidget *m_pContextMenuTrashBtn;
+	GtkWidget *m_pContextMenuRestoreBtn;
+	/* Overlay wrapping the icon view (see GetIconViewOverlay()). */
+	GtkWidget *m_pIconViewOverlay;
 	
 /* nested classes */
 	//class ViewerEventHandler;
@@ -397,6 +409,8 @@ static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_BROWSER_PASTE                              "BrowserPaste"
 #define ACTION_BROWSER_SELECT_ALL                         "BrowserSelectAll"
 #define ACTION_BROWSER_TRASH                              "BrowserTrash"
+#define ACTION_BROWSER_TRASH_FORCE                        "BrowserTrashForce"
+#define ACTION_BROWSER_RESTORE                            "BrowserRestore"
 #define ACTION_BROWSER_RELOAD                             "BrowserReload"
 #define ACTION_BROWSER_VIEW_PREVIEW                       "BrowserViewPreview"
 #define ACTION_BROWSER_VIEW_SIDEBAR                       "BrowserViewSidebar"
@@ -510,6 +524,11 @@ Browser::GetWidget()
 {
 	return m_BrowserImplPtr->GetWidget();
 };
+
+GtkWidget* Browser::GetIconViewOverlay()
+{
+	return m_BrowserImplPtr->m_pIconViewOverlay;
+}
 
 
 //=============================================================================
@@ -669,6 +688,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutHideLocationID = 0;
+	m_pContextMenuTrashBtn = NULL;
+	m_pContextMenuRestoreBtn = NULL;
+	m_pIconViewOverlay = NULL;
 	/*
 	 * layout for the browser gui:
 	 * hpaned
@@ -739,6 +761,14 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window),m_pIconView);
 	
+	/* wrap the icon-view scroller in an overlay so floating chrome (i.e. the
+	 * undo-delete toast) can be placed over the top-right of the image grid
+	 * without disturbing the location-entry row above. */
+	m_pIconViewOverlay = gtk_overlay_new();
+	gtk_overlay_set_child(GTK_OVERLAY(m_pIconViewOverlay), scrolled_window);
+	gtk_widget_set_hexpand(m_pIconViewOverlay, TRUE);
+	gtk_widget_set_vexpand(m_pIconViewOverlay, TRUE);
+	
 	hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
 	
@@ -746,10 +776,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	//gtk_box_append (GTK_BOX (hbox), hscale);
 	gtk_widget_set_hexpand(hbox, TRUE);
 	gtk_widget_set_vexpand(vbox, TRUE);
-	gtk_widget_set_hexpand(scrolled_window, TRUE);
-	gtk_widget_set_vexpand(scrolled_window, TRUE);
 	gtk_box_append (GTK_BOX (vbox), hbox);
-	gtk_box_append (GTK_BOX (vbox), scrolled_window);
+	gtk_box_append (GTK_BOX (vbox), m_pIconViewOverlay);
 	gtk_widget_set_vexpand(m_pImageView, TRUE);
 	
 	gtk_paned_set_start_child(GTK_PANED(vpaned),m_pNotebook);
@@ -918,6 +946,18 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
 		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver." ACTION_BROWSER_TRASH);
 		gtk_box_append(GTK_BOX(menu_box), menuitem);
+		m_pContextMenuTrashBtn = menuitem;
+
+		menuitem = gtk_button_new_with_label("Restore From Trash");
+		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver." ACTION_BROWSER_RESTORE);
+		gtk_box_append(GTK_BOX(menu_box), menuitem);
+		m_pContextMenuRestoreBtn = menuitem;
+
+		menuitem = gtk_button_new_with_label("Undo Delete");
+		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
+		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver.UndoDelete");
+		gtk_box_append(GTK_BOX(menu_box), menuitem);
 
 		gtk_popover_set_child(GTK_POPOVER(m_pContextMenuPopover), menu_box);
 	}
@@ -933,6 +973,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
 	m_ThumbnailLoader.SetIconDimensions((guint)thumb_size, (guint)thumb_size);
 
+}
+
+bool Browser::BrowserImpl::IsTrashMode() const
+{
+	list<string> dirs = m_ImageListPtr->GetFolderList();
+	return (1 == dirs.size() && QuiverFileOps::IsTrashURI(dirs.front().c_str()));
 }
 
 Browser::BrowserImpl::~BrowserImpl()
@@ -1073,6 +1119,8 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_PASTE, "<Control>V", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_SELECT_ALL, "<Control>A", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH, "Delete", browser_action_handler_cb, this);
+	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH_FORCE, "<Shift>Delete", browser_action_handler_cb, this);
+	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RESTORE, "r", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RELOAD, "<Control>R", browser_action_handler_cb, this);
 	/* Browser toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_BROWSER_VIEW_SIDEBAR, "<Control><Shift>F", TRUE, browser_action_handler_cb, this);
@@ -2011,6 +2059,11 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 
 	if (NULL != pBrowserImpl->m_pContextMenuPopover)
 	{
+		const bool bTrash = pBrowserImpl->IsTrashMode();
+		gtk_button_set_label(GTK_BUTTON(pBrowserImpl->m_pContextMenuTrashBtn),
+			bTrash ? "Delete Permanently" : "Move To Trash");
+		gtk_widget_set_visible(pBrowserImpl->m_pContextMenuRestoreBtn, bTrash);
+
 		if (x >= 0 && y >= 0)
 		{
 			GdkRectangle rect;
@@ -2064,6 +2117,13 @@ static void browser_imageview_reload(QuiverImageView *imageview,gpointer data)
 	params.state = ImageLoader::LOAD;
 
 	pBrowserImpl->m_ImageLoader.LoadImage(pBrowserImpl->m_ImageListPtr->GetCurrent(),params);
+}
+
+/* Modal "Permanently delete?" confirmation for trash browsing. */
+static bool browser_confirm_permanent_delete(const std::string& strDlgText)
+{
+	return QuiverUtils::ConfirmDialog("Delete Permanently?",
+		strDlgText, "Delete Permanently", "Cancel");
 }
 
 static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data)
@@ -2185,21 +2245,18 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			
 		
 	}
-	else if (0 == strcmp(szAction, ACTION_BROWSER_TRASH))
+	else if (0 == strcmp(szAction, ACTION_BROWSER_TRASH)
+			|| 0 == strcmp(szAction, ACTION_BROWSER_TRASH_FORCE))
 	{
-		gint rval = GTK_RESPONSE_NO;
+		bool bForce = (0 == strcmp(szAction, ACTION_BROWSER_TRASH_FORCE));
+
 		GList *selection;
 		selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
 		set<int> items;
-		if (NULL == selection)
-		{
-			// nothing to delete!
-		}
-		else
+		if (NULL != selection)
 		{
 			// delete the items!
 			GList *sel_itr = selection;
-			
 			while (NULL != sel_itr)
 			{
 				items.insert((uintptr_t)sel_itr->data);
@@ -2208,104 +2265,107 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			g_list_free(selection);
 		}
 
-		if (0 != items.size())
+		if (0 == items.size())
 		{
-			string strDlgText;
-			if (1 == items.size())
-			{
-			strDlgText = "Move the selected image to the trash?";
-			}
-			else
-			{
-			strDlgText = "Move the selected images to the trash?";
-			}
-		GtkWidget* dialog = gtk_window_new();
-		gtk_window_set_title(GTK_WINDOW(dialog), "Confirm");
-		gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
-		gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
-		GtkWidget* dlgBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-		GtkWidget* dlgLabel = gtk_label_new(strDlgText.c_str());
-		gtk_label_set_wrap(GTK_LABEL(dlgLabel), TRUE);
-		gtk_widget_set_margin_start(dlgLabel, 12);
-		gtk_widget_set_margin_end(dlgLabel, 12);
-		gtk_widget_set_margin_top(dlgLabel, 12);
-		gtk_widget_set_margin_bottom(dlgLabel, 4);
-		GtkWidget* btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-		gtk_widget_set_halign(btnBox, GTK_ALIGN_END);
-		gtk_widget_set_margin_start(btnBox, 12);
-		gtk_widget_set_margin_end(btnBox, 12);
-		gtk_widget_set_margin_bottom(btnBox, 12);
-		gtk_box_append(GTK_BOX(dlgBox), dlgLabel);
-		gtk_box_append(GTK_BOX(dlgBox), btnBox);
-		gtk_window_set_child(GTK_WINDOW(dialog), dlgBox);
-		GtkWidget* btnNo = gtk_button_new_with_label("No");
-		GtkWidget* btnYes = gtk_button_new_with_label("Yes");
-		gtk_box_append(GTK_BOX(btnBox), btnNo);
-		gtk_box_append(GTK_BOX(btnBox), btnYes);
-			{
-				GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-				struct { gint resp; GMainLoop *loop; } d = { GTK_RESPONSE_NO, loop };
-				gulong no_handler = g_signal_connect(btnNo, "clicked",
-					G_CALLBACK(+[](GtkWidget*, gpointer user_data) {
-						auto *d2 = (decltype(&d))user_data;
-						d2->resp = GTK_RESPONSE_NO;
-						g_main_loop_quit(d2->loop);
-					}), &d);
-				gulong yes_handler = g_signal_connect(btnYes, "clicked",
-					G_CALLBACK(+[](GtkWidget*, gpointer user_data) {
-						auto *d2 = (decltype(&d))user_data;
-						d2->resp = GTK_RESPONSE_YES;
-						g_main_loop_quit(d2->loop);
-					}), &d);
-				gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
-				gtk_window_present(GTK_WINDOW(dialog));
-				g_main_loop_run(loop);
-				g_signal_handler_disconnect(btnNo, no_handler);
-				g_signal_handler_disconnect(btnYes, yes_handler);
-				rval = d.resp;
-				g_main_loop_unref(loop);
-			}
-			gtk_window_destroy(GTK_WINDOW(dialog));
+			// nothing to delete
 		}
-
-		switch (rval)
+		else if (pBrowserImpl->IsTrashMode())
 		{
-			case GTK_RESPONSE_YES:
+			/* Browsing the trash: Delete removes files for good.  Confirm
+			 * unless the user held Shift (ACTION_BROWSER_TRASH_FORCE). */
+			bool bProceed = bForce;
+			if (!bProceed)
 			{
-				set<int>::reverse_iterator ritr;
-				
+				std::string strDlgText = (1 == items.size())
+					? "Permanently delete this item from the trash?"
+					: "Permanently delete these items from the trash?";
+				bProceed = browser_confirm_permanent_delete(strDlgText);
+			}
+
+			if (bProceed)
+			{
 				pBrowserImpl->m_ImageListPtr->BlockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
-				
-				for (ritr = items.rbegin() ; items.rend() != ritr ; ++ritr)
+				for (set<int>::reverse_iterator ritr = items.rbegin(); items.rend() != ritr; ++ritr)
 				{
-					//printf("delete: %d\n",*ritr);
 					QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[*ritr];
-					
-					
-					
-					if (QuiverFileOps::MoveToTrash(f))
+					if (QuiverFileOps::PermanentlyDeleteTrashItem(f))
 					{
 						pBrowserImpl->m_ImageListPtr->Remove(*ritr);
 					}
-
 				}
-				
-				pBrowserImpl->m_ImageListPtr->UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);	
-				
-				quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView),pBrowserImpl->m_ImageListPtr->GetCurrentIndex());					
-				
+				pBrowserImpl->m_ImageListPtr->UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
+				quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), pBrowserImpl->m_ImageListPtr->GetCurrentIndex());
 				pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
-				break;
 			}
-			case GTK_RESPONSE_NO:
-				//fall through
-			default:
-				// do not delete
-				// cout << "not trashing file : " << endl;//m_QuiverImplPtr->m_ImageListPtr->GetCurrent().GetURI() << endl;
-				break;
 		}
-	
+		else
+		{
+			/* Normal folder: move to trash without asking, then record the
+			 * batch so Ctrl+Z / the undo button can restore it. */
+			std::list<QuiverFile> trashed;
 
+			pBrowserImpl->m_ImageListPtr->BlockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
+
+			for (set<int>::reverse_iterator ritr = items.rbegin(); items.rend() != ritr; ++ritr)
+			{
+				QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[*ritr];
+
+				if (QuiverFileOps::MoveToTrash(f))
+				{
+					trashed.push_back(f);
+					pBrowserImpl->m_ImageListPtr->Remove(*ritr);
+				}
+			}
+
+			pBrowserImpl->m_ImageListPtr->UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
+
+			QuiverFileOps::UndoStackRecord(trashed);
+
+			quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), pBrowserImpl->m_ImageListPtr->GetCurrentIndex());
+
+			pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+		}
+	}
+	else if (0 == strcmp(szAction, ACTION_BROWSER_RESTORE))
+	{
+		if (!pBrowserImpl->IsTrashMode())
+		{
+			/* 'r' in a normal folder is reserved; restore only makes sense
+			 * while browsing the trash. */
+			return;
+		}
+
+		GList *selection;
+		selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+		set<int> items;
+		if (NULL != selection)
+		{
+			GList *sel_itr = selection;
+			while (NULL != sel_itr)
+			{
+				items.insert((uintptr_t)sel_itr->data);
+				sel_itr = g_list_next(sel_itr);
+			}
+			g_list_free(selection);
+		}
+
+		if (0 == items.size())
+		{
+			return;
+		}
+
+		pBrowserImpl->m_ImageListPtr->BlockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
+		for (set<int>::reverse_iterator ritr = items.rbegin(); items.rend() != ritr; ++ritr)
+		{
+			QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[*ritr];
+			if (QuiverFileOps::RestoreTrashItem(f))
+			{
+				pBrowserImpl->m_ImageListPtr->Remove(*ritr);
+			}
+		}
+		pBrowserImpl->m_ImageListPtr->UnblockHandler(pBrowserImpl->m_ImageListEventHandlerPtr);
+		quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), pBrowserImpl->m_ImageListPtr->GetCurrentIndex());
+		pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
 	}
 }
 
@@ -2317,6 +2377,14 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	// get the list of files and folders in the image list
 	list<string> dirs  = parent->m_ImageListPtr->GetFolderList();
 	list<string> files = parent->m_ImageListPtr->GetFileList();
+
+	/* 'r' restores from trash only while browsing the trash; outside of it
+	 * the reader's rotate action owns the plain-r key. */
+	GAction *restoreAction = QuiverUtils::GetAction(ACTION_BROWSER_RESTORE);
+	if (NULL != restoreAction && G_IS_SIMPLE_ACTION(restoreAction))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(restoreAction), parent->IsTrashMode());
+	}
 
 	// add new history event
 	if (!parent->m_bBrowserHistoryEvent)

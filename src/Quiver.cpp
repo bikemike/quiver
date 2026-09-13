@@ -32,6 +32,8 @@ GtkApplication *g_pApp = NULL;
 #include "QuiverPrefs.h"
 #include "PreferencesDlg.h"
 
+#include "QuiverFileOps.h"
+
 #include "SaveImageTask.h"
 #include "AdjustDateDlg.h"
 #include "AdjustDateTask.h"
@@ -118,6 +120,19 @@ public:
 	 * bookmark/tools placeholders).  Returns a new GMenu owned by the caller. */
 	GMenu* FilterMenuModel(GMenuModel *model, const std::set<std::string> &contexts);
 
+	/* Undo-delete support.  The toast and the "Recent Deletions" hamburger
+	 * submenu both mirror QuiverFileOps's trash undo stack; a callback wired
+	 * in CreateUI() keeps them in sync whenever the stack changes. */
+	void RebuildRecentDeletionsMenu();
+	void ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, unsigned int count);
+	void HideTrashToast();
+	void OnUndoDelete();                 // Ctrl+Z / undo button: restore newest batch
+	void OnUndoDeleteAt(unsigned int pos); // menu: restore a specific batch
+	/* Parent the toast into whichever overlay is active for the current mode
+	 * (browser icon view vs. viewer image view). */
+	void ParentUndoToast();
+	static gboolean TrashToastTimeout(gpointer user_data);
+
 // member variables
 	Quiver *m_pQuiver;
 
@@ -147,6 +162,17 @@ public:
 	 * menu model is a filtered clone produced on every mode switch. */
 	GtkBuilder *m_pMenubarBuilder;
 	GMenuModel *m_pAppMenuModel;
+	/* Live "Recent Deletions" menu (see RebuildRecentDeletionsMenu()). */
+	GMenu *m_pRecentDeletionsMenu;
+	/* Undo-delete toast: a floating pill that sits at the top-right of the
+	 * browser icon view (browser mode) or the viewer image view (viewer
+	 * mode).  It is reparented between the two mode overlays. */
+	GtkWidget *m_pUndoToast;
+	GtkWidget *m_pUndoPopupAnchorBrowser; /* Browser::GetIconViewOverlay() */
+	GtkWidget *m_pUndoPopupAnchorViewer;  /* Viewer::GetOverlay() */
+	GtkWidget *m_pUndoLabel;
+	GtkWidget *m_pUndoButton;
+	guint m_iUndoToastTimer;
 	GtkWidget *m_pToolbar;
 	GtkWidget *m_pToolbarSharedBox;
 	GtkWidget *m_pToolbarBrowserBox;
@@ -298,6 +324,13 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pMenubar = NULL;
 	m_pMenuPopover = NULL;
 	m_pMenuZoomRow = NULL;
+	m_pRecentDeletionsMenu = NULL;
+	m_pUndoToast = NULL;
+	m_pUndoPopupAnchorBrowser = NULL;
+	m_pUndoPopupAnchorViewer = NULL;
+	m_pUndoLabel = NULL;
+	m_pUndoButton = NULL;
+	m_iUndoToastTimer = 0;
 	m_pMenuRotateRow = NULL;
 	m_pMenubarBuilder = NULL;
 	m_pAppMenuModel = NULL;
@@ -339,6 +372,26 @@ QuiverImpl::~QuiverImpl()
 	{
 		g_source_remove(m_iTimeoutKeepScreenOn);
 		m_iTimeoutKeepScreenOn = 0;
+	}
+	if (0 != m_iUndoToastTimer)
+	{
+		g_source_remove(m_iUndoToastTimer);
+		m_iUndoToastTimer = 0;
+	}
+	QuiverFileOps::SetTrashUndoChangedCallback(NULL, NULL);
+	QuiverFileOps::UndoStackClear();
+
+	/* Release the toast while its anchor overlays (browser / viewer) are still
+	 * alive: it holds an owned reference (see its creation) that balances the
+	 * g_object_ref_sink() there. */
+	if (NULL != m_pUndoToast)
+	{
+		if (gtk_widget_get_parent(m_pUndoToast) != NULL)
+		{
+			gtk_widget_unparent(m_pUndoToast);
+		}
+		g_object_unref(m_pUndoToast);
+		m_pUndoToast = NULL;
 	}
 
 	m_BookmarksPtr->RemoveEventHandler(m_BookmarksEventHandler);
@@ -451,6 +504,182 @@ void QuiverImpl::LoadExternalTools()
 		g_menu_append_section(m_pExternalToolsMenu, NULL, G_MENU_MODEL(dynSection));
 		g_object_unref(dynSection);
 	}
+}
+
+/* Undo delete: restores the most recent trashed batch (Ctrl+Z); the menu
+ * variant carries a uint32 target selecting which batch to restore. */
+#define ACTION_QUIVER_UNDO_DELETE                            "UndoDelete"
+#define ACTION_QUIVER_UNDO_DELETE_N                          "UndoDeleteN"
+
+//---------------------------------------------------------------------------
+// undo-delete: toast + "Recent Deletions" hamburger submenu
+//---------------------------------------------------------------------------
+
+void QuiverImpl::RebuildRecentDeletionsMenu()
+{
+	if (NULL == m_pRecentDeletionsMenu)
+		return;
+
+	while (g_menu_model_get_n_items(G_MENU_MODEL(m_pRecentDeletionsMenu)) > 0)
+	{
+		g_menu_remove(m_pRecentDeletionsMenu, 0);
+	}
+
+	if (!QuiverFileOps::UndoStackHasItems())
+	{
+		/* Inert placeholder (no action) so the submenu is non-empty. */
+		GMenu *emptySection = g_menu_new();
+		g_menu_append(emptySection, "No recently deleted files", NULL);
+		g_menu_append_section(m_pRecentDeletionsMenu, NULL, G_MENU_MODEL(emptySection));
+		g_object_unref(emptySection);
+		return;
+	}
+
+	GMenu *staticSection = g_menu_new();
+	g_menu_append(staticSection, "_Undo Delete", "quiver." ACTION_QUIVER_UNDO_DELETE);
+	g_menu_append_section(m_pRecentDeletionsMenu, NULL, G_MENU_MODEL(staticSection));
+	g_object_unref(staticSection);
+
+	/* One section per batch, newest first; every entry restores its batch. */
+	const size_t batches = QuiverFileOps::UndoStackSize();
+	const size_t maxShownNames = 3;
+	for (size_t pos = 0; pos < batches; ++pos)
+	{
+		const std::list<QuiverFile>* files = QuiverFileOps::UndoStackAt(pos);
+		if (NULL == files || files->empty())
+			continue;
+
+		GMenu *dynSection = g_menu_new();
+		size_t n = 0;
+		std::list<QuiverFile>::const_iterator itr;
+		for (itr = files->begin(); files->end() != itr && n < maxShownNames; ++itr, ++n)
+		{
+			GMenuItem* item = g_menu_item_new(itr->GetFileName().c_str(),
+				"quiver." ACTION_QUIVER_UNDO_DELETE_N);
+			g_menu_item_set_action_and_target_value(item,
+				"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+				g_variant_new_uint32(pos));
+			g_menu_append_item(dynSection, item);
+			g_object_unref(item);
+		}
+		if (files->size() > maxShownNames)
+		{
+			char szMore[64] = "";
+			g_snprintf(szMore, sizeof(szMore), "… and %zu more file(s)",
+				files->size() - maxShownNames);
+			GMenuItem* more = g_menu_item_new(szMore, "quiver." ACTION_QUIVER_UNDO_DELETE_N);
+			g_menu_item_set_action_and_target_value(more,
+				"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+				g_variant_new_uint32(pos));
+			g_menu_append_item(dynSection, more);
+			g_object_unref(more);
+		}
+		g_menu_append_section(m_pRecentDeletionsMenu, NULL, G_MENU_MODEL(dynSection));
+		g_object_unref(dynSection);
+	}
+}
+
+gboolean QuiverImpl::TrashToastTimeout(gpointer user_data)
+{
+	QuiverImpl* pQuiverImpl = (QuiverImpl*)user_data;
+	pQuiverImpl->m_iUndoToastTimer = 0;
+	pQuiverImpl->HideTrashToast();
+	return FALSE;
+}
+
+void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, unsigned int count)
+{
+	if (NULL == m_pUndoToast)
+		return;
+
+	/* Float over whichever view the user is looking at. */
+	ParentUndoToast();
+
+	gchar szText[128] = "";
+	if (QuiverFileOps::TRASH_UNDO_DELETED == reason)
+	{
+		g_snprintf(szText, sizeof(szText),
+			ngettext("Moved one item to trash", "Moved %u items to trash", count), count);
+	}
+	else
+	{
+		g_snprintf(szText, sizeof(szText),
+			ngettext("Restored one item from trash",
+				"Restored %u items from trash", count), count);
+	}
+	gtk_label_set_text(GTK_LABEL(m_pUndoLabel), szText);
+
+	/* Only a fresh move-to-trash offers an undo button. */
+	gtk_widget_set_visible(m_pUndoButton,
+		(QuiverFileOps::TRASH_UNDO_DELETED == reason));
+
+	if (0 != m_iUndoToastTimer)
+	{
+		g_source_remove(m_iUndoToastTimer);
+		m_iUndoToastTimer = 0;
+	}
+	m_iUndoToastTimer = g_timeout_add(6000, TrashToastTimeout, this);
+	gtk_widget_set_visible(m_pUndoToast, TRUE);
+}
+
+void QuiverImpl::HideTrashToast()
+{
+	if (0 != m_iUndoToastTimer)
+	{
+		g_source_remove(m_iUndoToastTimer);
+		m_iUndoToastTimer = 0;
+	}
+	if (NULL != m_pUndoToast)
+	{
+		gtk_widget_set_visible(m_pUndoToast, FALSE);
+	}
+}
+
+void QuiverImpl::ParentUndoToast()
+{
+	if (NULL == m_pUndoToast)
+		return;
+
+	GtkWidget *anchored = m_bViewerMode ? m_pUndoPopupAnchorViewer
+		: m_pUndoPopupAnchorBrowser;
+	if (NULL == anchored)
+		return;
+
+	if (gtk_widget_get_parent(m_pUndoToast) == anchored)
+		return;
+
+	if (gtk_widget_get_parent(m_pUndoToast) != NULL)
+	{
+		gtk_widget_unparent(m_pUndoToast);
+	}
+	gtk_overlay_add_overlay(GTK_OVERLAY(anchored), m_pUndoToast);
+	/* Keep it pinned to the top-right of the view and out of the way of the
+	 * viewer's bottom media controls. */
+	gtk_widget_set_halign(m_pUndoToast, GTK_ALIGN_END);
+	gtk_widget_set_valign(m_pUndoToast, GTK_ALIGN_START);
+}
+
+void QuiverImpl::OnUndoDelete()
+{
+	if (QuiverFileOps::UndoStackHasItems())
+	{
+		QuiverFileOps::UndoStackPop(); // restore toast via the stack callback
+	}
+}
+
+void QuiverImpl::OnUndoDeleteAt(unsigned int pos)
+{
+	QuiverFileOps::UndoStackRestoreAt(pos);
+}
+
+static void quiver_trash_undo_changed_cb(
+	QuiverFileOps::TrashUndoChangedReason reason,
+	unsigned int count,
+	gpointer user_data)
+{
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)user_data;
+	pQuiverImpl->RebuildRecentDeletionsMenu();
+	pQuiverImpl->ShowTrashToast(reason, count);
 }
 
 void QuiverImpl::Save()
@@ -710,6 +939,8 @@ GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::set<std::string
 				replacement = m_pBookmarkMenu;
 			else if (strcmp(location, "tools") == 0)
 				replacement = m_pExternalToolsMenu;
+			else if (strcmp(location, "recent_deletions") == 0)
+				replacement = m_pRecentDeletionsMenu;
 			else if (contexts.find(location) == contexts.end())
 				bKeep = FALSE;
 		}
@@ -823,6 +1054,10 @@ void QuiverImpl::RebuildMenubar()
 		 * LoadExternalTools(). */
 		m_pBookmarkMenu = G_MENU(gtk_builder_get_object(m_pMenubarBuilder, "bookmark_menu"));
 		m_pExternalToolsMenu = G_MENU(gtk_builder_get_object(m_pMenubarBuilder, "external_tools_menu"));
+
+		/* Live "Recent Deletions" menu (undo stack mirror). */
+		m_pRecentDeletionsMenu = G_MENU(gtk_builder_get_object(m_pMenubarBuilder, "recent_deletions_menu"));
+		RebuildRecentDeletionsMenu();
 	}
 
 	/* Active menu contexts for the current state: "browser", or "viewer" plus
@@ -1413,6 +1648,26 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_TASK_MANAGER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ABOUT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 
+	/* Undo delete (Ctrl+Z): restores the most recent trashed batch. */
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UNDO_DELETE, "<Control>z", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	/* Parameterised variant for the "Recent Deletions" menu: uint32 target =
+	 * undo-stack position (0 = newest) of the batch to restore. */
+	{
+		GSimpleAction *undoN = g_simple_action_new(ACTION_QUIVER_UNDO_DELETE_N, G_VARIANT_TYPE_UINT32);
+		g_signal_connect(undoN, "activate",
+			G_CALLBACK(+[](GSimpleAction*, GVariant *parameter, gpointer user_data) {
+				if (NULL != parameter)
+				{
+					QuiverImpl *p = (QuiverImpl*)user_data;
+					p->OnUndoDeleteAt(g_variant_get_uint32(parameter));
+				}
+			}), m_QuiverImplPtr.get());
+		QuiverUtils::AddAction(G_ACTION(undoN));
+	}
+
+	/* Keep the undo toast + "Recent Deletions" menu in sync with the stack. */
+	QuiverFileOps::SetTrashUndoChangedCallback(quiver_trash_undo_changed_cb, m_QuiverImplPtr.get());
+
 	/* Global toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_QUIVER_FULLSCREEN, "f", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddToggleAction(ACTION_QUIVER_SLIDESHOW, "s", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
@@ -1560,6 +1815,65 @@ void Quiver::Init()
 		gtk_widget_set_visible(statusbar, TRUE);
 	}
 	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_STATUSBAR, prefs_show);
+
+	// undo-delete toast: a floating pill pinned to the top-right of the
+	// browser icon view (browser mode) or the viewer image view (viewer
+	// mode).  It is reparented between the two mode overlays on show / mode
+	// switch (see ParentUndoToast()).
+	{
+		static GtkCssProvider *sCssProvider = NULL;
+		if (NULL == sCssProvider)
+		{
+			sCssProvider = gtk_css_provider_new();
+			gtk_css_provider_load_from_string(sCssProvider,
+				".quiver-undo-toast {"
+				"  background-color: rgba(25, 25, 25, 0.94);"
+				"  border-radius: 10px;"
+				"}"
+				".quiver-undo-toast label { color: #ffffff; }");
+			gtk_style_context_add_provider_for_display(
+				gdk_display_get_default(), GTK_STYLE_PROVIDER(sCssProvider),
+				GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+			/* sCssProvider stays alive for the process lifetime. */
+		}
+	}
+
+	m_QuiverImplPtr->m_pUndoPopupAnchorBrowser = m_QuiverImplPtr->m_BrowserPtr->GetIconViewOverlay();
+	m_QuiverImplPtr->m_pUndoPopupAnchorViewer = m_QuiverImplPtr->m_ViewerPtr->GetOverlay();
+
+	m_QuiverImplPtr->m_pUndoToast = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+	/* The toast is reparented between the browser and viewer overlays
+	 * (ParentUndoToast()); gtk_widget_unparent() drops the parent's reference,
+	 * so hold an application-owned reference to keep the widget alive across
+	 * mode switches and release it in the destructor. */
+	g_object_ref_sink(m_QuiverImplPtr->m_pUndoToast);
+	gtk_widget_add_css_class(m_QuiverImplPtr->m_pUndoToast, "quiver-undo-toast");
+	gtk_widget_set_margin_top(m_QuiverImplPtr->m_pUndoToast, 12);
+	gtk_widget_set_margin_end(m_QuiverImplPtr->m_pUndoToast, 16);
+	gtk_widget_set_margin_start(m_QuiverImplPtr->m_pUndoToast, 12);
+	gtk_widget_set_visible(m_QuiverImplPtr->m_pUndoToast, FALSE);
+
+	m_QuiverImplPtr->m_pUndoLabel = gtk_label_new("");
+	gtk_widget_set_margin_top(m_QuiverImplPtr->m_pUndoLabel, 6);
+	gtk_widget_set_margin_bottom(m_QuiverImplPtr->m_pUndoLabel, 6);
+	gtk_widget_set_margin_start(m_QuiverImplPtr->m_pUndoLabel, 10);
+	gtk_widget_set_margin_end(m_QuiverImplPtr->m_pUndoLabel, 10);
+	gtk_box_append(GTK_BOX(m_QuiverImplPtr->m_pUndoToast), m_QuiverImplPtr->m_pUndoLabel);
+
+	m_QuiverImplPtr->m_pUndoButton = gtk_button_new_with_label("Undo");
+	/* GTK4 dropped GtkWidget button action hooks; forward the click manually. */
+	g_signal_connect(m_QuiverImplPtr->m_pUndoButton, "clicked",
+		G_CALLBACK(+[](GtkButton*, gpointer) {
+			g_action_group_activate_action(
+				G_ACTION_GROUP(QuiverUtils::GetActionGroup()), ACTION_QUIVER_UNDO_DELETE, NULL);
+		}), NULL);
+	gtk_widget_set_margin_top(m_QuiverImplPtr->m_pUndoButton, 4);
+	gtk_widget_set_margin_bottom(m_QuiverImplPtr->m_pUndoButton, 4);
+	gtk_widget_set_margin_end(m_QuiverImplPtr->m_pUndoButton, 6);
+	gtk_box_append(GTK_BOX(m_QuiverImplPtr->m_pUndoToast), m_QuiverImplPtr->m_pUndoButton);
+
+	/* Start anchored over the browser icon view (the initial mode). */
+	m_QuiverImplPtr->ParentUndoToast();
 
 	// menubar / hamburger menu button
 	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW, true);
@@ -2231,6 +2545,12 @@ void Quiver::ShowViewer()
 	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), false);
 	m_QuiverImplPtr->RebuildMenubar();
 
+	// keep a visible undo toast floating over the image view
+	if (gtk_widget_get_visible(m_QuiverImplPtr->m_pUndoToast))
+	{
+		m_QuiverImplPtr->ParentUndoToast();
+	}
+
 	// Naked space/arrow navigation shortcuts are only active in the viewer.
 	QuiverImpl::SetViewerNavigationAccelerators(true);
 
@@ -2246,6 +2566,12 @@ void Quiver::ShowBrowser()
 	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), false);
 	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), true);
 	m_QuiverImplPtr->RebuildMenubar();
+
+	// keep a visible undo toast floating over the icon view
+	if (gtk_widget_get_visible(m_QuiverImplPtr->m_pUndoToast))
+	{
+		m_QuiverImplPtr->ParentUndoToast();
+	}
 
 	// Naked space should not advance images while the browser (folder tree,
 	// image list) is visible - it is instead used for the folder tree
@@ -2787,6 +3113,10 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	else if (0 == strcmp(szAction, ACTION_QUIVER_ABOUT))
 	{
 		pQuiver->OnAbout();
+	}
+	else if (0 == strcmp(szAction, ACTION_QUIVER_UNDO_DELETE))
+	{
+		pQuiverImpl->OnUndoDelete();
 	}
 	else if (0 == strcmp(szAction,ACTION_QUIVER_SLIDESHOW))
 	{
