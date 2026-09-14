@@ -8,6 +8,9 @@
 #include <cstring>
 #include <vector>
 #include <utility>
+#include <algorithm>
+#include <thread>
+#include <semaphore>
 #include <zlib.h>
 #include "QuiverUtils.h"
 
@@ -79,6 +82,265 @@ static bool is_file_too_large(GFile *file, GCancellable *cancellable = NULL)
 }
 
 // -------------------------------------------------------------------------
+// Decode Concurrency Limiter
+// -------------------------------------------------------------------------
+// The underlying image libraries (libjxl / libheif / gdk-pixbuf loaders)
+// spin up a per-decode worker pool sized to the CPU count, so each full-image
+// decode can momentarily spawn nproc threads. A folder of thumbnails being
+// generated plus the viewer load can otherwise saturate every core, which
+// starves the UI thread and makes the app feel locked up. Cap how many
+// full-image decodes run at once; this also serializes concurrent glycin
+// loads of the same file, which are not safe against each other.
+namespace
+{
+    std::counting_semaphore<64> g_decode_slots(std::clamp<unsigned int>(
+        (std::max(1u, std::thread::hardware_concurrency()) + 1u) / 2u, 1u, 8u));
+
+    class DecodeSlotGuard
+    {
+    public:
+        DecodeSlotGuard() { g_decode_slots.acquire(); }
+        ~DecodeSlotGuard() { g_decode_slots.release(); }
+        DecodeSlotGuard(const DecodeSlotGuard&) = delete;
+        DecodeSlotGuard& operator=(const DecodeSlotGuard&) = delete;
+    };
+} // namespace
+
+// -------------------------------------------------------------------------
+// Fast Decode-Free Dimension Probing
+// -------------------------------------------------------------------------
+// Reading Width/Height for the common raster formats must not require a full
+// image decode. GNOME thumbnail files embed the source dimensions in their
+// text metadata (handled in QuiverFile); the formats handled here let us
+// answer GetDimensions() from a few dozen bytes of the file header. Anything
+// that is not recognized simply falls through to the configured decode
+// backend, so behavior is unchanged for exotic formats (HEIF/AVIF/etc.).
+namespace
+{
+    static bool read_file_prefix(GFile *file, std::vector<uint8_t> &buf, size_t max_bytes = 262144)
+    {
+        GInputStream *in = G_INPUT_STREAM(g_file_read(file, NULL, NULL));
+        if (!in)
+            return false;
+        buf.resize(max_bytes);
+        gssize total = 0;
+        while (total < (gssize)max_bytes)
+        {
+            gssize n = g_input_stream_read(in, buf.data() + total,
+                                           max_bytes - (size_t)total, NULL, NULL);
+            if (n <= 0)
+                break;
+            total += n;
+        }
+        buf.resize((size_t)total);
+        g_object_unref(in);
+        return total > 0;
+    }
+
+    static uint16_t rd16be(const uint8_t *p)
+    {
+        return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
+    }
+
+    static uint32_t rd32be(const uint8_t *p)
+    {
+        return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+               ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+    }
+
+    static uint16_t rd16le(const uint8_t *p)
+    {
+        return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+    }
+
+    static uint32_t rd32le(const uint8_t *p)
+    {
+        return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+               ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+    }
+
+    static bool fast_header_dimensions_png(const std::vector<uint8_t> &b, int *w, int *h)
+    {
+        static const uint8_t sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+        if (b.size() < 24)
+            return false;
+        if (memcmp(b.data(), sig, 8) != 0)
+            return false;
+        if (b[12] != 'I' || b[13] != 'H' || b[14] != 'D' || b[15] != 'R')
+            return false;
+        *w = (int)rd32be(b.data() + 16);
+        *h = (int)rd32be(b.data() + 20);
+        return *w > 0 && *h > 0;
+    }
+
+    static bool fast_header_dimensions_gif(const std::vector<uint8_t> &b, int *w, int *h)
+    {
+        if (b.size() < 10)
+            return false;
+        if (memcmp(b.data(), "GIF87a", 6) != 0 && memcmp(b.data(), "GIF89a", 6) != 0)
+            return false;
+        *w = (int)rd16le(b.data() + 6);
+        *h = (int)rd16le(b.data() + 8);
+        return *w > 0 && *h > 0;
+    }
+
+    static bool fast_header_dimensions_bmp(const std::vector<uint8_t> &b, int *w, int *h)
+    {
+        if (b.size() < 26)
+            return false;
+        if (b[0] != 'B' || b[1] != 'M')
+            return false;
+        uint32_t width = rd32le(b.data() + 18);
+        uint32_t height = rd32le(b.data() + 22);
+        if (height & 0x80000000u) // top-down bitmap: height stored as a signed negative
+            height = (uint32_t)(-(int32_t)height);
+        if (width == 0 || height == 0 || width > 100000 || height > 100000)
+            return false;
+        *w = (int)width;
+        *h = (int)height;
+        return true;
+    }
+
+    static bool fast_header_dimensions_jpeg(const std::vector<uint8_t> &b, int *w, int *h)
+    {
+        if (b.size() < 4 || b[0] != 0xFF || b[1] != 0xD8)
+            return false;
+        size_t off = 2;
+        while (off + 4 <= b.size())
+        {
+            if (b[off] != 0xFF)
+            {
+                ++off;
+                continue;
+            }
+            uint8_t marker = b[off + 1];
+            if (marker == 0xFF)
+            {
+                ++off;
+                continue;
+            }
+            if (marker == 0xD8 || marker == 0x01)
+            {
+                off += 2;
+                continue;
+            }
+            // SOF0..SOF15 (start of frame): [len(2)] [prec(1)] [height(2)] [width(2)]
+            if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 &&
+                marker != 0xC8 && marker != 0xCC)
+            {
+                if (off + 9 > b.size())
+                    return false;
+                *h = (int)rd16be(b.data() + off + 5);
+                *w = (int)rd16be(b.data() + off + 7);
+                return *w > 0 && *h > 0;
+            }
+            // standalone markers without a length payload
+            if (marker >= 0xD0 && marker <= 0xD9)
+            {
+                off += 2;
+                continue;
+            }
+            if (off + 4 > b.size())
+                return false;
+            uint16_t seglen = rd16be(b.data() + off + 2);
+            if (seglen < 2)
+                return false;
+            off += 2u + seglen;
+        }
+        return false;
+    }
+
+    static bool fast_header_dimensions_webp(const std::vector<uint8_t> &b, int *w, int *h)
+    {
+        if (b.size() < 30)
+            return false;
+        if (memcmp(b.data(), "RIFF", 4) != 0 || memcmp(b.data() + 8, "WEBP", 4) != 0)
+            return false;
+        if (memcmp(b.data() + 12, "VP8X", 4) == 0)
+        {
+            if (b.size() < 30)
+                return false;
+            *w = 1 + (int)((uint32_t)b[24] | ((uint32_t)b[25] << 8) | ((uint32_t)b[26] << 16));
+            *h = 1 + (int)((uint32_t)b[27] | ((uint32_t)b[28] << 8) | ((uint32_t)b[29] << 16));
+            return *w > 0 && *h > 0;
+        }
+        if (memcmp(b.data() + 12, "VP8 ", 4) == 0)
+        {
+            if (b.size() < 30)
+                return false;
+            *w = (int)rd16le(b.data() + 26) & 0x3FFF;
+            *h = (int)rd16le(b.data() + 28) & 0x3FFF;
+            return *w > 0 && *h > 0;
+        }
+        if (memcmp(b.data() + 12, "VP8L", 4) == 0)
+        {
+            if (b.size() < 25)
+                return false;
+            uint32_t bits = rd32le(b.data() + 21);
+            *w = (int)((bits & 0x3FFFu) + 1u);
+            *h = (int)(((bits >> 14) & 0x3FFFu) + 1u);
+            return *w > 0 && *h > 0;
+        }
+        return false;
+    }
+
+    static bool fast_header_dimensions_tiff(const std::vector<uint8_t> &b, int *w, int *h)
+    {
+        if (b.size() < 8)
+            return false;
+        const bool le = (b[0] == 'I' && b[1] == 'I');
+        const bool be = (b[0] == 'M' && b[1] == 'M');
+        if (!le && !be)
+            return false;
+        uint16_t magic = le ? rd16le(b.data() + 2) : rd16be(b.data() + 2);
+        if (magic != 42)
+            return false;
+        uint32_t ifd = le ? rd32le(b.data() + 4) : rd32be(b.data() + 4);
+        if (ifd + 2 > b.size())
+            return false;
+        uint16_t count = le ? rd16le(b.data() + ifd) : rd16be(b.data() + ifd);
+        uint32_t wd = 0, ht = 0;
+        for (uint16_t i = 0; i < count; ++i)
+        {
+            size_t e = ifd + 2 + (size_t)i * 12;
+            if (e + 12 > b.size())
+                return false;
+            uint16_t tag = le ? rd16le(b.data() + e) : rd16be(b.data() + e);
+            uint16_t type = le ? rd16le(b.data() + e + 2) : rd16be(b.data() + e + 2);
+            uint32_t n = le ? rd32le(b.data() + e + 4) : rd32be(b.data() + e + 4);
+            uint32_t val = 0;
+            if (type == 3 && n == 1) // SHORT
+                val = le ? rd16le(b.data() + e + 8) : rd16be(b.data() + e + 8);
+            else if (type == 4 && n == 1) // LONG
+                val = le ? rd32le(b.data() + e + 8) : rd32be(b.data() + e + 8);
+            else
+                continue;
+            if (tag == 256)
+                wd = val;
+            else if (tag == 257)
+                ht = val;
+        }
+        if (wd > 0 && ht > 0)
+        {
+            *w = (int)wd;
+            *h = (int)ht;
+            return true;
+        }
+        return false;
+    }
+
+    static bool fast_header_dimensions(const std::vector<uint8_t> &b, int *w, int *h)
+    {
+        return fast_header_dimensions_png(b, w, h) ||
+               fast_header_dimensions_jpeg(b, w, h) ||
+               fast_header_dimensions_gif(b, w, h) ||
+               fast_header_dimensions_bmp(b, w, h) ||
+               fast_header_dimensions_webp(b, w, h) ||
+               fast_header_dimensions_tiff(b, w, h);
+    }
+} // namespace
+
+// -------------------------------------------------------------------------
 // Fast Dimension Probing
 // -------------------------------------------------------------------------
 
@@ -92,6 +354,19 @@ bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, 
 
     if (is_video_mimetype(mimetype) || is_file_too_large(file))
         return false;
+
+    // decode-free header probing for the common raster formats
+    std::vector<uint8_t> prefix;
+    if (read_file_prefix(file, prefix))
+    {
+        int fw = -1, fh = -1;
+        if (fast_header_dimensions(prefix, &fw, &fh))
+        {
+            *width = fw;
+            *height = fh;
+            return true;
+        }
+    }
 
 #if HAVE_GLYCIN
     if (s_backend != ImageDecoderBackend::PIXBUF)
@@ -122,6 +397,8 @@ bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, 
 #if HAVE_GLYCIN
 bool ImageDecoder::GlycinGetDimensions(GFile *file, int *width, int *height)
 {
+    DecodeSlotGuard slot;
+
     GlyLoader *loader = gly_loader_new(file);
     if (!loader)
         return false;
@@ -366,6 +643,8 @@ GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
 #if HAVE_GLYCIN && HAVE_GDK_PIXBUF
 GdkPixbuf* ImageDecoder::GlycinDecodeFilePixbuf(GFile *file, GCancellable *cancellable, GError **error)
 {
+    DecodeSlotGuard slot;
+
     GlyLoader *loader = gly_loader_new(file);
     if (!loader)
         return NULL;
@@ -395,6 +674,8 @@ GdkPixbuf* ImageDecoder::GlycinDecodeFilePixbuf(GFile *file, GCancellable *cance
 
 GdkTexture* ImageDecoder::GlycinDecodeFileTexture(GFile *file, GCancellable *cancellable, GError **error)
 {
+    DecodeSlotGuard slot;
+
     GlyLoader *loader = gly_loader_new(file);
     if (!loader)
         return NULL;
@@ -594,6 +875,8 @@ GdkTexture* ImageDecoder::DecodeBytesTexture(GBytes *bytes, const char *mimetype
 #if HAVE_GLYCIN && HAVE_GDK_PIXBUF
 GdkPixbuf* ImageDecoder::GlycinDecodeBytesPixbuf(GBytes *bytes, GCancellable *cancellable, GError **error)
 {
+    DecodeSlotGuard slot;
+
     GlyLoader *loader = gly_loader_new_for_bytes(bytes);
     if (!loader)
         return NULL;
@@ -623,6 +906,8 @@ GdkPixbuf* ImageDecoder::GlycinDecodeBytesPixbuf(GBytes *bytes, GCancellable *ca
 
 GdkTexture* ImageDecoder::GlycinDecodeBytesTexture(GBytes *bytes, GCancellable *cancellable, GError **error)
 {
+    DecodeSlotGuard slot;
+
     GlyLoader *loader = gly_loader_new_for_bytes(bytes);
     if (!loader)
         return NULL;

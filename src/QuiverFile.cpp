@@ -222,6 +222,8 @@ public:
  	
  	std::shared_ptr<Exiv2::ExifData> m_ExifData;
  	std::shared_ptr<Exiv2::ExifData> m_ExifDataOriginal;
+
+ 	std::recursive_mutex m_MetadataMutex;
  	
 	IptcData* m_pIPTCData;
 	DBData* m_pDBData;
@@ -462,6 +464,8 @@ QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 
 GdkTexture * QuiverFile::QuiverFileImpl::GetExifThumbnailTexture()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
 	GdkTexture *thumb_texture = NULL;
 
 	if (IsVideo())
@@ -770,15 +774,30 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 				GdkTexture *video_tex = QuiverVideoOps::LoadTexture(m_szURI, &n, &d, -1, size, size, abort_fn, abort_data);
 				if (NULL != video_tex)
 				{
+					/* The texture is already pixel-aspect corrected by the grab,
+					 * so its size is the display size. */
 					guint tex_width = gdk_texture_get_width(video_tex);
 					guint tex_height = gdk_texture_get_height(video_tex);
-					if (n > d)
-						tex_width = (guint)((tex_width * n) / float(d) + .5);
-					else
-						tex_height = (guint)((tex_height * d) / float(n) + .5);
 
-					m_iWidth = tex_width;
-					m_iHeight = tex_height;
+					/* Cache the TRUE display dimensions, not the downscaled
+					 * thumb-bound size, so "actual size" rendering shows the
+					 * real frame size. */
+					gint vw = 0, vh = 0;
+					gint pn = 1, pd = 1; /* probe reports coded dims + PAR */
+					if (QuiverVideoOps::Probe(m_szURI, NULL, &vw, &vh, &pn, &pd) && vw > 0 && vh > 0)
+					{
+						if (pn > pd)
+							vw = (gint)((vw * pn) / double(pd) + .5);
+						else
+							vh = (gint)((vh * pd) / double(pn) + .5);
+					}
+					else
+					{
+						vw = (gint)tex_width;
+						vh = (gint)tex_height;
+					}
+					m_iWidth = vw;
+					m_iHeight = vh;
 
 					if (tex_width > (guint)size || tex_height > (guint)size)
 					{
@@ -936,6 +955,8 @@ void QuiverFile::QuiverFileImpl::SaveThumbnail(GdkPixbuf* pixbuf, const char* ur
 
 void QuiverFile::QuiverFileImpl::Reload()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
 	std::string strURI = m_szURI;
 	
 	if (NULL != m_pGFileInfo)
@@ -967,6 +988,8 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 	std::call_once(s_exiv2_init, []() {
 		Exiv2::LogMsg::setLevel(Exiv2::LogMsg::mute);
 	});
+
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 
 	if (NULL != m_szURI && !( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
 	{
@@ -1009,6 +1032,8 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 
 std::shared_ptr<Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifData()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
 	LoadExifData();
 	return m_ExifData;
 }
@@ -1115,6 +1140,8 @@ static bool FileNameHasCameraPrefix(const gchar* szURI)
 
 time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
 	if (m_cachedTimeT != 0)
 		return m_cachedTimeT;
 
@@ -1303,6 +1330,8 @@ static bool ExifDataEqual(const Exiv2::ExifData& a, const Exiv2::ExifData& b)
 
 bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
 	bool bSet = false;
 	bool bModified = false;
 
@@ -1456,6 +1485,8 @@ int QuiverFile::QuiverFileImpl::GetHeight()
 
 int QuiverFile::QuiverFileImpl::GetOrientation()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
 	if (IsVideo())
 	{
 		return 1;

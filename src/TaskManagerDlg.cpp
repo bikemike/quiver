@@ -46,7 +46,9 @@ public:
 			TaskProgressGUI* pParent = (TaskProgressGUI*)data;
 			gtk_widget_set_sensitive(pParent->m_btnCancel, TRUE);
 			gtk_button_set_icon_name(GTK_BUTTON(pParent->m_btnCancel), "edit-clear");
+			gtk_widget_set_tooltip_text(pParent->m_btnCancel, "Clear finished task");
 			gtk_widget_set_sensitive(pParent->m_btnPause, FALSE);
+			gtk_widget_set_visible(pParent->m_btnPause, FALSE);
 			gtk_widget_set_sensitive(pParent->m_labelDetails, TRUE);
 			gtk_widget_set_sensitive(pParent->m_labelProgDetails, TRUE);
 			gtk_widget_set_sensitive(pParent->m_pbarProgress, TRUE);
@@ -187,6 +189,7 @@ class TaskHandler :
 
 			m_btnPause    = gtk_button_new();
 			gtk_button_set_icon_name(GTK_BUTTON(m_btnPause), "media-pause");
+			gtk_widget_set_tooltip_text(m_btnPause, "Pause task");
 
 			if (!taskPtr->CanPause())
 			{
@@ -195,6 +198,7 @@ class TaskHandler :
 
 			m_btnCancel    = gtk_button_new();
 			gtk_button_set_icon_name(GTK_BUTTON(m_btnCancel), "process-stop");
+			gtk_widget_set_tooltip_text(m_btnCancel, "Cancel task");
 
 			if (!taskPtr->CanCancel())
 			{
@@ -344,11 +348,13 @@ class TaskHandler :
 					pGUI->m_TaskPtr->Pause();
 
 					gtk_button_set_icon_name(GTK_BUTTON(button), "media-play");
+					gtk_widget_set_tooltip_text(GTK_WIDGET(button), "Resume task");
 				}
 				else
 				{
 					pGUI->m_TaskPtr->Resume();
 					gtk_button_set_icon_name(GTK_BUTTON(button), "media-pause");
+					gtk_widget_set_tooltip_text(GTK_WIDGET(button), "Pause task");
 				}
 			}
 			else if (GTK_BUTTON(pGUI->m_btnCancel) == button)

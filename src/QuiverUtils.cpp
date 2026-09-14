@@ -665,6 +665,76 @@ void ConnectUnmodifiedAccelerators() {
 		return bConfirmed;
 	}
 
+	/* Modal single-line text prompt (for renaming files/folders).  Returns a
+	 * g_malloc'd string owned by the caller, or NULL when cancelled. */
+	char* PromptForString(const char *title, const char *prompt, const char *initial)
+	{
+		GtkWidget* dialog = gtk_window_new();
+		gtk_window_set_title(GTK_WINDOW(dialog), title);
+		gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+		gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+		GtkWidget* dlgBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+		GtkWidget* dlgLabel = gtk_label_new(prompt);
+		gtk_label_set_xalign(GTK_LABEL(dlgLabel), 0.0);
+		gtk_widget_set_margin_start(dlgLabel, 12);
+		gtk_widget_set_margin_end(dlgLabel, 12);
+		gtk_widget_set_margin_top(dlgLabel, 12);
+		gtk_widget_set_margin_bottom(dlgLabel, 4);
+		GtkWidget* entry = gtk_entry_new();
+		gtk_widget_set_hexpand(entry, TRUE);
+		gtk_editable_set_text(GTK_EDITABLE(entry), initial ? initial : "");
+		gtk_widget_set_margin_start(entry, 12);
+		gtk_widget_set_margin_end(entry, 12);
+		GtkWidget* btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+		gtk_widget_set_halign(btnBox, GTK_ALIGN_END);
+		gtk_widget_set_margin_start(btnBox, 12);
+		gtk_widget_set_margin_end(btnBox, 12);
+		gtk_widget_set_margin_bottom(btnBox, 12);
+		gtk_widget_set_margin_top(btnBox, 4);
+		gtk_box_append(GTK_BOX(dlgBox), dlgLabel);
+		gtk_box_append(GTK_BOX(dlgBox), entry);
+		gtk_box_append(GTK_BOX(dlgBox), btnBox);
+		gtk_window_set_child(GTK_WINDOW(dialog), dlgBox);
+		GtkWidget* btnCancel = gtk_button_new_with_label("Cancel");
+		GtkWidget* btnAccept = gtk_button_new_with_label("Rename");
+		gtk_widget_add_css_class(btnAccept, "suggested-action");
+		gtk_box_append(GTK_BOX(btnBox), btnCancel);
+		gtk_box_append(GTK_BOX(btnBox), btnAccept);
+
+		GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+		const int PROMPT_ACCEPTED = 1, PROMPT_CANCELLED = 2;
+		int result = 0;
+
+		struct { GMainLoop *loop; int *result; } d = { loop, &result };
+
+		auto accept_clicked = +[](GtkWidget*, gpointer user_data) {
+			auto *d2 = (decltype(&d))user_data;
+			*d2->result = PROMPT_ACCEPTED;
+			g_main_loop_quit(d2->loop);
+		};
+		auto cancel_clicked = +[](GtkWidget*, gpointer user_data) {
+			auto *d2 = (decltype(&d))user_data;
+			*d2->result = PROMPT_CANCELLED;
+			g_main_loop_quit(d2->loop);
+		};
+		g_signal_connect(btnCancel, "clicked", G_CALLBACK(cancel_clicked), &d);
+		g_signal_connect(btnAccept, "clicked", G_CALLBACK(accept_clicked), &d);
+		/* Enter in the entry behaves like pressing the Rename button. */
+		g_signal_connect(entry, "activate", G_CALLBACK(accept_clicked), &d);
+		gtk_window_present(GTK_WINDOW(dialog));
+		g_main_loop_run(loop);
+		gchar *answer = NULL;
+		if (PROMPT_ACCEPTED == result)
+		{
+			const char *text = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(entry)));
+			if (text != NULL && text[0] != '\0')
+				answer = g_strdup(text);
+		}
+		g_main_loop_unref(loop);
+		gtk_window_destroy(GTK_WINDOW(dialog));
+		return answer;
+	}
+
 	static void bg_provider_cleanup(gpointer data)
 	{
 		GtkCssProvider *provider = GTK_CSS_PROVIDER(data);
@@ -897,6 +967,169 @@ void ConnectUnmodifiedAccelerators() {
 		}
 
 		return NULL;
+	}
+
+	/*---------------------------------------------------------------------
+	 * context-menu helpers
+	 *---------------------------------------------------------------------
+	 *
+	 * These replace hand-built popovers full of GtkButtons with real menus.
+	 * A context menu must:
+	 *  - open exactly at the pointer (any coordinate space -- coordinates are
+	 *    translated into the popover's parent widget),
+	 *  - move to the new spot when the user right-clicks somewhere else
+	 *    (so press-to-dismiss grab mechanics are switched off and a capture
+	 *    controller dismisses the menu instead),
+	 *  - dismiss on any outside press / Escape.
+	 */
+
+	/* The single currently-open context menu (recreated on every show).  The
+	 * root-level dismiss controller below closes whatever is active. */
+	static GtkPopover *s_active_popover = NULL;
+
+	static void menu_dismiss_popover(void)
+	{
+		if (s_active_popover && gtk_widget_get_visible(GTK_WIDGET(s_active_popover)))
+		{
+			gtk_popover_popdown(s_active_popover);
+		}
+	}
+
+	static gboolean menu_dismiss_cb(GtkEventController *controller, GdkEvent *ev, gpointer user_data)
+	{
+		(void)controller;
+		(void)user_data;
+		GdkEventType t = gdk_event_get_event_type(ev);
+		if (t == GDK_BUTTON_PRESS)
+		{
+			/* A right-click is handled by the widget under the cursor (it may
+			 * move or dismiss the menu itself); the capture controller only
+			 * dismisses on other buttons and on Escape. */
+			if (gdk_button_event_get_button(ev) != 3)
+				menu_dismiss_popover();
+		}
+		else if (t == GDK_TOUCH_BEGIN)
+		{
+			menu_dismiss_popover();
+		}
+		else if (t == GDK_KEY_PRESS)
+		{
+			guint keyval = gdk_key_event_get_keyval(ev);
+			if (GDK_KEY_Escape == keyval)
+			{
+				menu_dismiss_popover();
+			}
+		}
+		return GDK_EVENT_PROPAGATE;
+	}
+
+	static void wire_menu_dismissal(GtkPopover *popover)
+	{
+		(void)popover;
+		GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(popover));
+		if (root == NULL || !GTK_IS_WINDOW(root))
+			return;
+		if (g_object_get_data(G_OBJECT(root), "quiver-menu-dismiss-wired"))
+			return;
+		g_object_set_data(G_OBJECT(root), "quiver-menu-dismiss-wired", GINT_TO_POINTER(1));
+
+		GtkEventController *legacy = gtk_event_controller_legacy_new();
+		gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(legacy), GTK_PHASE_CAPTURE);
+		g_signal_connect(legacy, "event", G_CALLBACK(menu_dismiss_cb), NULL);
+		gtk_widget_add_controller(GTK_WIDGET(root), GTK_EVENT_CONTROLLER(legacy));
+	}
+
+	void ShowContextMenuAt(GtkPopover *popover, GtkWidget *anchor_widget, gdouble x, gdouble y)
+	{
+		if (NULL == popover)
+			return;
+
+		GtkWidget *parent_widget = gtk_widget_get_parent(GTK_WIDGET(popover));
+
+		wire_menu_dismissal(popover);
+
+		if (x >= 0 && y >= 0)
+		{
+			GdkRectangle rect;
+			rect.width = 1;
+			rect.height = 1;
+			rect.x = (int)x;
+			rect.y = (int)y;
+
+			/* The pointing-to rect uses the popover parent's coordinate space;
+			 * the press reports coordinates in the anchor widget's space. */
+			if (anchor_widget != NULL && parent_widget != NULL && anchor_widget != parent_widget)
+			{
+				graphene_point_t in = GRAPHENE_POINT_INIT((float)x, (float)y);
+				graphene_point_t out;
+				if (gtk_widget_compute_point(anchor_widget, parent_widget, &in, &out))
+				{
+					rect.x = (int)out.x;
+					rect.y = (int)out.y;
+				}
+			}
+			gtk_popover_set_pointing_to(popover, &rect);
+		}
+
+		gtk_popover_popup(popover);
+
+		/* A GtkPopoverMenu inserts its section separators from an idle
+		 * callback, so the very first present sizes the surface slightly
+		 * smaller than the finished menu; the menu then ends up with a
+		 * spurious vertical scrollbar.  Re-present once on an idle that runs
+		 * after GTK's own separator sync so the surface is resized to the
+		 * menu's full natural height. */
+		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+			+[](gpointer d) -> gboolean {
+			GtkPopover *p = GTK_POPOVER(d);
+			if (gtk_widget_get_visible(GTK_WIDGET(p)) &&
+			    gtk_widget_get_parent(GTK_WIDGET(p)) != NULL)
+			{
+				gtk_widget_queue_resize(GTK_WIDGET(p));
+				gtk_popover_present(p);
+			}
+			g_object_unref(p);
+			return G_SOURCE_REMOVE;
+		}, g_object_ref(popover), NULL);
+	}
+
+	void MenuAppendAction(GMenu *menu, const char *label, const char *action_name, const char *accel)
+	{
+		GMenuItem *item = g_menu_item_new(label, action_name);
+		if (accel != NULL && accel[0] != '\0')
+		{
+			g_menu_item_set_attribute(item, "accel", "s", accel);
+		}
+		g_menu_append_item(menu, item);
+		g_object_unref(item);
+	}
+
+	void MenuAppendItem(GMenu *menu, GMenuItem *item)
+	{
+		g_menu_append_item(menu, item);
+	}
+
+	/* Title row for the top of a context menu: the file name on the first
+	 * line (bold) and its folder on the second (dimmed, wrapped). */
+	GtkWidget* MakeMenuTitleLabel(const char *name, const char *location)
+	{
+		gchar *esc_name = g_markup_escape_text(name ? name : "", -1);
+		gchar *esc_loc  = g_markup_escape_text(location ? location : "", -1);
+		gchar *markup = g_strdup_printf("<b>%s</b>\n%s", esc_name, esc_loc);
+		GtkWidget *label = gtk_label_new(NULL);
+		gtk_label_set_markup(GTK_LABEL(label), markup);
+		gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+		gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+		gtk_widget_set_halign(label, GTK_ALIGN_FILL);
+		gtk_widget_set_margin_top(label, 6);
+		gtk_widget_set_margin_bottom(label, 2);
+		gtk_widget_set_margin_start(label, 10);
+		gtk_widget_set_margin_end(label, 10);
+		gtk_widget_add_css_class(label, "dim-label");
+		g_free(markup);
+		g_free(esc_loc);
+		g_free(esc_name);
+		return label;
 	}
 
 }

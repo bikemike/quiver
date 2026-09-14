@@ -332,6 +332,23 @@ bool ImageLoader::LoadQuickPreview()
 			int width = m_Command.quiverFile.GetWidth();
 			int height = m_Command.quiverFile.GetHeight();
 			
+			// Videos may have m_iWidth/m_iHeight cached from thumbnail
+			// generation at a downscaled bound size (e.g. 256x144) rather
+			// than the real frame dimensions.  Probe the true dimensions so
+			// that the quick-preview thumbnail can be rendered at the video's
+			// actual size.
+			bool bVideo = m_Command.quiverFile.IsVideo();
+			if (bVideo)
+			{
+				gint vw = 0, vh = 0;
+				if (QuiverVideoOps::Probe(m_Command.quiverFile.GetURI(), NULL, &vw, &vh, NULL, NULL)
+					&& vw > 0 && vh > 0)
+				{
+					width = vw;
+					height = vh;
+				}
+			}
+			
 			if (4 < m_iLoadOrientation)
 			{
 				swap(width,height);
@@ -349,6 +366,23 @@ bool ImageLoader::LoadQuickPreview()
 				{
 					g_object_unref(thumb_tex);
 					thumb_tex = tex_rotated;
+				}
+			}
+
+			// For videos the quick-preview thumbnail is a small frame grab;
+			// scale it up to the video's real dimensions so that it fills the
+			// frame even in "actual size" mode, where the image view renders
+			// the texture at its native pixel size until the full-res grab lands.
+			if (bVideo
+				&& width > 0 && height > 0
+				&& (gint)gdk_texture_get_width(thumb_tex) < width
+				&& (gint)gdk_texture_get_height(thumb_tex) < height)
+			{
+				GdkTexture* tex_scaled = QuiverUtils::ScaleTexture(thumb_tex, width, height);
+				if (NULL != tex_scaled)
+				{
+					g_object_unref(thumb_tex);
+					thumb_tex = tex_scaled;
 				}
 			}
 			
@@ -430,8 +464,14 @@ void ImageLoader::Load()
 		
 		if ( NULL == texture)
 		{
-			if (0 != strcmp(m_Command.quiverFile.GetURI(),"") && !m_ImageCache.HasFailed(m_Command.quiverFile.GetURI()))
+			/* A session-level failure stamp for a *transient* decode miss must
+			 * not permanently brick a file: always attempt a real decode for
+			 * a user-visible LOAD and clear the stamp on success.  The stamp
+			 * still guards the background cache preloads against re-decoding
+			 * genuinely broken files. */
+			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
+				bool bLoadWasFailed = m_ImageCache.HasFailed(m_Command.quiverFile.GetURI());
 				bool bLoadedQuickPreview = LoadQuickPreview();
 				bool bAborted = false;
 				bool bGlycinTransformed = false;
@@ -447,18 +487,37 @@ void ImageLoader::Load()
 						bAborted = true;
 					if (NULL != texture)
 					{
+						/* The grab is already pixel-aspect corrected, so its
+						 * size is the display size. */
 						guint tex_width  = gdk_texture_get_width(texture);
 						guint tex_height = gdk_texture_get_height(texture);
 
-						if (n > d)
-							tex_width = (guint)((tex_width * n) / float(d) + .5);
-						else
-							tex_height = (guint)((tex_height * d) / float(n) + .5);
-
-						if (!m_Command.quiverFile.IsWidthHeightSet())
+						/* Store the TRUE frame dimensions so the "actual size"
+						 * view renders the real display size.  Only correct a
+						 * value when it disagrees with what this decode knows;
+						 * leave thumbnail-metadata dimensions alone when they
+						 * already match. */
+						gint vw = 0, vh = 0;
+						gint pn = 1, pd = 1; /* probe reports coded dims + PAR */
+						if (QuiverVideoOps::Probe(m_Command.quiverFile.GetURI(), NULL, &vw, &vh, &pn, &pd) && vw > 0 && vh > 0)
 						{
-							m_Command.quiverFile.SetWidth(tex_width);
-							m_Command.quiverFile.SetHeight(tex_height);
+							if (pn > pd)
+								vw = (gint)((vw * pn) / double(pd) + .5);
+							else
+								vh = (gint)((vh * pd) / double(pn) + .5);
+						}
+						else
+						{
+							vw = (gint)tex_width;
+							vh = (gint)tex_height;
+						}
+						if (vw > 0 && vh > 0
+							&& (!m_Command.quiverFile.IsWidthHeightSet()
+								|| vw != m_Command.quiverFile.GetWidth()
+								|| vh != m_Command.quiverFile.GetHeight()))
+						{
+							m_Command.quiverFile.SetWidth(vw);
+							m_Command.quiverFile.SetHeight(vh);
 						}
 
 						m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
@@ -483,13 +542,31 @@ void ImageLoader::Load()
 							}
 
 							Timer loadTimer;
-							texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, NULL);
+							GError *pDecodeError = NULL;
+							texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, &pDecodeError);
 							if (NULL != texture)
 							{
+								if (NULL != pDecodeError)
+								{
+									g_error_free(pDecodeError);
+									pDecodeError = NULL;
+								}
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
 								bGlycinTransformed = (g_object_get_data(G_OBJECT(texture), "glycin-transformed") != NULL);
 							}
 							g_object_unref(gfile);
+							if (NULL == texture && NULL != pDecodeError)
+							{
+								g_warning("ImageLoader: could not decode %s: %s",
+									m_Command.quiverFile.GetURI(), pDecodeError->message);
+								g_error_free(pDecodeError);
+								/* The user has already navigated elsewhere while this
+								 * in-flight (non-cancellable) decode was running; treat
+								 * the failure as superseded so it neither poisons the
+								 * failure cache nor paints the error label. */
+								if (CommandsPending())
+									bAborted = true;
+							}
 						}
 					}
 
@@ -572,11 +649,18 @@ void ImageLoader::Load()
 					g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pOrientation,g_free);
 
 					m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(),texture);
+					if (bLoadWasFailed)
+					{
+						m_ImageCache.RemoveFailure(m_Command.quiverFile.GetURI());
+					}
 					g_object_unref(texture);
 				}
 				else
 				{
-					if (!bAborted)
+					/* Only a real failure of the *current* command may poison the
+					 * failure cache or paint the error label; a failure for a load
+					 * that has since been superseded is discarded. */
+					if (!bAborted && !CommandsPending())
 					{
 						m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
 						list<IPixbufLoaderObserver*>::iterator itr;
@@ -697,11 +781,23 @@ void ImageLoader::Load()
 							}
 
 							Timer loadTimer;
-							cache_texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, NULL);
+							GError *pDecodeError = NULL;
+							cache_texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, &pDecodeError);
 							if (NULL != cache_texture)
 							{
+								if (NULL != pDecodeError)
+								{
+									g_error_free(pDecodeError);
+									pDecodeError = NULL;
+								}
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
 								bGlycinTransformed = (g_object_get_data(G_OBJECT(cache_texture), "glycin-transformed") != NULL);
+							}
+							if (NULL == cache_texture && NULL != pDecodeError)
+							{
+								g_warning("ImageLoader: could not decode %s: %s",
+									m_Command.quiverFile.GetURI(), pDecodeError->message);
+								g_error_free(pDecodeError);
 							}
 							g_object_unref(gfile);
 						}
@@ -790,10 +886,13 @@ void ImageLoader::Load()
 				}
 				else
 				{
-					if (!bAborted)
+					if (!bAborted && !CommandsPending())
 					{
 						m_ImageCache.AddFailure(m_Command.quiverFile.GetURI());
-						if (CACHE_LOAD == m_Command.params.state || LOAD == m_Command.params.state)
+						/* Only a LOAD of the current file paints the error label;
+						 * a background cache preload failure must not blame the
+						 * image the user is actually looking at. */
+						if (LOAD == m_Command.params.state)
 						{
 							list<IPixbufLoaderObserver*>::iterator itr;
 							g_mutex_lock(&m_csObservers);

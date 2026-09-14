@@ -143,6 +143,7 @@ static void signal_drag_end(GtkDragSource *source, GdkDrag *drag, gpointer user_
 static void attach_viewer_input_controllers(GtkWidget *widget, gpointer user_data)
 {
 	GtkGesture *click = gtk_gesture_click_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 0);
 	g_signal_connect(click, "pressed", G_CALLBACK(viewer_button_press_cb), user_data);
 	g_signal_connect(click, "released", G_CALLBACK(viewer_button_release_cb), user_data);
 	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(click));
@@ -183,6 +184,7 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 
 #define ACTION_VIEWER_CUT              "ViewerCut"
 #define ACTION_VIEWER_COPY             "ViewerCopy"
+#define ACTION_VIEWER_RENAME           "ViewerRename"
 #define ACTION_VIEWER_TRASH            "ViewerTrash"
 #define ACTION_VIEWER_TRASH_FORCE      "ViewerTrashForce"
 #define ACTION_VIEWER_RESTORE          "ViewerRestore"
@@ -722,6 +724,7 @@ public:
 	GtkWidget* m_pContextMenuPopover;
 	GtkWidget* m_pContextMenuTrashBtn = nullptr;
 	GtkWidget* m_pContextMenuRestoreBtn = nullptr;
+	GtkWidget* m_pContextMenuInfoLabel = nullptr;
 
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline;
@@ -2553,6 +2556,63 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			gdk_clipboard_set_text (clipboard, strPath.c_str());
 		}		
 	}
+	else if (0 == strcmp(szAction, ACTION_VIEWER_RENAME))
+	{
+		if (0 == pViewerImpl->m_ImageListPtr->GetSize())
+			return;
+
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		char *old_name = g_path_get_basename(f.GetURI());
+		char *new_name = QuiverUtils::PromptForString(
+			"Rename", "Enter the new name for this item:", old_name);
+
+		if (NULL == new_name)
+		{
+			g_free(old_name);
+			return;
+		}
+
+		GFile *src = g_file_new_for_uri(f.GetURI());
+		GFile *parent = g_file_get_parent(src);
+		GFile *dst = g_file_get_child(parent, new_name);
+		GError *error = NULL;
+		gboolean ok = g_file_move(src, dst, G_FILE_COPY_NONE, NULL, NULL, NULL, &error);
+		if (!ok)
+		{
+			QuiverUtils::ConfirmDialog("Rename failed",
+				error && error->message ? error->message
+					: "The item could not be renamed.",
+				"OK", "Close");
+			if (error)
+				g_error_free(error);
+		}
+		else
+		{
+			/* Point the list at the new file without leaving the current
+			 * position. */
+			char *new_uri = g_file_get_uri(dst);
+			ImageList* real = dynamic_cast<ImageList*>(pViewerImpl->m_ImageListPtr.get());
+			if (NULL != real)
+			{
+				real->Reload();
+				real->SetCurrentFile(new_uri);
+				/* Re-seat the view on the renamed item: SetCurrentFile only
+				 * fires a change event when the rename also shifted the
+				 * item's index, so drive the filmstrip/icon view directly
+				 * to stay on the item under its new name. */
+				guint idx = real->GetCurrentIndex();
+				pViewerImpl->SetImageIndex(idx, true);
+				quiver_icon_view_set_cursor_cell(
+					QUIVER_ICON_VIEW(pViewerImpl->m_pIconView), idx);
+			}
+			g_free(new_uri);
+		}
+		g_object_unref(dst);
+		g_object_unref(parent);
+		g_object_unref(src);
+		g_free(new_name);
+		g_free(old_name);
+	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ROTATE_FOR_BEST_FIT))
 	{
 		if (pViewerImpl->m_ImageListPtr->GetSize())
@@ -3809,72 +3869,158 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 	}
 }
 
+static void viewer_menu_item(GMenu *menu, const char *label, const char *action_name,
+	const char *accel, const char *item_id)
+{
+	GMenuItem *item = g_menu_item_new(label, action_name);
+	if (accel != NULL && accel[0] != '\0')
+		g_menu_item_set_attribute(item, "accel", "s", accel);
+	if (item_id != NULL && item_id[0] != '\0')
+		g_menu_item_set_attribute(item, "id", "s", item_id);
+	g_menu_append_item(menu, item);
+	g_object_unref(item);
+}
+
+/* Undo Delete is only offered when some item in the undo stack was moved to
+ * trash while the current image list was on screen, i.e. it came from the
+ * same folder as the file being viewed. */
+static bool viewer_undo_applies_to_current_list(Viewer::ViewerImpl *impl)
+{
+	if (!QuiverFileOps::UndoStackHasItems())
+		return false;
+	if (0 == impl->m_ImageListPtr->GetSize())
+		return false;
+
+	QuiverFile cur = impl->m_ImageListPtr->GetCurrent();
+	GFile *file = g_file_new_for_uri(cur.GetURI());
+	GFile *parent = g_file_get_parent(file);
+	char *folder_uri = (NULL != parent) ? g_file_get_uri(parent) : NULL;
+	if (NULL != parent)
+		g_object_unref(parent);
+	g_object_unref(file);
+	if (NULL == folder_uri)
+		return false;
+
+	bool found = false;
+	const size_t batches = QuiverFileOps::UndoStackSize();
+	for (size_t pos = 0; pos < batches && !found; ++pos)
+	{
+		const std::list<QuiverFile>* batch = QuiverFileOps::UndoStackAt(pos);
+		if (NULL == batch)
+			continue;
+		for (std::list<QuiverFile>::const_iterator it = batch->begin();
+			batch->end() != it && !found; ++it)
+		{
+			GFile *f2 = g_file_new_for_uri(it->GetURI());
+			GFile *p2 = g_file_get_parent(f2);
+			if (NULL != p2)
+			{
+				char *pu = g_file_get_uri(p2);
+				found = (NULL != pu && 0 == g_strcmp0(pu, folder_uri));
+				g_free(pu);
+				g_object_unref(p2);
+			}
+			g_object_unref(f2);
+		}
+	}
+	g_free(folder_uri);
+	return found;
+}
+
 static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble y_root, guint32 /*time*/, gpointer userdata)
 {
-	(void)userdata;
-
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)userdata;
 
 	if (NULL == pViewerImpl->m_pContextMenuPopover)
 	{
-		GtkWidget *popover = gtk_popover_new();
-		GtkWidget *menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+		GMenu *menu = g_menu_new();
+		GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+		g_object_unref(menu);
 
 		gtk_widget_insert_action_group(popover, "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
 
-		GtkWidget *item = gtk_button_new_with_label("Copy");
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_COPY);
-		gtk_box_append(GTK_BOX(menu_box), item);
+		/* Trash title row: the original name + location of the shown item. */
+		pViewerImpl->m_pContextMenuInfoLabel = QuiverUtils::MakeMenuTitleLabel("", "");
+		gtk_widget_set_visible(pViewerImpl->m_pContextMenuInfoLabel, FALSE);
+		gtk_popover_menu_add_child(GTK_POPOVER_MENU(popover),
+			pViewerImpl->m_pContextMenuInfoLabel, "viewer-trash-title");
 
-		GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-		gtk_box_append(GTK_BOX(menu_box), sep);
-
-		item = gtk_button_new_with_label("Rotate Counterclockwise");
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_ROTATE_CCW);
-		gtk_box_append(GTK_BOX(menu_box), item);
-
-		item = gtk_button_new_with_label("Rotate Clockwise");
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_ROTATE_CW);
-		gtk_box_append(GTK_BOX(menu_box), item);
-
-		sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-		gtk_box_append(GTK_BOX(menu_box), sep);
-
-		item = gtk_button_new_with_label("Move To Trash");
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_TRASH);
-		gtk_box_append(GTK_BOX(menu_box), item);
-		pViewerImpl->m_pContextMenuTrashBtn = item;
-
-		item = gtk_button_new_with_label("Restore From Trash");
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver." ACTION_VIEWER_RESTORE);
-		gtk_box_append(GTK_BOX(menu_box), item);
-		pViewerImpl->m_pContextMenuRestoreBtn = item;
-
-		item = gtk_button_new_with_label("Undo Delete");
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(item), "quiver.UndoDelete");
-		gtk_box_append(GTK_BOX(menu_box), item);
-
-		gtk_popover_set_child(GTK_POPOVER(popover), menu_box);
 		pViewerImpl->m_pContextMenuPopover = popover;
 		gtk_widget_set_parent(popover, widget);
 	}
 
-	/* relabel / show-hide menu items depending on the current folder */
-	if (NULL != pViewerImpl->m_pContextMenuTrashBtn)
+	const bool bTrash = (0 != pViewerImpl->m_ImageListPtr->GetSize())
+		&& QuiverFileOps::IsTrashURI(pViewerImpl->m_ImageListPtr->GetCurrent().GetURI());
+
+	/* Trash title row: file name + original location of the shown item. */
+	bool bShowTitle = false;
+	if (bTrash && 0 != pViewerImpl->m_ImageListPtr->GetSize())
 	{
-		const bool bTrash = (0 != pViewerImpl->m_ImageListPtr->GetSize())
-			&& QuiverFileOps::IsTrashURI(pViewerImpl->m_ImageListPtr->GetCurrent().GetURI());
-		gtk_button_set_label(GTK_BUTTON(pViewerImpl->m_pContextMenuTrashBtn),
-			bTrash ? "Delete Permanently" : "Move To Trash");
-		gtk_widget_set_visible(pViewerImpl->m_pContextMenuRestoreBtn, bTrash);
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		char *orig = QuiverFileOps::GetTrashItemOrigPath(f.GetURI());
+		if (NULL != orig)
+		{
+			char *name = g_path_get_basename(orig);
+			char *dir  = g_path_get_dirname(orig);
+			gchar *markup = g_markup_escape_text(name ? name : orig, -1);
+			gtk_label_set_markup(
+				GTK_LABEL(pViewerImpl->m_pContextMenuInfoLabel), markup);
+			g_free(markup);
+			g_free(dir);
+			g_free(name);
+			g_free(orig);
+			bShowTitle = true;
+		}
+	}
+	gtk_widget_set_visible(pViewerImpl->m_pContextMenuInfoLabel, bShowTitle);
+	const char *title_id = bShowTitle ? "viewer-trash-title" : NULL;
+
+	/* Rebuild the model: items depend on trash vs. normal browsing. */
+	GMenu *menu = g_menu_new();
+	if (bTrash)
+	{
+		viewer_menu_item(menu, "Copy", "quiver." ACTION_VIEWER_COPY,
+			"<Control>c", title_id);
+		GMenu *trash_section = g_menu_new();
+		viewer_menu_item(trash_section, "Delete Permanently", "quiver." ACTION_VIEWER_TRASH,
+			"Delete", NULL);
+		viewer_menu_item(trash_section, "Restore From Trash", "quiver." ACTION_VIEWER_RESTORE,
+			NULL, NULL);
+		if (viewer_undo_applies_to_current_list(pViewerImpl) &&
+			NULL != QuiverUtils::GetAction("UndoDelete"))
+			viewer_menu_item(trash_section, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL);
+		g_menu_append_section(menu, NULL, G_MENU_MODEL(trash_section));
+		g_object_unref(trash_section);
+	}
+	else
+	{
+		viewer_menu_item(menu, "Copy", "quiver." ACTION_VIEWER_COPY,
+			"<Control>c", title_id);
+		viewer_menu_item(menu, "Rename", "quiver." ACTION_VIEWER_RENAME,
+			"F2", NULL);
+		GMenu *rotate_section = g_menu_new();
+		viewer_menu_item(rotate_section, "Rotate Counterclockwise",
+			"quiver." ACTION_VIEWER_ROTATE_CCW, "<Shift>r", NULL);
+		viewer_menu_item(rotate_section, "Rotate Clockwise",
+			"quiver." ACTION_VIEWER_ROTATE_CW, "r", NULL);
+		g_menu_append_section(menu, NULL, G_MENU_MODEL(rotate_section));
+		g_object_unref(rotate_section);
+		GMenu *trash_section = g_menu_new();
+		viewer_menu_item(trash_section, "Move To Trash", "quiver." ACTION_VIEWER_TRASH,
+			"Delete", NULL);
+		if (viewer_undo_applies_to_current_list(pViewerImpl) &&
+			NULL != QuiverUtils::GetAction("UndoDelete"))
+			viewer_menu_item(trash_section, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL);
+		g_menu_append_section(menu, NULL, G_MENU_MODEL(trash_section));
+		g_object_unref(trash_section);
 	}
 
-	if (x_root >= 0 && y_root >= 0)
-	{
-		GdkRectangle rect = { (gint)x_root, (gint)y_root, 1, 1 };
-		gtk_popover_set_pointing_to(GTK_POPOVER(pViewerImpl->m_pContextMenuPopover), &rect);
-	}
-	gtk_popover_popup(GTK_POPOVER(pViewerImpl->m_pContextMenuPopover));
+	gtk_popover_menu_set_menu_model(
+		GTK_POPOVER_MENU(pViewerImpl->m_pContextMenuPopover), G_MENU_MODEL(menu));
+	g_object_unref(menu);
+
+	QuiverUtils::ShowContextMenuAt(
+		GTK_POPOVER(pViewerImpl->m_pContextMenuPopover), widget, x_root, y_root);
 }
 
 
@@ -5689,6 +5835,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	//popup menu stuff: GTK4 gesture controllers on the image view
 	{
 		GtkGesture *click = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 0);
 		g_signal_connect(click, "pressed", G_CALLBACK(viewer_button_press_cb), this);
 		g_signal_connect(click, "released", G_CALLBACK(viewer_button_release_cb), this);
 		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(click));
@@ -6138,9 +6285,10 @@ void Viewer::RegisterActions()
 	/* Viewer simple actions */
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_CUT, "<Control>X", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_COPY, "<Control>C", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_RENAME, "F2", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_TRASH, "Delete", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_TRASH_FORCE, "<Shift>Delete", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_RESTORE, "<Control>r", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_RESTORE, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS, "Left", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS_2, "Page_Up", viewer_action_handler_cb, m_ViewerImplPtr.get());

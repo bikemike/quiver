@@ -440,7 +440,7 @@
   <object class="GtkWindow" id="RenameDialog">
     <property name="title" translatable="1">Rename</property>
     <property name="default-width">560</property>
-    <property name="default-height">520</property>
+    <property name="default-height">620</property>
     <child>
       <object class="GtkBox" id="dialog-vbox12">
         <property name="orientation">vertical</property>

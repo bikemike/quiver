@@ -57,6 +57,16 @@ public:
 	                            FileConflictCheck::ProgressFn fnProgress = NULL,
 	                            gpointer pUserData = NULL);
 
+	// folder-less twin of the above for an explicit file list: maps each
+	// file onto a new name in its own directory, exactly as Run() renames
+	// a batch supplied through AddFile()/AddFiles().
+	static bool         ComputeMappings(const std::vector<QuiverFile>& vectFiles,
+	                            std::string strTemplate,
+	                            std::vector<FileConflictCheck::Mapping>& vectMappings,
+	                            GCancellable* pCancellable = NULL,
+	                            FileConflictCheck::ProgressFn fnProgress = NULL,
+	                            gpointer pUserData = NULL);
+
 	class PrivateImpl;
 	typedef boost::shared_ptr<PrivateImpl> PrivateImplPtr;
 protected:
@@ -69,6 +79,7 @@ private:
 
 	unsigned int      m_iCurrentFile;
 	std::vector<QuiverFile> m_vectQuiverFiles;
+	bool              m_bHasExplicitFiles;
 
 	std::string       m_strSrcDirURI;
 	std::string       m_strTemplate;

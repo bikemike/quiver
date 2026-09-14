@@ -13,11 +13,40 @@
 #include "FolderTree.h"
 #include "QuiverStockIcons.h"
 #include "QuiverUtils.h"
+#include "QuiverFileOps.h"
 #include "Bookmarks.h"
 #include "IBookmarksEventHandler.h"
 
 #define QUIVER_TREE_COLUMN_TOGGLE      "column_toggle"
 #define QUIVER_FOLDER_TREE_ROOT_NAME   "Filesystem"
+
+/* Which "paste" entry the context menu shows for a right-click, if any:
+ *   PASTE_NONE         -- row is not a directory (e.g. a file bookmark) or
+ *                         the menu was summoned with no usable target
+ *   PASTE_BARE         -- click in the list's empty area: plain "Paste" into
+ *                         the focused folder
+ *   PASTE_INTO_FOLDER  -- click on a directory row: "Paste Into Folder"
+ */
+enum class TreePasteMode {
+	PASTE_NONE = 0,
+	PASTE_BARE,
+	PASTE_INTO_FOLDER,
+};
+
+/* True when the uri points at a real directory (file transfer targets only
+ * make sense for such items).  Non-file schemes (trash, GVFS objects ...) are
+ * never treated as directories here. */
+static bool folder_tree_uri_is_directory(const char *uri)
+{
+	if (NULL == uri)
+		return false;
+	gchar *path = g_filename_from_uri(uri, NULL, NULL);
+	if (NULL == path)
+		return false;
+	bool is_dir = g_file_test(path, G_FILE_TEST_IS_DIR) ? true : false;
+	g_free(path);
+	return is_dir;
+}
 
 // row item type for the folder tree column view
 typedef struct {
@@ -154,12 +183,11 @@ static std::string folder_tree_normalize_uri(const gchar* arg)
 }
 
 // prototype
-static void view_onButtonPressed (GtkGestureClick *gesture, int n_press, double x, double y, gpointer userdata);
-static void view_onButtonReleased (GtkGestureClick *gesture, int n_press, double x, double y, gpointer userdata);
+static gboolean view_capture_button_press (GtkEventController *controller, GdkEvent *event, gpointer userdata);
 static gboolean view_on_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata);
-static void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y, gpointer userdata);
-static void signal_check_selected (GtkWidget *menuitem, gpointer userdata);
-static void signal_uncheck_selected (GtkWidget *menuitem, gpointer userdata);
+static void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
+	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata);
+static void folder_tree_action_paste_into(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl);
 static guint shortcuts_get_focused_position(FolderTree::FolderTreeImpl* impl);
 static void folder_tree_set_checkbox_for_selected(FolderTree::FolderTreeImpl* impl, gboolean value);
@@ -1053,13 +1081,13 @@ static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 		{
 			gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pShortcutsSelectionModel), pos, TRUE);
 		}
-		view_popup_menu_at(impl->m_pWidget, -1, -1, impl);
+		view_popup_menu_at(w, x, y, TreePasteMode::PASTE_INTO_FOLDER, item->uri, impl);
 	}
 }
 
 static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, double x, double y)
 {
-	(void)n_press; (void)x; (void)y;
+	(void)n_press;
 	GtkWidget* w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 	FolderTree::FolderTreeImpl* impl = static_cast<FolderTree::FolderTreeImpl*>(
 		g_object_get_data(G_OBJECT(w), "bm-impl"));
@@ -1143,7 +1171,11 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 		{
 			gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, TRUE);
 		}
-		view_popup_menu_at(impl->m_pWidget, -1, -1, impl);
+		/* Bookmarks can point at plain files (e.g. images); only a directory
+		 * bookmark offers a paste target. */
+		TreePasteMode mode = folder_tree_uri_is_directory(item->uri)
+			? TreePasteMode::PASTE_INTO_FOLDER : TreePasteMode::PASTE_NONE;
+		view_popup_menu_at(w, x, y, mode, item->uri, impl);
 	}
 }
 
@@ -1156,7 +1188,7 @@ static gboolean shortcuts_on_key_press(GtkEventControllerKey *controller, guint 
 
 	if (GDK_KEY_Menu == keyval)
 	{
-		view_popup_menu_at(pFolderTreeImpl->m_pWidget, -1, -1, userdata);
+		view_popup_menu_at(pFolderTreeImpl->m_pWidget, -1, -1, TreePasteMode::PASTE_NONE, NULL, userdata);
 		return TRUE;
 	}
 
@@ -1380,7 +1412,7 @@ static void folder_tree_row_on_clicked(GtkGestureClick* gesture, int n_press, do
 		{
 			gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos, TRUE);
 		}
-		view_popup_menu_at(impl->m_pWidget, -1, -1, impl);
+		view_popup_menu_at(w, x, y, TreePasteMode::PASTE_INTO_FOLDER, item->uri, impl);
 	}
 }
 
@@ -1626,10 +1658,10 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	g_signal_connect(sc_key_controller, "key-pressed", G_CALLBACK(shortcuts_on_key_press), this);
 	gtk_widget_add_controller(GTK_WIDGET(m_pShortcutsListView), sc_key_controller);
 
-	GtkGesture *sc_gesture = gtk_gesture_click_new();
-	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(sc_gesture), 0);
-	g_signal_connect(sc_gesture, "pressed", G_CALLBACK(view_onButtonPressed), this);
-	gtk_widget_add_controller(GTK_WIDGET(m_pShortcutsListView), GTK_EVENT_CONTROLLER(sc_gesture));
+	GtkEventController *sc_legacy = gtk_event_controller_legacy_new();
+	gtk_event_controller_set_propagation_phase(sc_legacy, GTK_PHASE_CAPTURE);
+	g_signal_connect(sc_legacy, "event", G_CALLBACK(view_capture_button_press), this);
+	gtk_widget_add_controller(GTK_WIDGET(m_pShortcutsListView), sc_legacy);
 
 	m_pSeparator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
 	gtk_widget_add_css_class(m_pSeparator, "sidebar-separator");
@@ -1851,10 +1883,10 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 	/* right-click context menu on the bookmarks list too */
 	{
-		GtkGesture *bm_gesture = gtk_gesture_click_new();
-		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(bm_gesture), 0);
-		g_signal_connect(bm_gesture, "pressed", G_CALLBACK(view_onButtonPressed), this);
-		gtk_widget_add_controller(GTK_WIDGET(m_pBookmarkListView), GTK_EVENT_CONTROLLER(bm_gesture));
+		GtkEventController *bm_legacy = gtk_event_controller_legacy_new();
+		gtk_event_controller_set_propagation_phase(bm_legacy, GTK_PHASE_CAPTURE);
+		g_signal_connect(bm_legacy, "event", G_CALLBACK(view_capture_button_press), this);
+		gtk_widget_add_controller(GTK_WIDGET(m_pBookmarkListView), bm_legacy);
 	}
 
 	// --- Bookmarks section: header + list, hidden when empty ---
@@ -2075,12 +2107,14 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 	m_pListView = GTK_LIST_VIEW(gtk_list_view_new(GTK_SELECTION_MODEL(m_pSelectionModel), factory));
 
-	// input handling via GTK4 event controllers / gestures on m_pListView
-	GtkGesture *gesture = gtk_gesture_click_new();
-	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
-	g_signal_connect(gesture, "pressed", G_CALLBACK(view_onButtonPressed), this);
-	g_signal_connect(gesture, "released", G_CALLBACK(view_onButtonReleased), this);
-	gtk_widget_add_controller(GTK_WIDGET(m_pListView), GTK_EVENT_CONTROLLER(gesture));
+	// input handling via GTK4 event controllers on m_pListView.  A capture
+	// phase legacy controller opens the empty-area context menu: GtkListView
+	// swallows right-button presses on its background before the widget-level
+	// gesture sees them, so bubble handlers only ever fire over a row.
+	GtkEventController *listview_legacy = gtk_event_controller_legacy_new();
+	gtk_event_controller_set_propagation_phase(listview_legacy, GTK_PHASE_CAPTURE);
+	g_signal_connect(listview_legacy, "event", G_CALLBACK(view_capture_button_press), this);
+	gtk_widget_add_controller(GTK_WIDGET(m_pListView), listview_legacy);
 
 	GtkEventController *key_controller = gtk_event_controller_key_new();
 	/* Use capture phase so space/Enter are seen here before GtkListView's own
@@ -2104,23 +2138,34 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	gtk_widget_set_vexpand(GTK_WIDGET(m_pListView), TRUE);
 
 	// build the right-click / menu context popover
-	m_pMenuPopover = gtk_popover_new();
 	{
-		GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+		GMenu *menu = g_menu_new();
+		m_pMenuPopover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+		g_object_unref(menu);
 
-		GtkWidget* menuitem = gtk_button_new_with_label("Check Selected Item(s)");
-		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
-		g_signal_connect(menuitem, "clicked",
-		                 (GCallback) signal_check_selected, this);
-		gtk_box_append(GTK_BOX(menu_box), menuitem);
-
-		menuitem = gtk_button_new_with_label("Uncheck Selected Item(s)");
-		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
-		g_signal_connect(menuitem, "clicked",
-		                 (GCallback) signal_uncheck_selected, this);
-		gtk_box_append(GTK_BOX(menu_box), menuitem);
-
-		gtk_popover_set_child(GTK_POPOVER(m_pMenuPopover), menu_box);
+		/* FolderTree actions live in the shared action group.  They are
+		 * registered here so the standard menu-model items can drive them. */
+		if (NULL == QuiverUtils::GetAction("FolderTreeCheckSelected"))
+		{
+			QuiverUtils::AddSimpleAction("FolderTreeCheckSelected", NULL,
+				(void(*)(GSimpleAction*, GVariant*, gpointer))(
+				+[](GSimpleAction*, GVariant*, gpointer ud) {
+					folder_tree_set_checkbox_for_selected(
+						static_cast<FolderTree::FolderTreeImpl*>(ud), TRUE);
+				}), this);
+			QuiverUtils::AddSimpleAction("FolderTreeUncheckSelected", NULL,
+				(void(*)(GSimpleAction*, GVariant*, gpointer))(
+				+[](GSimpleAction*, GVariant*, gpointer ud) {
+					folder_tree_set_checkbox_for_selected(
+						static_cast<FolderTree::FolderTreeImpl*>(ud), FALSE);
+				}), this);
+		}
+		if (NULL == QuiverUtils::GetAction("FolderTreePasteInto"))
+		{
+			GSimpleAction *a = g_simple_action_new("FolderTreePasteInto", G_VARIANT_TYPE_STRING);
+			g_signal_connect(a, "activate", G_CALLBACK(folder_tree_action_paste_into), this);
+			QuiverUtils::AddAction(G_ACTION(a));
+		}
 	}
 	gtk_widget_set_parent(m_pMenuPopover, m_pWidget);
 	g_signal_connect(m_pWidget, "destroy",
@@ -2203,36 +2248,69 @@ static void folder_tree_set_checkbox_for_selected(FolderTree::FolderTreeImpl* im
 }
 
 static void
-signal_check_selected (GtkWidget *menuitem, gpointer userdata)
-{ (void)menuitem; 
+folder_tree_action_paste_into (GSimpleAction* action, GVariant* parameter, gpointer userdata)
+{ (void)action;
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
-	folder_tree_set_checkbox_for_selected(pFolderTreeImpl, TRUE);
+	if (NULL == pFolderTreeImpl || NULL == parameter)
+		return;
+
+	const gchar* uri = g_variant_get_string(parameter, NULL);
+	if (NULL == uri || '\0' == uri[0])
+		return;
+
+	int moved = QuiverFileOps::ClipboardTransferTo(uri);
+	if (moved <= 0)
+		return;
+
+	/* Switch the browser to the target folder so the pasted material is
+	 * immediately visible. */
+	std::list<std::string> sel;
+	sel.push_back(uri);
+	pFolderTreeImpl->SetSelectedFolders(sel);
+	pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
 }
 
-static void
-signal_uncheck_selected (GtkWidget *menuitem, gpointer userdata)
-{ (void)menuitem; 
+void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
+	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata)
+{
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
-	folder_tree_set_checkbox_for_selected(pFolderTreeImpl, FALSE);
-}
+	if (NULL == pFolderTreeImpl || NULL == pFolderTreeImpl->m_pMenuPopover)
+		return;
 
-void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y, gpointer userdata)
-{ (void)treeview; 
-	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
+	/* The menu model is rebuilt every time: the paste item carries the
+	 * right-clicked folder's URI as its action target.  Only directories get
+	 * a paste entry, and the label depends on where the click landed. */
+	GMenu *menu = g_menu_new();
 
-	if (NULL != pFolderTreeImpl->m_pMenuPopover)
+	if (TreePasteMode::PASTE_NONE != paste_mode &&
+	    target_uri != NULL && QuiverFileOps::ClipboardHasItems())
 	{
-		if (x >= 0 && y >= 0)
-		{
-			GdkRectangle rect;
-			rect.x = (int)x;
-			rect.y = (int)y;
-			rect.width = 1;
-			rect.height = 1;
-			gtk_popover_set_pointing_to(GTK_POPOVER(pFolderTreeImpl->m_pMenuPopover), &rect);
-		}
-		gtk_popover_popup(GTK_POPOVER(pFolderTreeImpl->m_pMenuPopover));
+		GMenu *paste_section = g_menu_new();
+		const char *label = (TreePasteMode::PASTE_INTO_FOLDER == paste_mode)
+			? "Paste Into Folder" : "Paste";
+		GMenuItem *paste = g_menu_item_new(label, NULL);
+		g_menu_item_set_action_and_target(paste, "quiver.FolderTreePasteInto", "s", target_uri);
+		g_menu_item_set_attribute(paste, "accel", "s", "<Control>v");
+		g_menu_append_item(paste_section, paste);
+		g_object_unref(paste);
+		g_menu_append_section(menu, NULL, G_MENU_MODEL(paste_section));
+		g_object_unref(paste_section);
 	}
+
+	GMenu *select_section = g_menu_new();
+	QuiverUtils::MenuAppendAction(select_section, "Check Selected Item(s)",
+		"quiver.FolderTreeCheckSelected", NULL);
+	QuiverUtils::MenuAppendAction(select_section, "Uncheck Selected Item(s)",
+		"quiver.FolderTreeUncheckSelected", NULL);
+	g_menu_append_section(menu, NULL, G_MENU_MODEL(select_section));
+	g_object_unref(select_section);
+
+	gtk_popover_menu_set_menu_model(
+		GTK_POPOVER_MENU(pFolderTreeImpl->m_pMenuPopover), G_MENU_MODEL(menu));
+	g_object_unref(menu);
+
+	QuiverUtils::ShowContextMenuAt(
+		GTK_POPOVER(pFolderTreeImpl->m_pMenuPopover), treeview, x, y);
 }
 
 static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl)
@@ -2302,7 +2380,7 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 
 	if (GDK_KEY_Menu == keyval)
 	{
-		view_popup_menu_at(treeview, -1, -1, userdata);
+		view_popup_menu_at(treeview, -1, -1, TreePasteMode::PASTE_NONE, NULL, userdata);
 		return TRUE;
 	}
 
@@ -2501,24 +2579,62 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 	return rval;
 }
 
-static void
-view_onButtonPressed (GtkGestureClick *gesture, int n_press, double x, double y, gpointer userdata)
+static gboolean
+view_capture_button_press (GtkEventController *controller, GdkEvent *event, gpointer userdata)
 {
-	(void)n_press;
+	GdkEventType type = gdk_event_get_event_type(event);
+	if (type != GDK_BUTTON_PRESS)
+		return GDK_EVENT_PROPAGATE;
+	if (gdk_button_event_get_button(event) != 3)
+		return GDK_EVENT_PROPAGATE;
+
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
-	(void)pFolderTreeImpl;
-	GtkWidget *treeview = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)));
-	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	GtkWidget *treeview = gtk_event_controller_get_widget(controller);
 
-	if (button == 3 && n_press == 1)
+	double x = 0, y = 0;
+	gdk_event_get_position(event, &x, &y);
+
+	/* Row clicks are handled by the per-row gestures (their widgets carry the
+	 * item data), so only the empty area on the list's background is handled
+	 * here. */
+	bool over_row = false;
 	{
-		view_popup_menu_at(treeview, x, y, userdata);
+		GtkWidget *picked = gtk_widget_pick(treeview, (gint)x, (gint)y, GTK_PICK_DEFAULT);
+		for (GtkWidget *w = picked; w != NULL && w != treeview; w = gtk_widget_get_parent(w))
+		{
+			if (g_object_get_data(G_OBJECT(w), "dir-item") != NULL ||
+			    g_object_get_data(G_OBJECT(w), "sc-item") != NULL ||
+			    g_object_get_data(G_OBJECT(w), "bm-item") != NULL)
+			{
+				over_row = true;
+				break;
+			}
+		}
 	}
-}
+	if (over_row)
+		return GDK_EVENT_PROPAGATE;
 
-static void view_onButtonReleased (GtkGestureClick *gesture, int n_press, double x, double y, gpointer userdata)
-{
-	(void)gesture; (void)n_press; (void)x; (void)y; (void)userdata;
+	/* Paste target: the focused row's folder -- a bare-area paste lands in the
+	 * folder that currently has the list's input focus. */
+	const gchar* target_uri = NULL;
+	if (pFolderTreeImpl->m_pSelectionModel && pFolderTreeImpl->m_pTreeListModel)
+	{
+		guint pos = folder_tree_get_focused_position(pFolderTreeImpl);
+		if (pos != G_MAXUINT)
+		{
+			GtkTreeListRow* row = gtk_tree_list_model_get_row(
+				pFolderTreeImpl->m_pTreeListModel, pos);
+			if (row)
+			{
+				DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
+				if (item)
+					target_uri = item->uri;
+				g_object_unref(row);
+			}
+		}
+	}
+	view_popup_menu_at(treeview, x, y, TreePasteMode::PASTE_BARE, target_uri, userdata);
+	return GDK_EVENT_STOP;
 }
 
 void FolderTree::FolderTreeImpl::PopulateShortcutsModel(GListStore *store)

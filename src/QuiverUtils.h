@@ -51,6 +51,10 @@ namespace QuiverUtils
 	bool ConfirmDialog(const char *title, const std::string& message,
 		const char *accept_label = "OK", const char *cancel_label = "Cancel");
 
+	/* Modal single-line text prompt (for renaming files/folders).  Returns a
+	 * g_malloc'd string owned by the caller, or NULL when cancelled. */
+	char* PromptForString(const char *title, const char *prompt, const char *initial);
+
 	/* Grab keyboard focus on `widget` so it can receive key events (e.g.
 	 * arrow-key navigation in the browser/icon view and viewer).  GTK4's
 	 * gtk_widget_grab_focus() only succeeds once the widget is mapped and
@@ -89,6 +93,27 @@ namespace QuiverUtils
 	 * for XDG user directories and the user home directory, or NULL if not special. */
 	const char* GetSpecialFolderSymbolicIconName(const char* path_or_uri);
 	const char* GetSpecialFolderSymbolicIconName(GFile* file);
+
+	/* Context-menu helpers.
+	 *
+	 * ShowContextMenuAt() pops a context menu up at (x, y), where the point is
+	 * given in `anchor_widget`'s coordinate space and is translated into the
+	 * popover's parent widget before being used as the pointing-to rect.  It
+	 * turns off the popover's press-outside-dismiss-grab, moves the menu when
+	 * it is already open and another location is right-clicked, wires a
+	 * capture controller that dismisses the menu on any outside press or
+	 * Escape, and pops it up.  The popover must already be parented (GTK 4
+	 * requires a parent before popup()). */
+	void ShowContextMenuAt(GtkPopover *popover, GtkWidget *anchor_widget, gdouble x, gdouble y);
+
+	/* Build a menu model with standard-looking items.  `action_name` is the
+	 * full action prefix + name (e.g. "quiver.BrowserCopy"); `accel` is an
+	 * optional shortcut string ("<Control>c", "F2") shown as a hint. */
+	void MenuAppendAction(GMenu *menu, const char *label, const char *action_name, const char *accel);
+	void MenuAppendItem(GMenu *menu, GMenuItem *item);
+
+	/* Title row for the top of a context menu (file name + folder). */
+	GtkWidget* MakeMenuTitleLabel(const char *name, const char *location);
 }
 
 #endif

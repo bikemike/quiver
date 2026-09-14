@@ -36,7 +36,8 @@ public:
 };
 
 RenameTask::RenameTask()
-	: m_PrivateImplPtr(new PrivateImpl(this)), m_iCurrentFile(0), m_iStartNumber(1), m_eSortBy(ImageList::SORT_BY_DATE)
+	: m_PrivateImplPtr(new PrivateImpl(this)), m_iCurrentFile(0), m_bHasExplicitFiles(false),
+	  m_iStartNumber(1), m_eSortBy(ImageList::SORT_BY_DATE)
 {
 	//SetOutputFolder("~");
 }
@@ -93,11 +94,13 @@ double RenameTask::GetProgress() const
 void RenameTask::AddFile(QuiverFile quiverFile)
 {
 	m_vectQuiverFiles.push_back(quiverFile);
+	m_bHasExplicitFiles = true;
 }
 
 void RenameTask::AddFiles(std::vector<QuiverFile> vectQuiverFiles)
 {
 	m_vectQuiverFiles.insert(m_vectQuiverFiles.end(), vectQuiverFiles.begin(), vectQuiverFiles.end());
+	m_bHasExplicitFiles = true;
 }
 
 void RenameTask::SetInputFolder(std::string strSrcURI)
@@ -208,6 +211,57 @@ rename_task_compute_destination_name(
 	return strDstName;
 }
 
+// Resolve the destination GFile for one source item: the destination lives
+// in the source's own parent directory so a mixed-folder batch stays in
+// place.  NULL is returned for folders, empty-template results, or
+// directories that cannot be resolved.  When non-NULL, *pstrDstName is
+// filled with the computed base name (caller is responsible for
+// g_object_unref of the returned GFile).
+static GFile*
+rename_task_compute_destination(
+	const QuiverFile& f,
+	const std::string& strTemplate,
+	std::map<std::string, int>& mapFileCounter,
+	std::string* pstrDstName)
+{
+	if (f.IsFolder())
+		return NULL;
+
+	std::string strDstName =
+		rename_task_compute_destination_name(strTemplate, f, mapFileCounter);
+	if (NULL != pstrDstName)
+		*pstrDstName = strDstName;
+	if (strDstName.empty())
+		return NULL;
+
+	GFile* src    = g_file_new_for_uri(f.GetURI());
+	GFile* srcdir = g_file_get_parent(src);
+	GFile* dst    = (NULL != srcdir)
+		? g_file_get_child(srcdir, strDstName.c_str()) : NULL;
+	if (NULL != srcdir)
+		g_object_unref(srcdir);
+	g_object_unref(src);
+	return dst;
+}
+
+// Appends one source→destination mapping (resolving src URI + mime type).
+static void
+rename_task_push_mapping(
+	QuiverFile f,
+	GFile* dst,
+	std::vector<FileConflictCheck::Mapping>& vectMappings)
+{
+	GFile* src = g_file_new_for_uri(f.GetURI());
+	gchar* szSrcURI = g_file_get_uri(src);
+	gchar* szDstURI = g_file_get_uri(dst);
+	vectMappings.push_back(FileConflictCheck::Mapping(szSrcURI, szDstURI));
+	vectMappings.back().strContentType =
+		(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
+	g_free(szDstURI);
+	g_free(szSrcURI);
+	g_object_unref(src);
+}
+
 bool RenameTask::ComputeMappings(std::string strSrcDirURI,
 	std::string strTemplate,
 	ImageList::SortBy sortBy,
@@ -239,40 +293,59 @@ bool RenameTask::ComputeMappings(std::string strSrcDirURI,
 
 		QuiverFile f = vectQuiverFiles[i];
 
-		// folders are listed for browsing only; never rename them
-		if (f.IsFolder())
-		{
-			continue;
-		}
-
-		std::string strDstName =
-			rename_task_compute_destination_name(strTemplate, f, mapFileCounter);
-
-		GFile* src = g_file_new_for_uri(f.GetURI());
-		GFile* srcdir = g_file_get_parent(src);
-		GFile* dst = (strDstName.empty() || NULL == srcdir)
-			? NULL : g_file_get_child(srcdir, strDstName.c_str());
+		GFile* dst = rename_task_compute_destination(
+			f, strTemplate, mapFileCounter, NULL);
 
 		if (NULL != dst)
 		{
-			gchar* szSrcURI = g_file_get_uri(src);
-			gchar* szDstURI = g_file_get_uri(dst);
-			vectMappings.push_back(FileConflictCheck::Mapping(szSrcURI, szDstURI));
-			vectMappings.back().strContentType =
-				(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
-			g_free(szDstURI);
-			g_free(szSrcURI);
-		}
-
-		if (NULL != dst)
+			rename_task_push_mapping(f, dst, vectMappings);
 			g_object_unref(dst);
-		if (NULL != srcdir)
-			g_object_unref(srcdir);
-		g_object_unref(src);
+		}
 
 		if (NULL != fnProgress && 0 < vectQuiverFiles.size())
 		{
 			fnProgress((double)(++nProcessed) / (double)vectQuiverFiles.size(),
+				pUserData);
+		}
+	}
+
+	return !vectMappings.empty();
+}
+
+bool RenameTask::ComputeMappings(const std::vector<QuiverFile>& vectFiles,
+	std::string strTemplate,
+	std::vector<FileConflictCheck::Mapping>& vectMappings,
+	GCancellable* pCancellable,
+	FileConflictCheck::ProgressFn fnProgress,
+	gpointer pUserData)
+{
+	vectMappings.clear();
+
+	/* shared counter keeps the sequence numbers consistent with Run() */
+	std::map<std::string, int> mapFileCounter;
+	size_t nProcessed = 0;
+
+	for (size_t i = 0 ; i < vectFiles.size() ; ++i)
+	{
+		if (NULL != pCancellable && g_cancellable_is_cancelled(pCancellable))
+		{
+			return false;
+		}
+
+		QuiverFile f = vectFiles[i];
+
+		GFile* dst = rename_task_compute_destination(
+			f, strTemplate, mapFileCounter, NULL);
+
+		if (NULL != dst)
+		{
+			rename_task_push_mapping(f, dst, vectMappings);
+			g_object_unref(dst);
+		}
+
+		if (NULL != fnProgress && 0 < vectFiles.size())
+		{
+			fnProgress((double)(++nProcessed) / (double)vectFiles.size(),
 				pUserData);
 		}
 	}
@@ -314,15 +387,21 @@ void RenameTask::Run()
 
 	// FIXME: this should be a class variable so it isn't
 	// updated on pause/resume
-	ImageListPtr imgListPtr(new ImageList(false));
 
-	std::list<std::string> listFiles;
-	listFiles.push_back(m_strSrcDirURI);
+	/* A file list supplied via AddFile()/AddFiles() renames exactly those
+	 * items; otherwise the whole input folder is processed. */
+	if (!m_bHasExplicitFiles)
+	{
+		ImageListPtr imgListPtr(new ImageList(false));
 
-	imgListPtr->SetImageList(&listFiles, false);
-	imgListPtr->Sort(m_eSortBy);
+		std::list<std::string> listFiles;
+		listFiles.push_back(m_strSrcDirURI);
 
-	m_vectQuiverFiles = imgListPtr->GetQuiverFiles();	
+		imgListPtr->SetImageList(&listFiles, false);
+		imgListPtr->Sort(m_eSortBy);
+
+		m_vectQuiverFiles = imgListPtr->GetQuiverFiles();
+	}
 
 	std::map<std::string, int> mapFileCounter;
 
@@ -378,8 +457,6 @@ void RenameTask::Run()
 			g_free(shortname);
 		}
 
-		g_free(dst_display_name);
-
 		SetProgressText(szText);
 		EmitTaskProgressUpdatedEvent();
 
@@ -406,7 +483,7 @@ void RenameTask::Run()
 			// message box asking if they want to skip, skip all, retry, cancel
 		}
 
-
+		g_free(dst_display_name);
 
 		g_object_unref(dst);
 

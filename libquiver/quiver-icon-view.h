@@ -114,6 +114,7 @@ void quiver_icon_view_activate_cell(QuiverIconView *iconview,gulong cell);
 
 gulong quiver_icon_view_get_cursor_cell(QuiverIconView *iconview);
 void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gulong new_cursor_cell);
+void quiver_icon_view_set_cursor_cell_silent(QuiverIconView *iconview,gulong new_cursor_cell);
 
 gulong quiver_icon_view_get_prelight_cell(QuiverIconView* iconview);
 gulong quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y);

@@ -43,8 +43,8 @@
     (they live in the toolbar, context menu and keyboard shortcuts), video
     playback is controlled from the on-screen player controls, and zoom /
     rotate are inline button rows rather than menu items.  The only submenus
-    left are View, Arrange Items, Bookmarks, Tools.  About sits at the very
-    bottom.
+    left are View (with the browser-only Sort Order submenu), Bookmarks, Tools.
+    About sits at the very bottom.
   -->
 
   <menu id="app_menu">
@@ -106,6 +106,34 @@
           <attribute name="action">quiver.BrowserViewPreview</attribute>
           <attribute name="location">browser</attribute>
         </item>
+        <submenu>
+          <attribute name="label">_Sort Order</attribute>
+          <attribute name="location">browser</attribute>
+          <item>
+            <attribute name="label">By _Name</attribute>
+            <attribute name="action">quiver.SortByName</attribute>
+          </item>
+          <item>
+            <attribute name="label">By _Name (natural order)</attribute>
+            <attribute name="action">quiver.SortByNameNatural</attribute>
+          </item>
+          <item>
+            <attribute name="label">By _Date</attribute>
+            <attribute name="action">quiver.SortByDate</attribute>
+          </item>
+          <item>
+            <attribute name="label">By Date _Modified</attribute>
+            <attribute name="action">quiver.SortByDateModified</attribute>
+          </item>
+          <item>
+            <attribute name="label">_Randomize</attribute>
+            <attribute name="action">quiver.SortByRandom</attribute>
+          </item>
+          <item>
+            <attribute name="label">In _Descending Order</attribute>
+            <attribute name="action">quiver.SortDescending</attribute>
+          </item>
+        </submenu>
       </submenu>
     </section>
 
@@ -123,38 +151,6 @@
         <attribute name="custom">rotate-row</attribute>
         <attribute name="location">viewer-image</attribute>
       </item>
-    </section>
-
-    <!-- ====================== Arrange Items order ======================= -->
-    <section>
-      <submenu>
-        <attribute name="label">_Arrange Items</attribute>
-        <attribute name="location">browser</attribute>
-        <item>
-          <attribute name="label">By _Name</attribute>
-          <attribute name="action">quiver.SortByName</attribute>
-        </item>
-        <item>
-          <attribute name="label">By _Name (natural order)</attribute>
-          <attribute name="action">quiver.SortByNameNatural</attribute>
-        </item>
-        <item>
-          <attribute name="label">By _Date</attribute>
-          <attribute name="action">quiver.SortByDate</attribute>
-        </item>
-        <item>
-          <attribute name="label">By Date _Modified</attribute>
-          <attribute name="action">quiver.SortByDateModified</attribute>
-        </item>
-        <item>
-          <attribute name="label">_Randomize</attribute>
-          <attribute name="action">quiver.SortByRandom</attribute>
-        </item>
-        <item>
-          <attribute name="label">In _Descending Order</attribute>
-          <attribute name="action">quiver.SortDescending</attribute>
-        </item>
-      </submenu>
     </section>
 
     <!-- ==================== Bookmarks (live placeholder) =============== -->

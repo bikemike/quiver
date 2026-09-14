@@ -274,6 +274,12 @@ bool ImageCache::HasFailed(std::string filename)
 	return m_setLoadFailures.find(filename) != m_setLoadFailures.end();
 }
 
+void ImageCache::RemoveFailure(std::string filename)
+{
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+	m_setLoadFailures.erase(filename);
+}
+
 static unsigned long CurrentTimeInMilliseconds()
 {
 	timeval tv_time;

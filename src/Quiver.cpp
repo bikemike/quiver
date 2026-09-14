@@ -124,10 +124,12 @@ public:
 	 * submenu both mirror QuiverFileOps's trash undo stack; a callback wired
 	 * in CreateUI() keeps them in sync whenever the stack changes. */
 	void RebuildRecentDeletionsMenu();
-	void ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, unsigned int count);
+	void ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, unsigned int count,
+		const char *restored_uri = NULL);
 	void HideTrashToast();
 	void OnUndoDelete();                 // Ctrl+Z / undo button: restore newest batch
 	void OnUndoDeleteAt(unsigned int pos); // menu: restore a specific batch
+	void TakeMeToRestored();             // "take me there": open the restore target in the browser
 	/* Parent the toast into whichever overlay is active for the current mode
 	 * (browser icon view vs. viewer image view). */
 	void ParentUndoToast();
@@ -172,7 +174,14 @@ public:
 	GtkWidget *m_pUndoPopupAnchorViewer;  /* Viewer::GetOverlay() */
 	GtkWidget *m_pUndoLabel;
 	GtkWidget *m_pUndoButton;
+	/* "Take me there" button shown on a restore toast; jumps the browser to
+	 * the restored item's folder and selects it. */
+	GtkWidget *m_pUndoShowButton;
+	/* RESTORED-toast target: the file:/// URI of the last restored item. */
+	std::string m_strRestoredURI;
 	guint m_iUndoToastTimer;
+	/* Pointer is hovering over the toast: the auto-dismiss timer pauses. */
+	bool m_bUndoToastHover;
 	GtkWidget *m_pToolbar;
 	GtkWidget *m_pToolbarSharedBox;
 	GtkWidget *m_pToolbarBrowserBox;
@@ -330,7 +339,9 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pUndoPopupAnchorViewer = NULL;
 	m_pUndoLabel = NULL;
 	m_pUndoButton = NULL;
+	m_pUndoShowButton = NULL;
 	m_iUndoToastTimer = 0;
+	m_bUndoToastHover = false;
 	m_pMenuRotateRow = NULL;
 	m_pMenubarBuilder = NULL;
 	m_pAppMenuModel = NULL;
@@ -379,6 +390,7 @@ QuiverImpl::~QuiverImpl()
 		m_iUndoToastTimer = 0;
 	}
 	QuiverFileOps::SetTrashUndoChangedCallback(NULL, NULL);
+	QuiverFileOps::SetTrashRestoredChangedCallback(NULL, NULL);
 	QuiverFileOps::UndoStackClear();
 
 	/* Release the toast while its anchor overlays (browser / viewer) are still
@@ -587,19 +599,53 @@ gboolean QuiverImpl::TrashToastTimeout(gpointer user_data)
 	return FALSE;
 }
 
-void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, unsigned int count)
+void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, unsigned int count,
+	const char *restored_uri)
 {
 	if (NULL == m_pUndoToast)
 		return;
 
+	/* A zero count means the batch was dropped without an actual restore;
+	 * nothing to announce, just keep the menu/undo state consistent. */
+	if (0 == count)
+	{
+		if (0 != m_iUndoToastTimer)
+		{
+			g_source_remove(m_iUndoToastTimer);
+			m_iUndoToastTimer = 0;
+		}
+		m_bUndoToastHover = false;
+		gtk_widget_set_visible(m_pUndoToast, FALSE);
+		return;
+	}
+
 	/* Float over whichever view the user is looking at. */
 	ParentUndoToast();
 
-	gchar szText[128] = "";
+	m_strRestoredURI.clear();
+	gchar szText[384] = "";
 	if (QuiverFileOps::TRASH_UNDO_DELETED == reason)
 	{
 		g_snprintf(szText, sizeof(szText),
 			ngettext("Moved one item to trash", "Moved %u items to trash", count), count);
+	}
+	else if (NULL != restored_uri && 0 != restored_uri[0])
+	{
+		/* "Restored to <folder>" with a shortcut that jumps there. */
+		m_strRestoredURI = restored_uri;
+
+		char *dest_path = g_filename_from_uri(restored_uri, NULL, NULL);
+		char *dir_label = NULL;
+		if (NULL != dest_path)
+		{
+			char *dir = g_path_get_dirname(dest_path);
+			dir_label = dir ? g_filename_to_utf8(dir, -1, NULL, NULL, NULL) : NULL;
+			g_free(dir);
+			g_free(dest_path);
+		}
+		g_snprintf(szText, sizeof(szText), _("Restored to %s"),
+			dir_label ? dir_label : restored_uri);
+		g_free(dir_label);
 	}
 	else
 	{
@@ -609,21 +655,51 @@ void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, un
 	}
 	gtk_label_set_text(GTK_LABEL(m_pUndoLabel), szText);
 
-	/* Only a fresh move-to-trash offers an undo button. */
+	/* The undo button only belongs to a fresh move-to-trash; a restore toast
+	 * offers "take me there" instead (when a destination is known). */
 	gtk_widget_set_visible(m_pUndoButton,
 		(QuiverFileOps::TRASH_UNDO_DELETED == reason));
+	gtk_widget_set_visible(m_pUndoShowButton,
+		(QuiverFileOps::TRASH_UNDO_RESTORED == reason && !m_strRestoredURI.empty()));
 
 	if (0 != m_iUndoToastTimer)
 	{
 		g_source_remove(m_iUndoToastTimer);
 		m_iUndoToastTimer = 0;
 	}
-	m_iUndoToastTimer = g_timeout_add(6000, TrashToastTimeout, this);
 	gtk_widget_set_visible(m_pUndoToast, TRUE);
+	/* The pointer may already be resting on the toast when it (re)appears;
+	 * keep it paused in that case. */
+	if (m_bUndoToastHover)
+		return;
+	m_iUndoToastTimer = g_timeout_add(6000, TrashToastTimeout, this);
+}
+
+void QuiverImpl::TakeMeToRestored()
+{
+	if (m_strRestoredURI.empty())
+		return;
+
+	std::string target = m_strRestoredURI;
+	HideTrashToast();
+
+	/* Land on the restored file in the browser: the single-file form of
+	 * UpdateImageListAsync loads the parent folder and selects the file. */
+	if (NULL != m_pQuiver)
+	{
+		m_pQuiver->ShowBrowser();
+	}
+	std::list<std::string> files;
+	files.push_back(target);
+	if (m_ImageListPtr)
+	{
+		m_ImageListPtr->UpdateImageListAsync(&files, false, false);
+	}
 }
 
 void QuiverImpl::HideTrashToast()
 {
+	m_bUndoToastHover = false;
 	if (0 != m_iUndoToastTimer)
 	{
 		g_source_remove(m_iUndoToastTimer);
@@ -680,6 +756,13 @@ static void quiver_trash_undo_changed_cb(
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)user_data;
 	pQuiverImpl->RebuildRecentDeletionsMenu();
 	pQuiverImpl->ShowTrashToast(reason, count);
+}
+
+static void quiver_trash_restored_changed_cb(const char *restored_uri, gpointer user_data)
+{
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)user_data;
+	pQuiverImpl->RebuildRecentDeletionsMenu();
+	pQuiverImpl->ShowTrashToast(QuiverFileOps::TRASH_UNDO_RESTORED, 1, restored_uri);
 }
 
 void QuiverImpl::Save()
@@ -1668,6 +1751,9 @@ void Quiver::Init()
 	/* Keep the undo toast + "Recent Deletions" menu in sync with the stack. */
 	QuiverFileOps::SetTrashUndoChangedCallback(quiver_trash_undo_changed_cb, m_QuiverImplPtr.get());
 
+	/* Track single-item restores so the toast can offer "take me there". */
+	QuiverFileOps::SetTrashRestoredChangedCallback(quiver_trash_restored_changed_cb, m_QuiverImplPtr.get());
+
 	/* Global toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_QUIVER_FULLSCREEN, "f", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddToggleAction(ACTION_QUIVER_SLIDESHOW, "s", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());
@@ -1830,7 +1916,13 @@ void Quiver::Init()
 				"  background-color: rgba(25, 25, 25, 0.94);"
 				"  border-radius: 10px;"
 				"}"
-				".quiver-undo-toast label { color: #ffffff; }");
+				".quiver-undo-toast label { color: #ffffff; }"
+				"popover.menu separator {"
+				"  min-height: 1px;"
+				"  background-color: alpha(currentColor, 0.15);"
+				"  margin-top: 6px;"
+				"  margin-bottom: 6px;"
+				"}");
 			gtk_style_context_add_provider_for_display(
 				gdk_display_get_default(), GTK_STYLE_PROVIDER(sCssProvider),
 				GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -1854,6 +1946,8 @@ void Quiver::Init()
 	gtk_widget_set_visible(m_QuiverImplPtr->m_pUndoToast, FALSE);
 
 	m_QuiverImplPtr->m_pUndoLabel = gtk_label_new("");
+	gtk_label_set_ellipsize(GTK_LABEL(m_QuiverImplPtr->m_pUndoLabel), PANGO_ELLIPSIZE_END);
+	gtk_label_set_max_width_chars(GTK_LABEL(m_QuiverImplPtr->m_pUndoLabel), 48);
 	gtk_widget_set_margin_top(m_QuiverImplPtr->m_pUndoLabel, 6);
 	gtk_widget_set_margin_bottom(m_QuiverImplPtr->m_pUndoLabel, 6);
 	gtk_widget_set_margin_start(m_QuiverImplPtr->m_pUndoLabel, 10);
@@ -1871,6 +1965,47 @@ void Quiver::Init()
 	gtk_widget_set_margin_bottom(m_QuiverImplPtr->m_pUndoButton, 4);
 	gtk_widget_set_margin_end(m_QuiverImplPtr->m_pUndoButton, 6);
 	gtk_box_append(GTK_BOX(m_QuiverImplPtr->m_pUndoToast), m_QuiverImplPtr->m_pUndoButton);
+
+	/* "Take me there": jump to the restored item's folder in the browser. */
+	m_QuiverImplPtr->m_pUndoShowButton = gtk_button_new_with_label("Take Me There");
+	g_signal_connect(m_QuiverImplPtr->m_pUndoShowButton, "clicked",
+		G_CALLBACK(+[](GtkButton*, gpointer user_data) {
+			((QuiverImpl*)user_data)->TakeMeToRestored();
+		}), m_QuiverImplPtr.get());
+	gtk_widget_set_margin_top(m_QuiverImplPtr->m_pUndoShowButton, 4);
+	gtk_widget_set_margin_bottom(m_QuiverImplPtr->m_pUndoShowButton, 4);
+	gtk_widget_set_margin_end(m_QuiverImplPtr->m_pUndoShowButton, 6);
+	gtk_widget_set_visible(m_QuiverImplPtr->m_pUndoShowButton, FALSE);
+	gtk_box_append(GTK_BOX(m_QuiverImplPtr->m_pUndoToast), m_QuiverImplPtr->m_pUndoShowButton);
+
+	/* Hovering the toast pauses its auto-dismiss so the message (and the
+	 * Undo / Take Me There button) stays visible until the pointer leaves. */
+	{
+		GtkEventController *toast_hover = gtk_event_controller_motion_new();
+		g_signal_connect(toast_hover, "enter",
+			G_CALLBACK(+[](GtkEventController*, double, double, gpointer d) {
+				QuiverImpl *p = (QuiverImpl*)d;
+				p->m_bUndoToastHover = true;
+				if (0 != p->m_iUndoToastTimer)
+				{
+					g_source_remove(p->m_iUndoToastTimer);
+					p->m_iUndoToastTimer = 0;
+				}
+			}), m_QuiverImplPtr.get());
+		g_signal_connect(toast_hover, "leave",
+			G_CALLBACK(+[](GtkEventController*, gpointer d) {
+				QuiverImpl *p = (QuiverImpl*)d;
+				p->m_bUndoToastHover = false;
+				/* Only re-arm while the toast is still up. */
+				if (0 == p->m_iUndoToastTimer &&
+					gtk_widget_get_visible(p->m_pUndoToast))
+				{
+					p->m_iUndoToastTimer =
+						g_timeout_add(6000, QuiverImpl::TrashToastTimeout, p);
+				}
+			}), m_QuiverImplPtr.get());
+		gtk_widget_add_controller(m_QuiverImplPtr->m_pUndoToast, toast_hover);
+	}
 
 	/* Start anchored over the browser icon view (the initial mode). */
 	m_QuiverImplPtr->ParentUndoToast();
@@ -3262,9 +3397,34 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
 	{
 		RenameDlg dlg;
+
+		/* The dialog defaults to renaming the browser's current selection
+		 * when there is one (folders in the selection are ignored, each
+		 * selected file keeps its own folder), otherwise it falls back to a
+		 * whole directory pre-set to the current folder.  The user can flip
+		 * between the two modes inside the dialog. */
+		std::vector<QuiverFile> vectSelected;
+		std::list<unsigned int> selection = pQuiverImpl->m_BrowserPtr->GetSelection();
+		if (!selection.empty())
+		{
+			for (std::list<unsigned int>::iterator itr = selection.begin();
+				selection.end() != itr; ++itr)
+			{
+				if (*itr < pQuiverImpl->m_ImageListPtr->GetSize())
+				{
+					vectSelected.push_back((*pQuiverImpl->m_ImageListPtr)[*itr]);
+				}
+			}
+			if (!vectSelected.empty())
+			{
+				dlg.SetFiles(vectSelected);
+			}
+		}
+
+		/* Always preset a folder so the dialog's Folder mode works; the
+		 * current directory is the natural default. */
 		list<string> folders;
 		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
-
 		if (!folders.empty())
 		{
 			dlg.SetInputFolder(folders.front());
@@ -3274,18 +3434,15 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 		{
 			// organize pictures dialog
 			RenameTaskPtr renameTaskPtr(new RenameTask());
-			renameTaskPtr->SetInputFolder( dlg.GetInputFolder() );
 			renameTaskPtr->SetTemplate( dlg.GetTemplate() );
-
-			/*
-			std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
-			std::list<unsigned int>::iterator itr;
-			for (itr = items.begin(); items.end() != itr; ++itr)
+			if (dlg.GetFilesMode())
 			{
-				QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[*itr];
-				renameTaskPtr->AddFile(f);	
-			}				
-			*/
+				renameTaskPtr->AddFiles(dlg.GetFiles());
+			}
+			else
+			{
+				renameTaskPtr->SetInputFolder( dlg.GetInputFolder() );
+			}
 
 			TaskManager::GetInstance()->AddTask(renameTaskPtr);
 		}

@@ -11,17 +11,35 @@ extern GtkApplication *g_pApp;
 
 #include <gio/gio.h>
 #include <gtk/gtk.h>
+#include <gdk/gdkkeysyms.h>
 
 #include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <boost/algorithm/string/classification.hpp>
 
 extern "C"
 {
 #include "strnatcmp.h"
+}
+
+// human-readable local path for a folder URI (falls back to the URI itself
+// for non-local folders such as trash:///)
+static std::string rename_friendly_folder_path(const std::string& uri)
+{
+	GFile* file = g_file_new_for_uri(uri.c_str());
+	gchar* path = g_file_get_path(file);
+	g_object_unref(file);
+if (NULL != path)
+		{
+			std::string strPath(path);
+			g_free(path);
+			return strPath;
+		}
+	return uri;
 }
 
 class RenameDlg::RenameDlgPriv
@@ -51,6 +69,7 @@ public:
 // methods
 	void LoadWidgets();
 	void UpdateUI();
+	void UpdateFilesUI();
 	void ConnectSignals();
 
 	bool ValidateInput();
@@ -60,8 +79,12 @@ public:
 	std::string GetFolderURI() const;
 	void SetFolderURI(const std::string& folder) { m_strFolderURI = folder; }
 	std::string GetConflictInputKey() const;
+	std::string BuildSelectionSummary() const;
+	bool GetFilesMode() const { return m_bHasFiles; }
+	void SetFilesMode(bool bFilesMode);
 
 	static bool CollectAndCheck(const std::string& strFolder,
+			const std::vector<QuiverFile>& vectFiles,
 			const std::string& strTemplate,
 			GCancellable* pCancellable,
 			ConflictShared* pState,
@@ -78,9 +101,17 @@ public:
 	// dlg widgets
 	GtkWidget*              m_pDialogRename;
 	GtkWidget*              m_pBtnOK;
+	GtkWidget*              m_pBtnCancel;
 
 	GtkButton*              m_pBtnChooseFolder;
+	GtkWidget*              m_pLabelSourceFolder;
+	GtkWidget*              m_pLabelSelection;
+	GtkWidget*              m_pBtnModeSelection;
+	GtkWidget*              m_pBtnModeFolder;
 	std::string             m_strFolderURI;
+	std::vector<QuiverFile> m_vectFiles;
+	bool                    m_bHasFiles;
+	bool                    m_bHasSelection;
 	GtkEntry*               m_pEntryTemplate;
 	GtkLabel*               m_pLabelExample;
 	GtkWidget*              m_pLabelPurpose;
@@ -159,7 +190,39 @@ void RenameDlg::SetInputFolder(std::string folder)
 	m_PrivPtr->SetFolderURI(folder);
 	if (m_PrivPtr->m_bLoadedDlg && NULL != m_PrivPtr->m_pBtnChooseFolder)
 	{
-		gtk_button_set_label(m_PrivPtr->m_pBtnChooseFolder, folder.c_str());
+		gtk_button_set_label(m_PrivPtr->m_pBtnChooseFolder,
+			rename_friendly_folder_path(folder).c_str());
+		m_PrivPtr->UpdateUI();
+	}
+}
+
+std::vector<QuiverFile> RenameDlg::GetFiles() const
+{
+	return m_PrivPtr->m_vectFiles;
+}
+
+bool RenameDlg::GetFilesMode() const
+{
+	return m_PrivPtr->GetFilesMode();
+}
+
+void RenameDlg::SetFiles(std::vector<QuiverFile> vectFiles)
+{
+	/* Selection-based renaming only applies to files: drop any folders from
+	 * the list so they are neither renamed nor counted in the summary. */
+	std::vector<QuiverFile> vectFilesOnly;
+	for (std::vector<QuiverFile>::iterator it = vectFiles.begin();
+		it != vectFiles.end(); ++it)
+	{
+		if (!it->IsFolder())
+			vectFilesOnly.push_back(*it);
+	}
+	m_PrivPtr->m_vectFiles = std::move(vectFilesOnly);
+	m_PrivPtr->m_bHasSelection = !m_PrivPtr->m_vectFiles.empty();
+	m_PrivPtr->m_bHasFiles = m_PrivPtr->m_bHasSelection;
+	if (m_PrivPtr->m_bLoadedDlg)
+	{
+		m_PrivPtr->UpdateFilesUI();
 		m_PrivPtr->UpdateUI();
 	}
 }
@@ -347,6 +410,13 @@ RenameDlg::RenameDlgPriv::RenameDlgPriv(RenameDlg *parent) :
 	m_bConflictKeyValid = false;
 	m_bRunDone = false;
 	m_iRunResponse = GTK_RESPONSE_NONE;
+	m_bHasFiles = false;
+	m_bHasSelection = false;
+	m_pLabelSourceFolder = NULL;
+	m_pLabelSelection = NULL;
+	m_pBtnCancel = NULL;
+	m_pBtnModeSelection = NULL;
+	m_pBtnModeFolder = NULL;
 	m_pGtkBuilder = gtk_builder_new();
 	const char* objectids[] = {
 		"RenameDialog",
@@ -395,10 +465,12 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 	m_pDialogRename         = GTK_WIDGET(gtk_builder_get_object (m_pGtkBuilder, (gchar*)"RenameDialog"));
 
 	m_pBtnOK = gtk_button_new_with_mnemonic("_OK");
+	m_pBtnCancel = gtk_button_new_with_mnemonic("_Cancel");
 	if (m_pDialogRename)
 	{
 		GtkHeaderBar* hbar = GTK_HEADER_BAR(gtk_header_bar_new());
 		gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(hbar), TRUE);
+		gtk_header_bar_pack_start(hbar, GTK_WIDGET(m_pBtnCancel));
 		gtk_header_bar_pack_end(hbar, GTK_WIDGET(m_pBtnOK));
 		gtk_window_set_titlebar(GTK_WINDOW(m_pDialogRename), GTK_WIDGET(hbar));
 	}
@@ -409,6 +481,7 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 	m_pEntryTemplate        = GTK_ENTRY( gtk_builder_get_object(m_pGtkBuilder, "rename_entry_template") );
 
 	m_pLabelExample           = GTK_LABEL( gtk_builder_get_object(m_pGtkBuilder, "rename_label_example") );
+	m_pLabelSourceFolder      = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "label_source_folder"));
 
 	m_bLoadedDlg = (
 		NULL != m_pDialogRename        &&
@@ -425,10 +498,24 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 		gtk_label_set_attributes(m_pLabelExample, attrs);
 		pango_attr_list_unref(attrs);
 
-		gtk_window_set_default_size(GTK_WINDOW(m_pDialogRename), 560, 520);
-
 		GtkWidget* content_area =
 			gtk_window_get_child(GTK_WINDOW(m_pDialogRename));
+
+		m_pBtnModeSelection = gtk_toggle_button_new_with_mnemonic("S_election");
+		m_pBtnModeFolder = gtk_toggle_button_new_with_mnemonic("_Folder");
+		gtk_toggle_button_set_group(GTK_TOGGLE_BUTTON(m_pBtnModeFolder),
+			GTK_TOGGLE_BUTTON(m_pBtnModeSelection));
+		gtk_widget_set_tooltip_text(m_pBtnModeSelection,
+			"Rename the selected files, each in its own folder");
+		gtk_widget_set_tooltip_text(m_pBtnModeFolder,
+			"Rename every item in a folder");
+		GtkWidget* modeRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+		gtk_widget_add_css_class(modeRow, "linked");
+		gtk_widget_set_halign(modeRow, GTK_ALIGN_START);
+		gtk_widget_set_margin_bottom(modeRow, 4);
+		gtk_box_append(GTK_BOX(modeRow), m_pBtnModeSelection);
+		gtk_box_append(GTK_BOX(modeRow), m_pBtnModeFolder);
+		gtk_box_prepend(GTK_BOX(content_area), modeRow);
 
 		GtkWidget* align_folder = GTK_WIDGET(gtk_builder_get_object(m_pGtkBuilder, "rename_align_source_folder"));
 		if (align_folder)
@@ -439,6 +526,14 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 		{
 			gtk_box_append(GTK_BOX(content_area), GTK_WIDGET(m_pBtnChooseFolder));
 		}
+
+		m_pLabelSelection = gtk_label_new(NULL);
+		gtk_label_set_ellipsize(GTK_LABEL(m_pLabelSelection), PANGO_ELLIPSIZE_END);
+		gtk_label_set_xalign(GTK_LABEL(m_pLabelSelection), 0.0);
+		gtk_widget_set_hexpand(m_pLabelSelection, TRUE);
+		gtk_widget_set_visible(m_pLabelSelection, FALSE);
+		if (align_folder)
+			gtk_box_append(GTK_BOX(align_folder), m_pLabelSelection);
 
 		m_pLabelPurpose = gtk_label_new(NULL);
 		gtk_label_set_markup(GTK_LABEL(m_pLabelPurpose),
@@ -504,7 +599,131 @@ std::string RenameDlg::RenameDlgPriv::GetFolderURI() const
 	return m_strFolderURI;
 }
 
+void RenameDlg::RenameDlgPriv::UpdateFilesUI()
+{
+	if (!m_bLoadedDlg)
+		return;
+
+	if (NULL != m_pBtnModeSelection && NULL != m_pBtnModeFolder)
+	{
+		gtk_widget_set_sensitive(m_pBtnModeSelection, m_bHasSelection);
+		gtk_widget_set_sensitive(m_pBtnModeFolder, TRUE);
+		/* Setting the active state to its current value is a no-op; a real
+		 * flip only happens when the mode genuinely changed, in which case
+		 * the toggle handler runs SetFilesMode() to the same mode and the
+		 * recursion terminates because the states now match. */
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(m_pBtnModeSelection),
+			m_bHasFiles);
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(m_pBtnModeFolder),
+			!m_bHasFiles);
+	}
+
+	if (m_bHasFiles)
+	{
+		gtk_widget_set_visible(GTK_WIDGET(m_pBtnChooseFolder), FALSE);
+		if (NULL != m_pLabelSourceFolder)
+			gtk_label_set_markup(GTK_LABEL(m_pLabelSourceFolder), "<b>Selection:</b>");
+		if (NULL != m_pLabelSelection)
+		{
+			std::string strSummary = BuildSelectionSummary();
+			gtk_label_set_text(GTK_LABEL(m_pLabelSelection),
+				strSummary.empty() ? "(none)" : strSummary.c_str());
+			gtk_widget_set_visible(m_pLabelSelection, TRUE);
+		}
+		std::string strPurpose =
+			"Renames the <b>" + std::to_string(m_vectFiles.size()) + "</b> "
+			"selected file" + (1 == m_vectFiles.size() ? "" : "s")
+			+ " using the pattern below; each file keeps its own folder. "
+			"Use <b>#</b> characters in the template for sequence numbers.";
+		gtk_label_set_markup(GTK_LABEL(m_pLabelPurpose), strPurpose.c_str());
+	}
+	else
+	{
+		gtk_widget_set_visible(GTK_WIDGET(m_pBtnChooseFolder), TRUE);
+		if (NULL != m_pLabelSourceFolder)
+			gtk_label_set_markup(GTK_LABEL(m_pLabelSourceFolder), "<b>Folder:</b>");
+		if (NULL != m_pLabelSelection)
+			gtk_widget_set_visible(m_pLabelSelection, FALSE);
+		gtk_label_set_markup(GTK_LABEL(m_pLabelPurpose),
+			"Renames every supported photo or video in the selected folder "
+			"using the pattern below. Use <b>#</b> characters in the template "
+			"for sequence numbers.");
+	}
+}
+
+std::string RenameDlg::RenameDlgPriv::BuildSelectionSummary() const
+{
+	const size_t nTotal = m_vectFiles.size();
+	if (0 == nTotal)
+		return "";
+
+	size_t nVideos = 0;
+	for (const QuiverFile& file : m_vectFiles)
+	{
+		QuiverFile f(file);
+		if (f.IsVideo())
+			++nVideos;
+	}
+	const size_t nImages = nTotal - nVideos;
+
+	std::string strSummary;
+	if (0 != nImages && 0 != nVideos)
+	{
+		strSummary = std::to_string(nImages) + " image"
+			+ (1 == nImages ? "" : "s")
+			+ ", " + std::to_string(nVideos) + " video"
+			+ (1 == nVideos ? "" : "s");
+	}
+	else
+	{
+		strSummary = std::to_string(nTotal) + " item"
+			+ (1 == nTotal ? "" : "s");
+	}
+	return strSummary;
+}
+
+void RenameDlg::RenameDlgPriv::SetFilesMode(bool bFilesMode)
+{
+	if (bFilesMode)
+	{
+		/* Selection mode needs an actual selection to rename. */
+		if (!m_bHasSelection)
+			return;
+		m_bHasFiles = true;
+	}
+	else
+	{
+		m_bHasFiles = false;
+		/* Switching to a whole-folder rename: make sure there is a folder
+		 * picked, defaulting to the parent of the first selected file. */
+		if (m_strFolderURI.empty() && !m_vectFiles.empty())
+		{
+			const gchar* uri = m_vectFiles[0].GetURI();
+			if (NULL != uri)
+			{
+				GFile* file = g_file_new_for_uri(uri);
+				GFile* parent = g_file_get_parent(file);
+				g_object_unref(file);
+				if (NULL != parent)
+				{
+					gchar* parent_uri = g_file_get_uri(parent);
+					if (NULL != parent_uri)
+					{
+						m_strFolderURI = parent_uri;
+						g_free(parent_uri);
+					}
+					g_object_unref(parent);
+				}
+			}
+		}
+	}
+
+	UpdateFilesUI();
+	UpdateUI();
+}
+
 bool RenameDlg::RenameDlgPriv::CollectAndCheck(const std::string& strFolder,
+	const std::vector<QuiverFile>& vectFiles,
 	const std::string& strTemplate,
 	GCancellable* pCancellable,
 	ConflictShared* pState,
@@ -513,15 +732,27 @@ bool RenameDlg::RenameDlgPriv::CollectAndCheck(const std::string& strFolder,
 	if (NULL != pState)
 	{
 		std::lock_guard<std::mutex> lock(pState->mutex);
-		pState->strStatus = "Scanning folder…";
+		pState->strStatus = "Scanning…";
 	}
 
 	std::vector<FileConflictCheck::Mapping> vectMappings;
-	bool bHaveMappings = RenameTask::ComputeMappings(
+	bool bHaveMappings;
+	if (!vectFiles.empty())
+	{
+		bHaveMappings = RenameTask::ComputeMappings(
+			vectFiles, strTemplate, vectMappings,
+			pCancellable,
+			(NULL != pState) ? ConflictProgressCb : NULL,
+			pState);
+	}
+	else
+	{
+		bHaveMappings = RenameTask::ComputeMappings(
 			strFolder, strTemplate, ImageList::SORT_BY_DATE, vectMappings,
 			pCancellable,
 			(NULL != pState) ? ConflictProgressCb : NULL,
 			pState);
+	}
 	if (!bHaveMappings)
 	{
 		return false;
@@ -549,7 +780,22 @@ void RenameDlg::RenameDlgPriv::ConflictProgressCb(double fraction, gpointer user
 
 std::string RenameDlg::RenameDlgPriv::GetConflictInputKey() const
 {
-	return GetFolderURI() + "\n" + gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplate));
+	std::string strKey;
+	if (m_bHasFiles)
+	{
+		strKey = "files\n";
+		for (size_t i = 0 ; i < m_vectFiles.size() ; ++i)
+		{
+			strKey += m_vectFiles[i].GetURI();
+			strKey += '\n';
+		}
+	}
+	else
+	{
+		strKey = GetFolderURI();
+	}
+	strKey += "\n" + std::string(gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplate)));
+	return strKey;
 }
 
 void RenameDlg::RenameDlgPriv::StartConflictCheck()
@@ -567,14 +813,36 @@ void RenameDlg::RenameDlgPriv::StartConflictCheck()
 	gtk_widget_set_visible(m_pLabelWarning, FALSE);
 	gtk_widget_set_visible(m_pLabelStatus, FALSE);
 
-	std::string strFolder = GetFolderURI();
 	std::string strTemplate = gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplate));
 
-	if (strFolder.empty() || strTemplate.empty())
+	if (strTemplate.empty())
 	{
 		m_bConflictFound = false;
 		gtk_widget_set_sensitive(m_pBtnOK, TRUE);
 		return;
+	}
+
+	std::string strFolder;
+	std::vector<QuiverFile> vectFiles;
+	if (m_bHasFiles)
+	{
+		vectFiles = m_vectFiles;
+		if (vectFiles.empty())
+		{
+			m_bConflictFound = false;
+			gtk_widget_set_sensitive(m_pBtnOK, TRUE);
+			return;
+		}
+	}
+	else
+	{
+		strFolder = GetFolderURI();
+		if (strFolder.empty())
+		{
+			m_bConflictFound = false;
+			gtk_widget_set_sensitive(m_pBtnOK, TRUE);
+			return;
+		}
 	}
 
 	gtk_widget_set_sensitive(m_pBtnOK, FALSE);
@@ -592,10 +860,10 @@ void RenameDlg::RenameDlgPriv::StartConflictCheck()
 	std::shared_ptr<std::atomic<int> > pGen = m_pConflictGeneration;
 
 	std::thread(
-		[pState, pGen, iGeneration, strFolder, strTemplate, pCancel]()
+		[pState, pGen, iGeneration, strTemplate, strFolder, vectFiles, pCancel]()
 		{
 			FileConflictCheck::ResultList vectResults;
-			bool bFound = CollectAndCheck(strFolder, strTemplate,
+			bool bFound = CollectAndCheck(strFolder, vectFiles, strTemplate,
 				pCancel, pState.get(), vectResults);
 
 			if (NULL == pCancel || !g_cancellable_is_cancelled(pCancel))
@@ -742,17 +1010,59 @@ void RenameDlg::RenameDlgPriv::UpdateUI()
 
 
 
+static void rename_dlg_cancel_now(RenameDlg::RenameDlgPriv* current)
+{
+	current->m_iRunResponse = GTK_RESPONSE_CANCEL;
+	current->m_bRunDone = true;
+	gtk_widget_set_visible(current->m_pDialogRename, FALSE);
+}
+
 void RenameDlg::RenameDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
 		g_signal_connect(m_pDialogRename, "close-request",
 			G_CALLBACK(+[](GtkWidget* widget, gpointer user_data) -> gboolean {
-				RenameDlg::RenameDlgPriv* priv = static_cast<RenameDlg::RenameDlgPriv*>(user_data);
-				priv->m_iRunResponse = GTK_RESPONSE_CANCEL;
-				priv->m_bRunDone = true;
-				gtk_widget_set_visible(widget, FALSE);
+				(void)widget;
+				rename_dlg_cancel_now((RenameDlg::RenameDlgPriv*)user_data);
 				return TRUE;
+			}), this);
+
+		g_signal_connect(m_pBtnCancel, "clicked",
+			G_CALLBACK(+[](GtkButton* button, gpointer user_data) {
+				(void)button;
+				rename_dlg_cancel_now((RenameDlg::RenameDlgPriv*)user_data);
+			}), this);
+
+		/* Escape closes the dialog as a cancel.  The shortcut fires only when
+		 * the pointer/keyboard focus is inside this window; with an explicit
+		 * cancel path both the button and the shortcut share the same
+		 * response handling above. */
+		GtkEventController* keyCtrl = gtk_event_controller_key_new();
+		g_signal_connect(keyCtrl, "key-pressed",
+			G_CALLBACK(+[](GtkEventControllerKey* controller,
+			               guint keyval, guint keycode, GdkModifierType state,
+			               gpointer user_data) -> gboolean {
+				(void)controller; (void)keycode; (void)state;
+				if (GDK_KEY_Escape == keyval)
+				{
+					rename_dlg_cancel_now((RenameDlg::RenameDlgPriv*)user_data);
+					return TRUE;
+				}
+				return FALSE;
+			}), this);
+		gtk_widget_add_controller(m_pDialogRename, keyCtrl);
+
+		g_signal_connect(m_pBtnModeSelection, "toggled",
+			G_CALLBACK(+[](GtkToggleButton* button, gpointer user_data) {
+				if (gtk_toggle_button_get_active(button))
+					((RenameDlg::RenameDlgPriv*)user_data)->SetFilesMode(true);
+			}), this);
+
+		g_signal_connect(m_pBtnModeFolder, "toggled",
+			G_CALLBACK(+[](GtkToggleButton* button, gpointer user_data) {
+				if (gtk_toggle_button_get_active(button))
+					((RenameDlg::RenameDlgPriv*)user_data)->SetFilesMode(false);
 			}), this);
 
 		g_signal_connect(m_pBtnChooseFolder,
@@ -828,8 +1138,12 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 
 	std::string strSrcURI = GetFolderURI();
 
-
-	if (!strSrcURI.empty() && strSrcURI != "NULL" && !strSrcURI.empty())
+	if (m_bHasFiles)
+	{
+		/* selection mode: the file list itself is the source */
+		bIsValid = !m_vectFiles.empty();
+	}
+	else if (!strSrcURI.empty() && strSrcURI != "NULL" && !strSrcURI.empty())
 	{
 		GFile* file_src = g_file_new_for_uri(strSrcURI.c_str());
 
@@ -886,7 +1200,9 @@ bool RenameDlg::RenameDlgPriv::ValidateInput()
 
 			FileConflictCheck::ResultList vectResults;
 			if (CollectAndCheck(
-					GetFolderURI(), gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplate)),
+					m_bHasFiles ? "" : GetFolderURI(),
+					m_bHasFiles ? m_vectFiles : std::vector<QuiverFile>(),
+					gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplate)),
 					NULL, NULL, vectResults))
 			{
 				m_vectConflicts = std::move(vectResults);
@@ -968,7 +1284,8 @@ static void on_folder_selected (GObject* source, GAsyncResult* res, gpointer use
 		if (NULL != uri)
 		{
 			priv->SetFolderURI(uri);
-			gtk_button_set_label(priv->m_pBtnChooseFolder, uri);
+			gtk_button_set_label(priv->m_pBtnChooseFolder,
+				rename_friendly_folder_path(uri).c_str());
 			g_free(uri);
 		}
 		priv->UpdateUI();

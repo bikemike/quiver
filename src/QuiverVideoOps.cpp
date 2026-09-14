@@ -27,6 +27,19 @@ namespace QuiverVideoOps
  * "rotate" stream metadata tag, or - for modern files - as a display-matrix
  * side data present on the decoded frame.  Detect it and return the angle in
  * degrees (0/90/180/270). */
+/* Prefer the codec's pixel aspect ratio (from the bitstream); fall back to
+ * the container stream SAR and only then to square pixels.  Some files (e.g.
+ * .3gp with an H.263 stream) leave the stream SAR unset while the decoder
+ * reports a real, non-square PAR (12/11) that video sinks honor at play time. */
+static AVRational quiver_video_stream_aspect_ratio(AVStream* st)
+{
+	if (st->codecpar->sample_aspect_ratio.num > 0)
+		return st->codecpar->sample_aspect_ratio;
+	if (st->sample_aspect_ratio.num != 0)
+		return st->sample_aspect_ratio;
+	return (AVRational){1, 1};
+}
+
 static int frame_rotation_deg(AVFrame* frame, AVDictionary* metadata)
 {
 	AVDictionaryEntry* e = av_dict_get(metadata, "rotate", NULL, 0);
@@ -256,6 +269,7 @@ static void configure_sws_colorspace(struct SwsContext* sws, AVFrame* frame)
 }
 
 static GdkTexture* frame_to_texture(AVFrame* frame, int width, int height,
+                                    gint n, gint d,
                                     gint target_width, gint target_height,
                                     int rotation)
 {
@@ -264,10 +278,19 @@ static GdkTexture* frame_to_texture(AVFrame* frame, int width, int height,
 
 	int out_w = width;
 	int out_h = height;
+	/* Apply the pixel aspect ratio to the texture itself so the pixels carry
+	 * the display aspect ratio.  Video sinks render the stream PAR-corrected
+	 * at play time, so grabbed frames (thumbnails, previews, first frames)
+	 * must match: e.g. a 176x144 H.263 stream with PAR 12/11 shows 192 wide. */
+	if (n > d)
+		out_w = (gint)((out_w * n) / (double)d + .5);
+	else if (d > n)
+		out_h = (gint)((out_h * d) / (double)n + .5);
+
 	if (target_width > 0 && target_height > 0 &&
-	    (width > target_width || height > target_height))
+	    (out_w > target_width || out_h > target_height))
 	{
-		guint new_w = width, new_h = height;
+		guint new_w = out_w, new_h = out_h;
 		quiver_rect_get_bound_size(target_width, target_height,
 		                           &new_w, &new_h, FALSE);
 		out_w = (int)new_w;
@@ -368,11 +391,12 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 
 	if (aspect_n != NULL && aspect_d != NULL)
 	{
-		AVRational par = (st->sample_aspect_ratio.num != 0)
-			? st->sample_aspect_ratio : (AVRational){1, 1};
+		AVRational par = quiver_video_stream_aspect_ratio(st);
 		*aspect_n = par.num;
 		*aspect_d = par.den;
 	}
+
+	AVRational par_ratio = quiver_video_stream_aspect_ratio(st);
 
 	if (position_ns >= 0)
 	{
@@ -422,6 +446,7 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 			if (position_ns < 0)
 			{
 				result = frame_to_texture(frame, frame_w, frame_h,
+				                          par_ratio.num, par_ratio.den,
 				                          target_width, target_height, rotation);
 				av_frame_unref(frame);
 				goto done;
@@ -435,6 +460,7 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 				if (pts_ns >= position_ns)
 				{
 					result = frame_to_texture(frame, frame_w, frame_h,
+					                          par_ratio.num, par_ratio.den,
 					                          target_width, target_height, rotation);
 					av_frame_unref(frame);
 					goto done;
@@ -456,6 +482,7 @@ done:
 		int last_h = last_frame->height;
 		int last_rotation = frame_rotation_deg(last_frame, st->metadata);
 		result = frame_to_texture(last_frame, last_w, last_h,
+		                          par_ratio.num, par_ratio.den,
 		                          target_width, target_height, last_rotation);
 	}
 	av_packet_free(&pkt);
@@ -559,8 +586,7 @@ static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 
 	if (aspect_n != NULL && aspect_d != NULL)
 	{
-		AVRational par = (st->sample_aspect_ratio.num != 0)
-			? st->sample_aspect_ratio : (AVRational){1, 1};
+		AVRational par = quiver_video_stream_aspect_ratio(st);
 		*aspect_n = par.num;
 		*aspect_d = par.den;
 	}
@@ -705,8 +731,7 @@ gboolean Probe(const gchar *uri,
 			: 0;
 	}
 
-	AVRational par = (s.st->sample_aspect_ratio.num != 0)
-		? s.st->sample_aspect_ratio : (AVRational){1, 1};
+	AVRational par = quiver_video_stream_aspect_ratio(s.st);
 	int w = s.st->codecpar->width;
 	int h = s.st->codecpar->height;
 

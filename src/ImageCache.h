@@ -55,6 +55,7 @@ public:
 
 	void AddFailure(std::string filename);
 	bool HasFailed(std::string filename);
+	void RemoveFailure(std::string filename);
 
 private:
 	static void FreeCacheItem(CacheItem &item);

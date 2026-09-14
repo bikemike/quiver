@@ -611,7 +611,14 @@ quiver_icon_view_size_allocate (GtkWidget     *widget,
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
 
 	quiver_icon_view_update_icon_size(iconview);
-	quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,TRUE);
+	if (G_MAXULONG != iconview->priv->cursor_cell)
+	{
+		/* Only bring the cursor into view; don't force it to the top-left.
+		 * Forcing on every allocation makes routine re-layouts (e.g. a
+		 * context-menu popover being parented to the widget) snap the grid
+		 * away from the pointer. */
+		quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,FALSE);
+	}
 	gtk_widget_queue_draw(widget);
 }
 
@@ -2019,7 +2026,12 @@ quiver_icon_view_update_icon_size(QuiverIconView *iconview)
 
 	iconview->priv->scroll_draw = FALSE;
 
-	quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,TRUE);
+	if (G_MAXULONG != iconview->priv->cursor_cell)
+	{
+		/* Scroll-into-view only; do not force the cursor to the top-left on
+		 * every icon-size/layout update. */
+		quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,FALSE);
+	}
 
 	gtk_widget_queue_draw(widget);
 
@@ -2826,6 +2838,28 @@ void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gulong new_cursor
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
 
 	quiver_icon_view_set_cursor_cell_full(iconview,new_cursor_cell,(GdkModifierType)0,FALSE);
+}
+
+/* Move the cursor without touching the selection, scrolling the view, or
+ * emitting cursor_changed.  Used when a right-click gathers the context-menu
+ * target under itself: the caller selects the clicked cell and pins the cursor
+ * there so that the icon view's scroll-to-cursor bookkeeping (size-allocate,
+ * adjustment-changed, set_cursor_cell) always targets the cell already under
+ * the pointer instead of snapping back toward the previously selected cell. */
+void quiver_icon_view_set_cursor_cell_silent(QuiverIconView *iconview,gulong new_cursor_cell)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	if (new_cursor_cell >= iconview->priv->n_cell_items)
+		return;
+
+	if (new_cursor_cell == iconview->priv->cursor_cell)
+		return;
+
+	quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
+	iconview->priv->cursor_cell = new_cursor_cell;
+	iconview->priv->cursor_cell_first = G_MAXULONG;
+	quiver_icon_view_invalidate_cell(iconview,new_cursor_cell);
 }
 
 gulong quiver_icon_view_get_prelight_cell(QuiverIconView* iconview)

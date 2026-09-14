@@ -29,6 +29,9 @@
 #include "QuiverPrefs.h"
 #include "QuiverFileOps.h"
 #include "BrowserHistory.h"
+#include "RenameDlg.h"
+#include "RenameTask.h"
+#include "TaskManager.h"
 
 #include "Statusbar.h"
 
@@ -269,6 +272,17 @@ public:
 	GtkWidget *m_pToolbar;
 
 	GtkWidget *m_pContextMenuPopover;
+
+	/* A right-click on an icon sets this while the button is held; the
+	 * context-menu popover is only built and shown on the matching release,
+	 * because popping up a menu mid-press makes the autohide grab pop it
+	 * straight back down (the press is still in flight). */
+	bool m_bContextMenuPending;
+
+	/* When the pending right-click came down in the icon view's empty area
+	 * (no cell under the pointer), the release builds the reduced empty-area
+	 * menu (paste / undo-delete) instead of the item menu. */
+	bool m_bContextMenuOnEmptyArea;
 	
 	StatusbarPtr m_StatusbarPtr;
 	
@@ -301,10 +315,13 @@ public:
 	 * them to trash. */
 	bool IsTrashMode() const;
 
-	/* Context-menu widgets that depend on the current folder (trash vs.
-	 * normal), labelled/hidden in browser_show_context_menu(). */
+	/* Context-menu state that depends on the current folder (trash vs.
+	 * normal), updated in browser_show_context_menu(). */
 	GtkWidget *m_pContextMenuTrashBtn;
 	GtkWidget *m_pContextMenuRestoreBtn;
+	/* In the trash: title row showing the original name and location of the
+	 * item the restore action would bring back (menu child at the top). */
+	GtkWidget *m_pContextMenuTitleLabel;
 	/* Overlay wrapping the icon view (see GetIconViewOverlay()). */
 	GtkWidget *m_pIconViewOverlay;
 	
@@ -407,6 +424,7 @@ static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_BROWSER_CUT                                "BrowserCut"
 #define ACTION_BROWSER_COPY                               "BrowserCopy"
 #define ACTION_BROWSER_PASTE                              "BrowserPaste"
+#define ACTION_BROWSER_RENAME                             "BrowserRename"
 #define ACTION_BROWSER_SELECT_ALL                         "BrowserSelectAll"
 #define ACTION_BROWSER_TRASH                              "BrowserTrash"
 #define ACTION_BROWSER_TRASH_FORCE                        "BrowserTrashForce"
@@ -560,6 +578,7 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 	static void iconview_leave_notify(GtkEventControllerMotion *controller, gpointer user_data);
 
 static void browser_button_press_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data); 
+static void browser_button_release_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data); 
 static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, gpointer userdata);
 
 static void entry_activate(GtkEntry *entry, gpointer user_data);
@@ -690,6 +709,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_iTimeoutHideLocationID = 0;
 	m_pContextMenuTrashBtn = NULL;
 	m_pContextMenuRestoreBtn = NULL;
+	m_pContextMenuTitleLabel = NULL;
+	m_pContextMenuPopover = NULL;
+	m_bContextMenuPending = false;
+	m_bContextMenuOnEmptyArea = false;
 	m_pIconViewOverlay = NULL;
 	/*
 	 * layout for the browser gui:
@@ -853,6 +876,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		GtkGesture *gesture = gtk_gesture_click_new();
 		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
 		g_signal_connect(gesture, "pressed", G_CALLBACK(browser_button_press_cb), this);
+		g_signal_connect(gesture, "released", G_CALLBACK(browser_button_release_cb), this);
 		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(gesture));
 	}
 	//g_signal_connect(G_OBJECT(m_pImageView), "popup-menu", G_CALLBACK(browser_popup_menu_cb), this);
@@ -881,6 +905,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		GtkGesture *gesture = gtk_gesture_click_new();
 		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
 		g_signal_connect(gesture, "pressed", G_CALLBACK(browser_button_press_cb), this);
+		g_signal_connect(gesture, "released", G_CALLBACK(browser_button_release_cb), this);
 		gtk_widget_add_controller(m_pIconView, GTK_EVENT_CONTROLLER(gesture));
 	}
 	{
@@ -932,36 +957,21 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_widget_set_visible(m_pBrowserWidget, TRUE);
 	gtk_widget_set_visible(m_pBrowserWidget, FALSE);
 
-	// build context menu popover (follows FolderTree.cpp pattern)
-	m_pContextMenuPopover = gtk_popover_new();
-	{
-		GtkWidget* menu_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	// The context menu is a real menu model (no buttons); item set depends on
+	// the current folder/trash mode, so the popover and its model are built
+	// fresh in browser_show_context_menu() on every right-click.  Only the
+	// trash-mode title row is long-lived.
+	m_pContextMenuTitleLabel = QuiverUtils::MakeMenuTitleLabel("", "");
+	gtk_widget_set_visible(m_pContextMenuTitleLabel, FALSE);
 
-		GtkWidget* menuitem = gtk_button_new_with_label("Copy");
-		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver." ACTION_BROWSER_COPY);
-		gtk_box_append(GTK_BOX(menu_box), menuitem);
-
-		menuitem = gtk_button_new_with_label("Move To Trash");
-		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver." ACTION_BROWSER_TRASH);
-		gtk_box_append(GTK_BOX(menu_box), menuitem);
-		m_pContextMenuTrashBtn = menuitem;
-
-		menuitem = gtk_button_new_with_label("Restore From Trash");
-		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver." ACTION_BROWSER_RESTORE);
-		gtk_box_append(GTK_BOX(menu_box), menuitem);
-		m_pContextMenuRestoreBtn = menuitem;
-
-		menuitem = gtk_button_new_with_label("Undo Delete");
-		gtk_widget_set_halign(menuitem, GTK_ALIGN_FILL);
-		gtk_actionable_set_action_name(GTK_ACTIONABLE(menuitem), "quiver.UndoDelete");
-		gtk_box_append(GTK_BOX(menu_box), menuitem);
-
-		gtk_popover_set_child(GTK_POPOVER(m_pContextMenuPopover), menu_box);
-	}
-	gtk_widget_insert_action_group(m_pContextMenuPopover, "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
+	/* The popover is parented to the icon view on each right-click.  If the
+	 * icon view is destroyed directly (window teardown), the popover dies with
+	 * it, so drop the pointer here -- the destructor must not unparent it then. */
+	g_signal_connect(m_pIconView, "destroy",
+		G_CALLBACK(+[](GtkWidget*, gpointer user_data) {
+			Browser::BrowserImpl* b = static_cast<Browser::BrowserImpl*>(user_data);
+			b->m_pContextMenuPopover = NULL;
+		}), this);
 
 
 	gdouble thumb_size = (gdouble)prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE);	
@@ -1117,10 +1127,11 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_CUT, "<Control>X", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_COPY, "<Control>C", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_PASTE, "<Control>V", browser_action_handler_cb, this);
+	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RENAME, "F2", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_SELECT_ALL, "<Control>A", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH, "Delete", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH_FORCE, "<Shift>Delete", browser_action_handler_cb, this);
-	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RESTORE, "r", browser_action_handler_cb, this);
+	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RESTORE, NULL, browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RELOAD, "<Control>R", browser_action_handler_cb, this);
 	/* Browser toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_BROWSER_VIEW_SIDEBAR, "<Control><Shift>F", TRUE, browser_action_handler_cb, this);
@@ -2043,38 +2054,213 @@ entry_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode,
 
 static void 
 browser_button_press_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data)
-{ (void)n_press; (void)x; (void)y;
+{ (void)n_press;
 	GtkWidget *widget = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)));
-	guint button = gtk_gesture_single_get_button(GTK_GESTURE_SINGLE(gesture));
-	if (3 == button)
+	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	if (3 != button)
 	{
-		browser_show_context_menu(widget, x, y, user_data);
+		return;
 	}
+
+	Browser::BrowserImpl *b = static_cast<Browser::BrowserImpl*>(user_data);
+
+	/* A right-click in the icon view's empty area opens the reduced
+	 * empty-area menu (paste / undo delete) on release instead of acting on an
+	 * item; one over an icon selects exactly that icon (deselecting the rest)
+	 * so the menu actions act on the item that was clicked. */
+	if (widget == GTK_WIDGET(b->m_pIconView))
+	{
+		gulong cell = quiver_icon_view_get_cell_for_xy(
+			QUIVER_ICON_VIEW(widget), (gint)x, (gint)y);
+		if (G_MAXULONG == cell)
+		{
+			b->m_bContextMenuPending = true;
+			b->m_bContextMenuOnEmptyArea = true;
+			return;
+		}
+
+		b->m_bContextMenuPending = true;
+		b->m_bContextMenuOnEmptyArea = false;
+
+		GList *sel = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(widget));
+		gboolean already = FALSE;
+		for (const GList *it = sel; it != NULL; it = it->next)
+		{
+			if ((gulong)(uintptr_t)it->data == cell)
+			{
+				already = TRUE;
+				break;
+			}
+		}
+		if (!already)
+		{
+			GList *single = g_list_append(NULL, (gpointer)(uintptr_t)cell);
+			quiver_icon_view_set_selection(QUIVER_ICON_VIEW(widget), single);
+			g_list_free(single);
+		}
+
+		/* Pin the icon view's cursor to the right-clicked cell so the view's
+		 * scroll-to-cursor bookkeeping (size-allocate / adjustment-changed /
+		 * set_cursor_cell) targets the cell already under the pointer instead
+		 * of snapping back toward a previously selected cell. */
+		quiver_icon_view_set_cursor_cell_silent(QUIVER_ICON_VIEW(widget), cell);
+		g_list_free(sel);
+	}
+}
+
+static void browser_button_release_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data)
+{ (void)n_press;
+	Browser::BrowserImpl *pBrowserImpl = static_cast<Browser::BrowserImpl*>(user_data);
+	GtkWidget *widget = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)));
+	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	if (3 != button)
+		return;
+	if (!pBrowserImpl->m_bContextMenuPending)
+		return;
+	pBrowserImpl->m_bContextMenuPending = false;
+
+	browser_show_context_menu(widget, x, y, user_data);
+}
+
+static void browser_menu_item(GMenu *menu, const char *label, const char *action_name,
+	const char *accel, const char *item_id)
+{
+	GMenuItem *item = g_menu_item_new(label, action_name);
+	if (accel != NULL && accel[0] != '\0')
+		g_menu_item_set_attribute(item, "accel", "s", accel);
+	if (item_id != NULL && item_id[0] != '\0')
+		g_menu_item_set_attribute(item, "id", "s", item_id);
+	g_menu_append_item(menu, item);
+	g_object_unref(item);
 }
 
 static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, gpointer userdata)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)userdata;
-	(void)widget;
 
-	if (NULL != pBrowserImpl->m_pContextMenuPopover)
+	/* Build a fresh popover on every show: a GTK popover that has been
+	 * through a popup()/popdown() cycle refuses to map its surface again on
+	 * this stack, so reuse (rather than recycle) it. */
+	if (pBrowserImpl->m_pContextMenuPopover)
 	{
-		const bool bTrash = pBrowserImpl->IsTrashMode();
-		gtk_button_set_label(GTK_BUTTON(pBrowserImpl->m_pContextMenuTrashBtn),
-			bTrash ? "Delete Permanently" : "Move To Trash");
-		gtk_widget_set_visible(pBrowserImpl->m_pContextMenuRestoreBtn, bTrash);
-
-		if (x >= 0 && y >= 0)
+		if (gtk_widget_get_parent(pBrowserImpl->m_pContextMenuPopover))
 		{
-			GdkRectangle rect;
-			rect.x = (int)x;
-			rect.y = (int)y;
-			rect.width = 1;
-			rect.height = 1;
-			gtk_popover_set_pointing_to(GTK_POPOVER(pBrowserImpl->m_pContextMenuPopover), &rect);
+			gtk_widget_unparent(pBrowserImpl->m_pContextMenuPopover);
 		}
-		gtk_popover_popup(GTK_POPOVER(pBrowserImpl->m_pContextMenuPopover));
+		pBrowserImpl->m_pContextMenuPopover = NULL;
 	}
+
+	const bool bTrash = pBrowserImpl->IsTrashMode();
+	const bool bEmptyArea = pBrowserImpl->m_bContextMenuOnEmptyArea;
+
+	/* The icon view selection and the internal clipboard define which items
+	 * should be usable.  Update the enabled states so the model menu greys
+	 * out what cannot run right now. */
+	GList *selection = quiver_icon_view_get_selection(
+		QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+	const gboolean bHasSelection = (NULL != selection);
+	const gboolean bHasClipboard = QuiverFileOps::ClipboardHasItems() ? TRUE : FALSE;
+	{
+		GAction *a;
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_COPY)))
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection);
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_CUT)))
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection ? (bTrash ? FALSE : TRUE) : FALSE);
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_PASTE)))
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasClipboard);
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_RENAME)))
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && !bTrash);
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_TRASH)))
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection);
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_RESTORE)))
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && bTrash);
+	}
+	const guint nSel = g_list_length(selection);
+
+	/* Trash title row: the original file name + location of the (first)
+	 * selected trash item. */
+	bool bShowTitle = false;
+	if (bTrash && nSel > 0 && selection != NULL)
+	{
+		guint item = (guint)(uintptr_t)selection->data;
+		if (item < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+		{
+			QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
+			char *orig = QuiverFileOps::GetTrashItemOrigPath(f.GetURI());
+			if (NULL != orig)
+			{
+				char *name = g_path_get_basename(orig);
+				char *dir  = g_path_get_dirname(orig);
+				gchar *markup = g_markup_escape_text(name ? name : orig, -1);
+				gtk_label_set_markup(GTK_LABEL(pBrowserImpl->m_pContextMenuTitleLabel), markup);
+				g_free(markup);
+				g_free(dir);
+				g_free(name);
+				g_free(orig);
+				bShowTitle = true;
+			}
+		}
+	}
+	gtk_widget_set_visible(pBrowserImpl->m_pContextMenuTitleLabel, bShowTitle);
+	const char *title_id = bShowTitle ? "browser-trash-title" : NULL;
+
+	/* Rebuild the model: items depend on trash vs. normal browsing, and on
+	 * whether the click came down on an item or the empty area. */
+	GMenu *menu = g_menu_new();
+	if (bEmptyArea)
+	{
+		/* Empty-area menu: "Undo Delete" only makes sense here and only when
+		 * there actually is a deletion to undo. */
+		if (bHasClipboard)
+			browser_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
+				"<Control>v", NULL);
+		if (QuiverFileOps::UndoStackHasItems() && NULL != QuiverUtils::GetAction("UndoDelete"))
+			browser_menu_item(menu, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL);
+	}
+	else if (bTrash)
+	{
+		browser_menu_item(menu, "Copy", "quiver." ACTION_BROWSER_COPY,
+			"<Control>c", title_id);
+		GMenu *trash_section = g_menu_new();
+		browser_menu_item(trash_section, "Delete Permanently", "quiver." ACTION_BROWSER_TRASH,
+			"Delete", NULL);
+		browser_menu_item(trash_section, "Restore From Trash", "quiver." ACTION_BROWSER_RESTORE,
+			NULL, NULL);
+		g_menu_append_section(menu, NULL, G_MENU_MODEL(trash_section));
+		g_object_unref(trash_section);
+	}
+	else
+	{
+		browser_menu_item(menu, "Copy", "quiver." ACTION_BROWSER_COPY,
+			"<Control>c", NULL);
+		browser_menu_item(menu, "Cut", "quiver." ACTION_BROWSER_CUT,
+			"<Control>x", NULL);
+		if (QuiverFileOps::ClipboardHasItems())
+			browser_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
+				"<Control>v", NULL);
+		browser_menu_item(menu, "Rename", "quiver." ACTION_BROWSER_RENAME,
+			"F2", NULL);
+		GMenu *actions_section = g_menu_new();
+		browser_menu_item(actions_section, "Move To Trash", "quiver." ACTION_BROWSER_TRASH,
+			"Delete", NULL);
+		g_menu_append_section(menu, NULL, G_MENU_MODEL(actions_section));
+		g_object_unref(actions_section);
+	}
+	g_list_free(selection);
+
+	pBrowserImpl->m_pContextMenuPopover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+	g_object_unref(menu);
+	if (bShowTitle)
+	{
+		gtk_popover_menu_add_child(GTK_POPOVER_MENU(pBrowserImpl->m_pContextMenuPopover),
+			pBrowserImpl->m_pContextMenuTitleLabel, "browser-trash-title");
+	}
+	gtk_widget_insert_action_group(pBrowserImpl->m_pContextMenuPopover, "quiver",
+		G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
+	gtk_widget_set_parent(pBrowserImpl->m_pContextMenuPopover, widget);
+
+	QuiverUtils::ShowContextMenuAt(
+		GTK_POPOVER(pBrowserImpl->m_pContextMenuPopover), widget, x, y);
 }
 
 
@@ -2211,39 +2397,219 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	}	
 	else if (0 == strcmp(szAction,ACTION_BROWSER_COPY))
 	{
+		/* Collect the selected items once and feed both the system clipboard
+		 * (so other applications can paste the URIs) and the internal quiver
+		 * clipboard (so Paste inside quiver can duplicate files). */
 		GdkClipboard* clipboard = gdk_display_get_clipboard(gdk_display_get_default());
-		
-		string strClipText;
-		
+
+		list<string> uris;
 		GList *selection;
 		selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
-	
+
 		if (NULL != selection)
 		{
-			// delete the items!
 			GList *sel_itr = selection;
-
 			while (NULL != sel_itr)
 			{
-				int item = (uintptr_t)sel_itr->data;
-				QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
-				if (!strClipText.empty())
+				guint item = (guint)(uintptr_t)sel_itr->data;
+				if (item < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
 				{
-					strClipText += "\n";
+					QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
+					uris.push_back(f.GetURI());
 				}
-				strClipText += f.GetURI();
 				sel_itr = g_list_next(sel_itr);
 			}
 			g_list_free(selection);
 
-			gdk_clipboard_set_text (clipboard, strClipText.c_str());
+			QuiverFileOps::ClipboardSet(uris, false);
 
+			string strClipText;
+			for (list<string>::const_iterator it = uris.begin(); it != uris.end(); ++it)
+			{
+				if (!strClipText.empty())
+					strClipText += "\n";
+				strClipText += *it;
+			}
+			gdk_clipboard_set_text(clipboard, strClipText.c_str());
 		}
-			
-		
+	}
+	else if (0 == strcmp(szAction,ACTION_BROWSER_CUT))
+	{
+		list<string> uris;
+		GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+		if (NULL != selection)
+		{
+			GList *sel_itr = selection;
+			while (NULL != sel_itr)
+			{
+				guint item = (guint)(uintptr_t)sel_itr->data;
+				if (item < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+				{
+					QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
+					uris.push_back(f.GetURI());
+				}
+				sel_itr = g_list_next(sel_itr);
+			}
+			g_list_free(selection);
+		}
+		QuiverFileOps::ClipboardSet(uris, true);
+	}
+	else if (0 == strcmp(szAction,ACTION_BROWSER_PASTE))
+	{
+		if (!QuiverFileOps::ClipboardHasItems())
+			return;
 
-			
-		
+		std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
+		if (1 != dirs.size())
+			return; /* single-folder view only */
+
+		int transferred = QuiverFileOps::ClipboardTransferTo(dirs.front().c_str());
+		if (transferred <= 0)
+			return;
+
+		pBrowserImpl->m_ImageListPtr->Reload();
+		pBrowserImpl->m_ThumbnailCache.Clear();
+		pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+	}
+	else if (0 == strcmp(szAction,ACTION_BROWSER_RENAME))
+	{
+		GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+		if (NULL == selection)
+			return;
+
+		const guint nSelected = g_list_length(selection);
+		if (0 == nSelected)
+		{
+			g_list_free(selection);
+			return;
+		}
+
+		/* Multi-select: hand the batch over to the rename task dialog
+		 * (template + numbering), not the single-item prompt. */
+		if (nSelected > 1)
+		{
+			std::vector<QuiverFile> files;
+			for (const GList *it = selection; NULL != it; it = it->next)
+			{
+				guint idx = (guint)(uintptr_t)it->data;
+				if (idx < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+					files.push_back((*pBrowserImpl->m_ImageListPtr)[idx]);
+			}
+			g_list_free(selection);
+			if (files.empty())
+				return;
+
+			/* Rename exactly the selected items; each keeps its own folder.
+			 * A parent-folder default is preset so the dialog's Folder mode
+			 * works, and a folder-first selection falls back to renaming
+			 * the whole folder containing the first item. */
+			RenameDlg dlg;
+			if (!files.empty())
+			{
+				const gchar* uri0 = files.front().GetURI();
+				if (NULL != uri0)
+				{
+					GFile* file = g_file_new_for_uri(uri0);
+					GFile* parent = g_file_get_parent(file);
+					g_object_unref(file);
+					if (NULL != parent)
+					{
+						gchar* parent_uri = g_file_get_uri(parent);
+						if (NULL != parent_uri)
+						{
+							dlg.SetInputFolder(parent_uri);
+							g_free(parent_uri);
+						}
+						g_object_unref(parent);
+					}
+				}
+			}
+			dlg.SetFiles(files);
+
+			if (dlg.Run())
+			{
+				RenameTaskPtr renameTaskPtr(new RenameTask());
+				renameTaskPtr->SetTemplate(dlg.GetTemplate());
+				if (dlg.GetFilesMode())
+				{
+					renameTaskPtr->AddFiles(dlg.GetFiles());
+				}
+				else
+				{
+					renameTaskPtr->SetInputFolder(dlg.GetInputFolder());
+				}
+				TaskManager::GetInstance()->AddTask(renameTaskPtr);
+			}
+			return;
+		}
+
+		guint item = (guint)(uintptr_t)selection->data;
+		g_list_free(selection);
+		if (item >= (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+			return;
+
+		QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
+		char *old_name = g_path_get_basename(f.GetURI());
+		char *new_name = QuiverUtils::PromptForString(
+			"Rename", "Enter the new name for this item:", old_name);
+
+		if (NULL == new_name)
+		{
+			g_free(old_name);
+			return;
+		}
+
+		gboolean renamed = FALSE;
+		char *new_uri = NULL;
+		GFile *src = g_file_new_for_uri(f.GetURI());
+		GError *error = NULL;
+		GFile *dst = g_file_set_display_name(src, new_name, NULL, &error);
+		if (NULL == dst)
+		{
+			QuiverUtils::ConfirmDialog("Rename failed",
+				error && error->message ? error->message
+					: "The item could not be renamed.",
+				"OK", "Close");
+			if (error)
+				g_error_free(error);
+		}
+		else
+		{
+			renamed = TRUE;
+			new_uri = g_file_get_uri(dst);
+			g_object_unref(dst);
+		}
+		g_object_unref(src);
+		g_free(new_name);
+		g_free(old_name);
+
+		if (renamed)
+		{
+			pBrowserImpl->m_ImageListPtr->Reload();
+			pBrowserImpl->m_ThumbnailCache.Clear();
+			pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+
+			if (NULL != new_uri)
+			{
+				/* Position the list on the renamed item.  SetCurrentFile
+				 * refreshes the view downstream when the rename shifted the
+				 * item's index, but a rename that keeps the list order fires
+				 * nothing, so re-seat the cursor cell and the selection
+				 * explicitly under the item's new name. */
+				pBrowserImpl->m_ImageListPtr->SetCurrentFile(new_uri);
+
+				guint idx = pBrowserImpl->m_ImageListPtr->GetCurrentIndex();
+				quiver_icon_view_set_cursor_cell(
+					QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), idx);
+				GList *single = g_list_append(NULL, (gpointer)(uintptr_t)idx);
+				quiver_icon_view_set_selection(
+					QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), single);
+				g_list_free(single);
+
+				pBrowserImpl->m_BrowserHistory.SetCurrentSelected(new_uri);
+				g_free(new_uri);
+			}
+		}
 	}
 	else if (0 == strcmp(szAction, ACTION_BROWSER_TRASH)
 			|| 0 == strcmp(szAction, ACTION_BROWSER_TRASH_FORCE))
@@ -2601,7 +2967,9 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 
 	if (is_mapped && item.m_ulIndex < m_pBrowserImpl->m_ImageListPtr->GetSize())
 	{
-		QuiverFile f(item.m_QuiverFile);
+		QuiverFile f((*m_pBrowserImpl->m_ImageListPtr)[item.m_ulIndex]);
+		if (NULL == f.GetURI())
+			return;
 
 		GdkTexture *texture = NULL;
 		texture = m_pBrowserImpl->m_ThumbnailCache.GetTexture(f.GetURI());				

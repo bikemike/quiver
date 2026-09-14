@@ -1180,8 +1180,12 @@ bool ImageList::ImageListImpl::AddFile(const gchar*  uri)
 
 bool ImageList::ImageListImpl::ShouldAddFile(const gchar* uri, GFileInfo *info)
 {
-	// don't add hidden files
-	if (g_file_info_get_is_hidden(info))
+	// don't add hidden files.  Some backends (e.g. the gvfs trash mount)
+	// don't report standard::is-hidden even when it is requested, and
+	// g_file_info_get_is_hidden() would otherwise raise a GLib critical
+	// ("GFileInfo created without standard::is-hidden").
+	if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN)
+		&& g_file_info_get_is_hidden(info))
 		return false;
 
 	GFileType type = g_file_info_get_file_type(info);

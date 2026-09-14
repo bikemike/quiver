@@ -173,3 +173,80 @@ TEST_CASE("ImageDecoder FreeDesktop Thumbnail Specification Metadata", "[unit][d
     g_unlink(tmpThumbPb);
 #endif
 }
+
+static void write_bytes(const char* path, const std::vector<uint8_t>& bytes)
+{
+    FILE* f = fopen(path, "wb");
+    REQUIRE(f != nullptr);
+    size_t wrote = fwrite(bytes.data(), 1, bytes.size(), f);
+    REQUIRE(wrote == bytes.size());
+    fclose(f);
+}
+
+TEST_CASE("ImageDecoder Fast Header Dimensions", "[unit][decoder][fast]")
+{
+    const std::string dir = "/tmp/quiver-dimtest";
+
+    const uint8_t png[] = {
+        0x89,'P','N','G',0x0D,0x0A,0x1A,0x0A,
+        0x00,0x00,0x00,0x0D, 'I','H','D','R',
+        0x00,0x00,0x02,0x80, 0x00,0x00,0x01,0xE0, /*** 640 x 480 ***/
+        0x08,0x06,0x00,0x00,0x00
+    };
+    const uint8_t gif[] = {
+        'G','I','F','8','9','a', 0x40,0x01, 0xC8,0x00, 0x00,0x00,0x00,0x00
+    };
+    const uint8_t bmp[] = {
+        'B','M', 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+        0x20,0x03,0x00,0x00,  0xA8,0xFD,0xFF,0xFF     /* 800 x -600 (top-down) */
+    };
+    const uint8_t jpg[] = {
+        0xFF,0xD8,
+        0xFF,0xE0,0x00,0x10,'J','F','I','F',0x00,0x01,0x01,0x00,0x00,0x01,0x00,0x01,0x00,0x00,
+        0xFF,0xC0,0x00,0x11,0x08, 0x01,0xE0, 0x02,0x80, 0x03,0x01,0x22,0x00,0x02,0x11,0x01,0x03,0x11,0x01,
+        0xFF,0xD9
+    };
+    const uint8_t webp[] = {
+        'R','I','F','F',0x00,0x00,0x00,0x00,'W','E','B','P',
+        'V','P','8','X',0x0A,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x7F,0x02,0x00, 0xDF,0x01,0x00                    /* 640 x 480 */
+    };
+    const uint8_t tiff[] = {
+        'I','I',0x2A,0x00, 0x08,0x00,0x00,0x00, 0x02,0x00,
+        0x00,0x01,0x04,0x00, 0x01,0x00,0x00,0x00, 0x80,0x07,0x00,0x00,  /* tag256 -> 1920 */
+        0x01,0x01,0x04,0x00, 0x01,0x00,0x00,0x00, 0x38,0x04,0x00,0x00   /* tag257 -> 1080 */
+    };
+
+    struct Fixture { std::string file; std::vector<uint8_t> data; int w; int h; };
+    std::vector<Fixture> fixtures = {
+        { dir + "/test.png", std::vector<uint8_t>(png, png + sizeof(png)), 640, 480 },
+        { dir + "/test.gif", std::vector<uint8_t>(gif, gif + sizeof(gif)), 320, 200 },
+        { dir + "/test.bmp", std::vector<uint8_t>(bmp, bmp + sizeof(bmp)), 800, 600 },
+        { dir + "/test.jpg", std::vector<uint8_t>(jpg, jpg + sizeof(jpg)), 640, 480 },
+        { dir + "/test.webp", std::vector<uint8_t>(webp, webp + sizeof(webp)), 640, 480 },
+        { dir + "/test.tiff", std::vector<uint8_t>(tiff, tiff + sizeof(tiff)), 1920, 1080 },
+    };
+
+    g_mkdir_with_parents(dir.c_str(), 0700);
+
+    for (auto& fix : fixtures)
+    {
+        DYNAMIC_SECTION(fix.file)
+        {
+            write_bytes(fix.file.c_str(), fix.data);
+            GFile* file = g_file_new_for_path(fix.file.c_str());
+            REQUIRE(file != nullptr);
+
+            int w = -9, h = -9;
+            bool ok = ImageDecoder::GetDimensions(file, "application/octet-stream", &w, &h);
+
+            REQUIRE(ok == true);
+            REQUIRE(w == fix.w);
+            REQUIRE(h == fix.h);
+            g_object_unref(file);
+            g_unlink(fix.file.c_str());
+        }
+    }
+
+    g_rmdir(dir.c_str());
+}
