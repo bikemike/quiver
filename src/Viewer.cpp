@@ -713,6 +713,12 @@ public:
 	bool m_bMaximizeViewabe;
 
 	bool m_bIsPlaying;
+	GtkWidget* m_pPlayAnimWidget;
+	GtkWidget* m_pPlayAnimImage;
+	guint      m_iPlayAnimTickId;
+	gint64     m_iPlayAnimStartTime;
+	void       TriggerPlayPauseAnimation(bool isPlaying);
+	void       CancelPlayPauseAnimation();
 
 	ImageCache m_ThumbnailCache;
 
@@ -1555,6 +1561,12 @@ static void viewer_set_controls_opacity(Viewer::ViewerImpl* p, double opacity)
 		gtk_widget_set_opacity(p->m_pMediaControls, opacity);
 	if (p->m_pTransportRow)
 		gtk_widget_set_opacity(p->m_pTransportRow, opacity);
+	if (p->m_pPlayButton && p->m_pPlayImage && 0 == p->m_iPlayAnimTickId)
+	{
+		double scale = 0.75 + 0.25 * opacity;
+		int icon_sz = (int)(40.0 * scale + 0.5);
+		gtk_image_set_pixel_size(GTK_IMAGE(p->m_pPlayImage), icon_sz);
+	}
 }
 
 static void viewer_set_controls_visible(Viewer::ViewerImpl* p, bool visible)
@@ -1660,6 +1672,124 @@ void Viewer::ViewerImpl::StartControlsFade(bool fadeIn)
 	CancelControlsFade();
 	m_bControlsFadingIn = fadeIn;
 	m_iTimeoutControlsFade = g_timeout_add(CONTROLS_FADE_INTERVAL, controls_fade_cb, this);
+}
+
+/* ── Play / Pause animation (fading in and out in both transparency and size) ── */
+
+static gboolean play_anim_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (NULL == p || NULL == p->m_pPlayAnimWidget)
+		return G_SOURCE_REMOVE;
+
+	gint64 now = gdk_frame_clock_get_frame_time(frame_clock);
+	if (0 == p->m_iPlayAnimStartTime)
+	{
+		p->m_iPlayAnimStartTime = now;
+	}
+
+	const gint64 duration_us = 450000; // 450 ms animation
+	gint64 elapsed = now - p->m_iPlayAnimStartTime;
+	double t = (double)elapsed / (double)duration_us;
+
+	if (t >= 1.0)
+	{
+		gtk_widget_set_opacity(p->m_pPlayAnimWidget, 0.0);
+		gtk_widget_set_visible(p->m_pPlayAnimWidget, FALSE);
+		p->m_iPlayAnimTickId = 0;
+		p->m_iPlayAnimStartTime = 0;
+		if (p->m_pPlayButton)
+		{
+			gtk_widget_set_opacity(p->m_pPlayButton, 1.0);
+		}
+		return G_SOURCE_REMOVE;
+	}
+
+	if (t < 0.0)
+		t = 0.0;
+
+	double opacity = 0.0;
+	double scale = 1.0;
+
+	/* Phase 1 (0.0 -> 0.35, ~160ms): fade-in and scale up from 0.60 to 1.08 (subtle pop) */
+	/* Phase 2 (0.35 -> 1.0, ~290ms): fade-out and expand from 1.08 to 1.45 (dissolving burst) */
+	if (t <= 0.35)
+	{
+		double sub = t / 0.35;
+		double ease = sin(sub * (M_PI / 2.0));
+		opacity = ease;
+		scale = 0.60 + (1.08 - 0.60) * ease;
+	}
+	else
+	{
+		double sub = (t - 0.35) / 0.65;
+		double ease = sin(sub * (M_PI / 2.0));
+		opacity = 1.0 - ease;
+		scale = 1.08 + (1.45 - 1.08) * ease;
+	}
+
+	const int base_btn_size = 92;
+	const int base_icon_size = 48;
+	int btn_size = (int)(base_btn_size * scale + 0.5);
+	int icon_size = (int)(base_icon_size * scale + 0.5);
+
+	gtk_widget_set_size_request(p->m_pPlayAnimWidget, btn_size, btn_size);
+	if (p->m_pPlayAnimImage)
+	{
+		gtk_image_set_pixel_size(GTK_IMAGE(p->m_pPlayAnimImage), icon_size);
+	}
+	gtk_widget_set_opacity(p->m_pPlayAnimWidget, opacity);
+
+	return G_SOURCE_CONTINUE;
+}
+
+void Viewer::ViewerImpl::CancelPlayPauseAnimation()
+{
+	if (0 != m_iPlayAnimTickId && NULL != m_pPlayAnimWidget)
+	{
+		gtk_widget_remove_tick_callback(m_pPlayAnimWidget, m_iPlayAnimTickId);
+		m_iPlayAnimTickId = 0;
+	}
+	m_iPlayAnimStartTime = 0;
+	if (NULL != m_pPlayAnimWidget)
+	{
+		gtk_widget_set_opacity(m_pPlayAnimWidget, 0.0);
+		gtk_widget_set_visible(m_pPlayAnimWidget, FALSE);
+	}
+	if (NULL != m_pPlayButton)
+	{
+		gtk_widget_set_opacity(m_pPlayButton, 1.0);
+	}
+}
+
+void Viewer::ViewerImpl::TriggerPlayPauseAnimation(bool isPlaying)
+{
+	if (NULL == m_pPlayAnimWidget || NULL == m_pPlayAnimImage)
+		return;
+
+	const char *icon_name = isPlaying ? "media-playback-start" : "media-playback-pause";
+	gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayAnimImage), icon_name);
+
+	const int base_btn_size = 92;
+	const int base_icon_size = 48;
+	int init_btn = (int)(base_btn_size * 0.60);
+	int init_icon = (int)(base_icon_size * 0.60);
+	gtk_widget_set_size_request(m_pPlayAnimWidget, init_btn, init_btn);
+	gtk_image_set_pixel_size(GTK_IMAGE(m_pPlayAnimImage), init_icon);
+	gtk_widget_set_opacity(m_pPlayAnimWidget, 0.0);
+	gtk_widget_set_visible(m_pPlayAnimWidget, TRUE);
+
+	if (m_pPlayButton)
+	{
+		gtk_widget_set_opacity(m_pPlayButton, 0.0);
+	}
+
+	m_iPlayAnimStartTime = 0;
+	if (0 == m_iPlayAnimTickId)
+	{
+		m_iPlayAnimTickId = gtk_widget_add_tick_callback(m_pPlayAnimWidget, play_anim_tick_cb, this, NULL);
+	}
 }
 
 /* ── filmstrip overlay (continued) ──────────────────────────────── */
@@ -3520,6 +3650,7 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 				viewer_set_controls_visible(this, true);
 				UpdateTimelineVisibility();
 				SetIsPlaying(false);
+				TriggerPlayPauseAnimation(false);
 			}
 			else
 			{
@@ -3542,6 +3673,7 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 				}
 
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
+				TriggerPlayPauseAnimation(true);
 
 				if (0 != m_iTimeoutMouseMotionNotify)
 				{
@@ -3583,6 +3715,7 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
 		SetIsPlaying(true);
+		TriggerPlayPauseAnimation(true);
 
 		if (0 != m_iTimeoutMouseMotionNotify)
 		{
@@ -3640,6 +3773,7 @@ void Viewer::ViewerImpl::SkipBack()
 
 void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 {
+	CancelPlayPauseAnimation();
 	SetIsPlaying(false);
 	if (0 != m_iTimeoutMouseMotionNotify)
 	{
@@ -4085,6 +4219,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 	}
 
 	StopVideo(false);
+	CancelPlayPauseAnimation();
 
 
 	gst_object_unref(GST_OBJECT(m_pPipeline));
@@ -5365,6 +5500,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iVideoZoomIdle(0),
 	m_ImageListPtr(new ImageList()),
 	m_bIsPlaying(false),
+	m_pPlayAnimWidget(NULL),
+	m_pPlayAnimImage(NULL),
+	m_iPlayAnimTickId(0),
+	m_iPlayAnimStartTime(0),
 	m_ThumbnailCache(100),
 	m_dPlaybackSpeed(1.0),
 	m_pSpeedButton(NULL),
@@ -5634,6 +5773,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		".media-btn:hover { background-image: none; background-color: alpha(@theme_bg_color, 0.60); border: none; }\n"
 		".media-btn:focus, .media-btn:focus-visible { outline: none; box-shadow: none; }\n"
 		".time-label { color: rgba(255, 255, 255, 0.85); font-size: 12px; }\n"
+		".play-anim-badge { border-radius: 50%; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.50); }\n"
 		".image-load-error { color: rgba(255, 255, 255, 1.0); font-size: 18px; padding: 20px; border-radius: 12px; background-color: alpha(#000, 0.55); }\n");
 	gtk_style_context_add_provider_for_display(gdk_display_get_default(),
 		GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
@@ -5742,6 +5882,24 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
 		gtk_widget_add_controller(m_pTransportRow, scroll);
 	}
+
+	/* Play / pause animation overlay badge */
+	m_pPlayAnimWidget = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_widget_add_css_class(m_pPlayAnimWidget, "play-anim-badge");
+	gtk_widget_set_halign(m_pPlayAnimWidget, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pPlayAnimWidget, GTK_ALIGN_CENTER);
+	gtk_widget_set_can_target(m_pPlayAnimWidget, FALSE);
+	m_pPlayAnimImage = gtk_image_new_from_icon_name("media-playback-start");
+	gtk_widget_set_halign(m_pPlayAnimImage, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pPlayAnimImage, GTK_ALIGN_CENTER);
+	gtk_widget_set_hexpand(m_pPlayAnimImage, TRUE);
+	gtk_widget_set_vexpand(m_pPlayAnimImage, TRUE);
+	gtk_widget_set_can_target(m_pPlayAnimImage, FALSE);
+	gtk_box_append(GTK_BOX(m_pPlayAnimWidget), m_pPlayAnimImage);
+	gtk_widget_set_visible(m_pPlayAnimWidget, FALSE);
+	gtk_widget_set_opacity(m_pPlayAnimWidget, 0.0);
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pPlayAnimWidget);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pPlayAnimWidget, FALSE);
 
 	// the image/video stack is the overlay's single main widget
 	gtk_widget_set_hexpand(m_pImageView, TRUE);
