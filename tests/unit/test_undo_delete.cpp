@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <glib.h>
+#include <glib/gstdio.h>
 
 #include <list>
 #include <string>
@@ -97,4 +98,98 @@ TEST_CASE("Trash undo stack notifies about deletes", "[unit][undo][trash]")
 
     QuiverFileOps::UndoStackClear();
     QuiverFileOps::SetTrashUndoChangedCallback(nullptr, nullptr);
+}
+
+TEST_CASE("Undo stack records and undoes Move, Copy, and Rotate", "[unit][undo]")
+{
+    QuiverFileOps::UndoStackClear();
+
+    // 1. Move undo
+    std::vector<QuiverFileOps::UndoFilePair> move_pairs;
+    QuiverFileOps::UndoFilePair p1;
+    p1.src_uri = "file:///dirA/file1.jpg";
+    p1.dst_uri = "file:///dirB/file1.jpg";
+    move_pairs.push_back(p1);
+
+    REQUIRE(QuiverFileOps::UndoStackRecordMove(move_pairs));
+    REQUIRE(QuiverFileOps::UndoStackSize() == 1);
+    REQUIRE(QuiverFileOps::UndoStackTopType() == QuiverFileOps::UNDO_TYPE_MOVE);
+
+    // 2. Copy undo
+    std::vector<std::string> copies = { "file:///dirB/copy1.jpg", "file:///dirB/copy2.jpg" };
+    REQUIRE(QuiverFileOps::UndoStackRecordCopy(copies));
+    REQUIRE(QuiverFileOps::UndoStackSize() == 2);
+    REQUIRE(QuiverFileOps::UndoStackTopType() == QuiverFileOps::UNDO_TYPE_COPY);
+
+    // 3. Rotate undo
+    static int s_rotated_dir = 0;
+    static std::string s_rotated_uri;
+    QuiverFileOps::SetRotateUndoCallback(+[](const char* uri, int dir, gpointer) {
+        s_rotated_uri = uri ? uri : "";
+        s_rotated_dir = dir;
+    }, nullptr);
+
+    REQUIRE(QuiverFileOps::UndoStackRecordRotate("file:///dirA/image.png", +1));
+    REQUIRE(QuiverFileOps::UndoStackSize() == 3);
+    REQUIRE(QuiverFileOps::UndoStackTopType() == QuiverFileOps::UNDO_TYPE_ROTATE);
+
+    // Pop Rotate: should invoke rotate callback with opposite direction (-1)
+    int rot_ret = QuiverFileOps::UndoStackPop();
+    REQUIRE(rot_ret == 1);
+    REQUIRE(s_rotated_dir == -1);
+    REQUIRE(s_rotated_uri == "file:///dirA/image.png");
+    REQUIRE(QuiverFileOps::UndoStackSize() == 2);
+
+    // Top is now Copy
+    REQUIRE(QuiverFileOps::UndoStackTopType() == QuiverFileOps::UNDO_TYPE_COPY);
+
+    QuiverFileOps::UndoStackClear();
+    QuiverFileOps::SetRotateUndoCallback(nullptr, nullptr);
+}
+
+TEST_CASE("Undo stack records and undoes New Folder", "[unit][undo][new_folder]")
+{
+    QuiverFileOps::UndoStackClear();
+
+    static std::string s_undone_folder;
+    QuiverFileOps::SetNewFolderUndoCallback(+[](const char* folder_uri, gpointer) {
+        s_undone_folder = folder_uri ? folder_uri : "";
+    }, nullptr);
+
+    // Create a temporary directory so we can test the undo deletion
+    char* tmp_dir = g_dir_make_tmp("quiver_test_new_folder_XXXXXX", nullptr);
+    REQUIRE(tmp_dir != nullptr);
+
+    char* test_folder = g_build_filename(tmp_dir, "MyNewFolder", nullptr);
+    REQUIRE(g_mkdir(test_folder, 0755) == 0);
+    REQUIRE(g_file_test(test_folder, G_FILE_TEST_IS_DIR));
+
+    GFile* f = g_file_new_for_path(test_folder);
+    char* folder_uri = g_file_get_uri(f);
+
+    REQUIRE(QuiverFileOps::UndoStackRecordNewFolder(folder_uri));
+    REQUIRE(QuiverFileOps::UndoStackSize() == 1);
+    REQUIRE(QuiverFileOps::UndoStackTopType() == QuiverFileOps::UNDO_TYPE_NEW_FOLDER);
+
+    const QuiverFileOps::UndoEntry* entry = QuiverFileOps::UndoStackEntryAt(0);
+    REQUIRE(entry != nullptr);
+    REQUIRE(entry->type == QuiverFileOps::UNDO_TYPE_NEW_FOLDER);
+    REQUIRE(entry->new_folder_uri == folder_uri);
+
+    // Pop/undo New Folder: should remove the directory and invoke callback
+    s_undone_folder.clear();
+    int ret = QuiverFileOps::UndoStackPop();
+    REQUIRE(ret == 1);
+    REQUIRE(s_undone_folder == folder_uri);
+    REQUIRE(!g_file_test(test_folder, G_FILE_TEST_EXISTS));
+    REQUIRE(QuiverFileOps::UndoStackSize() == 0);
+
+    g_free(folder_uri);
+    g_object_unref(f);
+    g_free(test_folder);
+    g_rmdir(tmp_dir);
+    g_free(tmp_dir);
+
+    QuiverFileOps::SetNewFolderUndoCallback(nullptr, nullptr);
+    QuiverFileOps::UndoStackClear();
 }

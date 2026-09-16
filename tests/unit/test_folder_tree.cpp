@@ -2,6 +2,7 @@
 #include <gtk/gtk.h>
 #include <glib/gstdio.h>
 #include "FolderTree.h"
+#include "QuiverUtils.h"
 #include "QuiverFile.h"
 #include "Bookmarks.h"
 #include "Preferences.h"
@@ -403,11 +404,22 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
         GtkWidget* walk = gtk_widget_get_first_child(bm_section);
         REQUIRE(walk != nullptr);
         REQUIRE(GTK_IS_LABEL(walk));
-        GtkWidget* bm_list = gtk_widget_get_next_sibling(walk);
-        REQUIRE(bm_list == bm_widget);
+        GtkWidget* bm_child = gtk_widget_get_next_sibling(walk);
+        REQUIRE(GTK_IS_SCROLLED_WINDOW(bm_child));
+        REQUIRE(gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(bm_child)) == bm_widget);
+        REQUIRE(gtk_scrolled_window_get_propagate_natural_height(GTK_SCROLLED_WINDOW(bm_child)) == TRUE);
+        REQUIRE(gtk_scrolled_window_get_max_content_height(GTK_SCROLLED_WINDOW(bm_child)) == 180);
         GtkWidget* tree_sibling = gtk_widget_get_next_sibling(bm_section);
         while (tree_sibling != tree_widget && tree_sibling != nullptr)
+        {
+            if (GTK_IS_SCROLLED_WINDOW(tree_sibling) &&
+                gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(tree_sibling)) == tree_widget)
+            {
+                tree_sibling = tree_widget;
+                break;
+            }
             tree_sibling = gtk_widget_get_next_sibling(tree_sibling);
+        }
         REQUIRE(tree_sibling == tree_widget);
 
         // Verify CSS classes and styling attributes
@@ -416,8 +428,8 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
         REQUIRE(gtk_widget_has_css_class(sc_widget, "navigation-sidebar"));
         REQUIRE(gtk_widget_has_css_class(tree_widget, "compact-tree"));
         REQUIRE(gtk_widget_has_css_class(sep, "sidebar-separator"));
-        REQUIRE(gtk_widget_get_margin_top(sep) >= 10);
-        REQUIRE(gtk_widget_get_margin_bottom(sep) >= 10);
+        REQUIRE(gtk_widget_get_margin_top(sep) >= 4);
+        REQUIRE(gtk_widget_get_margin_bottom(sep) >= 4);
 
         // Verify shortcuts has items
         GtkSelectionModel* sc_sel = gtk_list_view_get_model(GTK_LIST_VIEW(sc_widget));
@@ -822,3 +834,330 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
 
     bm->Remove(added_id);
 }
+
+TEST_CASE("FolderTree drop expand on folder with many subfolders materializes rows",
+          "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    // Create a temp folder with 250 subfolders
+    std::string base = folder_tree_test_make_temp_dir();
+    for (int i = 0; i < 250; i++)
+    {
+        char name[32];
+        snprintf(name, sizeof(name), "subfolder_%03d", i);
+        std::string sub = base + "/" + name;
+        g_mkdir(sub.c_str(), 0755);
+    }
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* win = gtk_window_new();
+    GtkWidget* sw = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), tree->GetWidget());
+    gtk_window_set_child(GTK_WINDOW(win), sw);
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 600);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Reveal subfolder_200, which causes the parent base folder to expand
+    // with its 250 subfolders
+    std::string target_sub = base + "/subfolder_200";
+    std::list<std::string> sel = { target_sub };
+    tree->SetSelectedFolders(sel);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Verify the folder tree list view has items
+    GtkWidget* tree_widget = tree->GetTreeWidget();
+    REQUIRE(tree_widget != nullptr);
+    REQUIRE(GTK_IS_LIST_VIEW(tree_widget));
+
+    GtkListView* lv = GTK_LIST_VIEW(tree_widget);
+    GtkSelectionModel* sel_model = gtk_list_view_get_model(lv);
+    REQUIRE(sel_model != nullptr);
+
+    guint total = g_list_model_get_n_items(G_LIST_MODEL(sel_model));
+    // Base folder + 250 subfolders must be present in the model
+    REQUIRE(total >= 250);
+
+    // Verify that children are materialized (bound widgets with non-empty labels exist)
+    int child_count = 0;
+    int bound_with_labels = 0;
+    for (GtkWidget* ch = gtk_widget_get_first_child(tree_widget); ch != nullptr; ch = gtk_widget_get_next_sibling(ch))
+    {
+        child_count++;
+        auto find_label = [](GtkWidget* w, auto& self) -> GtkLabel* {
+            if (GTK_IS_LABEL(w)) return GTK_LABEL(w);
+            for (GtkWidget* c = gtk_widget_get_first_child(w); c != nullptr; c = gtk_widget_get_next_sibling(c))
+            {
+                GtkLabel* l = self(c, self);
+                if (l) return l;
+            }
+            return nullptr;
+        };
+        GtkLabel* label = find_label(ch, find_label);
+        if (label && gtk_label_get_text(label) != nullptr &&
+            gtk_label_get_text(label)[0] != '\0')
+        {
+            bound_with_labels++;
+        }
+    }
+    REQUIRE(child_count > 0);
+    REQUIRE(bound_with_labels > 0);
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+}
+
+TEST_CASE("FolderTree drop hover expansion materializes child rows with checkboxes",
+          "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string base = folder_tree_test_make_temp_dir();
+    for (int i = 0; i < 150; i++)
+    {
+        char name[32];
+        snprintf(name, sizeof(name), "sub_%03d", i);
+        std::string sub = base + "/" + name;
+        g_mkdir(sub.c_str(), 0755);
+    }
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* win = gtk_window_new();
+    GtkWidget* sw = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), tree->GetWidget());
+    gtk_window_set_child(GTK_WINDOW(win), sw);
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 600);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Reveal the parent folder without expanding
+    std::list<std::string> sel = { base };
+    tree->SetSelectedFolders(sel);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    GtkWidget* tree_widget = tree->GetTreeWidget();
+    REQUIRE(tree_widget != nullptr);
+    GtkListView* lv = GTK_LIST_VIEW(tree_widget);
+    GtkSelectionModel* sel_model = gtk_list_view_get_model(lv);
+    REQUIRE(sel_model != nullptr);
+
+    // Find an expandable row representing our base directory
+    guint n_items = g_list_model_get_n_items(G_LIST_MODEL(sel_model));
+    GtkTreeListRow* base_row = nullptr;
+    for (guint i = 0; i < n_items; i++)
+    {
+        GtkTreeListRow* row = GTK_TREE_LIST_ROW(g_list_model_get_item(G_LIST_MODEL(sel_model), i));
+        if (row)
+        {
+            if (gtk_tree_list_row_is_expandable(row) && !gtk_tree_list_row_get_expanded(row))
+            {
+                base_row = row;
+                break;
+            }
+            g_object_unref(row);
+        }
+    }
+
+    if (base_row)
+    {
+        // Expand base_row (simulating drop expand timeout - must not scroll or jump)
+        GtkAdjustment* vadj = nullptr;
+        for (GtkWidget* p = tree_widget; p != nullptr; p = gtk_widget_get_parent(p))
+        {
+            if (GTK_IS_SCROLLED_WINDOW(p))
+            {
+                vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(p));
+                break;
+            }
+        }
+        double adj_before = vadj ? gtk_adjustment_get_value(vadj) : 0.0;
+        gtk_tree_list_row_set_expanded(base_row, TRUE);
+        gtk_widget_queue_allocate(tree_widget);
+        gtk_widget_queue_draw(tree_widget);
+        while (g_main_context_iteration(NULL, FALSE));
+        double adj_after = vadj ? gtk_adjustment_get_value(vadj) : 0.0;
+        REQUIRE(adj_before == adj_after);
+
+        // Verify child rows contain checkboxes and labels
+        int check_count = 0;
+        int label_count = 0;
+        for (GtkWidget* ch = gtk_widget_get_first_child(tree_widget); ch != nullptr; ch = gtk_widget_get_next_sibling(ch))
+        {
+            auto find_check = [](GtkWidget* w, auto& self) -> GtkCheckButton* {
+                if (GTK_IS_CHECK_BUTTON(w)) return GTK_CHECK_BUTTON(w);
+                for (GtkWidget* c = gtk_widget_get_first_child(w); c != nullptr; c = gtk_widget_get_next_sibling(c))
+                {
+                    GtkCheckButton* cb = self(c, self);
+                    if (cb) return cb;
+                }
+                return nullptr;
+            };
+            auto find_label = [](GtkWidget* w, auto& self) -> GtkLabel* {
+                if (GTK_IS_LABEL(w)) return GTK_LABEL(w);
+                for (GtkWidget* c = gtk_widget_get_first_child(w); c != nullptr; c = gtk_widget_get_next_sibling(c))
+                {
+                    GtkLabel* l = self(c, self);
+                    if (l) return l;
+                }
+                return nullptr;
+            };
+
+            if (find_check(ch, find_check)) check_count++;
+            if (find_label(ch, find_label)) label_count++;
+        }
+        REQUIRE(check_count > 0);
+        REQUIRE(label_count > 0);
+        g_object_unref(base_row);
+    }
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+}
+
+TEST_CASE("FolderTree shortcuts and bookmarks have drop target controllers",
+          "[unit][foldertree][gui][dnd]")
+{
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* sidebar = tree->GetWidget();
+    REQUIRE(sidebar != nullptr);
+
+    GtkWidget* sc_widget = tree->GetShortcutsWidget();
+    REQUIRE(sc_widget != nullptr);
+    REQUIRE(GTK_IS_LIST_VIEW(sc_widget));
+
+    GListModel* controllers = gtk_widget_observe_controllers(sc_widget);
+    REQUIRE(controllers != nullptr);
+    bool has_sc_drop = false;
+    guint n_ctrl = g_list_model_get_n_items(controllers);
+    for (guint i = 0; i < n_ctrl; i++)
+    {
+        GObject* ctrl = G_OBJECT(g_list_model_get_item(controllers, i));
+        if (GTK_IS_DROP_TARGET(ctrl))
+            has_sc_drop = true;
+        g_object_unref(ctrl);
+    }
+    g_object_unref(controllers);
+    CHECK(has_sc_drop);
+}
+
+TEST_CASE("FolderTree AddChildFolder and FolderTreeNewFolder action", "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* sidebar = tree->GetWidget();
+    REQUIRE(sidebar != nullptr);
+
+    GAction* action = QuiverUtils::GetAction("FolderTreeNewFolder");
+    REQUIRE(action != nullptr);
+
+    std::string temp_dir = folder_tree_test_make_temp_dir();
+    std::string temp_uri = folder_tree_test_path_to_uri(temp_dir);
+
+    std::list<std::string> sel;
+    sel.push_back(temp_uri);
+    tree->SetSelectedFolders(sel);
+
+    std::string child_path = temp_dir + "/subfolder";
+    std::string child_uri = folder_tree_test_path_to_uri(child_path);
+
+    tree->AddChildFolder(temp_uri.c_str(), child_uri.c_str(), "subfolder");
+
+    // RemoveFolder should safely prune the folder
+    tree->RemoveFolder(child_uri.c_str());
+
+    g_rmdir(temp_dir.c_str());
+}
+
+TEST_CASE("FolderTree Left/Right arrow navigation and Menu key", "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* box = tree->GetWidget();
+    REQUIRE(box != nullptr);
+
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), box);
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 400);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    GtkWidget* widget = tree->GetTreeWidget();
+    REQUIRE(widget != nullptr);
+    REQUIRE(GTK_IS_LIST_VIEW(widget));
+
+    GtkListView* lv = GTK_LIST_VIEW(widget);
+    GtkSelectionModel* sel = gtk_list_view_get_model(lv);
+    REQUIRE(sel != nullptr);
+
+    guint total = g_list_model_get_n_items(G_LIST_MODEL(sel));
+    REQUIRE(total > 0);
+
+    // Find key controller on widget
+    GtkEventController* key_ctrl = nullptr;
+    GListModel* controllers = gtk_widget_observe_controllers(widget);
+    guint n_ctrl = g_list_model_get_n_items(controllers);
+    for (guint i = 0; i < n_ctrl; i++)
+    {
+        gpointer item = g_list_model_get_item(controllers, i);
+        if (GTK_IS_EVENT_CONTROLLER_KEY(item))
+        {
+            key_ctrl = GTK_EVENT_CONTROLLER(item);
+            g_object_unref(item);
+            break;
+        }
+        g_object_unref(item);
+    }
+    g_object_unref(controllers);
+    REQUIRE(key_ctrl != nullptr);
+
+    // Test Menu key on folder tree
+    gboolean handled = FALSE;
+    g_signal_emit_by_name(key_ctrl, "key-pressed", GDK_KEY_Menu, 0, (GdkModifierType)0, &handled);
+    CHECK(handled == TRUE);
+
+    // Test Shift+F10 on folder tree
+    handled = FALSE;
+    g_signal_emit_by_name(key_ctrl, "key-pressed", GDK_KEY_F10, 0, GDK_SHIFT_MASK, &handled);
+    CHECK(handled == TRUE);
+
+    // Test Right arrow expands expandable row, and Left arrow collapses it
+    gtk_selection_model_select_item(sel, 0, TRUE);
+    GtkTreeListRow* row0 = GTK_TREE_LIST_ROW(g_list_model_get_item(G_LIST_MODEL(sel), 0));
+    if (row0)
+    {
+        if (gtk_tree_list_row_is_expandable(row0))
+        {
+            // Right arrow to expand
+            handled = FALSE;
+            g_signal_emit_by_name(key_ctrl, "key-pressed", GDK_KEY_Right, 0, (GdkModifierType)0, &handled);
+            CHECK(handled == TRUE);
+            CHECK(gtk_tree_list_row_get_expanded(row0) == TRUE);
+
+            // Left arrow to collapse
+            handled = FALSE;
+            g_signal_emit_by_name(key_ctrl, "key-pressed", GDK_KEY_Left, 0, (GdkModifierType)0, &handled);
+            CHECK(handled == TRUE);
+            CHECK(gtk_tree_list_row_get_expanded(row0) == FALSE);
+
+            // KP_Right arrow expands
+            handled = FALSE;
+            g_signal_emit_by_name(key_ctrl, "key-pressed", GDK_KEY_KP_Right, 0, (GdkModifierType)0, &handled);
+            CHECK(handled == TRUE);
+            CHECK(gtk_tree_list_row_get_expanded(row0) == TRUE);
+
+            // KP_Left arrow collapses
+            handled = FALSE;
+            g_signal_emit_by_name(key_ctrl, "key-pressed", GDK_KEY_KP_Left, 0, (GdkModifierType)0, &handled);
+            CHECK(handled == TRUE);
+            CHECK(gtk_tree_list_row_get_expanded(row0) == FALSE);
+        }
+        g_object_unref(row0);
+    }
+
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+}
+

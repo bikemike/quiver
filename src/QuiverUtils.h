@@ -5,6 +5,8 @@
 #include <gio/gio.h>
 #include <string>
 
+#include "QuiverFileOps.h"
+
 namespace QuiverUtils
 {
 	GdkTexture * TextureExifReorientate(GdkTexture * texture, int orientation);
@@ -51,9 +53,42 @@ namespace QuiverUtils
 	bool ConfirmDialog(const char *title, const std::string& message,
 		const char *accept_label = "OK", const char *cancel_label = "Cancel");
 
-	/* Modal single-line text prompt (for renaming files/folders).  Returns a
+	/* Modal single-line text prompt (for renaming files/folders or creating folders).  Returns a
 	 * g_malloc'd string owned by the caller, or NULL when cancelled. */
-	char* PromptForString(const char *title, const char *prompt, const char *initial);
+	char* PromptForString(const char *title, const char *prompt, const char *initial, const char *accept_label = NULL);
+
+	/* Determine the character length of the base name (excluding extension).
+	 * Returns -1 if the full string is the base name. */
+	glong GetBasenameCharLength(const char *filename);
+
+	/* Compute the renamed filename given the original filename and user input.
+	 * If original filename had an extension and the entered name lacks one,
+	 * the original extension is appended. */
+	std::string ResolveRenameString(const char *initial, const char *entered);
+
+	/* Create a GFile from either a URI (file://...) or a local filesystem path */
+	GFile* FileFromURIOrPath(const char *uri_or_path);
+
+	/* Normalize a path or URI to a canonical URI string */
+	std::string NormalizeURI(const char *uri_or_path);
+
+	/* Check if a URI or path points to an existing directory */
+	bool IsDirectoryURI(const char *uri);
+
+	/* Generate a unique folder name like "New Folder", "New Folder 2", etc. */
+	std::string GetUniqueFolderName(GFile *parent, const char *base_name);
+
+	/* Modal overwrite/skip prompt for one paste or drop name conflict.
+	 *
+	 * `src_uri` / `dest_uri` identify the colliding pair.  When the user
+	 * ticks "do this for the remaining conflicts" the choice is remembered by
+	 * setting *apply_to_all (the caller then stops prompting).  Returns
+	 * QuiverFileOps::PASTE_OVERWRITE when the existing destination should be
+	 * replaced, else PASTE_SKIP.
+	 * GTK4 has no gtk_dialog_run(), so it runs its own nested GMainLoop.
+	 * Must be called from the GUI thread. */
+	QuiverFileOps::PasteConflictAction ResolvePasteConflict(const char *src_uri,
+		const char *dest_uri, bool& apply_to_all);
 
 	/* Grab keyboard focus on `widget` so it can receive key events (e.g.
 	 * arrow-key navigation in the browser/icon view and viewer).  GTK4's

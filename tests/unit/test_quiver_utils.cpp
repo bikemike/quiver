@@ -5,6 +5,7 @@
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #endif
 #include <gtk/gtk.h>
+#include <glib/gstdio.h>
 
 static GdkTexture* CreateTestTex(int w, int h)
 {
@@ -285,5 +286,256 @@ TEST_CASE("QuiverUtils GetSpecialFolderIconName", "[unit][icons][folders]")
         REQUIRE(QuiverUtils::GetSpecialFolderSymbolicIconName((const char*)nullptr) == nullptr);
         REQUIRE(QuiverUtils::GetSpecialFolderSymbolicIconName((GFile*)nullptr) == nullptr);
     }
+}
+
+TEST_CASE("QuiverUtils Rename Basename Selection and Extension Preservation", "[unit][rename][fast]")
+{
+    SECTION("GetBasenameCharLength computes correct offset")
+    {
+        REQUIRE(QuiverUtils::GetBasenameCharLength("photo.jpg") == 5);
+        REQUIRE(QuiverUtils::GetBasenameCharLength("archive.tar.gz") == 11);
+        REQUIRE(QuiverUtils::GetBasenameCharLength("Makefile") == -1);
+        REQUIRE(QuiverUtils::GetBasenameCharLength(".bashrc") == -1);
+        REQUIRE(QuiverUtils::GetBasenameCharLength(".profile.bak") == 8);
+        REQUIRE(QuiverUtils::GetBasenameCharLength("") == -1);
+        REQUIRE(QuiverUtils::GetBasenameCharLength(nullptr) == -1);
+    }
+
+    SECTION("ResolveRenameString appends original extension if omitted")
+    {
+        // Extension omitted -> append original extension
+        REQUIRE(QuiverUtils::ResolveRenameString("photo.jpg", "vacation") == "vacation.jpg");
+        // Trailing dot entered -> append original extension (without double dot)
+        REQUIRE(QuiverUtils::ResolveRenameString("photo.jpg", "vacation.") == "vacation.jpg");
+        // Explicit extension entered -> preserve entered extension
+        REQUIRE(QuiverUtils::ResolveRenameString("photo.jpg", "vacation.png") == "vacation.png");
+        REQUIRE(QuiverUtils::ResolveRenameString("photo.jpg", "vacation.jpeg") == "vacation.jpeg");
+        // Multi-dot filename
+        REQUIRE(QuiverUtils::ResolveRenameString("backup.tar.gz", "archive") == "archive.gz");
+        REQUIRE(QuiverUtils::ResolveRenameString("backup.tar.gz", "archive.tar") == "archive.tar");
+        // Original file had no extension -> keep entered name as is
+        REQUIRE(QuiverUtils::ResolveRenameString("Makefile", "GNUmakefile") == "GNUmakefile");
+        REQUIRE(QuiverUtils::ResolveRenameString("Makefile", "Makefile.old") == "Makefile.old");
+        // Hidden file with no extension
+        REQUIRE(QuiverUtils::ResolveRenameString(".bashrc", "my_bashrc") == "my_bashrc");
+        // Hidden file with extension
+        REQUIRE(QuiverUtils::ResolveRenameString(".profile.bak", "new_profile") == "new_profile.bak");
+        REQUIRE(QuiverUtils::ResolveRenameString(".profile.bak", "new_profile.txt") == "new_profile.txt");
+    }
+
+    SECTION("PromptForString opens with base name selected and cancels on Escape")
+    {
+        g_timeout_add(50, +[](gpointer) -> gboolean {
+            GListModel *toplevels = gtk_window_get_toplevels();
+            guint n = g_list_model_get_n_items(toplevels);
+            for (guint i = 0; i < n; i++)
+            {
+                GtkWindow *win = GTK_WINDOW(g_list_model_get_item(toplevels, i));
+                if (win != nullptr && g_strcmp0(gtk_window_get_title(win), "TestPromptEscape") == 0)
+                {
+                    // Find entry child in dlgBox
+                    GtkWidget *child = gtk_window_get_child(win);
+                    if (child != nullptr && GTK_IS_BOX(child))
+                    {
+                        GtkWidget *first = gtk_widget_get_first_child(child);
+                        GtkWidget *entry_widget = first ? gtk_widget_get_next_sibling(first) : nullptr;
+                        if (entry_widget && GTK_IS_ENTRY(entry_widget))
+                        {
+                            int start = -1, end = -1;
+                            gboolean has_sel = gtk_editable_get_selection_bounds(
+                                GTK_EDITABLE(entry_widget), &start, &end);
+                            // "summer_vacation" has length 15
+                            CHECK(has_sel == TRUE);
+                            CHECK(start == 0);
+                            CHECK(end == 15);
+                        }
+                    }
+
+                    // Test Escape key via key controller
+                    GListModel *controllers = gtk_widget_observe_controllers(GTK_WIDGET(win));
+                    guint nc = g_list_model_get_n_items(controllers);
+                    bool escape_emitted = false;
+                    for (guint ci = 0; ci < nc; ci++)
+                    {
+                        GObject *ctrl = G_OBJECT(g_list_model_get_item(controllers, ci));
+                        if (GTK_IS_EVENT_CONTROLLER_KEY(ctrl))
+                        {
+                            gboolean handled = FALSE;
+                            g_signal_emit_by_name(ctrl, "key-pressed", GDK_KEY_Escape, 0, (GdkModifierType)0, &handled);
+                            CHECK(handled == TRUE);
+                            escape_emitted = true;
+                            g_object_unref(ctrl);
+                            break;
+                        }
+                        g_object_unref(ctrl);
+                    }
+                    g_object_unref(controllers);
+                    CHECK(escape_emitted == true);
+                    g_object_unref(win);
+                    break;
+                }
+                g_object_unref(win);
+            }
+            return G_SOURCE_REMOVE;
+        }, nullptr);
+
+        char *result = QuiverUtils::PromptForString("TestPromptEscape", "Enter name:", "summer_vacation.jpg");
+        REQUIRE(result == nullptr);
+    }
+
+    SECTION("PromptForString cancels on window close")
+    {
+        g_timeout_add(50, +[](gpointer) -> gboolean {
+            GListModel *toplevels = gtk_window_get_toplevels();
+            guint n = g_list_model_get_n_items(toplevels);
+            for (guint i = 0; i < n; i++)
+            {
+                GtkWindow *win = GTK_WINDOW(g_list_model_get_item(toplevels, i));
+                if (win != nullptr && g_strcmp0(gtk_window_get_title(win), "TestPromptClose") == 0)
+                {
+                    gtk_window_close(win);
+                    g_object_unref(win);
+                    break;
+                }
+                g_object_unref(win);
+            }
+            return G_SOURCE_REMOVE;
+        }, nullptr);
+
+        char *result = QuiverUtils::PromptForString("TestPromptClose", "Enter name:", "photo.jpg");
+        REQUIRE(result == nullptr);
+    }
+
+    SECTION("PromptForString accepts with custom button label")
+    {
+        g_timeout_add(50, +[](gpointer) -> gboolean {
+            GListModel *toplevels = gtk_window_get_toplevels();
+            guint n = g_list_model_get_n_items(toplevels);
+            for (guint i = 0; i < n; i++)
+            {
+                GtkWindow *win = GTK_WINDOW(g_list_model_get_item(toplevels, i));
+                if (win != nullptr && g_strcmp0(gtk_window_get_title(win), "TestPromptCreate") == 0)
+                {
+                    GtkWidget *child = gtk_window_get_child(win);
+                    if (child != nullptr && GTK_IS_BOX(child))
+                    {
+                        for (GtkWidget *b = gtk_widget_get_first_child(child); b != nullptr; b = gtk_widget_get_next_sibling(b))
+                        {
+                            if (GTK_IS_BOX(b))
+                            {
+                                for (GtkWidget *btn = gtk_widget_get_first_child(b); btn != nullptr; btn = gtk_widget_get_next_sibling(btn))
+                                {
+                                    if (GTK_IS_BUTTON(btn) && g_strcmp0(gtk_button_get_label(GTK_BUTTON(btn)), "Create") == 0)
+                                    {
+                                        g_signal_emit_by_name(btn, "clicked");
+                                        g_object_unref(win);
+                                        return G_SOURCE_REMOVE;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                g_object_unref(win);
+            }
+            return G_SOURCE_REMOVE;
+        }, nullptr);
+
+        char *result = QuiverUtils::PromptForString("TestPromptCreate", "Folder name:", "New Folder", "Create");
+        REQUIRE(result != nullptr);
+        CHECK(std::string(result) == "New Folder");
+        g_free(result);
+    }
+}
+
+TEST_CASE("QuiverUtils IsDirectoryURI and GetUniqueFolderName", "[unit][fileops][fast]")
+{
+    gchar *tmp_dir = g_dir_make_tmp("quiver_test_dir_XXXXXX", NULL);
+    REQUIRE(tmp_dir != nullptr);
+
+    GFile *parent_file = g_file_new_for_path(tmp_dir);
+    gchar *parent_uri = g_file_get_uri(parent_file);
+    REQUIRE(parent_uri != nullptr);
+
+    SECTION("IsDirectoryURI validates directories")
+    {
+        CHECK(QuiverUtils::IsDirectoryURI(parent_uri) == true);
+        CHECK(QuiverUtils::IsDirectoryURI(tmp_dir) == true);
+        CHECK(QuiverUtils::IsDirectoryURI("trash:///") == false);
+        CHECK(QuiverUtils::IsDirectoryURI(nullptr) == false);
+
+        gchar *nonexistent = g_build_filename(tmp_dir, "nonexistent_dir", NULL);
+        gchar *nonexistent_uri = g_filename_to_uri(nonexistent, NULL, NULL);
+        CHECK(QuiverUtils::IsDirectoryURI(nonexistent_uri) == false);
+        g_free(nonexistent);
+        g_free(nonexistent_uri);
+
+        // Regular file is not a directory
+        gchar *file_path = g_build_filename(tmp_dir, "test.txt", NULL);
+        GError *err = NULL;
+        g_file_set_contents(file_path, "hello", -1, &err);
+        gchar *file_uri = g_filename_to_uri(file_path, NULL, NULL);
+        CHECK(QuiverUtils::IsDirectoryURI(file_uri) == false);
+        g_free(file_path);
+        g_free(file_uri);
+    }
+
+    SECTION("FileFromURIOrPath supports both plain paths and file:// URIs")
+    {
+        GFile *f_path = QuiverUtils::FileFromURIOrPath(tmp_dir);
+        REQUIRE(f_path != nullptr);
+        char *uri_from_path = g_file_get_uri(f_path);
+        CHECK(g_strcmp0(uri_from_path, parent_uri) == 0);
+        g_free(uri_from_path);
+
+        GFile *f_uri = QuiverUtils::FileFromURIOrPath(parent_uri);
+        REQUIRE(f_uri != nullptr);
+        char *uri_from_uri = g_file_get_uri(f_uri);
+        CHECK(g_strcmp0(uri_from_uri, parent_uri) == 0);
+        g_free(uri_from_uri);
+
+        CHECK(QuiverUtils::NormalizeURI(tmp_dir) == parent_uri);
+        CHECK(QuiverUtils::NormalizeURI(parent_uri) == parent_uri);
+
+        // Making a directory with parent created from a plain path must succeed without "Operation not supported"
+        GFile *sub = g_file_get_child(f_path, "sub_from_plain_path");
+        GError *mk_err = nullptr;
+        gboolean ok = g_file_make_directory(sub, NULL, &mk_err);
+        CHECK(ok == TRUE);
+        CHECK(mk_err == nullptr);
+        g_file_delete(sub, NULL, NULL);
+        g_object_unref(sub);
+
+        g_object_unref(f_path);
+        g_object_unref(f_uri);
+    }
+
+    SECTION("GetUniqueFolderName generates distinct names")
+    {
+        std::string name1 = QuiverUtils::GetUniqueFolderName(parent_file, "New Folder");
+        CHECK(name1 == "New Folder");
+
+        GFile *child1 = g_file_get_child(parent_file, "New Folder");
+        g_file_make_directory(child1, NULL, NULL);
+
+        std::string name2 = QuiverUtils::GetUniqueFolderName(parent_file, "New Folder");
+        CHECK(name2 == "New Folder 2");
+
+        GFile *child2 = g_file_get_child(parent_file, "New Folder 2");
+        g_file_make_directory(child2, NULL, NULL);
+
+        std::string name3 = QuiverUtils::GetUniqueFolderName(parent_file, "New Folder");
+        CHECK(name3 == "New Folder 3");
+
+        g_file_delete(child2, NULL, NULL);
+        g_file_delete(child1, NULL, NULL);
+        g_object_unref(child2);
+        g_object_unref(child1);
+    }
+
+    g_object_unref(parent_file);
+    g_free(parent_uri);
+    g_rmdir(tmp_dir);
+    g_free(tmp_dir);
 }
 

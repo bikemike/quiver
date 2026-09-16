@@ -21,9 +21,10 @@ public:
 class IconViewThumbLoader
 {
 public:
-	IconViewThumbLoader(gint nThreads);
+	IconViewThumbLoader(gint nThreads, bool bAutoStart = true);
 	virtual ~IconViewThumbLoader();
 
+	void Start();
 	void Stop();
 	bool IsStopped() const { return m_bStopThreads.load(std::memory_order_relaxed); }
 
@@ -53,6 +54,7 @@ private:
 	
 	gint                m_iThreads;
 	std::atomic<bool>   m_bStopThreads;
+	std::atomic<bool>   m_bThreadsStarted;
 	ThreadData*         m_pThreadData;
 
 	pthread_t*          m_pThreadIDs;

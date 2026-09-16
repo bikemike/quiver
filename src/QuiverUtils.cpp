@@ -1,6 +1,7 @@
 #include <config.h>
 #include "QuiverUtils.h"
 #include "ShortcutManager.h"
+#include "quiver-i18n.h"
 
 extern "C" {
 #include <libswscale/swscale.h>
@@ -657,6 +658,32 @@ void ConnectUnmodifiedAccelerators() {
 			d2->confirmed = true;
 			g_main_loop_quit(d2->loop);
 		}), &d);
+
+		/* Escape in the dialog cancels. */
+		GtkEventController *key_ctrl = gtk_event_controller_key_new();
+		gtk_event_controller_set_propagation_phase(key_ctrl, GTK_PHASE_CAPTURE);
+		gtk_widget_add_controller(dialog, key_ctrl);
+		g_signal_connect(key_ctrl, "key-pressed",
+			G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType, gpointer user_data) -> gboolean {
+				if (keyval == GDK_KEY_Escape)
+				{
+					auto *d2 = (decltype(&d))user_data;
+					d2->confirmed = false;
+					g_main_loop_quit(d2->loop);
+					return TRUE;
+				}
+				return FALSE;
+			}), &d);
+
+		/* Window close (X) cancels. */
+		g_signal_connect(dialog, "close-request",
+			G_CALLBACK(+[](GtkWindow*, gpointer user_data) -> gboolean {
+				auto *d2 = (decltype(&d))user_data;
+				d2->confirmed = false;
+				g_main_loop_quit(d2->loop);
+				return TRUE;
+			}), &d);
+
 		gtk_window_present(GTK_WINDOW(dialog));
 		g_main_loop_run(loop);
 		bConfirmed = d.confirmed;
@@ -665,14 +692,136 @@ void ConnectUnmodifiedAccelerators() {
 		return bConfirmed;
 	}
 
-	/* Modal single-line text prompt (for renaming files/folders).  Returns a
+	glong GetBasenameCharLength(const char *filename)
+	{
+		if (filename == NULL || filename[0] == '\0')
+			return -1;
+		const char *last_dot = strrchr(filename, '.');
+		if (last_dot != NULL && last_dot != filename)
+		{
+			return g_utf8_pointer_to_offset(filename, last_dot);
+		}
+		return -1;
+	}
+
+	std::string ResolveRenameString(const char *initial, const char *entered)
+	{
+		if (entered == NULL || entered[0] == '\0')
+			return std::string();
+		std::string final_name = entered;
+		if (initial != NULL)
+		{
+			const char *orig_dot = strrchr(initial, '.');
+			if (orig_dot != NULL && orig_dot != initial && orig_dot[1] != '\0')
+			{
+				const char *new_dot = strrchr(entered, '.');
+				if (new_dot == NULL || new_dot == entered || new_dot[1] == '\0')
+				{
+					if (new_dot != NULL && new_dot[1] == '\0')
+					{
+						final_name += (orig_dot + 1);
+					}
+					else
+					{
+						final_name += orig_dot;
+					}
+				}
+			}
+		}
+		return final_name;
+	}
+
+	GFile* FileFromURIOrPath(const char *uri_or_path)
+	{
+		if (NULL == uri_or_path || '\0' == uri_or_path[0])
+			return NULL;
+		if (g_str_has_prefix(uri_or_path, "file://") || strstr(uri_or_path, "://") != NULL)
+			return g_file_new_for_uri(uri_or_path);
+		return g_file_new_for_path(uri_or_path);
+	}
+
+	std::string NormalizeURI(const char *uri_or_path)
+	{
+		if (NULL == uri_or_path || '\0' == uri_or_path[0])
+			return std::string();
+		GFile *f = FileFromURIOrPath(uri_or_path);
+		if (NULL == f)
+			return std::string();
+		char *uri = g_file_get_uri(f);
+		std::string res = uri ? uri : "";
+		g_free(uri);
+		g_object_unref(f);
+		return res;
+	}
+
+	bool IsDirectoryURI(const char *uri)
+	{
+		if (NULL == uri)
+			return false;
+		GFile *f = FileFromURIOrPath(uri);
+		if (NULL == f)
+			return false;
+		gboolean is_dir = FALSE;
+		char *path = g_file_get_path(f);
+		if (path != NULL)
+		{
+			is_dir = g_file_test(path, G_FILE_TEST_IS_DIR);
+			g_free(path);
+		}
+		else
+		{
+			GFileType type = g_file_query_file_type(f, G_FILE_QUERY_INFO_NONE, NULL);
+			if (G_FILE_TYPE_DIRECTORY == type)
+				is_dir = TRUE;
+		}
+		g_object_unref(f);
+		return is_dir ? true : false;
+	}
+
+	std::string GetUniqueFolderName(GFile *parent, const char *base_name)
+	{
+		if (NULL == parent || NULL == base_name)
+			return base_name ? base_name : "New Folder";
+
+		GFile *c = g_file_get_child(parent, base_name);
+		if (!g_file_query_exists(c, NULL))
+		{
+			g_object_unref(c);
+			return base_name;
+		}
+		g_object_unref(c);
+
+		for (int i = 2; i < 1000; i++)
+		{
+			gchar *candidate = g_strdup_printf("%s %d", base_name, i);
+			c = g_file_get_child(parent, candidate);
+			gboolean exists = g_file_query_exists(c, NULL);
+			g_object_unref(c);
+			if (!exists)
+			{
+				std::string res = candidate;
+				g_free(candidate);
+				return res;
+			}
+			g_free(candidate);
+		}
+		return base_name;
+	}
+
+	/* Modal single-line text prompt (for renaming files/folders or creating folders).  Returns a
 	 * g_malloc'd string owned by the caller, or NULL when cancelled. */
-	char* PromptForString(const char *title, const char *prompt, const char *initial)
+	char* PromptForString(const char *title, const char *prompt, const char *initial, const char *accept_label)
 	{
 		GtkWidget* dialog = gtk_window_new();
 		gtk_window_set_title(GTK_WINDOW(dialog), title);
 		gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
 		gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+		if (NULL != g_pApp)
+		{
+			GtkWindow *mainWin = gtk_application_get_active_window(g_pApp);
+			if (mainWin != NULL)
+				gtk_window_set_transient_for(GTK_WINDOW(dialog), mainWin);
+		}
 		GtkWidget* dlgBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
 		GtkWidget* dlgLabel = gtk_label_new(prompt);
 		gtk_label_set_xalign(GTK_LABEL(dlgLabel), 0.0);
@@ -685,6 +834,73 @@ void ConnectUnmodifiedAccelerators() {
 		gtk_editable_set_text(GTK_EDITABLE(entry), initial ? initial : "");
 		gtk_widget_set_margin_start(entry, 12);
 		gtk_widget_set_margin_end(entry, 12);
+
+		// Select basename without extension (or entire name if no extension) so user can type immediately
+		if (initial != NULL && initial[0] != '\0')
+		{
+			glong base_len = GetBasenameCharLength(initial);
+			glong sel_len = (base_len > 0) ? base_len : -1;
+
+			struct InitialSelection {
+				GtkWidget *entry;
+				glong len;
+				gulong delegate_handler_id;
+				guint idle_id;
+				gboolean applied;
+			};
+
+			InitialSelection *sel_data = g_new0(InitialSelection, 1);
+			sel_data->entry = entry;
+			sel_data->len = sel_len;
+
+			GtkEditable *delegate = gtk_editable_get_delegate(GTK_EDITABLE(entry));
+			if (delegate != NULL)
+			{
+				sel_data->delegate_handler_id = g_signal_connect(delegate, "notify::has-focus",
+					G_CALLBACK(+[](GObject *obj, GParamSpec *, gpointer user_data) {
+						if (gtk_widget_has_focus(GTK_WIDGET(obj)))
+						{
+							InitialSelection *s = static_cast<InitialSelection*>(user_data);
+							if (s && !s->applied)
+							{
+								s->applied = TRUE;
+								gtk_editable_select_region(GTK_EDITABLE(s->entry), 0, (int)s->len);
+								if (s->idle_id != 0)
+								{
+									g_source_remove(s->idle_id);
+									s->idle_id = 0;
+								}
+							}
+						}
+					}), sel_data);
+			}
+
+			sel_data->idle_id = g_idle_add(+[](gpointer user_data) -> gboolean {
+				InitialSelection *s = static_cast<InitialSelection*>(user_data);
+				if (s != NULL)
+				{
+					s->idle_id = 0;
+					if (!s->applied)
+					{
+						s->applied = TRUE;
+						gtk_editable_select_region(GTK_EDITABLE(s->entry), 0, (int)s->len);
+					}
+				}
+				return G_SOURCE_REMOVE;
+			}, sel_data);
+
+			g_object_set_data_full(G_OBJECT(entry), "quiver-initial-selection", sel_data,
+				+[](gpointer data) {
+					InitialSelection *s = static_cast<InitialSelection*>(data);
+					if (s != NULL)
+					{
+						if (s->idle_id != 0)
+							g_source_remove(s->idle_id);
+						g_free(s);
+					}
+				});
+		}
+
 		GtkWidget* btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
 		gtk_widget_set_halign(btnBox, GTK_ALIGN_END);
 		gtk_widget_set_margin_start(btnBox, 12);
@@ -696,7 +912,8 @@ void ConnectUnmodifiedAccelerators() {
 		gtk_box_append(GTK_BOX(dlgBox), btnBox);
 		gtk_window_set_child(GTK_WINDOW(dialog), dlgBox);
 		GtkWidget* btnCancel = gtk_button_new_with_label("Cancel");
-		GtkWidget* btnAccept = gtk_button_new_with_label("Rename");
+		const char *btn_text = accept_label ? accept_label : (title ? title : "OK");
+		GtkWidget* btnAccept = gtk_button_new_with_label(btn_text);
 		gtk_widget_add_css_class(btnAccept, "suggested-action");
 		gtk_box_append(GTK_BOX(btnBox), btnCancel);
 		gtk_box_append(GTK_BOX(btnBox), btnAccept);
@@ -721,18 +938,147 @@ void ConnectUnmodifiedAccelerators() {
 		g_signal_connect(btnAccept, "clicked", G_CALLBACK(accept_clicked), &d);
 		/* Enter in the entry behaves like pressing the Rename button. */
 		g_signal_connect(entry, "activate", G_CALLBACK(accept_clicked), &d);
+
+		/* Escape in the dialog cancels. */
+		GtkEventController *key_ctrl = gtk_event_controller_key_new();
+		gtk_event_controller_set_propagation_phase(key_ctrl, GTK_PHASE_CAPTURE);
+		gtk_widget_add_controller(dialog, key_ctrl);
+		g_signal_connect(key_ctrl, "key-pressed",
+			G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType, gpointer user_data) -> gboolean {
+				if (keyval == GDK_KEY_Escape)
+				{
+					auto *d2 = (decltype(&d))user_data;
+					*d2->result = PROMPT_CANCELLED;
+					g_main_loop_quit(d2->loop);
+					return TRUE;
+				}
+				return FALSE;
+			}), &d);
+
+		/* Window close (X) cancels. */
+		g_signal_connect(dialog, "close-request",
+			G_CALLBACK(+[](GtkWindow*, gpointer user_data) -> gboolean {
+				auto *d2 = (decltype(&d))user_data;
+				*d2->result = PROMPT_CANCELLED;
+				g_main_loop_quit(d2->loop);
+				return TRUE;
+			}), &d);
+
 		gtk_window_present(GTK_WINDOW(dialog));
 		g_main_loop_run(loop);
 		gchar *answer = NULL;
 		if (PROMPT_ACCEPTED == result)
 		{
 			const char *text = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(entry)));
-			if (text != NULL && text[0] != '\0')
-				answer = g_strdup(text);
+			std::string resolved = ResolveRenameString(initial, text);
+			if (!resolved.empty())
+				answer = g_strdup(resolved.c_str());
 		}
 		g_main_loop_unref(loop);
 		gtk_window_destroy(GTK_WINDOW(dialog));
 		return answer;
+	}
+
+	QuiverFileOps::PasteConflictAction ResolvePasteConflict(const char *src_uri,
+		const char *dest_uri, bool& apply_to_all)
+	{
+		std::string message;
+		{
+			char *name = g_path_get_basename(src_uri);
+			char *dest_dir = g_path_get_dirname(dest_uri);
+			char *dir_label = (NULL != dest_dir)
+				? g_filename_to_utf8(dest_dir, -1, NULL, NULL, NULL) : NULL;
+			message = "A file named \"";
+			message += (name != NULL) ? name : "";
+			message += "\" already exists";
+			if (dir_label != NULL)
+			{
+				message += " in ";
+				message += dir_label;
+			}
+			message += ".\nReplace the existing file, or skip this one?";
+			g_free(dir_label);
+			g_free(dest_dir);
+			g_free(name);
+		}
+
+		GtkWidget* dialog = gtk_window_new();
+		gtk_window_set_title(GTK_WINDOW(dialog), _("Replace File?"));
+		gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+		gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+
+		GtkWidget* dlgBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+		GtkWidget* dlgLabel = gtk_label_new(message.empty() ? NULL : message.c_str());
+		gtk_label_set_wrap(GTK_LABEL(dlgLabel), TRUE);
+		gtk_label_set_xalign(GTK_LABEL(dlgLabel), 0.0);
+		gtk_widget_set_margin_start(dlgLabel, 12);
+		gtk_widget_set_margin_end(dlgLabel, 12);
+		gtk_widget_set_margin_top(dlgLabel, 12);
+		gtk_widget_set_margin_bottom(dlgLabel, 4);
+
+		GtkWidget* chkApply = gtk_check_button_new_with_label(
+			_("Do this for all remaining conflicts"));
+		gtk_check_button_set_active(GTK_CHECK_BUTTON(chkApply), apply_to_all);
+		gtk_widget_set_margin_start(chkApply, 12);
+		gtk_widget_set_margin_end(chkApply, 12);
+
+		GtkWidget* btnBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+		gtk_widget_set_halign(btnBox, GTK_ALIGN_END);
+		gtk_widget_set_margin_start(btnBox, 12);
+		gtk_widget_set_margin_end(btnBox, 12);
+		gtk_widget_set_margin_bottom(btnBox, 12);
+		gtk_widget_set_margin_top(btnBox, 4);
+		gtk_box_append(GTK_BOX(dlgBox), dlgLabel);
+		gtk_box_append(GTK_BOX(dlgBox), chkApply);
+		gtk_box_append(GTK_BOX(dlgBox), btnBox);
+		gtk_window_set_child(GTK_WINDOW(dialog), dlgBox);
+
+		GtkWidget* btnSkip = gtk_button_new_with_label(_("Skip"));
+		GtkWidget* btnReplace = gtk_button_new_with_label(_("Replace"));
+		gtk_widget_add_css_class(btnReplace, "destructive-action");
+		gtk_box_append(GTK_BOX(btnBox), btnSkip);
+		gtk_box_append(GTK_BOX(btnBox), btnReplace);
+
+		GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+		QuiverFileOps::PasteConflictAction result = QuiverFileOps::PASTE_SKIP;
+		struct { GMainLoop *loop; QuiverFileOps::PasteConflictAction *result; } d = { loop, &result };
+
+		auto skip_clicked = +[](GtkWidget*, gpointer user_data) {
+			auto *d2 = (decltype(&d))user_data;
+			*d2->result = QuiverFileOps::PASTE_SKIP;
+			g_main_loop_quit(d2->loop);
+		};
+		auto replace_clicked = +[](GtkWidget*, gpointer user_data) {
+			auto *d2 = (decltype(&d))user_data;
+			*d2->result = QuiverFileOps::PASTE_OVERWRITE;
+			g_main_loop_quit(d2->loop);
+		};
+		g_signal_connect(btnSkip, "clicked", G_CALLBACK(skip_clicked), &d);
+		g_signal_connect(btnReplace, "clicked", G_CALLBACK(replace_clicked), &d);
+		/* Closing the window (X) behaves like Skip. */
+		g_signal_connect(dialog, "close-request", G_CALLBACK(skip_clicked), &d);
+		/* Enter or Escape in the dialog behaves like Skip (the non-destructive default). */
+		GtkEventController *key = gtk_event_controller_key_new();
+		gtk_event_controller_set_propagation_phase(key, GTK_PHASE_CAPTURE);
+		gtk_widget_add_controller(dialog, key);
+		g_signal_connect(key, "key-pressed",
+			G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType, gpointer user_data) {
+				if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter || keyval == GDK_KEY_Escape)
+				{
+					auto *d2 = (decltype(&d))user_data;
+					*d2->result = QuiverFileOps::PASTE_SKIP;
+					g_main_loop_quit(d2->loop);
+					return (gboolean)TRUE;
+				}
+				return (gboolean)FALSE;
+			}), &d);
+
+		gtk_window_present(GTK_WINDOW(dialog));
+		g_main_loop_run(loop);
+		g_main_loop_unref(loop);
+		apply_to_all = gtk_check_button_get_active(GTK_CHECK_BUTTON(chkApply));
+		gtk_window_destroy(GTK_WINDOW(dialog));
+		return result;
 	}
 
 	static void bg_provider_cleanup(gpointer data)

@@ -22,6 +22,8 @@ public:
 
 	void SetSelectedFolders(std::list<std::string> &uris);
 	std::list<std::string> GetSelectedFolders() const;
+	void AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name);
+	void RemoveFolder(const char *folder_uri);
 
 	class FolderTreeImpl;
 	typedef boost::shared_ptr<FolderTreeImpl> FolderTreeImplPtr;

@@ -117,9 +117,22 @@ void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gulong new_cursor
 void quiver_icon_view_set_cursor_cell_silent(QuiverIconView *iconview,gulong new_cursor_cell);
 
 gulong quiver_icon_view_get_prelight_cell(QuiverIconView* iconview);
+gulong quiver_icon_view_get_drop_cell(QuiverIconView* iconview);
+void quiver_icon_view_set_drop_cell(QuiverIconView* iconview, gulong drop_cell);
 gulong quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y);
 
+typedef void (*QuiverIconViewScrollCallback)(QuiverIconView *iconview, gulong cell, gpointer user_data);
+
 void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint cell, gint *x, gint *y);
+gboolean quiver_icon_view_get_cell_rect(QuiverIconView *iconview, gulong cell, GdkRectangle *rect);
+gboolean quiver_icon_view_get_cell_target_rect(QuiverIconView *iconview, gulong cell, GdkRectangle *rect);
+gboolean quiver_icon_view_is_cell_visible(QuiverIconView *iconview, gulong cell);
+
+void quiver_icon_view_scroll_to_cell_with_callback(
+	QuiverIconView *iconview,
+	gulong cell,
+	QuiverIconViewScrollCallback callback,
+	gpointer user_data);
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection);
 GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
@@ -155,6 +168,10 @@ void quiver_icon_view_set_thumbnail_pixbuf_func (QuiverIconView *iconview,
 void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
          QuiverIconViewGetOverlayPixbufFunc func,gpointer data,GDestroyNotify destroy);
 #endif
+
+GdkPaintable* quiver_icon_view_create_drag_icon (QuiverIconView *iconview,
+                                                 gint *hot_x,
+                                                 gint *hot_y);
 
 G_END_DECLS
 

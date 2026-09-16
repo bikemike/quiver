@@ -33,6 +33,7 @@ GtkApplication *g_pApp = NULL;
 #include "PreferencesDlg.h"
 
 #include "QuiverFileOps.h"
+#include "FolderTree.h"
 
 #include "SaveImageTask.h"
 #include "AdjustDateDlg.h"
@@ -541,14 +542,22 @@ void QuiverImpl::RebuildRecentDeletionsMenu()
 	{
 		/* Inert placeholder (no action) so the submenu is non-empty. */
 		GMenu *emptySection = g_menu_new();
-		g_menu_append(emptySection, "No recently deleted files", NULL);
+		g_menu_append(emptySection, "Nothing to undo", NULL);
 		g_menu_append_section(m_pRecentDeletionsMenu, NULL, G_MENU_MODEL(emptySection));
 		g_object_unref(emptySection);
 		return;
 	}
 
+	QuiverFileOps::UndoType topType = QuiverFileOps::UndoStackTopType();
+	const char* undoLabel = "_Undo";
+	if (topType == QuiverFileOps::UNDO_TYPE_DELETE) undoLabel = "_Undo Delete";
+	else if (topType == QuiverFileOps::UNDO_TYPE_MOVE) undoLabel = "_Undo Move";
+	else if (topType == QuiverFileOps::UNDO_TYPE_COPY) undoLabel = "_Undo Copy";
+	else if (topType == QuiverFileOps::UNDO_TYPE_ROTATE) undoLabel = "_Undo Rotate";
+	else if (topType == QuiverFileOps::UNDO_TYPE_NEW_FOLDER) undoLabel = "_Undo New Folder";
+
 	GMenu *staticSection = g_menu_new();
-	g_menu_append(staticSection, "_Undo Delete", "quiver." ACTION_QUIVER_UNDO_DELETE);
+	g_menu_append(staticSection, undoLabel, "quiver." ACTION_QUIVER_UNDO_DELETE);
 	g_menu_append_section(m_pRecentDeletionsMenu, NULL, G_MENU_MODEL(staticSection));
 	g_object_unref(staticSection);
 
@@ -557,16 +566,107 @@ void QuiverImpl::RebuildRecentDeletionsMenu()
 	const size_t maxShownNames = 3;
 	for (size_t pos = 0; pos < batches; ++pos)
 	{
-		const std::list<QuiverFile>* files = QuiverFileOps::UndoStackAt(pos);
-		if (NULL == files || files->empty())
+		const QuiverFileOps::UndoEntry* entry = QuiverFileOps::UndoStackEntryAt(pos);
+		if (NULL == entry)
 			continue;
 
 		GMenu *dynSection = g_menu_new();
-		size_t n = 0;
-		std::list<QuiverFile>::const_iterator itr;
-		for (itr = files->begin(); files->end() != itr && n < maxShownNames; ++itr, ++n)
+		if (entry->type == QuiverFileOps::UNDO_TYPE_DELETE)
 		{
-			GMenuItem* item = g_menu_item_new(itr->GetFileName().c_str(),
+			const std::list<QuiverFile>& files = entry->trashed_files;
+			size_t n = 0;
+			for (std::list<QuiverFile>::const_iterator itr = files.begin();
+				files.end() != itr && n < maxShownNames; ++itr, ++n)
+			{
+				std::string label = "Delete: " + itr->GetFileName();
+				GMenuItem* item = g_menu_item_new(label.c_str(),
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N);
+				g_menu_item_set_action_and_target_value(item,
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+					g_variant_new_uint32(pos));
+				g_menu_append_item(dynSection, item);
+				g_object_unref(item);
+			}
+			if (files.size() > maxShownNames)
+			{
+				char szMore[64] = "";
+				g_snprintf(szMore, sizeof(szMore), "… and %zu more file(s)",
+					files.size() - maxShownNames);
+				GMenuItem* more = g_menu_item_new(szMore, "quiver." ACTION_QUIVER_UNDO_DELETE_N);
+				g_menu_item_set_action_and_target_value(more,
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+					g_variant_new_uint32(pos));
+				g_menu_append_item(dynSection, more);
+				g_object_unref(more);
+			}
+		}
+		else if (entry->type == QuiverFileOps::UNDO_TYPE_MOVE)
+		{
+			size_t n = 0;
+			for (size_t i = 0; i < entry->file_pairs.size() && n < maxShownNames; ++i, ++n)
+			{
+				gchar *name = g_path_get_basename(entry->file_pairs[i].dst_uri.c_str());
+				std::string label = "Move: ";
+				label += name ? name : "file";
+				g_free(name);
+				GMenuItem* item = g_menu_item_new(label.c_str(),
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N);
+				g_menu_item_set_action_and_target_value(item,
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+					g_variant_new_uint32(pos));
+				g_menu_append_item(dynSection, item);
+				g_object_unref(item);
+			}
+			if (entry->file_pairs.size() > maxShownNames)
+			{
+				char szMore[64] = "";
+				g_snprintf(szMore, sizeof(szMore), "… and %zu more file(s)",
+					entry->file_pairs.size() - maxShownNames);
+				GMenuItem* more = g_menu_item_new(szMore, "quiver." ACTION_QUIVER_UNDO_DELETE_N);
+				g_menu_item_set_action_and_target_value(more,
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+					g_variant_new_uint32(pos));
+				g_menu_append_item(dynSection, more);
+				g_object_unref(more);
+			}
+		}
+		else if (entry->type == QuiverFileOps::UNDO_TYPE_COPY)
+		{
+			size_t n = 0;
+			for (size_t i = 0; i < entry->copied_dsts.size() && n < maxShownNames; ++i, ++n)
+			{
+				gchar *name = g_path_get_basename(entry->copied_dsts[i].c_str());
+				std::string label = "Copy: ";
+				label += name ? name : "file";
+				g_free(name);
+				GMenuItem* item = g_menu_item_new(label.c_str(),
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N);
+				g_menu_item_set_action_and_target_value(item,
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+					g_variant_new_uint32(pos));
+				g_menu_append_item(dynSection, item);
+				g_object_unref(item);
+			}
+			if (entry->copied_dsts.size() > maxShownNames)
+			{
+				char szMore[64] = "";
+				g_snprintf(szMore, sizeof(szMore), "… and %zu more file(s)",
+					entry->copied_dsts.size() - maxShownNames);
+				GMenuItem* more = g_menu_item_new(szMore, "quiver." ACTION_QUIVER_UNDO_DELETE_N);
+				g_menu_item_set_action_and_target_value(more,
+					"quiver." ACTION_QUIVER_UNDO_DELETE_N,
+					g_variant_new_uint32(pos));
+				g_menu_append_item(dynSection, more);
+				g_object_unref(more);
+			}
+		}
+		else if (entry->type == QuiverFileOps::UNDO_TYPE_ROTATE)
+		{
+			gchar *name = g_path_get_basename(entry->rotate_uri.c_str());
+			std::string label = "Rotate: ";
+			label += name ? name : "image";
+			g_free(name);
+			GMenuItem* item = g_menu_item_new(label.c_str(),
 				"quiver." ACTION_QUIVER_UNDO_DELETE_N);
 			g_menu_item_set_action_and_target_value(item,
 				"quiver." ACTION_QUIVER_UNDO_DELETE_N,
@@ -574,18 +674,21 @@ void QuiverImpl::RebuildRecentDeletionsMenu()
 			g_menu_append_item(dynSection, item);
 			g_object_unref(item);
 		}
-		if (files->size() > maxShownNames)
+		else if (entry->type == QuiverFileOps::UNDO_TYPE_NEW_FOLDER)
 		{
-			char szMore[64] = "";
-			g_snprintf(szMore, sizeof(szMore), "… and %zu more file(s)",
-				files->size() - maxShownNames);
-			GMenuItem* more = g_menu_item_new(szMore, "quiver." ACTION_QUIVER_UNDO_DELETE_N);
-			g_menu_item_set_action_and_target_value(more,
+			gchar *name = g_path_get_basename(entry->new_folder_uri.c_str());
+			std::string label = "New Folder: ";
+			label += name ? name : "folder";
+			g_free(name);
+			GMenuItem* item = g_menu_item_new(label.c_str(),
+				"quiver." ACTION_QUIVER_UNDO_DELETE_N);
+			g_menu_item_set_action_and_target_value(item,
 				"quiver." ACTION_QUIVER_UNDO_DELETE_N,
 				g_variant_new_uint32(pos));
-			g_menu_append_item(dynSection, more);
-			g_object_unref(more);
+			g_menu_append_item(dynSection, item);
+			g_object_unref(item);
 		}
+
 		g_menu_append_section(m_pRecentDeletionsMenu, NULL, G_MENU_MODEL(dynSection));
 		g_object_unref(dynSection);
 	}
@@ -629,6 +732,24 @@ void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, un
 		g_snprintf(szText, sizeof(szText),
 			ngettext("Moved one item to trash", "Moved %u items to trash", count), count);
 	}
+	else if (QuiverFileOps::UNDO_RECORDED_MOVE == reason)
+	{
+		g_snprintf(szText, sizeof(szText),
+			ngettext("Moved one file", "Moved %u files", count), count);
+	}
+	else if (QuiverFileOps::UNDO_RECORDED_COPY == reason)
+	{
+		g_snprintf(szText, sizeof(szText),
+			ngettext("Copied one file", "Copied %u files", count), count);
+	}
+	else if (QuiverFileOps::UNDO_RECORDED_ROTATE == reason)
+	{
+		g_snprintf(szText, sizeof(szText), "%s", _("Rotated image"));
+	}
+	else if (QuiverFileOps::UNDO_RECORDED_NEW_FOLDER == reason)
+	{
+		g_snprintf(szText, sizeof(szText), "%s", _("Created new folder"));
+	}
 	else if (NULL != restored_uri && 0 != restored_uri[0])
 	{
 		/* "Restored to <folder>" with a shortcut that jumps there. */
@@ -649,18 +770,19 @@ void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, un
 	}
 	else
 	{
-		g_snprintf(szText, sizeof(szText),
-			ngettext("Restored one item from trash",
-				"Restored %u items from trash", count), count);
+		g_snprintf(szText, sizeof(szText), "%s", _("Restored"));
 	}
 	gtk_label_set_text(GTK_LABEL(m_pUndoLabel), szText);
 
-	/* The undo button only belongs to a fresh move-to-trash; a restore toast
-	 * offers "take me there" instead (when a destination is known). */
-	gtk_widget_set_visible(m_pUndoButton,
-		(QuiverFileOps::TRASH_UNDO_DELETED == reason));
+	/* The undo button belongs to newly recorded actions */
+	bool is_recorded = (QuiverFileOps::TRASH_UNDO_DELETED == reason ||
+		QuiverFileOps::UNDO_RECORDED_MOVE == reason ||
+		QuiverFileOps::UNDO_RECORDED_COPY == reason ||
+		QuiverFileOps::UNDO_RECORDED_ROTATE == reason ||
+		QuiverFileOps::UNDO_RECORDED_NEW_FOLDER == reason);
+	gtk_widget_set_visible(m_pUndoButton, is_recorded);
 	gtk_widget_set_visible(m_pUndoShowButton,
-		(QuiverFileOps::TRASH_UNDO_RESTORED == reason && !m_strRestoredURI.empty()));
+		(!is_recorded && !m_strRestoredURI.empty()));
 
 	if (0 != m_iUndoToastTimer)
 	{
@@ -763,6 +885,52 @@ static void quiver_trash_restored_changed_cb(const char *restored_uri, gpointer 
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)user_data;
 	pQuiverImpl->RebuildRecentDeletionsMenu();
 	pQuiverImpl->ShowTrashToast(QuiverFileOps::TRASH_UNDO_RESTORED, 1, restored_uri);
+}
+
+static void quiver_new_folder_undo_cb(const char *folder_uri, gpointer user_data)
+{
+	QuiverImpl *pQuiverImpl = (QuiverImpl*)user_data;
+	if (pQuiverImpl && folder_uri)
+	{
+		if (pQuiverImpl->m_BrowserPtr)
+		{
+			FolderTreePtr tree = pQuiverImpl->m_BrowserPtr->GetFolderTree();
+			if (tree)
+				tree->RemoveFolder(folder_uri);
+		}
+		if (pQuiverImpl->m_ImageListPtr)
+		{
+			/* If the browser is currently viewing the folder that was just undone/removed,
+			 * navigate up to its parent folder. */
+			std::list<std::string> dirs = pQuiverImpl->m_ImageListPtr->GetFolderList();
+			if (!dirs.empty())
+			{
+				std::string norm_target = QuiverUtils::NormalizeURI(folder_uri);
+				std::string norm_current = QuiverUtils::NormalizeURI(dirs.front().c_str());
+				if (norm_target == norm_current)
+				{
+					GFile *cur = QuiverUtils::FileFromURIOrPath(dirs.front().c_str());
+					if (cur)
+					{
+						GFile *parent = g_file_get_parent(cur);
+						if (parent)
+						{
+							char *parent_uri = g_file_get_uri(parent);
+							if (parent_uri)
+							{
+								std::list<std::string> list;
+								list.push_back(parent_uri);
+								pQuiverImpl->m_ImageListPtr->SetImageList(&list);
+								g_free(parent_uri);
+							}
+							g_object_unref(parent);
+						}
+						g_object_unref(cur);
+					}
+				}
+			}
+		}
+	}
 }
 
 void QuiverImpl::Save()
@@ -1753,6 +1921,9 @@ void Quiver::Init()
 
 	/* Track single-item restores so the toast can offer "take me there". */
 	QuiverFileOps::SetTrashRestoredChangedCallback(quiver_trash_restored_changed_cb, m_QuiverImplPtr.get());
+
+	/* Track new folder undo */
+	QuiverFileOps::SetNewFolderUndoCallback(quiver_new_folder_undo_cb, m_QuiverImplPtr.get());
 
 	/* Global toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_QUIVER_FULLSCREEN, "f", FALSE, quiver_new_action_handler_cb, m_QuiverImplPtr.get());

@@ -67,6 +67,7 @@ struct _QuiverIconViewPrivate
 	 
 	gulong cursor_cell;
 	gulong prelight_cell;
+	gulong drop_cell;
 	gulong cursor_cell_first;
 	
 	gboolean mouse_button_is_down;
@@ -81,6 +82,22 @@ struct _QuiverIconViewPrivate
 	
 	guint timeout_id_smooth_scroll;
 	guint timeout_id_smooth_scroll_slowdown;
+	QuiverIconViewScrollCallback scroll_complete_cb;
+	gpointer scroll_complete_data;
+	gulong scroll_complete_cell;
+
+	gint allocated_width;
+	gint allocated_height;
+	guint allocated_cell_width;
+	guint allocated_cell_height;
+
+	gboolean resize_anchor_active;
+	gulong resize_anchor_top_left;
+	gulong resize_anchor_top_right;
+	guint resize_anchor_cols;
+	guint timeout_id_resize_anchor;
+	GtkEventController *toplevel_click_controller;
+	GtkWidget *toplevel_widget;
 
 	guint n_columns;
 	guint n_rows;
@@ -182,6 +199,7 @@ static void      quiver_icon_view_set_hadjustment (QuiverIconView *iconview,
                     GtkAdjustment *hadjustment);
 static void      quiver_icon_view_set_vadjustment (QuiverIconView *iconview,
                     GtkAdjustment *vadjustment);
+static void      quiver_icon_view_reset_resize_anchor (QuiverIconView *iconview, const char *reason);
 
 
 static void      remove_timeout_smooth_scroll(QuiverIconView *iconview);
@@ -359,11 +377,62 @@ new_default_adjustment (void)
 }
 
 static void
+quiver_icon_view_toplevel_released_cb (GtkGestureClick *gesture,
+				       int n_press,
+				       double x,
+				       double y,
+				       QuiverIconView *iconview)
+{
+	(void)gesture;
+	(void)n_press;
+	(void)x;
+	(void)y;
+	if (iconview->priv->resize_anchor_active)
+	{
+		quiver_icon_view_reset_resize_anchor(iconview, "mouse_release");
+	}
+}
+
+static void
+quiver_icon_view_unmap_cb (GtkWidget *widget)
+{
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
+	if (iconview->priv->toplevel_click_controller != NULL && iconview->priv->toplevel_widget != NULL)
+	{
+		gtk_widget_remove_controller(iconview->priv->toplevel_widget,
+			iconview->priv->toplevel_click_controller);
+		iconview->priv->toplevel_click_controller = NULL;
+		iconview->priv->toplevel_widget = NULL;
+	}
+}
+
+static void
 quiver_icon_view_map_add_accent_class (GtkWidget *widget)
 {
 	GtkWidget *parent = gtk_widget_get_parent (widget);
 	if (parent && !gtk_widget_has_css_class (parent, "quiver-selection-accent"))
 		gtk_widget_add_css_class (parent, "quiver-selection-accent");
+}
+
+static void
+quiver_icon_view_map_cb (GtkWidget *widget)
+{
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
+	quiver_icon_view_map_add_accent_class(widget);
+
+	GtkRoot *root = gtk_widget_get_root(widget);
+	if (root && GTK_IS_WIDGET(root) && iconview->priv->toplevel_click_controller == NULL)
+	{
+		GtkWidget *toplevel = GTK_WIDGET(root);
+		GtkGesture *gesture = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
+		gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(gesture), GTK_PHASE_CAPTURE);
+		g_signal_connect(gesture, "released",
+			G_CALLBACK(quiver_icon_view_toplevel_released_cb), iconview);
+		gtk_widget_add_controller(toplevel, GTK_EVENT_CONTROLLER(gesture));
+		iconview->priv->toplevel_click_controller = GTK_EVENT_CONTROLLER(gesture);
+		iconview->priv->toplevel_widget = toplevel;
+	}
 }
 
 static void
@@ -476,9 +545,24 @@ quiver_icon_view_init(QuiverIconView *iconview)
 
 	iconview->priv->cursor_cell = G_MAXULONG;
 	iconview->priv->prelight_cell = G_MAXULONG;
+	iconview->priv->drop_cell = G_MAXULONG;
 
 	iconview->priv->timeout_id_smooth_scroll          = 0;
 	iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	iconview->priv->scroll_complete_cb                = NULL;
+	iconview->priv->scroll_complete_data              = NULL;
+	iconview->priv->scroll_complete_cell              = G_MAXULONG;
+	iconview->priv->allocated_width                   = 0;
+	iconview->priv->allocated_height                  = 0;
+	iconview->priv->allocated_cell_width              = 0;
+	iconview->priv->allocated_cell_height             = 0;
+	iconview->priv->resize_anchor_active              = FALSE;
+	iconview->priv->resize_anchor_top_left            = G_MAXULONG;
+	iconview->priv->resize_anchor_top_right           = G_MAXULONG;
+	iconview->priv->resize_anchor_cols                = 0;
+	iconview->priv->timeout_id_resize_anchor          = 0;
+	iconview->priv->toplevel_click_controller         = NULL;
+	iconview->priv->toplevel_widget                   = NULL;
 
 	/* setting these to 0 lets the widget decide how many
 	 * columns and rows to have
@@ -500,7 +584,9 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	quiver_icon_view_install_accent_css ();
 
 	g_signal_connect(GTK_WIDGET(iconview), "map",
-		G_CALLBACK(quiver_icon_view_map_add_accent_class), NULL);
+		G_CALLBACK(quiver_icon_view_map_cb), NULL);
+	g_signal_connect(GTK_WIDGET(iconview), "unmap",
+		G_CALLBACK(quiver_icon_view_unmap_cb), NULL);
 
 	quiver_icon_view_setup_controllers(iconview);
 }
@@ -510,7 +596,9 @@ quiver_icon_view_dispose(GObject *object)
 {
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(object);
 
+	quiver_icon_view_unmap_cb(GTK_WIDGET(iconview));
 	remove_timeout_smooth_scroll(iconview);
+	quiver_icon_view_reset_resize_anchor(iconview, "dispose");
 
 	if (iconview->priv->timeout_id_rubberband_scroll != 0)
 	{
@@ -598,27 +686,238 @@ quiver_icon_view_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 }
 
 static void
+quiver_icon_view_reset_resize_anchor(QuiverIconView *iconview, const char *reason)
+{
+	if (0 != iconview->priv->timeout_id_resize_anchor)
+	{
+		g_source_remove(iconview->priv->timeout_id_resize_anchor);
+		iconview->priv->timeout_id_resize_anchor = 0;
+	}
+	if (iconview->priv->resize_anchor_active)
+	{
+		g_print("[ResizeAnchor] END session (reason: %s)\n", reason ? reason : "unknown");
+		fflush(stdout);
+	}
+	iconview->priv->resize_anchor_active = FALSE;
+	iconview->priv->resize_anchor_top_left = G_MAXULONG;
+	iconview->priv->resize_anchor_top_right = G_MAXULONG;
+	iconview->priv->resize_anchor_cols = 0;
+}
+
+static gboolean
+quiver_icon_view_timeout_resize_anchor(gpointer data)
+{
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(data);
+	quiver_icon_view_reset_resize_anchor(iconview, "timeout (1500ms idle)");
+	return G_SOURCE_REMOVE;
+}
+
+static void
 quiver_icon_view_size_allocate (GtkWidget     *widget,
 				int width,
 				int height,
 				int baseline)
 {
 	(void)baseline;
-	(void)width;
-	(void)height;
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (widget));
 
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
 
-	quiver_icon_view_update_icon_size(iconview);
-	if (G_MAXULONG != iconview->priv->cursor_cell)
+	gint old_w = iconview->priv->allocated_width;
+	gint old_h = iconview->priv->allocated_height;
+	guint old_cw = iconview->priv->allocated_cell_width;
+	guint old_ch = iconview->priv->allocated_cell_height;
+
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+
+	guint old_cols = 1;
+	if (0 != iconview->priv->n_columns)
+		old_cols = iconview->priv->n_columns;
+	else if (old_w > 0 && old_cw > 0)
+		old_cols = MAX(1, (guint)(old_w / old_cw));
+
+	guint new_cols = 1;
+	if (0 != iconview->priv->n_columns)
+		new_cols = iconview->priv->n_columns;
+	else if (width > 0 && cell_width > 0)
+		new_cols = MAX(1, (guint)(width / cell_width));
+
+	gboolean size_changed = (old_w > 0 && old_h > 0 && (width != old_w || height != old_h));
+	gboolean cell_size_changed = (old_cw > 0 && old_ch > 0 && (cell_width != old_cw || cell_height != old_ch));
+
+	if (size_changed || cell_size_changed)
 	{
-		/* Only bring the cursor into view; don't force it to the top-left.
-		 * Forcing on every allocation makes routine re-layouts (e.g. a
-		 * context-menu popover being parented to the widget) snap the grid
-		 * away from the pointer. */
-		quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,FALSE);
+		/* If no anchor session is active, record the top row items from the initial state */
+		if (!iconview->priv->resize_anchor_active && old_w > 0 && old_cw > 0 && old_ch > 0)
+		{
+			gdouble hadjust = iconview->priv->hadjustment ?
+				gtk_adjustment_get_value(iconview->priv->hadjustment) : 0.0;
+			gdouble vadjust = iconview->priv->vadjustment ?
+				gtk_adjustment_get_value(iconview->priv->vadjustment) : 0.0;
+
+			guint old_top_row = (old_ch > 0) ? (guint)(vadjust / old_ch) : 0;
+			guint old_left_col = (old_cw > 0) ? (guint)(hadjust / old_cw) : 0;
+
+			gulong n_items = quiver_icon_view_get_n_items(iconview);
+
+			iconview->priv->resize_anchor_cols = old_cols;
+			iconview->priv->resize_anchor_top_left = (gulong)old_top_row * old_cols + old_left_col;
+			guint right_col = (old_cols > 0) ? (old_cols - 1) : 0;
+			iconview->priv->resize_anchor_top_right = (gulong)old_top_row * old_cols + right_col;
+
+			if (n_items > 0)
+			{
+				if (iconview->priv->resize_anchor_top_left >= n_items)
+					iconview->priv->resize_anchor_top_left = n_items - 1;
+				if (iconview->priv->resize_anchor_top_right >= n_items)
+					iconview->priv->resize_anchor_top_right = n_items - 1;
+			}
+			iconview->priv->resize_anchor_active = TRUE;
+
+			g_print("[ResizeAnchor] Initial resize: %dx%d -> %dx%d, anchor_cols=%u, anchor_top_left=%lu, anchor_top_right=%lu, vadjust=%.1f (top_row=%u)\n",
+			        old_w, old_h, width, height,
+			        iconview->priv->resize_anchor_cols,
+			        iconview->priv->resize_anchor_top_left,
+			        iconview->priv->resize_anchor_top_right,
+			        vadjust, old_top_row);
+			fflush(stdout);
+		}
+
+		/* Reset or rearm the debounce timeout to end the session once resizing stops */
+		if (0 != iconview->priv->timeout_id_resize_anchor)
+		{
+			g_source_remove(iconview->priv->timeout_id_resize_anchor);
+		}
+		iconview->priv->timeout_id_resize_anchor = g_timeout_add(1500, quiver_icon_view_timeout_resize_anchor, iconview);
 	}
+
+	gulong target_item = G_MAXULONG;
+
+	gboolean cols_changed = (old_w > 0 && old_cw > 0 && new_cols != old_cols);
+	gboolean rows_changed = (0 != iconview->priv->n_rows && old_h > 0 && old_ch > 0 &&
+		(guint)(height / cell_height) != (guint)(old_h / old_ch));
+
+	if (cols_changed || rows_changed)
+	{
+		if (0 != iconview->priv->n_rows)
+		{
+			gdouble hadjust = iconview->priv->hadjustment ?
+				gtk_adjustment_get_value(iconview->priv->hadjustment) : 0.0;
+			gdouble vadjust = iconview->priv->vadjustment ?
+				gtk_adjustment_get_value(iconview->priv->vadjustment) : 0.0;
+
+			guint old_top_row = (old_ch > 0) ? (guint)(vadjust / old_ch) : 0;
+			guint old_left_col = (old_cw > 0) ? (guint)(hadjust / old_cw) : 0;
+
+			guint old_rows = iconview->priv->n_rows;
+			guint new_rows = (cell_height > 0) ? MAX(1, (guint)(height / cell_height)) : 1;
+			if (new_rows > old_rows)
+			{
+				/* Height increased: use bottom-left item */
+				guint bottom_row = (old_rows > 0) ? (old_rows - 1) : 0;
+				target_item = (gulong)old_left_col * old_rows + bottom_row;
+			}
+			else
+			{
+				/* Height decreased: use top-left item */
+				target_item = (gulong)old_left_col * old_rows + old_top_row;
+			}
+		}
+		else if (iconview->priv->resize_anchor_active)
+		{
+			if (new_cols >= iconview->priv->resize_anchor_cols)
+			{
+				/* Width increased compared to resize start: use recorded top-right item */
+				target_item = iconview->priv->resize_anchor_top_right;
+			}
+			else
+			{
+				/* Width decreased compared to resize start: use recorded top-left item */
+				target_item = iconview->priv->resize_anchor_top_left;
+			}
+		}
+
+		gulong n_items = quiver_icon_view_get_n_items(iconview);
+		if (n_items > 0 && target_item >= n_items)
+		{
+			target_item = n_items - 1;
+		}
+	}
+
+	iconview->priv->allocated_width = width;
+	iconview->priv->allocated_height = height;
+	iconview->priv->allocated_cell_width = cell_width;
+	iconview->priv->allocated_cell_height = cell_height;
+
+	quiver_icon_view_update_icon_size(iconview);
+
+	if (target_item != G_MAXULONG && cell_height > 0 && cell_width > 0)
+	{
+		remove_timeout_smooth_scroll(iconview);
+
+		if (0 != iconview->priv->n_rows)
+		{
+			guint new_left_col = target_item / iconview->priv->n_rows;
+			gdouble target_hadjust = (gdouble)(new_left_col * cell_width);
+			if (iconview->priv->hadjustment)
+			{
+				gdouble max_h = MAX(0.0, gtk_adjustment_get_upper(iconview->priv->hadjustment) -
+				                         gtk_adjustment_get_page_size(iconview->priv->hadjustment));
+				target_hadjust = CLAMP(target_hadjust, 0.0, max_h);
+				gtk_adjustment_set_value(iconview->priv->hadjustment, target_hadjust);
+			}
+		}
+		else
+		{
+			guint new_top_row = target_item / new_cols;
+			gdouble target_vadjust = (gdouble)(new_top_row * cell_height);
+			if (iconview->priv->vadjustment)
+			{
+				gdouble max_v = MAX(0.0, gtk_adjustment_get_upper(iconview->priv->vadjustment) -
+				                         gtk_adjustment_get_page_size(iconview->priv->vadjustment));
+				target_vadjust = CLAMP(target_vadjust, 0.0, max_v);
+				gtk_adjustment_set_value(iconview->priv->vadjustment, target_vadjust);
+			}
+		}
+	}
+
+	if (cols_changed)
+	{
+		gdouble actual_vadjust = iconview->priv->vadjustment ?
+			gtk_adjustment_get_value(iconview->priv->vadjustment) : 0.0;
+		guint cur_top_row = (cell_height > 0) ? (guint)(actual_vadjust / cell_height) : 0;
+		gulong cur_top_left = (gulong)cur_top_row * new_cols;
+		gulong cur_top_right = cur_top_left + (new_cols > 0 ? (new_cols - 1) : 0);
+		gulong n_items = quiver_icon_view_get_n_items(iconview);
+		if (n_items > 0 && cur_top_right >= n_items)
+			cur_top_right = n_items - 1;
+
+		gboolean left_in_range = (iconview->priv->resize_anchor_top_left != G_MAXULONG &&
+		                          iconview->priv->resize_anchor_top_left >= cur_top_left &&
+		                          iconview->priv->resize_anchor_top_left <= cur_top_right);
+		gboolean right_in_range = (iconview->priv->resize_anchor_top_right != G_MAXULONG &&
+		                           iconview->priv->resize_anchor_top_right >= cur_top_left &&
+		                           iconview->priv->resize_anchor_top_right <= cur_top_right);
+		gboolean target_in_range = (target_item != G_MAXULONG &&
+		                            target_item >= cur_top_left &&
+		                            target_item <= cur_top_right);
+
+		const char *mode = (new_cols >= iconview->priv->resize_anchor_cols) ? "WIDEN (anchor_right)" : "NARROW (anchor_left)";
+
+		g_print("[ResizeAnchor] Column change %u -> %u (%s, anchor_cols=%u): target_item=%lu, vadjust=%.1f, top_row=%u, query top row items: [%lu .. %lu]. Target in range: %s | anchor_left(%lu) in range: %s | anchor_right(%lu) in range: %s (anchor_active=%s)\n",
+		        old_cols, new_cols, mode, iconview->priv->resize_anchor_cols,
+		        target_item, actual_vadjust, cur_top_row,
+		        cur_top_left, cur_top_right,
+		        target_in_range ? "YES" : "NO",
+		        iconview->priv->resize_anchor_top_left,
+		        left_in_range ? "YES" : "NO",
+		        iconview->priv->resize_anchor_top_right,
+		        right_in_range ? "YES" : "NO",
+		        iconview->priv->resize_anchor_active ? "TRUE" : "FALSE");
+		fflush(stdout);
+	}
+
 	gtk_widget_queue_draw(widget);
 }
 
@@ -712,6 +1011,250 @@ quiver_icon_view_get_col_row_count(QuiverIconView *iconview,guint *cols, guint *
 }
 
 static void
+quiver_icon_view_snapshot_cell_at (QuiverIconView *iconview,
+                                   GtkSnapshot    *snapshot,
+                                   gulong          current_cell,
+                                   gint            x_cell_offset,
+                                   gint            y_cell_offset,
+                                   gboolean        is_drag_icon)
+{
+	GtkWidget *widget = GTK_WIDGET(iconview);
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+	guint padding = iconview->priv->cell_padding;
+	guint bound_width = (cell_width > padding) ? cell_width - padding : cell_width;
+	guint bound_height = (cell_height > padding) ? cell_height - padding : cell_height;
+
+	GdkRGBA sel_color = { 0.21f, 0.52f, 0.89f, 1.0f };
+	quiver_icon_view_get_selection_color (widget, &sel_color);
+
+	if (!is_drag_icon && iconview->priv->cell_items[current_cell].selected)
+	{
+		graphene_rect_t sel_bounds;
+		graphene_rect_init(&sel_bounds,
+			(float)(x_cell_offset + (gint)padding / 2),
+			(float)(y_cell_offset + (gint)padding / 2),
+			(float)bound_width, (float)bound_height);
+
+		GdkRGBA sel_bg = sel_color;
+		sel_bg.alpha = gtk_widget_has_focus(widget) ? 0.40f : 0.25f;
+		gtk_snapshot_append_color(snapshot, &sel_bg, &sel_bounds);
+
+		GskRoundedRect sel_outline;
+		gsk_rounded_rect_init_from_rect(&sel_outline, &sel_bounds, 0.0f);
+		float b_widths[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		GdkRGBA b_colors[4] = { sel_color, sel_color, sel_color, sel_color };
+		gtk_snapshot_append_border(snapshot, &sel_outline, b_widths, b_colors);
+	}
+
+	if (!is_drag_icon && current_cell == iconview->priv->drop_cell)
+	{
+		graphene_rect_t drop_bounds;
+		graphene_rect_init(&drop_bounds,
+			(float)(x_cell_offset + (gint)padding / 2),
+			(float)(y_cell_offset + (gint)padding / 2),
+			(float)bound_width, (float)bound_height);
+
+		GdkRGBA drop_bg = { 0.18f, 0.76f, 0.494f, 0.20f };
+		gtk_snapshot_append_color(snapshot, &drop_bg, &drop_bounds);
+
+		GskRoundedRect drop_outline;
+		gsk_rounded_rect_init_from_rect(&drop_outline, &drop_bounds, 4.0f);
+		float d_widths[4] = { 2.0f, 2.0f, 2.0f, 2.0f };
+		GdkRGBA drop_border = { 0.18f, 0.76f, 0.494f, 1.0f };
+		GdkRGBA d_colors[4] = { drop_border, drop_border, drop_border, drop_border };
+		gtk_snapshot_append_border(snapshot, &drop_outline, d_widths, d_colors);
+	}
+
+	if (!is_drag_icon && gtk_widget_has_focus(widget) && current_cell == iconview->priv->cursor_cell)
+	{
+		graphene_rect_t focus_rect;
+		graphene_rect_init(&focus_rect,
+			(float)(x_cell_offset - 1 + (gint)padding / 2),
+			(float)(y_cell_offset - 1 + (gint)padding / 2),
+			(float)(bound_width + 2), (float)(bound_height + 2));
+
+		GskRoundedRect focus_outline;
+		gsk_rounded_rect_init_from_rect(&focus_outline, &focus_rect, 0.0f);
+		float f_widths[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		GdkRGBA f_colors[4] = { sel_color, sel_color, sel_color, sel_color };
+		gtk_snapshot_append_border(snapshot, &focus_outline, f_widths, f_colors);
+	}
+
+	gboolean stock = FALSE;
+	gint aw = 0, ah = 0;
+	GdkTexture *texture = quiver_icon_view_get_thumbnail_texture(iconview, current_cell, &aw, &ah);
+#if HAVE_GDK_PIXBUF
+	if (NULL == texture)
+	{
+		GdkPixbuf *pb = quiver_icon_view_get_thumbnail_pixbuf(iconview, current_cell, &aw, &ah);
+		if (NULL != pb)
+		{
+			texture = quiver_pixbuf_to_texture(pb);
+			g_object_unref(pb);
+		}
+	}
+#endif
+
+	if (NULL == texture)
+	{
+		texture = quiver_icon_view_get_icon_texture(iconview, current_cell);
+#if HAVE_GDK_PIXBUF
+		if (NULL == texture)
+		{
+			GdkPixbuf *pb = quiver_icon_view_get_icon_pixbuf(iconview, current_cell);
+			if (NULL != pb)
+			{
+				texture = quiver_pixbuf_to_texture(pb);
+				g_object_unref(pb);
+			}
+		}
+#endif
+		if (NULL != texture)
+		{
+			stock = TRUE;
+		}
+	}
+
+	int x_icon_offset = (int)padding / 2;
+	int y_icon_offset = (int)padding / 2;
+
+	if (NULL != texture)
+	{
+		guint pixbuf_width = gdk_texture_get_width(texture);
+		guint pixbuf_height = gdk_texture_get_height(texture);
+		guint nw = (aw > 0) ? (guint)aw : pixbuf_width;
+		guint nh = (ah > 0) ? (guint)ah : pixbuf_height;
+
+		quiver_rect_get_bound_size(iconview->priv->icon_width, iconview->priv->icon_height, &nw, &nh, FALSE);
+
+		x_icon_offset = ((int)cell_width - (int)nw) / 2;
+		y_icon_offset = ((int)cell_height - (int)nh) / 2;
+
+		graphene_rect_t thumb_bounds;
+		graphene_rect_init(&thumb_bounds,
+			(float)(x_cell_offset + x_icon_offset),
+			(float)(y_cell_offset + y_icon_offset),
+			(float)nw, (float)nh);
+
+		if (!stock)
+		{
+			GskRoundedRect shadow_outline;
+			gsk_rounded_rect_init_from_rect(&shadow_outline, &thumb_bounds, 0.0f);
+			GdkRGBA shadow_color = { 0.0f, 0.0f, 0.0f, 0.40f };
+			gtk_snapshot_append_outset_shadow(snapshot, &shadow_outline, &shadow_color, 1.0f, 2.0f, 0.0f, 3.0f);
+		}
+
+		gtk_snapshot_append_texture(snapshot, texture, &thumb_bounds);
+
+		if (!is_drag_icon && current_cell == iconview->priv->prelight_cell)
+		{
+			GdkRGBA hover_color = { 1.0f, 1.0f, 1.0f, 0.15f };
+			gtk_snapshot_append_color(snapshot, &hover_color, &thumb_bounds);
+		}
+
+		if (!stock)
+		{
+			guint border = iconview->priv->icon_border_size;
+			if (border > 0)
+			{
+				GskRoundedRect border_outline;
+				gsk_rounded_rect_init_from_rect(&border_outline, &thumb_bounds, 0.0f);
+				float b_w[4] = { (float)border, (float)border, (float)border, (float)border };
+				GdkRGBA white_color = { 1.0f, 1.0f, 1.0f, 0.95f };
+				GdkRGBA b_c[4] = { white_color, white_color, white_color, white_color };
+				gtk_snapshot_append_border(snapshot, &border_outline, b_w, b_c);
+			}
+		}
+
+		g_object_unref(texture);
+	}
+
+	/* draw overlay icons */
+	for (guint k = 0; k < QUIVER_ICON_OVERLAY_COUNT; k++)
+	{
+		GdkTexture *overlay_tex = quiver_icon_view_get_overlay_texture(iconview, current_cell, (QuiverIconOverlayType)k);
+#if HAVE_GDK_PIXBUF
+		if (NULL == overlay_tex && iconview->priv->callback_get_overlay_pixbuf)
+		{
+			GdkPixbuf *overlay = (*iconview->priv->callback_get_overlay_pixbuf)(iconview,
+					current_cell, (QuiverIconOverlayType)k,
+					iconview->priv->callback_get_overlay_pixbuf_data);
+					
+			if (overlay)
+			{
+				overlay_tex = quiver_pixbuf_to_texture(overlay);
+				g_object_unref(overlay);
+			}
+		}
+#endif
+		if (overlay_tex)
+		{
+			guint overlay_w = gdk_texture_get_width(overlay_tex);
+			guint overlay_h = gdk_texture_get_height(overlay_tex);
+			gint ox = is_drag_icon ? x_icon_offset : ((gint)padding / 2);
+			gint oy = is_drag_icon ? y_icon_offset : ((gint)padding / 2);
+			graphene_rect_t overlay_bounds;
+			graphene_rect_init(&overlay_bounds,
+				(float)(x_cell_offset + ox + 2 + 16 * k),
+				(float)(y_cell_offset + oy + 2),
+				(float)overlay_w, (float)overlay_h);
+			gtk_snapshot_append_texture(snapshot, overlay_tex, &overlay_bounds);
+			g_object_unref(overlay_tex);
+		}
+	}
+
+	/* draw cell text (e.g. folder names) */
+	if (!is_drag_icon && iconview->priv->callback_get_text)
+	{
+		gchar* text = (*iconview->priv->callback_get_text)(iconview,
+				current_cell,
+				iconview->priv->callback_get_text_data);
+
+		if (NULL != text && '\0' != text[0])
+		{
+			PangoLayout *layout = gtk_widget_create_pango_layout(widget, text);
+			PangoFontDescription* font_desc = pango_font_description_from_string("sans 11");
+			pango_layout_set_font_description(layout, font_desc);
+			pango_font_description_free(font_desc);
+
+			pango_layout_set_text(layout, text, -1);
+			pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+			pango_layout_set_width(layout,
+				((gint)cell_width - (gint)padding) * PANGO_SCALE);
+
+			gint text_w = 0, text_h = 0;
+			pango_layout_get_pixel_size(layout, &text_w, &text_h);
+
+			gint x_text = x_cell_offset + ((gint)cell_width - text_w) / 2;
+			gint y_text = y_cell_offset + (gint)cell_height - text_h - ((gint)padding / 2) - 2;
+
+			// Text drop shadow
+			GdkRGBA shadow_col = { 0.0f, 0.0f, 0.0f, 0.55f };
+			graphene_point_t shadow_pt;
+			graphene_point_init(&shadow_pt, (float)(x_text + 1), (float)(y_text + 1));
+			gtk_snapshot_save(snapshot);
+			gtk_snapshot_translate(snapshot, &shadow_pt);
+			gtk_snapshot_append_layout(snapshot, layout, &shadow_col);
+			gtk_snapshot_restore(snapshot);
+
+			// Text foreground
+			GdkRGBA fg;
+			gtk_widget_get_color(widget, &fg);
+			graphene_point_t text_pt;
+			graphene_point_init(&text_pt, (float)x_text, (float)y_text);
+			gtk_snapshot_save(snapshot);
+			gtk_snapshot_translate(snapshot, &text_pt);
+			gtk_snapshot_append_layout(snapshot, layout, &fg);
+			gtk_snapshot_restore(snapshot);
+
+			g_object_unref(layout);
+		}
+		g_free(text);
+	}
+}
+
+static void
 quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot)
 {
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
@@ -723,8 +1266,6 @@ quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot)
 
 	guint vadjust = iconview->priv->vadjustment ? (guint)gtk_adjustment_get_value(iconview->priv->vadjustment) : 0;
 	guint hadjust = iconview->priv->hadjustment ? (guint)gtk_adjustment_get_value(iconview->priv->hadjustment) : 0;
-
-	guint padding = iconview->priv->cell_padding;
 
 	guint num_cols, num_rows;
 	quiver_icon_view_get_col_row_count(iconview, &num_cols, &num_rows);
@@ -751,13 +1292,7 @@ quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot)
 		col_end = (0 != num_cols) ? num_cols - 1 : 0;
 	}
 
-	guint bound_width = (cell_width > padding) ? cell_width - padding : cell_width;
-	guint bound_height = (cell_height > padding) ? cell_height - padding : cell_height;
-
 	gulong n_cells = quiver_icon_view_get_n_items(iconview);
-
-	GdkRGBA sel_color = { 0.21f, 0.52f, 0.89f, 1.0f };
-	quiver_icon_view_get_selection_color (widget, &sel_color);
 
 	for (guint j = row_start; j <= row_end; j++)
 	{
@@ -773,212 +1308,17 @@ quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot)
 				continue;
 			}
 
-			if (iconview->priv->cell_items[current_cell].selected)
-			{
-				graphene_rect_t sel_bounds;
-				graphene_rect_init(&sel_bounds,
-					(float)(x_cell_offset + (gint)padding / 2),
-					(float)(y_cell_offset + (gint)padding / 2),
-					(float)bound_width, (float)bound_height);
-
-				GdkRGBA sel_bg = sel_color;
-				sel_bg.alpha = gtk_widget_has_focus(widget) ? 0.40f : 0.25f;
-				gtk_snapshot_append_color(snapshot, &sel_bg, &sel_bounds);
-
-				GskRoundedRect sel_outline;
-				gsk_rounded_rect_init_from_rect(&sel_outline, &sel_bounds, 0.0f);
-				float b_widths[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-				GdkRGBA b_colors[4] = { sel_color, sel_color, sel_color, sel_color };
-				gtk_snapshot_append_border(snapshot, &sel_outline, b_widths, b_colors);
-			}
-
-			if (gtk_widget_has_focus(widget) && current_cell == iconview->priv->cursor_cell)
-			{
-				graphene_rect_t focus_rect;
-				graphene_rect_init(&focus_rect,
-					(float)(x_cell_offset - 1 + (gint)padding / 2),
-					(float)(y_cell_offset - 1 + (gint)padding / 2),
-					(float)(bound_width + 2), (float)(bound_height + 2));
-
-				GskRoundedRect focus_outline;
-				gsk_rounded_rect_init_from_rect(&focus_outline, &focus_rect, 0.0f);
-				float f_widths[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-				GdkRGBA f_colors[4] = { sel_color, sel_color, sel_color, sel_color };
-				gtk_snapshot_append_border(snapshot, &focus_outline, f_widths, f_colors);
-			}
-
-			gboolean stock = FALSE;
-			gint aw = 0, ah = 0;
-			GdkTexture *texture = quiver_icon_view_get_thumbnail_texture(iconview, current_cell, &aw, &ah);
-#if HAVE_GDK_PIXBUF
-			if (NULL == texture)
-			{
-				GdkPixbuf *pb = quiver_icon_view_get_thumbnail_pixbuf(iconview, current_cell, &aw, &ah);
-				if (NULL != pb)
-				{
-					texture = quiver_pixbuf_to_texture(pb);
-					g_object_unref(pb);
-				}
-			}
-#endif
-
-			if (NULL == texture)
-			{
-				texture = quiver_icon_view_get_icon_texture(iconview, current_cell);
-#if HAVE_GDK_PIXBUF
-				if (NULL == texture)
-				{
-					GdkPixbuf *pb = quiver_icon_view_get_icon_pixbuf(iconview, current_cell);
-					if (NULL != pb)
-					{
-						texture = quiver_pixbuf_to_texture(pb);
-						g_object_unref(pb);
-					}
-				}
-#endif
-				if (NULL != texture)
-				{
-					stock = TRUE;
-				}
-			}
-
-			if (NULL != texture)
-			{
-				guint pixbuf_width = gdk_texture_get_width(texture);
-				guint pixbuf_height = gdk_texture_get_height(texture);
-				guint nw = (aw > 0) ? (guint)aw : pixbuf_width;
-				guint nh = (ah > 0) ? (guint)ah : pixbuf_height;
-
-				quiver_rect_get_bound_size(iconview->priv->icon_width, iconview->priv->icon_height, &nw, &nh, FALSE);
-
-				int x_icon_offset = ((int)cell_width - (int)nw) / 2;
-				int y_icon_offset = ((int)cell_height - (int)nh) / 2;
-
-				graphene_rect_t thumb_bounds;
-				graphene_rect_init(&thumb_bounds,
-					(float)(x_cell_offset + x_icon_offset),
-					(float)(y_cell_offset + y_icon_offset),
-					(float)nw, (float)nh);
-
-				if (!stock)
-				{
-					GskRoundedRect shadow_outline;
-					gsk_rounded_rect_init_from_rect(&shadow_outline, &thumb_bounds, 0.0f);
-					GdkRGBA shadow_color = { 0.0f, 0.0f, 0.0f, 0.40f };
-					gtk_snapshot_append_outset_shadow(snapshot, &shadow_outline, &shadow_color, 1.0f, 2.0f, 0.0f, 3.0f);
-				}
-
-				gtk_snapshot_append_texture(snapshot, texture, &thumb_bounds);
-
-				if (current_cell == iconview->priv->prelight_cell)
-				{
-					GdkRGBA hover_color = { 1.0f, 1.0f, 1.0f, 0.15f };
-					gtk_snapshot_append_color(snapshot, &hover_color, &thumb_bounds);
-				}
-
-				if (!stock)
-				{
-					guint border = iconview->priv->icon_border_size;
-					if (border > 0)
-					{
-						GskRoundedRect border_outline;
-						gsk_rounded_rect_init_from_rect(&border_outline, &thumb_bounds, 0.0f);
-						float b_w[4] = { (float)border, (float)border, (float)border, (float)border };
-						GdkRGBA white_color = { 1.0f, 1.0f, 1.0f, 0.95f };
-						GdkRGBA b_c[4] = { white_color, white_color, white_color, white_color };
-						gtk_snapshot_append_border(snapshot, &border_outline, b_w, b_c);
-					}
-				}
-
-				g_object_unref(texture);
-			}
-
-			/* draw overlay icons */
-			for (guint k = 0; k < QUIVER_ICON_OVERLAY_COUNT; k++)
-			{
-				GdkTexture *overlay_tex = quiver_icon_view_get_overlay_texture(iconview, current_cell, (QuiverIconOverlayType)k);
-#if HAVE_GDK_PIXBUF
-				if (NULL == overlay_tex && iconview->priv->callback_get_overlay_pixbuf)
-				{
-					GdkPixbuf *overlay = (*iconview->priv->callback_get_overlay_pixbuf)(iconview,
-							current_cell, (QuiverIconOverlayType)k,
-							iconview->priv->callback_get_overlay_pixbuf_data);
-							
-					if (overlay)
-					{
-						overlay_tex = quiver_pixbuf_to_texture(overlay);
-						g_object_unref(overlay);
-					}
-				}
-#endif
-				if (overlay_tex)
-				{
-					guint overlay_w = gdk_texture_get_width(overlay_tex);
-					guint overlay_h = gdk_texture_get_height(overlay_tex);
-					graphene_rect_t overlay_bounds;
-					graphene_rect_init(&overlay_bounds,
-						(float)(x_cell_offset + (gint)padding / 2 + 2 + 16 * k),
-						(float)(y_cell_offset + (gint)padding / 2 + 2),
-						(float)overlay_w, (float)overlay_h);
-					gtk_snapshot_append_texture(snapshot, overlay_tex, &overlay_bounds);
-					g_object_unref(overlay_tex);
-				}
-			}
-
-			/* draw cell text (e.g. folder names) */
-			if (iconview->priv->callback_get_text)
-			{
-				gchar* text = (*iconview->priv->callback_get_text)(iconview,
-						current_cell,
-						iconview->priv->callback_get_text_data);
-
-				if (NULL != text && '\0' != text[0])
-				{
-					PangoLayout *layout = gtk_widget_create_pango_layout(widget, text);
-					PangoFontDescription* font_desc = pango_font_description_from_string("sans 11");
-					pango_layout_set_font_description(layout, font_desc);
-					pango_font_description_free(font_desc);
-
-					pango_layout_set_text(layout, text, -1);
-					pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
-					pango_layout_set_width(layout,
-						((gint)cell_width - (gint)padding) * PANGO_SCALE);
-
-					gint text_w = 0, text_h = 0;
-					pango_layout_get_pixel_size(layout, &text_w, &text_h);
-
-					gint x_text = x_cell_offset + ((gint)cell_width - text_w) / 2;
-					gint y_text = y_cell_offset + (gint)cell_height - text_h - ((gint)padding / 2) - 2;
-
-					// Text drop shadow
-					GdkRGBA shadow_col = { 0.0f, 0.0f, 0.0f, 0.55f };
-					graphene_point_t shadow_pt;
-					graphene_point_init(&shadow_pt, (float)(x_text + 1), (float)(y_text + 1));
-					gtk_snapshot_save(snapshot);
-					gtk_snapshot_translate(snapshot, &shadow_pt);
-					gtk_snapshot_append_layout(snapshot, layout, &shadow_col);
-					gtk_snapshot_restore(snapshot);
-
-					// Text foreground
-					GdkRGBA fg;
-					gtk_widget_get_color(widget, &fg);
-					graphene_point_t text_pt;
-					graphene_point_init(&text_pt, (float)x_text, (float)y_text);
-					gtk_snapshot_save(snapshot);
-					gtk_snapshot_translate(snapshot, &text_pt);
-					gtk_snapshot_append_layout(snapshot, layout, &fg);
-					gtk_snapshot_restore(snapshot);
-
-					g_object_unref(layout);
-				}
-				g_free(text);
-			}
+			quiver_icon_view_snapshot_cell_at(iconview, snapshot, current_cell,
+				x_cell_offset, y_cell_offset, FALSE);
 		}
 	}
 
 	if (iconview->priv->drag_mode_enabled && 
 	    QUIVER_ICON_VIEW_DRAG_BEHAVIOR_RUBBER_BAND == iconview->priv->drag_behavior)
 	{
+		GdkRGBA sel_color = { 0.21f, 0.52f, 0.89f, 1.0f };
+		quiver_icon_view_get_selection_color (widget, &sel_color);
+
 		graphene_rect_t rub_bounds;
 		graphene_rect_init(&rub_bounds,
 			(float)(iconview->priv->rubberband_rect.x - (gint)hadjust),
@@ -996,6 +1336,231 @@ quiver_icon_view_snapshot_icons (GtkWidget *widget, GtkSnapshot *snapshot)
 		GdkRGBA rb_colors[4] = { sel_color, sel_color, sel_color, sel_color };
 		gtk_snapshot_append_border(snapshot, &rub_outline, rb_widths, rb_colors);
 	}
+}
+
+#define DRAG_ICON_SHADOW_PAD 6
+
+static void
+quiver_icon_view_get_cell_thumb_rect (QuiverIconView *iconview,
+                                      gulong          cell,
+                                      gint           *out_x_offset,
+                                      gint           *out_y_offset,
+                                      guint          *out_w,
+                                      guint          *out_h)
+{
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+
+	gint aw = 0, ah = 0;
+	GdkTexture *texture = quiver_icon_view_get_thumbnail_texture(iconview, cell, &aw, &ah);
+#if HAVE_GDK_PIXBUF
+	if (NULL == texture)
+	{
+		GdkPixbuf *pb = quiver_icon_view_get_thumbnail_pixbuf(iconview, cell, &aw, &ah);
+		if (NULL != pb)
+		{
+			texture = quiver_pixbuf_to_texture(pb);
+			g_object_unref(pb);
+		}
+	}
+#endif
+	if (NULL == texture)
+	{
+		texture = quiver_icon_view_get_icon_texture(iconview, cell);
+#if HAVE_GDK_PIXBUF
+		if (NULL == texture)
+		{
+			GdkPixbuf *pb = quiver_icon_view_get_icon_pixbuf(iconview, cell);
+			if (NULL != pb)
+			{
+				texture = quiver_pixbuf_to_texture(pb);
+				g_object_unref(pb);
+			}
+		}
+#endif
+	}
+
+	guint nw = 0, nh = 0;
+	if (NULL != texture)
+	{
+		guint pixbuf_width = gdk_texture_get_width(texture);
+		guint pixbuf_height = gdk_texture_get_height(texture);
+		nw = (aw > 0) ? (guint)aw : pixbuf_width;
+		nh = (ah > 0) ? (guint)ah : pixbuf_height;
+		g_object_unref(texture);
+	}
+	else
+	{
+		nw = iconview->priv->icon_width;
+		nh = iconview->priv->icon_height;
+	}
+
+	quiver_rect_get_bound_size(iconview->priv->icon_width, iconview->priv->icon_height, &nw, &nh, FALSE);
+
+	if (out_x_offset) *out_x_offset = ((int)cell_width - (int)nw) / 2;
+	if (out_y_offset) *out_y_offset = ((int)cell_height - (int)nh) / 2;
+	if (out_w) *out_w = nw;
+	if (out_h) *out_h = nh;
+}
+
+GdkPaintable*
+quiver_icon_view_create_drag_icon (QuiverIconView *iconview, gint *hot_x, gint *hot_y)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), NULL);
+
+	GList *selection = quiver_icon_view_get_selection(iconview);
+	if (NULL == selection)
+		return NULL;
+
+	guint num_cols = 0, num_rows = 0;
+	quiver_icon_view_get_col_row_count(iconview, &num_cols, &num_rows);
+	if (num_cols == 0)
+	{
+		g_list_free(selection);
+		return NULL;
+	}
+
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+	if (cell_width == 0 || cell_height == 0)
+	{
+		g_list_free(selection);
+		return NULL;
+	}
+
+	/* Restrict to visible range for responsiveness if selection is large */
+	gulong vis_first = 0, vis_last = G_MAXULONG;
+	quiver_icon_view_get_visible_range(iconview, &vis_first, &vis_last);
+
+	GList *visible_sel = NULL;
+	for (GList *it = selection; it != NULL; it = it->next)
+	{
+		gulong cell = (gulong)(uintptr_t)it->data;
+		if (cell >= vis_first && cell <= vis_last)
+		{
+			visible_sel = g_list_prepend(visible_sel, (gpointer)(uintptr_t)cell);
+		}
+	}
+	visible_sel = g_list_reverse(visible_sel);
+
+	GList *active_sel = (NULL != visible_sel) ? visible_sel : selection;
+
+	/* Calculate bounding box over only the thumbnail rectangles (+ drop shadow) */
+	gint min_x = G_MAXINT, min_y = G_MAXINT;
+	gint max_x = G_MININT, max_y = G_MININT;
+
+	for (GList *it = active_sel; it != NULL; it = it->next)
+	{
+		gulong cell = (gulong)(uintptr_t)it->data;
+		guint c = (guint)(cell % num_cols);
+		guint r = (guint)(cell / num_cols);
+		gint ox = 0, oy = 0;
+		guint tw = 0, th = 0;
+		quiver_icon_view_get_cell_thumb_rect(iconview, cell, &ox, &oy, &tw, &th);
+
+		gint left   = (gint)(c * cell_width) + ox - DRAG_ICON_SHADOW_PAD;
+		gint top    = (gint)(r * cell_height) + oy - DRAG_ICON_SHADOW_PAD;
+		gint right  = (gint)(c * cell_width) + ox + (gint)tw + DRAG_ICON_SHADOW_PAD;
+		gint bottom = (gint)(r * cell_height) + oy + (gint)th + DRAG_ICON_SHADOW_PAD;
+
+		if (left < min_x)   min_x = left;
+		if (top < min_y)    min_y = top;
+		if (right > max_x)  max_x = right;
+		if (bottom > max_y) max_y = bottom;
+	}
+
+	float total_w = (float)(max_x - min_x);
+	float total_h = (float)(max_y - min_y);
+
+	/* Determine hotspot: find which cell is under the mouse pointer */
+	gulong dragged_cell = (gulong)(uintptr_t)active_sel->data;
+	gint mouse_x = (gint)cell_width / 2;
+	gint mouse_y = (gint)cell_height / 2;
+	gboolean found_mouse = FALSE;
+
+	for (GList *it = active_sel; it != NULL; it = it->next)
+	{
+		gulong cell = (gulong)(uintptr_t)it->data;
+		gint mx = -1, my = -1;
+		quiver_icon_view_get_cell_mouse_position(iconview, (guint)cell, &mx, &my);
+		if (mx >= 0 && my >= 0)
+		{
+			dragged_cell = cell;
+			mouse_x = mx;
+			mouse_y = my;
+			found_mouse = TRUE;
+			break;
+		}
+	}
+
+	if (!found_mouse)
+	{
+		gulong cur = quiver_icon_view_get_cursor_cell(iconview);
+		for (GList *it = active_sel; it != NULL; it = it->next)
+		{
+			if ((gulong)(uintptr_t)it->data == cur)
+			{
+				dragged_cell = cur;
+				break;
+			}
+		}
+	}
+
+	guint dc = (guint)(dragged_cell % num_cols);
+	guint dr = (guint)(dragged_cell / num_cols);
+	gint global_mx = (gint)(dc * cell_width) + mouse_x;
+	gint global_my = (gint)(dr * cell_height) + mouse_y;
+
+	gint hx = global_mx - min_x;
+	gint hy = global_my - min_y;
+	if (hx < 0) hx = 0;
+	if (hx > (gint)total_w) hx = (gint)total_w;
+	if (hy < 0) hy = 0;
+	if (hy > (gint)total_h) hy = (gint)total_h;
+
+	GtkSnapshot *snap = gtk_snapshot_new();
+
+	/* Limit max dimensions of drag icon to 800x800 for safety */
+	const float max_dim = 800.0f;
+	float scale = 1.0f;
+	if (total_w > max_dim || total_h > max_dim)
+	{
+		scale = MIN(max_dim / total_w, max_dim / total_h);
+		gtk_snapshot_scale(snap, scale, scale);
+		hx = (gint)(hx * scale);
+		hy = (gint)(hy * scale);
+		total_w *= scale;
+		total_h *= scale;
+	}
+
+	/* Render at 50% opacity to make drop targets easily visible beneath */
+	gtk_snapshot_push_opacity(snap, 0.5f);
+
+	for (GList *it = active_sel; it != NULL; it = it->next)
+	{
+		gulong cell = (gulong)(uintptr_t)it->data;
+		guint c = (guint)(cell % num_cols);
+		guint r = (guint)(cell / num_cols);
+		gint cell_x = (gint)(c * cell_width) - min_x;
+		gint cell_y = (gint)(r * cell_height) - min_y;
+
+		quiver_icon_view_snapshot_cell_at(iconview, snap, cell, cell_x, cell_y, TRUE);
+	}
+
+	gtk_snapshot_pop(snap);
+
+	graphene_size_t size;
+	graphene_size_init(&size, total_w, total_h);
+	GdkPaintable *paintable = gtk_snapshot_free_to_paintable(snap, &size);
+
+	if (NULL != visible_sel)
+		g_list_free(visible_sel);
+	g_list_free(selection);
+
+	if (hot_x) *hot_x = hx;
+	if (hot_y) *hot_y = hy;
+
+	return paintable;
 }
 
 
@@ -1183,6 +1748,9 @@ static void remove_timeout_smooth_scroll(QuiverIconView *iconview)
 		iconview->priv->smooth_scroll_hadjust = 0.;
 		iconview->priv->smooth_scroll_vadjust = 0.;
 	}
+	iconview->priv->scroll_complete_cb = NULL;
+	iconview->priv->scroll_complete_data = NULL;
+	iconview->priv->scroll_complete_cell = G_MAXULONG;
 }
 		
 static void
@@ -1329,7 +1897,16 @@ quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 
 	if (hdone && vdone)
 	{
+		QuiverIconViewScrollCallback cb = iconview->priv->scroll_complete_cb;
+		gpointer cb_data = iconview->priv->scroll_complete_data;
+		gulong cb_cell = iconview->priv->scroll_complete_cell;
+
 		remove_timeout_smooth_scroll(iconview);
+
+		if (cb)
+		{
+			cb(iconview, cb_cell, cb_data);
+		}
 		return FALSE;
 	}
 	return TRUE;
@@ -2020,23 +2597,13 @@ quiver_icon_view_update_icon_size(QuiverIconView *iconview)
 	gtk_adjustment_set_lower(vadjustment, 0);
 	gtk_adjustment_set_upper(vadjustment, MAX(gtk_widget_get_height(widget), height));
 
+	if (gtk_adjustment_get_value(vadjustment) > gtk_adjustment_get_upper(vadjustment) - gtk_adjustment_get_page_size(vadjustment))
+		gtk_adjustment_set_value (vadjustment, MAX(0, gtk_adjustment_get_upper(vadjustment) - gtk_adjustment_get_page_size(vadjustment)));
+
 	g_signal_emit_by_name (hadjustment, "changed");
 	g_signal_emit_by_name (vadjustment, "changed");
 
-
-	iconview->priv->scroll_draw = FALSE;
-
-	if (G_MAXULONG != iconview->priv->cursor_cell)
-	{
-		/* Scroll-into-view only; do not force the cursor to the top-left on
-		 * every icon-size/layout update. */
-		quiver_icon_view_scroll_to_cell_force_top(iconview,iconview->priv->cursor_cell,FALSE);
-	}
-
 	gtk_widget_queue_draw(widget);
-
-	iconview->priv->scroll_draw = TRUE;
-
 }
 
 static gulong
@@ -2116,6 +2683,8 @@ quiver_icon_view_gesture_pressed (GtkGestureClick *gesture,
 {
 	(void)gesture;
 	GtkWidget *widget = GTK_WIDGET(iconview);
+
+	quiver_icon_view_reset_resize_anchor(iconview, "mouse_press");
 
 	gint ix = (gint)x;
 	gint iy = (gint)y;
@@ -2201,6 +2770,11 @@ quiver_icon_view_gesture_released (GtkGestureClick *gesture,
 
 	gint ix = (gint)x;
 	gint iy = (gint)y;
+
+	if (iconview->priv->resize_anchor_active)
+	{
+		quiver_icon_view_reset_resize_anchor(iconview, "mouse_release");
+	}
 
 	/* Get modifier state from current event */
 	GdkModifierType state = 0;
@@ -2514,6 +3088,8 @@ quiver_icon_view_scroll_controller_cb (GtkEventControllerScroll *controller,
 	(void)dx;
 	(void)controller;
 
+	quiver_icon_view_reset_resize_anchor(iconview, "scroll_event");
+
 	return quiver_icon_view_scroll_event_cb(NULL, dx, dy, iconview);
 }
 
@@ -2526,6 +3102,8 @@ quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 {
 	(void)controller;
 	(void)keycode;
+
+	quiver_icon_view_reset_resize_anchor(iconview, "key_press");
 
 	GtkWidget *widget = GTK_WIDGET(iconview);
 	gulong n_cells  = quiver_icon_view_get_n_items(iconview);
@@ -2868,6 +3446,30 @@ gulong quiver_icon_view_get_prelight_cell(QuiverIconView* iconview)
 	return iconview->priv->prelight_cell;
 }
 
+gulong quiver_icon_view_get_drop_cell(QuiverIconView* iconview)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), G_MAXULONG);
+	return iconview->priv->drop_cell;
+}
+
+void quiver_icon_view_set_drop_cell(QuiverIconView* iconview, gulong drop_cell)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+	if (iconview->priv->drop_cell != drop_cell)
+	{
+		gulong old_cell = iconview->priv->drop_cell;
+		iconview->priv->drop_cell = drop_cell;
+		if (old_cell != G_MAXULONG)
+		{
+			quiver_icon_view_invalidate_cell(iconview, old_cell);
+		}
+		if (drop_cell != G_MAXULONG)
+		{
+			quiver_icon_view_invalidate_cell(iconview, drop_cell);
+		}
+	}
+}
+
 void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint cell, gint *x, gint *y)
 {
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
@@ -2962,6 +3564,212 @@ void quiver_icon_view_get_cell_mouse_position(QuiverIconView* iconview, guint ce
 
 	*x = cx;
 	*y = cy;
+}
+
+gboolean quiver_icon_view_get_cell_rect(QuiverIconView *iconview, gulong cell, GdkRectangle *rect)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), FALSE);
+	g_return_val_if_fail (rect != NULL, FALSE);
+
+	gulong n_cells = quiver_icon_view_get_n_items(iconview);
+	if (cell >= n_cells)
+		return FALSE;
+
+	guint cols, rows;
+	quiver_icon_view_get_col_row_count(iconview, &cols, &rows);
+	if (cols == 0 || rows == 0)
+		return FALSE;
+
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+
+	gint hadjust = iconview->priv->hadjustment ? (gint)gtk_adjustment_get_value(iconview->priv->hadjustment) : 0;
+	gint vadjust = iconview->priv->vadjustment ? (gint)gtk_adjustment_get_value(iconview->priv->vadjustment) : 0;
+
+	guint cell_x;
+	guint cell_y;
+	if (0 != iconview->priv->n_rows)
+	{
+		cell_x = (cell / rows) * cell_width;
+		cell_y = (cell % rows) * cell_height;
+	}
+	else
+	{
+		cell_x = (cell % cols) * cell_width;
+		cell_y = (cell / cols) * cell_height;
+	}
+
+	rect->x = (gint)cell_x - hadjust;
+	rect->y = (gint)cell_y - vadjust;
+	rect->width = (gint)cell_width;
+	rect->height = (gint)cell_height;
+	return TRUE;
+}
+
+gboolean quiver_icon_view_get_cell_target_rect(QuiverIconView *iconview, gulong cell, GdkRectangle *rect)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), FALSE);
+	g_return_val_if_fail (rect != NULL, FALSE);
+
+	gulong n_cells = quiver_icon_view_get_n_items(iconview);
+	if (cell >= n_cells)
+		return FALSE;
+
+	guint cols, rows;
+	quiver_icon_view_get_col_row_count(iconview, &cols, &rows);
+	if (cols == 0 || rows == 0)
+		return FALSE;
+
+	guint cell_width = quiver_icon_view_get_cell_width(iconview);
+	guint cell_height = quiver_icon_view_get_cell_height(iconview);
+
+	gint hadjust = iconview->priv->hadjustment ? (gint)gtk_adjustment_get_value(iconview->priv->hadjustment) : 0;
+	gint vadjust = iconview->priv->vadjustment ? (gint)gtk_adjustment_get_value(iconview->priv->vadjustment) : 0;
+
+	guint cell_x;
+	guint cell_y;
+	if (0 != iconview->priv->n_rows)
+	{
+		cell_x = (cell / rows) * cell_width;
+		cell_y = (cell % rows) * cell_height;
+	}
+	else
+	{
+		cell_x = (cell % cols) * cell_width;
+		cell_y = (cell / cols) * cell_height;
+	}
+
+	gint target_hadjust = hadjust;
+	gint target_vadjust = vadjust;
+
+	if (iconview->priv->hadjustment)
+	{
+		gint page_w = (gint)gtk_adjustment_get_page_size(iconview->priv->hadjustment);
+		gint upper_w = (gint)gtk_adjustment_get_upper(iconview->priv->hadjustment);
+		if (cell_x < (guint)hadjust)
+		{
+			target_hadjust = (gint)cell_x;
+		}
+		else if (cell_x > (guint)(hadjust + page_w - (gint)cell_width))
+		{
+			target_hadjust = (gint)(cell_x + cell_width - page_w);
+		}
+		target_hadjust = CLAMP(target_hadjust, 0, MAX(0, upper_w - page_w));
+	}
+
+	if (iconview->priv->vadjustment)
+	{
+		gint page_h = (gint)gtk_adjustment_get_page_size(iconview->priv->vadjustment);
+		gint upper_h = (gint)gtk_adjustment_get_upper(iconview->priv->vadjustment);
+		if (cell_y < (guint)vadjust)
+		{
+			target_vadjust = (gint)cell_y;
+		}
+		else if (cell_y > (guint)(vadjust + page_h - (gint)cell_height))
+		{
+			target_vadjust = (gint)(cell_y + cell_height - page_h);
+		}
+		target_vadjust = CLAMP(target_vadjust, 0, MAX(0, upper_h - page_h));
+	}
+
+	rect->x = (gint)cell_x - target_hadjust;
+	rect->y = (gint)cell_y - target_vadjust;
+	rect->width = (gint)cell_width;
+	rect->height = (gint)cell_height;
+	return TRUE;
+}
+
+gboolean quiver_icon_view_is_cell_visible(QuiverIconView *iconview, gulong cell)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), FALSE);
+	GdkRectangle rect = {0, 0, 0, 0};
+	if (!quiver_icon_view_get_cell_rect(iconview, cell, &rect))
+		return FALSE;
+
+	int w = gtk_widget_get_width(GTK_WIDGET(iconview));
+	int h = gtk_widget_get_height(GTK_WIDGET(iconview));
+	if (w <= 0 || h <= 0)
+		return FALSE;
+
+	return (rect.x >= 0 && rect.x + rect.width <= w &&
+	        rect.y >= 0 && rect.y + rect.height <= h);
+}
+
+typedef struct {
+	QuiverIconView *iconview;
+	gulong cell;
+	QuiverIconViewScrollCallback cb;
+	gpointer user_data;
+} ScrollCallbackIdleData;
+
+static gboolean scroll_callback_idle_cb(gpointer user_data)
+{
+	ScrollCallbackIdleData *data = (ScrollCallbackIdleData *)user_data;
+	if (QUIVER_IS_ICON_VIEW(data->iconview) && data->cb)
+	{
+		data->cb(data->iconview, data->cell, data->user_data);
+	}
+	g_free(data);
+	return G_SOURCE_REMOVE;
+}
+
+void quiver_icon_view_scroll_to_cell_with_callback(
+	QuiverIconView *iconview,
+	gulong cell,
+	QuiverIconViewScrollCallback callback,
+	gpointer user_data)
+{
+	g_return_if_fail(QUIVER_IS_ICON_VIEW(iconview));
+
+	if (!callback)
+	{
+		quiver_icon_view_scroll_to_cell(iconview, cell);
+		return;
+	}
+
+	GdkRectangle target_rect;
+	if (!quiver_icon_view_get_cell_target_rect(iconview, cell, &target_rect))
+	{
+		ScrollCallbackIdleData *idle_data = g_new0(ScrollCallbackIdleData, 1);
+		idle_data->iconview = iconview;
+		idle_data->cell = cell;
+		idle_data->cb = callback;
+		idle_data->user_data = user_data;
+		g_idle_add(scroll_callback_idle_cb, idle_data);
+		return;
+	}
+
+	GdkRectangle cur_rect = {0, 0, 0, 0};
+	if (quiver_icon_view_get_cell_rect(iconview, cell, &cur_rect) &&
+	    cur_rect.x == target_rect.x && cur_rect.y == target_rect.y)
+	{
+		ScrollCallbackIdleData *idle_data = g_new0(ScrollCallbackIdleData, 1);
+		idle_data->iconview = iconview;
+		idle_data->cell = cell;
+		idle_data->cb = callback;
+		idle_data->user_data = user_data;
+		g_idle_add(scroll_callback_idle_cb, idle_data);
+		return;
+	}
+
+	iconview->priv->scroll_complete_cb = callback;
+	iconview->priv->scroll_complete_data = user_data;
+	iconview->priv->scroll_complete_cell = cell;
+
+	quiver_icon_view_scroll_to_cell(iconview, cell);
+
+	if (0 == iconview->priv->timeout_id_smooth_scroll)
+	{
+		iconview->priv->scroll_complete_cb = NULL;
+		iconview->priv->scroll_complete_data = NULL;
+		iconview->priv->scroll_complete_cell = G_MAXULONG;
+		ScrollCallbackIdleData *idle_data = g_new0(ScrollCallbackIdleData, 1);
+		idle_data->iconview = iconview;
+		idle_data->cell = cell;
+		idle_data->cb = callback;
+		idle_data->user_data = user_data;
+		g_idle_add(scroll_callback_idle_cb, idle_data);
+	}
 }
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection)

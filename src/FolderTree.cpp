@@ -14,6 +14,7 @@
 #include "QuiverStockIcons.h"
 #include "QuiverUtils.h"
 #include "QuiverFileOps.h"
+#include "QuiverClipboard.h"
 #include "Bookmarks.h"
 #include "IBookmarksEventHandler.h"
 
@@ -38,14 +39,7 @@ enum class TreePasteMode {
  * never treated as directories here. */
 static bool folder_tree_uri_is_directory(const char *uri)
 {
-	if (NULL == uri)
-		return false;
-	gchar *path = g_filename_from_uri(uri, NULL, NULL);
-	if (NULL == path)
-		return false;
-	bool is_dir = g_file_test(path, G_FILE_TEST_IS_DIR) ? true : false;
-	g_free(path);
-	return is_dir;
+	return QuiverUtils::IsDirectoryURI(uri);
 }
 
 // row item type for the folder tree column view
@@ -188,6 +182,15 @@ static gboolean view_on_key_press (GtkEventControllerKey *controller, guint keyv
 static void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata);
 static void folder_tree_action_paste_into(GSimpleAction* action, GVariant* parameter, gpointer userdata);
+static void folder_tree_action_new_folder(GSimpleAction* action, GVariant* parameter, gpointer userdata);
+static gboolean folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata);
+static void folder_tree_drop_leave_cb(GtkDropTarget *target, gpointer userdata);
+static gboolean folder_tree_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata);
+static gboolean shortcuts_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata);
+static void shortcuts_drop_leave_cb(GtkDropTarget *target, gpointer userdata);
+static gboolean shortcuts_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata);
+static void folder_tree_cancel_drop_expand(FolderTree::FolderTreeImpl *impl);
+static void folder_tree_arm_drop_expand(FolderTree::FolderTreeImpl *impl, GtkTreeListRow *row);
 static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl);
 static guint shortcuts_get_focused_position(FolderTree::FolderTreeImpl* impl);
 static void folder_tree_set_checkbox_for_selected(FolderTree::FolderTreeImpl* impl, gboolean value);
@@ -196,6 +199,7 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 static gboolean shortcuts_on_key_press(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata);
 
 static gchar* folder_tree_get_icon_name(GFile* gfile);
+static gchar* folder_tree_get_icon_name_from_info(GFileInfo* info, GFile* gfile);
 
 class FolderTree::FolderTreeImpl
 {
@@ -224,6 +228,8 @@ public:
 
 	void SyncTreeSelectionForURI(const gchar* uri, gboolean value);
 	void SyncShortcutSelectionForURI(const gchar* uri, gboolean value);
+	void AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name);
+	void RemoveFolder(const char *folder_uri);
 
 // member variables
 	GtkWidget*       m_pWidget;
@@ -248,6 +254,13 @@ public:
 	GtkTreeListModel*  m_pTreeListModel;
 	GtkMultiSelection* m_pSelectionModel;
 	GtkListView*       m_pListView;
+	GtkWidget*         m_pDropHover;
+	DirItem*           m_pDropHoverItem;
+	gdouble            m_dDropX;
+	gdouble            m_dDropY;
+	guint              m_DropExpandTimer;
+	GtkTreeListRow*    m_DropExpandRow;
+	guint              m_iFocusedTreePos;
 
 	gchar*             m_pScrollToURI;
 	IBookmarksEventHandlerPtr m_pBookmarksEventHandler;
@@ -308,6 +321,18 @@ void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
 	m_FolderTreeImplPtr->SetSelectedFolders(uris);
 }
 
+void FolderTree::AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name)
+{
+	if (m_FolderTreeImplPtr)
+		m_FolderTreeImplPtr->AddChildFolder(parent_uri, child_uri, folder_name);
+}
+
+void FolderTree::RemoveFolder(const char *folder_uri)
+{
+	if (m_FolderTreeImplPtr)
+		m_FolderTreeImplPtr->RemoveFolder(folder_uri);
+}
+
 
 
 FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
@@ -330,6 +355,13 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 	m_pTreeListModel = NULL;
 	m_pSelectionModel = NULL;
 	m_pListView = NULL;
+	m_pDropHover = NULL;
+	m_pDropHoverItem = NULL;
+	m_dDropX = 0;
+	m_dDropY = 0;
+	m_DropExpandTimer = 0;
+	m_DropExpandRow = NULL;
+	m_iFocusedTreePos = G_MAXUINT;
 
 	CreateWidget();
 
@@ -353,6 +385,18 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 		}
 	} catch (...) {}
 	m_pBookmarksEventHandler.reset();
+
+	/* Cancel any pending spring-load expand from a drag. */
+	if (0 != m_DropExpandTimer)
+	{
+		g_source_remove(m_DropExpandTimer);
+		m_DropExpandTimer = 0;
+	}
+	if (NULL != m_DropExpandRow)
+	{
+		g_object_unref(m_DropExpandRow);
+		m_DropExpandRow = NULL;
+	}
 
 	if (NULL != m_pScrollToURI)
 	{
@@ -390,6 +434,12 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 	m_pTreeListModel = NULL;
 	m_pListStoreRoots = NULL;
 	m_pListView = NULL;
+	m_pDropHover = NULL;
+	m_pDropHoverItem = NULL;
+	m_dDropX = 0;
+	m_dDropY = 0;
+	m_DropExpandTimer = 0;
+	m_DropExpandRow = NULL;
 	m_pWidget = NULL;
 }
 
@@ -729,7 +779,110 @@ void FolderTree::FolderTreeImpl::ExpandItem(DirItem* item)
 	if (NULL != row)
 	{
 		gtk_tree_list_row_set_expanded(row, TRUE);
+		g_object_unref(row);
 	}
+}
+
+void FolderTree::FolderTreeImpl::AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name)
+{
+	if (NULL == parent_uri || NULL == child_uri || NULL == folder_name || NULL == m_pTreeListModel)
+		return;
+
+	std::string norm_parent = folder_tree_normalize_uri(parent_uri);
+	guint pos = FindItemByURI(norm_parent.c_str(), FALSE);
+	if (pos == G_MAXUINT)
+		pos = FindItemByURI(parent_uri, FALSE);
+	if (pos == G_MAXUINT)
+		return;
+
+	GtkTreeListRow* row = gtk_tree_list_model_get_row(m_pTreeListModel, pos);
+	if (NULL == row)
+		return;
+
+	gboolean is_expanded = gtk_tree_list_row_get_expanded(row);
+	if (is_expanded)
+	{
+		GListModel* children = gtk_tree_list_row_get_children(row);
+		if (children && G_IS_LIST_STORE(children))
+		{
+			guint n_children = g_list_model_get_n_items(children);
+			gboolean exists = FALSE;
+			for (guint c = 0; c < n_children; c++)
+			{
+				DirItem* ci = DIR_ITEM(g_list_model_get_item(children, c));
+				if (ci && ci->uri && g_strcmp0(ci->uri, child_uri) == 0)
+				{
+					exists = TRUE;
+					g_object_unref(ci);
+					break;
+				}
+				if (ci)
+					g_object_unref(ci);
+			}
+			if (!exists)
+			{
+				DirItem* parent_item = DIR_ITEM(gtk_tree_list_row_get_item(row));
+				guint depth = parent_item ? parent_item->node_depth + 1 : 1;
+				if (parent_item)
+					g_object_unref(parent_item);
+
+				DirItem* new_child = dir_item_new(child_uri, folder_name, "folder", FALSE, -1, depth);
+				g_list_store_insert_sorted(G_LIST_STORE(children), G_OBJECT(new_child),
+					GCompareDataFunc(+[](gconstpointer a, gconstpointer b, gpointer) -> gint {
+						DirItem* ia = DIR_ITEM(a);
+						DirItem* ib = DIR_ITEM(b);
+						return g_ascii_strcasecmp(ia->display_name, ib->display_name);
+					}), NULL);
+				g_object_unref(new_child);
+			}
+		}
+	}
+	else
+	{
+		gtk_tree_list_row_set_expanded(row, TRUE);
+	}
+	g_object_unref(row);
+}
+
+void FolderTree::FolderTreeImpl::RemoveFolder(const char *folder_uri)
+{
+	if (NULL == folder_uri || NULL == m_pTreeListModel)
+		return;
+
+	std::string norm = folder_tree_normalize_uri(folder_uri);
+	guint pos = FindItemByURI(norm.c_str(), FALSE);
+	if (pos == G_MAXUINT)
+		pos = FindItemByURI(folder_uri, FALSE);
+	if (pos == G_MAXUINT)
+		return;
+
+	GtkTreeListRow* row = gtk_tree_list_model_get_row(m_pTreeListModel, pos);
+	if (NULL == row)
+		return;
+
+	GtkTreeListRow* parent_row = gtk_tree_list_row_get_parent(row);
+	if (parent_row)
+	{
+		GListModel* children = gtk_tree_list_row_get_children(parent_row);
+		if (children && G_IS_LIST_STORE(children))
+		{
+			guint n_children = g_list_model_get_n_items(children);
+			for (guint c = 0; c < n_children; c++)
+			{
+				DirItem* ci = DIR_ITEM(g_list_model_get_item(children, c));
+				if (ci && ci->uri && (g_strcmp0(ci->uri, folder_uri) == 0 || g_strcmp0(ci->uri, norm.c_str()) == 0))
+				{
+					g_object_unref(ci);
+					g_list_store_remove(G_LIST_STORE(children), c);
+					break;
+				}
+				if (ci)
+					g_object_unref(ci);
+			}
+		}
+		g_object_unref(parent_row);
+	}
+	g_object_unref(row);
 }
 
 guint FolderTree::FolderTreeImpl::FindItemByURI(const gchar* uri, gboolean check_only)
@@ -907,7 +1060,8 @@ static GListModel* create_subdirs (gpointer item_data, gpointer user_data)
 			file,
 			G_FILE_ATTRIBUTE_STANDARD_NAME ","
 			G_FILE_ATTRIBUTE_STANDARD_TYPE ","
-			G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME,
+			G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
+			G_FILE_ATTRIBUTE_STANDARD_ICON,
 			G_FILE_QUERY_INFO_NONE,
 			NULL,
 			NULL);
@@ -922,7 +1076,7 @@ static GListModel* create_subdirs (gpointer item_data, gpointer user_data)
 					GFile* child_file = g_file_get_child(file, g_file_info_get_name(info));
 					gchar* child_uri = g_file_get_uri(child_file);
 					gchar* display = g_strdup(g_file_info_get_display_name(info));
-					gchar* icon = folder_tree_get_icon_name(child_file);
+					gchar* icon = folder_tree_get_icon_name_from_info(info, child_file);
 					DirItem* child = dir_item_new(child_uri, display, icon,
 						FALSE, -1, folder->node_depth + 1);
 					listed = g_list_prepend(listed, child);
@@ -1186,14 +1340,25 @@ static gboolean shortcuts_on_key_press(GtkEventControllerKey *controller, guint 
 	if (!pFolderTreeImpl || !pFolderTreeImpl->m_pShortcutsStore || !pFolderTreeImpl->m_pShortcutsSelectionModel)
 		return FALSE;
 
-	if (GDK_KEY_Menu == keyval)
-	{
-		view_popup_menu_at(pFolderTreeImpl->m_pWidget, -1, -1, TreePasteMode::PASTE_NONE, NULL, userdata);
-		return TRUE;
-	}
-
 	guint n = g_list_model_get_n_items(G_LIST_MODEL(pFolderTreeImpl->m_pShortcutsStore));
 	if (n == 0) return FALSE;
+
+	if (GDK_KEY_Menu == keyval || ((state & GDK_SHIFT_MASK) && (GDK_KEY_F10 == keyval)))
+	{
+		const gchar* target_uri = NULL;
+		guint cursor_pos = shortcuts_get_focused_position(pFolderTreeImpl);
+		if (cursor_pos != G_MAXUINT && cursor_pos < n)
+		{
+			DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(pFolderTreeImpl->m_pShortcutsStore), cursor_pos));
+			if (item)
+			{
+				target_uri = item->uri;
+				g_object_unref(item);
+			}
+		}
+		view_popup_menu_at(pFolderTreeImpl->m_pWidget, -1, -1, TreePasteMode::PASTE_INTO_FOLDER, target_uri, userdata);
+		return TRUE;
+	}
 
 	GtkSelectionModel* sel = GTK_SELECTION_MODEL(pFolderTreeImpl->m_pShortcutsSelectionModel);
 	guint cursor_pos = shortcuts_get_focused_position(pFolderTreeImpl);
@@ -1329,6 +1494,10 @@ static void folder_tree_row_on_clicked(GtkGestureClick* gesture, int n_press, do
 		g_object_get_data(G_OBJECT(w), "dir-row"));
 	if (!impl || !item) return;
 
+	guint pos = row ? gtk_tree_list_row_get_position(row) : G_MAXUINT;
+	if (pos != G_MAXUINT)
+		impl->m_iFocusedTreePos = pos;
+
 	// If the click is on the expander arrow of an expandable row, let GtkTreeExpander handle it
 	GtkWidget* target = gtk_widget_pick(w, x, y, GTK_PICK_DEFAULT);
 	if (target != NULL && g_strcmp0(G_OBJECT_TYPE_NAME(target), "GtkBuiltinIcon") == 0 &&
@@ -1339,7 +1508,6 @@ static void folder_tree_row_on_clicked(GtkGestureClick* gesture, int n_press, do
 
 	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
-	guint pos = row ? gtk_tree_list_row_get_position(row) : G_MAXUINT;
 
 	if (button == 1)
 	{
@@ -1431,8 +1599,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			"    background-color: transparent;\n"
 			"}\n"
 			".quiver-sidebar listview.navigation-sidebar row {\n"
-			"    border-radius: 6px;\n"
-			"    margin: 1px 6px;\n"
+			"    border-radius: 4px;\n"
+			"    margin: 0 4px;\n"
 			"    padding: 0;\n"
 			"}\n"
 			".quiver-sidebar listview.navigation-sidebar row:hover {\n"
@@ -1453,9 +1621,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			"    outline: none;\n"
 			"}\n"
 			".sidebar-row {\n"
-			"    min-height: 34px;\n"
-			"    padding: 2px 6px;\n"
-			"    border-radius: 6px;\n"
+			"    min-height: 24px;\n"
+			"    padding: 1px 4px;\n"
+			"    border-radius: 4px;\n"
 			"}\n"
 			".sidebar-section-title {\n"
 			"    font-size: 11px;\n"
@@ -1483,6 +1651,13 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			"    min-height: 22px;\n"
 			"    padding: 0;\n"
 			"}\n"
+			".sidebar-row.drop-hover,\n"
+			".compact-tree-row.drop-hover {\n"
+			"    outline: 2px solid #2ec27e;\n"
+			"    outline-offset: -2px;\n"
+			"    border-radius: 4px;\n"
+			"    background-color: alpha(#2ec27e, 0.15);\n"
+			"}\n"
 		);
 		gtk_style_context_add_provider_for_display(gdk_display_get_default(),
 			GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -1499,8 +1674,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		gtk_widget_add_css_class(hbox, "sidebar-row");
 
 		GtkWidget* check = gtk_check_button_new();
-		gtk_widget_set_margin_start(check, 4);
-		gtk_widget_set_margin_end(check, 6);
+		gtk_widget_set_margin_start(check, 2);
+		gtk_widget_set_margin_end(check, 4);
 		gtk_widget_set_valign(check, GTK_ALIGN_CENTER);
 		g_signal_connect(check, "toggled", G_CALLBACK(+[](GtkWidget* w, gpointer) {
 			FolderTree::FolderTreeImpl* impl =
@@ -1530,7 +1705,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		}), NULL);
 		gtk_box_append(GTK_BOX(hbox), check);
 
-		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
 		gtk_widget_set_hexpand(row_box, TRUE);
 		gtk_widget_set_valign(row_box, GTK_ALIGN_CENTER);
 		GtkWidget* image = gtk_image_new();
@@ -1620,10 +1795,18 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(check), "set-active-guard", GINT_TO_POINTER(1));
 		gtk_check_button_set_active(GTK_CHECK_BUTTON(check), item->checked);
 		g_object_set_data(G_OBJECT(check), "set-active-guard", GINT_TO_POINTER(0));
+
+		if (NULL != impl && impl->m_pDropHoverItem == item)
+		{
+			gtk_widget_add_css_class(hbox, "drop-hover");
+			impl->m_pDropHover = hbox;
+		}
 	}), this);
 
-	g_signal_connect(sc_factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item) {
+	g_signal_connect(sc_factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item, gpointer user_data) {
 		(void)fact;
+		FolderTree::FolderTreeImpl* impl =
+			static_cast<FolderTree::FolderTreeImpl*>(user_data);
 		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "sc-check"));
 		if (check)
 		{
@@ -1636,6 +1819,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "sc-hbox"));
 		if (hbox)
 		{
+			if (NULL != impl && impl->m_pDropHover == hbox)
+				impl->m_pDropHover = NULL;
+			gtk_widget_remove_css_class(hbox, "drop-hover");
 			g_object_set_data(G_OBJECT(hbox), "sc-item", NULL);
 			g_object_set_data(G_OBJECT(hbox), "sc-impl", NULL);
 			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
@@ -1646,7 +1832,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			g_object_set_data(G_OBJECT(row_box), "sc-item", NULL);
 			g_object_set_data(G_OBJECT(row_box), "sc-impl", NULL);
 		}
-	}), NULL);
+	}), this);
 
 	m_pShortcutsStore = g_list_store_new(DIR_ITEM_TYPE);
 	PopulateShortcutsModel(m_pShortcutsStore);
@@ -1663,12 +1849,23 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	g_signal_connect(sc_legacy, "event", G_CALLBACK(view_capture_button_press), this);
 	gtk_widget_add_controller(GTK_WIDGET(m_pShortcutsListView), sc_legacy);
 
+	GtkDropTarget *sc_drop = gtk_drop_target_new(G_TYPE_STRING,
+		(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+	g_signal_connect(sc_drop, "motion",
+		G_CALLBACK(shortcuts_drop_motion_cb), this);
+	g_signal_connect(sc_drop, "leave",
+		G_CALLBACK(shortcuts_drop_leave_cb), this);
+	g_signal_connect(sc_drop, "drop",
+		G_CALLBACK(shortcuts_drop_cb), this);
+	gtk_widget_add_controller(GTK_WIDGET(m_pShortcutsListView),
+		GTK_EVENT_CONTROLLER(sc_drop));
+
 	m_pSeparator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
 	gtk_widget_add_css_class(m_pSeparator, "sidebar-separator");
-	gtk_widget_set_margin_top(m_pSeparator, 10);
-	gtk_widget_set_margin_bottom(m_pSeparator, 10);
-	gtk_widget_set_margin_start(m_pSeparator, 12);
-	gtk_widget_set_margin_end(m_pSeparator, 12);
+	gtk_widget_set_margin_top(m_pSeparator, 4);
+	gtk_widget_set_margin_bottom(m_pSeparator, 4);
+	gtk_widget_set_margin_start(m_pSeparator, 8);
+	gtk_widget_set_margin_end(m_pSeparator, 8);
 
 	// --- Bookmarks list view factory (dedicated section) ---
 	GtkListItemFactory* bm_factory = gtk_signal_list_item_factory_new();
@@ -1680,8 +1877,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		gtk_widget_add_css_class(hbox, "sidebar-row");
 
 		GtkWidget* check = gtk_check_button_new();
-		gtk_widget_set_margin_start(check, 4);
-		gtk_widget_set_margin_end(check, 6);
+		gtk_widget_set_margin_start(check, 2);
+		gtk_widget_set_margin_end(check, 4);
 		gtk_widget_set_valign(check, GTK_ALIGN_CENTER);
 		g_signal_connect(check, "toggled", G_CALLBACK(+[](GtkWidget* w, gpointer) {
 			FolderTree::FolderTreeImpl* impl =
@@ -1757,7 +1954,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		}), NULL);
 		gtk_box_append(GTK_BOX(hbox), check);
 
-		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
 		gtk_widget_set_hexpand(row_box, TRUE);
 		gtk_widget_set_valign(row_box, GTK_ALIGN_CENTER);
 		GtkWidget* image = gtk_image_new();
@@ -1847,10 +2044,18 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(check), "set-active-guard", GINT_TO_POINTER(1));
 		gtk_check_button_set_active(GTK_CHECK_BUTTON(check), item->checked);
 		g_object_set_data(G_OBJECT(check), "set-active-guard", GINT_TO_POINTER(0));
+
+		if (NULL != impl && impl->m_pDropHoverItem == item)
+		{
+			gtk_widget_add_css_class(hbox, "drop-hover");
+			impl->m_pDropHover = hbox;
+		}
 	}), this);
 
-	g_signal_connect(bm_factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item) {
+	g_signal_connect(bm_factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item, gpointer user_data) {
 		(void)fact;
+		FolderTree::FolderTreeImpl* impl =
+			static_cast<FolderTree::FolderTreeImpl*>(user_data);
 		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-check"));
 		if (check)
 		{
@@ -1863,6 +2068,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-hbox"));
 		if (hbox)
 		{
+			if (NULL != impl && impl->m_pDropHover == hbox)
+				impl->m_pDropHover = NULL;
+			gtk_widget_remove_css_class(hbox, "drop-hover");
 			g_object_set_data(G_OBJECT(hbox), "bm-item", NULL);
 			g_object_set_data(G_OBJECT(hbox), "bm-impl", NULL);
 			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
@@ -1873,7 +2081,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			g_object_set_data(G_OBJECT(row_box), "bm-item", NULL);
 			g_object_set_data(G_OBJECT(row_box), "bm-impl", NULL);
 		}
-	}), NULL);
+	}), this);
 
 	m_pBookmarkStore = g_list_store_new(DIR_ITEM_TYPE);
 	PopulateBookmarksModel(m_pBookmarkStore);
@@ -1889,26 +2097,44 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		gtk_widget_add_controller(GTK_WIDGET(m_pBookmarkListView), bm_legacy);
 	}
 
+	GtkDropTarget *bm_drop = gtk_drop_target_new(G_TYPE_STRING,
+		(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+	g_signal_connect(bm_drop, "motion",
+		G_CALLBACK(shortcuts_drop_motion_cb), this);
+	g_signal_connect(bm_drop, "leave",
+		G_CALLBACK(shortcuts_drop_leave_cb), this);
+	g_signal_connect(bm_drop, "drop",
+		G_CALLBACK(shortcuts_drop_cb), this);
+	gtk_widget_add_controller(GTK_WIDGET(m_pBookmarkListView),
+		GTK_EVENT_CONTROLLER(bm_drop));
+
 	// --- Bookmarks section: header + list, hidden when empty ---
 	m_pBookmarkSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	m_pBookmarkHeader = gtk_label_new("Bookmarks");
 	gtk_widget_add_css_class(m_pBookmarkHeader, "sidebar-section-title");
 	gtk_widget_set_halign(m_pBookmarkHeader, GTK_ALIGN_START);
-	gtk_widget_set_margin_top(m_pBookmarkHeader, 8);
+	gtk_widget_set_margin_top(m_pBookmarkHeader, 4);
 	gtk_widget_set_margin_bottom(m_pBookmarkHeader, 2);
-	gtk_widget_set_margin_start(m_pBookmarkHeader, 18);
-	gtk_widget_set_margin_end(m_pBookmarkHeader, 12);
+	gtk_widget_set_margin_start(m_pBookmarkHeader, 10);
+	gtk_widget_set_margin_end(m_pBookmarkHeader, 8);
 	gtk_box_append(GTK_BOX(m_pBookmarkSection), m_pBookmarkHeader);
-	gtk_box_append(GTK_BOX(m_pBookmarkSection), GTK_WIDGET(m_pBookmarkListView));
+
+	GtkWidget *bm_sw = gtk_scrolled_window_new();
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(bm_sw),
+		GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(bm_sw), TRUE);
+	gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(bm_sw), 180);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(bm_sw), GTK_WIDGET(m_pBookmarkListView));
+	gtk_box_append(GTK_BOX(m_pBookmarkSection), bm_sw);
 
 	/* Separator below the bookmark rows (before the folder tree). It lives
 	 * inside the section so it vanishes with it when there are no bookmarks. */
 	GtkWidget* bm_separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
 	gtk_widget_add_css_class(bm_separator, "sidebar-separator");
-	gtk_widget_set_margin_top(bm_separator, 10);
-	gtk_widget_set_margin_bottom(bm_separator, 10);
-	gtk_widget_set_margin_start(bm_separator, 12);
-	gtk_widget_set_margin_end(bm_separator, 12);
+	gtk_widget_set_margin_top(bm_separator, 4);
+	gtk_widget_set_margin_bottom(bm_separator, 4);
+	gtk_widget_set_margin_start(bm_separator, 8);
+	gtk_widget_set_margin_end(bm_separator, 8);
 	gtk_box_append(GTK_BOX(m_pBookmarkSection), bm_separator);
 
 	UpdateBookmarkSectionVisibility();
@@ -2006,6 +2232,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			static_cast<FolderTree::FolderTreeImpl*>(user_data);
 		GtkTreeListRow* row = GTK_TREE_LIST_ROW(gtk_list_item_get_item(list_item));
 		DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
+
 		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-check"));
 		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-hbox"));
 		GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-row-box"));
@@ -2027,6 +2254,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(hbox), "dir-impl", impl);
 		g_object_set_data(G_OBJECT(hbox), "dir-row", row);
 		g_object_set_data(G_OBJECT(hbox), "list-item", list_item);
+		g_object_set_data(G_OBJECT(hbox), "f-expander", expander);
 
 		g_object_set_data(G_OBJECT(expander), "dir-item", item);
 		g_object_set_data(G_OBJECT(expander), "dir-impl", impl);
@@ -2058,16 +2286,25 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		gtk_tree_expander_set_hide_expander(GTK_TREE_EXPANDER(expander),
 			!gtk_tree_list_row_is_expandable(row));
 		gtk_tree_expander_set_list_row(GTK_TREE_EXPANDER(expander), row);
+
+		if (NULL != impl && impl->m_pDropHoverItem == item)
+		{
+			gtk_widget_add_css_class(hbox, "drop-hover");
+			impl->m_pDropHover = hbox;
+		}
 	}), this);
 
-	g_signal_connect(factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item) {
+	g_signal_connect(factory, "unbind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item, gpointer user_data) {
 		(void)fact;
+		FolderTree::FolderTreeImpl* impl =
+			static_cast<FolderTree::FolderTreeImpl*>(user_data);
+
 		GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-check"));
 		if (check)
 		{
-			DirItem* old_item = static_cast<DirItem*>(g_object_get_data(G_OBJECT(check), "dir-item"));
-			if (old_item && g_object_get_data(G_OBJECT(old_item), "bound-check") == check)
-				g_object_set_data(G_OBJECT(old_item), "bound-check", NULL);
+			DirItem* item = static_cast<DirItem*>(g_object_get_data(G_OBJECT(check), "dir-item"));
+			if (item && g_object_get_data(G_OBJECT(item), "bound-check") == check)
+				g_object_set_data(G_OBJECT(item), "bound-check", NULL);
 			g_object_set_data(G_OBJECT(check), "dir-item", NULL);
 			g_object_set_data(G_OBJECT(check), "dir-impl", NULL);
 			g_object_set_data(G_OBJECT(check), "dir-row", NULL);
@@ -2075,14 +2312,20 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		GtkWidget* hbox = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-hbox"));
 		if (hbox)
 		{
+			/* A recycled row must never keep the drop highlight. */
+			if (NULL != impl && impl->m_pDropHover == hbox)
+				impl->m_pDropHover = NULL;
+			gtk_widget_remove_css_class(hbox, "drop-hover");
 			g_object_set_data(G_OBJECT(hbox), "dir-item", NULL);
 			g_object_set_data(G_OBJECT(hbox), "dir-impl", NULL);
 			g_object_set_data(G_OBJECT(hbox), "dir-row", NULL);
 			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
+			g_object_set_data(G_OBJECT(hbox), "f-expander", NULL);
 		}
 		GtkWidget* expander = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-expander"));
 		if (expander)
 		{
+			gtk_tree_expander_set_list_row(GTK_TREE_EXPANDER(expander), NULL);
 			g_object_set_data(G_OBJECT(expander), "dir-item", NULL);
 			g_object_set_data(G_OBJECT(expander), "dir-impl", NULL);
 			g_object_set_data(G_OBJECT(expander), "dir-row", NULL);
@@ -2094,7 +2337,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			g_object_set_data(G_OBJECT(row_box), "dir-impl", NULL);
 			g_object_set_data(G_OBJECT(row_box), "dir-row", NULL);
 		}
-	}), NULL);
+	}), this);
 
 	// root model
 	m_pListStoreRoots = g_list_store_new(DIR_ITEM_TYPE);
@@ -2116,6 +2359,20 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	g_signal_connect(listview_legacy, "event", G_CALLBACK(view_capture_button_press), this);
 	gtk_widget_add_controller(GTK_WIDGET(m_pListView), listview_legacy);
 
+	/* File drops onto tree rows: the motion handler highlights the hovered
+	 * folder (green outline) and accepts the drop; drop copies/moves the
+	 * files into that folder.  Empty areas and non-folders reject. */
+	GtkDropTarget *tree_drop = gtk_drop_target_new(G_TYPE_STRING,
+		(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+	g_signal_connect(tree_drop, "motion",
+		G_CALLBACK(folder_tree_drop_motion_cb), this);
+	g_signal_connect(tree_drop, "leave",
+		G_CALLBACK(folder_tree_drop_leave_cb), this);
+	g_signal_connect(tree_drop, "drop",
+		G_CALLBACK(folder_tree_drop_cb), this);
+	gtk_widget_add_controller(GTK_WIDGET(m_pListView),
+		GTK_EVENT_CONTROLLER(tree_drop));
+
 	GtkEventController *key_controller = gtk_event_controller_key_new();
 	/* Use capture phase so space/Enter are seen here before GtkListView's own
 	 * key handling (activate on Enter, mnemonic/selection handling) consumes
@@ -2134,8 +2391,14 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	gtk_box_append(GTK_BOX(m_pWidget), GTK_WIDGET(m_pShortcutsListView));
 	gtk_box_append(GTK_BOX(m_pWidget), m_pSeparator);
 	gtk_box_append(GTK_BOX(m_pWidget), m_pBookmarkSection);
-	gtk_box_append(GTK_BOX(m_pWidget), GTK_WIDGET(m_pListView));
-	gtk_widget_set_vexpand(GTK_WIDGET(m_pListView), TRUE);
+
+	GtkWidget *sw = gtk_scrolled_window_new();
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
+		GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), GTK_WIDGET(m_pListView));
+	gtk_widget_set_vexpand(sw, TRUE);
+	gtk_widget_set_hexpand(sw, TRUE);
+	gtk_box_append(GTK_BOX(m_pWidget), sw);
 
 	// build the right-click / menu context popover
 	{
@@ -2164,6 +2427,12 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		{
 			GSimpleAction *a = g_simple_action_new("FolderTreePasteInto", G_VARIANT_TYPE_STRING);
 			g_signal_connect(a, "activate", G_CALLBACK(folder_tree_action_paste_into), this);
+			QuiverUtils::AddAction(G_ACTION(a));
+		}
+		if (NULL == QuiverUtils::GetAction("FolderTreeNewFolder"))
+		{
+			GSimpleAction *a = g_simple_action_new("FolderTreeNewFolder", G_VARIANT_TYPE_STRING);
+			g_signal_connect(a, "activate", G_CALLBACK(folder_tree_action_new_folder), this);
 			QuiverUtils::AddAction(G_ACTION(a));
 		}
 	}
@@ -2247,6 +2516,457 @@ static void folder_tree_set_checkbox_for_selected(FolderTree::FolderTreeImpl* im
 	impl->m_pFolderTree->EmitSelectionChangedEvent();
 }
 
+/* Folder-tree drag & drop: hover highlight + drop-into-folder.  Tree rows are
+ * built by the list-item factory, which stamps "dir-item"/"list-item" on the
+ * row hbox at bind time, so the hovered folder is found by picking the widget
+ * under the pointer and walking up to that hbox. */
+/* Paste / drop conflict resolution: prompt once per collision, remember the
+ * choice when the user ticks "do this for all remaining conflicts". */
+struct FolderTreePasteConflictUI
+{
+	bool bApplyToAll = false;
+	QuiverFileOps::PasteConflictAction lastAction = QuiverFileOps::PASTE_SKIP;
+};
+
+static QuiverFileOps::PasteConflictAction folder_tree_paste_conflict_cb(
+	const gchar *src_uri, const gchar *dest_uri, gpointer user_data)
+{
+	FolderTreePasteConflictUI *ui = (FolderTreePasteConflictUI*)user_data;
+	if (ui->bApplyToAll)
+		return ui->lastAction;
+	QuiverFileOps::PasteConflictAction action =
+		QuiverUtils::ResolvePasteConflict(src_uri, dest_uri, ui->bApplyToAll);
+	ui->lastAction = action;
+	return action;
+}
+static void
+folder_tree_clear_drop_hover(FolderTree::FolderTreeImpl *impl)
+{
+	if (NULL != impl && NULL != impl->m_pDropHover)
+	{
+		gtk_widget_remove_css_class(impl->m_pDropHover, "drop-hover");
+		impl->m_pDropHover = NULL;
+	}
+}
+
+static GtkWidget*
+folder_tree_row_hbox_at_pos(FolderTree::FolderTreeImpl *impl, gdouble x, gdouble y, DirItem **item_out, GtkTreeListRow **row_out)
+{
+	if (NULL != item_out)
+		*item_out = NULL;
+	if (NULL != row_out)
+		*row_out = NULL;
+	if (NULL == impl || NULL == impl->m_pListView)
+		return NULL;
+	GtkWidget *w = gtk_widget_pick(GTK_WIDGET(impl->m_pListView), x, y, GTK_PICK_DEFAULT);
+	while (NULL != w && w != GTK_WIDGET(impl->m_pListView))
+	{
+		if (NULL != g_object_get_data(G_OBJECT(w), "list-item"))
+		{
+			DirItem *item = static_cast<DirItem*>(
+				g_object_get_data(G_OBJECT(w), "dir-item"));
+			GtkTreeListRow *row = static_cast<GtkTreeListRow*>(
+				g_object_get_data(G_OBJECT(w), "dir-row"));
+			if (NULL != item && NULL != item->uri &&
+			    folder_tree_uri_is_directory(item->uri))
+			{
+				if (NULL != item_out)
+					*item_out = item;
+				if (NULL != row_out)
+					*row_out = row;
+				return w;
+			}
+			return NULL;
+		}
+		w = gtk_widget_get_parent(w);
+	}
+	return NULL;
+}
+
+/* Spring-loaded folders: hovering a collapsed folder for a moment expands
+ * it so the drag can continue deeper.  The row is referenced while armed so
+ * a tree rebuild mid-hover cannot leave a dangling pointer. */
+#define FOLDER_TREE_DROP_EXPAND_DELAY_MS 1000
+static gboolean
+folder_tree_drop_expand_timeout(gpointer user_data)
+{
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)user_data;
+	impl->m_DropExpandTimer = 0;
+	GtkTreeListRow *row = impl->m_DropExpandRow;
+	impl->m_DropExpandRow = NULL;
+	if (NULL != row)
+	{
+		GtkWidget *sw = gtk_widget_get_ancestor(GTK_WIDGET(impl->m_pListView), GTK_TYPE_SCROLLED_WINDOW);
+		GtkAdjustment *vadj = sw ? gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(sw)) : NULL;
+		gdouble vadj_before = vadj ? gtk_adjustment_get_value(vadj) : 0.0;
+
+		gtk_tree_list_row_set_expanded(row, TRUE);
+		gtk_widget_queue_allocate(GTK_WIDGET(impl->m_pListView));
+		gtk_widget_queue_draw(GTK_WIDGET(impl->m_pListView));
+
+		// Process pending GTK layout and factory bind cycles so newly expanded
+		// rows are materialized and painted during the active DnD grab
+		while (g_main_context_iteration(NULL, FALSE));
+
+		GtkNative *native = gtk_widget_get_native(GTK_WIDGET(impl->m_pListView));
+		if (native)
+		{
+			GdkSurface *surface = gtk_native_get_surface(native);
+			if (surface)
+			{
+				gdk_surface_queue_render(surface);
+				GdkFrameClock *clock = gdk_surface_get_frame_clock(surface);
+				if (clock)
+				{
+					gdk_frame_clock_request_phase(clock, GDK_FRAME_CLOCK_PHASE_LAYOUT);
+					gdk_frame_clock_request_phase(clock, GDK_FRAME_CLOCK_PHASE_PAINT);
+				}
+			}
+		}
+
+		while (g_main_context_iteration(NULL, FALSE));
+
+		// Keep the scroll offset exactly at vadj_before so the expanded folder
+		// row does not jump or scroll away from under the cursor.
+		if (vadj)
+		{
+			double cur_v = gtk_adjustment_get_value(vadj);
+			if (std::abs(cur_v - vadj_before) > 0.5)
+			{
+				gtk_adjustment_set_value(vadj, vadj_before);
+				while (g_main_context_iteration(NULL, FALSE));
+			}
+		}
+
+		DirItem *item = NULL;
+		GtkTreeListRow *cur_row = NULL;
+		GtkWidget *hbox = folder_tree_row_hbox_at_pos(impl, impl->m_dDropX, impl->m_dDropY, &item, &cur_row);
+
+		if (NULL != hbox && NULL != item)
+		{
+			if (impl->m_pDropHover != hbox)
+			{
+				if (NULL != impl->m_pDropHover)
+					gtk_widget_remove_css_class(impl->m_pDropHover, "drop-hover");
+				gtk_widget_add_css_class(hbox, "drop-hover");
+				impl->m_pDropHover = hbox;
+			}
+			impl->m_pDropHoverItem = item;
+		}
+		g_object_unref(row);
+	}
+	return G_SOURCE_REMOVE;
+}
+
+static void
+folder_tree_cancel_drop_expand(FolderTree::FolderTreeImpl *impl)
+{
+	if (NULL == impl)
+		return;
+	if (0 != impl->m_DropExpandTimer)
+	{
+		g_source_remove(impl->m_DropExpandTimer);
+		impl->m_DropExpandTimer = 0;
+	}
+	if (NULL != impl->m_DropExpandRow)
+	{
+		g_object_unref(impl->m_DropExpandRow);
+		impl->m_DropExpandRow = NULL;
+	}
+}
+
+static void
+folder_tree_arm_drop_expand(FolderTree::FolderTreeImpl *impl, GtkTreeListRow *row)
+{
+	if (NULL == impl)
+		return;
+	if (row == impl->m_DropExpandRow)
+		return;
+	folder_tree_cancel_drop_expand(impl);
+	if (NULL != row && gtk_tree_list_row_is_expandable(row) &&
+	    !gtk_tree_list_row_get_expanded(row))
+	{
+		impl->m_DropExpandRow = (GtkTreeListRow*)g_object_ref(row);
+		impl->m_DropExpandTimer = g_timeout_add(
+			FOLDER_TREE_DROP_EXPAND_DELAY_MS,
+			folder_tree_drop_expand_timeout, impl);
+	}
+}
+
+static gboolean
+folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata)
+{
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	if (NULL == drop || NULL == impl)
+		return GDK_EVENT_PROPAGATE;
+	impl->m_dDropX = x;
+	impl->m_dDropY = y;
+	DirItem *item = NULL;
+	GtkTreeListRow *row = NULL;
+	GtkWidget *hbox = folder_tree_row_hbox_at_pos(impl, x, y, &item, &row);
+	if (NULL == hbox || NULL == item)
+	{
+		folder_tree_clear_drop_hover(impl);
+		folder_tree_cancel_drop_expand(impl);
+		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
+		return GDK_EVENT_PROPAGATE;
+	}
+	if (hbox != impl->m_pDropHover)
+	{
+		if (NULL != impl->m_pDropHover)
+			gtk_widget_remove_css_class(impl->m_pDropHover, "drop-hover");
+		gtk_widget_add_css_class(hbox, "drop-hover");
+		impl->m_pDropHover = hbox;
+	}
+	impl->m_pDropHoverItem = item;
+	folder_tree_arm_drop_expand(impl, row);
+	GdkDragAction actions = gdk_drop_get_actions(drop);
+	GdkDragAction chosen = (0 != (actions & GDK_ACTION_MOVE)) ? GDK_ACTION_MOVE : GDK_ACTION_COPY;
+	gdk_drop_status(drop, chosen, chosen);
+	return GDK_EVENT_STOP;
+}
+
+static void
+folder_tree_drop_leave_cb(GtkDropTarget *target, gpointer userdata)
+{ (void)target;
+	folder_tree_clear_drop_hover((FolderTree::FolderTreeImpl*)userdata);
+	folder_tree_cancel_drop_expand((FolderTree::FolderTreeImpl*)userdata);
+}
+
+static gboolean
+folder_tree_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata)
+{
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl || NULL == value || !G_VALUE_HOLDS_STRING(value))
+		return GDK_EVENT_PROPAGATE;
+	DirItem *item = NULL;
+	folder_tree_row_hbox_at_pos(impl, x, y, &item, NULL);
+	folder_tree_clear_drop_hover(impl);
+	folder_tree_cancel_drop_expand(impl);
+	if (NULL == item || NULL == item->uri)
+		return GDK_EVENT_PROPAGATE;
+
+	std::list<std::string> uris;
+	bool bCut = false;
+	const char *text = g_value_get_string(value);
+	if (!QuiverClipboard::ParseClipboardText(text ? text : "", uris, bCut) || uris.empty())
+		return GDK_EVENT_PROPAGATE;
+
+	/* Same move/copy rule as the browser icon view: a cut payload dropped
+	 * with MOVE moves; anything else copies. */
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	bool bMove = true;
+	if (NULL != drop)
+	{
+		GdkDragAction actions = gdk_drop_get_actions(drop);
+		if (actions == GDK_ACTION_COPY && !bCut)
+			bMove = false;
+	}
+	else
+		bMove = bCut;
+
+	struct FolderTreeDropData
+	{
+		FolderTree::FolderTreeImpl *impl;
+		std::list<std::string> uris;
+		std::string target_uri;
+		bool bMove;
+		bool bCut;
+	};
+
+	FolderTreeDropData *data = new FolderTreeDropData();
+	data->impl = impl;
+	data->uris = uris;
+	data->target_uri = item->uri;
+	data->bMove = bMove;
+	data->bCut = bCut;
+
+	g_idle_add(+[](gpointer user_data) -> gboolean {
+		FolderTreeDropData *d = static_cast<FolderTreeDropData*>(user_data);
+		FolderTreePasteConflictUI ui;
+		std::list<std::string> moved;
+		int movedCount = QuiverFileOps::TransferFiles(d->uris, d->bMove, d->target_uri.c_str(),
+			folder_tree_paste_conflict_cb, &ui, &moved);
+		if (d->bCut || d->bMove)
+			QuiverFileOps::ClipboardRemoveURIs(moved);
+		if (movedCount > 0 && d->impl && d->impl->m_pFolderTree)
+		{
+			d->impl->m_pFolderTree->EmitSelectionChangedEvent();
+		}
+		delete d;
+		return G_SOURCE_REMOVE;
+	}, data);
+
+	return GDK_EVENT_STOP;
+}
+
+static GtkWidget*
+shortcuts_row_hbox_at_pos(FolderTree::FolderTreeImpl *impl, GtkListView *listview, gdouble x, gdouble y, DirItem **item_out)
+{
+	if (NULL != item_out)
+		*item_out = NULL;
+	if (NULL == impl || NULL == listview)
+		return NULL;
+	GtkWidget *w = gtk_widget_pick(GTK_WIDGET(listview), x, y, GTK_PICK_DEFAULT);
+	while (NULL != w && w != GTK_WIDGET(listview))
+	{
+		if (NULL != g_object_get_data(G_OBJECT(w), "list-item"))
+		{
+			DirItem *item = static_cast<DirItem*>(
+				g_object_get_data(G_OBJECT(w), "sc-item"));
+			if (!item)
+				item = static_cast<DirItem*>(g_object_get_data(G_OBJECT(w), "bm-item"));
+			if (!item)
+				item = static_cast<DirItem*>(g_object_get_data(G_OBJECT(w), "dir-item"));
+			if (NULL != item && NULL != item->uri)
+			{
+				if (g_strcmp0(item->uri, "trash:///") == 0 || folder_tree_uri_is_directory(item->uri))
+				{
+					if (NULL != item_out)
+						*item_out = item;
+					return w;
+				}
+			}
+			return NULL;
+		}
+		w = gtk_widget_get_parent(w);
+	}
+	return NULL;
+}
+
+static gboolean
+shortcuts_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata)
+{
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	if (NULL == drop || NULL == impl)
+		return GDK_EVENT_PROPAGATE;
+	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
+	GtkListView *lv = GTK_IS_LIST_VIEW(widget) ? GTK_LIST_VIEW(widget) : impl->m_pShortcutsListView;
+
+	DirItem *item = NULL;
+	GtkWidget *hbox = shortcuts_row_hbox_at_pos(impl, lv, x, y, &item);
+	if (NULL == hbox || NULL == item)
+	{
+		folder_tree_clear_drop_hover(impl);
+		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
+		return GDK_EVENT_PROPAGATE;
+	}
+	if (hbox != impl->m_pDropHover)
+	{
+		if (NULL != impl->m_pDropHover)
+			gtk_widget_remove_css_class(impl->m_pDropHover, "drop-hover");
+		gtk_widget_add_css_class(hbox, "drop-hover");
+		impl->m_pDropHover = hbox;
+	}
+	impl->m_pDropHoverItem = item;
+	GdkDragAction actions = gdk_drop_get_actions(drop);
+	GdkDragAction chosen = (0 != (actions & GDK_ACTION_MOVE)) ? GDK_ACTION_MOVE : GDK_ACTION_COPY;
+	gdk_drop_status(drop, chosen, chosen);
+	return GDK_EVENT_STOP;
+}
+
+static void
+shortcuts_drop_leave_cb(GtkDropTarget *target, gpointer userdata)
+{
+	(void)target;
+	folder_tree_clear_drop_hover((FolderTree::FolderTreeImpl*)userdata);
+}
+
+static gboolean
+shortcuts_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata)
+{
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl || NULL == value || !G_VALUE_HOLDS_STRING(value))
+		return GDK_EVENT_PROPAGATE;
+	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
+	GtkListView *lv = GTK_IS_LIST_VIEW(widget) ? GTK_LIST_VIEW(widget) : impl->m_pShortcutsListView;
+
+	DirItem *item = NULL;
+	shortcuts_row_hbox_at_pos(impl, lv, x, y, &item);
+	folder_tree_clear_drop_hover(impl);
+	if (NULL == item || NULL == item->uri)
+		return GDK_EVENT_PROPAGATE;
+
+	std::list<std::string> uris;
+	bool bCut = false;
+	const char *text = g_value_get_string(value);
+	if (!QuiverClipboard::ParseClipboardText(text ? text : "", uris, bCut) || uris.empty())
+		return GDK_EVENT_PROPAGATE;
+
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	bool bMove = true;
+	if (NULL != drop)
+	{
+		GdkDragAction actions = gdk_drop_get_actions(drop);
+		if (actions == GDK_ACTION_COPY && !bCut)
+			bMove = false;
+	}
+	else
+		bMove = bCut;
+
+	struct ShortcutDropData
+	{
+		FolderTree::FolderTreeImpl *impl;
+		std::list<std::string> uris;
+		std::string target_uri;
+		bool bMove;
+		bool bCut;
+	};
+
+	ShortcutDropData *data = new ShortcutDropData();
+	data->impl = impl;
+	data->uris = uris;
+	data->target_uri = item->uri;
+	data->bMove = bMove;
+	data->bCut = bCut;
+
+	g_idle_add(+[](gpointer user_data) -> gboolean {
+		ShortcutDropData *d = static_cast<ShortcutDropData*>(user_data);
+		if (g_strcmp0(d->target_uri.c_str(), "trash:///") == 0)
+		{
+			std::list<QuiverFile> trashed_files;
+			std::list<std::string> trashed_uris;
+			for (const auto &u : d->uris)
+			{
+				QuiverFile qf(u.c_str());
+				if (QuiverFileOps::MoveToTrash(qf))
+				{
+					trashed_files.push_back(qf);
+					trashed_uris.push_back(u);
+				}
+			}
+			if (!trashed_files.empty())
+			{
+				QuiverFileOps::UndoStackRecordDelete(trashed_files);
+			}
+			QuiverFileOps::ClipboardRemoveURIs(trashed_uris);
+			if (!trashed_uris.empty() && d->impl && d->impl->m_pFolderTree)
+			{
+				d->impl->m_pFolderTree->EmitSelectionChangedEvent();
+			}
+		}
+		else
+		{
+			FolderTreePasteConflictUI ui;
+			std::list<std::string> moved;
+			int movedCount = QuiverFileOps::TransferFiles(d->uris, d->bMove, d->target_uri.c_str(),
+				folder_tree_paste_conflict_cb, &ui, &moved);
+			if (d->bCut || d->bMove)
+				QuiverFileOps::ClipboardRemoveURIs(moved);
+			if (movedCount > 0 && d->impl && d->impl->m_pFolderTree)
+			{
+				d->impl->m_pFolderTree->EmitSelectionChangedEvent();
+			}
+		}
+		delete d;
+		return G_SOURCE_REMOVE;
+	}, data);
+
+	return GDK_EVENT_STOP;
+}
+
 static void
 folder_tree_action_paste_into (GSimpleAction* action, GVariant* parameter, gpointer userdata)
 { (void)action;
@@ -2258,8 +2978,22 @@ folder_tree_action_paste_into (GSimpleAction* action, GVariant* parameter, gpoin
 	if (NULL == uri || '\0' == uri[0])
 		return;
 
-	int moved = QuiverFileOps::ClipboardTransferTo(uri);
-	if (moved <= 0)
+	std::list<std::string> uris = *QuiverFileOps::ClipboardGetUris();
+	bool bCut = QuiverFileOps::ClipboardIsCut();
+	if (uris.empty())
+	{
+		if (!QuiverClipboard::GetClipboardUris(uris, bCut))
+			return;
+		bCut = false;
+	}
+
+	FolderTreePasteConflictUI ui;
+	std::list<std::string> moved;
+	int movedCount = QuiverFileOps::TransferFiles(uris, bCut, uri,
+		folder_tree_paste_conflict_cb, &ui, &moved);
+	if (bCut)
+		QuiverFileOps::ClipboardRemoveURIs(moved);
+	if (movedCount <= 0)
 		return;
 
 	/* Switch the browser to the target folder so the pasted material is
@@ -2268,6 +3002,77 @@ folder_tree_action_paste_into (GSimpleAction* action, GVariant* parameter, gpoin
 	sel.push_back(uri);
 	pFolderTreeImpl->SetSelectedFolders(sel);
 	pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+}
+
+static void
+folder_tree_action_new_folder (GSimpleAction* action, GVariant* parameter, gpointer userdata)
+{ (void)action;
+	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == pFolderTreeImpl || NULL == parameter)
+		return;
+
+	const gchar* uri = g_variant_get_string(parameter, NULL);
+	if (NULL == uri || '\0' == uri[0] || !QuiverUtils::IsDirectoryURI(uri))
+		return;
+
+	GFile *parent = QuiverUtils::FileFromURIOrPath(uri);
+	if (NULL == parent)
+		return;
+
+	std::string initial_name = QuiverUtils::GetUniqueFolderName(parent, "New Folder");
+	char *folder_name = QuiverUtils::PromptForString("New Folder", "Folder name:", initial_name.c_str(), "Create");
+	if (NULL == folder_name || '\0' == folder_name[0])
+	{
+		if (folder_name)
+			g_free(folder_name);
+		g_object_unref(parent);
+		return;
+	}
+
+	GFile *child = g_file_get_child(parent, folder_name);
+	GError *error = NULL;
+	gboolean ok = g_file_make_directory(child, NULL, &error);
+	if (!ok)
+	{
+		QuiverUtils::ConfirmDialog("Create Folder Failed",
+			error && error->message ? error->message : "The folder could not be created.",
+			"OK", "Close");
+		if (error)
+			g_error_free(error);
+		g_object_unref(child);
+		g_object_unref(parent);
+		g_free(folder_name);
+		return;
+	}
+
+	char *child_uri = g_file_get_uri(child);
+	char *parent_canonical_uri = g_file_get_uri(parent);
+	pFolderTreeImpl->AddChildFolder(
+		parent_canonical_uri ? parent_canonical_uri : uri,
+		child_uri, folder_name);
+	if (child_uri)
+		QuiverFileOps::UndoStackRecordNewFolder(child_uri);
+
+	/* If the target folder is currently viewed in the browser, emit selection changed
+	 * so the browser reloads and shows the newly created folder in the icon view */
+	std::string norm_target = folder_tree_normalize_uri(uri);
+	std::list<std::string> current_sel = pFolderTreeImpl->GetSelectedFolders();
+	for (const auto &s : current_sel)
+	{
+		std::string norm_s = folder_tree_normalize_uri(s.c_str());
+		if (norm_s == norm_target && pFolderTreeImpl->m_pFolderTree)
+		{
+			pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+			break;
+		}
+	}
+
+	g_free(parent_canonical_uri);
+	if (child_uri)
+		g_free(child_uri);
+	g_object_unref(child);
+	g_object_unref(parent);
+	g_free(folder_name);
 }
 
 void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
@@ -2282,20 +3087,32 @@ void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 	 * a paste entry, and the label depends on where the click landed. */
 	GMenu *menu = g_menu_new();
 
+	GMenu *folder_section = g_menu_new();
+	if (target_uri != NULL && QuiverUtils::IsDirectoryURI(target_uri))
+	{
+		GMenuItem *new_folder = g_menu_item_new("New Folder", NULL);
+		g_menu_item_set_action_and_target(new_folder, "quiver.FolderTreeNewFolder", "s", target_uri);
+		g_menu_append_item(folder_section, new_folder);
+		g_object_unref(new_folder);
+	}
+
 	if (TreePasteMode::PASTE_NONE != paste_mode &&
 	    target_uri != NULL && QuiverFileOps::ClipboardHasItems())
 	{
-		GMenu *paste_section = g_menu_new();
 		const char *label = (TreePasteMode::PASTE_INTO_FOLDER == paste_mode)
 			? "Paste Into Folder" : "Paste";
 		GMenuItem *paste = g_menu_item_new(label, NULL);
 		g_menu_item_set_action_and_target(paste, "quiver.FolderTreePasteInto", "s", target_uri);
 		g_menu_item_set_attribute(paste, "accel", "s", "<Control>v");
-		g_menu_append_item(paste_section, paste);
+		g_menu_append_item(folder_section, paste);
 		g_object_unref(paste);
-		g_menu_append_section(menu, NULL, G_MENU_MODEL(paste_section));
-		g_object_unref(paste_section);
 	}
+
+	if (g_menu_model_get_n_items(G_MENU_MODEL(folder_section)) > 0)
+	{
+		g_menu_append_section(menu, NULL, G_MENU_MODEL(folder_section));
+	}
+	g_object_unref(folder_section);
 
 	GMenu *select_section = g_menu_new();
 	QuiverUtils::MenuAppendAction(select_section, "Check Selected Item(s)",
@@ -2313,9 +3130,56 @@ void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 		GTK_POPOVER(pFolderTreeImpl->m_pMenuPopover), treeview, x, y);
 }
 
+static void folder_tree_focus_position(FolderTree::FolderTreeImpl* impl, guint pos)
+{
+	if (!impl || !impl->m_pTreeListModel)
+		return;
+
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(impl->m_pTreeListModel));
+	if (pos >= n)
+		return;
+
+	impl->m_iFocusedTreePos = pos;
+
+	if (impl->m_pSelectionModel)
+	{
+		gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), pos, TRUE);
+	}
+
+	if (impl->m_pListView)
+	{
+		gtk_list_view_scroll_to(impl->m_pListView, pos,
+			(GtkListScrollFlags)(GTK_LIST_SCROLL_FOCUS | GTK_LIST_SCROLL_SELECT), NULL);
+
+		GtkWidget* lv = GTK_WIDGET(impl->m_pListView);
+		for (GtkWidget* item_widget = gtk_widget_get_first_child(lv);
+		     item_widget != NULL;
+		     item_widget = gtk_widget_get_next_sibling(item_widget))
+		{
+			GtkWidget* hbox = gtk_widget_get_first_child(item_widget);
+			if (hbox)
+			{
+				GtkTreeListRow* r = static_cast<GtkTreeListRow*>(
+					g_object_get_data(G_OBJECT(hbox), "dir-row"));
+				if (r && gtk_tree_list_row_get_position(r) == pos)
+				{
+					GtkWidget* exp = static_cast<GtkWidget*>(
+						g_object_get_data(G_OBJECT(hbox), "f-expander"));
+					gtk_widget_grab_focus(exp ? exp : hbox);
+					break;
+				}
+			}
+		}
+	}
+}
+
 static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl)
 {
 	if (!impl || !impl->m_pListView)
+		return G_MAXUINT;
+
+	guint n = impl->m_pTreeListModel ? g_list_model_get_n_items(G_LIST_MODEL(impl->m_pTreeListModel)) : 0;
+	if (n == 0)
 		return G_MAXUINT;
 
 	GtkWidget* lv = GTK_WIDGET(impl->m_pListView);
@@ -2329,11 +3193,25 @@ static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl)
 		GtkTreeListRow* row = static_cast<GtkTreeListRow*>(
 			g_object_get_data(G_OBJECT(w), "dir-row"));
 		if (row)
-			return gtk_tree_list_row_get_position(row);
+		{
+			guint pos = gtk_tree_list_row_get_position(row);
+			if (pos < n)
+			{
+				impl->m_iFocusedTreePos = pos;
+				return pos;
+			}
+		}
 		GtkListItem* li = static_cast<GtkListItem*>(
 			g_object_get_data(G_OBJECT(w), "list-item"));
 		if (li)
-			return gtk_list_item_get_position(li);
+		{
+			guint pos = gtk_list_item_get_position(li);
+			if (pos < n)
+			{
+				impl->m_iFocusedTreePos = pos;
+				return pos;
+			}
+		}
 	}
 
 	GtkWidget* fc = gtk_widget_get_focus_child(lv);
@@ -2344,22 +3222,44 @@ static guint folder_tree_get_focused_position(FolderTree::FolderTreeImpl* impl)
 			GtkTreeListRow* row = static_cast<GtkTreeListRow*>(
 				g_object_get_data(G_OBJECT(ch), "dir-row"));
 			if (row)
-				return gtk_tree_list_row_get_position(row);
+			{
+				guint pos = gtk_tree_list_row_get_position(row);
+				if (pos < n)
+				{
+					impl->m_iFocusedTreePos = pos;
+					return pos;
+				}
+			}
 			GtkListItem* li = static_cast<GtkListItem*>(
 				g_object_get_data(G_OBJECT(ch), "list-item"));
 			if (li)
-				return gtk_list_item_get_position(li);
+			{
+				guint pos = gtk_list_item_get_position(li);
+				if (pos < n)
+				{
+					impl->m_iFocusedTreePos = pos;
+					return pos;
+				}
+			}
 		}
 	}
 
-	// Fallback to first selected item in selection model
+	// Fallback to selection model
 	if (impl->m_pSelectionModel && impl->m_pTreeListModel)
 	{
-		guint n = g_list_model_get_n_items(G_LIST_MODEL(impl->m_pTreeListModel));
+		if (impl->m_iFocusedTreePos != G_MAXUINT && impl->m_iFocusedTreePos < n &&
+		    gtk_selection_model_is_selected(GTK_SELECTION_MODEL(impl->m_pSelectionModel), impl->m_iFocusedTreePos))
+		{
+			return impl->m_iFocusedTreePos;
+		}
+
 		for (guint i = 0; i < n; i++)
 		{
 			if (gtk_selection_model_is_selected(GTK_SELECTION_MODEL(impl->m_pSelectionModel), i))
+			{
+				impl->m_iFocusedTreePos = i;
 				return i;
+			}
 		}
 		if (n > 0)
 			return 0;
@@ -2378,9 +3278,24 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
 	GtkWidget *treeview = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller)));
 
-	if (GDK_KEY_Menu == keyval)
+	if (GDK_KEY_Menu == keyval || ((state & GDK_SHIFT_MASK) && (GDK_KEY_F10 == keyval)))
 	{
-		view_popup_menu_at(treeview, -1, -1, TreePasteMode::PASTE_NONE, NULL, userdata);
+		const gchar* target_uri = NULL;
+		guint cursor_pos = folder_tree_get_focused_position(pFolderTreeImpl);
+		guint n = pFolderTreeImpl->m_pTreeListModel ? g_list_model_get_n_items(G_LIST_MODEL(pFolderTreeImpl->m_pTreeListModel)) : 0;
+		if (cursor_pos != G_MAXUINT && cursor_pos < n)
+		{
+			GtkTreeListRow* row = gtk_tree_list_model_get_row(
+				pFolderTreeImpl->m_pTreeListModel, cursor_pos);
+			if (row)
+			{
+				DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
+				if (item)
+					target_uri = item->uri;
+				g_object_unref(row);
+			}
+		}
+		view_popup_menu_at(treeview, -1, -1, TreePasteMode::PASTE_INTO_FOLDER, target_uri, userdata);
 		return TRUE;
 	}
 
@@ -2527,32 +3442,38 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 		return rval;
 	}
 
-	if (GDK_KEY_Left == keyval)
+	if (GDK_KEY_Left == keyval || GDK_KEY_KP_Left == keyval)
 	{
-		if (G_MAXUINT != cursor_pos)
+		if (G_MAXUINT != cursor_pos && cursor_pos < n)
 		{
 			GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, cursor_pos);
 			if (NULL != row)
 			{
-				GtkTreeListRow* parent = gtk_tree_list_row_get_parent(row);
 				if (gtk_tree_list_row_get_expanded(row))
 				{
 					gtk_tree_list_row_set_expanded(row, FALSE);
+					folder_tree_focus_position(pFolderTreeImpl, cursor_pos);
 				}
-				else if (NULL != parent)
+				else
 				{
-					guint parent_pos = gtk_tree_list_row_get_position(parent);
-					gtk_selection_model_select_item(sel, parent_pos, TRUE);
+					GtkTreeListRow* parent = gtk_tree_list_row_get_parent(row);
+					if (NULL != parent)
+					{
+						guint parent_pos = gtk_tree_list_row_get_position(parent);
+						folder_tree_focus_position(pFolderTreeImpl, parent_pos);
+						g_object_unref(parent);
+					}
 				}
+				g_object_unref(row);
 			}
 		}
 		rval = TRUE;
 		return rval;
 	}
 
-	if (GDK_KEY_Right == keyval)
+	if (GDK_KEY_Right == keyval || GDK_KEY_KP_Right == keyval)
 	{
-		if (G_MAXUINT != cursor_pos)
+		if (G_MAXUINT != cursor_pos && cursor_pos < n)
 		{
 			GtkTreeListRow* row = gtk_tree_list_model_get_row(pFolderTreeImpl->m_pTreeListModel, cursor_pos);
 			if (NULL != row)
@@ -2560,6 +3481,7 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 				if (!gtk_tree_list_row_get_expanded(row) && gtk_tree_list_row_is_expandable(row))
 				{
 					gtk_tree_list_row_set_expanded(row, TRUE);
+					folder_tree_focus_position(pFolderTreeImpl, cursor_pos);
 				}
 				else if (gtk_tree_list_row_get_expanded(row))
 				{
@@ -2567,9 +3489,10 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 					if (NULL != children && g_list_model_get_n_items(children) > 0)
 					{
 						guint child_pos = cursor_pos + 1;
-						gtk_selection_model_select_item(sel, child_pos, TRUE);
+						folder_tree_focus_position(pFolderTreeImpl, child_pos);
 					}
 				}
+				g_object_unref(row);
 			}
 		}
 		rval = TRUE;
@@ -2957,24 +3880,18 @@ void FolderTree::FolderTreeImpl::PopulateTreeModel(GListStore *roots)
 }
 
 
-gchar* folder_tree_get_icon_name(GFile* gfile)
+gchar* folder_tree_get_icon_name_from_info(GFileInfo* info, GFile* gfile)
 {
-	if (NULL == gfile)
-		return g_strdup("folder");
-
-	const char* special_icon = QuiverUtils::GetSpecialFolderIconName(gfile);
-	if (NULL != special_icon)
+	if (NULL != gfile)
 	{
-		return g_strdup(special_icon);
+		const char* special_icon = QuiverUtils::GetSpecialFolderIconName(gfile);
+		if (NULL != special_icon)
+		{
+			return g_strdup(special_icon);
+		}
 	}
 
 	gchar* icon_name = NULL;
-	GFileInfo* info = g_file_query_info(
-		gfile,
-		G_FILE_ATTRIBUTE_STANDARD_ICON,
-		G_FILE_QUERY_INFO_NONE,
-		NULL,
-		NULL);
 	if (NULL != info)
 	{
 		GIcon* icon = g_file_info_get_icon(info);
@@ -2992,11 +3909,33 @@ gchar* folder_tree_get_icon_name(GFile* gfile)
 				icon_name = s;
 			}
 		}
-		g_object_unref(info);
 	}
 	if (NULL == icon_name)
 	{
 		icon_name = g_strdup("folder");
 	}
+	return icon_name;
+}
+
+gchar* folder_tree_get_icon_name(GFile* gfile)
+{
+	if (NULL == gfile)
+		return g_strdup("folder");
+
+	const char* special_icon = QuiverUtils::GetSpecialFolderIconName(gfile);
+	if (NULL != special_icon)
+	{
+		return g_strdup(special_icon);
+	}
+
+	GFileInfo* info = g_file_query_info(
+		gfile,
+		G_FILE_ATTRIBUTE_STANDARD_ICON,
+		G_FILE_QUERY_INFO_NONE,
+		NULL,
+		NULL);
+	gchar* icon_name = folder_tree_get_icon_name_from_info(info, gfile);
+	if (NULL != info)
+		g_object_unref(info);
 	return icon_name;
 }

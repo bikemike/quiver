@@ -292,6 +292,37 @@ int main(int argc, char **argv)
         g_signal_emit_by_name(motion_ctrl, "motion", (double)(cell_w / 2 + 10), (double)(cell_h / 2));
         assert(quiver_icon_view_get_prelight_cell(QUIVER_ICON_VIEW(iconview)) == 0);
         std::cout << " OK\n";
+
+        // Test 9: Drag icon creation with tight thumbnail bounds & hotspot
+        std::cout << "  [9] Testing quiver_icon_view_create_drag_icon...";
+        gint hot_x = -1, hot_y = -1;
+        GdkPaintable *drag_icon = quiver_icon_view_create_drag_icon(QUIVER_ICON_VIEW(iconview), &hot_x, &hot_y);
+        assert(drag_icon != NULL);
+        assert(GDK_IS_PAINTABLE(drag_icon));
+        int drag_w = gdk_paintable_get_intrinsic_width(drag_icon);
+        int drag_h = gdk_paintable_get_intrinsic_height(drag_icon);
+        assert(drag_w > 0);
+        assert(drag_h > 0);
+        // Drag icon must only bound the thumbnail (+ shadow padding), smaller than the full cell
+        assert((guint)drag_w <= cell_w);
+        assert((guint)drag_h <= cell_h);
+        assert(hot_x >= 0 && hot_x <= drag_w);
+        assert(hot_y >= 0 && hot_y <= drag_h);
+        (void)drag_w;
+        (void)drag_h;
+        (void)n_selected_during_drag;
+        (void)n_selected_after_release;
+        g_object_unref(drag_icon);
+        std::cout << " OK\n";
+
+        // Test 10: Drop cell highlight setter and getter
+        std::cout << "  [10] Testing drop_cell getter and setter...";
+        assert(quiver_icon_view_get_drop_cell(QUIVER_ICON_VIEW(iconview)) == G_MAXULONG);
+        quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(iconview), 1);
+        assert(quiver_icon_view_get_drop_cell(QUIVER_ICON_VIEW(iconview)) == 1);
+        quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(iconview), G_MAXULONG);
+        assert(quiver_icon_view_get_drop_cell(QUIVER_ICON_VIEW(iconview)) == G_MAXULONG);
+        std::cout << " OK\n";
     }
 
     // Cleanup widget

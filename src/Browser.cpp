@@ -5,6 +5,7 @@
 #include <atomic>
 
 #include <gtk/gtk.h>
+#include <pango/pangocairo.h>
 #include <string.h>
 #include <list>
 #include <map>
@@ -31,6 +32,8 @@
 #include "BrowserHistory.h"
 #include "RenameDlg.h"
 #include "RenameTask.h"
+
+#include "QuiverClipboard.h"
 #include "TaskManager.h"
 
 #include "Statusbar.h"
@@ -89,6 +92,8 @@ static void pixbuf_target_ref(PixbufTarget *t)
 
 static void pixbuf_target_unref(PixbufTarget *t)
 {
+	if (NULL == t)
+		return;
 	if (g_atomic_int_dec_and_test(&t->iRefs))
 	{
 		if (t->pImageView && G_IS_OBJECT(t->pImageView))
@@ -283,7 +288,11 @@ public:
 	 * (no cell under the pointer), the release builds the reduced empty-area
 	 * menu (paste / undo-delete) instead of the item menu. */
 	bool m_bContextMenuOnEmptyArea;
-	
+
+	/* Drag-and-drop: set in the drag-motion handler; used in the drop
+	 * handler to know whether the external source offered MOVE or COPY. */
+	GdkDragAction m_eDropAction;
+
 	StatusbarPtr m_StatusbarPtr;
 	
 	ImageListPtr m_ImageListPtr;
@@ -363,12 +372,15 @@ public:
 	class BrowserThumbLoader : public IconViewThumbLoader
 	{
 	public:
-		BrowserThumbLoader(BrowserImpl* pBrowserImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
+		BrowserThumbLoader(BrowserImpl* pBrowserImpl, guint iNumThreads, std::shared_ptr<bool> spAlive)  :
+			IconViewThumbLoader(iNumThreads, false),
+			m_pBrowserImpl(pBrowserImpl),
+			m_spAlive(spAlive)
 		{
-			m_pBrowserImpl = pBrowserImpl;
 			m_bMapped.store(false, std::memory_order_relaxed);
 			m_uiThumbWidth.store(96, std::memory_order_relaxed);
 			m_uiThumbHeight.store(96, std::memory_order_relaxed);
+			Start();
 		}
 		
 		~BrowserThumbLoader(){}
@@ -397,6 +409,7 @@ public:
 		
 	private:
 		BrowserImpl* m_pBrowserImpl; 
+		std::shared_ptr<bool> m_spAlive;
 		std::atomic<bool> m_bMapped;
 		std::atomic<guint> m_uiThumbWidth;
 		std::atomic<guint> m_uiThumbHeight;
@@ -407,8 +420,8 @@ public:
 	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
 	IFolderTreeEventHandlerPtr m_FolderTreeEventHandlerPtr;
 	
-	BrowserThumbLoader m_ThumbnailLoader;
 	std::shared_ptr<bool> m_spAlive;
+	BrowserThumbLoader m_ThumbnailLoader;
 	
 };
 // ============================================================================
@@ -424,6 +437,7 @@ static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_BROWSER_CUT                                "BrowserCut"
 #define ACTION_BROWSER_COPY                               "BrowserCopy"
 #define ACTION_BROWSER_PASTE                              "BrowserPaste"
+#define ACTION_BROWSER_NEW_FOLDER                         "BrowserNewFolder"
 #define ACTION_BROWSER_RENAME                             "BrowserRename"
 #define ACTION_BROWSER_SELECT_ALL                         "BrowserSelectAll"
 #define ACTION_BROWSER_TRASH                              "BrowserTrash"
@@ -478,6 +492,11 @@ std::string Browser::GetCurrentFolderChild()
 		}
 	}
 	return item;
+}
+
+FolderTreePtr Browser::GetFolderTree()
+{
+	return m_BrowserImplPtr->m_FolderTreePtr;
 }
 
 
@@ -580,6 +599,13 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 static void browser_button_press_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data); 
 static void browser_button_release_cb(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data); 
 static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, gpointer userdata);
+static gboolean iconview_key_press_cb(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
+
+static GdkContentProvider* browser_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data);
+static void browser_drag_source_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data);
+static gboolean browser_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer user_data);
+static void browser_drop_leave_cb(GtkDropTarget *target, gpointer user_data);
+static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer user_data);
 
 static void entry_activate(GtkEntry *entry, gpointer user_data);
 static gboolean entry_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
@@ -692,8 +718,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
 	m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
-	m_ThumbnailLoader(this,4),
-	m_spAlive(std::make_shared<bool>(true))
+	m_spAlive(std::make_shared<bool>(true)),
+	m_ThumbnailLoader(this, 4, m_spAlive)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -713,6 +739,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pContextMenuPopover = NULL;
 	m_bContextMenuPending = false;
 	m_bContextMenuOnEmptyArea = false;
+	m_eDropAction = GDK_ACTION_COPY;
 	m_pIconViewOverlay = NULL;
 	/*
 	 * layout for the browser gui:
@@ -771,6 +798,31 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ThumbnailLoader.SetMapped(gtk_widget_get_mapped(m_pIconView));
 	g_signal_connect(G_OBJECT(m_pIconView), "map", G_CALLBACK(browser_icon_view_map_cb), this);
 	g_signal_connect(G_OBJECT(m_pIconView), "unmap", G_CALLBACK(browser_icon_view_unmap_cb), this);
+
+	/* Drag & drop: drag the whole selection out; drop file URIs in.  The
+	 * drop target accepts a G_TYPE_STRING, which the uri-list/gome-copied-files
+	 * deserializers (QuiverClipboard) feed with the incoming file list. */
+	{
+		GtkDragSource *drag_source = gtk_drag_source_new();
+		gtk_drag_source_set_actions(drag_source, (GdkDragAction)(GDK_ACTION_MOVE | GDK_ACTION_COPY));
+		g_signal_connect(drag_source, "prepare",
+			G_CALLBACK(browser_drag_source_prepare), this);
+		g_signal_connect(drag_source, "drag-begin",
+			G_CALLBACK(browser_drag_source_begin), this);
+		gtk_widget_add_controller(GTK_WIDGET(m_pIconView),
+			GTK_EVENT_CONTROLLER(drag_source));
+
+		GtkDropTarget *drop_target = gtk_drop_target_new(G_TYPE_STRING,
+			(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+		g_signal_connect(drop_target, "motion",
+			G_CALLBACK(browser_drop_motion_cb), this);
+		g_signal_connect(drop_target, "leave",
+			G_CALLBACK(browser_drop_leave_cb), this);
+		g_signal_connect(drop_target, "drop",
+			G_CALLBACK(browser_drop_cb), this);
+		gtk_widget_add_controller(GTK_WIDGET(m_pIconView),
+			GTK_EVENT_CONTROLLER(drop_target));
+	}
 	m_pImageView = quiver_image_view_new();
 
 	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
@@ -839,15 +891,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	
 	m_pBrowserWidget = hpaned;
 	
-	m_pSWFolderTree = gtk_scrolled_window_new();
-	gtk_widget_add_css_class(m_pSWFolderTree, "sidebar");
-	gtk_widget_add_css_class(m_pSWFolderTree, "quiver-sidebar");
-	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pSWFolderTree),GTK_POLICY_AUTOMATIC,GTK_POLICY_AUTOMATIC);
 	GtkWidget *pFolderTree = m_FolderTreePtr->GetWidget();
-	
-	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(m_pSWFolderTree),pFolderTree);
-	gtk_widget_set_visible(m_pSWFolderTree, TRUE);
-	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNotebook), m_pSWFolderTree,gtk_label_new("Folders"));	
+	m_pSWFolderTree = pFolderTree;
+	gtk_widget_set_visible(pFolderTree, TRUE);
+	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNotebook), pFolderTree, gtk_label_new("Folders"));	
 	gtk_widget_set_visible(m_pNotebook, TRUE);
 
 	if (!prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
@@ -907,6 +954,11 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		g_signal_connect(gesture, "pressed", G_CALLBACK(browser_button_press_cb), this);
 		g_signal_connect(gesture, "released", G_CALLBACK(browser_button_release_cb), this);
 		gtk_widget_add_controller(m_pIconView, GTK_EVENT_CONTROLLER(gesture));
+	}
+	{
+		GtkEventController *key_ctrl = gtk_event_controller_key_new();
+		g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(iconview_key_press_cb), this);
+		gtk_widget_add_controller(m_pIconView, key_ctrl);
 	}
 	{
 		GtkEventController *motion = gtk_event_controller_motion_new();
@@ -1127,6 +1179,7 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_CUT, "<Control>X", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_COPY, "<Control>C", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_PASTE, "<Control>V", browser_action_handler_cb, this);
+	QuiverUtils::AddSimpleAction(ACTION_BROWSER_NEW_FOLDER, "<Control><Shift>N", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RENAME, "F2", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_SELECT_ALL, "<Control>A", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH, "Delete", browser_action_handler_cb, this);
@@ -2122,6 +2175,102 @@ static void browser_button_release_cb(GtkGestureClick *gesture, int n_press, dou
 	browser_show_context_menu(widget, x, y, user_data);
 }
 
+static void browser_iconview_scroll_context_menu_cb(QuiverIconView *iconview, gulong cell, gpointer user_data)
+{
+	Browser::BrowserImpl *pBrowserImpl = static_cast<Browser::BrowserImpl*>(user_data);
+	if (!pBrowserImpl || !pBrowserImpl->m_pIconView || GTK_WIDGET(iconview) != pBrowserImpl->m_pIconView)
+		return;
+
+	GdkRectangle rect;
+	if (quiver_icon_view_get_cell_rect(iconview, cell, &rect))
+	{
+		int w = gtk_widget_get_width(pBrowserImpl->m_pIconView);
+		int h = gtk_widget_get_height(pBrowserImpl->m_pIconView);
+		gdouble x = rect.x + rect.width / 2.0;
+		gdouble y = rect.y + rect.height / 2.0;
+		if (w > 0 && h > 0)
+		{
+			x = std::clamp(x, 0.0, (double)w);
+			y = std::clamp(y, 0.0, (double)h);
+		}
+		pBrowserImpl->m_bContextMenuOnEmptyArea = false;
+		browser_show_context_menu(pBrowserImpl->m_pIconView, x, y, pBrowserImpl);
+	}
+	else
+	{
+		pBrowserImpl->m_bContextMenuOnEmptyArea = false;
+		browser_show_context_menu(pBrowserImpl->m_pIconView, -1, -1, pBrowserImpl);
+	}
+}
+
+static gboolean iconview_key_press_cb(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data)
+{
+	(void)controller;
+	(void)keycode;
+	Browser::BrowserImpl *pBrowserImpl = static_cast<Browser::BrowserImpl*>(user_data);
+	if (!pBrowserImpl || !pBrowserImpl->m_pIconView)
+		return FALSE;
+
+	if (GDK_KEY_Menu == keyval || ((state & GDK_SHIFT_MASK) && (GDK_KEY_F10 == keyval)))
+	{
+		gulong cell = quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+		gulong n_items = pBrowserImpl->m_ImageListPtr ? pBrowserImpl->m_ImageListPtr->GetSize() : 0;
+		if (cell != G_MAXULONG && cell < n_items)
+		{
+			GList *sel = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+			if (NULL == sel)
+			{
+				GList *single = g_list_append(NULL, (gpointer)(uintptr_t)cell);
+				quiver_icon_view_set_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), single);
+				g_list_free(single);
+			}
+			else
+			{
+				g_list_free(sel);
+			}
+			pBrowserImpl->m_bContextMenuOnEmptyArea = false;
+
+			if (quiver_icon_view_is_cell_visible(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), cell))
+			{
+				GdkRectangle rect;
+				if (quiver_icon_view_get_cell_rect(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), cell, &rect))
+				{
+					int w = gtk_widget_get_width(pBrowserImpl->m_pIconView);
+					int h = gtk_widget_get_height(pBrowserImpl->m_pIconView);
+					gdouble x = rect.x + rect.width / 2.0;
+					gdouble y = rect.y + rect.height / 2.0;
+					if (w > 0 && h > 0)
+					{
+						x = std::clamp(x, 0.0, (double)w);
+						y = std::clamp(y, 0.0, (double)h);
+					}
+					browser_show_context_menu(pBrowserImpl->m_pIconView, x, y, pBrowserImpl);
+				}
+				else
+				{
+					browser_show_context_menu(pBrowserImpl->m_pIconView, -1, -1, pBrowserImpl);
+				}
+			}
+			else
+			{
+				/* Scroll to the cell (smoothly if enabled) and then show context menu on arrival */
+				quiver_icon_view_scroll_to_cell_with_callback(
+					QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView),
+					cell,
+					browser_iconview_scroll_context_menu_cb,
+					pBrowserImpl);
+			}
+		}
+		else
+		{
+			pBrowserImpl->m_bContextMenuOnEmptyArea = true;
+			browser_show_context_menu(pBrowserImpl->m_pIconView, -1, -1, pBrowserImpl);
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static void browser_menu_item(GMenu *menu, const char *label, const char *action_name,
 	const char *accel, const char *item_id)
 {
@@ -2168,6 +2317,12 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection ? (bTrash ? FALSE : TRUE) : FALSE);
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_PASTE)))
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasClipboard);
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_NEW_FOLDER)))
+		{
+			std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
+			bool canCreate = !bTrash && (dirs.size() == 1) && QuiverUtils::IsDirectoryURI(dirs.front().c_str());
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), canCreate);
+		}
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_RENAME)))
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && !bTrash);
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_TRASH)))
@@ -2209,6 +2364,15 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 	GMenu *menu = g_menu_new();
 	if (bEmptyArea)
 	{
+		if (!bTrash)
+		{
+			std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
+			if (dirs.size() == 1 && QuiverUtils::IsDirectoryURI(dirs.front().c_str()))
+			{
+				browser_menu_item(menu, "New Folder", "quiver." ACTION_BROWSER_NEW_FOLDER,
+					"<Primary><Shift>n", NULL);
+			}
+		}
 		/* Empty-area menu: "Undo Delete" only makes sense here and only when
 		 * there actually is a deletion to undo. */
 		if (bHasClipboard)
@@ -2312,6 +2476,256 @@ static bool browser_confirm_permanent_delete(const std::string& strDlgText)
 		strDlgText, "Delete Permanently", "Cancel");
 }
 
+/* URIs of the currently selected icon-view items, newest first. */
+static std::list<std::string> browser_selected_uris(Browser::BrowserImpl *b)
+{
+	std::list<std::string> uris;
+	GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(b->m_pIconView));
+	if (selection != NULL)
+	{
+		for (GList *it = selection; it != NULL; it = it->next)
+		{
+			guint item = (guint)(uintptr_t)it->data;
+			if (item < (guint)b->m_ImageListPtr->GetSize())
+				uris.push_back((*b->m_ImageListPtr)[item].GetURI());
+		}
+		g_list_free(selection);
+	}
+	return uris;
+}
+
+/* Paste / drop conflict resolution: prompt once per collision, remember the
+ * choice when the user ticks "do this for all remaining conflicts". */
+struct BrowserPasteConflictUI
+{
+	bool bApplyToAll = false;
+	QuiverFileOps::PasteConflictAction lastAction = QuiverFileOps::PASTE_SKIP;
+};
+
+static QuiverFileOps::PasteConflictAction browser_paste_conflict_cb(
+	const gchar *src_uri, const gchar *dest_uri, gpointer user_data)
+{
+	BrowserPasteConflictUI *ui = (BrowserPasteConflictUI*)user_data;
+	if (ui->bApplyToAll)
+		return ui->lastAction;
+	QuiverFileOps::PasteConflictAction action =
+		QuiverUtils::ResolvePasteConflict(src_uri, dest_uri, ui->bApplyToAll);
+	ui->lastAction = action;
+	return action;
+}
+
+/* Drag icon: creates a paintable snapshot of the selected icon view cells,
+ * masking out unselected cells with transparency. */
+static void browser_drag_source_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data)
+{ (void)drag;
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	gint hot_x = 0, hot_y = 0;
+	GdkPaintable *icon = quiver_icon_view_create_drag_icon(
+		QUIVER_ICON_VIEW(b->m_pIconView), &hot_x, &hot_y);
+	if (NULL != icon)
+	{
+		gtk_drag_source_set_icon(source, icon, hot_x, hot_y);
+		g_object_unref(icon);
+	}
+	else
+	{
+		gtk_drag_source_set_icon(source, NULL, 0, 0);
+	}
+}
+
+/* Drag the whole selection out of the icon view.  Copy-only, so dropping
+ * elsewhere can never destroy the sources (a MOVE would require the external
+ * target to move files it only sees as URIs). */
+static GdkContentProvider* browser_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data)
+{ (void)source;
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	QuiverIconView *iconview = QUIVER_ICON_VIEW(b->m_pIconView);
+	gulong cell = quiver_icon_view_get_cell_for_xy(iconview, (gint)x, (gint)y);
+	if (G_MAXULONG == cell)
+		return NULL;
+	GdkModifierType state = (GdkModifierType)0;
+	GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(source));
+	if (ev != NULL)
+		state = gdk_event_get_modifier_state(ev);
+	GList *sel = quiver_icon_view_get_selection(iconview);
+	gboolean bInSel = FALSE;
+	for (const GList *it = sel; it != NULL; it = it->next)
+	{
+		if ((gulong)(uintptr_t)it->data == cell)
+		{
+			bInSel = TRUE;
+			break;
+		}
+	}
+	if (!bInSel)
+	{
+		GList *subject = NULL;
+		if (0 == (state & GDK_CONTROL_MASK))
+			subject = g_list_append(NULL, (gpointer)(uintptr_t)cell);
+		else
+			subject = g_list_append(g_list_copy(sel), (gpointer)(uintptr_t)cell);
+		quiver_icon_view_set_selection(iconview, subject);
+		g_list_free(subject);
+	}
+	g_list_free(sel);
+	std::list<std::string> uris = browser_selected_uris(b);
+	if (uris.empty())
+		return NULL;
+	/* Alt-drag offers plain file-path text only (no file list), so drops
+	 * into text editors/terminals insert the paths instead of the target
+	 * treating the drag as files to open. */
+	bool bCutDrag = (0 == (state & GDK_CONTROL_MASK));
+	return QuiverClipboard::MakeContentProvider(uris, bCutDrag,
+		0 != (state & GDK_ALT_MASK));
+}
+
+static gboolean browser_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer user_data)
+{
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	if (drop == NULL || b == NULL || !b->m_pIconView || !QUIVER_IS_ICON_VIEW(b->m_pIconView))
+		return GDK_EVENT_PROPAGATE;
+
+	gulong cell = quiver_icon_view_get_cell_for_xy(QUIVER_ICON_VIEW(b->m_pIconView), (gint)x, (gint)y);
+	if (cell == G_MAXULONG || !b->m_ImageListPtr || cell >= b->m_ImageListPtr->GetSize())
+	{
+		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
+		return GDK_EVENT_PROPAGATE;
+	}
+
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+	if (!f.IsFolder())
+	{
+		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
+		return GDK_EVENT_PROPAGATE;
+	}
+
+	quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), cell);
+	GdkDragAction actions = gdk_drop_get_actions(drop);
+	GdkDragAction chosen = (actions & GDK_ACTION_MOVE) ? GDK_ACTION_MOVE : GDK_ACTION_COPY;
+	b->m_eDropAction = chosen;
+	gdk_drop_status(drop, chosen, chosen);
+	return GDK_EVENT_STOP;
+}
+
+static void browser_drop_leave_cb(GtkDropTarget *target, gpointer user_data)
+{
+	(void)target;
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	if (b != NULL && b->m_pIconView && QUIVER_IS_ICON_VIEW(b->m_pIconView))
+	{
+		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+	}
+}
+
+struct BrowserDropData
+{
+	Browser::BrowserImpl *browser;
+	std::shared_ptr<bool> alive;
+	std::list<std::string> uris;
+	std::string target_uri;
+	bool bMove;
+};
+
+static gboolean browser_drop_idle_cb(gpointer user_data)
+{
+	BrowserDropData *data = static_cast<BrowserDropData*>(user_data);
+	if (!data->alive || !*data->alive)
+	{
+		delete data;
+		return G_SOURCE_REMOVE;
+	}
+
+	BrowserPasteConflictUI ui;
+	std::list<std::string> moved;
+	int transferred = QuiverFileOps::TransferFiles(data->uris, data->bMove, data->target_uri.c_str(),
+		browser_paste_conflict_cb, &ui, &moved);
+	if (data->bMove)
+		QuiverFileOps::ClipboardRemoveURIs(moved);
+
+	if (transferred > 0 && data->alive && *data->alive)
+	{
+		data->browser->m_ImageListPtr->Reload();
+		data->browser->m_ThumbnailCache.Clear();
+		data->browser->m_ThumbnailLoader.UpdateList(true);
+		if (data->browser->m_StatusbarPtr)
+		{
+			gchar msg[64];
+			g_snprintf(msg, sizeof(msg), "%s %d file(s)",
+				data->bMove ? "Moved" : "Copied", transferred);
+			data->browser->m_StatusbarPtr->PushText(msg);
+		}
+	}
+
+	delete data;
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer user_data)
+{
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	if (b != NULL && b->m_pIconView && QUIVER_IS_ICON_VIEW(b->m_pIconView))
+	{
+		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+	}
+	if (value == NULL || !G_VALUE_HOLDS_STRING(value) || b == NULL || !b->m_pIconView || !QUIVER_IS_ICON_VIEW(b->m_pIconView))
+		return GDK_EVENT_PROPAGATE;
+
+	gulong cell = quiver_icon_view_get_cell_for_xy(QUIVER_ICON_VIEW(b->m_pIconView), (gint)x, (gint)y);
+	if (cell == G_MAXULONG || !b->m_ImageListPtr || cell >= b->m_ImageListPtr->GetSize())
+		return GDK_EVENT_PROPAGATE;
+
+	QuiverFile target_file = (*b->m_ImageListPtr)[cell];
+	if (!target_file.IsFolder())
+		return GDK_EVENT_PROPAGATE;
+
+	const char *target_uri = target_file.GetURI();
+	if (target_uri == NULL || '\0' == target_uri[0])
+		return GDK_EVENT_PROPAGATE;
+
+	std::list<std::string> uris;
+	bool bCut = false;
+	const char *text = g_value_get_string(value);
+	if (!QuiverClipboard::ParseClipboardText(text ? text : "", uris, bCut) || uris.empty())
+		return GDK_EVENT_PROPAGATE;
+
+	for (const auto &u : uris)
+	{
+		if (u == target_uri)
+			return GDK_EVENT_PROPAGATE;
+	}
+
+	/* Default to MOVE unless explicit copy was requested (e.g. Ctrl held) */
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	bool bMove = true;
+	if (drop != NULL)
+	{
+		GdkDragAction actions = gdk_drop_get_actions(drop);
+		if (actions == GDK_ACTION_COPY && !bCut)
+			bMove = false;
+		else if (b->m_eDropAction == GDK_ACTION_COPY && !bCut)
+			bMove = false;
+	}
+	else
+		bMove = bCut;
+
+	/* Defer the file transfer to an idle callback so the drop event finishes
+	 * in GTK immediately. Otherwise, resolving paste conflicts with a modal
+	 * dialog inside the drop callback spins a nested main loop while the drop
+	 * is active, causing gtk_drop_begin_event assertion failure. */
+	BrowserDropData *data = new BrowserDropData();
+	data->browser = b;
+	data->alive = b->m_spAlive;
+	data->uris = uris;
+	data->target_uri = target_uri;
+	data->bMove = bMove;
+	g_idle_add(browser_drop_idle_cb, data);
+
+	return GDK_EVENT_STOP;
+}
+
 static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data)
 { (void)parameter; 
 	Browser::BrowserImpl* pBrowserImpl;
@@ -2397,79 +2811,132 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	}	
 	else if (0 == strcmp(szAction,ACTION_BROWSER_COPY))
 	{
-		/* Collect the selected items once and feed both the system clipboard
-		 * (so other applications can paste the URIs) and the internal quiver
-		 * clipboard (so Paste inside quiver can duplicate files). */
-		GdkClipboard* clipboard = gdk_display_get_clipboard(gdk_display_get_default());
-
-		list<string> uris;
-		GList *selection;
-		selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
-
-		if (NULL != selection)
-		{
-			GList *sel_itr = selection;
-			while (NULL != sel_itr)
-			{
-				guint item = (guint)(uintptr_t)sel_itr->data;
-				if (item < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
-				{
-					QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
-					uris.push_back(f.GetURI());
-				}
-				sel_itr = g_list_next(sel_itr);
-			}
-			g_list_free(selection);
-
-			QuiverFileOps::ClipboardSet(uris, false);
-
-			string strClipText;
-			for (list<string>::const_iterator it = uris.begin(); it != uris.end(); ++it)
-			{
-				if (!strClipText.empty())
-					strClipText += "\n";
-				strClipText += *it;
-			}
-			gdk_clipboard_set_text(clipboard, strClipText.c_str());
-		}
+		/* Feed both the system clipboard (uri-list / gnome-copied-files /
+		 * plain text, so file managers AND text editors can paste the URLs)
+		 * and the internal quiver clipboard (so Paste inside quiver can
+		 * duplicate files). */
+		std::list<std::string> uris = browser_selected_uris(pBrowserImpl);
+		if (uris.empty())
+			return;
+		QuiverFileOps::ClipboardSet(uris, false);
+		QuiverClipboard::SetClipboard(uris, false);
+		if (pBrowserImpl->m_StatusbarPtr)
+			pBrowserImpl->m_StatusbarPtr->PushText("Copied to clipboard");
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_CUT))
 	{
-		list<string> uris;
-		GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
-		if (NULL != selection)
-		{
-			GList *sel_itr = selection;
-			while (NULL != sel_itr)
-			{
-				guint item = (guint)(uintptr_t)sel_itr->data;
-				if (item < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
-				{
-					QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
-					uris.push_back(f.GetURI());
-				}
-				sel_itr = g_list_next(sel_itr);
-			}
-			g_list_free(selection);
-		}
+		std::list<std::string> uris = browser_selected_uris(pBrowserImpl);
+		if (uris.empty())
+			return;
 		QuiverFileOps::ClipboardSet(uris, true);
+		QuiverClipboard::SetClipboard(uris, true);
+		if (pBrowserImpl->m_StatusbarPtr)
+			pBrowserImpl->m_StatusbarPtr->PushText("Cut to clipboard");
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_PASTE))
 	{
-		if (!QuiverFileOps::ClipboardHasItems())
-			return;
-
 		std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
 		if (1 != dirs.size())
 			return; /* single-folder view only */
 
-		int transferred = QuiverFileOps::ClipboardTransferTo(dirs.front().c_str());
+		/* The internal clipboard is authoritative for in-app cut/copy.  When
+		 * it is empty, best-effort read of the system clipboard so files
+		 * copied in an external file manager can be pasted here too. */
+		std::list<std::string> uris = *QuiverFileOps::ClipboardGetUris();
+		bool bCut = QuiverFileOps::ClipboardIsCut();
+		if (uris.empty())
+		{
+			if (!QuiverClipboard::GetClipboardUris(uris, bCut))
+				return;
+			bCut = false; /* cut state is only trustworthy on the internal clipboard */
+		}
+
+		BrowserPasteConflictUI ui;
+		std::list<std::string> moved;
+		int transferred = QuiverFileOps::TransferFiles(uris, bCut,
+			dirs.front().c_str(), browser_paste_conflict_cb, &ui, &moved);
+		if (bCut)
+			QuiverFileOps::ClipboardRemoveURIs(moved);
 		if (transferred <= 0)
 			return;
 
 		pBrowserImpl->m_ImageListPtr->Reload();
 		pBrowserImpl->m_ThumbnailCache.Clear();
 		pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+		if (pBrowserImpl->m_StatusbarPtr)
+		{
+			gchar msg[64];
+			g_snprintf(msg, sizeof(msg), "%s %d file(s)",
+				bCut ? "Moved" : "Copied", transferred);
+			pBrowserImpl->m_StatusbarPtr->PushText(msg);
+		}
+	}
+	else if (0 == strcmp(szAction, ACTION_BROWSER_NEW_FOLDER))
+	{
+		std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
+		if (dirs.size() != 1 || pBrowserImpl->IsTrashMode() || !QuiverUtils::IsDirectoryURI(dirs.front().c_str()))
+			return;
+
+		GFile *parent = QuiverUtils::FileFromURIOrPath(dirs.front().c_str());
+		if (NULL == parent)
+			return;
+
+		std::string initial_name = QuiverUtils::GetUniqueFolderName(parent, "New Folder");
+		char *folder_name = QuiverUtils::PromptForString("New Folder", "Folder name:", initial_name.c_str(), "Create");
+		if (NULL == folder_name || '\0' == folder_name[0])
+		{
+			if (folder_name)
+				g_free(folder_name);
+			g_object_unref(parent);
+			return;
+		}
+
+		GFile *child = g_file_get_child(parent, folder_name);
+		GError *error = NULL;
+		gboolean ok = g_file_make_directory(child, NULL, &error);
+		if (!ok)
+		{
+			QuiverUtils::ConfirmDialog("Create Folder Failed",
+				error && error->message ? error->message : "The folder could not be created.",
+				"OK", "Close");
+			if (error)
+				g_error_free(error);
+		}
+		else
+		{
+			char *child_uri = g_file_get_uri(child);
+			pBrowserImpl->m_ImageListPtr->Reload();
+			pBrowserImpl->m_ThumbnailCache.Clear();
+			pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+
+			if (NULL != child_uri)
+			{
+				pBrowserImpl->m_ImageListPtr->SetCurrentFile(child_uri);
+				guint idx = pBrowserImpl->m_ImageListPtr->GetCurrentIndex();
+				quiver_icon_view_set_cursor_cell(
+					QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), idx);
+				GList *single = g_list_append(NULL, (gpointer)(uintptr_t)idx);
+				quiver_icon_view_set_selection(
+					QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), single);
+				g_list_free(single);
+
+				pBrowserImpl->m_BrowserHistory.SetCurrentSelected(child_uri);
+
+				if (pBrowserImpl->m_FolderTreePtr)
+				{
+					char *parent_uri = g_file_get_uri(parent);
+					pBrowserImpl->m_FolderTreePtr->AddChildFolder(
+						parent_uri ? parent_uri : dirs.front().c_str(),
+						child_uri, folder_name);
+					g_free(parent_uri);
+				}
+				QuiverFileOps::UndoStackRecordNewFolder(child_uri);
+				g_free(child_uri);
+			}
+		}
+		g_object_unref(child);
+		g_object_unref(parent);
+		g_free(folder_name);
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_RENAME))
 	{
@@ -2960,12 +3427,12 @@ static gboolean idle_set_is_running(gpointer data) {
 
 void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
-	if (IsStopped() || !m_pBrowserImpl->m_spAlive || !*m_pBrowserImpl->m_spAlive)
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pBrowserImpl)
 		return;
 
 	bool is_mapped = m_bMapped.load(std::memory_order_relaxed);
 
-	if (is_mapped && item.m_ulIndex < m_pBrowserImpl->m_ImageListPtr->GetSize())
+	if (is_mapped && m_pBrowserImpl->m_ImageListPtr && item.m_ulIndex < m_pBrowserImpl->m_ImageListPtr->GetSize())
 	{
 		QuiverFile f((*m_pBrowserImpl->m_ImageListPtr)[item.m_ulIndex]);
 		if (NULL == f.GetURI())
@@ -3036,7 +3503,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			BrowserThumbLoaderSyncData* pInvData = new BrowserThumbLoaderSyncData();
 			pInvData->iconview = m_pBrowserImpl->m_pIconView;
 			pInvData->index = item.m_ulIndex;
-			pInvData->aliveToken = m_pBrowserImpl->m_spAlive;
+			pInvData->aliveToken = m_spAlive;
 			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_invalidate_cell, pInvData, NULL); } else { idle_invalidate_cell(pInvData); }
 		}
 	}
@@ -3046,7 +3513,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::GetVisibleRange(gulong* pulStart,
 {
 	if (pulStart) *pulStart = 0;
 	if (pulEnd) *pulEnd = 0;
-	if (IsStopped() || !m_pBrowserImpl->m_spAlive || !*m_pBrowserImpl->m_spAlive)
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pBrowserImpl)
 	{
 		return;
 	}
@@ -3064,11 +3531,15 @@ void Browser::BrowserImpl::BrowserThumbLoader::GetIconSize(guint* puiWidth, guin
 
 gulong Browser::BrowserImpl::BrowserThumbLoader::GetNumItems()
 {
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pBrowserImpl || !m_pBrowserImpl->m_ImageListPtr)
+		return 0;
 	return m_pBrowserImpl->m_ImageListPtr->GetSize();
 }
 
 QuiverFile Browser::BrowserImpl::BrowserThumbLoader::GetQuiverFile(gulong index)
 {
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pBrowserImpl || !m_pBrowserImpl->m_ImageListPtr)
+		return QuiverFile();
 	if (index < m_pBrowserImpl->m_ImageListPtr->GetSize())
 	{
 		return (*m_pBrowserImpl->m_ImageListPtr)[index];
@@ -3078,17 +3549,19 @@ QuiverFile Browser::BrowserImpl::BrowserThumbLoader::GetQuiverFile(gulong index)
 
 void Browser::BrowserImpl::BrowserThumbLoader::SetIsRunning(bool bIsRunning)
 {
-	if (IsStopped() || !m_pBrowserImpl->m_spAlive || !*m_pBrowserImpl->m_spAlive)
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pBrowserImpl)
 		return;
 	BrowserThumbLoaderSyncData* pData = new BrowserThumbLoaderSyncData();
 	pData->statusbar = m_pBrowserImpl->m_StatusbarPtr.get();
 	pData->is_running = bIsRunning;
-	pData->aliveToken = m_pBrowserImpl->m_spAlive;
+	pData->aliveToken = m_spAlive;
 	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_set_is_running, pData, NULL); } else { idle_set_is_running(pData); }
 }
 
 void Browser::BrowserImpl::BrowserThumbLoader::SetCacheSize(guint uiCacheSize)
 {
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pBrowserImpl)
+		return;
 	m_pBrowserImpl->m_ThumbnailCache.SetSize(uiCacheSize);
 }
 

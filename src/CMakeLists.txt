@@ -54,6 +54,7 @@ set(QUIVER_CORE_SOURCES
     RenameDlg.cpp
     RenameTask.cpp
     FileConflictCheck.cpp
+    QuiverClipboard.cpp
     SaveImageTask.cpp
     libjpeg/gio_jdatadst.c
     libjpeg/gio_jdatasrc.c

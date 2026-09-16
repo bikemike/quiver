@@ -6,10 +6,11 @@
 #include <sched.h>
 #include <glib.h>
 
-IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
+IconViewThumbLoader::IconViewThumbLoader(gint iThreads, bool bAutoStart)
 {
 	m_uiNumCachePages = 12;
 	m_bStopThreads    = false;
+	m_bThreadsStarted = false;
 	m_ulRangeStart    = 0;
 	m_ulRangeEnd      = 0;
 	
@@ -20,21 +21,36 @@ IconViewThumbLoader::IconViewThumbLoader(gint iThreads)
 	
 	m_pThreadData = new ThreadData[m_iThreads];
 	
-	
 	int i;
 	for (i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_cond_init(&m_pConditions[i],NULL);
 		m_pThreadData[i].parent = this;
 		m_pThreadData[i].id = i;
-		
+		m_pThreadIDs[i] = 0;
 	}
 	pthread_mutex_init(&m_ListMutex, NULL);
 	
-	for (i = 0 ; i < m_iThreads; ++i)
+	if (bAutoStart)
+	{
+		Start();
+	}
+}
+
+void IconViewThumbLoader::Start()
+{
+	pthread_mutex_lock (&m_ListMutex);
+	if (m_bThreadsStarted || m_bStopThreads)
+	{
+		pthread_mutex_unlock (&m_ListMutex);
+		return;
+	}
+	m_bThreadsStarted = true;
+	for (int i = 0 ; i < m_iThreads; ++i)
 	{
 		pthread_create(&m_pThreadIDs[i], NULL, run, &m_pThreadData[i]);
 	}
+	pthread_mutex_unlock (&m_ListMutex);
 }
 
 void IconViewThumbLoader::Stop()

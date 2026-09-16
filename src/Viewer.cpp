@@ -30,6 +30,7 @@
 
 #include "QuiverStockIcons.h"
 #include "QuiverFileOps.h"
+#include "QuiverClipboard.h"
 
 #include "IImageListEventHandler.h"
 
@@ -847,12 +848,15 @@ public:
 	class ViewerThumbLoader : public IconViewThumbLoader
 	{
 	public:
-		ViewerThumbLoader(ViewerImpl* pViewerImpl, guint iNumThreads)  : IconViewThumbLoader(iNumThreads)
+		ViewerThumbLoader(ViewerImpl* pViewerImpl, guint iNumThreads, std::shared_ptr<bool> spAlive)  :
+			IconViewThumbLoader(iNumThreads, false),
+			m_pViewerImpl(pViewerImpl),
+			m_spAlive(spAlive)
 		{
-			m_pViewerImpl = pViewerImpl;
 			m_bMapped.store(false, std::memory_order_relaxed);
 			m_uiThumbWidth.store(96, std::memory_order_relaxed);
 			m_uiThumbHeight.store(96, std::memory_order_relaxed);
+			Start();
 		}
 		
 		~ViewerThumbLoader(){}
@@ -881,6 +885,7 @@ public:
 		
 	private:
 		ViewerImpl* m_pViewerImpl; 
+		std::shared_ptr<bool> m_spAlive;
 		std::atomic<bool> m_bMapped;
 		std::atomic<guint> m_uiThumbWidth;
 		std::atomic<guint> m_uiThumbHeight;
@@ -888,8 +893,8 @@ public:
 
 	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
 	IImageListEventHandlerPtr    m_ImageListEventHandlerPtr;
-	ViewerThumbLoader            m_ThumbnailLoader;      
 	std::shared_ptr<bool>        m_spAlive;
+	ViewerThumbLoader            m_ThumbnailLoader;
 
 };
 
@@ -2365,11 +2370,23 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	{
 		quiver_image_view_rotate(imageview,TRUE);
 		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->GetCurrentOrientation()] );
+		if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
+		{
+			QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+			if (f.GetURI())
+				QuiverFileOps::UndoStackRecordRotate(f.GetURI(), +1);
+		}
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CCW) || 0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CCW_2))
 	{
 		quiver_image_view_rotate(imageview,FALSE);
 		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->GetCurrentOrientation()] );
+		if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
+		{
+			QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+			if (f.GetURI())
+				QuiverFileOps::UndoStackRecordRotate(f.GetURI(), -1);
+		}
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_FLIP_H) || 0 == strcmp(szAction,ACTION_VIEWER_FLIP_H_2))
 	{
@@ -2547,14 +2564,27 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_COPY))
 	{
-		GdkClipboard* clipboard = gdk_display_get_clipboard(gdk_display_get_default());
-		
-		string strClipText;
-		if (pViewerImpl->m_ImageListPtr->GetSize())
-		{
-			string strPath = pViewerImpl->m_ImageListPtr->GetCurrent().GetFilePath();
-			gdk_clipboard_set_text (clipboard, strPath.c_str());
-		}		
+		if (0 == pViewerImpl->m_ImageListPtr->GetSize())
+			return;
+
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		std::list<std::string> uris;
+		uris.push_back(f.GetURI());
+		QuiverFileOps::ClipboardSet(uris, false);
+		QuiverClipboard::SetClipboard(uris, false);
+	}
+	else if (0 == strcmp(szAction, ACTION_VIEWER_CUT))
+	{
+		if (0 == pViewerImpl->m_ImageListPtr->GetSize())
+			return;
+
+		/* Wire the (previously dead) Ctrl+X: cut the shown file so a later
+		 * Paste in the browser / Paste-Into-Folder moves it. */
+		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+		std::list<std::string> uris;
+		uris.push_back(f.GetURI());
+		QuiverFileOps::ClipboardSet(uris, true);
+		QuiverClipboard::SetClipboard(uris, true);
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_RENAME))
 	{
@@ -3210,7 +3240,7 @@ void navigation_control_button_release_event (GtkGestureClick *gesture, gint n_p
 }
 
 static GdkContentProvider* signal_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data)
-{ (void)source; (void)x; (void)y; 
+{ (void)x; (void)y; 
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	
 	const gchar* uri = NULL;
@@ -3220,12 +3250,16 @@ static GdkContentProvider* signal_drag_source_prepare(GtkDragSource *source, gdo
 	if (uri == NULL)
 		return NULL;
 
-	GValue value = G_VALUE_INIT;
-	g_value_init(&value, G_TYPE_STRING);
-	g_value_set_string(&value, uri);
-	GdkContentProvider *provider = gdk_content_provider_new_for_value(&value);
-	g_value_unset(&value);
-	return provider;
+	GdkModifierType state = (GdkModifierType)0;
+	GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(source));
+	if (ev != NULL)
+		state = gdk_event_get_modifier_state(ev);
+
+	std::list<std::string> uris;
+	uris.push_back(uri);
+	bool bCutDrag = (0 == (state & GDK_CONTROL_MASK));
+	return QuiverClipboard::MakeContentProvider(uris, bCutDrag,
+		0 != (state & GDK_ALT_MASK));
 }
 
 static void signal_drag_begin (GtkDragSource *source, GdkDrag *drag, gpointer user_data)
@@ -5355,8 +5389,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pBlankCursor(NULL),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
-	m_ThumbnailLoader(this,2),
-	m_spAlive(std::make_shared<bool>(true))
+	m_spAlive(std::make_shared<bool>(true)),
+	m_ThumbnailLoader(this, 2, m_spAlive)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
@@ -5800,6 +5834,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	/* GTK4 drag-and-drop source via GtkDragSource controller */
 	if (!m_pDragSource) {
 		m_pDragSource = gtk_drag_source_new();
+		gtk_drag_source_set_actions(m_pDragSource, (GdkDragAction)(GDK_ACTION_MOVE | GDK_ACTION_COPY));
 		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(m_pDragSource));
 		g_signal_connect(m_pDragSource, "prepare", G_CALLBACK(signal_drag_source_prepare), this);
 		g_signal_connect(m_pDragSource, "drag-begin", G_CALLBACK(signal_drag_begin), this);
@@ -6280,8 +6315,23 @@ void Viewer::Hide()
 	m_ViewerImplPtr->m_ImageListPtr->BlockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
 }
 
+static void viewer_rotate_undo_cb(const char* uri, int undo_direction, gpointer user_data)
+{
+	(void)uri;
+	Viewer::ViewerImpl* impl = static_cast<Viewer::ViewerImpl*>(user_data);
+	if (impl && impl->m_pImageView && QUIVER_IS_IMAGE_VIEW(impl->m_pImageView))
+	{
+		QuiverImageView* imageview = QUIVER_IMAGE_VIEW(impl->m_pImageView);
+		quiver_image_view_rotate(imageview, undo_direction > 0 ? TRUE : FALSE);
+		int orient_op = undo_direction > 0 ? ORIENTATION_ROTATE_CW : ORIENTATION_ROTATE_CCW;
+		impl->SetCurrentOrientation(orientation_matrix[orient_op][impl->GetCurrentOrientation()]);
+	}
+}
+
 void Viewer::RegisterActions()
 {
+	QuiverFileOps::SetRotateUndoCallback(viewer_rotate_undo_cb, m_ViewerImplPtr.get());
+
 	/* Viewer simple actions */
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_CUT, "<Control>X", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_COPY, "<Control>C", viewer_action_handler_cb, m_ViewerImplPtr.get());
@@ -6987,7 +7037,7 @@ static gboolean idle_set_is_running_v(gpointer data) {
 
 void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem &item, guint uiWidth, guint uiHeight)
 {
-	if (IsStopped() || !m_pViewerImpl->m_spAlive || !*m_pViewerImpl->m_spAlive)
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pViewerImpl)
 		return;
 
 	bool is_mapped = m_bMapped.load(std::memory_order_relaxed);
@@ -6998,12 +7048,11 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 		usleep(100000);
 	}
 
-	if (is_mapped && item.m_ulIndex < m_pViewerImpl->m_ImageListPtr->GetSize())
+	if (is_mapped && m_pViewerImpl->m_ImageListPtr && item.m_ulIndex < m_pViewerImpl->m_ImageListPtr->GetSize())
 	{
-		// don't copy the quiver file, instead make a new one
-		// based on the uri. this is to get around an issue with
-		// concurrent writes to shared pointers from different threads
 		QuiverFile f(item.m_QuiverFile);
+		if (NULL == f.GetURI())
+			return;
 
 		GdkTexture *texture = NULL;
 		texture = m_pViewerImpl->m_ThumbnailCache.GetTexture(f.GetURI());				
@@ -7036,7 +7085,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 
 		if (NULL == texture)
 		{
-			texture = f.GetThumbnailTexture(MAX(uiWidth,uiHeight));
+			texture = f.GetThumbnailTexture(std::max(uiWidth,uiHeight));
 		}
 
 		if (NULL != texture)
@@ -7070,7 +7119,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 			ViewerThumbLoaderSyncData* pInvData = new ViewerThumbLoaderSyncData();
 			pInvData->iconview = m_pViewerImpl->m_pIconView;
 			pInvData->index = item.m_ulIndex;
-			pInvData->aliveToken = m_pViewerImpl->m_spAlive;
+			pInvData->aliveToken = m_spAlive;
 			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_invalidate_cell_v, pInvData, NULL); } else { idle_invalidate_cell_v(pInvData); }
 		}
 	}
@@ -7080,7 +7129,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::GetVisibleRange(gulong* pulStart, gu
 {
 	if (pulStart) *pulStart = 0;
 	if (pulEnd) *pulEnd = 0;
-	if (IsStopped() || !m_pViewerImpl->m_spAlive || !*m_pViewerImpl->m_spAlive)
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pViewerImpl)
 	{
 		return;
 	}
@@ -7098,21 +7147,25 @@ void Viewer::ViewerImpl::ViewerThumbLoader::GetIconSize(guint* puiWidth, guint* 
 
 gulong Viewer::ViewerImpl::ViewerThumbLoader::GetNumItems()
 {
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pViewerImpl || !m_pViewerImpl->m_ImageListPtr)
+		return 0;
 	return m_pViewerImpl->m_ImageListPtr->GetSize();
 }
 
 void Viewer::ViewerImpl::ViewerThumbLoader::SetIsRunning(bool bIsRunning)
 {
-	if (IsStopped() || !m_pViewerImpl->m_spAlive || !*m_pViewerImpl->m_spAlive)
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pViewerImpl)
 		return;
 	ViewerThumbLoaderSyncData* pData = new ViewerThumbLoaderSyncData();
 	pData->statusbar = m_pViewerImpl->m_StatusbarPtr.get();
 	pData->is_running = bIsRunning;
-	pData->aliveToken = m_pViewerImpl->m_spAlive;
+	pData->aliveToken = m_spAlive;
 	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_set_is_running_v, pData, NULL); } else { idle_set_is_running_v(pData); }
 }
 
 void Viewer::ViewerImpl::ViewerThumbLoader::SetCacheSize(guint uiCacheSize)
 {
+	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pViewerImpl)
+		return;
 	m_pViewerImpl->m_ThumbnailCache.SetSize(uiCacheSize);
 }

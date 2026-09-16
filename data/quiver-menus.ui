@@ -199,13 +199,13 @@
       </submenu>
     </section>
 
-    <!-- ============ Recent Deletions (live placeholder) =============== -->
+    <!-- ============ Undo (live placeholder) =============== -->
     <section>
       <submenu>
-        <attribute name="label">_Recently Deleted</attribute>
+        <attribute name="label">_Undo</attribute>
         <attribute name="location">recent_deletions</attribute>
         <item>
-          <attribute name="label">_Undo Delete</attribute>
+          <attribute name="label">_Undo</attribute>
           <attribute name="action">quiver.UndoDelete</attribute>
         </item>
       </submenu>

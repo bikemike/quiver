@@ -6,9 +6,21 @@
 #include <deque>
 
 #include <gio/gio.h>
+#include <glib/gstdio.h>
 
 namespace QuiverFileOps
 {
+	static bool dest_is_inside_or_equal(const char* src_uri, const char* dest_dir_uri)
+	{
+		if (!src_uri || !dest_dir_uri)
+			return false;
+		GFile *sf = g_file_new_for_uri(src_uri);
+		GFile *df = g_file_new_for_uri(dest_dir_uri);
+		bool result = g_file_equal(sf, df) || g_file_has_prefix(df, sf);
+		g_object_unref(sf);
+		g_object_unref(df);
+		return result;
+	}
 
 	class StatusCallback::PrivateImpl
 	{
@@ -179,16 +191,18 @@ namespace QuiverFileOps
 		return rval;
 	}
 
-	bool CopyFile(QuiverFile src, QuiverFile dst)
+	/* May run from the main thread only (GUI feedback / dialogs). */
+	static bool file_copy_uri(const char *src_uri, const char *dst_uri, bool bOverwrite)
 	{
 		bool rval = false;
-		GFile* gsrc = g_file_new_for_uri(src.GetURI());
-		GFile* gdst = g_file_new_for_uri(dst.GetURI());
+		GFile* gsrc = g_file_new_for_uri(src_uri);
+		GFile* gdst = g_file_new_for_uri(dst_uri);
 		GError* error = NULL;
-		rval = g_file_copy(gsrc, gdst, G_FILE_COPY_NONE, NULL, NULL, NULL, &error);
+		GFileCopyFlags flags = bOverwrite ? G_FILE_COPY_OVERWRITE : G_FILE_COPY_NONE;
+		rval = g_file_copy(gsrc, gdst, (GFileCopyFlags)flags, NULL, NULL, NULL, &error);
 		if (!rval && NULL != error)
 		{
-			warn_op_error("copy file", dst.GetURI(), error);
+			warn_op_error("copy file", dst_uri, error);
 			g_error_free(error);
 		}
 		g_object_unref(gdst);
@@ -196,21 +210,32 @@ namespace QuiverFileOps
 		return rval;
 	}
 
-	bool MoveFile(QuiverFile src, QuiverFile dst)
+	static bool file_move_uri(const char *src_uri, const char *dst_uri, bool bOverwrite)
 	{
 		bool rval = false;
-		GFile* gsrc = g_file_new_for_uri(src.GetURI());
-		GFile* gdst = g_file_new_for_uri(dst.GetURI());
+		GFile* gsrc = g_file_new_for_uri(src_uri);
+		GFile* gdst = g_file_new_for_uri(dst_uri);
 		GError* error = NULL;
-		rval = g_file_move(gsrc, gdst, G_FILE_COPY_NONE, NULL, NULL, NULL, &error);
+		GFileCopyFlags flags = bOverwrite ? G_FILE_COPY_OVERWRITE : G_FILE_COPY_NONE;
+		rval = g_file_move(gsrc, gdst, (GFileCopyFlags)flags, NULL, NULL, NULL, &error);
 		if (!rval && NULL != error)
 		{
-			warn_op_error("move file", dst.GetURI(), error);
+			warn_op_error("move file", dst_uri, error);
 			g_error_free(error);
 		}
-g_object_unref(gdst);
-			g_object_unref(gsrc);
-			return rval;
+		g_object_unref(gdst);
+		g_object_unref(gsrc);
+		return rval;
+	}
+
+	bool CopyFile(QuiverFile src, QuiverFile dst)
+	{
+		return file_copy_uri(src.GetURI(), dst.GetURI(), false);
+	}
+
+	bool MoveFile(QuiverFile src, QuiverFile dst)
+	{
+		return file_move_uri(src.GetURI(), dst.GetURI(), false);
 	}
 
 	//---------------------------------------------------------------------
@@ -247,55 +272,129 @@ g_object_unref(gdst);
 		return &s_clipboardUris;
 	}
 
-	/* Build a unique destination URI inside `folder_uri` for `src_uri`: if the
-	 * basename is free it is used directly, otherwise a " (n)" suffix is added
-	 * until a free name is found (file managers copy/move behaviour). */
-	static std::string unique_dest_uri(const char *src_uri, const char *folder_uri)
+	/* Transfer the given URIs into `dest_folder_uri`.  See the header for the
+	 * conflict semantics. */
+	int TransferFiles(const std::list<std::string>& uris, bool bCut,
+		const char* dest_folder_uri,
+		ClipboardConflictFn conflict_fn, gpointer conflict_data,
+		std::list<std::string>* moved_out)
 	{
-		char *base = g_path_get_basename(src_uri);
-		gchar *filename = g_uri_unescape_string(base, NULL);
-		if (NULL == filename)
-			filename = g_strdup(base);
-		g_free(base);
+		if (uris.empty() || dest_folder_uri == NULL || '\0' == dest_folder_uri[0])
+			return 0;
 
 		/* folder_uri is a dir URI; make sure it ends with '/' for concat */
-		std::string prefix = folder_uri;
+		std::string prefix = dest_folder_uri;
 		if (prefix.empty() || prefix[prefix.size() - 1] != '/')
 			prefix += "/";
 
-		std::string candidate;
-		GFile *tmp = nullptr;
-		guint n = 0;
-		std::string stem, ext;
+		int count = 0;
+		std::vector<UndoFilePair> moved_pairs;
+		std::vector<std::string> copied_dsts;
+
+		for (std::list<std::string>::const_iterator it = uris.begin();
+			uris.end() != it; ++it)
 		{
-			std::string name = filename;
-			std::string::size_type dot = name.find_last_of('.');
-			if (dot != std::string::npos && dot > 0)
+			if (it->empty())
+				continue;
+
+			/* Don't transfer a folder into itself or into its own subtree */
+			if (dest_is_inside_or_equal(it->c_str(), dest_folder_uri))
+				continue;
+
+			/* A cut of a file into its own directory is a no-op: already there */
+			if (bCut)
 			{
-				stem = name.substr(0, dot);
-				ext = name.substr(dot);
+				gchar *src_dir = g_path_get_dirname(it->c_str());
+				gchar *dst_path = g_strdup(dest_folder_uri);
+				size_t dlen = dst_path ? strlen(dst_path) : 0;
+				if (dlen > 1 && dst_path[dlen - 1] == '/')
+					dst_path[dlen - 1] = '\0';
+				bool same_dir = (NULL != src_dir && NULL != dst_path &&
+					0 == g_strcmp0(src_dir, dst_path));
+				g_free(dst_path);
+				g_free(src_dir);
+				if (same_dir)
+				{
+					if (moved_out != NULL)
+						moved_out->push_back(*it);
+					continue;
+				}
 			}
-			else
+
+			/* destination name keeps the (URI-escaped) source basename. */
+			gchar *base = g_path_get_basename(it->c_str());
+			if (NULL == base || '\0' == base[0])
 			{
-				stem = name;
-				ext.clear();
+				g_free(base);
+				continue;
+			}
+			const std::string dst_uri = prefix + base;
+			g_free(base);
+
+			bool bOverwrite = false;
+			{
+				GFile *dstf = g_file_new_for_uri(dst_uri.c_str());
+				gboolean exists = g_file_query_exists(dstf, NULL);
+				g_object_unref(dstf);
+				if (exists)
+				{
+					PasteConflictAction action = PASTE_SKIP;
+					if (conflict_fn != NULL)
+						action = conflict_fn(it->c_str(), dst_uri.c_str(), conflict_data);
+					if (action != PASTE_OVERWRITE)
+						continue; /* skip: leave the existing file alone */
+					bOverwrite = true;
+				}
+			}
+
+			bool ok = bCut
+				? file_move_uri(it->c_str(), dst_uri.c_str(), bOverwrite)
+				: file_copy_uri(it->c_str(), dst_uri.c_str(), bOverwrite);
+			if (ok)
+			{
+				count++;
+				if (bCut)
+				{
+					UndoFilePair pair;
+					pair.src_uri = *it;
+					pair.dst_uri = dst_uri;
+					moved_pairs.push_back(pair);
+					if (moved_out != NULL)
+						moved_out->push_back(*it);
+				}
+				else
+				{
+					copied_dsts.push_back(dst_uri);
+				}
 			}
 		}
 
-		gboolean exists;
-		do
+		if (count > 0)
 		{
-			if (0 == n)
-				candidate = prefix + filename;
+			if (bCut)
+				UndoStackRecordMove(moved_pairs);
 			else
-				candidate = prefix + stem + " (" + std::to_string(n) + ")" + ext;
-			tmp = g_file_new_for_uri(candidate.c_str());
-			exists = g_file_query_exists(tmp, NULL);
-			g_object_unref(tmp);
-			n++;
-		} while (exists && n < 10000);
-		g_free(filename);
-		return candidate;
+				UndoStackRecordCopy(copied_dsts);
+		}
+
+		return count;
+	}
+
+	void ClipboardRemoveURIs(const std::list<std::string>& uris)
+	{
+		if (uris.empty())
+			return;
+		std::list<std::string> remaining;
+		for (std::list<std::string>::const_iterator it = s_clipboardUris.begin();
+			it != s_clipboardUris.end(); ++it)
+		{
+			bool gone = false;
+			for (std::list<std::string>::const_iterator m = uris.begin(); m != uris.end(); ++m)
+				if (*m == *it) { gone = true; break; }
+			if (!gone)
+				remaining.push_back(*it);
+		}
+		s_clipboardUris.swap(remaining);
 	}
 
 	int ClipboardTransferTo(const char* dest_folder_uri)
@@ -303,65 +402,11 @@ g_object_unref(gdst);
 		if (s_clipboardUris.empty())
 			return 0;
 
-		int count = 0;
 		std::list<std::string> moved;
-		for (std::list<std::string>::const_iterator it = s_clipboardUris.begin();
-			it != s_clipboardUris.end(); ++it)
-		{
-			/* Cutting a file back into the folder it already lives in is a
-			 * pointless self-move that would pollute the undo stack, so skip
-			 * items whose parent directory is the paste destination.  The cut
-			 * is then cancelled for such items: they are dropped from the cut
-			 * clipboard along with any actually-moved files. */
-			if (s_clipboardCut)
-			{
-				char *src_path = g_filename_from_uri(it->c_str(), NULL, NULL);
-				char *src_dir = (NULL != src_path)
-					? g_path_get_dirname(src_path) : NULL;
-				g_free(src_path);
-				char *dst_path = g_filename_from_uri(dest_folder_uri, NULL, NULL);
-				bool same_dir = (NULL != src_dir && NULL != dst_path &&
-					0 == g_strcmp0(src_dir, dst_path));
-				g_free(dst_path);
-				g_free(src_dir);
-				if (same_dir)
-				{
-					moved.push_back(*it);
-					continue;
-				}
-			}
-
-			std::string dst = unique_dest_uri(it->c_str(), dest_folder_uri);
-			QuiverFile src(it->c_str());
-			bool ok;
-			if (s_clipboardCut)
-				ok = MoveFile(src, QuiverFile(dst.c_str()));
-			else
-				ok = CopyFile(src, QuiverFile(dst.c_str()));
-			if (ok)
-			{
-				count++;
-				if (s_clipboardCut)
-					moved.push_back(*it);
-			}
-		}
-
-		/* drop the moved items from the cut clipboard so re-pasting cannot
-		 * produce stale entries */
-		if (!moved.empty())
-		{
-			std::list<std::string> remaining;
-			for (std::list<std::string>::const_iterator it = s_clipboardUris.begin();
-				it != s_clipboardUris.end(); ++it)
-			{
-				bool gone = false;
-				for (std::list<std::string>::const_iterator m = moved.begin(); m != moved.end(); ++m)
-					if (*m == *it) { gone = true; break; }
-				if (!gone)
-					remaining.push_back(*it);
-			}
-			s_clipboardUris.swap(remaining);
-		}
+		int count = TransferFiles(s_clipboardUris, s_clipboardCut,
+			dest_folder_uri, NULL, NULL, &moved);
+		if (s_clipboardCut)
+			ClipboardRemoveURIs(moved);
 		return count;
 	}
 
@@ -369,7 +414,7 @@ g_object_unref(gdst);
 	// undo stack
 	//---------------------------------------------------------------------
 
-	static std::deque<std::list<QuiverFile> > s_undoStack;
+	static std::deque<UndoEntry> s_undoStack;
 	static const size_t kMaxUndoBatches = 32;
 
 	static TrashUndoChangedCallback s_trashUndoChangedCb = NULL;
@@ -377,6 +422,12 @@ g_object_unref(gdst);
 
 	static TrashRestoredChangedCallback s_trashRestoredChangedCb = NULL;
 	static gpointer s_trashRestoredChangedData = NULL;
+
+	static RotateUndoCallback s_rotateUndoCb = NULL;
+	static gpointer s_rotateUndoData = NULL;
+
+	static NewFolderUndoCallback s_newFolderUndoCb = NULL;
+	static gpointer s_newFolderUndoData = NULL;
 
 	void SetTrashUndoChangedCallback(TrashUndoChangedCallback cb, gpointer user_data)
 	{
@@ -388,6 +439,18 @@ g_object_unref(gdst);
 	{
 		s_trashRestoredChangedCb = cb;
 		s_trashRestoredChangedData = user_data;
+	}
+
+	void SetRotateUndoCallback(RotateUndoCallback cb, gpointer user_data)
+	{
+		s_rotateUndoCb = cb;
+		s_rotateUndoData = user_data;
+	}
+
+	void SetNewFolderUndoCallback(NewFolderUndoCallback cb, gpointer user_data)
+	{
+		s_newFolderUndoCb = cb;
+		s_newFolderUndoData = user_data;
 	}
 
 	void NotifyTrashUndoChanged(TrashUndoChangedReason reason, unsigned int count)
@@ -406,16 +469,105 @@ g_object_unref(gdst);
 		}
 	}
 
+	void NotifyRotateUndo(const char* uri, int undo_direction)
+	{
+		if (NULL != s_rotateUndoCb)
+		{
+			s_rotateUndoCb(uri, undo_direction, s_rotateUndoData);
+		}
+	}
+
+	void NotifyNewFolderUndo(const char* folder_uri)
+	{
+		if (NULL != s_newFolderUndoCb)
+		{
+			s_newFolderUndoCb(folder_uri, s_newFolderUndoData);
+		}
+	}
+
 	bool UndoStackRecord(const std::list<QuiverFile>& files)
+	{
+		return UndoStackRecordDelete(files);
+	}
+
+	bool UndoStackRecordDelete(const std::list<QuiverFile>& files)
 	{
 		if (files.empty())
 			return false;
-		s_undoStack.push_front(files);
+		UndoEntry entry;
+		entry.type = UNDO_TYPE_DELETE;
+		entry.trashed_files = files;
+		s_undoStack.push_front(entry);
 		while (s_undoStack.size() > kMaxUndoBatches)
 		{
 			s_undoStack.pop_back();
 		}
 		NotifyTrashUndoChanged(TRASH_UNDO_DELETED, files.size());
+		return true;
+	}
+
+	bool UndoStackRecordMove(const std::vector<UndoFilePair>& pairs)
+	{
+		if (pairs.empty())
+			return false;
+		UndoEntry entry;
+		entry.type = UNDO_TYPE_MOVE;
+		entry.file_pairs = pairs;
+		s_undoStack.push_front(entry);
+		while (s_undoStack.size() > kMaxUndoBatches)
+		{
+			s_undoStack.pop_back();
+		}
+		NotifyTrashUndoChanged(UNDO_RECORDED_MOVE, pairs.size());
+		return true;
+	}
+
+	bool UndoStackRecordCopy(const std::vector<std::string>& copied_dsts)
+	{
+		if (copied_dsts.empty())
+			return false;
+		UndoEntry entry;
+		entry.type = UNDO_TYPE_COPY;
+		entry.copied_dsts = copied_dsts;
+		s_undoStack.push_front(entry);
+		while (s_undoStack.size() > kMaxUndoBatches)
+		{
+			s_undoStack.pop_back();
+		}
+		NotifyTrashUndoChanged(UNDO_RECORDED_COPY, copied_dsts.size());
+		return true;
+	}
+
+	bool UndoStackRecordRotate(const std::string& uri, int direction)
+	{
+		if (uri.empty())
+			return false;
+		UndoEntry entry;
+		entry.type = UNDO_TYPE_ROTATE;
+		entry.rotate_uri = uri;
+		entry.rotate_direction = direction;
+		s_undoStack.push_front(entry);
+		while (s_undoStack.size() > kMaxUndoBatches)
+		{
+			s_undoStack.pop_back();
+		}
+		NotifyTrashUndoChanged(UNDO_RECORDED_ROTATE, 1);
+		return true;
+	}
+
+	bool UndoStackRecordNewFolder(const std::string& folder_uri)
+	{
+		if (folder_uri.empty())
+			return false;
+		UndoEntry entry;
+		entry.type = UNDO_TYPE_NEW_FOLDER;
+		entry.new_folder_uri = folder_uri;
+		s_undoStack.push_front(entry);
+		while (s_undoStack.size() > kMaxUndoBatches)
+		{
+			s_undoStack.pop_back();
+		}
+		NotifyTrashUndoChanged(UNDO_RECORDED_NEW_FOLDER, 1);
 		return true;
 	}
 
@@ -429,14 +581,26 @@ g_object_unref(gdst);
 		return s_undoStack.size();
 	}
 
+	UndoType UndoStackTopType()
+	{
+		return s_undoStack.empty() ? UNDO_TYPE_DELETE : s_undoStack.front().type;
+	}
+
+	const UndoEntry* UndoStackEntryAt(size_t pos)
+	{
+		return (pos >= s_undoStack.size()) ? NULL : &s_undoStack[pos];
+	}
+
 	const std::list<QuiverFile>* UndoStackPeekTop()
 	{
-		return s_undoStack.empty() ? NULL : &s_undoStack.front();
+		return (s_undoStack.empty() || s_undoStack.front().type != UNDO_TYPE_DELETE)
+			? NULL : &s_undoStack.front().trashed_files;
 	}
 
 	const std::list<QuiverFile>* UndoStackAt(size_t pos)
 	{
-		return (pos >= s_undoStack.size()) ? NULL : &s_undoStack[pos];
+		return (pos >= s_undoStack.size() || s_undoStack[pos].type != UNDO_TYPE_DELETE)
+			? NULL : &s_undoStack[pos].trashed_files;
 	}
 
 	int UndoStackRestoreAt(size_t pos)
@@ -444,35 +608,102 @@ g_object_unref(gdst);
 		if (pos >= s_undoStack.size())
 			return 0;
 
-		std::list<QuiverFile> files = s_undoStack[pos];
+		UndoEntry entry = s_undoStack[pos];
 		s_undoStack.erase(s_undoStack.begin() + pos);
 
-		// Restore deepest/last-trashed first so earlier restores keep their
-		// original folder hierarchy intact.
-		int restored = 0;
-		for (std::list<QuiverFile>::reverse_iterator ritr = files.rbegin();
-			files.rend() != ritr; ++ritr)
+		if (entry.type == UNDO_TYPE_DELETE)
 		{
-			if (RestoreFromTrash(*ritr))
+			int restored = 0;
+			for (std::list<QuiverFile>::reverse_iterator ritr = entry.trashed_files.rbegin();
+				entry.trashed_files.rend() != ritr; ++ritr)
 			{
-				restored++;
+				if (RestoreFromTrash(*ritr))
+				{
+					restored++;
+				}
 			}
+			if (restored == 1)
+			{
+				NotifyTrashRestored(s_strLastRestoredURI.c_str());
+			}
+			else
+			{
+				NotifyTrashUndoChanged(TRASH_UNDO_RESTORED, restored);
+			}
+			return restored;
 		}
-		/* A single-item restore tells the UI exactly where the file went, so
-		 * the toast can offer "take me there"; restoring a whole batch only
-		 * has a count to report.  Always notify so the "Recent Deletions"
-		 * menu and other undo UI stay in sync, even when every restore failed
-		 * (the browser/undo checks read the live stack, but the menu only
-		 * refreshes on this callback). */
-		if (restored == 1)
+		else if (entry.type == UNDO_TYPE_MOVE)
 		{
-			NotifyTrashRestored(s_strLastRestoredURI.c_str());
+			int restored = 0;
+			std::string last_src;
+			for (std::vector<UndoFilePair>::reverse_iterator ritr = entry.file_pairs.rbegin();
+				entry.file_pairs.rend() != ritr; ++ritr)
+			{
+				if (file_move_uri(ritr->dst_uri.c_str(), ritr->src_uri.c_str(), false))
+				{
+					restored++;
+					last_src = ritr->src_uri;
+				}
+			}
+			if (restored == 1 && !last_src.empty())
+			{
+				NotifyTrashRestored(last_src.c_str());
+			}
+			else
+			{
+				NotifyTrashUndoChanged(UNDO_RESTORED_OP, restored);
+			}
+			return restored;
 		}
-		else
+		else if (entry.type == UNDO_TYPE_COPY)
 		{
-			NotifyTrashUndoChanged(TRASH_UNDO_RESTORED, restored);
+			int removed = 0;
+			for (size_t i = 0; i < entry.copied_dsts.size(); ++i)
+			{
+				QuiverFile f(entry.copied_dsts[i].c_str());
+				if (MoveToTrash(f))
+				{
+					removed++;
+				}
+				else
+				{
+					char* path = g_filename_from_uri(entry.copied_dsts[i].c_str(), NULL, NULL);
+					if (path)
+					{
+						if (g_remove(path) == 0)
+							removed++;
+						g_free(path);
+					}
+				}
+			}
+			NotifyTrashUndoChanged(UNDO_RESTORED_OP, removed);
+			return removed;
 		}
-		return restored;
+		else if (entry.type == UNDO_TYPE_ROTATE)
+		{
+			NotifyRotateUndo(entry.rotate_uri.c_str(), -entry.rotate_direction);
+			NotifyTrashUndoChanged(UNDO_RESTORED_OP, 1);
+			return 1;
+		}
+		else if (entry.type == UNDO_TYPE_NEW_FOLDER)
+		{
+			QuiverFile f(entry.new_folder_uri.c_str());
+			bool removed = MoveToTrash(f);
+			if (!removed)
+			{
+				char* path = g_filename_from_uri(entry.new_folder_uri.c_str(), NULL, NULL);
+				if (path)
+				{
+					if (g_rmdir(path) == 0 || g_remove(path) == 0)
+						removed = true;
+					g_free(path);
+				}
+			}
+			NotifyNewFolderUndo(entry.new_folder_uri.c_str());
+			NotifyTrashUndoChanged(UNDO_RESTORED_OP, removed ? 1 : 0);
+			return removed ? 1 : 0;
+		}
+		return 0;
 	}
 
 	int UndoStackPop()
