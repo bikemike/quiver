@@ -199,7 +199,7 @@ static void      quiver_icon_view_set_hadjustment (QuiverIconView *iconview,
                     GtkAdjustment *hadjustment);
 static void      quiver_icon_view_set_vadjustment (QuiverIconView *iconview,
                     GtkAdjustment *vadjustment);
-static void      quiver_icon_view_reset_resize_anchor (QuiverIconView *iconview, const char *reason);
+static void      quiver_icon_view_reset_resize_anchor (QuiverIconView *iconview);
 
 
 static void      remove_timeout_smooth_scroll(QuiverIconView *iconview);
@@ -389,7 +389,7 @@ quiver_icon_view_toplevel_released_cb (GtkGestureClick *gesture,
 	(void)y;
 	if (iconview->priv->resize_anchor_active)
 	{
-		quiver_icon_view_reset_resize_anchor(iconview, "mouse_release");
+		quiver_icon_view_reset_resize_anchor(iconview);
 	}
 }
 
@@ -598,7 +598,7 @@ quiver_icon_view_dispose(GObject *object)
 
 	quiver_icon_view_unmap_cb(GTK_WIDGET(iconview));
 	remove_timeout_smooth_scroll(iconview);
-	quiver_icon_view_reset_resize_anchor(iconview, "dispose");
+	quiver_icon_view_reset_resize_anchor(iconview);
 
 	if (iconview->priv->timeout_id_rubberband_scroll != 0)
 	{
@@ -686,17 +686,12 @@ quiver_icon_view_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 }
 
 static void
-quiver_icon_view_reset_resize_anchor(QuiverIconView *iconview, const char *reason)
+quiver_icon_view_reset_resize_anchor(QuiverIconView *iconview)
 {
 	if (0 != iconview->priv->timeout_id_resize_anchor)
 	{
 		g_source_remove(iconview->priv->timeout_id_resize_anchor);
 		iconview->priv->timeout_id_resize_anchor = 0;
-	}
-	if (iconview->priv->resize_anchor_active)
-	{
-		g_print("[ResizeAnchor] END session (reason: %s)\n", reason ? reason : "unknown");
-		fflush(stdout);
 	}
 	iconview->priv->resize_anchor_active = FALSE;
 	iconview->priv->resize_anchor_top_left = G_MAXULONG;
@@ -708,7 +703,7 @@ static gboolean
 quiver_icon_view_timeout_resize_anchor(gpointer data)
 {
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(data);
-	quiver_icon_view_reset_resize_anchor(iconview, "timeout (1500ms idle)");
+	quiver_icon_view_reset_resize_anchor(iconview);
 	return G_SOURCE_REMOVE;
 }
 
@@ -775,13 +770,6 @@ quiver_icon_view_size_allocate (GtkWidget     *widget,
 			}
 			iconview->priv->resize_anchor_active = TRUE;
 
-			g_print("[ResizeAnchor] Initial resize: %dx%d -> %dx%d, anchor_cols=%u, anchor_top_left=%lu, anchor_top_right=%lu, vadjust=%.1f (top_row=%u)\n",
-			        old_w, old_h, width, height,
-			        iconview->priv->resize_anchor_cols,
-			        iconview->priv->resize_anchor_top_left,
-			        iconview->priv->resize_anchor_top_right,
-			        vadjust, old_top_row);
-			fflush(stdout);
 		}
 
 		/* Reset or rearm the debounce timeout to end the session once resizing stops */
@@ -880,42 +868,6 @@ quiver_icon_view_size_allocate (GtkWidget     *widget,
 				gtk_adjustment_set_value(iconview->priv->vadjustment, target_vadjust);
 			}
 		}
-	}
-
-	if (cols_changed)
-	{
-		gdouble actual_vadjust = iconview->priv->vadjustment ?
-			gtk_adjustment_get_value(iconview->priv->vadjustment) : 0.0;
-		guint cur_top_row = (cell_height > 0) ? (guint)(actual_vadjust / cell_height) : 0;
-		gulong cur_top_left = (gulong)cur_top_row * new_cols;
-		gulong cur_top_right = cur_top_left + (new_cols > 0 ? (new_cols - 1) : 0);
-		gulong n_items = quiver_icon_view_get_n_items(iconview);
-		if (n_items > 0 && cur_top_right >= n_items)
-			cur_top_right = n_items - 1;
-
-		gboolean left_in_range = (iconview->priv->resize_anchor_top_left != G_MAXULONG &&
-		                          iconview->priv->resize_anchor_top_left >= cur_top_left &&
-		                          iconview->priv->resize_anchor_top_left <= cur_top_right);
-		gboolean right_in_range = (iconview->priv->resize_anchor_top_right != G_MAXULONG &&
-		                           iconview->priv->resize_anchor_top_right >= cur_top_left &&
-		                           iconview->priv->resize_anchor_top_right <= cur_top_right);
-		gboolean target_in_range = (target_item != G_MAXULONG &&
-		                            target_item >= cur_top_left &&
-		                            target_item <= cur_top_right);
-
-		const char *mode = (new_cols >= iconview->priv->resize_anchor_cols) ? "WIDEN (anchor_right)" : "NARROW (anchor_left)";
-
-		g_print("[ResizeAnchor] Column change %u -> %u (%s, anchor_cols=%u): target_item=%lu, vadjust=%.1f, top_row=%u, query top row items: [%lu .. %lu]. Target in range: %s | anchor_left(%lu) in range: %s | anchor_right(%lu) in range: %s (anchor_active=%s)\n",
-		        old_cols, new_cols, mode, iconview->priv->resize_anchor_cols,
-		        target_item, actual_vadjust, cur_top_row,
-		        cur_top_left, cur_top_right,
-		        target_in_range ? "YES" : "NO",
-		        iconview->priv->resize_anchor_top_left,
-		        left_in_range ? "YES" : "NO",
-		        iconview->priv->resize_anchor_top_right,
-		        right_in_range ? "YES" : "NO",
-		        iconview->priv->resize_anchor_active ? "TRUE" : "FALSE");
-		fflush(stdout);
 	}
 
 	gtk_widget_queue_draw(widget);
@@ -2684,7 +2636,7 @@ quiver_icon_view_gesture_pressed (GtkGestureClick *gesture,
 	(void)gesture;
 	GtkWidget *widget = GTK_WIDGET(iconview);
 
-	quiver_icon_view_reset_resize_anchor(iconview, "mouse_press");
+	quiver_icon_view_reset_resize_anchor(iconview);
 
 	gint ix = (gint)x;
 	gint iy = (gint)y;
@@ -2773,7 +2725,7 @@ quiver_icon_view_gesture_released (GtkGestureClick *gesture,
 
 	if (iconview->priv->resize_anchor_active)
 	{
-		quiver_icon_view_reset_resize_anchor(iconview, "mouse_release");
+		quiver_icon_view_reset_resize_anchor(iconview);
 	}
 
 	/* Get modifier state from current event */
@@ -3088,7 +3040,7 @@ quiver_icon_view_scroll_controller_cb (GtkEventControllerScroll *controller,
 	(void)dx;
 	(void)controller;
 
-	quiver_icon_view_reset_resize_anchor(iconview, "scroll_event");
+	quiver_icon_view_reset_resize_anchor(iconview);
 
 	return quiver_icon_view_scroll_event_cb(NULL, dx, dy, iconview);
 }
@@ -3103,7 +3055,7 @@ quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 	(void)controller;
 	(void)keycode;
 
-	quiver_icon_view_reset_resize_anchor(iconview, "key_press");
+	quiver_icon_view_reset_resize_anchor(iconview);
 
 	GtkWidget *widget = GTK_WIDGET(iconview);
 	gulong n_cells  = quiver_icon_view_get_n_items(iconview);
