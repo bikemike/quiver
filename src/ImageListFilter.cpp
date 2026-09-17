@@ -217,6 +217,8 @@ void ImageListFilter::Remove(unsigned int nIndex)
 void ImageListFilter::HandleContentsChanged(ImageListEventPtr event)
 { (void)event;
 	m_bMapValid = false;
+	m_szCurrentURI.clear();
+	m_iLastEmittedView = -1;
 	EmitContentsChangedEvent();
 }
 

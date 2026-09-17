@@ -144,7 +144,7 @@ public:
 
 	bool RemoveFile(unsigned int iIndex);
 
-	void SetCurrentImage(std::string uri);
+	bool SetCurrentImage(std::string uri);
 	
 	void Sort();
 	void Sort(bool bUpdateCurrentIndex);
@@ -239,7 +239,7 @@ bool
 ImageList::SetCurrentIndex(unsigned int new_index)
 {
 	bool rval = false;
-	if ( new_index  < GetSize())
+	if ( 0 == new_index || new_index  < GetSize())
 	{
 		if ( new_index != m_ImageListImplPtr->m_iCurrentIndex)
 		{
@@ -790,7 +790,7 @@ void ImageList::ImageListImpl::LoadMimeTypes()
 	}
 }
 
-void ImageList::ImageListImpl::SetCurrentImage(string uri)
+bool ImageList::ImageListImpl::SetCurrentImage(string uri)
 {
 	if (!uri.empty())
 	{
@@ -801,9 +801,11 @@ void ImageList::ImageListImpl::SetCurrentImage(string uri)
 		itr = std::find(m_QuiverFileList.begin(),m_QuiverFileList.end(),f);
 		if (m_QuiverFileList.end() != itr)
 		{
-			m_iCurrentIndex = itr -m_QuiverFileList.begin() ;			
+			m_iCurrentIndex = itr - m_QuiverFileList.begin();
+			return true;
 		}
 	}
+	return false;
 }
 
 
@@ -1480,9 +1482,11 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 
 	m_QuiverFileList.assign(pData->quiverFiles.begin(), pData->quiverFiles.end());
 
-	if (!pData->strCurrentURI.empty())
+	m_iCurrentIndex = 0;
+	bool bFoundURI = false;
+	if (!pData->bSelectFirstItem && !pData->strCurrentURI.empty())
 	{
-		SetCurrentImage(pData->strCurrentURI);
+		bFoundURI = SetCurrentImage(pData->strCurrentURI);
 	}
 	if (0 < m_QuiverFileList.size() && m_iCurrentIndex >= m_QuiverFileList.size())
 	{
@@ -1493,7 +1497,7 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 		m_iCurrentIndex = 0;
 	}
 
-	Sort(!pData->strCurrentURI.empty());
+	Sort(bFoundURI);
 
 	// "open this bookmark" semantics: clear the previous selection and
 	// land on the first item, matching the bookmark menu (SetImageList ->
@@ -1709,6 +1713,7 @@ void ImageList::ImageListImpl::Clear()
 	m_mapDirs.clear();
 	m_mapFiles.clear();
 	m_QuiverFileList.clear();
+	m_iCurrentIndex = 0;
 }
 
 bool ImageList::ImageListImpl::RemoveFile(unsigned int iIndex)

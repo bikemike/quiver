@@ -106,10 +106,11 @@ TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
     boost::shared_ptr<MockImageListView> mock(new MockImageListView(uris));
 
     // Predicate filters only .jpg files
-    ImageListFilter filter(mock, [](const QuiverFile& qf) {
+    boost::shared_ptr<ImageListFilter> filterPtr(new ImageListFilter(mock, [](const QuiverFile& qf) {
         std::string uri = qf.GetURI() ? qf.GetURI() : "";
         return uri.find(".jpg") != std::string::npos;
-    });
+    }));
+    ImageListFilter& filter = *filterPtr;
 
     SECTION("Filtered size and elements")
     {
@@ -144,21 +145,40 @@ TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
 
     SECTION("Filter that matches nothing")
     {
-        ImageListFilter noMatch(mock, [](const QuiverFile&) {
+        boost::shared_ptr<ImageListFilter> noMatch(new ImageListFilter(mock, [](const QuiverFile&) {
             return false;
-        });
+        }));
 
-        REQUIRE(noMatch.GetSize() == 0);
-        REQUIRE_FALSE(noMatch.HasNext());
-        REQUIRE_FALSE(noMatch.HasPrevious());
+        REQUIRE(noMatch->GetSize() == 0);
+        REQUIRE_FALSE(noMatch->HasNext());
+        REQUIRE_FALSE(noMatch->HasPrevious());
     }
 
     SECTION("Filter that matches everything")
     {
-        ImageListFilter matchAll(mock, [](const QuiverFile&) {
+        boost::shared_ptr<ImageListFilter> matchAll(new ImageListFilter(mock, [](const QuiverFile&) {
             return true;
-        });
+        }));
 
-        REQUIRE(matchAll.GetSize() == 5);
+        REQUIRE(matchAll->GetSize() == 5);
+    }
+
+    SECTION("Contents changed resets view index to source current index")
+    {
+        REQUIRE(filter.SetCurrentIndex(2));
+        REQUIRE(filter.GetCurrentIndex() == 2);
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///test/e.jpg");
+
+        // Simulate folder switch: replace mock's files with an entirely new set
+        mock->m_files.clear();
+        mock->m_files.push_back(QuiverFile("file:///other/x.jpg"));
+        mock->m_files.push_back(QuiverFile("file:///other/y.jpg"));
+        mock->m_files.push_back(QuiverFile("file:///other/z.jpg"));
+        mock->m_currentIndex = 0;
+        mock->EmitContentsChangedEvent();
+
+        REQUIRE(filter.GetSize() == 3);
+        REQUIRE(filter.GetCurrentIndex() == 0);
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///other/x.jpg");
     }
 }

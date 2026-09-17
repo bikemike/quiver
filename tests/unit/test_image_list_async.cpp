@@ -89,16 +89,17 @@ TEST_CASE("ImageList async folder load: selectFirstItem lands on the first item"
     REQUIRE(list->SetCurrentIndex(2));
     REQUIRE(list->GetCurrentIndex() == 2);
 
-    // Opening a different folder set without select-first keeps the stale
-    // index (the reported bug scenario: a bookmark's contents replacing an
-    // unrelated view keeps the old position as long as it is still in bounds).
+    // Opening a different folder set whose files do not contain the previous
+    // current URI resets the index to the first item (index 0).
     list->UpdateImageListAsync(&foldersB);
     pump_until([&] { return loaded_folder(uriB); });
     REQUIRE(list->GetSize() == 4);
-    REQUIRE(list->GetCurrentIndex() == 2);
+    REQUIRE(list->GetCurrentIndex() == 0);
 
     // Opening yet another folder set with select-first (the bookmark-open
-    // path) must land on the first item, matching the bookmark menu.
+    // or folder-tree-click path) also lands on the first item.
+    REQUIRE(list->SetCurrentIndex(2));
+    REQUIRE(list->GetCurrentIndex() == 2);
     list->UpdateImageListAsync(&foldersC, false, true);
     pump_until([&] { return loaded_folder(uriC); });
     REQUIRE(list->GetSize() == 4);

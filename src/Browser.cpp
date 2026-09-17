@@ -3385,7 +3385,7 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	}
 
 	list<string> listFolders = parent->m_FolderTreePtr->GetSelectedFolders();
-	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders);
+	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders, false, true);
 }
 
 
