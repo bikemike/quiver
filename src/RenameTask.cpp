@@ -178,19 +178,12 @@ rename_task_compute_destination_name(
 	std::map<std::string, int>& mapFileCounter)
 {
 	std::string strBaseName = f.GetFileName();
-	std::string strBaseNameLower = boost::algorithm::to_lower_copy(strBaseName);
 	std::string strExtension;
 
 	std::string::size_type pos = strBaseName.find_last_of(".");
 	if (std::string::npos != pos)
 	{
 		strExtension = strBaseName.substr(pos+1);
-	}
-
-	std::string strSpecialCase;
-	if (f.IsVideo() && strBaseNameLower.find("pxl") != std::string::npos)
-	{
-		strSpecialCase = ".pxl";
 	}
 
 	GDateTime* datetime = g_date_time_new_from_unix_local(f.GetTimeT());
@@ -211,7 +204,7 @@ rename_task_compute_destination_name(
 	}
 
 	if (!strExtension.empty())
-		return strDstName + strSpecialCase + "." + strExtension;
+		return strDstName + "." + strExtension;
 	return strDstName;
 }
 
