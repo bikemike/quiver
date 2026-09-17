@@ -87,6 +87,7 @@ struct AsyncFolderLoadData
 	std::list<QuiverFile> quiverFiles;
 	std::string strCurrentURI;
 	bool bRecursive;
+	bool bSelectFirstItem;
 };
 
 const char* const szFileInfoAttributes =
@@ -1469,9 +1470,18 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 	}
 
 	Sort(!pData->strCurrentURI.empty());
+
+	// "open this bookmark" semantics: clear the previous selection and
+	// land on the first item, matching the bookmark menu (SetImageList ->
+	// Clear + Add). The old current URI is not restored, because the
+	// bookmark's folders may be unrelated to the previous view.
+	if (pData->bSelectFirstItem && 0 < m_QuiverFileList.size())
+	{
+		m_iCurrentIndex = 0;
+	}
 }
 
-void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive)
+void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive, bool bSelectFirstItem)
 {
 	ImageListImpl* impl = m_ImageListImplPtr.get();
 
@@ -1520,8 +1530,10 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	}
 
 	// snapshot the current image so it can be reselected after the load
+	// (unless the caller wants to land on the first item, like an
+	// "open bookmark" action)
 	string strCurrentURI;
-	if (0 < impl->m_QuiverFileList.size())
+	if (0 < impl->m_QuiverFileList.size() && !bSelectFirstItem)
 	{
 		strCurrentURI = impl->m_QuiverFileList[impl->m_iCurrentIndex].GetURI();
 	}
@@ -1534,6 +1546,7 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	pData->strCurrentURI = strCurrentURI;
 	pData->folders = *file_list;
 	pData->bRecursive = bRecursive;
+	pData->bSelectFirstItem = bSelectFirstItem;
 
 	GThread* thread = g_thread_new("quiver-folder-load", ImageList::ImageListImpl::AsyncFolderLoadThread, pData);
 	g_thread_unref(thread);

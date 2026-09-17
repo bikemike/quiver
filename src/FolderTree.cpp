@@ -30,6 +30,7 @@ typedef struct {
 	gboolean separator;
 	gint     node_order;
 	guint    node_depth;
+	gint     bookmark_id;
 } DirItem;
 
 typedef struct {
@@ -117,6 +118,7 @@ static void dir_item_init (DirItem* item)
 	item->separator = FALSE;
 	item->node_order = 0;
 	item->node_depth = 0;
+	item->bookmark_id = -1;
 }
 
 static DirItem* dir_item_new (const gchar* uri, const gchar* display_name,
@@ -130,7 +132,25 @@ static DirItem* dir_item_new (const gchar* uri, const gchar* display_name,
 	item->permanent = permanent;
 	item->node_order = node_order;
 	item->node_depth = node_depth;
+	item->bookmark_id = -1;
 	return item;
+}
+
+/* Canonicalize a filesystem path or a file URI into a file:// URI so the
+ * folder tree can match it against its root/child items, whose uri fields
+ * are always file:// URIs. Callers pass both URIs (bookmarks, shortcuts)
+ * and plain paths (command line folder arguments), and matching happens
+ * only if both sides use the same representation. */
+static std::string folder_tree_normalize_uri(const gchar* arg)
+{
+	if (NULL == arg || '\0' == arg[0])
+		return std::string();
+	GFile* file = g_file_new_for_commandline_arg(arg);
+	char* uri = g_file_get_uri(file);
+	std::string str(uri ? uri : arg);
+	g_free(uri);
+	g_object_unref(file);
+	return str;
 }
 
 // prototype
@@ -462,13 +482,18 @@ void FolderTree::FolderTreeImpl::SyncShortcutSelectionForURI(const gchar* uri, g
 	if (!uri || !m_pShortcutsStore)
 		return;
 
+	std::string normalized = folder_tree_normalize_uri(uri);
+	if (normalized.empty())
+		return;
+	const char* target = normalized.c_str();
+
 	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pShortcutsStore));
 	for (guint i = 0; i < n; i++)
 	{
 		DirItem* it = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pShortcutsStore), i));
 		if (it)
 		{
-			if (it->uri && 0 == g_strcmp0(it->uri, uri))
+			if (it->uri && 0 == g_strcmp0(it->uri, target))
 			{
 				dir_item_set_checked(it, value);
 			}
@@ -484,7 +509,7 @@ void FolderTree::FolderTreeImpl::SyncShortcutSelectionForURI(const gchar* uri, g
 			DirItem* it = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
 			if (it)
 			{
-				if (it->uri && 0 == g_strcmp0(it->uri, uri))
+				if (it->uri && 0 == g_strcmp0(it->uri, target))
 				{
 					dir_item_set_checked(it, value);
 				}
@@ -499,11 +524,16 @@ void FolderTree::FolderTreeImpl::SyncTreeSelectionForURI(const gchar* uri, gbool
 	if (!uri || !m_pTreeListModel || !m_pListStoreRoots)
 		return;
 
-	DirItem* root = FindRootForPath(uri);
+	std::string normalized = folder_tree_normalize_uri(uri);
+	if (normalized.empty())
+		return;
+	const char* target = normalized.c_str();
+
+	DirItem* root = FindRootForPath(target);
 	if (!root)
 		return;
 
-	if (root->uri && 0 == g_strcmp0(root->uri, uri))
+	if (root->uri && 0 == g_strcmp0(root->uri, target))
 	{
 		dir_item_set_checked(root, value);
 		return;
@@ -512,7 +542,7 @@ void FolderTree::FolderTreeImpl::SyncTreeSelectionForURI(const gchar* uri, gbool
 	DirItem* current = root;
 	ExpandItem(current);
 
-	gchar* remaining = g_strdup(uri);
+	gchar* remaining = g_strdup(target);
 	gint tries = 0;
 	gboolean done = FALSE;
 	while (!done && tries < 1000)
@@ -696,10 +726,24 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 {
 	ClearAllCheckboxes();
 
+	// normalize plain paths and file URIs to file:// URIs so the tree can
+	// match them; a folder passed on the command line arrives as a plain
+	// path while tree items always carry file:// URIs
+	std::list<std::string> normUris;
+	{
+		std::list<std::string>::iterator itr;
+		for (itr = uris.begin(); uris.end() != itr; ++itr)
+		{
+			std::string normalized = folder_tree_normalize_uri(itr->c_str());
+			if (!normalized.empty())
+				normUris.push_back(normalized);
+		}
+	}
+
 	guint first_found = G_MAXUINT;
 
 	std::list<std::string>::iterator itr;
-	for (itr = uris.begin(); uris.end() != itr; ++itr)
+	for (itr = normUris.begin(); normUris.end() != itr; ++itr)
 	{
 		SyncShortcutSelectionForURI(itr->c_str(), TRUE);
 
@@ -745,26 +789,43 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 
 			gchar* base = g_strdup(current->uri);
 			GFile* cur_file = g_file_new_for_uri(base);
+			// remaining stays the FULL target path for the whole walk;
+			// the loop locates the child that is either an ancestor of
+			// the target (drop down into it) or equals the target.
 			GFile* tgt_file = g_file_new_for_uri(remaining);
 
 			DirItem* next = NULL;
 			guint child_count = g_list_model_get_n_items(children);
 			for (guint c = 0 ; c < child_count ; c++)
 			{
+				// child is a real row item returned by the model; take
+				// ownership of the reference so the walk can descend into
+				// it on later iterations (FindItemPosition must see the
+				// model item, not a copy)
 				DirItem* child = DIR_ITEM(g_list_model_get_item(children, c));
-				DirItem* child_copy = dir_item_new(child->uri, child->display_name, child->icon_name, child->permanent, child->node_order, child->node_depth);
-				g_object_unref(child);
-
-				GFile* child_file = g_file_new_for_uri(child_copy->uri);
-				if (g_file_has_prefix(tgt_file, child_file))
+				if (NULL == child || NULL == child->uri)
 				{
-					next = child_copy;
-					// do not unref: returning ownership
+					if (NULL != child)
+						g_object_unref(child);
+					continue;
+				}
+
+				GFile* child_file = g_file_new_for_uri(child->uri);
+				if (g_file_equal(child_file, tgt_file))
+				{
+					next = child;
+					done = TRUE;
+					g_object_unref(child_file);
+					break;
+				}
+				else if (g_file_has_prefix(tgt_file, child_file))
+				{
+					next = child;
 					g_object_unref(child_file);
 					break;
 				}
 				g_object_unref(child_file);
-				g_object_unref(child_copy);
+				g_object_unref(child);
 			}
 			g_object_unref(cur_file);
 			g_object_unref(tgt_file);
@@ -772,23 +833,19 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 
 			if (NULL != next)
 			{
-				if (0 == g_ascii_strcasecmp(next->uri, itr->c_str())
-					|| 0 == g_strcmp0(next->uri, itr->c_str()))
+				if (done)
 				{
 					SetCheckboxForItem(next, TRUE);
 					guint fpos = FindItemPosition(next);
 					if (G_MAXUINT == first_found)
 						first_found = fpos;
 					g_object_unref(next);
-					done = TRUE;
 				}
 				else
 				{
 					g_object_unref(current);
 					current = next;
 					ExpandItem(current);
-					g_free(remaining);
-					remaining = g_strdup(next->uri);
 				}
 			}
 			else
@@ -1037,6 +1094,27 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 			if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
 			{
 				gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, TRUE);
+			}
+			const Bookmark* bm = NULL;
+			if (item->bookmark_id >= 0)
+			{
+				BookmarksPtr bmPtr = Bookmarks::GetInstance();
+				bm = bmPtr->GetBookmark(item->bookmark_id);
+			}
+			if (NULL != bm)
+			{
+				/* Open like the bookmark menu: all the bookmark's folders,
+				 * honoring its "include subfolders" (recursive) option. */
+				std::list<std::string> uris = bm->GetURIs();
+				std::list<std::string>::const_iterator uri;
+				for (uri = uris.begin(); uris.end() != uri; ++uri)
+				{
+					impl->SyncTreeSelectionForURI(uri->c_str(), TRUE);
+					impl->SyncShortcutSelectionForURI(uri->c_str(), TRUE);
+				}
+				impl->m_pFolderTree->EmitBookmarkOpenEvent(uris, bm->GetRecursive());
+				gtk_widget_grab_focus(w);
+				return;
 			}
 			impl->SyncTreeSelectionForURI(item->uri, TRUE);
 		}
@@ -1579,22 +1657,68 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 					g_object_get_data(G_OBJECT(w), "bm-impl"));
 			DirItem* item = static_cast<DirItem*>(
 				g_object_get_data(G_OBJECT(w), "bm-item"));
+			guint pos = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(w), "bm-pos"));
 			if (NULL != impl && NULL != item &&
 				!g_object_get_data(G_OBJECT(w), "set-active-guard"))
 			{
 				gboolean active = gtk_check_button_get_active(GTK_CHECK_BUTTON(w));
 				if (item->checked != active)
 				{
-					dir_item_set_checked(item, active);
-					guint pos = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(w), "bm-pos"));
-					if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
+					const Bookmark* bm = NULL;
+					if (item->bookmark_id >= 0)
 					{
-						if (active)
-							gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, FALSE);
-						else
-							gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos);
+						BookmarksPtr bmPtr = Bookmarks::GetInstance();
+						bm = bmPtr->GetBookmark(item->bookmark_id);
 					}
-					impl->SyncTreeSelectionForURI(item->uri, active);
+
+					if (active)
+					{
+						/* Checking a bookmark behaves like clicking its row
+						 * (or the bookmark menu entry): open every folder of
+						 * the bookmark, honoring "include subfolders". */
+						impl->ClearAllCheckboxes();
+						dir_item_set_checked(item, TRUE);
+						if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
+						{
+							gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, TRUE);
+						}
+						if (NULL != bm)
+						{
+							std::list<std::string> uris = bm->GetURIs();
+							std::list<std::string>::const_iterator uri;
+							for (uri = uris.begin(); uris.end() != uri; ++uri)
+							{
+								impl->SyncTreeSelectionForURI(uri->c_str(), TRUE);
+								impl->SyncShortcutSelectionForURI(uri->c_str(), TRUE);
+							}
+							impl->m_pFolderTree->EmitBookmarkOpenEvent(uris, bm->GetRecursive());
+							return;
+						}
+						impl->SyncTreeSelectionForURI(item->uri, TRUE);
+					}
+					else
+					{
+						dir_item_set_checked(item, FALSE);
+						if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
+						{
+							gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos);
+						}
+						if (NULL != bm)
+						{
+							std::list<std::string> uris = bm->GetURIs();
+							std::list<std::string>::const_iterator uri;
+							for (uri = uris.begin(); uris.end() != uri; ++uri)
+							{
+								impl->SyncTreeSelectionForURI(uri->c_str(), FALSE);
+								impl->SyncShortcutSelectionForURI(uri->c_str(), FALSE);
+							}
+						}
+						else
+						{
+							impl->SyncTreeSelectionForURI(item->uri, FALSE);
+						}
+					}
+					gtk_widget_grab_focus(w);
 					impl->m_pFolderTree->EmitSelectionChangedEvent();
 				}
 			}
@@ -2518,8 +2642,9 @@ void FolderTree::FolderTreeImpl::PopulateBookmarksModel(GListStore *store)
 			std::string bm_uri = bm.GetURIs().front();
 			const char* icon = QuiverUtils::GetSpecialFolderSymbolicIconName(bm_uri.c_str());
 			std::string icon_name = icon ? icon : (!bm.GetIcon().empty() ? bm.GetIcon() : "folder-symbolic");
-			g_list_store_append(store,
-				G_OBJECT(dir_item_new(bm_uri.c_str(), bm.GetName().c_str(), icon_name.c_str(), FALSE, order++, 0)));
+			DirItem* item = dir_item_new(bm_uri.c_str(), bm.GetName().c_str(), icon_name.c_str(), FALSE, order++, 0);
+			item->bookmark_id = bm.GetID();
+			g_list_store_append(store, G_OBJECT(item));
 		}
 	} catch (...) {}
 }
