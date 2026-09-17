@@ -3,8 +3,6 @@
 #include <gtk/gtk.h>
 
 
-#define ICON_DIR  QUIVER_DATADIR "/icons"
-
 void QuiverStockIcons::Load()
 {
 	GdkDisplay* display = gdk_display_get_default();
@@ -14,5 +12,6 @@ void QuiverStockIcons::Load()
 	}
 
 	GtkIconTheme* icon_theme = gtk_icon_theme_get_for_display(display);
-	gtk_icon_theme_add_search_path(icon_theme, ICON_DIR);
+	std::string icon_dir = quiver_get_resource_path("icons");
+	gtk_icon_theme_add_search_path(icon_theme, icon_dir.c_str());
 }

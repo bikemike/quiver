@@ -1,0 +1,49 @@
+name: quiver
+base: core24
+version: '0.3.0'
+summary: Fast, responsive image viewer and photo manager for GTK4
+description: |
+  Quiver is a fast, responsive image and video viewer and organizer built with GTK4.
+  Features include smooth transitions, fast thumbnail caching, lossless JPEG
+  transformations, EXIF metadata editing, and video playback support.
+
+grade: stable
+confinement: strict
+
+apps:
+  quiver:
+    command: usr/bin/quiver
+    extensions: [gnome]
+    plugs:
+      - home
+      - removable-media
+      - opengl
+      - audio-playback
+      - wayland
+      - x11
+
+parts:
+  quiver:
+    plugin: cmake
+    source: .
+    cmake-parameters:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DBUILD_TESTING=OFF
+    build-packages:
+      - libgtk-4-dev
+      - libgstreamer1.0-dev
+      - libgstreamer-plugins-base1.0-dev
+      - libexiv2-dev
+      - libavformat-dev
+      - libavcodec-dev
+      - libswscale-dev
+      - libsqlite3-dev
+      - libjpeg-dev
+      - zlib1g-dev
+      - libboost-dev
+    stage-packages:
+      - gstreamer1.0-plugins-good
+      - gstreamer1.0-plugins-bad
+      - gstreamer1.0-plugins-ugly
+      - gstreamer1.0-libav

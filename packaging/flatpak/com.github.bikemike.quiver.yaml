@@ -1,0 +1,50 @@
+app-id: com.github.bikemike.quiver
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+command: quiver
+
+finish-args:
+  # Display & Graphics
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Audio playback for videos
+  - --socket=pulseaudio
+  # Filesystem access for browsing and managing photos
+  - --filesystem=host
+  - --filesystem=xdg-pictures:ro
+  # D-Bus integration
+  - --own-name=com.github.bikemike.quiver
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - /share/pkgconfig
+  - '*.a'
+  - '*.la'
+
+modules:
+  - name: exiv2
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DEXIV2_BUILD_SAMPLES=OFF
+      - -DEXIV2_BUILD_UNIT_TESTS=OFF
+      - -DEXIV2_ENABLE_NLS=OFF
+      - -DEXIV2_ENABLE_WEB_READY=OFF
+    sources:
+      - type: archive
+        url: https://github.com/Exiv2/exiv2/releases/download/v0.28.2/exiv2-0.28.2-Source.tar.gz
+        sha256: 0e768364f7a142718919c674e25ae99bab38b8c5417855b41fae0a2db7593dd8
+
+  - name: quiver
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: dir
+        path: ../..

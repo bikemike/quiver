@@ -4,11 +4,44 @@
 #define HAVE_EXT 1
 #define HAVE_CXX0X 1
 #define GETTEXT_PACKAGE "@GETTEXT_PACKAGE@"
-#define PACKAGE_STRING "quiver 0.2.0"
-#define PACKAGE_VERSION "0.2.0"
-#define PACKAGE_BUGREPORT "http://mike.yi.org/quiver"
+#define PACKAGE_STRING "quiver @PROJECT_VERSION@"
+#define PACKAGE_VERSION "@PROJECT_VERSION@"
+#define PACKAGE_BUGREPORT "https://github.com/bikemike/quiver/issues"
 
 #cmakedefine01 HAVE_GLYCIN
 #cmakedefine01 HAVE_GDK_PIXBUF
+
+#ifdef __cplusplus
+#include <string>
+#include <glib.h>
+
+inline std::string quiver_get_resource_path(const char* rel_path) {
+    const char* env_dir = g_getenv("QUIVER_DATADIR");
+    if (env_dir) {
+        std::string p = std::string(env_dir) + "/" + rel_path;
+        if (g_file_test(p.c_str(), G_FILE_TEST_EXISTS))
+            return p;
+    }
+#ifdef QUIVER_DATADIR
+    std::string installed_path = std::string(QUIVER_DATADIR) + "/" + rel_path;
+    if (g_file_test(installed_path.c_str(), G_FILE_TEST_EXISTS))
+        return installed_path;
+#endif
+#ifdef QUIVER_SOURCE_DATADIR
+    std::string source_path = std::string(QUIVER_SOURCE_DATADIR) + "/" + rel_path;
+    if (g_file_test(source_path.c_str(), G_FILE_TEST_EXISTS))
+        return source_path;
+#endif
+    if (g_file_test((std::string("data/") + rel_path).c_str(), G_FILE_TEST_EXISTS))
+        return std::string("data/") + rel_path;
+    if (g_file_test((std::string("../data/") + rel_path).c_str(), G_FILE_TEST_EXISTS))
+        return std::string("../data/") + rel_path;
+#ifdef QUIVER_DATADIR
+    return std::string(QUIVER_DATADIR) + "/" + rel_path;
+#else
+    return std::string("data/") + rel_path;
+#endif
+}
+#endif
 
 #endif

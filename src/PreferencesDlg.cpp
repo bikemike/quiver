@@ -192,7 +192,7 @@ PreferencesDlg::PreferencesDlgPriv::PreferencesDlgPriv(PreferencesDlg *parent) :
 		"adjustment2",
 		NULL
 	};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", (const char**)objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, quiver_get_resource_path("quiver.ui").c_str(), (const char**)objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();

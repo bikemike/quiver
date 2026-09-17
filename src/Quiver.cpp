@@ -1292,7 +1292,7 @@ void QuiverImpl::RebuildMenubar()
 	 * states never collide in a shared placeholder. */
 	if (NULL == m_pMenubarBuilder)
 	{
-		m_pMenubarBuilder = gtk_builder_new_from_file(QUIVER_DATADIR "/" "quiver-menus.ui");
+		m_pMenubarBuilder = gtk_builder_new_from_file(quiver_get_resource_path("quiver-menus.ui").c_str());
 		if (NULL == m_pMenubarBuilder)
 		{
 			g_warning("Failed to load menu UI file quiver-menus.ui");
@@ -1853,7 +1853,8 @@ void Quiver::Init()
 
 	ApplyForceDarkTheme();
 	
-	gchar *icon_path = g_build_filename(QUIVER_DATADIR, "icons", "48x48", "quiver-icon-app.png", NULL);
+	std::string icon_file = quiver_get_resource_path("icons/48x48/quiver-icon-app.png");
+	gchar *icon_path = g_strdup(icon_file.c_str());
 	(void)icon_path;
 	gtk_window_set_default_icon_name("quiver-icon-app");
 	g_free(icon_path);	
@@ -2783,7 +2784,7 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 	 * (browser_box / viewer_box); the shared box is always visible.  Because
 	 * they are separate boxes, one state's controls can never be removed while
 	 * the other state is active. */
-	GtkBuilder *builder = gtk_builder_new_from_file(QUIVER_DATADIR "/" "quiver-toolbar.ui");
+	GtkBuilder *builder = gtk_builder_new_from_file(quiver_get_resource_path("quiver-toolbar.ui").c_str());
 	if (NULL == builder)
 	{
 		g_error("Failed to load toolbar UI file");

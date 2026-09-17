@@ -68,6 +68,7 @@ target_compile_definitions(quiver_core PUBLIC
     PACKAGE_SRC_DIR="${PACKAGE_SRC_DIR}"
     PACKAGE_DATA_DIR="${PACKAGE_DATA_DIR}"
     QUIVER_DATADIR="${QUIVER_DATADIR}"
+    QUIVER_SOURCE_DATADIR="${CMAKE_SOURCE_DIR}/data"
 )
 
 target_include_directories(quiver_core PUBLIC
@@ -96,3 +97,7 @@ endif()
 
 add_executable(quiver Quiver.cpp)
 target_link_libraries(quiver PRIVATE quiver_core)
+
+install(TARGETS quiver
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)

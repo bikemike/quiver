@@ -241,7 +241,7 @@ OrganizeDlg::OrganizeDlgPriv::OrganizeDlgPriv(OrganizeDlg *parent) :
 		"OrganizeDialog",
 		"adjustment8",
 		NULL};
-	gtk_builder_add_objects_from_file(m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file(m_pGtkBuilder, quiver_get_resource_path("quiver.ui").c_str(), objectids, NULL);
 
 	LoadWidgets();
 	UpdateUI();

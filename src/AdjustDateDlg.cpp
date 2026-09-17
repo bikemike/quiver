@@ -204,7 +204,7 @@ AdjustDateDlg::AdjustDateDlgPriv::AdjustDateDlgPriv(AdjustDateDlg *parent) :
 		"adjustment6", 
 		"adjustment7", 
 		NULL};
-	gtk_builder_add_objects_from_file (m_pGtkBuilder, QUIVER_DATADIR "/" "quiver.ui", objectids, NULL);
+	gtk_builder_add_objects_from_file (m_pGtkBuilder, quiver_get_resource_path("quiver.ui").c_str(), objectids, NULL);
 	m_bRunDone = false;
 	m_iRunResponse = GTK_RESPONSE_NONE;
 

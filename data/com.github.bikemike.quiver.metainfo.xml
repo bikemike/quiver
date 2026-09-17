@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.bikemike.quiver</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+  <name>Quiver</name>
+  <summary>Fast and responsive image viewer and photo manager</summary>
+  <description>
+    <p>
+      Quiver is a high-performance image viewer and manager built for the GNOME desktop using GTK4.
+      It focuses on speed, responsiveness, and seamless navigation across large photo collections.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Fast thumbnail browsing and asynchronous caching</li>
+      <li>Full-screen viewing with slideshow capabilities</li>
+      <li>Video playback support with smooth seek and timeline controls</li>
+      <li>Lossless JPEG transformations (rotate, flip)</li>
+      <li>EXIF and IPTC metadata viewing and date adjustments</li>
+      <li>Tagging, bookmarking, and external tool integration</li>
+      <li>Fluid animations and modern GTK4 interface</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">quiver.desktop</launchable>
+  <url type="homepage">https://github.com/bikemike/quiver</url>
+  <url type="bugtracker">https://github.com/bikemike/quiver/issues</url>
+  <provides>
+    <binary>quiver</binary>
+  </provides>
+  <developer id="com.github.bikemike">
+    <name>Mike Morrison</name>
+  </developer>
+  <releases>
+    <release version="0.3.0" date="2026-09-16">
+      <description>
+        <p>GTK4 migration, smooth play/pause animations, responsive thumbnail browsing, and modern C++20 codebase.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>
