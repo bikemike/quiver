@@ -185,6 +185,7 @@ else()
   set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.38), libgtk-4-1 (>= 4.12.0), libgstreamer1.0-0 (>= 1.2.0), libgstreamer-plugins-base1.0-0, libexiv2-28 | libexiv2-27, libsqlite3-0, libjpeg8, zlib1g")
 endif()
 set(CPACK_DEBIAN_PACKAGE_GENERATE_SHLIBS ON)
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 
 # Source package settings

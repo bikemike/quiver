@@ -22,12 +22,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            cmake ninja-build file dpkg-dev \
+            cmake ninja-build pkgconf file dpkg-dev \
             libgtk-4-dev libglib2.0-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \
-            libexiv2-dev libavformat-dev libavcodec-dev libswscale-dev \
-            libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev
+            libexiv2-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev \
+            catch2 xvfb \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
 
       - name: Configure CMake
         run: |
@@ -40,7 +43,7 @@ jobs:
         run: cmake --build build
 
       - name: Run Tests
-        run: ctest --test-dir build --output-on-failure
+        run: xvfb-run -a ctest --test-dir build --output-on-failure
 
       - name: Package with CPack (.deb & .tar.gz)
         run: |
@@ -65,7 +68,7 @@ jobs:
   # --------------------------------------------------------------------------
   build-appimage:
     name: Build AppImage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -74,10 +77,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            cmake ninja-build wget file \
+            cmake ninja-build pkgconf wget file libfuse2t64 \
             libgtk-4-dev libglib2.0-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            libexiv2-dev libavformat-dev libavcodec-dev libswscale-dev \
+            libgstreamer-plugins-bad1.0-dev \
+            libexiv2-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
             libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev
 
       - name: Build AppImage
@@ -95,21 +99,19 @@ jobs:
   build-flatpak:
     name: Build Flatpak
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-46
+      options: --privileged
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Flatpak environment
-        uses: flatpak/flatpak-github-actions/setup-flatpak@v1
-        with:
-          runtime-repo: https://dl.flathub.org/repo/flathub.flatpakrepo
-
       - name: Build Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v1
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: Quiver.flatpak
           manifest-path: packaging/flatpak/com.github.bikemike.quiver.yaml
-          app-id: com.github.bikemike.quiver
+          cache-key: flatpak-builder-${{ github.sha }}
 
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4

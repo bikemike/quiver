@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Build script for Quiver AppImage using linuxdeploy & linuxdeploy-plugin-gtk
+export APPIMAGE_EXTRACT_AND_RUN=1
 BUILD_DIR="${1:-build-appimage}"
 APP_DIR="${BUILD_DIR}/AppDir"
 

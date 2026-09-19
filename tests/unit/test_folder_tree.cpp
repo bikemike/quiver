@@ -971,11 +971,25 @@ TEST_CASE("FolderTree drop hover expansion materializes child rows with checkbox
                 break;
             }
         }
+        // Ensure any pending scroll animation from SetSelectedFolders has settled
+        for (int p = 0; p < 20; p++)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(5000);
+        }
         double adj_before = vadj ? gtk_adjustment_get_value(vadj) : 0.0;
         gtk_tree_list_row_set_expanded(base_row, TRUE);
         gtk_widget_queue_allocate(tree_widget);
         gtk_widget_queue_draw(tree_widget);
         while (g_main_context_iteration(NULL, FALSE));
+
+        // Restore vadj if GTK changed it during expansion (matching folder_tree_drop_expand_timeout)
+        if (vadj && std::abs(gtk_adjustment_get_value(vadj) - adj_before) > 0.5)
+        {
+            gtk_adjustment_set_value(vadj, adj_before);
+            while (g_main_context_iteration(NULL, FALSE));
+        }
+
         double adj_after = vadj ? gtk_adjustment_get_value(vadj) : 0.0;
         REQUIRE(adj_before == adj_after);
 

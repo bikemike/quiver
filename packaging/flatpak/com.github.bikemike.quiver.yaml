@@ -35,10 +35,39 @@ modules:
       - -DEXIV2_BUILD_UNIT_TESTS=OFF
       - -DEXIV2_ENABLE_NLS=OFF
       - -DEXIV2_ENABLE_WEB_READY=OFF
+      - -DEXIV2_ENABLE_INIH=OFF
+      - -DEXIV2_ENABLE_BROTLI=OFF
+    sources:
+      - type: git
+        url: https://github.com/Exiv2/exiv2.git
+        tag: v0.28.2
+        commit: 04207b9c39bf7b3b1a7144f7ed4e4f16b4f29ef6
+
+  - name: boost-headers
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/include
+      - cp -r boost /app/include/
     sources:
       - type: archive
-        url: https://github.com/Exiv2/exiv2/releases/download/v0.28.2/exiv2-0.28.2-Source.tar.gz
-        sha256: 0e768364f7a142718919c674e25ae99bab38b8c5417855b41fae0a2db7593dd8
+        url: https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.bz2
+        sha256: cc4b893acf645c9d4b698e9a0f08ca8846aa5d6c68275c14c3e7949c24109454
+
+  - name: ffmpeg
+    buildsystem: autotools
+    config-opts:
+      - --prefix=/app
+      - --disable-programs
+      - --disable-doc
+      - --disable-static
+      - --enable-shared
+      - --disable-yasm
+      - --disable-asm
+      - --enable-gpl
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-6.1.2.tar.xz
+        sha256: 3b624649725ecdc565c903ca6643d41f33bd49239922e45c9b1442c63dca4e38
 
   - name: quiver
     buildsystem: cmake-ninja

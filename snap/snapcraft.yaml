@@ -31,12 +31,16 @@ parts:
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DBUILD_TESTING=OFF
     build-packages:
+      - pkgconf
       - libgtk-4-dev
+      - libglib2.0-dev
       - libgstreamer1.0-dev
       - libgstreamer-plugins-base1.0-dev
+      - libgstreamer-plugins-bad1.0-dev
       - libexiv2-dev
       - libavformat-dev
       - libavcodec-dev
+      - libavutil-dev
       - libswscale-dev
       - libsqlite3-dev
       - libjpeg-dev
