@@ -63,6 +63,7 @@ public:
 	void OnFullScreen();
 	void OnShowProperties(bool bShow);
 	void OnSlideShow(bool bStart);
+	void AbortSlideShow();
 	void OnShowToolbar(bool bShow);
 	void OnShowStatusbar(bool bShow);
 	void OnShowMenubar(bool bShow);

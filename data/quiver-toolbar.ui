@@ -28,17 +28,6 @@
       <object class="GtkBox" id="shared_box">
         <property name="orientation">horizontal</property>
         <property name="spacing">2</property>
-        <child>
-          <object class="GtkToggleButton">
-            <property name="action-name">quiver.FullScreen</property>
-            <property name="tooltip-text">Toggle Full Screen Mode</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">view-fullscreen-symbolic</property>
-              </object>
-            </child>
-          </object>
-        </child>
       </object>
     </child>
 

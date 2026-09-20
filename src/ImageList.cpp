@@ -298,7 +298,10 @@ ImageList::GetNext() const
 QuiverFile
 ImageList::GetCurrent() const
 {
-	assert ( GetSize() );
+	if (0 == GetSize())
+	{
+		return QuiverFile();
+	}
 	return m_ImageListImplPtr->m_QuiverFileList[GetCurrentIndex()];
 }
 

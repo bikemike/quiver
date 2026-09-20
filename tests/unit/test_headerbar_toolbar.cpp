@@ -93,7 +93,18 @@ TEST_CASE("Toolbar UI Layout and Widget Order", "[unit][gui][toolbar]")
         }
     }
 
-    SECTION("Shared box is the first child (full-screen on the far left)")
+    SECTION("Shared box has no fullscreen control")
+    {
+        for (GtkWidget *child = gtk_widget_get_first_child(sharedBox); child;
+             child = gtk_widget_get_next_sibling(child))
+        {
+            if (!GTK_IS_ACTIONABLE(child)) continue;
+            const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(child));
+            REQUIRE(std::string(actionName ? actionName : "") != "quiver.FullScreen");
+        }
+    }
+
+    SECTION("Shared box is the first child")
     {
         GtkWidget *firstToolbarChild = gtk_widget_get_first_child(toolbar);
         REQUIRE(firstToolbarChild == sharedBox);
@@ -196,6 +207,35 @@ TEST_CASE("Hamburger menu structure has no File/Edit/Help top levels and About l
     // About must be the final entry in the flat menu model.
     REQUIRE(!allLabels.empty());
     REQUIRE(allLabels.back() == "_About");
+
+    // Verify icons on key menu items
+    std::map<std::string, std::string> itemIcons;
+    std::function<void(GMenuModel*)> walkIcons = [&](GMenuModel *mm) {
+        const int c = g_menu_model_get_n_items(mm);
+        for (int i = 0; i < c; ++i)
+        {
+            g_autoptr(GMenuModel) sec = g_menu_model_get_item_link(mm, i, G_MENU_LINK_SECTION);
+            g_autoptr(GMenuModel) sub = g_menu_model_get_item_link(mm, i, G_MENU_LINK_SUBMENU);
+            g_autofree gchar *label = NULL;
+            g_autofree gchar *icon = NULL;
+            g_menu_model_get_item_attribute(mm, i, "label", "s", &label);
+            g_menu_model_get_item_attribute(mm, i, "icon", "s", &icon);
+            if (label && icon)
+            {
+                itemIcons[label] = icon;
+            }
+            if (sec) walkIcons(sec);
+            if (sub) walkIcons(sub);
+        }
+    };
+    walkIcons(model);
+
+    CHECK(itemIcons["_Viewer"] == "image-x-generic-symbolic");
+    CHECK(itemIcons["_Browser"] == "folder-symbolic");
+    CHECK(itemIcons["_Full Screen"] == "fullscreen-square-symbolic");
+    CHECK(itemIcons["_Slide Show"] == "display-projector-symbolic");
+    CHECK(itemIcons["Properties"] == "document-properties-symbolic");
+    CHECK(itemIcons["_About"] == "help-about-symbolic");
 
     g_object_unref(builder);
 }

@@ -149,6 +149,10 @@ namespace QuiverUtils
 
 	/* Title row for the top of a context menu (file name + folder). */
 	GtkWidget* MakeMenuTitleLabel(const char *name, const char *location);
+
+	/* Traverses a GtkPopoverMenu hierarchy and ensures that all GtkImage icons
+	 * associated with menu items are made visible. */
+	void EnablePopoverMenuIcons(GtkWidget *popover);
 }
 
 #endif

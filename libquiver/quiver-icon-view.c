@@ -82,6 +82,10 @@ struct _QuiverIconViewPrivate
 	
 	guint timeout_id_smooth_scroll;
 	guint timeout_id_smooth_scroll_slowdown;
+	guint tick_id_smooth_scroll;
+	guint tick_id_smooth_scroll_slowdown;
+	gint64 smooth_scroll_last_time;
+	gint64 smooth_scroll_slowdown_last_time;
 	QuiverIconViewScrollCallback scroll_complete_cb;
 	gpointer scroll_complete_data;
 	gulong scroll_complete_cell;
@@ -203,6 +207,9 @@ static void      quiver_icon_view_reset_resize_anchor (QuiverIconView *iconview)
 
 
 static void      remove_timeout_smooth_scroll(QuiverIconView *iconview);
+static void      quiver_icon_view_stop_smooth_scroll_slowdown(QuiverIconView *iconview);
+static void      quiver_icon_view_start_smooth_scroll(QuiverIconView *iconview);
+static void      quiver_icon_view_start_smooth_scroll_slowdown(QuiverIconView *iconview);
 
 static void      quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjustment,
                     QuiverIconView *iconview);
@@ -210,8 +217,11 @@ static void      quiver_icon_view_adjustment_value_changed (GtkAdjustment *adjus
 static void      quiver_icon_view_scroll_to_cell_smooth(QuiverIconView *iconview, gulong cell);
 static void      quiver_icon_view_scroll_to_adjustment_smooth(QuiverIconView *iconview, gint hadjust, gint vadjust);
 
-static gboolean  quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview);
+static gboolean  quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview, gint64 frame_time_us);
+static gboolean  quiver_icon_view_tick_smooth_scroll(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data);
 static gboolean  quiver_icon_view_timeout_smooth_scroll(gpointer data);
+static gboolean  quiver_icon_view_smooth_scroll_slowdown_step(QuiverIconView* iconview, gint64 frame_time_us);
+static gboolean  quiver_icon_view_tick_smooth_scroll_slowdown(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data);
 static gboolean  quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data);
 
 static void      quiver_icon_view_set_property (GObject *object,
@@ -549,6 +559,10 @@ quiver_icon_view_init(QuiverIconView *iconview)
 
 	iconview->priv->timeout_id_smooth_scroll          = 0;
 	iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	iconview->priv->tick_id_smooth_scroll             = 0;
+	iconview->priv->tick_id_smooth_scroll_slowdown    = 0;
+	iconview->priv->smooth_scroll_last_time           = 0;
+	iconview->priv->smooth_scroll_slowdown_last_time  = 0;
 	iconview->priv->scroll_complete_cb                = NULL;
 	iconview->priv->scroll_complete_data              = NULL;
 	iconview->priv->scroll_complete_cell              = G_MAXULONG;
@@ -606,11 +620,7 @@ quiver_icon_view_dispose(GObject *object)
 		iconview->priv->timeout_id_rubberband_scroll = 0;
 	}
 
-	if (0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
-	{
-		g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
-		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
-	}
+	quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 
 	if (iconview->priv->hadjustment)
 	{
@@ -1554,7 +1564,7 @@ gboolean quiver_icon_view_scroll_event_cb ( GtkEventControllerScroll *controller
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
-	if (0 != iconview->priv->timeout_id_smooth_scroll &&
+	if ((0 != iconview->priv->timeout_id_smooth_scroll || 0 != iconview->priv->tick_id_smooth_scroll) &&
 		iconview->priv->smooth_scroll_cell == G_MAXULONG)
 	{
 		hadjust = iconview->priv->smooth_scroll_hadjust;
@@ -1692,71 +1702,110 @@ quiver_icon_view_set_vadjustment (QuiverIconView *iconview, GtkAdjustment *adj)
 
 static void remove_timeout_smooth_scroll(QuiverIconView *iconview)
 {
+	if (0 != iconview->priv->tick_id_smooth_scroll)
+	{
+		gtk_widget_remove_tick_callback(GTK_WIDGET(iconview), iconview->priv->tick_id_smooth_scroll);
+		iconview->priv->tick_id_smooth_scroll = 0;
+	}
 	if (0 != iconview->priv->timeout_id_smooth_scroll)
 	{
 		g_source_remove (iconview->priv->timeout_id_smooth_scroll);
 		iconview->priv->timeout_id_smooth_scroll = 0;
-		iconview->priv->smooth_scroll_cell = G_MAXULONG;
-		iconview->priv->smooth_scroll_hadjust = 0.;
-		iconview->priv->smooth_scroll_vadjust = 0.;
 	}
+	iconview->priv->smooth_scroll_cell = G_MAXULONG;
+	iconview->priv->smooth_scroll_hadjust = 0.;
+	iconview->priv->smooth_scroll_vadjust = 0.;
+	iconview->priv->smooth_scroll_last_time = 0;
 	iconview->priv->scroll_complete_cb = NULL;
 	iconview->priv->scroll_complete_data = NULL;
 	iconview->priv->scroll_complete_cell = G_MAXULONG;
 }
-		
+
 static void
-quiver_icon_view_scroll_to_adjustment_smooth(QuiverIconView *iconview, gint hadjust, gint vadjust)
+quiver_icon_view_stop_smooth_scroll_slowdown(QuiverIconView *iconview)
 {
-	if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
+	if (0 != iconview->priv->tick_id_smooth_scroll_slowdown)
+	{
+		gtk_widget_remove_tick_callback(GTK_WIDGET(iconview), iconview->priv->tick_id_smooth_scroll_slowdown);
+		iconview->priv->tick_id_smooth_scroll_slowdown = 0;
+	}
+	if (0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
 	{
 		g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
 		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
 	}
+	if (iconview->priv->velocity_time_list != NULL)
+	{
+		g_list_free_full(iconview->priv->velocity_time_list, g_free);
+		iconview->priv->velocity_time_list = NULL;
+	}
+	iconview->priv->smooth_scroll_slowdown_last_time = 0;
+}
+
+static void
+quiver_icon_view_start_smooth_scroll(QuiverIconView *iconview)
+{
+	if (0 == iconview->priv->tick_id_smooth_scroll && 0 == iconview->priv->timeout_id_smooth_scroll)
+	{
+		iconview->priv->smooth_scroll_last_time = g_get_monotonic_time();
+		if (gtk_widget_get_mapped(GTK_WIDGET(iconview)))
+		{
+			iconview->priv->tick_id_smooth_scroll =
+				gtk_widget_add_tick_callback(GTK_WIDGET(iconview),
+				                             quiver_icon_view_tick_smooth_scroll,
+				                             iconview,
+				                             NULL);
+		}
+		else
+		{
+			iconview->priv->timeout_id_smooth_scroll =
+				g_timeout_add(16, quiver_icon_view_timeout_smooth_scroll, iconview);
+		}
+	}
+	quiver_icon_view_smooth_scroll_step(iconview, g_get_monotonic_time());
+}
+
+static void
+quiver_icon_view_scroll_to_adjustment_smooth(QuiverIconView *iconview, gint hadjust, gint vadjust)
+{
+	quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 
 	iconview->priv->smooth_scroll_cell = G_MAXULONG;
 	iconview->priv->smooth_scroll_hadjust = hadjust;
 	iconview->priv->smooth_scroll_vadjust = vadjust;
 
-	if (0 == iconview->priv->timeout_id_smooth_scroll)
-	{
-		iconview->priv->timeout_id_smooth_scroll = g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll,iconview);
-	}
-
-	quiver_icon_view_smooth_scroll_step(iconview);
+	quiver_icon_view_start_smooth_scroll(iconview);
 }
 
 static void quiver_icon_view_scroll_to_cell_smooth(QuiverIconView *iconview, gulong cell)
 {
-	if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
-	{
-		g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
-		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
-	}
-
+	quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 
 	iconview->priv->smooth_scroll_cell = cell;
 
-	if (0 == iconview->priv->timeout_id_smooth_scroll)
-	{
-		iconview->priv->timeout_id_smooth_scroll = g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll,iconview);
-	}
-
-	quiver_icon_view_smooth_scroll_step(iconview);
+	quiver_icon_view_start_smooth_scroll(iconview);
 }
 
 static gboolean
-quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
+quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview, gint64 frame_time_us)
 {
+	gdouble dt = 0.016;
+	if (iconview->priv->smooth_scroll_last_time > 0 && frame_time_us > iconview->priv->smooth_scroll_last_time)
+	{
+		dt = (gdouble)(frame_time_us - iconview->priv->smooth_scroll_last_time) / 1000000.0;
+		if (dt > 0.05) dt = 0.05;
+	}
+	iconview->priv->smooth_scroll_last_time = frame_time_us;
+
 	gboolean hdone = FALSE; 
 	gboolean vdone = FALSE; 
 	
 	gulong cell = iconview->priv->smooth_scroll_cell;
 
-	gint hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
-	gint vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
-	gint new_hadjust = hadjust;
-	gint new_vadjust = vadjust;
+	gdouble hadjust = (iconview->priv->hadjustment != NULL) ? gtk_adjustment_get_value(iconview->priv->hadjustment) : 0.0;
+	gdouble vadjust = (iconview->priv->vadjustment != NULL) ? gtk_adjustment_get_value(iconview->priv->vadjustment) : 0.0;
+	gdouble new_hadjust = hadjust;
+	gdouble new_vadjust = vadjust;
 
 	if (G_MAXULONG == cell)
 	{
@@ -1766,8 +1815,9 @@ quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 	}
 	else
 	{
-		guint cols,rows;
-		quiver_icon_view_get_col_row_count(iconview,&cols,&rows);
+		guint cols = 1, rows = 1;
+		quiver_icon_view_get_col_row_count(iconview, &cols, &rows);
+		if (cols == 0) cols = 1;
 
 		guint cell_width = quiver_icon_view_get_cell_width(iconview);
 		guint cell_height = quiver_icon_view_get_cell_height(iconview);
@@ -1777,70 +1827,100 @@ quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 
 		if (QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER == iconview->priv->scroll_type)
 		{
-			new_hadjust = cell_x - gtk_adjustment_get_page_size(iconview->priv->hadjustment)/2 + cell_width/2;
-			new_hadjust = MAX (0,new_hadjust);
-			new_hadjust = MIN(new_hadjust, gtk_adjustment_get_upper(iconview->priv->hadjustment) - gtk_adjustment_get_page_size(iconview->priv->hadjustment));
-			
+			if (iconview->priv->hadjustment != NULL)
+			{
+				new_hadjust = (gdouble)cell_x - gtk_adjustment_get_page_size(iconview->priv->hadjustment)/2.0 + (gdouble)cell_width/2.0;
+				new_hadjust = MAX(0.0, new_hadjust);
+				new_hadjust = MIN(new_hadjust, gtk_adjustment_get_upper(iconview->priv->hadjustment) - gtk_adjustment_get_page_size(iconview->priv->hadjustment));
+			}
 
-			new_vadjust = cell_y - gtk_adjustment_get_page_size(iconview->priv->vadjustment)/2 + cell_height/2;
-			new_vadjust = MAX (0,new_vadjust);
-			new_vadjust = MIN(new_vadjust, gtk_adjustment_get_upper(iconview->priv->vadjustment) - gtk_adjustment_get_page_size(iconview->priv->vadjustment));
-
+			if (iconview->priv->vadjustment != NULL)
+			{
+				new_vadjust = (gdouble)cell_y - gtk_adjustment_get_page_size(iconview->priv->vadjustment)/2.0 + (gdouble)cell_height/2.0;
+				new_vadjust = MAX(0.0, new_vadjust);
+				new_vadjust = MIN(new_vadjust, gtk_adjustment_get_upper(iconview->priv->vadjustment) - gtk_adjustment_get_page_size(iconview->priv->vadjustment));
+			}
 		}
 		else if (QUIVER_ICON_VIEW_SCROLL_SMOOTH == iconview->priv->scroll_type)
 		{
-			/* horizontal adjustment */
-			if (cell_x < (gulong)hadjust)
+			if (iconview->priv->hadjustment != NULL)
 			{
-				new_hadjust = cell_x;
-			}
-			else if (cell_x > hadjust + gtk_adjustment_get_page_size(iconview->priv->hadjustment) - cell_width)
-			{
-				new_hadjust = cell_x + cell_width - gtk_adjustment_get_page_size(iconview->priv->hadjustment);
+				/* horizontal adjustment */
+				if (cell_x < (gulong)hadjust)
+				{
+					new_hadjust = (gdouble)cell_x;
+				}
+				else if ((gdouble)cell_x > hadjust + gtk_adjustment_get_page_size(iconview->priv->hadjustment) - (gdouble)cell_width)
+				{
+					new_hadjust = (gdouble)cell_x + (gdouble)cell_width - gtk_adjustment_get_page_size(iconview->priv->hadjustment);
+				}
+
+				new_hadjust = MAX(0.0, new_hadjust);
+				new_hadjust = MIN(new_hadjust, gtk_adjustment_get_upper(iconview->priv->hadjustment) - gtk_adjustment_get_page_size(iconview->priv->hadjustment));
 			}
 
-			new_hadjust = MAX (0,new_hadjust);
-			new_hadjust = MIN(new_hadjust, gtk_adjustment_get_upper(iconview->priv->hadjustment) - gtk_adjustment_get_page_size(iconview->priv->hadjustment));
-
-			/* vertical adjustment */
-			if (cell_y < (gulong)vadjust)
+			if (iconview->priv->vadjustment != NULL)
 			{
-				new_vadjust = cell_y;
-			}
-			else if (cell_y > vadjust + gtk_adjustment_get_page_size(iconview->priv->vadjustment) - cell_height)
-			{
-				new_vadjust = cell_y + cell_height - gtk_adjustment_get_page_size(iconview->priv->vadjustment);
-			}
+				/* vertical adjustment */
+				if (cell_y < (gulong)vadjust)
+				{
+					new_vadjust = (gdouble)cell_y;
+				}
+				else if ((gdouble)cell_y > vadjust + gtk_adjustment_get_page_size(iconview->priv->vadjustment) - (gdouble)cell_height)
+				{
+					new_vadjust = (gdouble)cell_y + (gdouble)cell_height - gtk_adjustment_get_page_size(iconview->priv->vadjustment);
+				}
 
-			new_vadjust = MAX (0,new_vadjust);
-			new_vadjust = MIN(new_vadjust, gtk_adjustment_get_upper(iconview->priv->vadjustment) - gtk_adjustment_get_page_size(iconview->priv->vadjustment));
+				new_vadjust = MAX(0.0, new_vadjust);
+				new_vadjust = MIN(new_vadjust, gtk_adjustment_get_upper(iconview->priv->vadjustment) - gtk_adjustment_get_page_size(iconview->priv->vadjustment));
+			}
 		}
 	}
 
-	gint mid_hadjust = (new_hadjust + hadjust) / 2;
-	if (mid_hadjust != new_hadjust)
+	gdouble blend = 1.0 - exp(-19.8042 * dt);
+	if (blend < 0.0) blend = 0.0;
+	if (blend > 1.0) blend = 1.0;
+
+	if (iconview->priv->hadjustment != NULL)
 	{
-		if (1 == ABS(new_hadjust - mid_hadjust))
+		if (fabs(new_hadjust - hadjust) < 1.0)
 		{
-			mid_hadjust = new_hadjust;
+			gtk_adjustment_set_value(iconview->priv->hadjustment, new_hadjust);
 			hdone = TRUE;
 		}
-		gtk_adjustment_set_value(iconview->priv->hadjustment,mid_hadjust);
+		else
+		{
+			gdouble next_hadjust = hadjust + (new_hadjust - hadjust) * blend;
+			if (fabs(new_hadjust - next_hadjust) < 1.0)
+			{
+				next_hadjust = new_hadjust;
+				hdone = TRUE;
+			}
+			gtk_adjustment_set_value(iconview->priv->hadjustment, next_hadjust);
+		}
 	}
 	else
 	{
 		hdone = TRUE;
 	}
 
-	gint mid_vadjust = (new_vadjust + vadjust) / 2;
-	if (vadjust != new_vadjust)
+	if (iconview->priv->vadjustment != NULL)
 	{
-		if (1 == ABS(new_vadjust - vadjust))
+		if (fabs(new_vadjust - vadjust) < 1.0)
 		{
-			mid_vadjust = new_vadjust;
+			gtk_adjustment_set_value(iconview->priv->vadjustment, new_vadjust);
 			vdone = TRUE;
 		}
-		gtk_adjustment_set_value(iconview->priv->vadjustment,mid_vadjust);
+		else
+		{
+			gdouble next_vadjust = vadjust + (new_vadjust - vadjust) * blend;
+			if (fabs(new_vadjust - next_vadjust) < 1.0)
+			{
+				next_vadjust = new_vadjust;
+				vdone = TRUE;
+			}
+			gtk_adjustment_set_value(iconview->priv->vadjustment, next_vadjust);
+		}
 	}
 	else
 	{
@@ -1864,49 +1944,75 @@ quiver_icon_view_smooth_scroll_step(QuiverIconView* iconview)
 	return TRUE;
 }
 
+static gboolean
+quiver_icon_view_tick_smooth_scroll(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data)
+{
+	(void)widget;
+	QuiverIconView *iconview = (QuiverIconView*)data;
+	gint64 frame_time = gdk_frame_clock_get_frame_time(frame_clock);
+	gboolean keep_going = quiver_icon_view_smooth_scroll_step(iconview, frame_time);
+	if (!keep_going)
+	{
+		iconview->priv->tick_id_smooth_scroll = 0;
+		return G_SOURCE_REMOVE;
+	}
+	return G_SOURCE_CONTINUE;
+}
+
 static gboolean 
 quiver_icon_view_timeout_smooth_scroll(gpointer data)
 {
 	QuiverIconView *iconview = (QuiverIconView*)data;
-	gboolean notdone = FALSE;
-
-	notdone = quiver_icon_view_smooth_scroll_step(iconview);
-	
-	return notdone;
+	gint64 now = g_get_monotonic_time();
+	gboolean keep_going = quiver_icon_view_smooth_scroll_step(iconview, now);
+	if (!keep_going)
+	{
+		iconview->priv->timeout_id_smooth_scroll = 0;
+		return G_SOURCE_REMOVE;
+	}
+	return G_SOURCE_CONTINUE;
 }
 
 static gboolean
-quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
+quiver_icon_view_smooth_scroll_slowdown_step(QuiverIconView *iconview, gint64 frame_time_us)
 {
-	QuiverIconView *iconview = (QuiverIconView*)data;
-
-	gdouble divider = 1.02; 	
-	gdouble timeout_secs = SMOOTH_SCROLL_TIMEOUT / 1000.;
+	gdouble dt = 0.016;
+	if (iconview->priv->smooth_scroll_slowdown_last_time > 0 && frame_time_us > iconview->priv->smooth_scroll_slowdown_last_time)
+	{
+		dt = (gdouble)(frame_time_us - iconview->priv->smooth_scroll_slowdown_last_time) / 1000000.0;
+		if (dt > 0.05) dt = 0.05;
+	}
+	iconview->priv->smooth_scroll_slowdown_last_time = frame_time_us;
 
 	gboolean hdone = FALSE;
 	gboolean vdone = FALSE;
 
 	GList* list_itr = g_list_first(iconview->priv->velocity_time_list);
-	gint hvelocity_avg = 0;
-	gint vvelocity_avg = 0;
+	gdouble hvelocity_avg = 0;
+	gdouble vvelocity_avg = 0;
 	gdouble total_time = 0; 
 	if (NULL != list_itr)
 	{
 		do
 		{
-			VelocityTimeStruct* vt = list_itr->data;
-			hvelocity_avg += (gint)(vt->hvelocity * vt->time);
-			vvelocity_avg += (gint)(vt->vvelocity * vt->time);
+			VelocityTimeStruct* vt = (VelocityTimeStruct*)list_itr->data;
+			hvelocity_avg += (gdouble)(vt->hvelocity * vt->time);
+			vvelocity_avg += (gdouble)(vt->vvelocity * vt->time);
 			total_time += vt->time;
 			list_itr = g_list_next(list_itr);
-		} while (NULL !=list_itr);
+		} while (NULL != list_itr);
 	}
 	
-	hvelocity_avg = (gint)(hvelocity_avg/total_time);
-	vvelocity_avg = (gint)(vvelocity_avg/total_time);
+	if (total_time <= 0.0)
+	{
+		quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
+		return FALSE;
+	}
 
+	hvelocity_avg = (hvelocity_avg / total_time);
+	vvelocity_avg = (vvelocity_avg / total_time);
 
-	if (1 != g_list_length(iconview->priv->velocity_time_list) )
+	if (1 != g_list_length(iconview->priv->velocity_time_list))
 	{
 		g_list_free_full(iconview->priv->velocity_time_list, g_free);
 		iconview->priv->velocity_time_list = NULL;
@@ -1917,67 +2023,134 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 		vt->time = total_time;
 		
 		iconview->priv->velocity_time_list = 
-			g_list_append(iconview->priv->velocity_time_list,vt);
+			g_list_append(iconview->priv->velocity_time_list, vt);
 	}
 	GList* first = g_list_first(iconview->priv->velocity_time_list);
+	if (NULL == first)
+	{
+		quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
+		return FALSE;
+	}
 	
 	VelocityTimeStruct* vt = (VelocityTimeStruct*)first->data;
-	vt->hvelocity = (gint)(hvelocity_avg/divider);
-	vt->vvelocity = (gint)(vvelocity_avg/divider);
+	// Frame-rate independent continuous exponential decay: k = ln(1.02) / 0.035 ≈ 0.5658 s^-1
+	gdouble decay = exp(-0.5658 * dt);
+	vt->hvelocity = vt->hvelocity * decay;
+	vt->vvelocity = vt->vvelocity * decay;
 	
-	gint hdistance = (gint)(timeout_secs * hvelocity_avg);
+	gdouble hdistance = dt * vt->hvelocity;
+	gdouble vdistance = dt * vt->vvelocity;
 	
-	if (0 == hdistance || 0 == hvelocity_avg)
+	if (fabs(hdistance) < 0.05 || abs(vt->hvelocity) < 5)
 	{
 		hdone = TRUE;
 	}
-	else
+	else if (iconview->priv->hadjustment != NULL)
 	{
-	
-		gint old_hadjust = (guint)gtk_adjustment_get_value(iconview->priv->hadjustment);
-		gint hadjust = old_hadjust;
-		hadjust = MAX (0,hadjust - hdistance);
-		hadjust = MIN(hadjust, gtk_adjustment_get_upper(iconview->priv->hadjustment) - gtk_adjustment_get_page_size(iconview->priv->hadjustment));
-		if (old_hadjust == hadjust)
+		gdouble old_hadjust = gtk_adjustment_get_value(iconview->priv->hadjustment);
+		gdouble max_h = gtk_adjustment_get_upper(iconview->priv->hadjustment) -
+		                gtk_adjustment_get_page_size(iconview->priv->hadjustment);
+		if (max_h < 0.0) max_h = 0.0;
+		gdouble hadjust = old_hadjust - hdistance;
+		hadjust = CLAMP(hadjust, 0.0, max_h);
+		if (fabs(old_hadjust - hadjust) < 0.001)
 		{
 			hdone = TRUE;
 		}
 		else
 		{
-			gtk_adjustment_set_value(iconview->priv->hadjustment,hadjust);
+			gtk_adjustment_set_value(iconview->priv->hadjustment, hadjust);
 		}
-	}
-	
-	gint vdistance = (gint)(timeout_secs * vvelocity_avg);
-
-	if (0 == vdistance || 0 == vvelocity_avg)
-	{
-		vdone = TRUE;
 	}
 	else
 	{
-	
-		gint old_vadjust = (guint)gtk_adjustment_get_value(iconview->priv->vadjustment);
-		gint vadjust = old_vadjust;
-		vadjust = MAX (0,vadjust - vdistance);
-		vadjust = MIN(vadjust, gtk_adjustment_get_upper(iconview->priv->vadjustment) - gtk_adjustment_get_page_size(iconview->priv->vadjustment));
-		if (old_vadjust == vadjust)
+		hdone = TRUE;
+	}
+
+	if (fabs(vdistance) < 0.05 || abs(vt->vvelocity) < 5)
+	{
+		vdone = TRUE;
+	}
+	else if (iconview->priv->vadjustment != NULL)
+	{
+		gdouble old_vadjust = gtk_adjustment_get_value(iconview->priv->vadjustment);
+		gdouble max_v = gtk_adjustment_get_upper(iconview->priv->vadjustment) -
+		                gtk_adjustment_get_page_size(iconview->priv->vadjustment);
+		if (max_v < 0.0) max_v = 0.0;
+		gdouble vadjust = old_vadjust - vdistance;
+		vadjust = CLAMP(vadjust, 0.0, max_v);
+		if (fabs(old_vadjust - vadjust) < 0.001)
 		{
 			vdone = TRUE;
 		}
 		else
 		{
-			gtk_adjustment_set_value(iconview->priv->vadjustment,vadjust);
+			gtk_adjustment_set_value(iconview->priv->vadjustment, vadjust);
 		}
 	}
-	
+	else
+	{
+		vdone = TRUE;
+	}
 	
 	if (hdone && vdone)
 	{
-		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+		quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
+		return FALSE;
 	}
-	
-	return !(hdone && vdone);
+	return TRUE;
+}
+
+static gboolean
+quiver_icon_view_tick_smooth_scroll_slowdown(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data)
+{
+	(void)widget;
+	QuiverIconView *iconview = (QuiverIconView*)data;
+	gint64 frame_time = gdk_frame_clock_get_frame_time(frame_clock);
+	gboolean keep_going = quiver_icon_view_smooth_scroll_slowdown_step(iconview, frame_time);
+	if (!keep_going)
+	{
+		iconview->priv->tick_id_smooth_scroll_slowdown = 0;
+		return G_SOURCE_REMOVE;
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+static gboolean
+quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
+{
+	QuiverIconView *iconview = (QuiverIconView*)data;
+	gint64 now = g_get_monotonic_time();
+	gboolean keep_going = quiver_icon_view_smooth_scroll_slowdown_step(iconview, now);
+	if (!keep_going)
+	{
+		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+		return G_SOURCE_REMOVE;
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+static void
+quiver_icon_view_start_smooth_scroll_slowdown(QuiverIconView *iconview)
+{
+	quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
+	remove_timeout_smooth_scroll(iconview);
+
+	iconview->priv->smooth_scroll_slowdown_last_time = g_get_monotonic_time();
+
+	if (gtk_widget_get_mapped(GTK_WIDGET(iconview)))
+	{
+		iconview->priv->tick_id_smooth_scroll_slowdown =
+			gtk_widget_add_tick_callback(GTK_WIDGET(iconview),
+			                             quiver_icon_view_tick_smooth_scroll_slowdown,
+			                             iconview,
+			                             NULL);
+	}
+	else
+	{
+		iconview->priv->timeout_id_smooth_scroll_slowdown =
+			g_timeout_add(16, quiver_icon_view_timeout_smooth_scroll_slowdown, iconview);
+	}
 }
 
 /* start callbacks */
@@ -2681,11 +2854,7 @@ quiver_icon_view_gesture_pressed (GtkGestureClick *gesture,
 		if (QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL == iconview->priv->drag_behavior)
 		{
 			iconview->priv->drag_mode_start = TRUE;
-			if ( 0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
-			{
-				g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
-				iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
-			}
+			quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 			gettimeofday(&iconview->priv->last_motion_time, NULL);
 		}
 		else if (cell == G_MAXULONG &&
@@ -2774,10 +2943,7 @@ quiver_icon_view_gesture_released (GtkGestureClick *gesture,
 			if ( 3 == g_list_length(iconview->priv->velocity_time_list) &&
 				(0.1 > new_time - old_time) )
 			{
-				remove_timeout_smooth_scroll(iconview);
-
-				iconview->priv->timeout_id_smooth_scroll_slowdown = 
-					g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll_slowdown,iconview);
+				quiver_icon_view_start_smooth_scroll_slowdown(iconview);
 			}
 		}
 	}
@@ -3015,10 +3181,7 @@ quiver_icon_view_gesture_drag_end (GtkGestureDrag *gesture,
 			if ( 3 == g_list_length(iconview->priv->velocity_time_list) &&
 				(0.1 > new_time - old_time) )
 			{
-				remove_timeout_smooth_scroll(iconview);
-
-				iconview->priv->timeout_id_smooth_scroll_slowdown = 
-					g_timeout_add(SMOOTH_SCROLL_TIMEOUT,quiver_icon_view_timeout_smooth_scroll_slowdown,iconview);
+				quiver_icon_view_start_smooth_scroll_slowdown(iconview);
 			}
 		}
 	}
@@ -3710,7 +3873,7 @@ void quiver_icon_view_scroll_to_cell_with_callback(
 
 	quiver_icon_view_scroll_to_cell(iconview, cell);
 
-	if (0 == iconview->priv->timeout_id_smooth_scroll)
+	if (0 == iconview->priv->timeout_id_smooth_scroll && 0 == iconview->priv->tick_id_smooth_scroll)
 	{
 		iconview->priv->scroll_complete_cb = NULL;
 		iconview->priv->scroll_complete_data = NULL;

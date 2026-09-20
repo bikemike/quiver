@@ -1385,10 +1385,102 @@ void ConnectUnmodifiedAccelerators() {
 		gtk_widget_add_controller(GTK_WIDGET(root), GTK_EVENT_CONTROLLER(legacy));
 	}
 
+	static void popover_enable_icons_recursive(GtkWidget *widget)
+	{
+		if (widget == NULL)
+			return;
+
+		if (g_str_has_prefix(G_OBJECT_TYPE_NAME(widget), "GtkModelButton"))
+		{
+			GtkWidget *start_box = gtk_widget_get_first_child(widget);
+			GtkWidget *image = NULL;
+			GtkWidget *label = NULL;
+			for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c))
+			{
+				if (GTK_IS_IMAGE(c))
+					image = c;
+				if (GTK_IS_LABEL(c))
+					label = c;
+			}
+			if (image)
+			{
+				GIcon *icon = NULL;
+				const char *icon_name = NULL;
+				g_object_get(image, "gicon", &icon, "icon-name", &icon_name, NULL);
+				if (icon != NULL || (icon_name != NULL && icon_name[0] != '\0'))
+				{
+					gtk_widget_set_visible(image, TRUE);
+					gtk_widget_set_margin_end(image, 6);
+					if (start_box && GTK_IS_BOX(start_box))
+					{
+						gtk_widget_set_visible(start_box, FALSE);
+					}
+				}
+				if (icon)
+					g_object_unref(icon);
+			}
+			if (label)
+			{
+				gtk_widget_set_hexpand(label, TRUE);
+				gtk_widget_set_halign(label, GTK_ALIGN_START);
+			}
+		}
+		else if (GTK_IS_IMAGE(widget))
+		{
+			GIcon *icon = NULL;
+			const char *icon_name = NULL;
+			g_object_get(widget, "gicon", &icon, "icon-name", &icon_name, NULL);
+			if (icon != NULL || (icon_name != NULL && icon_name[0] != '\0'))
+			{
+				gtk_widget_set_visible(widget, TRUE);
+				gtk_widget_set_margin_end(widget, 6);
+			}
+			if (icon)
+				g_object_unref(icon);
+		}
+		else if (GTK_IS_STACK(widget))
+		{
+			if (!g_object_get_data(G_OBJECT(widget), "quiver-stack-icons-wired"))
+			{
+				g_object_set_data(G_OBJECT(widget), "quiver-stack-icons-wired", GINT_TO_POINTER(1));
+				g_signal_connect(widget, "notify::visible-child",
+					G_CALLBACK(+[](GObject *stack, GParamSpec*, gpointer) {
+						popover_enable_icons_recursive(GTK_WIDGET(stack));
+					}), NULL);
+			}
+		}
+
+		for (GtkWidget *child = gtk_widget_get_first_child(widget);
+		     child != NULL;
+		     child = gtk_widget_get_next_sibling(child))
+		{
+			popover_enable_icons_recursive(child);
+		}
+	}
+
+	void EnablePopoverMenuIcons(GtkWidget *popover)
+	{
+		if (NULL == popover)
+			return;
+
+		popover_enable_icons_recursive(popover);
+
+		if (!g_object_get_data(G_OBJECT(popover), "quiver-enable-icons-wired"))
+		{
+			g_object_set_data(G_OBJECT(popover), "quiver-enable-icons-wired", GINT_TO_POINTER(1));
+			g_signal_connect(popover, "map",
+				G_CALLBACK(+[](GtkWidget *widget, gpointer) {
+					popover_enable_icons_recursive(widget);
+				}), NULL);
+		}
+	}
+
 	void ShowContextMenuAt(GtkPopover *popover, GtkWidget *anchor_widget, gdouble x, gdouble y)
 	{
 		if (NULL == popover)
 			return;
+
+		EnablePopoverMenuIcons(GTK_WIDGET(popover));
 
 		GtkWidget *parent_widget = gtk_widget_get_parent(GTK_WIDGET(popover));
 

@@ -123,22 +123,63 @@ static void set_widget_bg_color(GtkWidget *widget, const GdkRGBA *color) {
 static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble y_root, guint32 time, gpointer userdata);
 static void viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
 static void viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
-static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble y_root, guint32 time, gpointer userdata);
-static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data);
-static void viewer_speed_create_popup_cb(GtkMenuButton *button, gpointer user_data);
 static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer user_data);
-static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user_data);
 static void viewer_snapshot_button_clicked_cb(GtkButton *button, gpointer user_data);
 static void viewer_video_rw_cb(gpointer user_data);
 static void viewer_video_ff_cb(gpointer user_data);
 static void viewer_frame_step_back_cb(gpointer user_data);
 static void viewer_frame_step_fwd_cb(gpointer user_data);
+static void viewer_shortcuts_changed_cb(gpointer user_data);
+
+/* GTK4 Gesture and Overlay Callbacks */
+static void viewer_gesture_zoom_begin_cb(GtkGesture *gesture, GdkEventSequence *sequence, gpointer user_data);
+static void viewer_gesture_zoom_scale_changed_cb(GtkGestureZoom *gesture, gdouble scale, gpointer user_data);
+static void viewer_gesture_zoom_end_cb(GtkGesture *gesture, GdkEventSequence *sequence, gpointer user_data);
+
+static void viewer_two_finger_pan_begin_cb(GtkGestureDrag *gesture, gdouble start_x, gdouble start_y, gpointer user_data);
+static void viewer_two_finger_pan_update_cb(GtkGestureDrag *gesture, gdouble offset_x, gdouble offset_y, gpointer user_data);
+static void viewer_two_finger_pan_end_cb(GtkGestureDrag *gesture, gdouble offset_x, gdouble offset_y, gpointer user_data);
+
+static void viewer_swipe_cb(GtkGestureSwipe *gesture, gdouble velocity_x, gdouble velocity_y, gpointer user_data);
+
+static void viewer_overlay_prev_cb(Viewer::ViewerImpl *p);
+static void viewer_overlay_next_cb(Viewer::ViewerImpl *p);
+static void viewer_overlay_slideshow_cb(Viewer::ViewerImpl *p);
+static void viewer_overlay_zoom_out_cb(Viewer::ViewerImpl *p);
+static void viewer_overlay_zoom_fit_cb(Viewer::ViewerImpl *p);
+static void viewer_overlay_zoom_in_cb(Viewer::ViewerImpl *p);
+static void viewer_overlay_rotate_ccw_cb(Viewer::ViewerImpl *p);
+static void viewer_overlay_rotate_cw_cb(Viewer::ViewerImpl *p);
+static void viewer_image_submenu_create_popup_cb(GtkMenuButton *button, gpointer user_data);
+static void viewer_overlay_fullscreen_cb(Viewer::ViewerImpl *p);
+
+static const char* get_fullscreen_icon_name(bool bFullscreen)
+{
+	GdkDisplay *disp = gdk_display_get_default();
+	GtkIconTheme *theme = disp ? gtk_icon_theme_get_for_display(disp) : NULL;
+	if (bFullscreen)
+	{
+		if (theme && gtk_icon_theme_has_icon(theme, "unfullscreen-square-symbolic"))
+			return "unfullscreen-square-symbolic";
+		if (theme && gtk_icon_theme_has_icon(theme, "unfullscreen-square"))
+			return "unfullscreen-square";
+		return "view-restore-symbolic";
+	}
+	else
+	{
+		if (theme && gtk_icon_theme_has_icon(theme, "fullscreen-square-symbolic"))
+			return "fullscreen-square-symbolic";
+		if (theme && gtk_icon_theme_has_icon(theme, "fullscreen-square"))
+			return "fullscreen-square";
+		return "view-fullscreen-symbolic";
+	}
+}
 
 static GdkContentProvider* signal_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data);
 static void signal_drag_begin (GtkDragSource *source, GdkDrag *drag, gpointer user_data);
 static void signal_drag_end(GtkDragSource *source, GdkDrag *drag, gpointer user_data);
 
-/* Attach the shared input controllers (click/scroll/motion) to a widget
+/* Attach the shared input controllers (click/scroll/motion/gestures) to a widget
  * so the viewer area responds over the image, the video fixed and the GL
  * sink widget alike. */
 static void attach_viewer_input_controllers(GtkWidget *widget, gpointer user_data)
@@ -162,6 +203,26 @@ static void attach_viewer_input_controllers(GtkWidget *widget, gpointer user_dat
 	GtkEventController *motion = gtk_event_controller_motion_new();
 	g_signal_connect(motion, "motion", G_CALLBACK(viewer_motion_notify), user_data);
 	gtk_widget_add_controller(widget, motion);
+
+	/* GTK4 Gesture Controllers: pinch-to-zoom, two-finger pan, swipe/flick */
+	GtkGesture *zoom = gtk_gesture_zoom_new();
+	g_signal_connect(zoom, "begin", G_CALLBACK(viewer_gesture_zoom_begin_cb), user_data);
+	g_signal_connect(zoom, "scale-changed", G_CALLBACK(viewer_gesture_zoom_scale_changed_cb), user_data);
+	g_signal_connect(zoom, "end", G_CALLBACK(viewer_gesture_zoom_end_cb), user_data);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(zoom));
+
+	GtkGesture *two_finger_pan = GTK_GESTURE(g_object_new(GTK_TYPE_GESTURE_DRAG, "n-points", 2, NULL));
+	g_signal_connect(two_finger_pan, "drag-begin", G_CALLBACK(viewer_two_finger_pan_begin_cb), user_data);
+	g_signal_connect(two_finger_pan, "drag-update", G_CALLBACK(viewer_two_finger_pan_update_cb), user_data);
+	g_signal_connect(two_finger_pan, "drag-end", G_CALLBACK(viewer_two_finger_pan_end_cb), user_data);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(two_finger_pan));
+
+	gtk_gesture_group(zoom, two_finger_pan);
+
+	GtkGesture *swipe = gtk_gesture_swipe_new();
+	gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(swipe), TRUE);
+	g_signal_connect(swipe, "swipe", G_CALLBACK(viewer_swipe_cb), user_data);
+	gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(swipe));
 }
 
 
@@ -183,6 +244,9 @@ static void video_zoom_raise_media_windows(Viewer::ViewerImpl *p);
 static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data);
 static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer user_data);
 
+#define OVERLAY_AUTO_HIDE_TIMEOUT_MS   800 /* ms before HUD / filmstrip auto-hide */
+
+#define ACTION_VIEWER_SLIDESHOW        "SlideShow"
 #define ACTION_VIEWER_CUT              "ViewerCut"
 #define ACTION_VIEWER_COPY             "ViewerCopy"
 #define ACTION_VIEWER_RENAME           "ViewerRename"
@@ -228,6 +292,7 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 #define ACTION_VIEWER_VIDEO_FRAME_FWD    "VideoFrameFwd"
 #define ACTION_VIEWER_VIDEO_FRAME_BACK   "VideoFrameBack"
 #define ACTION_VIEWER_VIDEO_SNAPSHOT     "VideoSnapshot"
+#define ACTION_VIEWER_VIDEO_MUTE         "VideoMute"
 
 
 
@@ -276,6 +341,7 @@ static const gchar* pszActionsVideo[] =
 	ACTION_VIEWER_VIDEO_FRAME_FWD,
 	ACTION_VIEWER_VIDEO_FRAME_BACK,
 	ACTION_VIEWER_VIDEO_SNAPSHOT,
+	ACTION_VIEWER_VIDEO_MUTE,
 	"VideoSpeed025",
 	"VideoSpeed05",
 	"VideoSpeed10",
@@ -522,12 +588,14 @@ public:
 		return m_bIsPlaying;
 	}
 
-	/* the timeline (time label, progress bar, volume button) is hidden while
-	 * the video is shown and only appears once play has been pressed; from
-	 * then on it stays visible until the current item changes */
+	/* The timeline row in the unified HUD is visible for videos only once playback has started and controls are visible. */
 	void UpdateTimelineVisibility()
 	{
-		set_control_visible(m_pTimelineRow, IsVideo() && m_bTimelineVisible);
+		if (m_pTimelineRow)
+		{
+			bool visible = IsVideo() && m_bVideoPlaybackStarted && m_bControlsVisible;
+			set_control_visible(m_pTimelineRow, visible);
+		}
 	}
 
 	void SetIsPlaying(bool isPlaying)
@@ -542,22 +610,16 @@ public:
 
 		if (IsPlaying())
 		{
+			m_bVideoPlaybackStarted = true;
 			m_bTimelineVisible = true;
 			UpdateTimelineVisibility();
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause");
+			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
 
-			/* show all controls via opacity fade-in */
-			set_control_visible(m_pTimeElapsedLabel, true);
-			set_control_visible(m_pTimeDurationLabel, true);
-			set_control_visible(m_pRewindBtn, true);
-			set_control_visible(m_pSpeedButton, true);
-			set_control_visible(m_pFfBtn, true);
-			set_control_visible(m_pSnapBtn, true);
-			set_control_visible(m_pVolumeButton, true);
-			set_control_visible(m_pVideoOptionsBtn, true);
-			set_control_visible(m_pFullscreenBtn, true);
-			/* the fade-in below animates opacity, so first make the bars
-			 * visible (they may still be hidden from a prior auto-hide) */
+			/* hide center play button during playback */
+			if (m_pCenterPlayBtn)
+				gtk_widget_set_visible(m_pCenterPlayBtn, FALSE);
+
+			/* show HUD via opacity fade-in */
 			viewer_controls_show(this);
 			StartControlsFade(true);
 
@@ -565,17 +627,13 @@ public:
 		}
 		else
 		{
-			/* don't leave a stale auto-hide timer running once paused, or the
-			 * whole media bar (timeline included) can vanish after a click */
-			if (0 != m_iTimeoutMouseMotionNotify)
-			{
-				g_source_remove(m_iTimeoutMouseMotionNotify);
-				m_iTimeoutMouseMotionNotify = 0;
-			}
 			CancelControlsFade();
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start");
+			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
+			/* show center play button when paused/stopped on video */
+			UpdateCenterPlayButtonVisibility();
 			/* a pause (click or keyboard) must not leave the pointer hidden */
 			viewer_set_idle_cursor(this, false);
+			RefreshAutoHideTimer();
 		}
 
 		UpdateFilmstripForPlayback();
@@ -591,9 +649,9 @@ public:
 			g_source_remove(m_iTimeoutMouseMotionNotify);
 			m_iTimeoutMouseMotionNotify = 0;
 		}
-		if (IsPlaying())
+		if (m_ImageListPtr && m_ImageListPtr->GetSize() > 0)
 		{
-			m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
+			m_iTimeoutMouseMotionNotify = g_timeout_add(OVERLAY_AUTO_HIDE_TIMEOUT_MS, timeout_event_motion_notify, this);
 		}
 	}
 
@@ -606,8 +664,12 @@ public:
 	void StopVideo(bool reloadImage = true);
 	void SetPlaybackSpeed(double speed);
 	void Snapshot();
+	bool IsMuted() const { return m_bMuted; }
+	void ToggleMute();
+	void SetMuted(bool bMute);
+	void UpdateVolumeUI();
 	// returns true if current item is a video
-	bool IsVideo();
+	bool IsVideo() const;
 	// switch the stack to the video page and unhide the video widgets
 	void ShowVideoPage();
 
@@ -662,7 +724,9 @@ public:
 	GtkWidget* m_pVolumeButton;
 	GtkWidget* m_pVolumePopover;
 	GtkWidget* m_pVolumeScale;
+	GtkWidget* m_pVolumeMuteBtn;
 	double m_dVolume;
+	bool m_bMuted;
 	GtkWidget* m_pFullscreenBtn;
 	GtkWidget* m_pVideoOptionsBtn;
 	GtkWidget* m_pVideoOptionsPopover; // currently-open video-options popover (created on click)
@@ -687,15 +751,6 @@ public:
 
 	Viewer *m_pViewer;
 	
-	typedef enum _SlideShowState
-	{
-		SLIDESHOW_STATE_ADVANCE,
-		SLIDESHOW_STATE_CACHE,
-		SLIDESHOW_STATE_PLAY_VIDEO,
-		SLIDESHOW_STATE_PLAYING_VIDEO
-	} SlideShowState;
-
-	SlideShowState m_SlideShowState;
 	guint m_iIdleSetIndex;
 	guint m_iTimeoutScrollbars;
 	guint m_iTimeoutUpdateListID;
@@ -727,17 +782,17 @@ public:
 	GtkWidget* m_pSpeedLabel;
 
 	GtkDragSource* m_pDragSource = nullptr;
-	GtkDropTarget* m_pDropTarget;
-	GtkWidget* m_pContextMenuPopover;
+	GtkDropTarget* m_pDropTarget = nullptr;
+	GtkWidget* m_pContextMenuPopover = nullptr;
 	GtkWidget* m_pContextMenuTrashBtn = nullptr;
 	GtkWidget* m_pContextMenuRestoreBtn = nullptr;
 	GtkWidget* m_pContextMenuInfoLabel = nullptr;
 
 	// gstreamer elements for playing videos
-	GstElement* m_pPipeline;
-	GdkPaintable* m_pVideoPaintable; // paintable exposed by the sink
-	GtkWidget*  m_pVideoSinkWidget; // GtkPicture wrapping the paintable
-	GtkWidget*  m_pVideoFixed;      // GtkFixed canvas (fills the viewer area, clips the video sink widget)
+	GstElement* m_pPipeline = nullptr;
+	GdkPaintable* m_pVideoPaintable = nullptr; // paintable exposed by the sink
+	GtkWidget*  m_pVideoSinkWidget = nullptr; // GtkPicture wrapping the paintable
+	GtkWidget*  m_pVideoFixed = nullptr;      // GtkFixed canvas (fills the viewer area, clips the video sink widget)
 	// how the digital zoom crop+scale chain is implemented, chosen at build time
 	// from the GPU acceleration actually available on the platform
 	typedef enum
@@ -770,6 +825,7 @@ public:
 	gboolean    m_bVideoNeedsFirstFrame; // TRUE after switching videos: defer opacity restore until new frame is decoded
 	gboolean    m_bVideoFlushPending; // TRUE between the flushing seek and the next ASYNC_DONE
 	bool        m_bVideoPagePending; // TRUE: keep the image/preview page visible until the video's first frame is ready
+	bool        m_bVideoPlaybackStarted; // TRUE once playback has been triggered for the current video
 	gdouble     m_dVideoPanStartRootX; // pan drag start point, root (screen) coords
 	gdouble     m_dVideoPanStartRootY;
 	gdouble     m_dVideoPanStartPX; // crop window left/top at drag start
@@ -813,10 +869,71 @@ public:
 	 * it sits idly over a playing video (in step with the controls' auto-hide) */
 	GdkCursor*  m_pBlankCursor;
 
+	typedef enum _SlideShowState
+	{
+		SLIDESHOW_STATE_ADVANCE,
+		SLIDESHOW_STATE_CACHE,
+		SLIDESHOW_STATE_PLAY_VIDEO,
+		SLIDESHOW_STATE_PLAYING_VIDEO,
+		SLIDESHOW_STATE_PAUSED
+	} SlideShowState;
+
+	SlideShowState m_SlideShowState;
+	SlideShowState m_SlideShowPrePauseState;
+	bool  m_bSlideShowRunning;
+	bool  m_bSlideShowPaused;
+
+	// Viewer Control Overlays (floating HUD controls)
+	GtkWidget* m_pViewerOverlayBar;
+	bool       m_bPointerOverOverlayBar;
+	bool       m_bControlsVisible;
+	bool       m_bVideoZoomAnchorCenter;
+	GtkWidget* m_pViewerPrevBtn;
+	GtkWidget* m_pViewerNextBtn;
+	GtkWidget* m_pViewerSlideshowBtn;
+	GtkWidget* m_pViewerVideoSlideshowBtn;
+	GtkWidget* m_pImageBlank1;
+	GtkWidget* m_pImageBlank2;
+	GtkWidget* m_pVideoBlank1;
+	GtkWidget* m_pVideoBlank2;
+	GtkWidget* m_pViewerZoomOutBtn;
+	GtkWidget* m_pViewerZoomFitBtn;
+	GtkWidget* m_pViewerZoomInBtn;
+	GtkWidget* m_pViewerRotateCcwBtn;
+	GtkWidget* m_pViewerRotateCwBtn;
+	GtkWidget* m_pViewerFlipHBtn;
+	GtkWidget* m_pViewerFlipVBtn;
+	GtkWidget* m_pImageSubmenuBtn;
+	GtkWidget* m_pImageSubmenuPopover;
+	GtkWidget* m_pViewerFullscreenBtn;
+
+	// Gesture tracking
+	double m_dGestureLastScale;
+	double m_dTwoFingerPanStartHAdj;
+	double m_dTwoFingerPanStartVAdj;
+	double m_dTwoFingerPanStartVidX;
+	double m_dTwoFingerPanStartVidY;
+
+	void UpdateSlideshowButton();
+	void UpdateHUDTooltips();
+	void UpdateHUDPosition();
+	bool IsSlideShowRunning() const { return m_bSlideShowRunning; }
+	bool IsSlideShowPaused() const { return m_bSlideShowPaused; }
+	void SlideShowPause();
+	void SlideShowResume();
+	void SlideShowTogglePause();
+
+	bool        m_bVideoPreviewClick = false;
+	gdouble     m_dVideoPreviewClickX = 0.0;
+	gdouble     m_dVideoPreviewClickY = 0.0;
+	GtkWidget*  m_pCenterPlayBtn = nullptr;
+	void        UpdateCenterPlayButtonVisibility();
+
 	bool IsFilmstripOverlay() const { return m_bFilmstripOverlay; }
 	bool IsHideFilmstripFS() const { return m_bHideFilmstripFS; }
 	bool IsPointerOverFilmstrip() const;
 	bool IsPointerOverMediaControls() const;
+	bool IsPointerOverControls() const;
 	void ShowFilmstripOverlay();
 	void HideFilmstripOverlay();
 	void UpdateFilmstripForPlayback();
@@ -912,6 +1029,7 @@ void Viewer::ViewerImpl::SetImageList(IImageListViewPtr imgList)
 	
 	m_ImageListPtr->AddEventHandler(m_ImageListEventHandlerPtr);
 	
+	UpdateUI();
 }
 // has image
 
@@ -965,16 +1083,35 @@ void Viewer::ViewerImpl::UpdateUI()
 		/* For videos the zoom factor is applied in the pipeline (from the fit
 		 * level up to 8x of the actual size); for stills it comes from the
 		 * image view's magnification. */
-		gboolean bCanZoomIn, bCanZoomOut;
-		if (IsVideo())
+		gboolean bCanZoomIn = FALSE;
+		gboolean bCanZoomOut = FALSE;
+		if (m_ImageListPtr && m_ImageListPtr->GetSize() > 0)
 		{
-			bCanZoomIn = (m_dVideoZoomFinal < 16.0);
-			bCanZoomOut = (m_dVideoZoomFinal > m_dVideoZoomMin);
+			if (IsVideo())
+			{
+				bCanZoomIn = (m_dVideoZoomFinal < 16.0);
+				bCanZoomOut = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW
+				               && (m_dVideoZoomFinal > m_dVideoZoomMin + 0.005));
+			}
+			else
+			{
+				bCanZoomIn = quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), TRUE);
+				bCanZoomOut = quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), FALSE);
+			}
 		}
-		else
+
+		gboolean bCanZoomFit = FALSE;
+		if (m_ImageListPtr && m_ImageListPtr->GetSize() > 0)
 		{
-			bCanZoomIn = quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), TRUE);
-			bCanZoomOut = quiver_image_view_can_magnify(QUIVER_IMAGE_VIEW(m_pImageView), FALSE);
+			if (IsVideo())
+			{
+				bCanZoomFit = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW
+				               || m_dVideoZoomFinal > m_dVideoZoomMin + 0.005);
+			}
+			else
+			{
+				bCanZoomFit = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+			}
 		}
 
 		GAction* action;
@@ -984,11 +1121,99 @@ void Viewer::ViewerImpl::UpdateUI()
 		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_OUT);
 		if (NULL != action)
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomOut);
+		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_FIT);
+		if (NULL != action)
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomFit);
+
+		gboolean bHasItems = (m_ImageListPtr && m_ImageListPtr->GetSize() > 0);
+		gboolean bCanPrev = FALSE;
+		gboolean bCanNext = FALSE;
+		if (bHasItems)
+		{
+			bCanPrev = (m_ImageListPtr->GetCurrentIndex() > 0);
+			bCanNext = (m_ImageListPtr->GetCurrentIndex() < m_ImageListPtr->GetSize() - 1);
+		}
+		gboolean bCanSlideshow = m_bSlideShowRunning || (m_ImageListPtr && m_ImageListPtr->GetSize() >= 2);
+		gboolean bCanRotate = bHasItems && !IsVideo();
+
+		bool bIsVid = IsVideo();
+		UpdateTimelineVisibility();
+		UpdateCenterPlayButtonVisibility();
+		UpdateSlideshowButton();
+
+		if (m_pImageBlank1)
+			gtk_widget_set_visible(m_pImageBlank1, !bIsVid);
+		if (m_pViewerRotateCcwBtn)
+			gtk_widget_set_visible(m_pViewerRotateCcwBtn, !bIsVid);
+		if (m_pViewerRotateCwBtn)
+			gtk_widget_set_visible(m_pViewerRotateCwBtn, !bIsVid);
+		if (m_pImageBlank2)
+			gtk_widget_set_visible(m_pImageBlank2, !bIsVid);
+		if (m_pImageSubmenuBtn)
+			gtk_widget_set_visible(m_pImageSubmenuBtn, !bIsVid);
+
+		if (m_pPlayButton)
+			gtk_widget_set_visible(m_pPlayButton, bIsVid);
+		if (m_pRewindBtn)
+			gtk_widget_set_visible(m_pRewindBtn, bIsVid);
+		if (m_pFfBtn)
+			gtk_widget_set_visible(m_pFfBtn, bIsVid);
+		if (m_pVolumeButton)
+			gtk_widget_set_visible(m_pVolumeButton, bIsVid);
+		if (m_pVideoOptionsBtn)
+			gtk_widget_set_visible(m_pVideoOptionsBtn, bIsVid);
+
+		if (m_pViewerPrevBtn)
+			gtk_widget_set_sensitive(m_pViewerPrevBtn, bCanPrev);
+		if (m_pViewerNextBtn)
+			gtk_widget_set_sensitive(m_pViewerNextBtn, bCanNext);
+		if (m_pViewerSlideshowBtn)
+			gtk_widget_set_sensitive(m_pViewerSlideshowBtn, bCanSlideshow);
+		if (m_pViewerVideoSlideshowBtn)
+			gtk_widget_set_sensitive(m_pViewerVideoSlideshowBtn, bCanSlideshow);
+		if (m_pViewerZoomInBtn)
+			gtk_widget_set_sensitive(m_pViewerZoomInBtn, bCanZoomIn);
+		if (m_pViewerZoomOutBtn)
+			gtk_widget_set_sensitive(m_pViewerZoomOutBtn, bCanZoomOut);
+		if (m_pViewerZoomFitBtn)
+			gtk_widget_set_sensitive(m_pViewerZoomFitBtn, bCanZoomFit);
+		if (m_pViewerRotateCcwBtn)
+			gtk_widget_set_sensitive(m_pViewerRotateCcwBtn, bCanRotate);
+		if (m_pViewerRotateCwBtn)
+			gtk_widget_set_sensitive(m_pViewerRotateCwBtn, bCanRotate);
+		if (m_pImageSubmenuBtn)
+			gtk_widget_set_sensitive(m_pImageSubmenuBtn, bHasItems);
+		if (m_pPlayButton)
+			gtk_widget_set_sensitive(m_pPlayButton, bIsVid);
+		if (m_pFfBtn)
+			gtk_widget_set_sensitive(m_pFfBtn, bIsVid);
+		if (m_pRewindBtn)
+			gtk_widget_set_sensitive(m_pRewindBtn, bIsVid);
+		if (m_pSnapBtn)
+			gtk_widget_set_sensitive(m_pSnapBtn, bIsVid);
+		if (m_pVolumeButton)
+			gtk_widget_set_sensitive(m_pVolumeButton, bIsVid);
+		if (m_pVideoOptionsBtn)
+			gtk_widget_set_sensitive(m_pVideoOptionsBtn, bIsVid);
+
+		if (m_pViewerFullscreenBtn && m_pOverlay)
+		{
+			GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(m_pOverlay));
+			bool bFS = root && GTK_IS_WINDOW(root) && gtk_window_is_fullscreen(GTK_WINDOW(root));
+			gtk_button_set_icon_name(GTK_BUTTON(m_pViewerFullscreenBtn),
+				get_fullscreen_icon_name(bFS));
+			std::string fs_tip = ShortcutManager::GetInstance().GetTooltipForAction("FullScreen", bFS ? "Exit Fullscreen" : "Fullscreen");
+			if (bFS)
+				fs_tip += " / Middle Click / Esc";
+			else
+				fs_tip += " / Middle Click";
+			gtk_widget_set_tooltip_text(m_pViewerFullscreenBtn, fs_tip.c_str());
+		}
 	}
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
-	if (0 != m_iTimeoutSlideshowID)
+	if (m_bSlideShowRunning)
 	{
 		bool bMaximize = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_ROTATE_FOR_BEST_FIT, false);
 		QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_ROTATE_FOR_BEST_FIT, bMaximize ? TRUE : FALSE);
@@ -1005,7 +1230,17 @@ void Viewer::ViewerImpl::UpdateUI()
 		bool bMaximize = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT, false);
 		QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_ROTATE_FOR_BEST_FIT, bMaximize ? TRUE : FALSE);
 
-		bool bShowFilmStrip = 	prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW);
+		bool bShowFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW);
+		bool bFS = false;
+		if (m_pOverlay)
+		{
+			GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(m_pOverlay));
+			bFS = root && GTK_IS_WINDOW(root) && gtk_window_is_fullscreen(GTK_WINDOW(root));
+		}
+		if (bFS && m_bHideFilmstripFS)
+		{
+			bShowFilmStrip = false;
+		}
 		QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, bShowFilmStrip ? TRUE : FALSE);
 	}
 }
@@ -1273,7 +1508,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 {
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
 	
-	if (m_ImageListPtr->SetCurrentIndex(index))
+	if (0 != m_ImageListPtr->GetSize() && m_ImageListPtr->SetCurrentIndex(index))
 	{
 		StopVideo(false);
 
@@ -1296,26 +1531,18 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		m_bTimelineVisible = false;
 		UpdateTimelineVisibility();
 
-		if (IsVideo())
+		bool keep_visible = m_bPointerOverOverlayBar || IsPointerOverControls();
+		if (keep_visible)
 		{
-			// show media controls but only the play button
-			viewer_set_controls_visible(this, true);
-
-			set_control_visible(m_pTimeElapsedLabel, false);
-			set_control_visible(m_pTimeDurationLabel, false);
-			set_control_visible(m_pRewindBtn, false);
-			set_control_visible(m_pSpeedButton, false);
-			set_control_visible(m_pFfBtn, false);
-			set_control_visible(m_pSnapBtn, false);
-			set_control_visible(m_pVolumeButton, false);
-			set_control_visible(m_pVideoOptionsBtn, false);
-			set_control_visible(m_pFullscreenBtn, false);
+			viewer_controls_show(this);
+			viewer_set_controls_opacity(this, 1.0);
+			RefreshAutoHideTimer();
 		}
 		else
 		{
-			// hide them
 			viewer_set_controls_visible(this, false);
 		}
+		UpdateCenterPlayButtonVisibility();
 
 		gtk_window_set_default_size (GTK_WINDOW (m_pNavigationWindow),1,1);
 		QuiverFile f = m_ImageListPtr->GetCurrent();
@@ -1552,50 +1779,45 @@ static void set_control_visible(GtkWidget* w, bool visible)
 	}
 }
 
-/* The bottom controls bar and the centered transport row fade/show/hide as
- * one unit, otherwise a fade-out could tuck the transport buttons away while
- * the timeline stayed on screen (or vice versa). */
+/* The unified overlay bar and timeline row fade/show/hide together. */
 static void viewer_set_controls_opacity(Viewer::ViewerImpl* p, double opacity)
 {
-	if (p->m_pMediaControls)
-		gtk_widget_set_opacity(p->m_pMediaControls, opacity);
-	if (p->m_pTransportRow)
-		gtk_widget_set_opacity(p->m_pTransportRow, opacity);
-	if (p->m_pPlayButton && p->m_pPlayImage && 0 == p->m_iPlayAnimTickId)
-	{
-		double scale = 0.75 + 0.25 * opacity;
-		int icon_sz = (int)(40.0 * scale + 0.5);
-		gtk_image_set_pixel_size(GTK_IMAGE(p->m_pPlayImage), icon_sz);
-	}
+	if (p->m_pViewerOverlayBar)
+		gtk_widget_set_opacity(p->m_pViewerOverlayBar, opacity);
+	if (p->m_pTimelineRow && p->IsVideo() && p->m_bVideoPlaybackStarted)
+		gtk_widget_set_opacity(p->m_pTimelineRow, opacity);
 }
 
 static void viewer_set_controls_visible(Viewer::ViewerImpl* p, bool visible)
 {
-	set_control_visible(p->m_pMediaControls, visible);
-	set_control_visible(p->m_pTransportRow, visible);
+	p->m_bControlsVisible = visible;
+	if (p->m_pViewerOverlayBar)
+		set_control_visible(p->m_pViewerOverlayBar, visible);
+	if (p->m_pTimelineRow)
+		set_control_visible(p->m_pTimelineRow, visible && p->IsVideo() && p->m_bVideoPlaybackStarted);
 }
 
 /* True when the controls should be (re-)shown: they are gone entirely, or a
- * fade-out is mid-flight and user activity must not let them vanish.  This is
- * the visibility-based replacement for the old "opacity < 0.5" heuristic. */
+ * fade-out is mid-flight and user activity must not let them vanish. */
 static bool viewer_controls_need_reshow(Viewer::ViewerImpl* p)
 {
-	if (NULL == p->m_pMediaControls)
+	if (NULL == p->m_pViewerOverlayBar)
 		return false;
-	if (!gtk_widget_get_visible(p->m_pMediaControls))
+	if (!gtk_widget_get_visible(p->m_pViewerOverlayBar))
 		return true;
 	return 0 != p->m_iTimeoutControlsFade && !p->m_bControlsFadingIn;
 }
 
-/* Make the bar and transport row pickable/rendered again WITHOUT touching
+/* Make the overlay bar (and timeline) pickable/rendered again WITHOUT touching
  * opacity: used before a fade-in, which animates the (still low) opacity up
  * to 1.0 to restore a smooth transition instead of a hard pop-in. */
 static void viewer_controls_show(Viewer::ViewerImpl* p)
 {
-	if (p->m_pMediaControls)
-		gtk_widget_set_visible(p->m_pMediaControls, TRUE);
-	if (p->m_pTransportRow)
-		gtk_widget_set_visible(p->m_pTransportRow, TRUE);
+	p->m_bControlsVisible = true;
+	if (p->m_pViewerOverlayBar)
+		gtk_widget_set_visible(p->m_pViewerOverlayBar, TRUE);
+	if (p->m_pTimelineRow && p->IsVideo() && p->m_bVideoPlaybackStarted)
+		gtk_widget_set_visible(p->m_pTimelineRow, TRUE);
 }
 
 /* 1x1 fully-transparent cursor used to hide the pointer while watching a
@@ -1780,11 +2002,6 @@ void Viewer::ViewerImpl::TriggerPlayPauseAnimation(bool isPlaying)
 	gtk_widget_set_opacity(m_pPlayAnimWidget, 0.0);
 	gtk_widget_set_visible(m_pPlayAnimWidget, TRUE);
 
-	if (m_pPlayButton)
-	{
-		gtk_widget_set_opacity(m_pPlayButton, 0.0);
-	}
-
 	m_iPlayAnimStartTime = 0;
 	if (0 == m_iPlayAnimTickId)
 	{
@@ -1870,47 +2087,63 @@ bool Viewer::ViewerImpl::IsPointerOverFilmstrip() const
 
 	graphene_point_t src = GRAPHENE_POINT_INIT((float)surface_x, (float)surface_y);
 	graphene_point_t dest;
-	if (!gtk_widget_compute_point(m_pFilmstripOverlayContainer, GTK_WIDGET(native), &src, &dest))
+	if (!gtk_widget_compute_point(GTK_WIDGET(native), m_pFilmstripOverlayContainer, &src, &dest))
 		return false;
 	return dest.x >= 0 && dest.x < gtk_widget_get_width(m_pFilmstripOverlayContainer)
 		&& dest.y >= 0 && dest.y < gtk_widget_get_height(m_pFilmstripOverlayContainer);
 }
 
+bool Viewer::ViewerImpl::IsPointerOverControls() const
+{
+	if (!IsVideo() && m_bPointerOverOverlayBar)
+		return true;
+
+	auto check_widget = [](GtkWidget *ctrl) -> bool {
+		if (!ctrl || !gtk_widget_get_visible(ctrl)) return false;
+
+		GtkNative *native = GTK_NATIVE(gtk_widget_get_native(ctrl));
+		if (!native) return false;
+		GdkSurface *surface = gtk_native_get_surface(native);
+		if (!surface) return false;
+
+		GdkDisplay *display = gtk_widget_get_display(ctrl);
+		if (!display) return false;
+		GdkSeat *seat = gdk_display_get_default_seat(display);
+		if (!seat) return false;
+		GdkDevice *device = gdk_seat_get_pointer(seat);
+		if (!device) return false;
+		double surface_x = 0., surface_y = 0.;
+		if (!gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL))
+			return false;
+
+		graphene_point_t src = GRAPHENE_POINT_INIT((float)surface_x, (float)surface_y);
+		graphene_point_t dest;
+		if (!gtk_widget_compute_point(GTK_WIDGET(native), ctrl, &src, &dest))
+			return false;
+		float local_x = dest.x;
+		float local_y = dest.y;
+
+		/* X: anywhere across the full width of the controls bar */
+		bool in_x = local_x >= 0
+			&& local_x < gtk_widget_get_width(ctrl);
+
+		/* Y: at or below the controls top, extending to its bottom */
+		bool in_y = local_y >= 0
+			&& local_y <= gtk_widget_get_height(ctrl);
+
+		return in_x && in_y;
+	};
+
+	if (check_widget(m_pViewerOverlayBar))
+		return true;
+	if (IsVideo() && m_bVideoPlaybackStarted && check_widget(m_pTimelineRow))
+		return true;
+	return false;
+}
+
 bool Viewer::ViewerImpl::IsPointerOverMediaControls() const
 {
-	if (!m_pPlayButton || !m_pMediaControls) return false;
-
-	GtkNative *native = GTK_NATIVE(gtk_widget_get_native(m_pMediaControls));
-	if (!native) return false;
-	GdkSurface *surface = gtk_native_get_surface(native);
-	if (!surface) return false;
-
-	GdkDisplay *display = gtk_widget_get_display(m_pPlayButton);
-	if (!display) return false;
-	GdkSeat *seat = gdk_display_get_default_seat(display);
-	if (!seat) return false;
-	GdkDevice *device = gdk_seat_get_pointer(seat);
-	if (!device) return false;
-	double surface_x = 0., surface_y = 0.;
-	if (!gdk_surface_get_device_position(surface, device, &surface_x, &surface_y, NULL))
-		return false;
-
-	graphene_point_t src = GRAPHENE_POINT_INIT((float)surface_x, (float)surface_y);
-	graphene_point_t dest;
-	if (!gtk_widget_compute_point(m_pMediaControls, GTK_WIDGET(native), &src, &dest))
-		return false;
-	float local_x = dest.x;
-	float local_y = dest.y;
-
-	/* X: anywhere across the full width of the media controls bar */
-	bool in_x = local_x >= 0
-		&& local_x < gtk_widget_get_width(m_pMediaControls);
-
-	/* Y: at or below the media controls top, extending to its bottom */
-	bool in_y = local_y >= 0
-		&& local_y <= gtk_widget_get_height(m_pMediaControls);
-
-	return in_x && in_y;
+	return IsPointerOverControls();
 }
 
 void Viewer::ViewerImpl::ScheduleFilmstripHide()
@@ -1918,7 +2151,7 @@ void Viewer::ViewerImpl::ScheduleFilmstripHide()
 	if (!m_bFilmstripOverlay) return;
 	if (IsPointerOverFilmstrip()) return;
 	CancelFilmstripHide();
-	m_iTimeoutFilmstripHide = g_timeout_add(800, filmstrip_hide_timeout_cb, this);
+	m_iTimeoutFilmstripHide = g_timeout_add(OVERLAY_AUTO_HIDE_TIMEOUT_MS, filmstrip_hide_timeout_cb, this);
 }
 
 void Viewer::ViewerImpl::CancelFilmstripHide()
@@ -2119,25 +2352,7 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		/* remove the overlay CSS class */
 		gtk_widget_remove_css_class(m_pIconView, "filmstrip-overlay");
 
-/* The video paintable is referenced by the sink AND by us (g_object_get).
-	 * The sink widget holds its own reference, so our ref can be dropped here;
-	 * also disconnect the invalidate handler so it can never fire with this
-	 * (freed) object after the pipeline teardown */
-	if (m_pVideoPaintable)
-	{
-		g_signal_handlers_disconnect_matched(
-			G_OBJECT(m_pVideoPaintable),
-			G_SIGNAL_MATCH_DATA,
-			0,
-			0,
-			NULL,
-			NULL,
-			this);
-		g_object_unref(m_pVideoPaintable);
-		m_pVideoPaintable = NULL;
-	}
-
-	CancelFilmstripHide();
+		CancelFilmstripHide();
 		CancelFilmstripFade();
 
 		/* icon view may have been hidden or faded out in overlay mode;
@@ -2151,6 +2366,8 @@ void Viewer::ViewerImpl::AddFilmstrip()
 	{
 		g_object_unref(m_pIconView);
 	}
+
+	UpdateHUDPosition();
 }
 
 static gboolean 
@@ -2177,11 +2394,11 @@ timeout_event_motion_notify (gpointer user_data)
 			bKeepVisible = TRUE;
 	}
 
-	// ...and while the speed popover is open
-	if (!bKeepVisible && pViewerImpl->m_pSpeedButton != NULL)
+	// ...and while the image submenu popover is open
+	if (!bKeepVisible && pViewerImpl->m_pImageSubmenuBtn != NULL)
 	{
-		GtkPopover* speedPop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(pViewerImpl->m_pSpeedButton));
-		if (speedPop != NULL && gtk_widget_get_visible(GTK_WIDGET(speedPop)))
+		GtkPopover* imgPop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(pViewerImpl->m_pImageSubmenuBtn));
+		if (imgPop != NULL && gtk_widget_get_visible(GTK_WIDGET(imgPop)))
 			bKeepVisible = TRUE;
 	}
 
@@ -2189,19 +2406,28 @@ timeout_event_motion_notify (gpointer user_data)
 	if (!bKeepVisible && FALSE)
 		bKeepVisible = TRUE;
 
-	if (pViewerImpl->IsPlaying())
+	// ...and while pointer is over the viewer overlay bar
+	if (!bKeepVisible && (pViewerImpl->m_bPointerOverOverlayBar || pViewerImpl->IsPointerOverControls()))
+		bKeepVisible = TRUE;
+
+	if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
 	{
 		if (bKeepVisible)
 		{
-			pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
+			pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(OVERLAY_AUTO_HIDE_TIMEOUT_MS, timeout_event_motion_notify, pViewerImpl);
 		}
 		else
 		{
 			pViewerImpl->StartControlsFade(false);
 			pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
 			/* the controls faded away because the pointer went idle: hide the
-			 * pointer too, like a movie player */
-			viewer_set_idle_cursor(pViewerImpl, true);
+			 * pointer if playing video or in fullscreen/slideshow */
+			GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(pViewerImpl->m_pOverlay));
+			bool bFS = root && GTK_IS_WINDOW(root) && gtk_window_is_fullscreen(GTK_WINDOW(root));
+			if (pViewerImpl->IsPlaying() || pViewerImpl->m_bSlideShowRunning || bFS)
+			{
+				viewer_set_idle_cursor(pViewerImpl, true);
+			}
 		}
 	}
 	else
@@ -2263,13 +2489,9 @@ viewer_scale_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, 
 	(void)gesture; (void)n_press; (void)x; (void)y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->m_bSeekDragging = TRUE;
-	/* Keep the whole media bar (transport row + timeline + time labels)
-	 * visible while seeking by cancelling any in-flight fade-out. */
 	p->CancelControlsFade();
 	viewer_set_controls_visible(p, true);
-	/* ensure the transport row is not left hidden from a prior seek */
-	if (p->m_pControlsBox)
-		gtk_widget_set_visible(p->m_pControlsBox, TRUE);
+	viewer_set_controls_opacity(p, 1.0);
 }
 
 static void
@@ -2278,9 +2500,6 @@ viewer_scale_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x
 	(void)gesture; (void)n_press; (void)x; (void)y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->m_bSeekDragging = FALSE;
-	/* restore the top transport row that had been hidden while dragging the scale */
-	if (p->m_pControlsBox)
-		gtk_widget_set_visible(p->m_pControlsBox, TRUE);
 	p->RefreshAutoHideTimer();
 }
 
@@ -2315,30 +2534,48 @@ static bool viewer_pointer_moved(Viewer::ViewerImpl *p)
 	return moved;
 }
 
+static void viewer_overlay_bar_enter_cb(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
+{
+	(void)controller; (void)x; (void)y;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->m_bPointerOverOverlayBar = true;
+	p->CancelControlsFade();
+	viewer_controls_show(p);
+	viewer_set_controls_opacity(p, 1.0);
+	viewer_set_idle_cursor(p, false);
+}
+
+static void viewer_overlay_bar_leave_cb(GtkEventControllerMotion *controller, gpointer user_data)
+{
+	(void)controller;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->m_bPointerOverOverlayBar = false;
+	p->RefreshAutoHideTimer();
+}
+
 /* Connected on control buttons and the timeline scale via motion
  * controllers so the bar stays visible while hovering. */
 static void controls_show_on_event_cb(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
 {
 	(void)controller; (void)x; (void)y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	/* Only re-show the media controls while the current item is a video.
-	 * Otherwise hovering the transport buttons after navigating to a plain
-	 * image would resurrect the controls over the image. */
-	if (p->IsVideo())
+	if (!viewer_pointer_moved(p))
 	{
-		if (!viewer_pointer_moved(p))
-		{
-			return;
-		}
-		gboolean was_hidden = viewer_controls_need_reshow(p);
-		if (was_hidden)
-		{
-			viewer_set_controls_visible(p, true);
-		}
-		/* hovering a control button counts as pointer activity too */
-		viewer_set_idle_cursor(p, false);
-		p->RefreshAutoHideTimer();
+		return;
 	}
+	gboolean was_hidden = viewer_controls_need_reshow(p);
+	if (was_hidden)
+	{
+		viewer_controls_show(p);
+		p->StartControlsFade(true);
+		if (p->IsVideo())
+		{
+			p->UpdateTimelineVisibility();
+		}
+	}
+	/* hovering a control button counts as pointer activity too */
+	viewer_set_idle_cursor(p, false);
+	p->RefreshAutoHideTimer();
 }
 
 static void
@@ -2390,27 +2627,307 @@ viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y,
 			pViewerImpl->m_iTimeoutMouseMotionNotify = 0;
 		}
 
-		if (0 != pViewerImpl->m_ImageListPtr->GetSize() && 
-				pViewerImpl->m_ImageListPtr->GetCurrent().IsVideo())
+		if (0 != pViewerImpl->m_ImageListPtr->GetSize())
 		{
-			/* Only re-show the controls on motion if they are not already
-			 * visible.  Once visible, motion merely re-arms the auto-hide
-			 * timer, so a fade-out that has started is allowed to complete
-			 * instead of being cancelled on every motion event (which is why
-			 * the controls never hid while the cursor stayed in the viewer). */
 			if (viewer_controls_need_reshow(pViewerImpl))
 			{
-				pViewerImpl->CancelControlsFade();
-				viewer_set_controls_visible(pViewerImpl, true);
-				pViewerImpl->UpdateTimelineVisibility();
+				viewer_controls_show(pViewerImpl);
+				pViewerImpl->StartControlsFade(true);
+				if (pViewerImpl->IsVideo())
+				{
+					pViewerImpl->UpdateTimelineVisibility();
+				}
 			}
 		}
 
-		if (pViewerImpl->IsPlaying())
+		pViewerImpl->RefreshAutoHideTimer();
+	}
+}
+
+/* ── GTK4 Gesture Controllers: pinch-to-zoom, two-finger pan, swipe/flick ── */
+
+static void viewer_gesture_zoom_begin_cb(GtkGesture *gesture, GdkEventSequence *sequence, gpointer user_data)
+{
+	(void)gesture; (void)sequence;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->m_dGestureLastScale = 1.0;
+	p->RefreshAutoHideTimer();
+}
+
+static void viewer_gesture_zoom_scale_changed_cb(GtkGestureZoom *gesture, gdouble scale, gpointer user_data)
+{
+	(void)gesture;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (scale <= 0.0)
+		return;
+
+	double factor = (p->m_dGestureLastScale > 0.0) ? (scale / p->m_dGestureLastScale) : 1.0;
+	p->m_dGestureLastScale = scale;
+
+	factor = CLAMP(factor, 0.5, 2.0);
+
+	if (p->IsVideo())
+	{
+		p->SetVideoZoom(p->m_dVideoZoomFinal * factor);
+	}
+	else
+	{
+		if (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_ZOOM)
 		{
-			pViewerImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,pViewerImpl);
+			quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView), QUIVER_IMAGE_VIEW_MODE_ZOOM);
+		}
+		quiver_image_view_zoom_by(QUIVER_IMAGE_VIEW(p->m_pImageView), factor);
+	}
+
+	p->RefreshAutoHideTimer();
+}
+
+static void viewer_gesture_zoom_end_cb(GtkGesture *gesture, GdkEventSequence *sequence, gpointer user_data)
+{
+	(void)gesture; (void)sequence;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->m_dGestureLastScale = 1.0;
+	p->RefreshAutoHideTimer();
+}
+
+static void viewer_two_finger_pan_begin_cb(GtkGestureDrag *gesture, gdouble start_x, gdouble start_y, gpointer user_data)
+{
+	(void)gesture; (void)start_x; (void)start_y;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->IsVideo())
+	{
+		p->m_dTwoFingerPanStartVidX = p->m_dVideoPanX;
+		p->m_dTwoFingerPanStartVidY = p->m_dVideoPanY;
+	}
+	else
+	{
+		GtkAdjustment *hadj = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(p->m_pImageView));
+		GtkAdjustment *vadj = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(p->m_pImageView));
+		p->m_dTwoFingerPanStartHAdj = hadj ? gtk_adjustment_get_value(hadj) : 0.0;
+		p->m_dTwoFingerPanStartVAdj = vadj ? gtk_adjustment_get_value(vadj) : 0.0;
+	}
+	p->RefreshAutoHideTimer();
+}
+
+static void viewer_two_finger_pan_update_cb(GtkGestureDrag *gesture, gdouble offset_x, gdouble offset_y, gpointer user_data)
+{
+	(void)gesture;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->IsVideo())
+	{
+		gdouble srcPerPxX = 1., srcPerPxY = 1.;
+		if (p->m_iVideoWidth > 0 && p->m_iVideoHeight > 0)
+		{
+			gdouble scale = MIN((gdouble)gtk_widget_get_width(p->m_pVideoFixed) / p->m_iVideoWidth,
+				(gdouble)gtk_widget_get_height(p->m_pVideoFixed) / p->m_iVideoHeight);
+			gdouble zoom = MAX(p->m_dVideoZoom, 1.0);
+			if (scale * zoom > 0.)
+			{
+				srcPerPxX = 1. / (scale * zoom);
+				srcPerPxY = srcPerPxX;
+			}
+		}
+		p->m_dVideoPanX = p->m_dTwoFingerPanStartVidX - offset_x * srcPerPxX;
+		p->m_dVideoPanY = p->m_dTwoFingerPanStartVidY - offset_y * srcPerPxY;
+		p->ApplyVideoZoom();
+	}
+	else
+	{
+		if (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView)) == QUIVER_IMAGE_VIEW_MODE_ZOOM)
+		{
+			GtkAdjustment *hadj = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(p->m_pImageView));
+			GtkAdjustment *vadj = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(p->m_pImageView));
+			if (hadj)
+			{
+				double new_val = p->m_dTwoFingerPanStartHAdj - offset_x;
+				double upper = gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj);
+				new_val = CLAMP(new_val, gtk_adjustment_get_lower(hadj), MAX(gtk_adjustment_get_lower(hadj), upper));
+				gtk_adjustment_set_value(hadj, new_val);
+			}
+			if (vadj)
+			{
+				double new_val = p->m_dTwoFingerPanStartVAdj - offset_y;
+				double upper = gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj);
+				new_val = CLAMP(new_val, gtk_adjustment_get_lower(vadj), MAX(gtk_adjustment_get_lower(vadj), upper));
+				gtk_adjustment_set_value(vadj, new_val);
+			}
 		}
 	}
+	p->RefreshAutoHideTimer();
+}
+
+static void viewer_two_finger_pan_end_cb(GtkGestureDrag *gesture, gdouble offset_x, gdouble offset_y, gpointer user_data)
+{
+	(void)gesture; (void)offset_x; (void)offset_y;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->RefreshAutoHideTimer();
+}
+
+static void viewer_swipe_cb(GtkGestureSwipe *gesture, gdouble velocity_x, gdouble velocity_y, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (NULL == p || 0 == p->m_ImageListPtr->GetSize())
+		return;
+
+	/* Ignore mouse, touchpad, or other non-touchscreen events */
+	GdkDevice *dev = gtk_gesture_get_device(GTK_GESTURE(gesture));
+	if (dev == NULL)
+	{
+		GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(gesture));
+		if (ev != NULL)
+			dev = gdk_event_get_device(ev);
+	}
+	if (dev != NULL && gdk_device_get_source(dev) != GDK_SOURCE_TOUCHSCREEN)
+	{
+		return;
+	}
+
+	/* Disable swiping when zoomed in: dragging must only pan the image */
+	if (p->m_pImageView && QUIVER_IS_IMAGE_VIEW(p->m_pImageView))
+	{
+		QuiverImageView *iv = QUIVER_IMAGE_VIEW(p->m_pImageView);
+		QuiverImageViewMode mode = quiver_image_view_get_view_mode(iv);
+		if (mode == QUIVER_IMAGE_VIEW_MODE_ZOOM || mode == QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE)
+		{
+			return;
+		}
+	}
+	if (p->IsVideo() && p->m_dVideoZoom > 1.05)
+	{
+		return;
+	}
+
+	const double kSwipeThreshold = 120.0;
+
+	if (fabs(velocity_x) >= fabs(velocity_y))
+	{
+		if (velocity_x < -kSwipeThreshold)
+		{
+			GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_NEXT);
+			if (act) g_action_activate(act, NULL);
+		}
+		else if (velocity_x > kSwipeThreshold)
+		{
+			GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_PREVIOUS);
+			if (act) g_action_activate(act, NULL);
+		}
+	}
+	else
+	{
+		if (velocity_y < -kSwipeThreshold)
+		{
+			// Flick up: toggle fullscreen
+			GAction *fs = QuiverUtils::GetAction("FullScreen");
+			if (fs) g_action_activate(fs, NULL);
+		}
+		else if (velocity_y > kSwipeThreshold)
+		{
+			// Flick down: exit fullscreen if fullscreen
+			GtkRoot *root = gtk_widget_get_root(p->m_pHBox);
+			bool bFS = root && GTK_IS_WINDOW(root) && gtk_window_is_fullscreen(GTK_WINDOW(root));
+			if (bFS)
+			{
+				GAction *fs = QuiverUtils::GetAction("FullScreen");
+				if (fs) g_action_activate(fs, NULL);
+			}
+		}
+	}
+	p->RefreshAutoHideTimer();
+}
+
+/* ── Overlay button callbacks ── */
+
+static void viewer_overlay_prev_cb(Viewer::ViewerImpl *p)
+{
+	(void)p;
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_PREVIOUS);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_overlay_next_cb(Viewer::ViewerImpl *p)
+{
+	(void)p;
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_NEXT);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_overlay_slideshow_cb(Viewer::ViewerImpl *p)
+{
+	if (!p || !p->m_pViewer) return;
+	gboolean want_active = !p->m_bSlideShowRunning;
+	QuiverUtils::ToggleActionSetState(ACTION_VIEWER_SLIDESHOW, !want_active);
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_SLIDESHOW);
+	if (act)
+	{
+		g_action_activate(act, NULL);
+		return;
+	}
+	if (!p->m_pViewer) return;
+	if (p->m_bSlideShowRunning)
+	{
+		p->m_pViewer->SlideShowStop();
+	}
+	else
+	{
+		p->m_pViewer->SlideShowStart();
+	}
+}
+
+static void viewer_overlay_zoom_out_cb(Viewer::ViewerImpl *p)
+{
+	if (p->IsVideo())
+	{
+		p->m_bVideoZoomAnchorCenter = true;
+	}
+	else
+	{
+		quiver_image_view_set_zoom_anchor_center(QUIVER_IMAGE_VIEW(p->m_pImageView), TRUE);
+	}
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_OUT);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_overlay_zoom_fit_cb(Viewer::ViewerImpl *p)
+{
+	(void)p;
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_FIT);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_overlay_zoom_in_cb(Viewer::ViewerImpl *p)
+{
+	if (p->IsVideo())
+	{
+		p->m_bVideoZoomAnchorCenter = true;
+	}
+	else
+	{
+		quiver_image_view_set_zoom_anchor_center(QUIVER_IMAGE_VIEW(p->m_pImageView), TRUE);
+	}
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_IN);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_overlay_rotate_ccw_cb(Viewer::ViewerImpl *p)
+{
+	(void)p;
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_ROTATE_CCW);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_overlay_rotate_cw_cb(Viewer::ViewerImpl *p)
+{
+	(void)p;
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_ROTATE_CW);
+	if (act) g_action_activate(act, NULL);
+}
+
+
+static void viewer_overlay_fullscreen_cb(Viewer::ViewerImpl *p)
+{
+	(void)p;
+	GAction *fs = QuiverUtils::GetAction("FullScreen");
+	if (fs) g_action_activate(fs, NULL);
 }
 
 static void viewer_radio_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data)
@@ -2439,6 +2956,11 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		QuiverImageViewMode zoom_mode = (QuiverImageViewMode)QuiverUtils::GetRadioActionCurrent(szAction);
 		if (pViewerImpl->IsVideo())
 		{
+			if (pViewerImpl->m_iVideoZoomTimeoutID != 0)
+			{
+				g_source_remove(pViewerImpl->m_iVideoZoomTimeoutID);
+				pViewerImpl->m_iVideoZoomTimeoutID = 0;
+			}
 			/* update the image view first so ApplyVideoZoom reads the new mode */
 			quiver_image_view_set_view_mode(imageview, zoom_mode);
 			/* re-center the visible viewport when changing modes during
@@ -2477,7 +2999,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 
 		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
-				
+
 		quiver_image_view_set_magnification(imageview,
 						quiver_image_view_get_magnification(imageview)*1.25);
 	}
@@ -2486,13 +3008,16 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	{
 		if (pViewerImpl->IsVideo())
 		{
-			pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / 1.25);
+			if (pViewerImpl->m_dVideoZoomFinal > pViewerImpl->m_dVideoZoomMin + 0.005)
+			{
+				pViewerImpl->SetVideoZoom(pViewerImpl->m_dVideoZoomFinal / 1.25);
+			}
 			return;
 		}
 
 		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
-				
+
 		quiver_image_view_set_magnification(imageview,
 			quiver_image_view_get_magnification(imageview)/1.25);
 	}
@@ -2530,7 +3055,14 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_PLAY) || 0 == strcmp(szAction,ACTION_VIEWER_VIDEO_PLAY_2))
 	{
-		pViewerImpl->PlayPauseVideo();
+		if (pViewerImpl->m_pViewer && pViewerImpl->m_pViewer->IsSlideShowRunning())
+		{
+			pViewerImpl->m_pViewer->SlideShowTogglePause();
+		}
+		else
+		{
+			pViewerImpl->PlayPauseVideo();
+		}
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SKIP_FORWARD))
 	{
@@ -2559,6 +3091,10 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_SNAPSHOT))
 	{
 		pViewerImpl->Snapshot();
+	}
+	else if (0 == strcmp(szAction, ACTION_VIEWER_VIDEO_MUTE))
+	{
+		pViewerImpl->ToggleMute();
 	}
 	else if (g_str_has_prefix(szAction, "VideoSpeed"))
 	{
@@ -2853,6 +3389,8 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 
  	if (bZoom)
  	{
+ 		pViewerImpl->m_bVideoZoomAnchorCenter = false;
+ 		quiver_image_view_set_zoom_anchor_center(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView), FALSE);
  		/* Scale smooth (touchpad) deltas to a notch-equivalent so the zoom is
  		 * proportional; WHEEL deltas are already whole notches. */
  		GdkScrollUnit unit = gtk_event_controller_scroll_get_unit(
@@ -2888,6 +3426,53 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
  	 * the next event is quantized.) */
  	GdkScrollUnit unit = gtk_event_controller_scroll_get_unit(
  		GTK_EVENT_CONTROLLER_SCROLL(controller));
+
+ 	if (unit == GDK_SCROLL_UNIT_SURFACE)
+ 	{
+ 		/* Two-finger smooth pan on touchpad */
+ 		if (!pViewerImpl->IsVideo() &&
+ 			quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) == QUIVER_IMAGE_VIEW_MODE_ZOOM)
+ 		{
+ 			GtkAdjustment *hadj = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+ 			GtkAdjustment *vadj = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+ 			if (hadj && dx != 0.0)
+ 			{
+ 				double val = gtk_adjustment_get_value(hadj) + dx;
+ 				double upper = gtk_adjustment_get_upper(hadj) - gtk_adjustment_get_page_size(hadj);
+ 				gtk_adjustment_set_value(hadj, CLAMP(val, gtk_adjustment_get_lower(hadj), MAX(gtk_adjustment_get_lower(hadj), upper)));
+ 			}
+ 			if (vadj && dy != 0.0)
+ 			{
+ 				double val = gtk_adjustment_get_value(vadj) + dy;
+ 				double upper = gtk_adjustment_get_upper(vadj) - gtk_adjustment_get_page_size(vadj);
+ 				gtk_adjustment_set_value(vadj, CLAMP(val, gtk_adjustment_get_lower(vadj), MAX(gtk_adjustment_get_lower(vadj), upper)));
+ 			}
+ 			pViewerImpl->RefreshAutoHideTimer();
+ 			return TRUE;
+ 		}
+ 		else if (pViewerImpl->IsVideo() && pViewerImpl->m_dVideoZoom > 1.0)
+ 		{
+ 			gdouble srcPerPxX = 1., srcPerPxY = 1.;
+ 			if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
+ 			{
+ 				gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoWidth,
+ 					(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoHeight);
+ 				gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
+ 				if (scale * zoom > 0.)
+ 				{
+ 					srcPerPxX = 1. / (scale * zoom);
+ 					srcPerPxY = srcPerPxX;
+ 				}
+ 			}
+ 			pViewerImpl->m_dVideoPanX += dx * srcPerPxX;
+ 			pViewerImpl->m_dVideoPanY += dy * srcPerPxY;
+ 			pViewerImpl->ApplyVideoZoom();
+ 			pViewerImpl->RefreshAutoHideTimer();
+ 			return TRUE;
+ 		}
+ 		return FALSE;
+ 	}
+
  	if (unit != GDK_SCROLL_UNIT_WHEEL)
  		return FALSE;
 
@@ -2950,7 +3535,10 @@ static void viewer_imageview_magnification_changed(QuiverImageView *imageview,gp
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 
 	double mag = quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
-	pViewerImpl->m_StatusbarPtr->SetMagnification((int)(mag*100+.5));
+	if (pViewerImpl->m_StatusbarPtr)
+	{
+		pViewerImpl->m_StatusbarPtr->SetMagnification((int)(mag*100+.5));
+	}
 	
 	pViewerImpl->UpdateUI();
 
@@ -2998,7 +3586,14 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 }
 
 static gboolean viewer_imageview_key_press_event(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata)
-{ (void)controller; (void)keycode; (void)state; (void)userdata;
+{ (void)controller; (void)keycode; (void)state;
+	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)userdata;
+	if (pViewerImpl && pViewerImpl->IsVideo() && (keyval == GDK_KEY_m || keyval == GDK_KEY_M))
+	{
+		pViewerImpl->ToggleMute();
+		return TRUE;
+	}
+
 	if (GDK_KEY_Left == keyval || GDK_KEY_Page_Up == keyval || GDK_KEY_Up == keyval)
 	{
 		GAction* action = QuiverUtils::GetAction(ACTION_VIEWER_PREVIOUS);
@@ -3135,7 +3730,7 @@ static void viewer_video_option_text_cb(GtkButton *button, gpointer user_data)
 	}
 }
 
-static void viewer_video_option_rotate_cb(GtkButton *button, gpointer user_data)
+static void viewer_video_option_rotate_cw_cb(GtkButton *button, gpointer user_data)
 {
 	(void)button;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
@@ -3149,14 +3744,244 @@ static void viewer_video_option_rotate_cb(GtkButton *button, gpointer user_data)
 	}
 }
 
+static void viewer_video_option_rotate_ccw_cb(GtkButton *button, gpointer user_data)
+{
+	(void)button;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
+	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL && p->m_pVideoZoomScaler != NULL)
+	{
+		gfloat rot = 0.0f;
+		g_object_get(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", &rot, NULL);
+		rot -= 90.0f;
+		if (rot < 0.0f) rot += 360.0f;
+		g_object_set(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", rot, NULL);
+	}
+}
+
 static void viewer_video_option_loop_cb(GtkButton *button, gpointer user_data)
 {
+	(void)button;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
 	p->m_bVideoLoop = !p->m_bVideoLoop;
-	gchar *loop_label = g_strdup_printf("%s Loop",
-		p->m_bVideoLoop ? "✓" : "  ");
-	gtk_button_set_label(button, loop_label);
-	g_free(loop_label);
+	if (p->m_pVideoOptionsPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pVideoOptionsPopover));
+}
+
+static void viewer_slideshow_delay_cb(GtkWidget *widget, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	int sec = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "delay-seconds"));
+	if (sec > 0)
+	{
+		p->m_iSlideShowDuration = sec * 1000;
+		Preferences::GetInstance()->SetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION, p->m_iSlideShowDuration);
+		if (p->m_pImageSubmenuPopover)
+			gtk_popover_popdown(GTK_POPOVER(p->m_pImageSubmenuPopover));
+	}
+}
+
+static void viewer_slideshow_loop_cb(GtkWidget *widget, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (!p) return;
+	p->m_bSlideShowLoop = !p->m_bSlideShowLoop;
+	Preferences::GetInstance()->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_LOOP, p->m_bSlideShowLoop);
+	if (p->m_bSlideShowLoop)
+		gtk_widget_add_css_class(widget, "speed-active");
+	else
+		gtk_widget_remove_css_class(widget, "speed-active");
+}
+
+static void viewer_submenu_flip_h_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_pImageSubmenuPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pImageSubmenuPopover));
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_FLIP_H);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_submenu_flip_v_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_pImageSubmenuPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pImageSubmenuPopover));
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_FLIP_V);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_submenu_trash_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_pImageSubmenuPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pImageSubmenuPopover));
+	if (p->m_pVideoOptionsPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pVideoOptionsPopover));
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_TRASH);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_submenu_copy_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_pImageSubmenuPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pImageSubmenuPopover));
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_COPY);
+	if (act) g_action_activate(act, NULL);
+}
+
+static void viewer_video_submenu_speed_cb(GtkWidget *widget, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	int speedInt = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "speed-value"));
+	double speed = speedInt / 100.0;
+	if (speed > 0.0)
+	{
+		p->SetPlaybackSpeed(speed);
+		if (p->m_pVideoOptionsPopover)
+			gtk_popover_popdown(GTK_POPOVER(p->m_pVideoOptionsPopover));
+	}
+}
+
+static void viewer_submenu_slideshow_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p)
+	{
+		viewer_overlay_slideshow_cb(p);
+	}
+}
+
+static void viewer_video_submenu_snapshot_cb(GtkWidget *widget, gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p && p->m_pVideoOptionsPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pVideoOptionsPopover));
+	viewer_snapshot_button_clicked_cb(GTK_BUTTON(widget), user_data);
+}
+
+static void viewer_image_submenu_create_popup_cb(GtkMenuButton *button, gpointer user_data)
+{
+	(void)button;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p == NULL) return;
+
+	PreferencesPtr prefs = Preferences::GetInstance();
+	int hudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
+	GtkPositionType popPos = (hudPos == HUD_POS_TOP) ? GTK_POS_BOTTOM : GTK_POS_TOP;
+
+	GtkWidget *popover = gtk_popover_new();
+	gtk_popover_set_position(GTK_POPOVER(popover), popPos);
+	gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
+	p->m_pImageSubmenuPopover = popover;
+	g_signal_connect_swapped(popover, "map", G_CALLBACK(+[](Viewer::ViewerImpl *impl) {
+		if (impl) impl->UpdateSlideshowButton();
+	}), p);
+
+	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	gtk_widget_set_margin_start(box, 8);
+	gtk_widget_set_margin_end(box, 8);
+	gtk_widget_set_margin_top(box, 8);
+	gtk_widget_set_margin_bottom(box, 8);
+
+	// Slideshow Delay section
+	GtkWidget *lblDelay = gtk_label_new(NULL);
+	gtk_label_set_markup(GTK_LABEL(lblDelay), "<b>Slideshow Delay</b>");
+	gtk_widget_set_halign(lblDelay, GTK_ALIGN_START);
+	gtk_box_append(GTK_BOX(box), lblDelay);
+
+	GtkWidget *delayRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
+	static const int delays[] = { 1, 2, 3, 5, 10 };
+	int curSec = p->m_iSlideShowDuration / 1000;
+	for (size_t i = 0; i < sizeof(delays)/sizeof(delays[0]); i++)
+	{
+		int s = delays[i];
+		gchar *label = g_strdup_printf("%ds", s);
+		GtkWidget *btn = gtk_button_new_with_label(label);
+		g_free(label);
+		gtk_widget_add_css_class(btn, "submenu-pill-btn");
+		if (curSec == s)
+			gtk_widget_add_css_class(btn, "speed-active");
+		g_object_set_data(G_OBJECT(btn), "delay-seconds", GINT_TO_POINTER(s));
+		g_signal_connect(btn, "clicked", G_CALLBACK(viewer_slideshow_delay_cb), p);
+		gtk_box_append(GTK_BOX(delayRow), btn);
+	}
+	gtk_box_append(GTK_BOX(box), delayRow);
+
+	gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+	// Action icon buttons row
+	GtkWidget *actionRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+	gtk_widget_set_halign(actionRow, GTK_ALIGN_CENTER);
+
+	// Flip Horizontal
+	GtkWidget *fliph_btn = gtk_button_new_from_icon_name("object-flip-horizontal-symbolic");
+	gtk_widget_set_tooltip_text(fliph_btn, ShortcutManager::GetInstance().GetTooltipForAction("FlipH", "Flip Horizontal").c_str());
+	gtk_widget_add_css_class(fliph_btn, "media-btn");
+	gtk_widget_add_css_class(fliph_btn, "submenu-icon-btn");
+	g_signal_connect(fliph_btn, "clicked", G_CALLBACK(viewer_submenu_flip_h_cb), p);
+	gtk_box_append(GTK_BOX(actionRow), fliph_btn);
+
+	// Flip Vertical
+	GtkWidget *flipv_btn = gtk_button_new_from_icon_name("object-flip-vertical-symbolic");
+	gtk_widget_set_tooltip_text(flipv_btn, ShortcutManager::GetInstance().GetTooltipForAction("FlipV", "Flip Vertical").c_str());
+	gtk_widget_add_css_class(flipv_btn, "media-btn");
+	gtk_widget_add_css_class(flipv_btn, "submenu-icon-btn");
+	g_signal_connect(flipv_btn, "clicked", G_CALLBACK(viewer_submenu_flip_v_cb), p);
+	gtk_box_append(GTK_BOX(actionRow), flipv_btn);
+
+	// Slideshow toggle
+	GtkWidget *ss_btn = gtk_toggle_button_new();
+	gtk_button_set_icon_name(GTK_BUTTON(ss_btn), "display-projector-symbolic");
+	gtk_widget_set_tooltip_text(ss_btn, ShortcutManager::GetInstance().GetTooltipForAction("SlideShow", "Slideshow").c_str());
+	gtk_widget_add_css_class(ss_btn, "media-btn");
+	gtk_widget_add_css_class(ss_btn, "submenu-icon-btn");
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ss_btn), p->m_bSlideShowRunning);
+	if (p->m_bSlideShowRunning)
+		gtk_widget_add_css_class(ss_btn, "speed-active");
+	g_signal_connect(ss_btn, "clicked", G_CALLBACK(viewer_submenu_slideshow_cb), p);
+	p->m_pViewerSlideshowBtn = ss_btn;
+	g_object_add_weak_pointer(G_OBJECT(ss_btn), (gpointer*)&p->m_pViewerSlideshowBtn);
+	p->UpdateUI();
+	gtk_box_append(GTK_BOX(actionRow), ss_btn);
+
+	// Loop toggle
+	GtkWidget *loop_btn = gtk_button_new_from_icon_name("media-playlist-repeat-symbolic");
+	gtk_widget_set_tooltip_text(loop_btn, "Loop Slideshow");
+	gtk_widget_add_css_class(loop_btn, "media-btn");
+	gtk_widget_add_css_class(loop_btn, "submenu-icon-btn");
+	if (p->m_bSlideShowLoop)
+		gtk_widget_add_css_class(loop_btn, "speed-active");
+	g_signal_connect(loop_btn, "clicked", G_CALLBACK(viewer_slideshow_loop_cb), p);
+	gtk_box_append(GTK_BOX(actionRow), loop_btn);
+
+	// Copy File
+	GtkWidget *copy_btn = gtk_button_new_from_icon_name("edit-copy-symbolic");
+	gtk_widget_set_tooltip_text(copy_btn, "Copy File (Ctrl+C)");
+	gtk_widget_add_css_class(copy_btn, "media-btn");
+	gtk_widget_add_css_class(copy_btn, "submenu-icon-btn");
+	g_signal_connect(copy_btn, "clicked", G_CALLBACK(viewer_submenu_copy_cb), p);
+	gtk_box_append(GTK_BOX(actionRow), copy_btn);
+
+	// Move to Trash
+	GtkWidget *trash_btn = gtk_button_new_from_icon_name("user-trash-symbolic");
+	gtk_widget_set_tooltip_text(trash_btn, ShortcutManager::GetInstance().GetTooltipForAction("BrowserTrash", "Move to Trash").c_str());
+	gtk_widget_add_css_class(trash_btn, "media-btn");
+	gtk_widget_add_css_class(trash_btn, "submenu-icon-btn");
+	gtk_widget_add_css_class(trash_btn, "destructive-action");
+	g_signal_connect(trash_btn, "clicked", G_CALLBACK(viewer_submenu_trash_cb), p);
+	gtk_box_append(GTK_BOX(actionRow), trash_btn);
+
+	gtk_box_append(GTK_BOX(box), actionRow);
+
+	gtk_popover_set_child(GTK_POPOVER(popover), box);
+	gtk_menu_button_set_popover(button, popover);
+	gtk_popover_set_position(GTK_POPOVER(popover), popPos);
 }
 
 static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer user_data)
@@ -3165,31 +3990,132 @@ static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	if (p == NULL) return;
 
+	PreferencesPtr prefs = Preferences::GetInstance();
+	int hudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
+	GtkPositionType popPos = (hudPos == HUD_POS_TOP) ? GTK_POS_BOTTOM : GTK_POS_TOP;
+
 	GtkWidget *popover = gtk_popover_new();
-	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
+	gtk_popover_set_position(GTK_POPOVER(popover), popPos);
 	gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
 	p->m_pVideoOptionsPopover = popover;
+	g_signal_connect_swapped(popover, "map", G_CALLBACK(+[](Viewer::ViewerImpl *impl) {
+		if (impl) impl->UpdateSlideshowButton();
+	}), p);
 
-	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-	gtk_widget_set_margin_start(box, 6);
-	gtk_widget_set_margin_end(box, 6);
-	gtk_widget_set_margin_top(box, 6);
-	gtk_widget_set_margin_bottom(box, 6);
+	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	gtk_widget_set_margin_start(box, 8);
+	gtk_widget_set_margin_end(box, 8);
+	gtk_widget_set_margin_top(box, 8);
+	gtk_widget_set_margin_bottom(box, 8);
 
 	if (p->m_pPipeline != NULL)
 	{
+		// Playback Speed
+		GtkWidget *lblSpeed = gtk_label_new(NULL);
+		gtk_label_set_markup(GTK_LABEL(lblSpeed), "<b>Playback Speed</b>");
+		gtk_widget_set_halign(lblSpeed, GTK_ALIGN_START);
+		gtk_box_append(GTK_BOX(box), lblSpeed);
+
+		GtkWidget *speedRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
+		const double speeds[] = { 0.5, 0.75, 1.0, 1.25, 1.5, 2.0 };
+		const int nSpeeds = sizeof(speeds) / sizeof(speeds[0]);
+		for (int i = 0; i < nSpeeds; i++)
+		{
+			bool isCurrent = (fabs(p->m_dPlaybackSpeed - speeds[i]) < 0.05);
+			gchar *label = g_strdup_printf("%.4gx", speeds[i]);
+			GtkWidget *btn = gtk_button_new_with_label(label);
+			g_free(label);
+			gtk_widget_add_css_class(btn, "submenu-pill-btn");
+			if (isCurrent)
+				gtk_widget_add_css_class(btn, "speed-active");
+			g_object_set_data(G_OBJECT(btn), "speed-value", GINT_TO_POINTER((int)(speeds[i] * 100)));
+			g_signal_connect(btn, "clicked", G_CALLBACK(viewer_video_submenu_speed_cb), p);
+			gtk_box_append(GTK_BOX(speedRow), btn);
+		}
+		gtk_box_append(GTK_BOX(box), speedRow);
+
+		gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+		// Video tools & actions row (Rotate CCW, Rotate CW, Frame Grab, Loop, Trash)
+		GtkWidget *actionRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+		gtk_widget_set_halign(actionRow, GTK_ALIGN_CENTER);
+
+		if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL)
+		{
+			GtkWidget *rotCcw = gtk_button_new_from_icon_name("object-rotate-left-symbolic");
+			gtk_widget_set_tooltip_text(rotCcw, ShortcutManager::GetInstance().GetTooltipForAction("RotateCCW", "Rotate Counter-Clockwise 90°").c_str());
+			gtk_widget_add_css_class(rotCcw, "media-btn");
+			gtk_widget_add_css_class(rotCcw, "submenu-icon-btn");
+			g_signal_connect(rotCcw, "clicked", G_CALLBACK(viewer_video_option_rotate_ccw_cb), p);
+			gtk_box_append(GTK_BOX(actionRow), rotCcw);
+
+			GtkWidget *rotCw = gtk_button_new_from_icon_name("object-rotate-right-symbolic");
+			gtk_widget_set_tooltip_text(rotCw, ShortcutManager::GetInstance().GetTooltipForAction("RotateCW", "Rotate Clockwise 90°").c_str());
+			gtk_widget_add_css_class(rotCw, "media-btn");
+			gtk_widget_add_css_class(rotCw, "submenu-icon-btn");
+			g_signal_connect(rotCw, "clicked", G_CALLBACK(viewer_video_option_rotate_cw_cb), p);
+			gtk_box_append(GTK_BOX(actionRow), rotCw);
+		}
+
+		// Snapshot (Frame Grab)
+		GtkWidget *snap_btn = gtk_button_new_from_icon_name("camera-photo-symbolic");
+		gtk_widget_set_tooltip_text(snap_btn, ShortcutManager::GetInstance().GetTooltipForAction("VideoSnapshot", "Take Snapshot").c_str());
+		gtk_widget_add_css_class(snap_btn, "media-btn");
+		gtk_widget_add_css_class(snap_btn, "submenu-icon-btn");
+		g_signal_connect(snap_btn, "clicked", G_CALLBACK(viewer_video_submenu_snapshot_cb), p);
+		p->m_pSnapBtn = snap_btn;
+		g_object_add_weak_pointer(G_OBJECT(snap_btn), (gpointer*)&p->m_pSnapBtn);
+		p->UpdateUI();
+		gtk_box_append(GTK_BOX(actionRow), snap_btn);
+
+		// Slideshow toggle
+		GtkWidget *ss_btn = gtk_toggle_button_new();
+		gtk_button_set_icon_name(GTK_BUTTON(ss_btn), "display-projector-symbolic");
+		gtk_widget_set_tooltip_text(ss_btn, ShortcutManager::GetInstance().GetTooltipForAction("SlideShow", "Slideshow").c_str());
+		gtk_widget_add_css_class(ss_btn, "media-btn");
+		gtk_widget_add_css_class(ss_btn, "submenu-icon-btn");
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ss_btn), p->m_bSlideShowRunning);
+		if (p->m_bSlideShowRunning)
+			gtk_widget_add_css_class(ss_btn, "speed-active");
+		g_signal_connect(ss_btn, "clicked", G_CALLBACK(viewer_submenu_slideshow_cb), p);
+		p->m_pViewerVideoSlideshowBtn = ss_btn;
+		g_object_add_weak_pointer(G_OBJECT(ss_btn), (gpointer*)&p->m_pViewerVideoSlideshowBtn);
+		p->UpdateUI();
+		gtk_box_append(GTK_BOX(actionRow), ss_btn);
+
+		// Loop Video
+		GtkWidget *loop_btn = gtk_button_new_from_icon_name("media-playlist-repeat-symbolic");
+		gtk_widget_set_tooltip_text(loop_btn, "Loop Video");
+		gtk_widget_add_css_class(loop_btn, "media-btn");
+		gtk_widget_add_css_class(loop_btn, "submenu-icon-btn");
+		if (p->m_bVideoLoop)
+			gtk_widget_add_css_class(loop_btn, "speed-active");
+		g_signal_connect(loop_btn, "clicked", G_CALLBACK(viewer_video_option_loop_cb), p);
+		gtk_box_append(GTK_BOX(actionRow), loop_btn);
+
+		// Move to Trash
+		GtkWidget *trash_btn = gtk_button_new_from_icon_name("user-trash-symbolic");
+		gtk_widget_set_tooltip_text(trash_btn, ShortcutManager::GetInstance().GetTooltipForAction("BrowserTrash", "Move to Trash").c_str());
+		gtk_widget_add_css_class(trash_btn, "media-btn");
+		gtk_widget_add_css_class(trash_btn, "submenu-icon-btn");
+		gtk_widget_add_css_class(trash_btn, "destructive-action");
+		g_signal_connect(trash_btn, "clicked", G_CALLBACK(viewer_submenu_trash_cb), p);
+		gtk_box_append(GTK_BOX(actionRow), trash_btn);
+
+		gtk_box_append(GTK_BOX(box), actionRow);
+
+		// Audio tracks: ONLY show if n_audio > 1!
 		gint n_audio = 0;
 		g_object_get(p->m_pPipeline, "n-audio", &n_audio, NULL);
 		gint current_audio = -1;
 		g_object_get(p->m_pPipeline, "current-audio", &current_audio, NULL);
 
-		if (n_audio > 0)
+		if (n_audio > 1)
 		{
+			gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 			GtkWidget *mi = gtk_label_new(NULL);
-			gtk_label_set_markup(GTK_LABEL(mi), "<b>Audio Tracks:</b>");
+			gtk_label_set_markup(GTK_LABEL(mi), "<b>Audio Tracks</b>");
 			gtk_widget_set_halign(mi, GTK_ALIGN_START);
-			gtk_widget_set_margin_top(mi, 2);
-			gtk_widget_set_margin_bottom(mi, 2);
 			gtk_box_append(GTK_BOX(box), mi);
 
 			for (gint i = 0; i < n_audio; ++i)
@@ -3220,35 +4146,34 @@ static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer
 				g_signal_connect(item, "clicked", G_CALLBACK(viewer_video_option_audio_cb), p);
 				gtk_box_append(GTK_BOX(box), item);
 			}
-			gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 		}
 
+		// Subtitles: ONLY show if n_text > 0!
 		gint n_text = 0;
 		g_object_get(p->m_pPipeline, "n-text", &n_text, NULL);
 		gint current_text = -1;
 		g_object_get(p->m_pPipeline, "current-text", &current_text, NULL);
 
-		guint flags = 0;
-		g_object_get(p->m_pPipeline, "flags", &flags, NULL);
-		gboolean text_enabled = (flags & (1 << 2)) != 0; // GST_PLAY_FLAG_TEXT
-
-		GtkWidget *mi = gtk_label_new(NULL);
-		gtk_label_set_markup(GTK_LABEL(mi), "<b>Subtitles:</b>");
-		gtk_widget_set_halign(mi, GTK_ALIGN_START);
-		gtk_widget_set_margin_top(mi, 2);
-		gtk_widget_set_margin_bottom(mi, 2);
-		gtk_box_append(GTK_BOX(box), mi);
-
-		GtkWidget *item_off = gtk_button_new_with_label(!text_enabled ? "✓ Off" : "   Off");
-		gtk_button_set_has_frame(GTK_BUTTON(item_off), FALSE);
-		gtk_widget_set_halign(item_off, GTK_ALIGN_FILL);
-		g_object_set_data(G_OBJECT(item_off), "track-id", GINT_TO_POINTER(-1));
-		g_object_set_data(G_OBJECT(item_off), "is-text-track", GINT_TO_POINTER(1));
-		g_signal_connect(item_off, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
-		gtk_box_append(GTK_BOX(box), item_off);
-
 		if (n_text > 0)
 		{
+			guint flags = 0;
+			g_object_get(p->m_pPipeline, "flags", &flags, NULL);
+			gboolean text_enabled = (flags & (1 << 2)) != 0; // GST_PLAY_FLAG_TEXT
+
+			gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+			GtkWidget *mi = gtk_label_new(NULL);
+			gtk_label_set_markup(GTK_LABEL(mi), "<b>Subtitles</b>");
+			gtk_widget_set_halign(mi, GTK_ALIGN_START);
+			gtk_box_append(GTK_BOX(box), mi);
+
+			GtkWidget *item_off = gtk_button_new_with_label(!text_enabled ? "✓ Off" : "   Off");
+			gtk_button_set_has_frame(GTK_BUTTON(item_off), FALSE);
+			gtk_widget_set_halign(item_off, GTK_ALIGN_FILL);
+			g_object_set_data(G_OBJECT(item_off), "track-id", GINT_TO_POINTER(-1));
+			g_object_set_data(G_OBJECT(item_off), "is-text-track", GINT_TO_POINTER(1));
+			g_signal_connect(item_off, "clicked", G_CALLBACK(viewer_video_option_text_cb), p);
+			gtk_box_append(GTK_BOX(box), item_off);
+
 			for (gint i = 0; i < n_text; ++i)
 			{
 				GstTagList *tags = NULL;
@@ -3278,29 +4203,6 @@ static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer
 				gtk_box_append(GTK_BOX(box), item);
 			}
 		}
-
-		if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL)
-		{
-			gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-			GtkWidget *item_rot = gtk_button_new_with_label("Rotate 90°");
-			gtk_button_set_has_frame(GTK_BUTTON(item_rot), FALSE);
-			gtk_widget_set_halign(item_rot, GTK_ALIGN_FILL);
-			g_signal_connect(item_rot, "clicked", G_CALLBACK(viewer_video_option_rotate_cb), p);
-			gtk_box_append(GTK_BOX(box), item_rot);
-		}
-
-		gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-		{
-			gchar *loop_label = g_strdup_printf("%s Loop",
-				p->m_bVideoLoop ? "✓" : "  ");
-			GtkWidget *item_loop = gtk_button_new_with_label(loop_label);
-			gtk_button_set_has_frame(GTK_BUTTON(item_loop), FALSE);
-			gtk_widget_set_halign(item_loop, GTK_ALIGN_FILL);
-			g_free(loop_label);
-			g_signal_connect(item_loop, "clicked",
-				G_CALLBACK(viewer_video_option_loop_cb), p);
-			gtk_box_append(GTK_BOX(box), item_loop);
-		}
 	}
 
 	GtkWidget *scrolled = gtk_scrolled_window_new();
@@ -3311,7 +4213,7 @@ static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer
 
 	gtk_popover_set_child(GTK_POPOVER(popover), scrolled);
 	gtk_menu_button_set_popover(button, popover);
-	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
+	gtk_popover_set_position(GTK_POPOVER(popover), popPos);
 }
 
 static void
@@ -3320,7 +4222,32 @@ viewer_volume_value_changed (GtkRange *range, gdouble value, gpointer user_data)
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	pViewerImpl->m_dVolume = gtk_range_get_value(range);
-	g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", pViewerImpl->m_dVolume, NULL);
+	if (pViewerImpl->m_bMuted && pViewerImpl->m_dVolume > 0.01)
+	{
+		pViewerImpl->m_bMuted = false;
+		if (pViewerImpl->m_pPipeline)
+		{
+			g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "mute", FALSE, NULL);
+		}
+	}
+	if (pViewerImpl->m_pPipeline)
+	{
+		g_object_set(G_OBJECT(pViewerImpl->m_pPipeline), "volume", pViewerImpl->m_dVolume, NULL);
+	}
+	pViewerImpl->UpdateVolumeUI();
+}
+
+static void viewer_volume_mute_cb(gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->ToggleMute();
+}
+
+static void viewer_volume_button_middle_click_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
+{
+	(void)gesture; (void)n_press; (void)x; (void)y;
+	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	pViewerImpl->ToggleMute();
 }
 
 
@@ -3645,11 +4572,11 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		{
 			if (GST_STATE_PLAYING == current)
 			{
+				SetIsPlaying(false);
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PAUSED);
 				CancelControlsFade();
 				viewer_set_controls_visible(this, true);
 				UpdateTimelineVisibility();
-				SetIsPlaying(false);
 				TriggerPlayPauseAnimation(false);
 			}
 			else
@@ -3672,16 +4599,13 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 						GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 				}
 
+				if (m_pPipeline)
+				{
+					g_object_set(G_OBJECT(m_pPipeline), "mute", m_bMuted ? TRUE : FALSE, NULL);
+				}
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 				TriggerPlayPauseAnimation(true);
-
-				if (0 != m_iTimeoutMouseMotionNotify)
-				{
-					g_source_remove(m_iTimeoutMouseMotionNotify);
-					m_iTimeoutMouseMotionNotify = 0;
-				}
-
-				m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
+				RefreshAutoHideTimer();
 			}
 		}
 	}
@@ -3711,19 +4635,14 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		 * overwrites them, causing a flash of the old frame.
 		 * NOTE: events sent in NULL state are no-ops (no streaming
 		 * thread).  The actual flush is sent in ASYNC_DONE below. */
+		SetIsPlaying(true);
 		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
+		g_object_set(G_OBJECT(m_pPipeline), "mute", m_bMuted ? TRUE : FALSE, NULL);
+		g_object_set(G_OBJECT(m_pPipeline), "volume", m_dVolume, NULL);
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
-		SetIsPlaying(true);
 		TriggerPlayPauseAnimation(true);
-
-		if (0 != m_iTimeoutMouseMotionNotify)
-		{
-			g_source_remove(m_iTimeoutMouseMotionNotify);
-			m_iTimeoutMouseMotionNotify = 0;
-		}
-
-		m_iTimeoutMouseMotionNotify = g_timeout_add(1500,timeout_event_motion_notify,this);
+		RefreshAutoHideTimer();
 	}
 	g_free(uri);
 }
@@ -3751,13 +4670,7 @@ void Viewer::ViewerImpl::SeekRelative(gint64 seconds)
 		(void)seek_started;
 		CancelControlsFade();
 		viewer_set_controls_visible(this, true);
-		if (0 != m_iTimeoutMouseMotionNotify)
-		{
-			g_source_remove(m_iTimeoutMouseMotionNotify);
-			m_iTimeoutMouseMotionNotify = 0;
-		}
-
-		m_iTimeoutMouseMotionNotify = g_timeout_add(1500, timeout_event_motion_notify, this);
+		RefreshAutoHideTimer();
 	}
 }
 
@@ -3775,11 +4688,6 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 {
 	CancelPlayPauseAnimation();
 	SetIsPlaying(false);
-	if (0 != m_iTimeoutMouseMotionNotify)
-	{
-		g_source_remove(m_iTimeoutMouseMotionNotify);
-		m_iTimeoutMouseMotionNotify = 0;
-	}
 
 	gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_NULL);
 	if (m_pVideoSinkWidget != NULL)
@@ -3812,6 +4720,20 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_dVideoZoomFinal = 1.0;
 	m_dVideoZoomMin = 1.0;
 	m_dPlaybackSpeed = 1.0;
+	m_bVideoPlaybackStarted = false;
+	m_bVideoZoomAnchorCenter = false;
+	if (m_pPlayProgress)
+	{
+		g_signal_handler_block(m_pPlayProgress, m_iPlayProgressChangeHandler);
+		gtk_range_set_value(GTK_RANGE(m_pPlayProgress), 0.0);
+		g_signal_handler_unblock(m_pPlayProgress, m_iPlayProgressChangeHandler);
+	}
+	if (m_pTimeElapsedLabel)
+		gtk_label_set_markup(GTK_LABEL(m_pTimeElapsedLabel), "<b>0:00</b>");
+	if (m_pTimeDurationLabel)
+		gtk_label_set_markup(GTK_LABEL(m_pTimeDurationLabel), "<b>0:00</b>");
+	if (m_pTimelineRow)
+		set_control_visible(m_pTimelineRow, false);
 	if (m_pSpeedLabel)
 		gtk_label_set_markup(GTK_LABEL(m_pSpeedLabel), "<b>1x</b>");
 	QuiverUtils::SetRadioActionCurrent("VideoSpeed10", 2);
@@ -3862,15 +4784,15 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 
 
 	UpdateTimeline();
+	UpdateCenterPlayButtonVisibility();
 
 	if (IsVideo())
 	{
-		CancelControlsFade();
-		viewer_set_controls_visible(this, true);
+		RefreshAutoHideTimer();
 	}
 }
 
-bool Viewer::ViewerImpl::IsVideo()
+bool Viewer::ViewerImpl::IsVideo() const
 {
 	return (0 != m_ImageListPtr->GetSize() && 
 		m_ImageListPtr->GetCurrent().IsVideo());
@@ -3941,6 +4863,61 @@ void Viewer::ViewerImpl::Snapshot()
 	}
 }
 
+void Viewer::ViewerImpl::ToggleMute()
+{
+	SetMuted(!m_bMuted);
+}
+
+void Viewer::ViewerImpl::SetMuted(bool bMute)
+{
+	m_bMuted = bMute;
+	if (!m_bMuted && m_dVolume <= 0.01)
+	{
+		m_dVolume = 0.5;
+		if (m_pVolumeScale)
+		{
+			gtk_range_set_value(GTK_RANGE(m_pVolumeScale), m_dVolume);
+		}
+	}
+	if (m_pPipeline)
+	{
+		g_object_set(G_OBJECT(m_pPipeline), "mute", m_bMuted ? TRUE : FALSE, NULL);
+		if (!m_bMuted)
+		{
+			g_object_set(G_OBJECT(m_pPipeline), "volume", m_dVolume, NULL);
+		}
+	}
+	UpdateVolumeUI();
+}
+
+void Viewer::ViewerImpl::UpdateVolumeUI()
+{
+	const char *icon_name = "audio-volume-high-symbolic";
+	if (m_bMuted || m_dVolume <= 0.001)
+	{
+		icon_name = "audio-volume-muted-symbolic";
+	}
+	else if (m_dVolume < 0.33)
+	{
+		icon_name = "audio-volume-low-symbolic";
+	}
+	else if (m_dVolume < 0.67)
+	{
+		icon_name = "audio-volume-medium-symbolic";
+	}
+
+	if (m_pVolumeButton)
+	{
+		gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pVolumeButton), icon_name);
+		gtk_widget_set_tooltip_text(m_pVolumeButton, m_bMuted ? "Volume (Muted - Click to Open, M to Unmute)" : "Volume (Click to Open, M to Mute)");
+	}
+	if (m_pVolumeMuteBtn)
+	{
+		gtk_button_set_icon_name(GTK_BUTTON(m_pVolumeMuteBtn), m_bMuted ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic");
+		gtk_widget_set_tooltip_text(m_pVolumeMuteBtn, m_bMuted ? "Unmute (M)" : "Mute (M)");
+	}
+}
+
 static void 
 viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
 {
@@ -3948,7 +4925,17 @@ viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdou
 	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	if ((widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
+	if (widget == pViewerImpl->m_pImageView && pViewerImpl->IsVideo() && pViewerImpl->m_bVideoPreviewClick)
+	{
+		pViewerImpl->m_bVideoPreviewClick = false;
+		if (ABS(x - pViewerImpl->m_dVideoPreviewClickX) < 5.
+			&& ABS(y - pViewerImpl->m_dVideoPreviewClickY) < 5.)
+		{
+			pViewerImpl->PlayPauseVideo();
+		}
+		pViewerImpl->RefreshAutoHideTimer();
+	}
+	else if ((widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
 		&& pViewerImpl->m_bVideoPanning)
 	{
 		pViewerImpl->m_bVideoPanning = FALSE;
@@ -3974,6 +4961,32 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 
 	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 
+	// Middle click: toggle windowed <-> fullscreen
+	if (2 == button)
+	{
+		GAction *fs = QuiverUtils::GetAction("FullScreen");
+		if (fs != NULL)
+		{
+			g_action_activate(fs, NULL);
+		}
+		return;
+	}
+
+	// Tap / pointer press: reveal controls if hidden
+	if (1 == button)
+	{
+		if (viewer_controls_need_reshow(pViewerImpl))
+		{
+			viewer_controls_show(pViewerImpl);
+			pViewerImpl->StartControlsFade(true);
+			if (pViewerImpl->IsVideo())
+			{
+				pViewerImpl->UpdateTimelineVisibility();
+			}
+		}
+		pViewerImpl->RefreshAutoHideTimer();
+	}
+
 	if (widget == pViewerImpl->m_pImageView || widget == pViewerImpl->m_pVideoFixed
 		|| widget == pViewerImpl->m_pVideoSinkWidget) 
 	{
@@ -3982,43 +4995,26 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 			viewer_show_context_menu(widget, x, y, 0, user_data);
 			return;
 		}
-		else if ((widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
-			&& 1 == button)
+		else if (1 == button)
 		{
-			if (pViewerImpl->IsVideo())
+			if (widget == pViewerImpl->m_pImageView && pViewerImpl->IsVideo())
 			{
-				pViewerImpl->m_bVideoPanning = TRUE;
-				pViewerImpl->m_dVideoPanStartRootX = x;
-				pViewerImpl->m_dVideoPanStartRootY = y;
-				pViewerImpl->m_dVideoPanStartPX = pViewerImpl->m_dVideoPanX;
-				pViewerImpl->m_dVideoPanStartPY = pViewerImpl->m_dVideoPanY;
-				viewer_set_controls_visible(pViewerImpl, true);
-				pViewerImpl->RefreshAutoHideTimer();
-				return;
+				pViewerImpl->m_bVideoPreviewClick = true;
+				pViewerImpl->m_dVideoPreviewClickX = x;
+				pViewerImpl->m_dVideoPreviewClickY = y;
 			}
-		}
-	}
-	else if (widget == pViewerImpl->m_pTransportRow)
-	{
-		/* The transport row floats over the video, so pressing the row's own
-		 * background would otherwise swallow the video's click-to-pause.
-		 * Treat a press that does not land on one of the control buttons as
-		 * a press on the video itself.  (Button presses are left to the
-		 * buttons: seeking for rewind/ff, play/pause for the play button.) */
-		if (3 == button)
-		{
-			viewer_show_context_menu(widget, x, y, 0, user_data);
-			return;
-		}
-		if (1 == button)
-		{
-			GtkWidget *under = gtk_widget_pick(widget, x, y, GTK_PICK_DEFAULT);
-			if (NULL == under || under == widget)
+			else if (widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
 			{
 				if (pViewerImpl->IsVideo())
 				{
+					pViewerImpl->m_bVideoPanning = TRUE;
+					pViewerImpl->m_dVideoPanStartRootX = x;
+					pViewerImpl->m_dVideoPanStartRootY = y;
+					pViewerImpl->m_dVideoPanStartPX = pViewerImpl->m_dVideoPanX;
+					pViewerImpl->m_dVideoPanStartPY = pViewerImpl->m_dVideoPanY;
+					viewer_set_controls_visible(pViewerImpl, true);
 					pViewerImpl->RefreshAutoHideTimer();
-					pViewerImpl->PlayPauseVideo();
+					return;
 				}
 			}
 		}
@@ -4038,13 +5034,15 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 }
 
 static void viewer_menu_item(GMenu *menu, const char *label, const char *action_name,
-	const char *accel, const char *item_id)
+	const char *accel, const char *item_id, const char *icon_name = NULL)
 {
 	GMenuItem *item = g_menu_item_new(label, action_name);
 	if (accel != NULL && accel[0] != '\0')
 		g_menu_item_set_attribute(item, "accel", "s", accel);
 	if (item_id != NULL && item_id[0] != '\0')
 		g_menu_item_set_attribute(item, "id", "s", item_id);
+	if (icon_name != NULL && icon_name[0] != '\0')
+		g_menu_item_set_attribute(item, "icon", "s", icon_name);
 	g_menu_append_item(menu, item);
 	g_object_unref(item);
 }
@@ -4069,26 +5067,30 @@ static bool viewer_undo_applies_to_current_list(Viewer::ViewerImpl *impl)
 	if (NULL == folder_uri)
 		return false;
 
-	bool found = false;
-	const size_t batches = QuiverFileOps::UndoStackSize();
-	for (size_t pos = 0; pos < batches && !found; ++pos)
+	const QuiverFileOps::UndoEntry *top = QuiverFileOps::UndoStackEntryAt(0);
+	if (NULL == top || top->type != QuiverFileOps::UNDO_TYPE_DELETE)
 	{
-		const std::list<QuiverFile>* batch = QuiverFileOps::UndoStackAt(pos);
-		if (NULL == batch)
-			continue;
-		for (std::list<QuiverFile>::const_iterator it = batch->begin();
-			batch->end() != it && !found; ++it)
+		g_free(folder_uri);
+		return false;
+	}
+
+	bool found = false;
+	for (std::list<QuiverFile>::const_iterator it = top->trashed_files.begin();
+		 it != top->trashed_files.end(); ++it)
+	{
+		GFile *tf = g_file_new_for_uri(it->GetURI());
+		GFile *tp = g_file_get_parent(tf);
+		char *turi = (NULL != tp) ? g_file_get_uri(tp) : NULL;
+		if (NULL != tp)
+			g_object_unref(tp);
+		g_object_unref(tf);
+		if (NULL != turi)
 		{
-			GFile *f2 = g_file_new_for_uri(it->GetURI());
-			GFile *p2 = g_file_get_parent(f2);
-			if (NULL != p2)
-			{
-				char *pu = g_file_get_uri(p2);
-				found = (NULL != pu && 0 == g_strcmp0(pu, folder_uri));
-				g_free(pu);
-				g_object_unref(p2);
-			}
-			g_object_unref(f2);
+			if (0 == strcmp(turi, folder_uri))
+				found = true;
+			g_free(turi);
+			if (found)
+				break;
 		}
 	}
 	g_free(folder_uri);
@@ -4148,37 +5150,37 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 	if (bTrash)
 	{
 		viewer_menu_item(menu, "Copy", "quiver." ACTION_VIEWER_COPY,
-			"<Control>c", title_id);
+			"<Control>c", title_id, "edit-copy-symbolic");
 		GMenu *trash_section = g_menu_new();
 		viewer_menu_item(trash_section, "Delete Permanently", "quiver." ACTION_VIEWER_TRASH,
-			"Delete", NULL);
+			"Delete", NULL, "edit-delete-symbolic");
 		viewer_menu_item(trash_section, "Restore From Trash", "quiver." ACTION_VIEWER_RESTORE,
-			NULL, NULL);
+			NULL, NULL, "edit-undo-symbolic");
 		if (viewer_undo_applies_to_current_list(pViewerImpl) &&
 			NULL != QuiverUtils::GetAction("UndoDelete"))
-			viewer_menu_item(trash_section, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL);
+			viewer_menu_item(trash_section, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL, "edit-undo-symbolic");
 		g_menu_append_section(menu, NULL, G_MENU_MODEL(trash_section));
 		g_object_unref(trash_section);
 	}
 	else
 	{
 		viewer_menu_item(menu, "Copy", "quiver." ACTION_VIEWER_COPY,
-			"<Control>c", title_id);
+			"<Control>c", title_id, "edit-copy-symbolic");
 		viewer_menu_item(menu, "Rename", "quiver." ACTION_VIEWER_RENAME,
-			"F2", NULL);
+			"F2", NULL, "document-edit-symbolic");
 		GMenu *rotate_section = g_menu_new();
 		viewer_menu_item(rotate_section, "Rotate Counterclockwise",
-			"quiver." ACTION_VIEWER_ROTATE_CCW, "<Shift>r", NULL);
+			"quiver." ACTION_VIEWER_ROTATE_CCW, "<Shift>r", NULL, "object-rotate-left-symbolic");
 		viewer_menu_item(rotate_section, "Rotate Clockwise",
-			"quiver." ACTION_VIEWER_ROTATE_CW, "r", NULL);
+			"quiver." ACTION_VIEWER_ROTATE_CW, "r", NULL, "object-rotate-right-symbolic");
 		g_menu_append_section(menu, NULL, G_MENU_MODEL(rotate_section));
 		g_object_unref(rotate_section);
 		GMenu *trash_section = g_menu_new();
 		viewer_menu_item(trash_section, "Move To Trash", "quiver." ACTION_VIEWER_TRASH,
-			"Delete", NULL);
+			"Delete", NULL, "user-trash-symbolic");
 		if (viewer_undo_applies_to_current_list(pViewerImpl) &&
 			NULL != QuiverUtils::GetAction("UndoDelete"))
-			viewer_menu_item(trash_section, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL);
+			viewer_menu_item(trash_section, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL, "edit-undo-symbolic");
 		g_menu_append_section(menu, NULL, G_MENU_MODEL(trash_section));
 		g_object_unref(trash_section);
 	}
@@ -4196,6 +5198,7 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 
 Viewer::ViewerImpl::~ViewerImpl()
 {
+	ShortcutManager::GetInstance().RemoveShortcutsChangedCallback(viewer_shortcuts_changed_cb, this);
 	if (m_spAlive)
 	{
 		*m_spAlive = false;
@@ -4297,6 +5300,12 @@ Viewer::ViewerImpl::~ViewerImpl()
 			gtk_widget_unparent(m_pVideoOptionsPopover);
 		m_pVideoOptionsPopover = NULL;
 	}
+	if (m_pImageSubmenuPopover)
+	{
+		if (gtk_widget_get_parent(m_pImageSubmenuPopover))
+			gtk_widget_unparent(m_pImageSubmenuPopover);
+		m_pImageSubmenuPopover = NULL;
+	}
 	if (m_pSpeedButton && GTK_IS_MENU_BUTTON(m_pSpeedButton))
 	{
 		GtkPopover *speedPop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(m_pSpeedButton));
@@ -4331,6 +5340,8 @@ Viewer::ViewerImpl::~ViewerImpl()
 	if (m_pVideoPaintable && G_IS_OBJECT(m_pVideoPaintable))
 	{
 		g_signal_handlers_disconnect_by_data(m_pVideoPaintable, this);
+		g_object_unref(m_pVideoPaintable);
+		m_pVideoPaintable = NULL;
 	}
 	if (m_pVideoSinkWidget && G_IS_OBJECT(m_pVideoSinkWidget))
 	{
@@ -4343,6 +5354,11 @@ Viewer::ViewerImpl::~ViewerImpl()
 	if (m_pVolumeButton && G_IS_OBJECT(m_pVolumeButton))
 	{
 		g_signal_handlers_disconnect_by_data(m_pVolumeButton, this);
+	}
+	if (m_pVolumeMuteBtn && G_IS_OBJECT(m_pVolumeMuteBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVolumeMuteBtn, this);
+		m_pVolumeMuteBtn = NULL;
 	}
 	if (m_pSpeedButton && G_IS_OBJECT(m_pSpeedButton))
 	{
@@ -4359,6 +5375,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 	if (m_pFullscreenBtn && G_IS_OBJECT(m_pFullscreenBtn))
 	{
 		g_signal_handlers_disconnect_by_data(m_pFullscreenBtn, this);
+		m_pFullscreenBtn = NULL;
 	}
 	if (m_pRewindBtn && G_IS_OBJECT(m_pRewindBtn))
 	{
@@ -4368,9 +5385,25 @@ Viewer::ViewerImpl::~ViewerImpl()
 	{
 		g_signal_handlers_disconnect_by_data(m_pFfBtn, this);
 	}
+	if (m_pImageSubmenuBtn && G_IS_OBJECT(m_pImageSubmenuBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pImageSubmenuBtn, this);
+	}
+	if (m_pViewerFlipHBtn && G_IS_OBJECT(m_pViewerFlipHBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pViewerFlipHBtn, this);
+	}
+	if (m_pViewerFlipVBtn && G_IS_OBJECT(m_pViewerFlipVBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pViewerFlipVBtn, this);
+	}
 	if (m_pPlayButton && G_IS_OBJECT(m_pPlayButton))
 	{
 		g_signal_handlers_disconnect_by_data(m_pPlayButton, this);
+	}
+	if (m_pCenterPlayBtn && G_IS_OBJECT(m_pCenterPlayBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pCenterPlayBtn, this);
 	}
 	if (m_pDragSource && G_IS_OBJECT(m_pDragSource))
 	{
@@ -4707,13 +5740,18 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 	 * from the fit level (the smallest scale the video has been seen at) up
 	 * to 8x of the actual size, so the same image-like zoom is available no
 	 * matter how small the window is */
-	quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView),
-		QUIVER_IMAGE_VIEW_MODE_ZOOM);
-	if (zoom < m_dVideoZoomMin)
+	if (zoom <= m_dVideoZoomMin + 0.005)
+	{
 		zoom = m_dVideoZoomMin;
-	else if (zoom > 16.0)
-		zoom = 16.0;
-	QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_ZOOM);
+		quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+	}
+	else
+	{
+		quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), QUIVER_IMAGE_VIEW_MODE_ZOOM);
+		if (zoom > 16.0) zoom = 16.0;
+		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_ZOOM);
+	}
 
 #if VIDEO_ZOOM_SMOOTH_ANIMATION
 	/* animate toward the target so the video eases in like the image view.
@@ -4730,6 +5768,10 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 			m_iVideoZoomTimeoutID = g_timeout_add(30, video_zoom_timeout, this);
 		}
 	}
+	else
+	{
+		m_bVideoZoomAnchorCenter = false;
+	}
 #else
 	/* apply the zoom immediately instead of animating it: a smooth animation
 	 * changes the crop every 30 ms and the VA scaler re-negotiates its output
@@ -4744,6 +5786,7 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 	m_dVideoZoom = zoom;
 	m_dVideoZoomFinal = zoom;
 	ApplyVideoZoom();
+	m_bVideoZoomAnchorCenter = false;
 #endif
 	UpdateUI();
 }
@@ -4782,6 +5825,8 @@ static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *
 	 * the area / the area is not realized yet (callers zoom about the center) */
 	*px = -1.;
 	*py = -1.;
+	if (p->m_bVideoZoomAnchorCenter || p->IsPointerOverControls())
+		return;
 	GtkWidget *area = p->m_pVideoFixed;
 	if (area == NULL || !gtk_widget_get_realized(area))
 		return;
@@ -4849,6 +5894,7 @@ static gboolean video_zoom_timeout(gpointer data)
 		p->m_dVideoZoom = final;
 		p->m_iVideoZoomTimeoutID = 0;
 		p->ApplyVideoZoom();
+		p->m_bVideoZoomAnchorCenter = false;
 		return FALSE;
 	}
 
@@ -4926,10 +5972,22 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
 			zoom = fitZoom;
 			m_dVideoZoomMin = fitZoom;
+			m_dVideoZoomFinal = fitZoom;
+			if (m_iVideoZoomTimeoutID != 0)
+			{
+				g_source_remove(m_iVideoZoomTimeoutID);
+				m_iVideoZoomTimeoutID = 0;
+			}
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
 			zoom = fitScale;
 			m_dVideoZoomMin = fitScale;
+			m_dVideoZoomFinal = fitScale;
+			if (m_iVideoZoomTimeoutID != 0)
+			{
+				g_source_remove(m_iVideoZoomTimeoutID);
+				m_iVideoZoomTimeoutID = 0;
+			}
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE:
 			zoom = 1.0;
@@ -4944,7 +6002,7 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			/* when zooming out lands back at the fit level, snap back to
 			 * FIT_WINDOW so a window resize will re-fit the video instead
 			 * of keeping it pinned at the old fit size */
-			if (zoom <= m_dVideoZoomMin)
+			if (zoom <= m_dVideoZoomMin + 0.005)
 			{
 				quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView),
 					QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
@@ -4953,6 +6011,12 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 				videoViewMode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
 				zoom = fitZoom;
 				m_dVideoZoomMin = fitZoom;
+				m_dVideoZoomFinal = fitZoom;
+				if (m_iVideoZoomTimeoutID != 0)
+				{
+					g_source_remove(m_iVideoZoomTimeoutID);
+					m_iVideoZoomTimeoutID = 0;
+				}
 			}
 			break;
 	}
@@ -5269,104 +6333,7 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	}
 }
 
-static void viewer_speed_button_clicked_cb(GtkButton *button, gpointer user_data)
-{
-	(void)button;
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	int val = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "speed-value"));
-	gdouble speed = val / 1000.0;
-	
-	int idx = -1;
-	if (speed == 0.25) idx = 0;
-	else if (speed == 0.5) idx = 1;
-	else if (speed == 1.0) idx = 2;
-	else if (speed == 1.5) idx = 3;
-	else if (speed == 2.0) idx = 4;
-	else if (speed == 4.0) idx = 5;
-	else if (speed == 8.0) idx = 6;
-	else if (speed == 16.0) idx = 7;
 
-	if (idx >= 0)
-	{
-		const gchar* speed_names[] = {
-			"VideoSpeed025", "VideoSpeed05", "VideoSpeed10", "VideoSpeed15",
-			"VideoSpeed20", "VideoSpeed40", "VideoSpeed80", "VideoSpeed160"
-		};
-		const gchar *action_name = speed_names[idx];
-		
-		GAction *action = QuiverUtils::GetAction(action_name);
-		if (action)
-		{
-			g_action_activate(action, NULL); // radio actions are activated with NULL to just select them
-		}
-	}
-	else
-	{
-		p->SetPlaybackSpeed(speed);
-	}
-
-	/* close the popover */
-	GtkWidget *speedBtn = p->m_pSpeedButton;
-	if (speedBtn != NULL)
-	{
-		GtkPopover *popover = gtk_menu_button_get_popover(GTK_MENU_BUTTON(speedBtn));
-		if (popover != NULL)
-			gtk_popover_popdown(popover);
-	}
-}
-
-static void viewer_speed_create_popup_cb(GtkMenuButton *button, gpointer user_data)
-{
-	(void)button;
-	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	if (p == NULL) return;
-
-	GtkWidget *popover = gtk_popover_new();
-	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
-	gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
-	gtk_widget_set_size_request(popover, 100, -1);
-
-	GtkWidget *speedBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-	gtk_widget_set_margin_start(speedBox, 3);
-	gtk_widget_set_margin_end(speedBox, 3);
-	gtk_widget_set_margin_top(speedBox, 3);
-	gtk_widget_set_margin_bottom(speedBox, 3);
-
-	const double speeds[] = { 0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0 };
-	const int nSpeeds = sizeof(speeds) / sizeof(speeds[0]);
-	for (int i = 0; i < nSpeeds; i++)
-	{
-		GtkWidget* btn = gtk_button_new();
-		gchar* label = g_strdup_printf("<b>%.4gx</b>", speeds[i]);
-		GtkWidget* lbl = gtk_label_new(NULL);
-		gtk_label_set_use_markup(GTK_LABEL(lbl), TRUE);
-		gtk_label_set_markup(GTK_LABEL(lbl), label);
-		gtk_button_set_child(GTK_BUTTON(btn), lbl);
-		g_free(label);
-		if (speeds[i] == p->m_dPlaybackSpeed)
-		{
-			gtk_widget_add_css_class(btn, "speed-active");
-		}
-		g_object_set_data(G_OBJECT(btn), "speed-value", GINT_TO_POINTER((int)(speeds[i] * 1000)));
-		g_signal_connect(G_OBJECT(btn), "clicked", G_CALLBACK(viewer_speed_button_clicked_cb), p);
-		gtk_box_append(GTK_BOX(speedBox), btn);
-	}
-
-	gtk_popover_set_child(GTK_POPOVER(popover), speedBox);
-	gtk_menu_button_set_popover(button, popover);
-	gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
-}
-
-static void viewer_fullscreen_button_clicked_cb(GtkButton *button, gpointer user_data)
-{
-	(void)button;
-	(void)user_data;
-	GAction *fs = QuiverUtils::GetAction("FullScreen");
-	if (fs != NULL)
-	{
-		g_action_activate(fs, NULL);
-	}
-}
 
 static void viewer_snapshot_button_clicked_cb(GtkButton *button, gpointer user_data)
 {
@@ -5378,7 +6345,7 @@ static void viewer_snapshot_button_clicked_cb(GtkButton *button, gpointer user_d
 static void viewer_video_rw_cb(gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	p->SeekRelative(-5);
+	p->SkipBack();
 }
 
 static void viewer_play_button_clicked_cb(gpointer user_data)
@@ -5394,7 +6361,7 @@ static void viewer_play_button_clicked_cb(gpointer user_data)
 static void viewer_video_ff_cb(gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	p->SeekRelative(5);
+	p->SkipForward();
 }
 
 static gint64 get_pipeline_frame_duration(GstElement *pipeline)
@@ -5481,6 +6448,15 @@ static void viewer_frame_step_fwd_cb(gpointer user_data)
 	p->RefreshAutoHideTimer();
 }
 
+static void viewer_shortcuts_changed_cb(gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p)
+	{
+		p->UpdateHUDTooltips();
+	}
+}
+
 Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : 
 	
 	m_pTimeElapsedLabel(NULL),
@@ -5493,7 +6469,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pVolumeButton(NULL),
 	m_pVolumePopover(NULL),
 	m_pVolumeScale(NULL),
+	m_pVolumeMuteBtn(NULL),
 	m_dVolume(1.0),
+	m_bMuted(false),
 	m_pFullscreenBtn(NULL),
 	m_pVideoOptionsBtn(NULL),
 	m_pVideoOptionsPopover(NULL),
@@ -5509,6 +6487,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pSpeedButton(NULL),
 	m_pSpeedLabel(NULL),
 	m_pContextMenuPopover(NULL),
+	m_bVideoPlaybackStarted(false),
 	m_bFilmstripOverlay(false),
 	m_bHideFilmstripFS(true),
 	m_bFilmstripHiddenByFS(false),
@@ -5526,13 +6505,50 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_dPointerRootY(0.0),
 	m_bPointerPosValid(false),
 	m_pBlankCursor(NULL),
+	m_SlideShowState(SLIDESHOW_STATE_ADVANCE),
+	m_SlideShowPrePauseState(SLIDESHOW_STATE_ADVANCE),
+	m_bSlideShowRunning(false),
+	m_bSlideShowPaused(false),
+	m_pViewerOverlayBar(NULL),
+	m_bPointerOverOverlayBar(false),
+	m_bControlsVisible(false),
+	m_bVideoZoomAnchorCenter(false),
+	m_pViewerPrevBtn(NULL),
+	m_pViewerNextBtn(NULL),
+	m_pViewerSlideshowBtn(NULL),
+	m_pViewerVideoSlideshowBtn(NULL),
+	m_pImageBlank1(NULL),
+	m_pImageBlank2(NULL),
+	m_pVideoBlank1(NULL),
+	m_pVideoBlank2(NULL),
+	m_pViewerZoomOutBtn(NULL),
+	m_pViewerZoomFitBtn(NULL),
+	m_pViewerZoomInBtn(NULL),
+	m_pViewerRotateCcwBtn(NULL),
+	m_pViewerRotateCwBtn(NULL),
+	m_pViewerFlipHBtn(NULL),
+	m_pViewerFlipVBtn(NULL),
+	m_pImageSubmenuBtn(NULL),
+	m_pImageSubmenuPopover(NULL),
+	m_pViewerFullscreenBtn(NULL),
+	m_dGestureLastScale(1.0),
+	m_dTwoFingerPanStartHAdj(0.0),
+	m_dTwoFingerPanStartVAdj(0.0),
+	m_dTwoFingerPanStartVidX(0.0),
+	m_dTwoFingerPanStartVidY(0.0),
+	m_bVideoPreviewClick(false),
+	m_dVideoPreviewClickX(0.0),
+	m_dVideoPreviewClickY(0.0),
+	m_pCenterPlayBtn(NULL),
 	m_PreferencesEventHandlerPtr ( new PreferencesEventHandler(this) ),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_spAlive(std::make_shared<bool>(true)),
 	m_ThumbnailLoader(this, 2, m_spAlive)
 {
+	QuiverStockIcons::Load();
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->AddEventHandler( m_PreferencesEventHandlerPtr );
+	ShortcutManager::GetInstance().AddShortcutsChangedCallback(viewer_shortcuts_changed_cb, this);
 	
 	m_pViewer = pViewer;
 
@@ -5547,254 +6563,49 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	//GdkPixmap* bitmap = gdk_pixmap_new(NULL, w, h, 1);
 	//gdk_pixbuf_render_threshold_alpha(m_pPixbufPlay, bitmap, 0,0,0,0,w,h, 0x80);
 
-	GtkWidget* alignment = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	gtk_widget_set_halign(alignment, GTK_ALIGN_FILL);
-	gtk_widget_set_valign(alignment, GTK_ALIGN_END);
-	gtk_widget_set_margin_top(alignment, 0);
-	gtk_widget_set_margin_bottom(alignment, 0);
-	gtk_widget_set_margin_start(alignment, 0);
-	gtk_widget_set_margin_end(alignment, 0);
-	gtk_box_set_spacing(GTK_BOX(alignment), 0);
-
-	/* ── Row 1: Transport controls (overlay layout) ─────────────── */
-	/* Main content: two equal expanding spacers center [rewind][play][ff].
-	 * The spacers have natural size 0 and hexpand=TRUE, so they each get
-	 * exactly half the remaining space — guaranteeing true centering. */
-
-	/* Speed button — using GtkMenuButton with custom label child */
-	m_dPlaybackSpeed = 1.0;
-	m_pSpeedButton = gtk_menu_button_new();
-	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pSpeedButton), GTK_ARROW_UP);
-	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pSpeedButton), FALSE);
-	m_pSpeedLabel = gtk_label_new(NULL);
-	gtk_label_set_use_markup(GTK_LABEL(m_pSpeedLabel), TRUE);
-	gtk_label_set_markup(GTK_LABEL(m_pSpeedLabel), "<b>1x</b>");
-	gtk_menu_button_set_child(GTK_MENU_BUTTON(m_pSpeedButton), m_pSpeedLabel);
-	gtk_widget_add_css_class(m_pSpeedButton, "media-btn");
-	gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(m_pSpeedButton), viewer_speed_create_popup_cb, this, NULL);
-
-	/* Snapshot button */
-	m_pSnapBtn = gtk_button_new_from_icon_name("camera-photo");
-	gtk_button_set_has_frame(GTK_BUTTON(m_pSnapBtn), FALSE);
-	g_signal_connect(G_OBJECT(m_pSnapBtn), "clicked", G_CALLBACK(viewer_snapshot_button_clicked_cb), this);
-	gtk_widget_add_css_class(m_pSnapBtn, "media-btn");
-
-	/* Volume button — using GtkMenuButton */
-	m_pVolumeButton = gtk_menu_button_new();
-	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pVolumeButton), "audio-volume-high");
-	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVolumeButton), GTK_ARROW_UP);
-	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pVolumeButton), FALSE);
-	gtk_widget_add_css_class(m_pVolumeButton, "media-btn");
-
-	m_pVolumePopover = gtk_popover_new();
-	gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_TOP);
-	gtk_popover_set_autohide(GTK_POPOVER(m_pVolumePopover), TRUE);
-	GtkWidget* volBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-	gtk_widget_set_margin_start(volBox, 8);
-	gtk_widget_set_margin_end(volBox, 8);
-	gtk_widget_set_margin_top(volBox, 8);
-	gtk_widget_set_margin_bottom(volBox, 8);
-	GtkWidget* volLabel = gtk_label_new("Volume");
-	gtk_box_append(GTK_BOX(volBox), volLabel);
-	m_pVolumeScale = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, 0.0, 1.0, 0.05);
-	gtk_range_set_inverted(GTK_RANGE(m_pVolumeScale), TRUE);
-	gtk_widget_set_size_request(m_pVolumeScale, -1, 120);
-	gtk_range_set_value(GTK_RANGE(m_pVolumeScale), m_dVolume);
-	g_signal_connect(G_OBJECT(m_pVolumeScale), "value-changed", G_CALLBACK(viewer_volume_value_changed), this);
-	gtk_box_append(GTK_BOX(volBox), m_pVolumeScale);
-	gtk_popover_set_child(GTK_POPOVER(m_pVolumePopover), volBox);
-	gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pVolumeButton), m_pVolumePopover);
-
-	/* Video Options button — using GtkMenuButton */
-	m_pVideoOptionsBtn = gtk_menu_button_new();
-	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pVideoOptionsBtn), "emblem-system-symbolic");
-	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_UP);
-	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pVideoOptionsBtn), FALSE);
-	gtk_widget_add_css_class(m_pVideoOptionsBtn, "media-btn");
-	gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(m_pVideoOptionsBtn), viewer_video_options_create_popup_cb, this, NULL);
-
-	/* Fullscreen button */
-	m_pFullscreenBtn = gtk_button_new_from_icon_name("view-fullscreen");
-	gtk_button_set_has_frame(GTK_BUTTON(m_pFullscreenBtn), FALSE);
-	g_signal_connect(G_OBJECT(m_pFullscreenBtn), "clicked", G_CALLBACK(viewer_fullscreen_button_clicked_cb), this);
-	gtk_widget_add_css_class(m_pFullscreenBtn, "media-btn");
-
-	/* Attach motion controllers so hovering any button keeps the
-	 * controls bar (and the timeline) visible. */
-	{
-		GtkWidget *btns[] = { m_pSpeedButton, m_pSnapBtn, m_pVolumeButton,
-			m_pVideoOptionsBtn, m_pFullscreenBtn };
-		for (size_t i = 0; i < sizeof(btns)/sizeof(btns[0]); i++)
-		{
-			GtkEventController *motion = gtk_event_controller_motion_new();
-			g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
-			gtk_widget_add_controller(btns[i], motion);
-		}
-	}
-
-	/* Far-right group: speed | snap | vol | fullscreen */
-	GtkWidget* extraBtns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_append(GTK_BOX(extraBtns), m_pSpeedButton);
-	gtk_box_append(GTK_BOX(extraBtns), m_pSnapBtn);
-	gtk_box_append(GTK_BOX(extraBtns), m_pVolumeButton);
-	gtk_box_append(GTK_BOX(extraBtns), m_pVideoOptionsBtn);
-	gtk_box_append(GTK_BOX(extraBtns), m_pFullscreenBtn);
-	gtk_widget_set_halign(extraBtns, GTK_ALIGN_END);
-	gtk_widget_set_valign(extraBtns, GTK_ALIGN_END);
-
-	/* Rewind button */
-	m_pRewindBtn = gtk_button_new_from_icon_name("media-seek-backward");
-	{
-		GtkEventController *motion = gtk_event_controller_motion_new();
-		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
-		gtk_widget_add_controller(m_pRewindBtn, motion);
-	}
-	gtk_button_set_has_frame(GTK_BUTTON(m_pRewindBtn), FALSE);
-	g_signal_connect_swapped(G_OBJECT(m_pRewindBtn), "clicked", G_CALLBACK(viewer_video_rw_cb), this);
-	gtk_widget_add_css_class(m_pRewindBtn, "media-btn");
-	gtk_widget_set_valign(m_pRewindBtn, GTK_ALIGN_CENTER);
-
-	/* Fast-forward button */
-	m_pFfBtn = gtk_button_new_from_icon_name("media-seek-forward");
-	{
-		GtkEventController *motion = gtk_event_controller_motion_new();
-		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
-		gtk_widget_add_controller(m_pFfBtn, motion);
-	}
-	gtk_button_set_has_frame(GTK_BUTTON(m_pFfBtn), FALSE);
-	g_signal_connect_swapped(G_OBJECT(m_pFfBtn), "clicked", G_CALLBACK(viewer_video_ff_cb), this);
-	gtk_widget_add_css_class(m_pFfBtn, "media-btn");
-	gtk_widget_set_valign(m_pFfBtn, GTK_ALIGN_CENTER);
-
-	/* Play button */
-	m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start");
-	m_pPlayButton = gtk_button_new();
-	{
-		GtkEventController *motion = gtk_event_controller_motion_new();
-		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
-		gtk_widget_add_controller(m_pPlayButton, motion);
-	}
-	gtk_button_set_has_frame(GTK_BUTTON(m_pPlayButton), FALSE);
-	gtk_button_set_child(GTK_BUTTON(m_pPlayButton), m_pPlayImage);
-	g_signal_connect_swapped(G_OBJECT(m_pPlayButton), "clicked", G_CALLBACK(viewer_play_button_clicked_cb), this);
-	gtk_widget_add_css_class(m_pPlayButton, "media-btn");
-	gtk_widget_add_css_class(m_pPlayButton, "media-btn-play");
-
-	/* --- Centered transport row: [rewind][play][ff] ------------------------
-	 * These float at the center of the video/image area rather than in the
-	 * bottom controls bar (which keeps the far-right speed/snap/volume/
-	 * options/fullscreen buttons plus the timeline). */
-	m_pTransportRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_append(GTK_BOX(m_pTransportRow), m_pRewindBtn);
-	gtk_box_append(GTK_BOX(m_pTransportRow), m_pPlayButton);
-	gtk_box_append(GTK_BOX(m_pTransportRow), m_pFfBtn);
-	gtk_widget_set_halign(m_pTransportRow, GTK_ALIGN_CENTER);
-	gtk_widget_set_valign(m_pTransportRow, GTK_ALIGN_CENTER);
-	/* The row floats over the video, so give it the same  button/press input
-	 * handling as the image/video surfaces: a press on the row itself (i.e.
-	 * not on one of its control buttons) toggles play/pause, restoring
-	 * click-to-pause across the centre of the picture. */
-	attach_viewer_input_controllers(m_pTransportRow, this);
-
-	m_pControlsBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_widget_set_margin_start(m_pControlsBox, 6);
-	gtk_widget_set_margin_end(m_pControlsBox, 6);
-	gtk_widget_set_halign(m_pControlsBox, GTK_ALIGN_END);
-	gtk_box_append(GTK_BOX(m_pControlsBox), extraBtns);
-
-	/* ── Row 2: Timeline scale ─────────────────────────────────── */
-	GtkWidget* scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.001);
-	m_pPlayProgress = scale;
-	gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
-	gtk_widget_set_focusable(scale, FALSE);
-	gtk_widget_set_hexpand(scale, TRUE);
-
-	{
-		GtkEventController *motion = gtk_event_controller_motion_new();
-		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
-		gtk_widget_add_controller(scale, motion);
-	}
-	{
-		GtkGesture *click = gtk_gesture_click_new();
-		g_signal_connect(click, "pressed", G_CALLBACK(viewer_scale_button_press_cb), this);
-		g_signal_connect(click, "released", G_CALLBACK(viewer_scale_button_release_cb), this);
-		gtk_widget_add_controller(scale, GTK_EVENT_CONTROLLER(click));
-	}
-
-	m_pTimelineRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_widget_set_margin_start(m_pTimelineRow, 6);
-	gtk_widget_set_margin_end(m_pTimelineRow, 6);
-	gtk_box_append(GTK_BOX(m_pTimelineRow), scale);
-
-	/* ── Row 3: Time labels — at the edges of the scale ──────── */
-	m_pTimeElapsedLabel = gtk_label_new(NULL);
-	gtk_label_set_markup(GTK_LABEL(m_pTimeElapsedLabel), "<b>0:00</b>");
-	gtk_widget_add_css_class(m_pTimeElapsedLabel, "time-label");
-
-	m_pTimeDurationLabel = gtk_label_new(NULL);
-	gtk_label_set_markup(GTK_LABEL(m_pTimeDurationLabel), "<b>0:00</b>");
-	gtk_widget_add_css_class(m_pTimeDurationLabel, "time-label");
-
-	GtkWidget* timeRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_widget_set_margin_start(timeRow, 18);
-	gtk_widget_set_margin_end(timeRow, 18);
-	gtk_box_append(GTK_BOX(timeRow), m_pTimeElapsedLabel);
-	GtkWidget* timeSpacer = gtk_label_new("");
-	gtk_widget_set_hexpand(timeSpacer, TRUE);
-	gtk_box_append(GTK_BOX(timeRow), timeSpacer);
-	gtk_box_append(GTK_BOX(timeRow), m_pTimeDurationLabel);
-
-	/* ── Assemble alignment ──────────────────────────────────── */
-	gtk_box_append(GTK_BOX(alignment), m_pControlsBox);
-	gtk_box_append(GTK_BOX(alignment), m_pTimelineRow);
-	gtk_box_append(GTK_BOX(alignment), timeRow);
-
-	m_pMediaControls = alignment;
-	m_pTimeline = scale;
-
-	/* Scroll over the floating controls must reach the viewer's unified
-	 * handler too: Ctrl+wheel zooms (video), plain wheel navigates.  The
-	 * controls are an overlay child above the video/image widget, so they
-	 * would otherwise swallow these scroll events. */
-	{
-		GtkEventController *scroll = gtk_event_controller_scroll_new(
-			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
-		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
-		gtk_widget_add_controller(m_pMediaControls, scroll);
-	}
-
 	/* ── Screen-wide CSS ──────────────────────────────────────── */
 	GtkCssProvider *cssProvider = gtk_css_provider_new();
 	gtk_css_provider_load_from_string(cssProvider,
-		".speed-active { background-image: none; background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n"
 		".filmstrip-overlay { background-color: transparent; }\n"
-".media-btn { border-radius: 8px; min-width: 2.4em; min-height: 2.4em; padding: 4px; background-image: none; background-color: transparent; border: none; outline: none; }\n"
-		".media-btn-play { border-radius: 50%; font-size: 2.5em; -gtk-icon-size: 1em; }\n"
+		".media-btn { border-radius: 8px; min-width: 2.4em; min-height: 2.4em; padding: 4px; background-image: none; background-color: transparent; border: none; outline: none; }\n"
 		".media-btn:hover { background-image: none; background-color: alpha(@theme_bg_color, 0.60); border: none; }\n"
 		".media-btn:focus, .media-btn:focus-visible { outline: none; box-shadow: none; }\n"
-		".time-label { color: rgba(255, 255, 255, 0.85); font-size: 12px; }\n"
+		"button.media-btn:checked,\n"
+		"button.media-btn.speed-active,\n"
+		"button.submenu-icon-btn:checked,\n"
+		"button.submenu-icon-btn.speed-active,\n"
+		".media-btn:checked,\n"
+		".media-btn.speed-active,\n"
+		".speed-active {\n"
+		"  background-image: none;\n"
+		"  background-color: @theme_selected_bg_color;\n"
+		"  color: @theme_selected_fg_color;\n"
+		"}\n"
+		"button.media-btn:checked:hover,\n"
+		"button.media-btn.speed-active:hover,\n"
+		"button.submenu-icon-btn:checked:hover,\n"
+		"button.submenu-icon-btn.speed-active:hover,\n"
+		".media-btn:checked:hover,\n"
+		".media-btn.speed-active:hover,\n"
+		".speed-active:hover {\n"
+		"  background-image: none;\n"
+		"  background-color: alpha(@theme_selected_bg_color, 0.85);\n"
+		"  color: @theme_selected_fg_color;\n"
+		"}\n"
+		".time-label { color: #ffffff; font-size: 12px; font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.7); }\n"
 		".play-anim-badge { border-radius: 50%; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.50); }\n"
-		".image-load-error { color: rgba(255, 255, 255, 1.0); font-size: 18px; padding: 20px; border-radius: 12px; background-color: alpha(#000, 0.55); }\n");
+		".image-load-error { color: rgba(255, 255, 255, 1.0); font-size: 18px; padding: 20px; border-radius: 12px; background-color: alpha(#000, 0.55); }\n"
+		".media-btn-blank { min-width: 2.4em; min-height: 2.4em; padding: 4px; }\n"
+		".viewer-overlay-bar { background-color: rgba(30, 30, 30, 0.75); border-radius: 10px; padding: 4px 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }\n"
+		".timeline-overlay-bar { background: transparent; border: none; box-shadow: none; padding: 0 4px; }\n"
+		".submenu-pill-btn { border-radius: 6px; padding: 3px 8px; font-weight: 500; font-size: 11px; }\n"
+		".submenu-icon-btn { border-radius: 6px; min-width: 2.2em; min-height: 2.2em; padding: 4px; }\n"
+		".center-play-btn { border-radius: 50%; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; outline: none; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.60); padding: 0; }\n"
+		".center-play-btn:hover { background-color: rgba(10, 10, 10, 0.85); border: none; }\n"
+		".center-play-btn:focus, .center-play-btn:focus-visible { outline: none; box-shadow: none; border: none; }\n");
 	gtk_style_context_add_provider_for_display(gdk_display_get_default(),
 		GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
 	g_object_unref(cssProvider);
-
-	/* ── Wire events ──────────────────────────────────────────── */
-	m_iPlayProgressChangeHandler = g_signal_connect(G_OBJECT(m_pPlayProgress), "change-value",
-		G_CALLBACK(viewer_scale_change_value_cb), this);
-
-	/* Show everything initially, then hide what should be invisible at startup */
-	/* Only the play button should be visible when a video is loaded. */
-	set_control_visible(m_pTimeElapsedLabel, false);
-	set_control_visible(m_pTimeDurationLabel, false);
-	set_control_visible(m_pTimelineRow, false);
-	set_control_visible(m_pRewindBtn, false);
-	set_control_visible(m_pSpeedButton, false);
-	set_control_visible(m_pFfBtn, false);
-	set_control_visible(m_pSnapBtn, false);
-	set_control_visible(m_pVolumeButton, false);
-			set_control_visible(m_pVideoOptionsBtn, false);
-	set_control_visible(m_pFullscreenBtn, false);
 
 	m_iCurrentOrientation = 1;
 	
@@ -5839,7 +6650,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	
 	m_pNavigationBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 
-GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
+	GtkWidget *image = gtk_image_new_from_icon_name(get_fullscreen_icon_name(false));
 	gtk_box_append (GTK_BOX (m_pNavigationBox), image);
 
 	{
@@ -5858,31 +6669,6 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	gtk_widget_set_hexpand(m_pStack, TRUE);
 	gtk_widget_set_vexpand(m_pStack, TRUE);
 
-	// left right top bottom
-	// media controls float above the image/video area
-	gtk_widget_set_hexpand(alignment, TRUE);
-	gtk_widget_set_valign(alignment, GTK_ALIGN_END);
-	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), alignment);
-	// In GTK4 overlay children contribute to the overlay's size by default;
-	// the transport buttons' min-widths would otherwise pin the viewer area
-	// wider than the window (controls off-center, timeline scale overflowing
-	// past the edge).  Mark the floating bar as non-measuring so it always
-	// spans exactly the viewer's actual width.
-	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), alignment, FALSE);
-
-	// Play/ff/rewind float at the center of the video; the row only spans its
-	// buttons (not the whole viewer) so pointer events elsewhere pass through.
-	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pTransportRow);
-	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pTransportRow, FALSE);
-	/* only a video navigation reveals the transport row */
-	set_control_visible(m_pTransportRow, false);
-	{
-		GtkEventController *scroll = gtk_event_controller_scroll_new(
-			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
-		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
-		gtk_widget_add_controller(m_pTransportRow, scroll);
-	}
-
 	/* Play / pause animation overlay badge */
 	m_pPlayAnimWidget = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_add_css_class(m_pPlayAnimWidget, "play-anim-badge");
@@ -5900,6 +6686,291 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	gtk_widget_set_opacity(m_pPlayAnimWidget, 0.0);
 	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pPlayAnimWidget);
 	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pPlayAnimWidget, FALSE);
+
+	/* Persistent Center Play Button (for video previews / paused videos) */
+	m_pCenterPlayBtn = gtk_button_new();
+	gtk_button_set_has_frame(GTK_BUTTON(m_pCenterPlayBtn), FALSE);
+	gtk_widget_add_css_class(m_pCenterPlayBtn, "center-play-btn");
+	gtk_widget_set_halign(m_pCenterPlayBtn, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pCenterPlayBtn, GTK_ALIGN_CENTER);
+	gtk_widget_set_size_request(m_pCenterPlayBtn, 76, 76);
+	GtkWidget *center_play_icon = gtk_image_new_from_icon_name("media-playback-start-symbolic");
+	gtk_image_set_pixel_size(GTK_IMAGE(center_play_icon), 38);
+	gtk_button_set_child(GTK_BUTTON(m_pCenterPlayBtn), center_play_icon);
+	gtk_widget_set_tooltip_text(m_pCenterPlayBtn, "Play Video (Space / Click)");
+	g_signal_connect_swapped(G_OBJECT(m_pCenterPlayBtn), "clicked", G_CALLBACK(viewer_play_button_clicked_cb), this);
+	gtk_widget_set_visible(m_pCenterPlayBtn, FALSE);
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pCenterPlayBtn);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pCenterPlayBtn, FALSE);
+
+	/* ── Unified Viewer Control Overlays (floating HUD for stills and videos) ── */
+	/* ── Full-width Timeline row (floats at the bottom for videos) ────────────── */
+	m_pTimelineRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+	gtk_widget_add_css_class(m_pTimelineRow, "timeline-overlay-bar");
+	gtk_widget_set_halign(m_pTimelineRow, GTK_ALIGN_FILL);
+	gtk_widget_set_hexpand(m_pTimelineRow, TRUE);
+	gtk_widget_set_valign(m_pTimelineRow, GTK_ALIGN_END);
+	gtk_widget_set_margin_start(m_pTimelineRow, 24);
+	gtk_widget_set_margin_end(m_pTimelineRow, 24);
+	gtk_widget_set_margin_bottom(m_pTimelineRow, 12);
+
+	m_pTimeElapsedLabel = gtk_label_new(NULL);
+	gtk_label_set_markup(GTK_LABEL(m_pTimeElapsedLabel), "<b>0:00</b>");
+	gtk_widget_add_css_class(m_pTimeElapsedLabel, "time-label");
+	gtk_box_append(GTK_BOX(m_pTimelineRow), m_pTimeElapsedLabel);
+
+	GtkWidget* scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.001);
+	m_pPlayProgress = scale;
+	m_pTimeline = scale;
+	gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
+	gtk_widget_set_focusable(scale, FALSE);
+	gtk_widget_set_hexpand(scale, TRUE);
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(scale, motion);
+	}
+	{
+		GtkGesture *click = gtk_gesture_click_new();
+		g_signal_connect(click, "pressed", G_CALLBACK(viewer_scale_button_press_cb), this);
+		g_signal_connect(click, "released", G_CALLBACK(viewer_scale_button_release_cb), this);
+		gtk_widget_add_controller(scale, GTK_EVENT_CONTROLLER(click));
+	}
+	m_iPlayProgressChangeHandler = g_signal_connect(G_OBJECT(m_pPlayProgress), "change-value",
+		G_CALLBACK(viewer_scale_change_value_cb), this);
+	gtk_box_append(GTK_BOX(m_pTimelineRow), scale);
+
+	m_pTimeDurationLabel = gtk_label_new(NULL);
+	gtk_label_set_markup(GTK_LABEL(m_pTimeDurationLabel), "<b>0:00</b>");
+	gtk_widget_add_css_class(m_pTimeDurationLabel, "time-label");
+	gtk_box_append(GTK_BOX(m_pTimelineRow), m_pTimeDurationLabel);
+
+	{
+		GtkEventController *scroll = gtk_event_controller_scroll_new(
+			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
+		gtk_widget_add_controller(m_pTimelineRow, scroll);
+	}
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "enter", G_CALLBACK(viewer_overlay_bar_enter_cb), this);
+		g_signal_connect(motion, "leave", G_CALLBACK(viewer_overlay_bar_leave_cb), this);
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pTimelineRow, motion);
+	}
+
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pTimelineRow);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pTimelineRow, FALSE);
+	set_control_visible(m_pTimelineRow, false);
+
+	/* ── Unified HUD controls toolbar (15-slot consistent layout) ────────────── */
+	m_pViewerOverlayBar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+	gtk_widget_add_css_class(m_pViewerOverlayBar, "osd");
+	gtk_widget_add_css_class(m_pViewerOverlayBar, "viewer-overlay-bar");
+	gtk_widget_set_halign(m_pViewerOverlayBar, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pViewerOverlayBar, GTK_ALIGN_END);
+	gtk_widget_set_margin_bottom(m_pViewerOverlayBar, 50);
+
+	m_pControlsBox = m_pViewerOverlayBar;
+
+	auto make_overlay_btn = [this](const char *icon, const char *tooltip, GCallback cb) -> GtkWidget* {
+		GtkWidget *btn = gtk_button_new_from_icon_name(icon);
+		gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
+		gtk_widget_add_css_class(btn, "media-btn");
+		gtk_widget_set_focus_on_click(btn, FALSE);
+		gtk_widget_set_focusable(btn, FALSE);
+		if (tooltip) gtk_widget_set_tooltip_text(btn, tooltip);
+		if (cb) g_signal_connect_swapped(G_OBJECT(btn), "clicked", cb, this);
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(btn, motion);
+		return btn;
+	};
+
+	auto make_blank_slot = []() -> GtkWidget* {
+		GtkWidget *b = gtk_button_new();
+		gtk_button_set_has_frame(GTK_BUTTON(b), FALSE);
+		gtk_widget_add_css_class(b, "media-btn");
+		gtk_widget_add_css_class(b, "media-btn-blank");
+		gtk_widget_set_opacity(b, 0.0);
+		gtk_widget_set_can_target(b, FALSE);
+		gtk_widget_set_focusable(b, FALSE);
+		return b;
+	};
+
+	// Slot 0: < (Previous)
+	m_pViewerPrevBtn = make_overlay_btn("go-previous-symbolic", NULL, G_CALLBACK(viewer_overlay_prev_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerPrevBtn);
+
+	// Slot 1: > (Next)
+	m_pViewerNextBtn = make_overlay_btn("go-next-symbolic", NULL, G_CALLBACK(viewer_overlay_next_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerNextBtn);
+
+	// Slot 2: Blank 1 (image) / Play (video)
+	m_pImageBlank1 = make_blank_slot();
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pImageBlank1);
+
+	m_pPlayImage = gtk_image_new_from_icon_name("media-playback-start-symbolic");
+	m_pPlayButton = gtk_button_new();
+	gtk_button_set_has_frame(GTK_BUTTON(m_pPlayButton), FALSE);
+	gtk_button_set_child(GTK_BUTTON(m_pPlayButton), m_pPlayImage);
+	gtk_widget_add_css_class(m_pPlayButton, "media-btn");
+	gtk_widget_set_focus_on_click(m_pPlayButton, FALSE);
+	gtk_widget_set_focusable(m_pPlayButton, FALSE);
+	gtk_widget_set_tooltip_text(m_pPlayButton, "Play / Pause (Space)");
+	g_signal_connect_swapped(G_OBJECT(m_pPlayButton), "clicked", G_CALLBACK(viewer_play_button_clicked_cb), this);
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pPlayButton, motion);
+	}
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pPlayButton);
+
+	// Slot 3: Rotate Left (CCW) (image) / Skip Backward 10s (video)
+	m_pViewerRotateCcwBtn = make_overlay_btn("object-rotate-left-symbolic", "Rotate Counter-Clockwise", G_CALLBACK(viewer_overlay_rotate_ccw_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerRotateCcwBtn);
+	m_pRewindBtn = make_overlay_btn("skip-backwards-10", "Skip Backwards 10s (Left / Shift+Left)", G_CALLBACK(viewer_video_rw_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pRewindBtn);
+
+	// Slot 4: Rotate Right (CW) (image) / Skip Forward 10s (video)
+	m_pViewerRotateCwBtn = make_overlay_btn("object-rotate-right-symbolic", "Rotate Clockwise", G_CALLBACK(viewer_overlay_rotate_cw_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerRotateCwBtn);
+	m_pFfBtn = make_overlay_btn("skip-forward-10", "Skip Forward 10s (Right / Shift+Right)", G_CALLBACK(viewer_video_ff_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pFfBtn);
+
+	// Slot 5: Zoom Out (-)
+	m_pViewerZoomOutBtn = make_overlay_btn("zoom-out-symbolic", "Zoom Out (-)", G_CALLBACK(viewer_overlay_zoom_out_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomOutBtn);
+
+	// Slot 6: Zoom Fit
+	m_pViewerZoomFitBtn = make_overlay_btn("zoom-fit-best-symbolic", "Zoom to Fit Window", G_CALLBACK(viewer_overlay_zoom_fit_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomFitBtn);
+
+	// Slot 7: Zoom In (+)
+	m_pViewerZoomInBtn = make_overlay_btn("zoom-in-symbolic", "Zoom In (+)", G_CALLBACK(viewer_overlay_zoom_in_cb));
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomInBtn);
+
+	// Slot 8: Blank 2 (image) / Volume (video)
+	m_pImageBlank2 = make_blank_slot();
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pImageBlank2);
+
+	m_pVolumeButton = gtk_menu_button_new();
+	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pVolumeButton), "audio-volume-high-symbolic");
+	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVolumeButton), GTK_ARROW_UP);
+	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pVolumeButton), FALSE);
+	gtk_widget_add_css_class(m_pVolumeButton, "media-btn");
+	gtk_widget_set_tooltip_text(m_pVolumeButton, "Volume");
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pVolumeButton, motion);
+	}
+	{
+		GtkGesture *middle_click = gtk_gesture_click_new();
+		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(middle_click), GDK_BUTTON_MIDDLE);
+		g_signal_connect(middle_click, "pressed", G_CALLBACK(viewer_volume_button_middle_click_cb), this);
+		gtk_widget_add_controller(m_pVolumeButton, GTK_EVENT_CONTROLLER(middle_click));
+	}
+	m_pVolumePopover = gtk_popover_new();
+	gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_TOP);
+	gtk_popover_set_autohide(GTK_POPOVER(m_pVolumePopover), TRUE);
+	GtkWidget* volBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	gtk_widget_set_margin_start(volBox, 8);
+	gtk_widget_set_margin_end(volBox, 8);
+	gtk_widget_set_margin_top(volBox, 8);
+	gtk_widget_set_margin_bottom(volBox, 8);
+	GtkWidget* volLabel = gtk_label_new("Volume");
+	gtk_box_append(GTK_BOX(volBox), volLabel);
+	m_pVolumeScale = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, 0.0, 1.0, 0.05);
+	gtk_range_set_inverted(GTK_RANGE(m_pVolumeScale), TRUE);
+	gtk_widget_set_size_request(m_pVolumeScale, -1, 120);
+	gtk_range_set_value(GTK_RANGE(m_pVolumeScale), m_dVolume);
+	g_signal_connect(G_OBJECT(m_pVolumeScale), "value-changed", G_CALLBACK(viewer_volume_value_changed), this);
+	gtk_box_append(GTK_BOX(volBox), m_pVolumeScale);
+	m_pVolumeMuteBtn = gtk_button_new_from_icon_name("audio-volume-high-symbolic");
+	gtk_widget_add_css_class(m_pVolumeMuteBtn, "media-btn");
+	gtk_widget_set_tooltip_text(m_pVolumeMuteBtn, "Mute (M)");
+	g_signal_connect_swapped(m_pVolumeMuteBtn, "clicked", G_CALLBACK(viewer_volume_mute_cb), this);
+	gtk_box_append(GTK_BOX(volBox), m_pVolumeMuteBtn);
+	gtk_popover_set_child(GTK_POPOVER(m_pVolumePopover), volBox);
+	gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pVolumeButton), m_pVolumePopover);
+	UpdateVolumeUI();
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pVolumeButton);
+
+	// Slot 9: Submenu (image) / Submenu (video)
+	m_pImageSubmenuBtn = gtk_menu_button_new();
+	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pImageSubmenuBtn), "view-more-symbolic");
+	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pImageSubmenuBtn), GTK_ARROW_UP);
+	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pImageSubmenuBtn), FALSE);
+	gtk_widget_add_css_class(m_pImageSubmenuBtn, "media-btn");
+	gtk_widget_set_tooltip_text(m_pImageSubmenuBtn, "More Options");
+	gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(m_pImageSubmenuBtn), viewer_image_submenu_create_popup_cb, this, NULL);
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pImageSubmenuBtn, motion);
+	}
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pImageSubmenuBtn);
+
+	m_pVideoOptionsBtn = gtk_menu_button_new();
+	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pVideoOptionsBtn), "view-more-symbolic");
+	gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_UP);
+	gtk_menu_button_set_has_frame(GTK_MENU_BUTTON(m_pVideoOptionsBtn), FALSE);
+	gtk_widget_add_css_class(m_pVideoOptionsBtn, "media-btn");
+	gtk_widget_set_tooltip_text(m_pVideoOptionsBtn, "Video Options");
+	gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(m_pVideoOptionsBtn), viewer_video_options_create_popup_cb, this, NULL);
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pVideoOptionsBtn, motion);
+	}
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pVideoOptionsBtn);
+
+	// Slot 10: Fullscreen
+	m_pViewerFullscreenBtn = make_overlay_btn(get_fullscreen_icon_name(false), "Toggle Fullscreen (F11 / Middle Click)", G_CALLBACK(viewer_overlay_fullscreen_cb));
+	m_pFullscreenBtn = m_pViewerFullscreenBtn;
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerFullscreenBtn);
+
+	UpdateHUDTooltips();
+	UpdateHUDPosition();
+
+	m_pMediaControls = m_pViewerOverlayBar;
+	m_pTransportRow = NULL;
+
+	{
+		GtkEventController *scroll = gtk_event_controller_scroll_new(
+			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
+		gtk_widget_add_controller(m_pViewerOverlayBar, scroll);
+	}
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "enter", G_CALLBACK(viewer_overlay_bar_enter_cb), this);
+		g_signal_connect(motion, "leave", G_CALLBACK(viewer_overlay_bar_leave_cb), this);
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pViewerOverlayBar, motion);
+	}
+
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pViewerOverlayBar);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pViewerOverlayBar, FALSE);
+	set_control_visible(m_pViewerOverlayBar, false);
+	gtk_widget_set_opacity(m_pViewerOverlayBar, 0.0);
+
+	// Hide video-specific controls initially (since default is stills)
+	set_control_visible(m_pTimelineRow, false);
+	set_control_visible(m_pPlayButton, false);
+	set_control_visible(m_pRewindBtn, false);
+	set_control_visible(m_pFfBtn, false);
+	set_control_visible(m_pVolumeButton, false);
+	set_control_visible(m_pVideoOptionsBtn, false);
+
+	// Show stills controls initially
+	set_control_visible(m_pImageBlank1, true);
+	set_control_visible(m_pViewerRotateCcwBtn, true);
+	set_control_visible(m_pViewerRotateCwBtn, true);
+	set_control_visible(m_pImageBlank2, true);
+	set_control_visible(m_pImageSubmenuBtn, true);
+	set_control_visible(m_pViewerFullscreenBtn, true);
 
 	// the image/video stack is the overlay's single main widget
 	gtk_widget_set_hexpand(m_pImageView, TRUE);
@@ -6025,25 +7096,7 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	g_signal_connect(G_OBJECT(m_pIconView),"map",G_CALLBACK(viewer_icon_view_map_cb),this);
 	g_signal_connect(G_OBJECT(m_pIconView),"unmap",G_CALLBACK(viewer_icon_view_unmap_cb),this);
 
-	//popup menu stuff: GTK4 gesture controllers on the image view
-	{
-		GtkGesture *click = gtk_gesture_click_new();
-		gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 0);
-		g_signal_connect(click, "pressed", G_CALLBACK(viewer_button_press_cb), this);
-		g_signal_connect(click, "released", G_CALLBACK(viewer_button_release_cb), this);
-		gtk_widget_add_controller(m_pImageView, GTK_EVENT_CONTROLLER(click));
-	}
-	{
-		GtkEventController *scroll = gtk_event_controller_scroll_new(
-			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
-		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
-		gtk_widget_add_controller(m_pImageView, scroll);
-	}
-	{
-		GtkEventController *motion = gtk_event_controller_motion_new();
-		g_signal_connect(motion, "motion", G_CALLBACK(viewer_motion_notify), this);
-		gtk_widget_add_controller(m_pImageView, motion);
-	}
+	attach_viewer_input_controllers(m_pImageView, this);
 	{
 		GtkEventController *key = gtk_event_controller_key_new();
 		g_signal_connect(key, "key-pressed", G_CALLBACK(viewer_imageview_key_press_event), this);
@@ -6378,6 +7431,8 @@ GtkWidget *image = gtk_image_new_from_icon_name("view-fullscreen");
 	//gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL); // Removed sync handler
 	gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
 	gst_object_unref (bus);
+
+	UpdateUI();
 }
 
 
@@ -6466,7 +7521,7 @@ void Viewer::Show()
 void Viewer::Hide()
 {
 	m_ViewerImplPtr->StopVideo(true);
-	SlideShowStop();
+	m_ViewerImplPtr->SlideShowStop(true);
 	
 	gtk_widget_set_visible(m_ViewerImplPtr->m_pHBox, FALSE);
 
@@ -6525,6 +7580,7 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_FWD, "<Shift>greater", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_FRAME_BACK, "<Shift>less", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SNAPSHOT, "", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_MUTE, "m", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	/* Viewer toggle actions */
 	QuiverUtils::AddToggleAction(ACTION_VIEWER_VIEW_FILM_STRIP, "", FALSE, viewer_action_handler_cb, m_ViewerImplPtr.get());
@@ -6630,6 +7686,12 @@ bool Viewer::IsFilmstripHiddenByFS() const
 	return m_ViewerImplPtr->m_bFilmstripHiddenByFS;
 }
 
+void Viewer::UpdateHUDPosition()
+{
+	if (m_ViewerImplPtr)
+		m_ViewerImplPtr->UpdateHUDPosition();
+}
+
 int Viewer::GetCurrentOrientation()
 {
 	return m_ViewerImplPtr->GetCurrentOrientation();	
@@ -6639,6 +7701,11 @@ int Viewer::GetCurrentOrientation()
 static gboolean timeout_advance_slideshow (gpointer data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)data;
+
+	if (pViewerImpl->m_bSlideShowPaused)
+	{
+		return FALSE;
+	}
 	
 	int iNextIndex = pViewerImpl->m_ImageListPtr->GetCurrentIndex()+1;
 
@@ -6655,6 +7722,8 @@ static gboolean timeout_advance_slideshow (gpointer data)
 
 	switch (pViewerImpl->m_SlideShowState)
 	{
+		case Viewer::ViewerImpl::SLIDESHOW_STATE_PAUSED:
+			break;
 		case Viewer::ViewerImpl::SLIDESHOW_STATE_ADVANCE:
 			{
 				bool bStop = false;
@@ -6747,6 +7816,8 @@ void Viewer::SlideShowStart()
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,true);
 	
+	m_ViewerImplPtr->m_bSlideShowRunning = true;
+	m_ViewerImplPtr->m_bSlideShowPaused = false;
 	m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_ADVANCE;
 	m_ViewerImplPtr->m_iSlideShowWaitCount = 0;
 
@@ -6770,13 +7841,15 @@ void Viewer::SlideShowStart()
 
 		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(duration,timeout_advance_slideshow, m_ViewerImplPtr.get());
 
+		QuiverUtils::ToggleActionSetState(ACTION_VIEWER_SLIDESHOW, TRUE);
 		EmitSlideShowStartedEvent();
 	}
-	else
+	else if (m_ViewerImplPtr->m_ImageListPtr->GetSize() < 2)
 	{
 		SlideShowStop();
 	}
 
+	m_ViewerImplPtr->UpdateSlideshowButton();
 	m_ViewerImplPtr->UpdateUI();
 }
 
@@ -6784,6 +7857,126 @@ void Viewer::SlideShowStart()
 void Viewer::SlideShowStop()
 {
 	m_ViewerImplPtr->SlideShowStop();
+}
+
+void Viewer::SlideShowPause()
+{
+	if (!m_ViewerImplPtr->m_bSlideShowRunning || m_ViewerImplPtr->m_bSlideShowPaused)
+		return;
+
+	m_ViewerImplPtr->m_bSlideShowPaused = true;
+	m_ViewerImplPtr->m_SlideShowPrePauseState = m_ViewerImplPtr->m_SlideShowState;
+	m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_PAUSED;
+	if (0 != m_ViewerImplPtr->m_iTimeoutSlideshowID)
+	{
+		g_source_remove(m_ViewerImplPtr->m_iTimeoutSlideshowID);
+		m_ViewerImplPtr->m_iTimeoutSlideshowID = 0;
+	}
+	if (m_ViewerImplPtr->IsVideo() && m_ViewerImplPtr->IsPlaying())
+	{
+		m_ViewerImplPtr->PlayPauseVideo();
+	}
+	m_ViewerImplPtr->UpdateSlideshowButton();
+}
+
+void Viewer::SlideShowResume()
+{
+	if (!m_ViewerImplPtr->m_bSlideShowRunning || !m_ViewerImplPtr->m_bSlideShowPaused)
+		return;
+
+	m_ViewerImplPtr->m_bSlideShowPaused = false;
+	m_ViewerImplPtr->m_SlideShowState = m_ViewerImplPtr->m_SlideShowPrePauseState;
+	if (m_ViewerImplPtr->m_SlideShowState == ViewerImpl::SLIDESHOW_STATE_PAUSED)
+	{
+		m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_ADVANCE;
+	}
+
+	if (m_ViewerImplPtr->IsVideo() && !m_ViewerImplPtr->IsPlaying())
+	{
+		m_ViewerImplPtr->PlayPauseVideo();
+		m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_PLAYING_VIDEO;
+		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(SLIDESHOW_WAIT_DURATION, timeout_advance_slideshow, m_ViewerImplPtr.get());
+	}
+	else
+	{
+		int duration = (m_ViewerImplPtr->m_SlideShowState == ViewerImpl::SLIDESHOW_STATE_CACHE)
+			? MAX(10, m_ViewerImplPtr->m_iSlideShowDuration - m_ViewerImplPtr->m_iSlideShowWaitCount * SLIDESHOW_WAIT_DURATION)
+			: SLIDESHOW_WAIT_DURATION;
+		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(duration, timeout_advance_slideshow, m_ViewerImplPtr.get());
+	}
+	m_ViewerImplPtr->UpdateSlideshowButton();
+}
+
+void Viewer::SlideShowTogglePause()
+{
+	if (!m_ViewerImplPtr->m_bSlideShowRunning)
+	{
+		SlideShowStart();
+	}
+	else if (m_ViewerImplPtr->m_bSlideShowPaused)
+	{
+		SlideShowResume();
+	}
+	else
+	{
+		SlideShowPause();
+	}
+}
+
+bool Viewer::IsSlideShowRunning() const
+{
+	return m_ViewerImplPtr->IsSlideShowRunning();
+}
+
+bool Viewer::IsSlideShowPaused() const
+{
+	return m_ViewerImplPtr->IsSlideShowPaused();
+}
+
+GtkWidget* Viewer::GetViewerOverlayBar() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pViewerOverlayBar : NULL;
+}
+
+GtkWidget* Viewer::GetTimelineRow() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pTimelineRow : NULL;
+}
+
+GtkWidget* Viewer::GetCenterPlayButton() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pCenterPlayBtn : NULL;
+}
+
+GtkWidget* Viewer::GetImageView() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pImageView : NULL;
+}
+
+bool Viewer::IsVideoZoomAnchorCenter() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_bVideoZoomAnchorCenter : false;
+}
+
+void Viewer::ToggleMute()
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->ToggleMute();
+	}
+}
+
+bool Viewer::IsMuted() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->IsMuted() : false;
+}
+
+void Viewer::SetMuted(bool bMute)
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->SetMuted(bMute);
+	}
 }
 
 
@@ -6951,7 +8144,9 @@ void Viewer::ViewerImpl::QueueIconViewUpdate(int timeout)
 
 void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
 {
-	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	bool wasRunning = m_bSlideShowRunning;
+	m_bSlideShowRunning = false;
+	m_bSlideShowPaused = false;
 
 	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_pImageView),FALSE);
 
@@ -6962,12 +8157,158 @@ void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
 		m_iTimeoutSlideshowID = 0;
 	}
 
-	if (bEmitStopEvent)
+	QuiverUtils::ToggleActionSetState(ACTION_VIEWER_SLIDESHOW, FALSE);
+	UpdateSlideshowButton();
+
+	if (bEmitStopEvent && wasRunning)
 	{
 		m_pViewer->EmitSlideShowStoppedEvent();
 	}
 
 	UpdateUI();
+}
+
+static void update_single_slideshow_btn(GtkWidget *btn, bool isRunning, Viewer::ViewerImpl *impl)
+{
+	if (!btn) return;
+	gtk_button_set_icon_name(GTK_BUTTON(btn), "display-projector-symbolic");
+	std::string tooltip = ShortcutManager::GetInstance().GetTooltipForAction("SlideShow", "Slideshow");
+	gtk_widget_set_tooltip_text(btn, tooltip.c_str());
+	if (GTK_IS_TOGGLE_BUTTON(btn))
+	{
+		g_signal_handlers_block_by_func(btn, (gpointer)viewer_submenu_slideshow_cb, impl);
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), isRunning);
+		g_signal_handlers_unblock_by_func(btn, (gpointer)viewer_submenu_slideshow_cb, impl);
+	}
+	if (isRunning)
+		gtk_widget_add_css_class(btn, "speed-active");
+	else
+		gtk_widget_remove_css_class(btn, "speed-active");
+}
+
+void Viewer::ViewerImpl::UpdateSlideshowButton()
+{
+	update_single_slideshow_btn(m_pViewerSlideshowBtn, m_bSlideShowRunning, this);
+	update_single_slideshow_btn(m_pViewerVideoSlideshowBtn, m_bSlideShowRunning, this);
+}
+
+void Viewer::ViewerImpl::UpdateHUDTooltips()
+{
+	const ShortcutManager &sm = ShortcutManager::GetInstance();
+	if (m_pViewerPrevBtn)
+		gtk_widget_set_tooltip_text(m_pViewerPrevBtn, sm.GetTooltipForAction("ImagePrevious", "Previous Image").c_str());
+	if (m_pViewerNextBtn)
+		gtk_widget_set_tooltip_text(m_pViewerNextBtn, sm.GetTooltipForAction("ImageNext", "Next Image").c_str());
+	if (m_pPlayButton)
+		gtk_widget_set_tooltip_text(m_pPlayButton, sm.GetTooltipForAction("VideoPlay", "Play / Pause").c_str());
+	if (m_pCenterPlayBtn)
+		gtk_widget_set_tooltip_text(m_pCenterPlayBtn, (sm.GetTooltipForAction("VideoPlay", "Play Video") + " / Click").c_str());
+	if (m_pViewerRotateCcwBtn)
+		gtk_widget_set_tooltip_text(m_pViewerRotateCcwBtn, sm.GetTooltipForAction("RotateCCW", "Rotate Counter-Clockwise").c_str());
+	if (m_pRewindBtn)
+		gtk_widget_set_tooltip_text(m_pRewindBtn, sm.GetTooltipForAction("VideoSkipBack", "Skip Backwards 10s").c_str());
+	if (m_pViewerRotateCwBtn)
+		gtk_widget_set_tooltip_text(m_pViewerRotateCwBtn, sm.GetTooltipForAction("RotateCW", "Rotate Clockwise").c_str());
+	if (m_pFfBtn)
+		gtk_widget_set_tooltip_text(m_pFfBtn, sm.GetTooltipForAction("VideoSkipForward", "Skip Forward 10s").c_str());
+	if (m_pViewerZoomOutBtn)
+		gtk_widget_set_tooltip_text(m_pViewerZoomOutBtn, sm.GetTooltipForAction("ZoomOut", "Zoom Out").c_str());
+	if (m_pViewerZoomFitBtn)
+		gtk_widget_set_tooltip_text(m_pViewerZoomFitBtn, sm.GetTooltipForAction("ZoomFit", "Zoom to Fit Window").c_str());
+	if (m_pViewerZoomInBtn)
+		gtk_widget_set_tooltip_text(m_pViewerZoomInBtn, sm.GetTooltipForAction("ZoomIn", "Zoom In").c_str());
+	if (m_pSnapBtn)
+		gtk_widget_set_tooltip_text(m_pSnapBtn, sm.GetTooltipForAction("VideoSnapshot", "Take Snapshot").c_str());
+	if (m_pViewerFullscreenBtn && m_pOverlay)
+	{
+		GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(m_pOverlay));
+		bool bFS = root && GTK_IS_WINDOW(root) && gtk_window_is_fullscreen(GTK_WINDOW(root));
+		std::string fs_tip = sm.GetTooltipForAction("FullScreen", bFS ? "Exit Fullscreen" : "Fullscreen");
+		if (bFS)
+			fs_tip += " / Middle Click / Esc";
+		else
+			fs_tip += " / Middle Click";
+		gtk_widget_set_tooltip_text(m_pViewerFullscreenBtn, fs_tip.c_str());
+	}
+	UpdateSlideshowButton();
+}
+
+void Viewer::ViewerImpl::UpdateCenterPlayButtonVisibility()
+{
+	if (!m_pCenterPlayBtn) return;
+	bool show = IsVideo() && !m_bVideoPlaybackStarted;
+	gtk_widget_set_visible(m_pCenterPlayBtn, show);
+}
+
+void Viewer::ViewerImpl::UpdateHUDPosition()
+{
+	if (!m_pViewerOverlayBar || !m_pTimelineRow)
+		return;
+
+	PreferencesPtr prefs = Preferences::GetInstance();
+	int hudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
+	bool bFilmstripVisible = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
+	if (QuiverUtils::GetAction(ACTION_VIEWER_VIEW_FILM_STRIP) != NULL)
+	{
+		bFilmstripVisible = bFilmstripVisible && QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP);
+	}
+	int filmstripPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
+	bool bOverlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
+
+	int offset = 0;
+	if (bFilmstripVisible && bOverlay && m_pIconView)
+	{
+		int cell_h = quiver_icon_view_get_cell_height(QUIVER_ICON_VIEW(m_pIconView));
+		if (cell_h <= 0)
+			cell_h = 100;
+		if (hudPos == HUD_POS_BOTTOM && filmstripPos == FSTRIP_POS_BOTTOM)
+		{
+			offset = cell_h + 10;
+		}
+		else if (hudPos == HUD_POS_TOP && filmstripPos == FSTRIP_POS_TOP)
+		{
+			offset = cell_h + 10;
+		}
+	}
+
+	if (hudPos == HUD_POS_TOP)
+	{
+		gtk_widget_set_valign(m_pTimelineRow, GTK_ALIGN_START);
+		gtk_widget_set_margin_top(m_pTimelineRow, 12 + offset);
+		gtk_widget_set_margin_bottom(m_pTimelineRow, 0);
+
+		gtk_widget_set_valign(m_pViewerOverlayBar, GTK_ALIGN_START);
+		gtk_widget_set_margin_top(m_pViewerOverlayBar, 50 + offset);
+		gtk_widget_set_margin_bottom(m_pViewerOverlayBar, 0);
+
+		if (m_pVolumePopover)
+			gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_BOTTOM);
+		if (m_pImageSubmenuBtn)
+			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pImageSubmenuBtn), GTK_ARROW_DOWN);
+		if (m_pVideoOptionsBtn)
+			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_DOWN);
+		if (m_pVolumeButton)
+			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVolumeButton), GTK_ARROW_DOWN);
+	}
+	else
+	{
+		gtk_widget_set_valign(m_pTimelineRow, GTK_ALIGN_END);
+		gtk_widget_set_margin_bottom(m_pTimelineRow, 12 + offset);
+		gtk_widget_set_margin_top(m_pTimelineRow, 0);
+
+		gtk_widget_set_valign(m_pViewerOverlayBar, GTK_ALIGN_END);
+		gtk_widget_set_margin_bottom(m_pViewerOverlayBar, 50 + offset);
+		gtk_widget_set_margin_top(m_pViewerOverlayBar, 0);
+
+		if (m_pVolumePopover)
+			gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_TOP);
+		if (m_pImageSubmenuBtn)
+			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pImageSubmenuBtn), GTK_ARROW_UP);
+		if (m_pVideoOptionsBtn)
+			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_UP);
+		if (m_pVolumeButton)
+			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVolumeButton), GTK_ARROW_UP);
+	}
 }
 
 static gboolean timeout_update_scrollbars(gpointer user_data)
@@ -7102,19 +8443,27 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 	{
 		if (QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW == event->GetKey() )
 		{
+			parent->UpdateHUDPosition();
 		}
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION == event->GetKey() )
 		{
 			parent->AddFilmstrip();
+			parent->UpdateHUDPosition();
 		}
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE == event->GetKey() )
 		{
 			quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewInteger(), event->GetNewInteger());
 			parent->m_ThumbnailLoader.SetIconDimensions(event->GetNewInteger(), event->GetNewInteger());
+			parent->UpdateHUDPosition();
 		}
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY == event->GetKey() )
 		{
 			parent->AddFilmstrip();
+			parent->UpdateHUDPosition();
+		}
+		else if (QUIVER_PREFS_VIEWER_HUD_POSITION == event->GetKey() )
+		{
+			parent->UpdateHUDPosition();
 		}
 		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_HIDE_FS == event->GetKey() )
 		{

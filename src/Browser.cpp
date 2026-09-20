@@ -1365,7 +1365,7 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 	}
 
 	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
-	if (m_ImageListPtr->SetCurrentIndex(index))
+	if (0 != m_ImageListPtr->GetSize() && m_ImageListPtr->SetCurrentIndex(index))
 	{
 		QuiverFile f;
 		f = m_ImageListPtr->GetCurrent();
@@ -2110,6 +2110,15 @@ browser_button_press_cb(GtkGestureClick *gesture, int n_press, double x, double 
 { (void)n_press;
 	GtkWidget *widget = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture)));
 	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	if (2 == button)
+	{
+		GAction *fs = QuiverUtils::GetAction("FullScreen");
+		if (fs != NULL)
+		{
+			g_action_activate(fs, NULL);
+		}
+		return;
+	}
 	if (3 != button)
 	{
 		return;
@@ -2272,13 +2281,15 @@ static gboolean iconview_key_press_cb(GtkEventControllerKey *controller, guint k
 }
 
 static void browser_menu_item(GMenu *menu, const char *label, const char *action_name,
-	const char *accel, const char *item_id)
+	const char *accel, const char *item_id, const char *icon_name = NULL)
 {
 	GMenuItem *item = g_menu_item_new(label, action_name);
 	if (accel != NULL && accel[0] != '\0')
 		g_menu_item_set_attribute(item, "accel", "s", accel);
 	if (item_id != NULL && item_id[0] != '\0')
 		g_menu_item_set_attribute(item, "id", "s", item_id);
+	if (icon_name != NULL && icon_name[0] != '\0')
+		g_menu_item_set_attribute(item, "icon", "s", icon_name);
 	g_menu_append_item(menu, item);
 	g_object_unref(item);
 }
@@ -2370,43 +2381,43 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 			if (dirs.size() == 1 && QuiverUtils::IsDirectoryURI(dirs.front().c_str()))
 			{
 				browser_menu_item(menu, "New Folder", "quiver." ACTION_BROWSER_NEW_FOLDER,
-					"<Primary><Shift>n", NULL);
+					"<Primary><Shift>n", NULL, "folder-new-symbolic");
 			}
 		}
 		/* Empty-area menu: "Undo Delete" only makes sense here and only when
 		 * there actually is a deletion to undo. */
 		if (bHasClipboard)
 			browser_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
-				"<Control>v", NULL);
+				"<Control>v", NULL, "edit-paste-symbolic");
 		if (QuiverFileOps::UndoStackHasItems() && NULL != QuiverUtils::GetAction("UndoDelete"))
-			browser_menu_item(menu, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL);
+			browser_menu_item(menu, "Undo Delete", "quiver.UndoDelete", "<Control>z", NULL, "edit-undo-symbolic");
 	}
 	else if (bTrash)
 	{
 		browser_menu_item(menu, "Copy", "quiver." ACTION_BROWSER_COPY,
-			"<Control>c", title_id);
+			"<Control>c", title_id, "edit-copy-symbolic");
 		GMenu *trash_section = g_menu_new();
 		browser_menu_item(trash_section, "Delete Permanently", "quiver." ACTION_BROWSER_TRASH,
-			"Delete", NULL);
+			"Delete", NULL, "edit-delete-symbolic");
 		browser_menu_item(trash_section, "Restore From Trash", "quiver." ACTION_BROWSER_RESTORE,
-			NULL, NULL);
+			NULL, NULL, "edit-undo-symbolic");
 		g_menu_append_section(menu, NULL, G_MENU_MODEL(trash_section));
 		g_object_unref(trash_section);
 	}
 	else
 	{
 		browser_menu_item(menu, "Copy", "quiver." ACTION_BROWSER_COPY,
-			"<Control>c", NULL);
+			"<Control>c", NULL, "edit-copy-symbolic");
 		browser_menu_item(menu, "Cut", "quiver." ACTION_BROWSER_CUT,
-			"<Control>x", NULL);
+			"<Control>x", NULL, "edit-cut-symbolic");
 		if (QuiverFileOps::ClipboardHasItems())
 			browser_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
-				"<Control>v", NULL);
+				"<Control>v", NULL, "edit-paste-symbolic");
 		browser_menu_item(menu, "Rename", "quiver." ACTION_BROWSER_RENAME,
-			"F2", NULL);
+			"F2", NULL, "document-edit-symbolic");
 		GMenu *actions_section = g_menu_new();
 		browser_menu_item(actions_section, "Move To Trash", "quiver." ACTION_BROWSER_TRASH,
-			"Delete", NULL);
+			"Delete", NULL, "user-trash-symbolic");
 		g_menu_append_section(menu, NULL, G_MENU_MODEL(actions_section));
 		g_object_unref(actions_section);
 	}
@@ -3232,7 +3243,10 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	}
 
 	// refresh the list
-	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
+	if (0 != parent->m_ImageListPtr->GetSize())
+	{
+		parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
+	}
 			
 	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
 	parent->m_ThumbnailLoader.UpdateList(true);	

@@ -52,6 +52,7 @@
 #define QUIVER_PREFS_VIEWER_GIF_ANIMATION          "gif_animation"
 #define QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE        "hide_scrollbars"
 #define QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT    "rotate_for_best_fit"
+#define QUIVER_PREFS_VIEWER_HUD_POSITION           "hud_position"
 
 // slideshow preferences
 #define QUIVER_PREFS_SLIDESHOW                     "slideshow"
@@ -72,4 +73,9 @@ enum {
 	FSTRIP_POS_LEFT,
 	FSTRIP_POS_BOTTOM,
 	FSTRIP_POS_RIGHT,
+};
+
+enum {
+	HUD_POS_BOTTOM = 0,
+	HUD_POS_TOP = 1,
 };

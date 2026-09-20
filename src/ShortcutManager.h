@@ -44,11 +44,23 @@ public:
     void LoadFromPreferences();
     void SaveToPreferences();
 
+    std::string GetTooltipForAction(const std::string &action_name, const std::string &base_label = "") const;
+
+    typedef void (*ShortcutsChangedCallback)(gpointer user_data);
+    void AddShortcutsChangedCallback(ShortcutsChangedCallback cb, gpointer user_data);
+    void RemoveShortcutsChangedCallback(ShortcutsChangedCallback cb, gpointer user_data);
+
     static std::string KeyvalAndModsToAccelString(guint keyval, GdkModifierType mods);
     static std::string AccelStringToHumanLabel(const std::string &accel);
     static bool IsUnmodifiedAccel(const std::string &accel);
 
 private:
+    struct CallbackEntry {
+        ShortcutsChangedCallback cb;
+        gpointer user_data;
+    };
+    std::vector<CallbackEntry> m_change_callbacks;
+    void NotifyShortcutsChanged();
     ShortcutManager();
     ~ShortcutManager() = default;
     ShortcutManager(const ShortcutManager&) = delete;

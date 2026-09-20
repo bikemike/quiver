@@ -37,6 +37,7 @@ set(UNIT_TEST_SOURCES
     unit/test_headerbar_toolbar.cpp
     unit/test_shortcut_manager.cpp
     unit/test_dialog_singleton.cpp
+    unit/test_viewer_gestures_and_overlay.cpp
 )
 
 add_executable(quiver_unit_tests ${UNIT_TEST_SOURCES})

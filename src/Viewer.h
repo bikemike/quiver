@@ -27,6 +27,21 @@ public:
 
 	void SlideShowStart();
 	void SlideShowStop();
+	void SlideShowPause();
+	void SlideShowResume();
+	void SlideShowTogglePause();
+	bool IsSlideShowRunning() const;
+	bool IsSlideShowPaused() const;
+
+	GtkWidget *GetViewerOverlayBar() const;
+	GtkWidget *GetTimelineRow() const;
+	GtkWidget *GetCenterPlayButton() const;
+	GtkWidget *GetImageView() const;
+	bool IsVideoZoomAnchorCenter() const;
+
+	void ToggleMute();
+	bool IsMuted() const;
+	void SetMuted(bool bMute);
 
 	// returns true if the view mode was reset, false if it did not need to be reset
 	bool ResetViewMode();
@@ -50,6 +65,7 @@ public:
 	void CancelFilmstripHide();
 	void SetFilmstripHiddenByFS(bool bHidden);
 	bool IsFilmstripHiddenByFS() const;
+	void UpdateHUDPosition();
 
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;

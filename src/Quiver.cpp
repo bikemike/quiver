@@ -193,6 +193,7 @@ public:
 	GtkWidget* m_pHPanedMainArea;
 	
 	bool m_bSlideShowRestoreFromFS;
+	bool m_bWasViewerModeBeforeSlideShow;
 	bool m_bFilmStripVisibleBeforeFS;
 			
 	ImageListPtr m_ImageListPtr;
@@ -428,6 +429,17 @@ QuiverImpl::~QuiverImpl()
 	gtk_window_destroy(GTK_WINDOW(m_pQuiverWindow));
 }
 
+static void append_menu_item_with_icon(GMenu *menu, const char *label, const char *action, const char *icon_name = NULL)
+{
+	GMenuItem *item = g_menu_item_new(label, action);
+	if (icon_name != NULL && icon_name[0] != '\0')
+	{
+		g_menu_item_set_attribute(item, "icon", "s", icon_name);
+	}
+	g_menu_append_item(menu, item);
+	g_object_unref(item);
+}
+
 void QuiverImpl::LoadBookmarks()
 {
 	if (NULL == m_pBookmarkMenu)
@@ -444,8 +456,8 @@ void QuiverImpl::LoadBookmarks()
 	}
 
 	GMenu *staticSection = g_menu_new();
-	g_menu_append(staticSection, "_Add Bookmark", "quiver.BookmarksAdd");
-	g_menu_append(staticSection, "_Edit Bookmarks...", "quiver.BookmarksEdit");
+	append_menu_item_with_icon(staticSection, "_Add Bookmark", "quiver.BookmarksAdd", "bookmark-new-symbolic");
+	append_menu_item_with_icon(staticSection, "_Edit Bookmarks...", "quiver.BookmarksEdit", "user-bookmarks-symbolic");
 	g_menu_append_section(m_pBookmarkMenu, NULL, G_MENU_MODEL(staticSection));
 	g_object_unref(staticSection);
 
@@ -488,11 +500,11 @@ void QuiverImpl::LoadExternalTools()
 	}
 
 	GMenu *staticSection = g_menu_new();
-	g_menu_append(staticSection, "Task Manager...", "quiver.TaskManager");
-	g_menu_append(staticSection, "Adjust Date...", "quiver.AdjustDate");
-	g_menu_append(staticSection, "Rename...", "quiver.Rename");
-	g_menu_append(staticSection, "Organize...", "quiver.Organize");
-	g_menu_append(staticSection, "External Tools...", "quiver.ExternalTools");
+	append_menu_item_with_icon(staticSection, "Task Manager...", "quiver.TaskManager", "system-run-symbolic");
+	append_menu_item_with_icon(staticSection, "Adjust Date...", "quiver.AdjustDate", "x-office-calendar-symbolic");
+	append_menu_item_with_icon(staticSection, "Rename...", "quiver.Rename", "document-edit-symbolic");
+	append_menu_item_with_icon(staticSection, "Organize...", "quiver.Organize", "folder-saved-search-symbolic");
+	append_menu_item_with_icon(staticSection, "External Tools...", "quiver.ExternalTools", "applications-system-symbolic");
 	g_menu_append_section(m_pExternalToolsMenu, NULL, G_MENU_MODEL(staticSection));
 	g_object_unref(staticSection);
 
@@ -557,7 +569,7 @@ void QuiverImpl::RebuildRecentDeletionsMenu()
 	else if (topType == QuiverFileOps::UNDO_TYPE_NEW_FOLDER) undoLabel = "_Undo New Folder";
 
 	GMenu *staticSection = g_menu_new();
-	g_menu_append(staticSection, undoLabel, "quiver." ACTION_QUIVER_UNDO_DELETE);
+	append_menu_item_with_icon(staticSection, undoLabel, "quiver." ACTION_QUIVER_UNDO_DELETE, "edit-undo-symbolic");
 	g_menu_append_section(m_pRecentDeletionsMenu, NULL, G_MENU_MODEL(staticSection));
 	g_object_unref(staticSection);
 
@@ -1249,7 +1261,8 @@ GMenu* QuiverImpl::FilterMenuModel(GMenuModel *model, const std::set<std::string
  * icons/actions/tips are parallel arrays of length n.  Clicking a button only
  * activates its action — the popover stays open so zoom/rotate can be applied
  * repeatedly without reopening the menu. */
-static GtkWidget *BuildPopoverButtonRow(const gchar *pszCaption,
+static GtkWidget *BuildPopoverButtonRow(const gchar *pszIconName,
+                                        const gchar *pszCaption,
                                         const gchar *const icons[],
                                         const gchar *const actions[],
                                         const gchar *const tips[],
@@ -1258,7 +1271,16 @@ static GtkWidget *BuildPopoverButtonRow(const gchar *pszCaption,
 	GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
 	gtk_widget_set_margin_top(row, 4);
 	gtk_widget_set_margin_bottom(row, 4);
+	gtk_widget_set_margin_start(row, 12);
+	gtk_widget_set_margin_end(row, 6);
 	gtk_widget_add_css_class(row, "wide");
+
+	if (pszIconName != NULL && pszIconName[0] != '\0')
+	{
+		GtkWidget *icon = gtk_image_new_from_icon_name(pszIconName);
+		gtk_widget_set_margin_end(icon, 6);
+		gtk_box_append(GTK_BOX(row), icon);
+	}
 
 	GtkWidget *label = gtk_label_new(pszCaption);
 	/* Left-align the caption with the menu labels above/below it and keep it
@@ -1277,8 +1299,9 @@ static GtkWidget *BuildPopoverButtonRow(const gchar *pszCaption,
 		gtk_widget_add_css_class(button, "image-button");
 		gtk_widget_set_focus_on_click(button, FALSE);
 		gtk_actionable_set_action_name(GTK_ACTIONABLE(button), actions[i]);
-		if (tips[i] != NULL && tips[i][0] != '\0')
-			gtk_widget_set_tooltip_text(button, tips[i]);
+		std::string tip = ShortcutManager::GetInstance().GetTooltipForAction(actions[i], tips[i] ? tips[i] : "");
+		if (!tip.empty())
+			gtk_widget_set_tooltip_text(button, tip.c_str());
 		gtk_box_append(GTK_BOX(row), button);
 	}
 
@@ -1368,7 +1391,7 @@ void QuiverImpl::RebuildMenubar()
 			"Zoom In",
 			"Zoom Out"
 		};
-		m_pMenuZoomRow = BuildPopoverButtonRow("Zoom",
+		m_pMenuZoomRow = BuildPopoverButtonRow("zoom-in-symbolic", "Zoom",
 			zoomIcons, zoomActions, zoomTips, G_N_ELEMENTS(zoomIcons));
 		/* Take a strong reference on each row so it survives the content
 		 * rebuild that gtk_popover_menu_set_menu_model() performs.  Every
@@ -1398,7 +1421,7 @@ void QuiverImpl::RebuildMenubar()
 			"Flip Horizontally",
 			"Flip Vertically"
 		};
-		m_pMenuRotateRow = BuildPopoverButtonRow("Rotate",
+		m_pMenuRotateRow = BuildPopoverButtonRow("object-rotate-right-symbolic", "Rotate",
 			rotateIcons, rotateActions, rotateTips, G_N_ELEMENTS(rotateIcons));
 
 		/* Own both rows (see note above) so menu-model rebuilds can never free
@@ -1420,6 +1443,7 @@ void QuiverImpl::RebuildMenubar()
 	gtk_popover_menu_set_menu_model(GTK_POPOVER_MENU(m_pMenuPopover), G_MENU_MODEL(appMenu));
 	gtk_popover_menu_add_child(GTK_POPOVER_MENU(m_pMenuPopover), m_pMenuZoomRow, "zoom-row");
 	gtk_popover_menu_add_child(GTK_POPOVER_MENU(m_pMenuPopover), m_pMenuRotateRow, "rotate-row");
+	QuiverUtils::EnablePopoverMenuIcons(m_pMenuPopover);
 	m_pMenubar = m_pMenuButton;
 	g_object_unref(appMenu);
 }
@@ -1635,7 +1659,10 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 
 	if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)
 	{
-		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);
+		if (!pQuiverImpl->m_bSlideShowRestoreFromFS)
+		{
+			prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);
+		}
 
 		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
 		if (0 != pQuiverImpl->m_iTimeoutMouseMotionNotify)
@@ -1664,6 +1691,14 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 	else
 	{
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
+
+		/* If unfullscreen occurs while slideshow is running, abort slideshow and restore previous view */
+		bool bInSlideShow = pQuiverImpl->m_ViewerPtr->IsSlideShowRunning();
+		if (bInSlideShow)
+		{
+			pQuiverImpl->m_pQuiver->AbortSlideShow();
+		}
+
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 
 		/* restore the filmstrip if we hid it for fullscreen */
@@ -1816,6 +1851,7 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_bViewerMode = false;
 
 	m_QuiverImplPtr->m_bSlideShowRestoreFromFS = false;
+	m_QuiverImplPtr->m_bWasViewerModeBeforeSlideShow = false;
 	m_QuiverImplPtr->m_bFilmStripVisibleBeforeFS = false;
 	
 	m_QuiverImplPtr->m_bInitialized = false;
@@ -1973,7 +2009,8 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_pPrefButton = gtk_button_new_from_icon_name("preferences-system-symbolic");
 	gtk_widget_set_name(m_QuiverImplPtr->m_pPrefButton, "Quiver Preferences Button");
 	gtk_actionable_set_action_name(GTK_ACTIONABLE(m_QuiverImplPtr->m_pPrefButton), "quiver.Preferences");
-	gtk_widget_set_tooltip_text(m_QuiverImplPtr->m_pPrefButton, "Preferences");
+	std::string pref_tip = ShortcutManager::GetInstance().GetTooltipForAction("Preferences", "Preferences");
+	gtk_widget_set_tooltip_text(m_QuiverImplPtr->m_pPrefButton, pref_tip.c_str());
 	gtk_widget_set_focus_on_click(m_QuiverImplPtr->m_pPrefButton, FALSE);
 	gtk_widget_set_focusable(m_QuiverImplPtr->m_pPrefButton, FALSE);
 
@@ -1988,9 +2025,6 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_ViewerPtr->SetStatusbar(m_QuiverImplPtr->m_StatusbarPtr);
 
 	m_QuiverImplPtr->m_pBuilder = NULL;
-
-    g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "notify::default-width",
-    			G_CALLBACK (event_window_state), m_QuiverImplPtr.get());
 
     g_signal_connect (G_OBJECT (m_QuiverImplPtr->m_pQuiverWindow), "close-request",
     			G_CALLBACK (Quiver::event_close_request), this);
@@ -2097,7 +2131,7 @@ void Quiver::Init()
 				"}");
 			gtk_style_context_add_provider_for_display(
 				gdk_display_get_default(), GTK_STYLE_PROVIDER(sCssProvider),
-				GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+				GTK_STYLE_PROVIDER_PRIORITY_USER);
 			/* sCssProvider stays alive for the process lifetime. */
 		}
 	}
@@ -2775,6 +2809,27 @@ static void quiver_toolbar_set_focus_on_click(GtkWidget *widget, gboolean focus)
 	}
 }
 
+static void update_actionable_tooltips(GtkWidget *widget)
+{
+	for (GtkWidget *child = gtk_widget_get_first_child(widget); child != NULL; child = gtk_widget_get_next_sibling(child))
+	{
+		if (GTK_IS_ACTIONABLE(child))
+		{
+			const gchar *act = gtk_actionable_get_action_name(GTK_ACTIONABLE(child));
+			if (act != NULL)
+			{
+				const gchar *curr_tip = gtk_widget_get_tooltip_text(child);
+				std::string new_tip = ShortcutManager::GetInstance().GetTooltipForAction(act, curr_tip ? curr_tip : "");
+				if (!new_tip.empty())
+				{
+					gtk_widget_set_tooltip_text(child, new_tip.c_str());
+				}
+			}
+		}
+		update_actionable_tooltips(child);
+	}
+}
+
 void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 {
 	/* The toolbar (shared + browser + viewer control groups) is defined as
@@ -2803,6 +2858,9 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 	pQuiverImpl->m_pToolbar = toolbar;
 	g_object_set_data_full(G_OBJECT(pQuiverImpl->m_pQuiverWindow), "toolbar-builder",
 	                       builder, (GDestroyNotify)g_object_unref);
+
+	/* Update tooltips with current shortcuts from ShortcutManager */
+	update_actionable_tooltips(toolbar);
 
 	/* Toolbar and headerbar buttons must not steal keyboard focus from the content area,
 	 * otherwise arrow-key navigation in the browser/icon view and viewer is
@@ -2866,6 +2924,13 @@ void Quiver::ShowViewer()
 
 void Quiver::ShowBrowser()
 {
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW)
+		|| (m_QuiverImplPtr->m_ViewerPtr && m_QuiverImplPtr->m_ViewerPtr->IsSlideShowRunning());
+	if (bInSlideShow)
+	{
+		m_QuiverImplPtr->m_pQuiver->AbortSlideShow();
+	}
+
 	m_QuiverImplPtr->m_ViewerPtr->Hide();
 	m_QuiverImplPtr->m_BrowserPtr->Show();
 
@@ -2911,7 +2976,9 @@ void Quiver::OnAbout()
 
 void Quiver::OnFullScreen()
 {
-	if (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState)
+	bool is_fs = gtk_window_is_fullscreen(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow))
+		|| (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState);
+	if (is_fs)
 	{
 		gtk_window_unfullscreen(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
 	}
@@ -2926,7 +2993,8 @@ void QuiverImpl::UpdateUI()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 
-	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW);
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW)
+		|| (m_ViewerPtr && m_ViewerPtr->IsSlideShowRunning());
 
 	if (bInSlideShow)
 	{
@@ -2966,7 +3034,6 @@ void QuiverImpl::UpdateUI()
 		else
 		{
 			prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
-			m_bSlideShowRestoreFromFS = false;
 			// show widgets
 			bool bShow = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOOLBAR_SHOW);
 			QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_TOOLBAR_MAIN, bShow);
@@ -3048,17 +3115,27 @@ void QuiverImpl::ViewerEventHandler::HandleCursorChanged(ViewerEventPtr event_pt
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event_ptr)
 { (void)event_ptr; 
+	if (!QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW))
+	{
+		parent->m_bWasViewerModeBeforeSlideShow = parent->m_bViewerMode;
+	}
 	PreferencesPtr prefs = Preferences::GetInstance();
 	
 	bool bFS = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_FULLSCREEN, TRUE);
-	if (bFS)
+	bool was_fullscreen = gtk_window_is_fullscreen(GTK_WINDOW(parent->m_pQuiverWindow))
+		|| (GDK_WINDOW_STATE_FULLSCREEN & parent->m_WindowState);
+
+	if (bFS && !was_fullscreen)
 	{
-		if ( !(GDK_WINDOW_STATE_FULLSCREEN & parent->m_WindowState) )
-		{
-			parent->m_bSlideShowRestoreFromFS = true;
-			parent->m_pQuiver->OnFullScreen();
-		}
+		parent->m_bSlideShowRestoreFromFS = true;
+		parent->m_pQuiver->OnFullScreen();
 	}
+	else
+	{
+		parent->m_bSlideShowRestoreFromFS = false;
+	}
+
+	QuiverUtils::ToggleActionSetState(ACTION_QUIVER_SLIDESHOW, TRUE);
 
 	parent->UpdateUI();
 }
@@ -3068,10 +3145,20 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 	// return from FS if necessary
 	if (parent->m_bSlideShowRestoreFromFS)
 	{
-		parent->m_pQuiver->OnFullScreen();
+		parent->m_bSlideShowRestoreFromFS = false;
+		if (gtk_window_is_fullscreen(GTK_WINDOW(parent->m_pQuiverWindow)) || (GDK_WINDOW_STATE_FULLSCREEN & parent->m_WindowState))
+		{
+			gtk_window_unfullscreen(GTK_WINDOW(parent->m_pQuiverWindow));
+			parent->m_WindowState = 0;
+		}
 	}
 
-	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_SLIDESHOW, FALSE);
+	QuiverUtils::ToggleActionSetState(ACTION_QUIVER_SLIDESHOW, FALSE);
+
+	if (parent->m_bViewerMode && !parent->m_bWasViewerModeBeforeSlideShow)
+	{
+		parent->m_pQuiver->ShowBrowser();
+	}
 
 	parent->UpdateUI();
 
@@ -3199,6 +3286,7 @@ void Quiver::OnSlideShow(bool bStart)
 {
 	if( bStart )
 	{
+		m_QuiverImplPtr->m_bWasViewerModeBeforeSlideShow = m_QuiverImplPtr->m_bViewerMode;
 		PreferencesPtr prefsPtr = Preferences::GetInstance();
 		bool bRandomOrder = 
 			prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_RANDOM_ORDER,false);
@@ -3221,7 +3309,54 @@ void Quiver::OnSlideShow(bool bStart)
 		}
 
 		m_QuiverImplPtr->m_ViewerPtr->SlideShowStop();
+
+		if (m_QuiverImplPtr->m_bSlideShowRestoreFromFS)
+		{
+			m_QuiverImplPtr->m_bSlideShowRestoreFromFS = false;
+			if (gtk_window_is_fullscreen(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow)) || (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState))
+			{
+				gtk_window_unfullscreen(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
+				m_QuiverImplPtr->m_WindowState = 0;
+			}
+		}
+
+		if (!m_QuiverImplPtr->m_bWasViewerModeBeforeSlideShow)
+		{
+			ShowBrowser();
+		}
 	}
+}
+
+void Quiver::AbortSlideShow()
+{
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW)
+		|| m_QuiverImplPtr->m_ViewerPtr->IsSlideShowRunning();
+	if (!bInSlideShow)
+		return;
+
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	int sortby = prefsPtr->GetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, ImageList::SORT_BY_FILENAME_NATURAL);
+	QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, sortby);
+
+	m_QuiverImplPtr->m_ViewerPtr->SlideShowStop();
+	QuiverUtils::ToggleActionSetState(ACTION_QUIVER_SLIDESHOW, FALSE);
+
+	if (m_QuiverImplPtr->m_bSlideShowRestoreFromFS)
+	{
+		m_QuiverImplPtr->m_bSlideShowRestoreFromFS = false;
+		if (gtk_window_is_fullscreen(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow)) || (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState))
+		{
+			gtk_window_unfullscreen(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow));
+			m_QuiverImplPtr->m_WindowState = 0;
+		}
+	}
+
+	if (m_QuiverImplPtr->m_bViewerMode && !m_QuiverImplPtr->m_bWasViewerModeBeforeSlideShow)
+	{
+		ShowBrowser();
+	}
+
+	m_QuiverImplPtr->UpdateUI();
 }
 
 void Quiver::OnShowToolbar(bool bShow)
@@ -3336,6 +3471,15 @@ static void quiver_escape_action(QuiverImpl *pQuiverImpl)
 	// this action will do one of the following
 
 	Quiver *pQuiver = pQuiverImpl->m_pQuiver;
+
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW)
+		|| pQuiverImpl->m_ViewerPtr->IsSlideShowRunning();
+	if (bInSlideShow)
+	{
+		pQuiver->AbortSlideShow();
+		return;
+	}
+
 	bool bDoneSomething = false;
 
 	if (GDK_WINDOW_STATE_FULLSCREEN & pQuiverImpl->m_WindowState)

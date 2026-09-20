@@ -103,6 +103,10 @@ TEST_CASE("Video Controls Configuration and Formatting", "[unit][video][controls
         gtk_range_set_inverted(GTK_RANGE(volScale), TRUE);
         gtk_range_set_value(GTK_RANGE(volScale), 0.75);
         gtk_box_append(GTK_BOX(volBox), volScale);
+        GtkWidget* muteBtn = gtk_button_new_from_icon_name("audio-volume-high-symbolic");
+        gtk_widget_add_css_class(muteBtn, "media-btn");
+        gtk_box_append(GTK_BOX(volBox), muteBtn);
+        REQUIRE(gtk_widget_has_css_class(muteBtn, "media-btn"));
 
         gtk_popover_set_child(GTK_POPOVER(popover), volBox);
         gtk_menu_button_set_popover(GTK_MENU_BUTTON(btn), popover);

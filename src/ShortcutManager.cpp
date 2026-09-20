@@ -22,6 +22,10 @@ static std::string normalize_accel(const std::string &accel)
 ShortcutManager& ShortcutManager::GetInstance()
 {
     static ShortcutManager instance;
+    if (!instance.m_bInitialized)
+    {
+        instance.Init();
+    }
     return instance;
 }
 
@@ -285,6 +289,7 @@ bool ShortcutManager::SetAccelerators(const std::string &action_name, const std:
     def->current_accels = normalized;
     SaveToPreferences();
     ApplyShortcutsForAction(action_name);
+    NotifyShortcutsChanged();
     return true;
 }
 
@@ -300,6 +305,7 @@ bool ShortcutManager::AddAccelerator(const std::string &action_name, const std::
         def->current_accels.push_back(n);
         SaveToPreferences();
         ApplyShortcutsForAction(action_name);
+        NotifyShortcutsChanged();
         return true;
     }
     return false;
@@ -316,6 +322,7 @@ bool ShortcutManager::RemoveAccelerator(const std::string &action_name, const st
         def->current_accels.erase(it);
         SaveToPreferences();
         ApplyShortcutsForAction(action_name);
+        NotifyShortcutsChanged();
         return true;
     }
     return false;
@@ -328,6 +335,7 @@ void ShortcutManager::ResetToDefault(const std::string &action_name)
     def->current_accels = def->default_accels;
     SaveToPreferences();
     ApplyShortcutsForAction(action_name);
+    NotifyShortcutsChanged();
 }
 
 void ShortcutManager::ResetAllToDefaults()
@@ -337,6 +345,7 @@ void ShortcutManager::ResetAllToDefaults()
     }
     SaveToPreferences();
     ApplyShortcuts();
+    NotifyShortcutsChanged();
 }
 
 std::string ShortcutManager::FindConflictingAction(const std::string &accel, const std::string &exclude_action) const
@@ -513,4 +522,95 @@ std::string ShortcutManager::AccelStringToHumanLabel(const std::string &accel)
     std::string result = label ? label : accel;
     g_free(label);
     return result;
+}
+
+std::string ShortcutManager::GetTooltipForAction(const std::string &action_name, const std::string &base_label) const
+{
+    std::string act = action_name;
+    if (act.rfind("quiver.", 0) == 0)
+    {
+        act = act.substr(7);
+    }
+
+    const ShortcutActionDef *def = GetAction(act);
+    std::string label = base_label;
+    if (label.empty())
+    {
+        label = def ? def->label : act;
+    }
+    else
+    {
+        // Strip any existing parenthesized shortcut hints like " (...)"
+        size_t paren = label.rfind(" (");
+        if (paren != std::string::npos && label.back() == ')')
+        {
+            label = label.substr(0, paren);
+        }
+    }
+
+    if (!def || def->current_accels.empty())
+    {
+        return label;
+    }
+
+    std::vector<std::string> human_labels;
+    for (const auto &accel : def->current_accels)
+    {
+        std::string h = AccelStringToHumanLabel(accel);
+        if (!h.empty())
+        {
+            if (std::find(human_labels.begin(), human_labels.end(), h) == human_labels.end())
+            {
+                human_labels.push_back(h);
+            }
+        }
+    }
+
+    if (human_labels.empty())
+    {
+        return label;
+    }
+
+    std::string accels_str;
+    for (size_t i = 0; i < human_labels.size(); ++i)
+    {
+        if (i > 0) accels_str += " / ";
+        accels_str += human_labels[i];
+    }
+
+    return label + " (" + accels_str + ")";
+}
+
+void ShortcutManager::AddShortcutsChangedCallback(ShortcutsChangedCallback cb, gpointer user_data)
+{
+    if (!cb) return;
+    for (const auto &entry : m_change_callbacks)
+    {
+        if (entry.cb == cb && entry.user_data == user_data)
+            return;
+    }
+    m_change_callbacks.push_back({cb, user_data});
+}
+
+void ShortcutManager::RemoveShortcutsChangedCallback(ShortcutsChangedCallback cb, gpointer user_data)
+{
+    for (auto it = m_change_callbacks.begin(); it != m_change_callbacks.end(); ++it)
+    {
+        if (it->cb == cb && it->user_data == user_data)
+        {
+            m_change_callbacks.erase(it);
+            return;
+        }
+    }
+}
+
+void ShortcutManager::NotifyShortcutsChanged()
+{
+    for (const auto &entry : m_change_callbacks)
+    {
+        if (entry.cb)
+        {
+            entry.cb(entry.user_data);
+        }
+    }
 }

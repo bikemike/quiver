@@ -31,6 +31,7 @@ public:
 	GtkWidget*  m_pFCBtnPhotoLibrary;
 
 	GtkDropDown*           m_pComboFilmstripPos;
+	GtkDropDown*           m_pComboHudPos;
 	GtkDropDown*           m_pComboDefaultViewMode;
 	
 	GtkCheckButton*        m_pToggleUseThemeColor;
@@ -155,6 +156,7 @@ void PreferencesDlg::Run()
 	if (m_PrivPtr->m_bLoadedDlg)
 	{
 		GtkWidget *prefDlg = GTK_WIDGET(gtk_builder_get_object (m_PrivPtr->m_pGtkBuilder, "QuiverPreferencesDialog"));
+		gtk_window_set_default_size(GTK_WINDOW(prefDlg), 680, 520);
 		GtkWindow *mainWin = gtk_application_get_active_window(g_pApp);
 		if (mainWin != NULL)
 			gtk_window_set_transient_for(GTK_WINDOW(prefDlg), mainWin);
@@ -176,6 +178,7 @@ void PreferencesDlg::Run()
 static void on_photo_library_folder_selected(GObject *source, GAsyncResult *res, gpointer user_data);
 static void  on_toggled (GtkCheckButton *togglebutton, gpointer user_data);
 static void  on_viewer_film_strip_pos_changed  (GObject *widget, gpointer user_data);
+static void  on_viewer_hud_pos_changed         (GObject *widget, gpointer user_data);
 static void  on_value_changed(GtkRange *range, gpointer user_data);
 
 static void  on_color_set(GObject* object, GParamSpec* pspec, gpointer user_data);
@@ -223,6 +226,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		//m_pFCBtnPhotoLibrary     = GTK_FILE_CHOOSER_BUTTON(     gtk_builder_get_object (m_pGtkBuilder, "fcb_general_photo_library") );
 				
 		m_pComboFilmstripPos     = GTK_DROP_DOWN(    gtk_builder_get_object (m_pGtkBuilder, "cbox_viewer_filmstrip_position") );
+		m_pComboHudPos           = GTK_DROP_DOWN(    gtk_builder_get_object (m_pGtkBuilder, "cbox_viewer_hud_position") );
 		m_pComboDefaultViewMode  = GTK_DROP_DOWN(    gtk_builder_get_object (m_pGtkBuilder, "cbox_viewer_default_viewmode") );
 
 		if (NULL != m_pComboDefaultViewMode)
@@ -248,6 +252,16 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 				NULL};
 			GtkStringList* model = gtk_string_list_new(positions);
 			gtk_drop_down_set_model(m_pComboFilmstripPos, G_LIST_MODEL(model));
+			g_object_unref(model);
+		}
+		if (NULL != m_pComboHudPos)
+		{
+			const char* hud_positions[] = {
+				"Bottom",
+				"Top",
+				NULL};
+			GtkStringList* model = gtk_string_list_new(hud_positions);
+			gtk_drop_down_set_model(m_pComboHudPos, G_LIST_MODEL(model));
 			g_object_unref(model);
 		}
 		
@@ -296,6 +310,7 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		m_bLoadedDlg = (
 			NULL != m_pFCBtnPhotoLibrary &&
 			NULL != m_pComboFilmstripPos && 
+			NULL != m_pComboHudPos && 
 			NULL != m_pComboDefaultViewMode && 
 			NULL != m_pToggleStartFS && 
 			NULL != m_pToggleForceDarkTheme && 
@@ -332,6 +347,10 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 			
 		int iFilmstripPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
 		gtk_drop_down_set_selected(m_pComboFilmstripPos, (guint)iFilmstripPos);
+
+		int iHudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
+		if (NULL != m_pComboHudPos)
+			gtk_drop_down_set_selected(m_pComboHudPos, (guint)iHudPos);
 
 		gboolean bLoopSlideshow = (gboolean)prefs->GetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_LOOP, true);
 		gtk_check_button_set_active(m_pToggleSlideShowLoop, bLoopSlideshow);	
@@ -676,6 +695,8 @@ void PreferencesDlg::PreferencesDlgPriv::PopulateShortcutsList()
 		GtkWidget *lbl_desc = gtk_label_new(def.description.c_str());
 		gtk_widget_add_css_class(lbl_desc, "dim-label");
 		gtk_label_set_xalign(GTK_LABEL(lbl_desc), 0.0);
+		gtk_label_set_wrap(GTK_LABEL(lbl_desc), TRUE);
+		gtk_label_set_wrap_mode(GTK_LABEL(lbl_desc), PANGO_WRAP_WORD_CHAR);
 
 		gtk_box_append(GTK_BOX(vbox_labels), lbl_title);
 		gtk_box_append(GTK_BOX(vbox_labels), lbl_desc);
@@ -821,6 +842,8 @@ void PreferencesDlg::PreferencesDlgPriv::ConnectSignals()
 			"clicked",(GCallback)on_photo_library_clicked,this);
 		g_signal_connect(m_pComboFilmstripPos,
 			"notify::selected",(GCallback)on_viewer_film_strip_pos_changed,this);
+		g_signal_connect(m_pComboHudPos,
+			"notify::selected",(GCallback)on_viewer_hud_pos_changed,this);
 
 		g_signal_connect(m_pToggleUseThemeColor,
 			"toggled",(GCallback)on_toggled,this);	
@@ -982,6 +1005,13 @@ static void  on_viewer_film_strip_pos_changed  (GObject *widget, gpointer user_d
 	
 	guint iFilmstripPos = gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
 	prefs->SetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, (int)iFilmstripPos);
+}
+
+static void  on_viewer_hud_pos_changed  (GObject *widget, gpointer user_data)
+{ (void)user_data;
+	PreferencesPtr prefs = Preferences::GetInstance();
+	guint iHudPos = gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
+	prefs->SetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, (int)iHudPos);
 }
 
 

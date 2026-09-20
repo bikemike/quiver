@@ -245,3 +245,33 @@ TEST_CASE("ShortcutManager Key Translation Helpers", "[unit][shortcuts][fast]")
     }
 }
 
+TEST_CASE("ShortcutManager Dynamic Tooltips", "[unit][shortcuts][fast]")
+{
+    ShortcutManager &sm = ShortcutManager::GetInstance();
+    sm.Init();
+
+    std::string next_tt = sm.GetTooltipForAction("ImageNext", "Next Image");
+    REQUIRE(next_tt.find("Next Image") != std::string::npos);
+    REQUIRE(next_tt.find("Right") != std::string::npos);
+    REQUIRE(next_tt.find("Space") == std::string::npos);
+    REQUIRE(next_tt.find("Backspace") == std::string::npos);
+
+    // Test that old misleading parenthesized lists in base label are stripped and replaced with active shortcuts
+    std::string prev_tt = sm.GetTooltipForAction("ImagePrevious", "Previous Image (Page Up / Backspace / Left)");
+    REQUIRE(prev_tt.find("Previous Image") != std::string::npos);
+    REQUIRE(prev_tt.find("Left") != std::string::npos);
+    REQUIRE(prev_tt.find("Backspace") == std::string::npos);
+
+    // Callbacks verification
+    bool callback_called = false;
+    auto test_cb = [](gpointer data) {
+        *static_cast<bool*>(data) = true;
+    };
+    sm.AddShortcutsChangedCallback(test_cb, &callback_called);
+
+    sm.ResetToDefault("ImageNext");
+    REQUIRE(callback_called == true);
+
+    sm.RemoveShortcutsChangedCallback(test_cb, &callback_called);
+}
+

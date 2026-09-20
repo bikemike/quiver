@@ -539,3 +539,92 @@ TEST_CASE("QuiverUtils IsDirectoryURI and GetUniqueFolderName", "[unit][fileops]
     g_free(tmp_dir);
 }
 
+TEST_CASE("QuiverUtils EnablePopoverMenuIcons and Preferences UI", "[unit][popover][fast]")
+{
+    REQUIRE_DISPLAY();
+    gtk_init();
+
+    const char *xml =
+        "<interface>"
+        "  <menu id='m'>"
+        "    <item>"
+        "      <attribute name='label'>Cut</attribute>"
+        "      <attribute name='icon'>edit-cut-symbolic</attribute>"
+        "    </item>"
+        "  </menu>"
+        "</interface>";
+    GtkBuilder *b = gtk_builder_new_from_string(xml, -1);
+    REQUIRE(b != NULL);
+    GMenuModel *m = G_MENU_MODEL(gtk_builder_get_object(b, "m"));
+    REQUIRE(m != NULL);
+    GtkWidget *popover = gtk_popover_menu_new_from_model(m);
+    REQUIRE(popover != NULL);
+    QuiverUtils::EnablePopoverMenuIcons(popover);
+
+    GtkWidget *sw = gtk_widget_get_first_child(gtk_widget_get_first_child(popover));
+    GtkWidget *vp = gtk_widget_get_first_child(sw);
+    GtkWidget *stk = gtk_widget_get_first_child(vp);
+    GtkWidget *msb = gtk_widget_get_first_child(stk);
+    GtkWidget *box = gtk_widget_get_first_child(msb);
+    GtkWidget *mb = gtk_widget_get_first_child(box);
+    GtkWidget *box_child = gtk_widget_get_first_child(mb);
+    GtkWidget *img = gtk_widget_get_next_sibling(box_child);
+
+    REQUIRE(GTK_IS_IMAGE(img));
+    CHECK(gtk_widget_get_visible(img) == TRUE);
+    CHECK(gtk_widget_get_margin_end(img) == 6);
+
+    g_object_unref(b);
+
+    // Verify preferences dialog UI
+    std::string uiPath = QuiverTest_GetDataDir() + "/quiver.ui";
+    GtkBuilder *b_ui = gtk_builder_new_from_file(uiPath.c_str());
+    REQUIRE(b_ui != NULL);
+
+    GtkWidget *pref_dlg = GTK_WIDGET(gtk_builder_get_object(b_ui, "QuiverPreferencesDialog"));
+    REQUIRE(pref_dlg != NULL);
+    int def_w = 0, def_h = 0;
+    gtk_window_get_default_size(GTK_WINDOW(pref_dlg), &def_w, &def_h);
+    CHECK(def_w == 680);
+    CHECK(def_h == 520);
+
+    GtkImage *img_browser = GTK_IMAGE(gtk_builder_get_object(b_ui, "image5"));
+    REQUIRE(img_browser != NULL);
+    CHECK(std::string(gtk_image_get_icon_name(img_browser)) == "folder-symbolic");
+
+    GtkImage *img_general = GTK_IMAGE(gtk_builder_get_object(b_ui, "image1"));
+    REQUIRE(img_general != NULL);
+    CHECK(std::string(gtk_image_get_icon_name(img_general)) == "preferences-system-symbolic");
+
+    GtkImage *img_viewer = GTK_IMAGE(gtk_builder_get_object(b_ui, "image2"));
+    REQUIRE(img_viewer != NULL);
+    CHECK(std::string(gtk_image_get_icon_name(img_viewer)) == "image-x-generic-symbolic");
+
+    GtkImage *img_shortcuts = GTK_IMAGE(gtk_builder_get_object(b_ui, "image_tab_shortcuts"));
+    REQUIRE(img_shortcuts != NULL);
+    CHECK(std::string(gtk_image_get_icon_name(img_shortcuts)) == "insert-link-symbolic");
+
+    GtkImage *img_slideshow = GTK_IMAGE(gtk_builder_get_object(b_ui, "image3"));
+    REQUIRE(img_slideshow != NULL);
+    CHECK(std::string(gtk_image_get_icon_name(img_slideshow)) == "display-projector-symbolic");
+
+    const char *tabs[] = {"alignment1", "alignment10", "alignment8", "alignment3"};
+    for (int i = 0; i < 4; i++) {
+        GtkWidget *w = GTK_WIDGET(gtk_builder_get_object(b_ui, tabs[i]));
+        REQUIRE(w != NULL);
+        CHECK(gtk_widget_get_margin_start(w) == 8);
+        CHECK(gtk_widget_get_margin_end(w) == 8);
+        CHECK(gtk_widget_get_margin_top(w) == 8);
+        CHECK(gtk_widget_get_margin_bottom(w) == 8);
+    }
+
+    GtkScrolledWindow *sw_sc = GTK_SCROLLED_WINDOW(gtk_builder_get_object(b_ui, "scrolled_shortcuts"));
+    REQUIRE(sw_sc != NULL);
+    GtkPolicyType hp = GTK_POLICY_AUTOMATIC, vp_policy = GTK_POLICY_AUTOMATIC;
+    gtk_scrolled_window_get_policy(sw_sc, &hp, &vp_policy);
+    CHECK(hp == GTK_POLICY_NEVER);
+
+    g_object_unref(b_ui);
+}
+
+

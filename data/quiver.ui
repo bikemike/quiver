@@ -1169,6 +1169,8 @@
   <object class="GtkDialog" id="QuiverPreferencesDialog">
     <property name="title" translatable="1">Quiver Preferences</property>
     <property name="icon_name">gtk-preferences</property>
+    <property name="default-width">680</property>
+    <property name="default-height">520</property>
     <child internal-child="content_area">
       <object class="GtkBox" id="dialog-vbox1">
         <child>
@@ -1318,6 +1320,10 @@
                     </child>
                     <property name="orientation">vertical</property>
                     <property name="spacing">0</property>
+                    <property name="margin-start">8</property>
+                    <property name="margin-end">8</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
                   </object>
                 </property>
                 <property name="tab">
@@ -1325,6 +1331,7 @@
                     <child>
                       <object class="GtkImage" id="image1">
                         <property name="hexpand">1</property>
+                        <property name="icon_name">preferences-system-symbolic</property>
                       </object>
                     </child>
                     <child>
@@ -1358,6 +1365,10 @@
                     </child>
                     <property name="orientation">vertical</property>
                     <property name="spacing">0</property>
+                    <property name="margin-start">8</property>
+                    <property name="margin-end">8</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
                   </object>
                 </property>
                 <property name="tab">
@@ -1365,7 +1376,7 @@
                     <child>
                       <object class="GtkImage" id="image5">
                         <property name="hexpand">1</property>
-                        <property name="icon_name">quiver-icon-browser</property>
+                        <property name="icon_name">folder-symbolic</property>
                       </object>
                     </child>
                     <child>
@@ -1415,6 +1426,23 @@
                             </child>
                             <child>
                               <object class="GtkDropDown" id="cbox_viewer_filmstrip_position">
+                                <property name="halign">center</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox" id="hbox_hud_pos">
+                            <property name="valign">center</property>
+                            <property name="spacing">10</property>
+                            <child>
+                              <object class="GtkLabel" id="label_hud_pos">
+                                <property name="halign">center</property>
+                                <property name="label" translatable="1">HUD controls position:</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkDropDown" id="cbox_viewer_hud_position">
                                 <property name="halign">center</property>
                               </object>
                             </child>
@@ -1487,6 +1515,10 @@
                     </child>
                     <property name="orientation">vertical</property>
                     <property name="spacing">0</property>
+                    <property name="margin-start">8</property>
+                    <property name="margin-end">8</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
                   </object>
                 </property>
                 <property name="tab">
@@ -1494,7 +1526,7 @@
                     <child>
                       <object class="GtkImage" id="image2">
                         <property name="hexpand">1</property>
-                        <property name="icon_name">quiver-icon-app</property>
+                        <property name="icon_name">image-x-generic-symbolic</property>
                       </object>
                     </child>
                     <child>
@@ -1588,6 +1620,10 @@
                     </child>
                     <property name="orientation">vertical</property>
                     <property name="spacing">0</property>
+                    <property name="margin-start">8</property>
+                    <property name="margin-end">8</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
                   </object>
                 </property>
                 <property name="tab">
@@ -1595,7 +1631,7 @@
                     <child>
                       <object class="GtkImage" id="image3">
                         <property name="hexpand">1</property>
-                        <property name="icon_name">quiver-icon-slideshow</property>
+                        <property name="icon_name">display-projector-symbolic</property>
                       </object>
                     </child>
                     <child>
@@ -1655,6 +1691,7 @@
                         <property name="hexpand">1</property>
                         <property name="min-content-height">280</property>
                         <property name="has-frame">1</property>
+                        <property name="hscrollbar-policy">never</property>
                         <child>
                           <object class="GtkListBox" id="listbox_shortcuts">
                             <property name="selection-mode">none</property>
@@ -1681,7 +1718,7 @@
                     <child>
                       <object class="GtkImage" id="image_tab_shortcuts">
                         <property name="hexpand">1</property>
-                        <property name="icon_name">preferences-desktop-keyboard-shortcuts</property>
+                        <property name="icon_name">insert-link-symbolic</property>
                       </object>
                     </child>
                     <child>

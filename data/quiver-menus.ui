@@ -54,11 +54,13 @@
       <item>
         <attribute name="label">_Viewer</attribute>
         <attribute name="action">quiver.UIModeViewer</attribute>
+        <attribute name="icon">image-x-generic-symbolic</attribute>
         <attribute name="location">browser</attribute>
       </item>
       <item>
         <attribute name="label">_Browser</attribute>
         <attribute name="action">quiver.UIModeBrowser</attribute>
+        <attribute name="icon">folder-symbolic</attribute>
         <attribute name="location">viewer</attribute>
       </item>
     </section>
@@ -68,10 +70,12 @@
       <item>
         <attribute name="label">_Full Screen</attribute>
         <attribute name="action">quiver.FullScreen</attribute>
+        <attribute name="icon">fullscreen-square-symbolic</attribute>
       </item>
       <item>
         <attribute name="label">_Slide Show</attribute>
         <attribute name="action">quiver.SlideShow</attribute>
+        <attribute name="icon">display-projector-symbolic</attribute>
       </item>
     </section>
 
@@ -79,6 +83,7 @@
     <section>
       <submenu>
         <attribute name="label">_View</attribute>
+        <attribute name="icon">view-reveal-symbolic</attribute>
         <item>
           <attribute name="label">Toolbar</attribute>
           <attribute name="action">quiver.ViewToolbarMain</attribute>
@@ -86,6 +91,7 @@
         <item>
           <attribute name="label">Properties</attribute>
           <attribute name="action">quiver.ViewProperties</attribute>
+          <attribute name="icon">document-properties-symbolic</attribute>
         </item>
         <item>
           <attribute name="label">Statusbar</attribute>
@@ -128,10 +134,12 @@
           <item>
             <attribute name="label">_Randomize</attribute>
             <attribute name="action">quiver.SortByRandom</attribute>
+            <attribute name="icon">media-playlist-shuffle-symbolic</attribute>
           </item>
           <item>
             <attribute name="label">In _Descending Order</attribute>
             <attribute name="action">quiver.SortDescending</attribute>
+            <attribute name="icon">view-sort-descending-symbolic</attribute>
           </item>
         </submenu>
       </submenu>
@@ -157,16 +165,19 @@
     <section>
       <submenu>
         <attribute name="label">_Bookmarks</attribute>
+        <attribute name="icon">user-bookmarks-symbolic</attribute>
         <attribute name="location">bookmarks</attribute>
         <!-- Inline content is a fallback; the C++ filter substitutes the live
              m_pBookmarkMenu (populated by LoadBookmarks). -->
         <item>
           <attribute name="label">_Add Bookmark</attribute>
           <attribute name="action">quiver.BookmarksAdd</attribute>
+          <attribute name="icon">bookmark-new-symbolic</attribute>
         </item>
         <item>
           <attribute name="label">_Edit Bookmarks...</attribute>
           <attribute name="action">quiver.BookmarksEdit</attribute>
+          <attribute name="icon">user-bookmarks-symbolic</attribute>
         </item>
       </submenu>
     </section>
@@ -175,26 +186,32 @@
     <section>
       <submenu>
         <attribute name="label">_Tools</attribute>
+        <attribute name="icon">applications-system-symbolic</attribute>
         <attribute name="location">tools</attribute>
         <item>
           <attribute name="label">Task Manager...</attribute>
           <attribute name="action">quiver.TaskManager</attribute>
+          <attribute name="icon">system-run-symbolic</attribute>
         </item>
         <item>
           <attribute name="label">Adjust Date...</attribute>
           <attribute name="action">quiver.AdjustDate</attribute>
+          <attribute name="icon">x-office-calendar-symbolic</attribute>
         </item>
         <item>
           <attribute name="label">Rename...</attribute>
           <attribute name="action">quiver.Rename</attribute>
+          <attribute name="icon">document-edit-symbolic</attribute>
         </item>
         <item>
           <attribute name="label">Organize...</attribute>
           <attribute name="action">quiver.Organize</attribute>
+          <attribute name="icon">folder-saved-search-symbolic</attribute>
         </item>
         <item>
           <attribute name="label">External Tools...</attribute>
           <attribute name="action">quiver.ExternalTools</attribute>
+          <attribute name="icon">applications-system-symbolic</attribute>
         </item>
       </submenu>
     </section>
@@ -203,10 +220,12 @@
     <section>
       <submenu>
         <attribute name="label">_Undo</attribute>
+        <attribute name="icon">edit-undo-symbolic</attribute>
         <attribute name="location">recent_deletions</attribute>
         <item>
           <attribute name="label">_Undo</attribute>
           <attribute name="action">quiver.UndoDelete</attribute>
+          <attribute name="icon">edit-undo-symbolic</attribute>
         </item>
       </submenu>
     </section>
@@ -216,6 +235,7 @@
       <item>
         <attribute name="label">_About</attribute>
         <attribute name="action">quiver.About</attribute>
+        <attribute name="icon">help-about-symbolic</attribute>
       </item>
     </section>
 
@@ -229,10 +249,12 @@
     <item>
       <attribute name="label">_Add Bookmark</attribute>
       <attribute name="action">quiver.BookmarksAdd</attribute>
+      <attribute name="icon">bookmark-new-symbolic</attribute>
     </item>
     <item>
       <attribute name="label">_Edit Bookmarks...</attribute>
       <attribute name="action">quiver.BookmarksEdit</attribute>
+      <attribute name="icon">user-bookmarks-symbolic</attribute>
     </item>
   </menu>
 
@@ -240,22 +262,27 @@
     <item>
       <attribute name="label">Task Manager...</attribute>
       <attribute name="action">quiver.TaskManager</attribute>
+      <attribute name="icon">system-run-symbolic</attribute>
     </item>
     <item>
       <attribute name="label">Adjust Date...</attribute>
       <attribute name="action">quiver.AdjustDate</attribute>
+      <attribute name="icon">x-office-calendar-symbolic</attribute>
     </item>
     <item>
       <attribute name="label">Rename...</attribute>
       <attribute name="action">quiver.Rename</attribute>
+      <attribute name="icon">document-edit-symbolic</attribute>
     </item>
     <item>
       <attribute name="label">Organize...</attribute>
       <attribute name="action">quiver.Organize</attribute>
+      <attribute name="icon">folder-saved-search-symbolic</attribute>
     </item>
     <item>
       <attribute name="label">External Tools...</attribute>
       <attribute name="action">quiver.ExternalTools</attribute>
+      <attribute name="icon">applications-system-symbolic</attribute>
     </item>
   </menu>
 
@@ -263,6 +290,7 @@
     <item>
       <attribute name="label">_Undo Delete</attribute>
       <attribute name="action">quiver.UndoDelete</attribute>
+      <attribute name="icon">edit-undo-symbolic</attribute>
     </item>
   </menu>
 </interface>
