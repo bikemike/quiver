@@ -25,6 +25,8 @@ public:
 	void SetImageList(IImageListViewPtr imgList);
 	int GetCurrentOrientation();
 
+	void StopVideo(bool reloadImage = true);
+
 	void SlideShowStart();
 	void SlideShowStop();
 	void SlideShowPause();

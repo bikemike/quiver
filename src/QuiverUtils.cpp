@@ -759,6 +759,8 @@ void ConnectUnmodifiedAccelerators() {
 	{
 		if (NULL == uri)
 			return false;
+		if (QuiverFileOps::IsTrashURI(uri))
+			return false;
 		GFile *f = FileFromURIOrPath(uri);
 		if (NULL == f)
 			return false;
@@ -845,50 +847,79 @@ void ConnectUnmodifiedAccelerators() {
 			struct InitialSelection {
 				GtkWidget *entry;
 				glong len;
-				gulong delegate_handler_id;
 				guint idle_id;
-				gboolean applied;
+				guint focus_idle_id;
+				gboolean focus_applied;
 			};
 
 			InitialSelection *sel_data = g_new0(InitialSelection, 1);
 			sel_data->entry = entry;
 			sel_data->len = sel_len;
 
+			gtk_editable_select_region(GTK_EDITABLE(entry), 0, (int)sel_len);
+
+			GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+			g_signal_connect(focus_ctrl, "enter",
+				G_CALLBACK(+[](GtkEventControllerFocus*, gpointer user_data) {
+					InitialSelection *s = static_cast<InitialSelection*>(user_data);
+					if (s && !s->focus_applied)
+					{
+						s->focus_applied = TRUE;
+						gtk_editable_select_region(GTK_EDITABLE(s->entry), 0, (int)s->len);
+						if (s->focus_idle_id == 0)
+						{
+							s->focus_idle_id = g_idle_add_full(G_PRIORITY_HIGH, +[](gpointer d) -> gboolean {
+								InitialSelection *s2 = static_cast<InitialSelection*>(d);
+								if (s2 != NULL)
+								{
+									s2->focus_idle_id = 0;
+									gtk_editable_select_region(GTK_EDITABLE(s2->entry), 0, (int)s2->len);
+								}
+								return G_SOURCE_REMOVE;
+							}, s, NULL);
+						}
+					}
+				}), sel_data);
+			gtk_widget_add_controller(entry, focus_ctrl);
+
 			GtkEditable *delegate = gtk_editable_get_delegate(GTK_EDITABLE(entry));
 			if (delegate != NULL)
 			{
-				sel_data->delegate_handler_id = g_signal_connect(delegate, "notify::has-focus",
+				g_signal_connect(delegate, "notify::has-focus",
 					G_CALLBACK(+[](GObject *obj, GParamSpec *, gpointer user_data) {
 						if (gtk_widget_has_focus(GTK_WIDGET(obj)))
 						{
 							InitialSelection *s = static_cast<InitialSelection*>(user_data);
-							if (s && !s->applied)
+							if (s && !s->focus_applied)
 							{
-								s->applied = TRUE;
+								s->focus_applied = TRUE;
 								gtk_editable_select_region(GTK_EDITABLE(s->entry), 0, (int)s->len);
-								if (s->idle_id != 0)
+								if (s->focus_idle_id == 0)
 								{
-									g_source_remove(s->idle_id);
-									s->idle_id = 0;
+									s->focus_idle_id = g_idle_add_full(G_PRIORITY_HIGH, +[](gpointer d) -> gboolean {
+										InitialSelection *s2 = static_cast<InitialSelection*>(d);
+										if (s2 != NULL)
+										{
+											s2->focus_idle_id = 0;
+											gtk_editable_select_region(GTK_EDITABLE(s2->entry), 0, (int)s2->len);
+										}
+										return G_SOURCE_REMOVE;
+									}, s, NULL);
 								}
 							}
 						}
 					}), sel_data);
 			}
 
-			sel_data->idle_id = g_idle_add(+[](gpointer user_data) -> gboolean {
+			sel_data->idle_id = g_idle_add_full(G_PRIORITY_HIGH, +[](gpointer user_data) -> gboolean {
 				InitialSelection *s = static_cast<InitialSelection*>(user_data);
 				if (s != NULL)
 				{
 					s->idle_id = 0;
-					if (!s->applied)
-					{
-						s->applied = TRUE;
-						gtk_editable_select_region(GTK_EDITABLE(s->entry), 0, (int)s->len);
-					}
+					gtk_editable_select_region(GTK_EDITABLE(s->entry), 0, (int)s->len);
 				}
 				return G_SOURCE_REMOVE;
-			}, sel_data);
+			}, sel_data, NULL);
 
 			g_object_set_data_full(G_OBJECT(entry), "quiver-initial-selection", sel_data,
 				+[](gpointer data) {
@@ -897,6 +928,8 @@ void ConnectUnmodifiedAccelerators() {
 					{
 						if (s->idle_id != 0)
 							g_source_remove(s->idle_id);
+						if (s->focus_idle_id != 0)
+							g_source_remove(s->focus_idle_id);
 						g_free(s);
 					}
 				});

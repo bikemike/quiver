@@ -819,6 +819,7 @@ public:
 	gdouble     m_dVideoZoomFinal;  // target video zoom factor for the smooth animation
 	gdouble     m_dVideoZoomMin;    // lowest zoom allowed: the fit level seen so far (1.0 when actual size)
 	guint       m_iVideoZoomTimeoutID; // timer driving the smooth video zoom animation
+	guint       m_iGstBusWatchID = 0;  // watch ID for GStreamer bus messages
 	gdouble     m_dVideoPanX;       // viewport (visible part of the frame) left edge, in source px
 	gdouble     m_dVideoPanY;       // viewport top edge, in source pixels
 	gdouble     m_dVideoLastWidgetW; // last applied video widget width (for zoom anchoring)
@@ -4378,6 +4379,8 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 { (void)bus; 
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	if (pViewerImpl == NULL || !pViewerImpl->m_spAlive || !*pViewerImpl->m_spAlive)
+		return FALSE;
 	switch (GST_MESSAGE_TYPE (msg)) {
 
 		case GST_MESSAGE_EOS:
@@ -4529,7 +4532,7 @@ void Viewer::ViewerImpl::ShowVideoPage()
 	{
 		m_bVideoPagePending = TRUE;
 	}
-	else if (m_pStack != NULL)
+	else if (m_pStack != NULL && GTK_IS_STACK(m_pStack))
 	{
 		m_bVideoPagePending = FALSE;
 		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "video");
@@ -4538,9 +4541,9 @@ void Viewer::ViewerImpl::ShowVideoPage()
 	 * fixed page itself.  Still, StopVideo() explicitly hides the picture, so
 	 * re-show it when the video page is brought up, or the sink picture stays
 	 * invisible while audio plays. */
-	if (m_pVideoFixed != NULL)
+	if (m_pVideoFixed != NULL && GTK_IS_WIDGET(m_pVideoFixed))
 		gtk_widget_set_visible(m_pVideoFixed, TRUE);
-	if (m_pVideoSinkWidget != NULL)
+	if (m_pVideoSinkWidget != NULL && GTK_IS_WIDGET(m_pVideoSinkWidget))
 	{
 		gtk_widget_set_visible(m_pVideoSinkWidget, TRUE);
 		gtk_widget_queue_draw(m_pVideoSinkWidget);
@@ -4716,7 +4719,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 		if (0 == m_iTimeoutSlideshowID)
 			LoadImage(m_ImageListPtr->GetCurrent());
 	}
-	gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "image");
+	if (m_pStack != NULL && GTK_IS_STACK(m_pStack))
+		gtk_stack_set_visible_child_name(GTK_STACK(m_pStack), "image");
 
 	/* reset the digital zoom so the next video starts at fit, and drop the
 	 * stale frame size so a different-sized video is scaled to its own
@@ -4727,15 +4731,15 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_dPlaybackSpeed = 1.0;
 	m_bVideoPlaybackStarted = false;
 	m_bVideoZoomAnchorCenter = false;
-	if (m_pPlayProgress)
+	if (m_pPlayProgress && GTK_IS_RANGE(m_pPlayProgress))
 	{
 		g_signal_handler_block(m_pPlayProgress, m_iPlayProgressChangeHandler);
 		gtk_range_set_value(GTK_RANGE(m_pPlayProgress), 0.0);
 		g_signal_handler_unblock(m_pPlayProgress, m_iPlayProgressChangeHandler);
 	}
-	if (m_pTimeElapsedLabel)
+	if (m_pTimeElapsedLabel && GTK_IS_LABEL(m_pTimeElapsedLabel))
 		gtk_label_set_markup(GTK_LABEL(m_pTimeElapsedLabel), "<b>0:00</b>");
-	if (m_pTimeDurationLabel)
+	if (m_pTimeDurationLabel && GTK_IS_LABEL(m_pTimeDurationLabel))
 		gtk_label_set_markup(GTK_LABEL(m_pTimeDurationLabel), "<b>0:00</b>");
 	if (m_pTimelineRow)
 		set_control_visible(m_pTimelineRow, false);
@@ -5227,11 +5231,37 @@ Viewer::ViewerImpl::~ViewerImpl()
 #endif
 	}
 
+	if (0 != m_iGstBusWatchID)
+	{
+		g_source_remove(m_iGstBusWatchID);
+		m_iGstBusWatchID = 0;
+	}
+
+	if (m_pVideoPaintable && G_IS_OBJECT(m_pVideoPaintable))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVideoPaintable, this);
+		g_object_unref(m_pVideoPaintable);
+		m_pVideoPaintable = NULL;
+	}
+
+	if (m_pPipeline != NULL)
+	{
+		GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline));
+		if (bus != NULL)
+		{
+			gst_bus_set_flushing(bus, TRUE);
+			gst_object_unref(bus);
+		}
+	}
+
 	StopVideo(false);
 	CancelPlayPauseAnimation();
 
-
-	gst_object_unref(GST_OBJECT(m_pPipeline));
+	if (m_pPipeline != NULL)
+	{
+		gst_object_unref(GST_OBJECT(m_pPipeline));
+		m_pPipeline = NULL;
+	}
 
 	/* cancel every main-loop callback that captures `this` so none can fire
 	 * into the freed object after the teardown idle returns */
@@ -5294,29 +5324,27 @@ Viewer::ViewerImpl::~ViewerImpl()
 	/* popovers are parented to viewer widgets (buttons / icon view); unparent
 	 * them NOW while their parents are still alive, or they would be left with
 	 * a dangling parent pointer when the widget tree below is destroyed */
-	if (m_pVolumePopover)
+	if (m_pVolumeButton && GTK_IS_MENU_BUTTON(m_pVolumeButton))
 	{
-		if (gtk_widget_get_parent(m_pVolumePopover))
-			gtk_widget_unparent(m_pVolumePopover);
-		m_pVolumePopover = NULL;
+		gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pVolumeButton), NULL);
 	}
-	if (m_pVideoOptionsPopover)
+	m_pVolumePopover = NULL;
+
+	if (m_pVideoOptionsBtn && GTK_IS_MENU_BUTTON(m_pVideoOptionsBtn))
 	{
-		if (gtk_widget_get_parent(m_pVideoOptionsPopover))
-			gtk_widget_unparent(m_pVideoOptionsPopover);
-		m_pVideoOptionsPopover = NULL;
+		gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pVideoOptionsBtn), NULL);
 	}
-	if (m_pImageSubmenuPopover)
+	m_pVideoOptionsPopover = NULL;
+
+	if (m_pImageSubmenuBtn && GTK_IS_MENU_BUTTON(m_pImageSubmenuBtn))
 	{
-		if (gtk_widget_get_parent(m_pImageSubmenuPopover))
-			gtk_widget_unparent(m_pImageSubmenuPopover);
-		m_pImageSubmenuPopover = NULL;
+		gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pImageSubmenuBtn), NULL);
 	}
+	m_pImageSubmenuPopover = NULL;
+
 	if (m_pSpeedButton && GTK_IS_MENU_BUTTON(m_pSpeedButton))
 	{
-		GtkPopover *speedPop = gtk_menu_button_get_popover(GTK_MENU_BUTTON(m_pSpeedButton));
-		if (speedPop && gtk_widget_get_parent(GTK_WIDGET(speedPop)))
-			gtk_widget_unparent(GTK_WIDGET(speedPop));
+		gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pSpeedButton), NULL);
 	}
 	if (m_pContextMenuPopover)
 	{
@@ -5342,12 +5370,6 @@ Viewer::ViewerImpl::~ViewerImpl()
 	if (m_pIconView && G_IS_OBJECT(m_pIconView))
 	{
 		g_signal_handlers_disconnect_by_data(m_pIconView, this);
-	}
-	if (m_pVideoPaintable && G_IS_OBJECT(m_pVideoPaintable))
-	{
-		g_signal_handlers_disconnect_by_data(m_pVideoPaintable, this);
-		g_object_unref(m_pVideoPaintable);
-		m_pVideoPaintable = NULL;
 	}
 	if (m_pVideoSinkWidget && G_IS_OBJECT(m_pVideoSinkWidget))
 	{
@@ -5421,11 +5443,22 @@ Viewer::ViewerImpl::~ViewerImpl()
 	 * Unmap the whole viewer subtree HERE, while `this` is still alive, so no
 	 * widget can fire a leave/unmap/gesture callback into this freed object
 	 * during the window teardown (same pattern as ~BrowserImpl). */
-	if (m_pHBox && gtk_widget_get_parent(m_pHBox))
+	if (m_pHBox)
 	{
-		gtk_widget_unparent(m_pHBox);
+		GtkWidget *pParent = gtk_widget_get_parent(m_pHBox);
+		if (pParent != NULL)
+		{
+			if (GTK_IS_WINDOW(pParent))
+			{
+				gtk_window_set_child(GTK_WINDOW(pParent), NULL);
+			}
+			else
+			{
+				gtk_widget_unparent(m_pHBox);
+			}
+		}
+		m_pHBox = NULL;
 	}
-	m_pHBox = NULL;
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
@@ -5685,17 +5718,20 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 {
 	(void)paintable;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p == NULL || !p->m_spAlive || !*p->m_spAlive)
+		return;
 	if (p->m_bVideoNeedsFirstFrame
 		&& !p->m_bVideoFlushPending
-		&& p->m_pVideoFixed != NULL && gtk_widget_get_visible(p->m_pVideoFixed))
+		&& p->m_pVideoFixed != NULL && GTK_IS_WIDGET(p->m_pVideoFixed) && gtk_widget_get_visible(p->m_pVideoFixed))
 	{
 		p->m_bVideoNeedsFirstFrame = FALSE;
-		gtk_widget_set_opacity(p->m_pVideoSinkWidget, 1.0);
+		if (p->m_pVideoSinkWidget != NULL && GTK_IS_WIDGET(p->m_pVideoSinkWidget))
+			gtk_widget_set_opacity(p->m_pVideoSinkWidget, 1.0);
 		/* The first frame is now decoded, so the video page no longer shows
 		 * the transparent sink over the background.  Complete the deferred
 		 * page switch requested by ShowVideoPage() to avoid the background
 		 * flicker that would appear if we switched before the frame. */
-		if (p->m_bVideoPagePending && p->m_pStack != NULL)
+		if (p->m_bVideoPagePending && p->m_pStack != NULL && GTK_IS_STACK(p->m_pStack))
 		{
 			p->m_bVideoPagePending = FALSE;
 			gtk_stack_set_visible_child_name(GTK_STACK(p->m_pStack), "video");
@@ -7441,7 +7477,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(m_pPipeline));
 	//gst_bus_set_sync_handler (bus, (GstBusSyncHandler) gstreamer_bus_sync_handler, this, NULL); // Removed sync handler
-	gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
+	m_iGstBusWatchID = gst_bus_add_watch (bus, (GstBusFunc) gstreamer_bus_watcher, this);
 	gst_object_unref (bus);
 
 	UpdateUI();
@@ -7822,6 +7858,13 @@ static gboolean timeout_advance_slideshow (gpointer data)
 	return FALSE;
 }
 
+void Viewer::StopVideo(bool reloadImage)
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->StopVideo(reloadImage);
+	}
+}
 
 void Viewer::SlideShowStart()
 {

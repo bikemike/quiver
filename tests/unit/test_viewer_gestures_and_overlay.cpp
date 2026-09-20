@@ -391,7 +391,10 @@ TEST_CASE("Viewer Overlay Button Sensitivities and Hover Controller", "[unit][vi
     REQUIRE_FALSE(gtk_widget_get_sensitive(nextBtn));
     REQUIRE(gtk_widget_get_visible(centerPlay));
 
+    viewer->StopVideo(false);
+    viewer.reset();
     gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
 }
 
 TEST_CASE("Viewer Mute and Volume Control", "[unit][viewer][mute]")
@@ -510,7 +513,10 @@ TEST_CASE("Viewer Overlay Slideshow Button and Play State", "[unit][viewer][over
     REQUIRE(std::string(gtk_button_get_icon_name(GTK_BUTTON(slideshowBtn))) == "display-projector-symbolic");
     REQUIRE_FALSE(gtk_widget_has_css_class(slideshowBtn, "speed-active"));
 
+    viewer->StopVideo(false);
+    viewer.reset();
     gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
 }
 
 TEST_CASE("Viewer Zoom In and Zoom Out Anchor Behavior", "[unit][viewer][zoom]")
@@ -706,7 +712,10 @@ TEST_CASE("Viewer HUD and Filmstrip Auto-Hide Timeout", "[unit][viewer][timeout]
     REQUIRE(gtk_widget_get_visible(fsWidget));
 
     prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, origOverlay);
+    viewer->StopVideo(false);
+    viewer.reset();
     gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
 }
 
 
