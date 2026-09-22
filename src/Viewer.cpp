@@ -6640,16 +6640,16 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		"  color: @theme_selected_fg_color;\n"
 		"}\n"
 		".time-label { color: #ffffff; font-size: 12px; font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.7); }\n"
-		".play-anim-badge { border-radius: 50%; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.50); }\n"
+		".play-anim-badge { border-radius: 9999px; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; outline: none; padding: 0; min-width: 0; min-height: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.35); }\n"
 		".image-load-error { color: rgba(255, 255, 255, 1.0); font-size: 18px; padding: 20px; border-radius: 12px; background-color: alpha(#000, 0.55); }\n"
 		".media-btn-blank { min-width: 2.4em; min-height: 2.4em; padding: 4px; }\n"
 		".viewer-overlay-bar { background-color: rgba(30, 30, 30, 0.75); border-radius: 10px; padding: 4px 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }\n"
 		".timeline-overlay-bar { background: transparent; border: none; box-shadow: none; padding: 0 4px; }\n"
 		".submenu-pill-btn { border-radius: 6px; padding: 3px 8px; font-weight: 500; font-size: 11px; }\n"
 		".submenu-icon-btn { border-radius: 6px; min-width: 2.2em; min-height: 2.2em; padding: 4px; }\n"
-		".center-play-btn { border-radius: 50%; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; outline: none; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.60); padding: 0; }\n"
+		".center-play-btn { border-radius: 9999px; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; outline: none; padding: 0; min-width: 76px; min-height: 76px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.35); }\n"
 		".center-play-btn:hover { background-color: rgba(10, 10, 10, 0.85); border: none; }\n"
-		".center-play-btn:focus, .center-play-btn:focus-visible { outline: none; box-shadow: none; border: none; }\n");
+		".center-play-btn:focus, .center-play-btn:focus-visible { outline: none; border: none; }\n");
 	gtk_style_context_add_provider_for_display(gdk_display_get_default(),
 		GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
 	g_object_unref(cssProvider);
@@ -6719,9 +6719,11 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	/* Play / pause animation overlay badge */
 	m_pPlayAnimWidget = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_add_css_class(m_pPlayAnimWidget, "play-anim-badge");
+	gtk_widget_add_css_class(m_pPlayAnimWidget, "circular");
 	gtk_widget_set_halign(m_pPlayAnimWidget, GTK_ALIGN_CENTER);
 	gtk_widget_set_valign(m_pPlayAnimWidget, GTK_ALIGN_CENTER);
 	gtk_widget_set_can_target(m_pPlayAnimWidget, FALSE);
+	gtk_widget_set_size_request(m_pPlayAnimWidget, 92, 92);
 	m_pPlayAnimImage = gtk_image_new_from_icon_name("media-playback-start");
 	gtk_widget_set_halign(m_pPlayAnimImage, GTK_ALIGN_CENTER);
 	gtk_widget_set_valign(m_pPlayAnimImage, GTK_ALIGN_CENTER);
@@ -6738,6 +6740,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pCenterPlayBtn = gtk_button_new();
 	gtk_button_set_has_frame(GTK_BUTTON(m_pCenterPlayBtn), FALSE);
 	gtk_widget_add_css_class(m_pCenterPlayBtn, "center-play-btn");
+	gtk_widget_add_css_class(m_pCenterPlayBtn, "circular");
 	gtk_widget_set_halign(m_pCenterPlayBtn, GTK_ALIGN_CENTER);
 	gtk_widget_set_valign(m_pCenterPlayBtn, GTK_ALIGN_CENTER);
 	gtk_widget_set_size_request(m_pCenterPlayBtn, 76, 76);

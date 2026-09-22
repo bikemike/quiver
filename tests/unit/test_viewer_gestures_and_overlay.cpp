@@ -100,6 +100,7 @@ TEST_CASE("Viewer Control Overlays Structure and Styling", "[unit][viewer][overl
     REQUIRE(centerPlay != nullptr);
     REQUIRE(GTK_IS_BUTTON(centerPlay));
     REQUIRE(gtk_widget_has_css_class(centerPlay, "center-play-btn"));
+    REQUIRE(gtk_widget_has_css_class(centerPlay, "circular"));
 }
 
 TEST_CASE("Viewer Slideshow State Management", "[unit][viewer][slideshow]")
