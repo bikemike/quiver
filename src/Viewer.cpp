@@ -20,6 +20,7 @@
 #include "QuiverUtils.h"
 #include "ShortcutManager.h"
 #include "QuiverVideoOps.h"
+#include "QuiverRotatedPaintable.h"
 #include "ImageLoader.h"
 #include "ImageList.h"
 
@@ -680,6 +681,7 @@ public:
 	// video zoom (in-pipeline crop, optionally HW-accelerated upscale)
 	void SetVideoZoom(gdouble zoom);
 	void ApplyVideoZoom();
+	int GetVideoUserRotation() const { return m_iVideoUserRotation; }
 
 
 // member variables
@@ -796,6 +798,8 @@ public:
 	// gstreamer elements for playing videos
 	GstElement* m_pPipeline = nullptr;
 	GdkPaintable* m_pVideoPaintable = nullptr; // paintable exposed by the sink
+	QuiverRotatedPaintable* m_pVideoRotatedPaintable = nullptr; // paintable with rotation applied
+	int         m_iVideoUserRotation = 0;      // 0, 90, 180, 270
 	GtkWidget*  m_pVideoSinkWidget = nullptr; // GtkPicture wrapping the paintable
 	GtkWidget*  m_pVideoFixed = nullptr;      // GtkFixed canvas (fills the viewer area, clips the video sink widget)
 	// how the digital zoom crop+scale chain is implemented, chosen at build time
@@ -2602,8 +2606,12 @@ viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y,
 		gdouble srcPerPxX = 1., srcPerPxY = 1.;
 		if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
 		{
-			gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoWidth,
-				(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoHeight);
+			gdouble vW = pViewerImpl->m_iVideoWidth;
+			gdouble vH = pViewerImpl->m_iVideoHeight;
+			if (pViewerImpl->m_iVideoUserRotation == 90 || pViewerImpl->m_iVideoUserRotation == 270)
+				swap(vW, vH);
+			gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / vW,
+				(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / vH);
 			gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
 			if (scale * zoom > 0.)
 			{
@@ -2728,8 +2736,12 @@ static void viewer_two_finger_pan_update_cb(GtkGestureDrag *gesture, gdouble off
 		gdouble srcPerPxX = 1., srcPerPxY = 1.;
 		if (p->m_iVideoWidth > 0 && p->m_iVideoHeight > 0)
 		{
-			gdouble scale = MIN((gdouble)gtk_widget_get_width(p->m_pVideoFixed) / p->m_iVideoWidth,
-				(gdouble)gtk_widget_get_height(p->m_pVideoFixed) / p->m_iVideoHeight);
+			gdouble vW = p->m_iVideoWidth;
+			gdouble vH = p->m_iVideoHeight;
+			if (p->m_iVideoUserRotation == 90 || p->m_iVideoUserRotation == 270)
+				swap(vW, vH);
+			gdouble scale = MIN((gdouble)gtk_widget_get_width(p->m_pVideoFixed) / vW,
+				(gdouble)gtk_widget_get_height(p->m_pVideoFixed) / vH);
 			gdouble zoom = MAX(p->m_dVideoZoom, 1.0);
 			if (scale * zoom > 0.)
 			{
@@ -3033,24 +3045,38 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CW) || 0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CW_2))
 	{
-		quiver_image_view_rotate(imageview,TRUE);
-		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->GetCurrentOrientation()] );
-		if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
+		if (pViewerImpl->IsVideo())
 		{
-			QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
-			if (f.GetURI())
-				QuiverFileOps::UndoStackRecordRotate(f.GetURI(), +1);
+			pViewerImpl->RotateVideo(true);
+		}
+		else
+		{
+			quiver_image_view_rotate(imageview,TRUE);
+			pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->GetCurrentOrientation()] );
+			if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
+			{
+				QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+				if (f.GetURI())
+					QuiverFileOps::UndoStackRecordRotate(f.GetURI(), +1);
+			}
 		}
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CCW) || 0 == strcmp(szAction,ACTION_VIEWER_ROTATE_CCW_2))
 	{
-		quiver_image_view_rotate(imageview,FALSE);
-		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->GetCurrentOrientation()] );
-		if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
+		if (pViewerImpl->IsVideo())
 		{
-			QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
-			if (f.GetURI())
-				QuiverFileOps::UndoStackRecordRotate(f.GetURI(), -1);
+			pViewerImpl->RotateVideo(false);
+		}
+		else
+		{
+			quiver_image_view_rotate(imageview,FALSE);
+			pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->GetCurrentOrientation()] );
+			if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
+			{
+				QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+				if (f.GetURI())
+					QuiverFileOps::UndoStackRecordRotate(f.GetURI(), -1);
+			}
 		}
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_FLIP_H) || 0 == strcmp(szAction,ACTION_VIEWER_FLIP_H_2))
@@ -3463,10 +3489,14 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
  		else if (pViewerImpl->IsVideo() && pViewerImpl->m_dVideoZoom > 1.0)
  		{
  			gdouble srcPerPxX = 1., srcPerPxY = 1.;
- 			if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
- 			{
- 				gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoWidth,
- 					(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / pViewerImpl->m_iVideoHeight);
+  			if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
+  			{
+  				gdouble vW = pViewerImpl->m_iVideoWidth;
+  				gdouble vH = pViewerImpl->m_iVideoHeight;
+  				if (pViewerImpl->m_iVideoUserRotation == 90 || pViewerImpl->m_iVideoUserRotation == 270)
+  					swap(vW, vH);
+  				gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / vW,
+  					(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / vH);
  				gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
  				if (scale * zoom > 0.)
  				{
@@ -3744,28 +3774,16 @@ static void viewer_video_option_rotate_cw_cb(GtkButton *button, gpointer user_da
 {
 	(void)button;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
-	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL && p->m_pVideoZoomScaler != NULL)
-	{
-		gfloat rot = 0.0f;
-		g_object_get(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", &rot, NULL);
-		rot += 90.0f;
-		if (rot >= 360.0f) rot -= 360.0f;
-		g_object_set(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", rot, NULL);
-	}
+	if (p)
+		p->RotateVideo(true);
 }
 
 static void viewer_video_option_rotate_ccw_cb(GtkButton *button, gpointer user_data)
 {
 	(void)button;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)user_data;
-	if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL && p->m_pVideoZoomScaler != NULL)
-	{
-		gfloat rot = 0.0f;
-		g_object_get(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", &rot, NULL);
-		rot -= 90.0f;
-		if (rot < 0.0f) rot += 360.0f;
-		g_object_set(G_OBJECT(p->m_pVideoZoomScaler), "rotation-z", rot, NULL);
-	}
+	if (p)
+		p->RotateVideo(false);
 }
 
 static void viewer_video_option_loop_cb(GtkButton *button, gpointer user_data)
@@ -4050,22 +4068,19 @@ static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer
 		GtkWidget *actionRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
 		gtk_widget_set_halign(actionRow, GTK_ALIGN_CENTER);
 
-		if (p->m_VideoZoomType == Viewer::ViewerImpl::VIDEO_ZOOM_GL)
-		{
-			GtkWidget *rotCcw = gtk_button_new_from_icon_name("object-rotate-left-symbolic");
-			gtk_widget_set_tooltip_text(rotCcw, ShortcutManager::GetInstance().GetTooltipForAction("RotateCCW", "Rotate Counter-Clockwise 90°").c_str());
-			gtk_widget_add_css_class(rotCcw, "media-btn");
-			gtk_widget_add_css_class(rotCcw, "submenu-icon-btn");
-			g_signal_connect(rotCcw, "clicked", G_CALLBACK(viewer_video_option_rotate_ccw_cb), p);
-			gtk_box_append(GTK_BOX(actionRow), rotCcw);
+		GtkWidget *rotCcw = gtk_button_new_from_icon_name("object-rotate-left-symbolic");
+		gtk_widget_set_tooltip_text(rotCcw, ShortcutManager::GetInstance().GetTooltipForAction("RotateCCW", "Rotate Counter-Clockwise 90°").c_str());
+		gtk_widget_add_css_class(rotCcw, "media-btn");
+		gtk_widget_add_css_class(rotCcw, "submenu-icon-btn");
+		g_signal_connect(rotCcw, "clicked", G_CALLBACK(viewer_video_option_rotate_ccw_cb), p);
+		gtk_box_append(GTK_BOX(actionRow), rotCcw);
 
-			GtkWidget *rotCw = gtk_button_new_from_icon_name("object-rotate-right-symbolic");
-			gtk_widget_set_tooltip_text(rotCw, ShortcutManager::GetInstance().GetTooltipForAction("RotateCW", "Rotate Clockwise 90°").c_str());
-			gtk_widget_add_css_class(rotCw, "media-btn");
-			gtk_widget_add_css_class(rotCw, "submenu-icon-btn");
-			g_signal_connect(rotCw, "clicked", G_CALLBACK(viewer_video_option_rotate_cw_cb), p);
-			gtk_box_append(GTK_BOX(actionRow), rotCw);
-		}
+		GtkWidget *rotCw = gtk_button_new_from_icon_name("object-rotate-right-symbolic");
+		gtk_widget_set_tooltip_text(rotCw, ShortcutManager::GetInstance().GetTooltipForAction("RotateCW", "Rotate Clockwise 90°").c_str());
+		gtk_widget_add_css_class(rotCw, "media-btn");
+		gtk_widget_add_css_class(rotCw, "submenu-icon-btn");
+		g_signal_connect(rotCw, "clicked", G_CALLBACK(viewer_video_option_rotate_cw_cb), p);
+		gtk_box_append(GTK_BOX(actionRow), rotCw);
 
 		// Snapshot (Frame Grab)
 		GtkWidget *snap_btn = gtk_button_new_from_icon_name("camera-photo-symbolic");
@@ -4735,6 +4750,11 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_dPlaybackSpeed = 1.0;
 	m_bVideoPlaybackStarted = false;
 	m_bVideoZoomAnchorCenter = false;
+	m_iVideoUserRotation = 0;
+	if (m_pVideoRotatedPaintable)
+	{
+		quiver_rotated_paintable_set_rotation(m_pVideoRotatedPaintable, 0);
+	}
 	if (m_pPlayProgress && GTK_IS_RANGE(m_pPlayProgress))
 	{
 		g_signal_handler_block(m_pPlayProgress, m_iPlayProgressChangeHandler);
@@ -4873,6 +4893,26 @@ void Viewer::ViewerImpl::Snapshot()
 			g_free(path);
 		}
 		g_object_unref(texture);
+	}
+}
+
+void Viewer::ViewerImpl::RotateVideo(bool clockwise)
+{
+	m_iVideoUserRotation = (m_iVideoUserRotation + (clockwise ? 90 : 270)) % 360;
+	if (m_pVideoRotatedPaintable)
+	{
+		quiver_rotated_paintable_set_rotation(m_pVideoRotatedPaintable, m_iVideoUserRotation);
+	}
+	m_dVideoLastWidgetW = 0.;
+	m_dVideoLastWidgetH = 0.;
+	m_iVideoSinkW = 0;
+	m_iVideoSinkH = 0;
+	m_iVideoSinkX = -999999;
+	m_iVideoSinkY = -999999;
+	ApplyVideoZoom();
+	if (m_pVideoSinkWidget)
+	{
+		gtk_widget_queue_draw(m_pVideoSinkWidget);
 	}
 }
 
@@ -5239,6 +5279,12 @@ Viewer::ViewerImpl::~ViewerImpl()
 	{
 		g_source_remove(m_iGstBusWatchID);
 		m_iGstBusWatchID = 0;
+	}
+
+	if (m_pVideoRotatedPaintable && G_IS_OBJECT(m_pVideoRotatedPaintable))
+	{
+		g_object_unref(m_pVideoRotatedPaintable);
+		m_pVideoRotatedPaintable = NULL;
 	}
 
 	if (m_pVideoPaintable && G_IS_OBJECT(m_pVideoPaintable))
@@ -5996,6 +6042,10 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			if (codedLandscape != displayLandscape)
 				swap(dispW, dispH);
 		}
+	}
+	if (m_iVideoUserRotation == 90 || m_iVideoUserRotation == 270)
+	{
+		swap(dispW, dispH);
 	}
 	/* the zoom is the magnification relative to the video's actual size
 	 * (1.0 = 100%), exactly like the image view: FIT never upscales a small
@@ -7239,8 +7289,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		if (g_object_class_find_property(G_OBJECT_GET_CLASS(gtk4glsink), "force-aspect-ratio") != NULL)
 			g_object_set(G_OBJECT(gtk4glsink), "force-aspect-ratio", TRUE, NULL);
 		g_object_get(G_OBJECT(gtk4glsink), "paintable", &m_pVideoPaintable, NULL);
+		m_pVideoRotatedPaintable = quiver_rotated_paintable_new(m_pVideoPaintable);
 
-		m_pVideoSinkWidget = gtk_picture_new_for_paintable(m_pVideoPaintable);
+		m_pVideoSinkWidget = gtk_picture_new_for_paintable(GDK_PAINTABLE(m_pVideoRotatedPaintable));
 		gtk_picture_set_content_fit(GTK_PICTURE(m_pVideoSinkWidget), GTK_CONTENT_FIT_FILL);
 		gtk_picture_set_can_shrink(GTK_PICTURE(m_pVideoSinkWidget), TRUE);
 
@@ -7272,8 +7323,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 			if (g_object_class_find_property(G_OBJECT_GET_CLASS(video_sink), "force-aspect-ratio") != NULL)
 				g_object_set(G_OBJECT(video_sink), "force-aspect-ratio", TRUE, NULL);
 			g_object_get(G_OBJECT(video_sink), "paintable", &m_pVideoPaintable, NULL);
+			m_pVideoRotatedPaintable = quiver_rotated_paintable_new(m_pVideoPaintable);
 
-			m_pVideoSinkWidget = gtk_picture_new_for_paintable(m_pVideoPaintable);
+			m_pVideoSinkWidget = gtk_picture_new_for_paintable(GDK_PAINTABLE(m_pVideoRotatedPaintable));
 			gtk_picture_set_content_fit(GTK_PICTURE(m_pVideoSinkWidget), GTK_CONTENT_FIT_FILL);
 			gtk_picture_set_can_shrink(GTK_PICTURE(m_pVideoSinkWidget), TRUE);
 			g_signal_connect(m_pVideoPaintable, "invalidate-contents", G_CALLBACK(video_paintable_invalidated_cb), this);
@@ -8061,6 +8113,19 @@ void Viewer::SetMuted(bool bMute)
 	{
 		m_ViewerImplPtr->SetMuted(bMute);
 	}
+}
+
+void Viewer::RotateVideo(bool clockwise)
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->RotateVideo(clockwise);
+	}
+}
+
+int Viewer::GetVideoUserRotation() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->GetVideoUserRotation() : 0;
 }
 
 

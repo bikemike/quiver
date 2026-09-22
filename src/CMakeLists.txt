@@ -26,6 +26,7 @@ set(QUIVER_CORE_SOURCES
     ShortcutManager.cpp
     QuiverStockIcons.cpp
     QuiverVideoOps.cpp
+    QuiverRotatedPaintable.cpp
     AbstractEventSource.cpp
     BrowserEventSource.cpp
     ViewerEventSource.cpp

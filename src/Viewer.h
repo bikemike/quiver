@@ -45,6 +45,9 @@ public:
 	bool IsMuted() const;
 	void SetMuted(bool bMute);
 
+	void RotateVideo(bool clockwise);
+	int GetVideoUserRotation() const;
+
 	// returns true if the view mode was reset, false if it did not need to be reset
 	bool ResetViewMode();
 
