@@ -22,6 +22,7 @@ ImageListFilter::~ImageListFilter()
 
 void ImageListFilter::RebuildIfNeeded() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	if (m_bMapValid)
 		return;
 
@@ -44,6 +45,7 @@ QuiverFile ImageListFilter::SourceGet(unsigned int iSourceIdx) const
 
 bool ImageListFilter::MapPosOfSource(unsigned int iSourceIdx, unsigned int& iPos) const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	RebuildIfNeeded();
 	std::vector<unsigned int>::const_iterator itr =
 		std::lower_bound(m_vectMap.begin(), m_vectMap.end(), iSourceIdx);
@@ -57,6 +59,7 @@ bool ImageListFilter::MapPosOfSource(unsigned int iSourceIdx, unsigned int& iPos
 
 int ImageListFilter::ResolveViewIndex() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	RebuildIfNeeded();
 	if (m_vectMap.empty())
 	{
@@ -103,30 +106,35 @@ int ImageListFilter::ResolveViewIndex() const
 
 unsigned int ImageListFilter::GetSize() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	RebuildIfNeeded();
 	return m_vectMap.size();
 }
 
 unsigned int ImageListFilter::GetCurrentIndex() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	int i = ResolveViewIndex();
 	return (0 > i) ? 0 : (unsigned int)i;
 }
 
 bool ImageListFilter::HasNext() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	int i = ResolveViewIndex();
 	return (0 <= i) && ((size_t)i + 1 < m_vectMap.size());
 }
 
 bool ImageListFilter::HasPrevious() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	int i = ResolveViewIndex();
 	return (0 < i);
 }
 
 bool ImageListFilter::Next()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	if (!HasNext())
 		return false;
 	return SetCurrentIndex((unsigned int)ResolveViewIndex() + 1);
@@ -134,6 +142,7 @@ bool ImageListFilter::Next()
 
 bool ImageListFilter::Previous()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	if (!HasPrevious())
 		return false;
 	return SetCurrentIndex((unsigned int)ResolveViewIndex() - 1);
@@ -141,16 +150,19 @@ bool ImageListFilter::Previous()
 
 bool ImageListFilter::First()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	return SetCurrentIndex(0);
 }
 
 bool ImageListFilter::Last()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	return SetCurrentIndex(GetSize() - 1);
 }
 
 bool ImageListFilter::SetCurrentIndex(unsigned int iIndex)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	RebuildIfNeeded();
 	if (iIndex >= m_vectMap.size())
 		return false;
@@ -162,6 +174,7 @@ bool ImageListFilter::SetCurrentIndex(unsigned int iIndex)
 
 QuiverFile ImageListFilter::GetCurrent() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	int i = ResolveViewIndex();
 	if (0 > i)
 		return QuiverFile();
@@ -170,6 +183,7 @@ QuiverFile ImageListFilter::GetCurrent() const
 
 QuiverFile ImageListFilter::GetNext() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	if (!HasNext())
 		return QuiverFile();
 	return Get((unsigned int)ResolveViewIndex() + 1);
@@ -177,6 +191,7 @@ QuiverFile ImageListFilter::GetNext() const
 
 QuiverFile ImageListFilter::GetPrevious() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	if (!HasPrevious())
 		return QuiverFile();
 	return Get((unsigned int)ResolveViewIndex() - 1);
@@ -184,6 +199,7 @@ QuiverFile ImageListFilter::GetPrevious() const
 
 QuiverFile ImageListFilter::GetFirst() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	if (0 == GetSize())
 		return QuiverFile();
 	return Get(0);
@@ -191,6 +207,7 @@ QuiverFile ImageListFilter::GetFirst() const
 
 QuiverFile ImageListFilter::GetLast() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	if (0 == GetSize())
 		return QuiverFile();
 	return Get(GetSize() - 1);
@@ -198,6 +215,7 @@ QuiverFile ImageListFilter::GetLast() const
 
 QuiverFile ImageListFilter::Get(unsigned int nIndex) const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	RebuildIfNeeded();
 	if (nIndex >= m_vectMap.size())
 		return QuiverFile();
@@ -206,6 +224,7 @@ QuiverFile ImageListFilter::Get(unsigned int nIndex) const
 
 void ImageListFilter::Remove(unsigned int nIndex)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	RebuildIfNeeded();
 	if (nIndex >= m_vectMap.size())
 		return;
@@ -216,6 +235,7 @@ void ImageListFilter::Remove(unsigned int nIndex)
 
 void ImageListFilter::HandleContentsChanged(ImageListEventPtr event)
 { (void)event;
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	m_bMapValid = false;
 	m_szCurrentURI.clear();
 	m_iLastEmittedView = -1;
@@ -224,6 +244,7 @@ void ImageListFilter::HandleContentsChanged(ImageListEventPtr event)
 
 void ImageListFilter::HandleCurrentIndexChanged(ImageListEventPtr event)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	int iOld = m_iLastEmittedView;
 
 	// a selection on a filtered-out item (e.g. a folder clicked in the
@@ -244,6 +265,7 @@ void ImageListFilter::HandleCurrentIndexChanged(ImageListEventPtr event)
 
 void ImageListFilter::HandleItemAdded(ImageListEventPtr event)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	bool bVisible = m_pred(SourceGet(event->GetIndex()));
 	m_bMapValid = false;
 	if (bVisible)
@@ -257,6 +279,7 @@ void ImageListFilter::HandleItemAdded(ImageListEventPtr event)
 
 void ImageListFilter::HandleItemRemoved(ImageListEventPtr event)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	unsigned int iOldPos = 0;
 	bool bWasVisible = MapPosOfSource(event->GetIndex(), iOldPos);
 	m_bMapValid = false;
@@ -270,6 +293,7 @@ void ImageListFilter::HandleItemRemoved(ImageListEventPtr event)
 
 void ImageListFilter::HandleItemChanged(ImageListEventPtr event)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	unsigned int iOldPos = 0;
 	bool bWasVisible = MapPosOfSource(event->GetIndex(), iOldPos);
 	// a change can alter folder-ness, so the map may be stale too

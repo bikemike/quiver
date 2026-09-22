@@ -17,6 +17,7 @@ set(UNIT_TEST_SOURCES
     unit/test_image_list_filter.cpp
     unit/test_image_list_async.cpp
     unit/test_image_list_remove.cpp
+    unit/test_image_list_filter_delete.cpp
     unit/test_undo_delete.cpp
     unit/test_quiver_file.cpp
     unit/test_pixbuf_utils.cpp

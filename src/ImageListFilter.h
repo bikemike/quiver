@@ -2,6 +2,7 @@
 #define FILE_IMAGE_LIST_FILTER_H
 
 #include <functional>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,13 @@ protected:
 	IImageListViewPtr m_pSource;
 	Predicate         m_pred;
 	IImageListEventHandlerPtr m_pEventHandlerPtr;
+
+	// The lazy map below is rebuilt on demand from const accessors.  The
+	// viewer consults this filter from the GUI thread AND from thumbnail
+	// loader worker threads (Viewer.cpp get-size paths), so a rebuild can
+	// race with a rebuild/removal on another thread - protect the state.
+	// Recursive so the re-entrant remove/emit paths can re-enter getters.
+	mutable std::recursive_mutex m_MapMutex;
 
 	mutable std::vector<unsigned int> m_vectMap; // view idx -> source idx
 	mutable bool                      m_bMapValid;
