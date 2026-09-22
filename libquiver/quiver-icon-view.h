@@ -106,6 +106,8 @@ void quiver_icon_view_set_drag_behavior(QuiverIconView *iconview,QuiverIconViewD
 
 void quiver_icon_view_set_icon_size(QuiverIconView *iconview, guint width,guint height);
 void quiver_icon_view_set_cell_padding(QuiverIconView *iconview,guint padding);
+void quiver_icon_view_set_thumbnails_square(QuiverIconView *iconview, gboolean square);
+gboolean quiver_icon_view_get_thumbnails_square(QuiverIconView *iconview);
 void quiver_icon_view_get_icon_size(QuiverIconView *iconview, guint* width,guint* height);
 guint quiver_icon_view_get_cell_padding(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_width(QuiverIconView *iconview);

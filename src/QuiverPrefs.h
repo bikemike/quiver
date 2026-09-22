@@ -33,6 +33,7 @@
 // browser preferences
 #define QUIVER_PREFS_BROWSER                       "browser"
 #define QUIVER_PREFS_BROWSER_THUMB_SIZE            "thumb_size"
+#define QUIVER_PREFS_BROWSER_THUMBS_SQUARE         "thumbs_square"
 #define QUIVER_PREFS_BROWSER_FOLDER_HPANE          "folder_hpane"
 #define QUIVER_PREFS_BROWSER_FOLDER_VPANE          "folder_vpane"
 #define QUIVER_PREFS_BROWSER_PREVIEW_SHOW          "preview_show"
@@ -47,6 +48,7 @@
 #define QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE         "filmstrip_size"
 #define QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY      "filmstrip_overlay"
 #define QUIVER_PREFS_VIEWER_FILMSTRIP_HIDE_FS      "filmstrip_hide_fs"
+#define QUIVER_PREFS_VIEWER_FILMSTRIP_SQUARE       "filmstrip_square"
 #define QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE      "default_view_mode"
 #define QUIVER_PREFS_VIEWER_QUICK_PREVIEW          "quick_preview"
 #define QUIVER_PREFS_VIEWER_GIF_ANIMATION          "gif_animation"

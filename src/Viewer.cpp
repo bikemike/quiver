@@ -7087,6 +7087,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER);
 	int iIconSize = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(m_pIconView),iIconSize,iIconSize);
+	bool bFilmstripSquare = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SQUARE, false);
+	quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(m_pIconView), bFilmstripSquare);
 	m_ThumbnailLoader.SetIconDimensions(iIconSize, iIconSize);
 	m_ThumbnailLoader.SetMapped(gtk_widget_get_mapped(m_pIconView));
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
@@ -8072,6 +8074,10 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cel
 		{
 			need_new_thumb = FALSE;
 		}
+		else if (thumb_width >= bound_width && thumb_height >= bound_height)
+		{
+			need_new_thumb = FALSE;
+		}
 	}
 	
 	if (need_new_thumb)
@@ -8469,6 +8475,11 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		{
 			parent->m_bHideFilmstripFS = event->GetNewBoolean();
 		}
+		else if (QUIVER_PREFS_VIEWER_FILMSTRIP_SQUARE == event->GetKey() )
+		{
+			quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewBoolean());
+			parent->m_ThumbnailLoader.UpdateList(true);
+		}
 		else if (QUIVER_PREFS_VIEWER_QUICK_PREVIEW == event->GetKey() )
 		{
 			parent->m_ImageLoader.EnableQuickPreview(event->GetNewBoolean());
@@ -8561,6 +8572,16 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 		if (NULL == f.GetURI())
 			return;
 
+		bool bSquare = Preferences::GetInstance()->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SQUARE, false);
+
+		/* In square mode the icon view center-crops thumbnails at draw time, so
+		 * fetch and cache an extra 2x source to keep that crop sharp for images
+		 * whose aspect ratio is far from the square cell.  Thumbnails always
+		 * stay proportional (aspect-ratio preserving), both here and in the
+		 * freedesktop.org thumbnail cache. */
+		guint uiLoadW = bSquare ? uiWidth * 2 : uiWidth;
+		guint uiLoadH = bSquare ? uiHeight * 2 : uiHeight;
+
 		GdkTexture *texture = NULL;
 		texture = m_pViewerImpl->m_ThumbnailCache.GetTexture(f.GetURI());				
 	
@@ -8579,7 +8600,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 			thumb_width = gdk_texture_get_width(texture);
 			thumb_height = gdk_texture_get_height(texture);
 			
-			quiver_rect_get_bound_size(uiWidth,uiHeight, &bound_width,&bound_height,FALSE);
+			quiver_rect_get_bound_size(uiLoadW,uiLoadH, &bound_width,&bound_height,FALSE);
 			if (thumb_width != bound_width || thumb_height != bound_height)
 			{
 				// need a new thumbnail because the current cached size
@@ -8592,7 +8613,10 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 
 		if (NULL == texture)
 		{
-			texture = f.GetThumbnailTexture(std::max(uiWidth,uiHeight));
+			/* In square mode fetch a 2x source so the center-crop keeps its
+			 * resolution when the image aspect differs a lot from the cell. */
+			guint iMaxSide = std::max(uiWidth,uiHeight);
+			texture = f.GetThumbnailTexture(bSquare ? iMaxSide * 2 : iMaxSide);
 		}
 
 		if (NULL != texture)

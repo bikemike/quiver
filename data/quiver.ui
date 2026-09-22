@@ -1361,6 +1361,14 @@
                             <property name="use_underline">1</property>
                           </object>
                         </child>
+                        <child>
+                          <object class="GtkCheckButton" id="chkbtn_browser_thumbs_square">
+                            <property name="valign">center</property>
+                            <property name="label" translatable="1">Display thumbnails as squares</property>
+                            <property name="focusable">1</property>
+                            <property name="use_underline">1</property>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <property name="orientation">vertical</property>
@@ -1482,6 +1490,14 @@
                             <property name="focusable">1</property>
                             <property name="use_underline">1</property>
                             <property name="active">1</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkCheckButton" id="chkbtn_viewer_filmstrip_square">
+                            <property name="valign">center</property>
+                            <property name="label" translatable="1">Display filmstrip thumbnails as squares</property>
+                            <property name="focusable">1</property>
+                            <property name="use_underline">1</property>
                           </object>
                         </child>
                         <child>

@@ -44,6 +44,10 @@ struct _QuiverIconViewPrivate
 	guint icon_border_size;
 	guint cell_padding;
 
+	/* When TRUE, thumbnails are scaled to fill the (square) icon area and
+	 * center-cropped, instead of being fitted proportionally. */
+	gboolean thumbnails_square;
+
 	gint start_x, start_y;
 	gint last_x, last_y;
 	gint rubberband_x1, rubberband_y1;
@@ -526,6 +530,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->icon_height  = QUIVER_ICON_VIEW_ICON_HEIGHT;
 	iconview->priv->icon_border_size  = QUIVER_ICON_VIEW_ICON_BORDER_SIZE;
 	iconview->priv->cell_padding = QUIVER_ICON_VIEW_CELL_PADDING;
+	iconview->priv->thumbnails_square = FALSE;
 
 	iconview->priv->scroll_draw   = TRUE;
 	iconview->priv->scroll_type = QUIVER_ICON_VIEW_SCROLL_NORMAL;
@@ -1088,16 +1093,59 @@ quiver_icon_view_snapshot_cell_at (QuiverIconView *iconview,
 		guint nw = (aw > 0) ? (guint)aw : pixbuf_width;
 		guint nh = (ah > 0) ? (guint)ah : pixbuf_height;
 
-		quiver_rect_get_bound_size(iconview->priv->icon_width, iconview->priv->icon_height, &nw, &nh, FALSE);
+		/* "thumbnails_square" fills the icon area with the image, preserving
+		 * aspect ratio and cropping any overflow ("cover").  Stock fallback
+		 * icons keep the proportional fit so they are never distorted. */
+		gboolean cover = iconview->priv->thumbnails_square && !stock && nw > 0 && nh > 0;
 
-		x_icon_offset = ((int)cell_width - (int)nw) / 2;
-		y_icon_offset = ((int)cell_height - (int)nh) / 2;
+		/* The cover geometry must be derived from the texture's actual pixel
+		 * dimensions, not from aw/ah (the original image size) or from an
+		 * already square-cropped thumbnail, otherwise the image would be
+		 * stretched into the square and squished. */
+		if (cover)
+		{
+			nw = pixbuf_width;
+			nh = pixbuf_height;
+		}
 
 		graphene_rect_t thumb_bounds;
-		graphene_rect_init(&thumb_bounds,
-			(float)(x_cell_offset + x_icon_offset),
-			(float)(y_cell_offset + y_icon_offset),
-			(float)nw, (float)nh);
+		graphene_rect_t cover_clip;
+
+		if (!cover)
+		{
+			quiver_rect_get_bound_size(iconview->priv->icon_width, iconview->priv->icon_height, &nw, &nh, FALSE);
+
+			x_icon_offset = ((int)cell_width - (int)nw) / 2;
+			y_icon_offset = ((int)cell_height - (int)nh) / 2;
+
+			graphene_rect_init(&thumb_bounds,
+				(float)(x_cell_offset + x_icon_offset),
+				(float)(y_cell_offset + y_icon_offset),
+				(float)nw, (float)nh);
+		}
+		else
+		{
+			guint bound = MIN(iconview->priv->icon_width, iconview->priv->icon_height);
+			if (0 == bound)
+				bound = 1;
+
+			/* Visible (square) area of the cell. */
+			gint square_x = x_cell_offset + ((int)cell_width - (int)bound) / 2;
+			gint square_y = y_cell_offset + ((int)cell_height - (int)bound) / 2;
+			graphene_rect_init(&thumb_bounds,
+				(float)square_x, (float)square_y, (float)bound, (float)bound);
+
+			/* The texture is scaled (preserving its own aspect ratio) so it
+			 * covers the square, then the overflow is clipped away. */
+			gdouble scale = MAX((gdouble)bound / nw, (gdouble)bound / nh);
+			guint scaled_w = (guint)((gdouble)nw * scale + 0.5);
+			guint scaled_h = (guint)((gdouble)nh * scale + 0.5);
+
+			graphene_rect_init(&cover_clip,
+				(float)(square_x - ((int)scaled_w - (int)bound) / 2),
+				(float)(square_y - ((int)scaled_h - (int)bound) / 2),
+				(float)scaled_w, (float)scaled_h);
+		}
 
 		if (!stock)
 		{
@@ -1107,7 +1155,17 @@ quiver_icon_view_snapshot_cell_at (QuiverIconView *iconview,
 			gtk_snapshot_append_outset_shadow(snapshot, &shadow_outline, &shadow_color, 1.0f, 2.0f, 0.0f, 3.0f);
 		}
 
-		gtk_snapshot_append_texture(snapshot, texture, &thumb_bounds);
+		if (cover)
+		{
+			/* Center-crop the texture into the square icon area. */
+			gtk_snapshot_push_clip(snapshot, &thumb_bounds);
+			gtk_snapshot_append_texture(snapshot, texture, &cover_clip);
+			gtk_snapshot_pop(snapshot);
+		}
+		else
+		{
+			gtk_snapshot_append_texture(snapshot, texture, &thumb_bounds);
+		}
 
 		if (!is_drag_icon && current_cell == iconview->priv->prelight_cell)
 		{
@@ -1357,7 +1415,17 @@ quiver_icon_view_get_cell_thumb_rect (QuiverIconView *iconview,
 		nh = iconview->priv->icon_height;
 	}
 
-	quiver_rect_get_bound_size(iconview->priv->icon_width, iconview->priv->icon_height, &nw, &nh, FALSE);
+	if (iconview->priv->thumbnails_square && nw > 0 && nh > 0)
+	{
+		/* The visible thumbnail region is the (square) icon area. */
+		guint bound = MIN(iconview->priv->icon_width, iconview->priv->icon_height);
+		nw = bound;
+		nh = bound;
+	}
+	else
+	{
+		quiver_rect_get_bound_size(iconview->priv->icon_width, iconview->priv->icon_height, &nw, &nh, FALSE);
+	}
 
 	if (out_x_offset) *out_x_offset = ((int)cell_width - (int)nw) / 2;
 	if (out_y_offset) *out_y_offset = ((int)cell_height - (int)nh) / 2;
@@ -3490,6 +3558,27 @@ void
 quiver_icon_view_set_cell_padding(QuiverIconView *iconview,guint padding)
 {
 	iconview->priv->cell_padding = padding;
+}
+
+void
+quiver_icon_view_set_thumbnails_square(QuiverIconView *iconview, gboolean square)
+{
+	gboolean changed;
+
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	changed = iconview->priv->thumbnails_square != (square ? TRUE : FALSE);
+	iconview->priv->thumbnails_square = square ? TRUE : FALSE;
+
+	if (changed)
+		gtk_widget_queue_draw(GTK_WIDGET(iconview));
+}
+
+gboolean
+quiver_icon_view_get_thumbnails_square(QuiverIconView *iconview)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), FALSE);
+	return iconview->priv->thumbnails_square;
 }
 
 void

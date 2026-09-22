@@ -1035,6 +1035,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
 	m_ThumbnailLoader.SetIconDimensions((guint)thumb_size, (guint)thumb_size);
 
+	bool bThumbsSquare = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_SQUARE, false);
+	quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(m_pIconView), bThumbsSquare);
+
 }
 
 bool Browser::BrowserImpl::IsTrashMode() const
@@ -1759,6 +1762,10 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cel
 			{
 				need_new_thumb = FALSE;
 			}
+			else if (thumb_width >= bound_width && thumb_height >= bound_height)
+			{
+				need_new_thumb = FALSE;
+			}
 		}
 	}
 	
@@ -1858,6 +1865,7 @@ static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong c
 			guint bound_width, bound_height;
 			bound_width = *actual_width;
 			bound_height = *actual_height;
+
 			quiver_rect_get_bound_size(width,height, &bound_width,&bound_height,FALSE);
 
 			if (bound_width == thumb_width && bound_height == thumb_height)
@@ -3383,6 +3391,14 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 			parent->UpdateUI();
 		}
 	}
+	else if ( QUIVER_PREFS_BROWSER == event->GetSection() )
+	{
+		if (QUIVER_PREFS_BROWSER_THUMBS_SQUARE == event->GetKey() )
+		{
+			quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewBoolean());
+			parent->m_ThumbnailLoader.UpdateList(true);
+		}
+	}
 }
 
 
@@ -3452,6 +3468,16 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 		if (NULL == f.GetURI())
 			return;
 
+		bool bSquare = Preferences::GetInstance()->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_SQUARE, false);
+
+		/* In square mode the icon view center-crops thumbnails at draw time, so
+		 * fetch and cache an extra 2x source to keep that crop sharp for images
+		 * whose aspect ratio is far from the square cell.  Thumbnails always
+		 * stay proportional (aspect-ratio preserving), both here and in the
+		 * freedesktop.org thumbnail cache. */
+		guint uiLoadW = bSquare ? uiWidth * 2 : uiWidth;
+		guint uiLoadH = bSquare ? uiHeight * 2 : uiHeight;
+
 		GdkTexture *texture = NULL;
 		texture = m_pBrowserImpl->m_ThumbnailCache.GetTexture(f.GetURI());				
 	
@@ -3470,7 +3496,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			thumb_width = gdk_texture_get_width(texture);
 			thumb_height = gdk_texture_get_height(texture);
 			
-			quiver_rect_get_bound_size(uiWidth,uiHeight, &bound_width,&bound_height,FALSE);
+			quiver_rect_get_bound_size(uiLoadW,uiLoadH, &bound_width,&bound_height,FALSE);
 			if (thumb_width != bound_width || thumb_height != bound_height)
 			{
 				// need a new thumbnail because the current cached size
@@ -3483,7 +3509,8 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 
 		if (NULL == texture)
 		{
-			texture = f.GetThumbnailTexture(std::max(uiWidth,uiHeight));
+			guint iMaxSide = std::max(uiLoadW,uiLoadH);
+			texture = f.GetThumbnailTexture(iMaxSide);
 		}
 
 		if (NULL != texture)
@@ -3499,7 +3526,8 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			{
 				swap(bound_width,bound_height);
 			}
-			quiver_rect_get_bound_size(uiWidth,uiHeight, &bound_width,&bound_height,FALSE);
+
+			quiver_rect_get_bound_size(uiLoadW,uiLoadH, &bound_width,&bound_height,FALSE);
 
 			if (bound_width > 0 && bound_height > 0 && (thumb_width != bound_width || thumb_height != bound_height))
 			{

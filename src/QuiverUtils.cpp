@@ -8,6 +8,7 @@ extern "C" {
 }
 #include <vector>
 #include <cstdint>
+#include <cstring>
 
 extern GtkApplication *g_pApp;
 
