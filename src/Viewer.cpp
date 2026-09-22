@@ -605,7 +605,15 @@ public:
 
 	void SetIsPlaying(bool isPlaying)
 	{
+		bool bWasPlaying = m_bIsPlaying;
 		m_bIsPlaying = isPlaying;
+
+		/* surface playback transitions so the app can keep the screen awake
+		 * while a video is actually playing */
+		if (isPlaying && !bWasPlaying)
+			m_pViewer->EmitVideoPlaybackStartedEvent();
+		else if (!isPlaying && bWasPlaying)
+			m_pViewer->EmitVideoPlaybackStoppedEvent();
 
 		if (0 != m_iTimeoutPlayProgress)
 		{

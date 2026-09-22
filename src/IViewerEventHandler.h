@@ -12,6 +12,8 @@ public:
 	virtual void HandleCursorChanged(ViewerEventPtr event) = 0;
 	virtual void HandleSlideShowStarted(ViewerEventPtr event) = 0;
 	virtual void HandleSlideShowStopped(ViewerEventPtr event) = 0;
+	virtual void HandleVideoPlaybackStarted(ViewerEventPtr event) = 0;
+	virtual void HandleVideoPlaybackStopped(ViewerEventPtr event) = 0;
 	virtual ~IViewerEventHandler(){};
 };
 

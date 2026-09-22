@@ -115,6 +115,11 @@ public:
 
 	void UpdateUI();
 	
+	/* Increment/decrement the shared "keep the screen awake" refcount and
+	 * call g_application_inhibit()/uninhibit() around idle/suspend while
+	 * anything (slideshow, video playback) needs the display on. */
+	void SetScreenAwake(bool bKeepAwake);
+	
 	static void ShowViewerUIItems(QuiverImpl *pQuiverImpl, bool bShow);
 	static void ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow);
 	static void SetViewerNavigationAccelerators(bool bEnable);
@@ -219,7 +224,11 @@ public:
 	
 	guint m_iTimeoutMouseMotionNotify;
 
-	guint m_iTimeoutKeepScreenOn;
+	/* g_application_inhibit() cookie while the display must stay awake
+	 * (slideshow running and/or a video is playing).  0 = not inhibited. */
+	guint m_uiScreenInhibitCookie;
+	/* nested reasons (slideshow, video playback) that want the screen on */
+	uint m_uiScreenAwakeRefCount;
 	
 	QuiverFile m_CurrentQuiverFile;
 
@@ -261,6 +270,8 @@ public:
 		virtual void HandleCursorChanged(ViewerEventPtr event_ptr);
 		virtual void HandleSlideShowStarted(ViewerEventPtr event_ptr);
 		virtual void HandleSlideShowStopped(ViewerEventPtr event_ptr);
+		virtual void HandleVideoPlaybackStarted(ViewerEventPtr event_ptr);
+		virtual void HandleVideoPlaybackStopped(ViewerEventPtr event_ptr);
 	private:
 		QuiverImpl *parent;
 	};
@@ -385,10 +396,10 @@ QuiverImpl::~QuiverImpl()
 		g_source_remove(m_iTimeoutMouseMotionNotify);
 		m_iTimeoutMouseMotionNotify = 0;
 	}
-	if (0 != m_iTimeoutKeepScreenOn)
+	if (0 != m_uiScreenInhibitCookie)
 	{
-		g_source_remove(m_iTimeoutKeepScreenOn);
-		m_iTimeoutKeepScreenOn = 0;
+		gtk_application_uninhibit(GTK_APPLICATION(g_pApp), m_uiScreenInhibitCookie);
+		m_uiScreenInhibitCookie = 0;
 	}
 	if (0 != m_iUndoToastTimer)
 	{
@@ -436,6 +447,38 @@ QuiverImpl::~QuiverImpl()
 	m_StatusbarPtr.reset();
 
 	gtk_window_destroy(GTK_WINDOW(m_pQuiverWindow));
+}
+
+void QuiverImpl::SetScreenAwake(bool bKeepAwake)
+{
+	if (bKeepAwake)
+	{
+		if (0 == m_uiScreenAwakeRefCount &&
+			0 == m_uiScreenInhibitCookie &&
+			NULL != g_pApp)
+		{
+			/* inhibit idle (screen blanker, lock) + suspend so a slideshow
+			 * or an actively-played video keeps the display lit */
+			m_uiScreenInhibitCookie = gtk_application_inhibit(
+				GTK_APPLICATION(g_pApp),
+				GTK_WINDOW(m_pQuiverWindow),
+				(GtkApplicationInhibitFlags)
+					(GTK_APPLICATION_INHIBIT_IDLE | GTK_APPLICATION_INHIBIT_SUSPEND),
+				"Slideshow or video playback");
+		}
+		++m_uiScreenAwakeRefCount;
+	}
+	else
+	{
+		if (0 < m_uiScreenAwakeRefCount)
+			--m_uiScreenAwakeRefCount;
+		if (0 == m_uiScreenAwakeRefCount &&
+			0 != m_uiScreenInhibitCookie)
+		{
+			gtk_application_uninhibit(GTK_APPLICATION(g_pApp), m_uiScreenInhibitCookie);
+			m_uiScreenInhibitCookie = 0;
+		}
+	}
 }
 
 static void append_menu_item_with_icon(GMenu *menu, const char *label, const char *action, const char *icon_name = NULL)
@@ -1915,7 +1958,8 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_bTimeoutEventMotionNotifyMouseMoved = false;
 	
 	m_QuiverImplPtr->m_iTimeoutMouseMotionNotify = 0;
-	m_QuiverImplPtr->m_iTimeoutKeepScreenOn = 0;
+	m_QuiverImplPtr->m_uiScreenInhibitCookie = 0;
+	m_QuiverImplPtr->m_uiScreenAwakeRefCount = 0;
 
 	m_QuiverImplPtr->m_WindowState = GDK_WINDOW_STATE_WITHDRAWN;
 
@@ -3236,6 +3280,9 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStarted(ViewerEventPtr event
 	QuiverUtils::ToggleActionSetState(ACTION_QUIVER_SLIDESHOW, TRUE);
 
 	parent->UpdateUI();
+
+	/* keep the display on for the whole show */
+	parent->SetScreenAwake(true);
 }
 
 void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event_ptr)
@@ -3260,12 +3307,18 @@ void QuiverImpl::ViewerEventHandler::HandleSlideShowStopped(ViewerEventPtr event
 
 	parent->UpdateUI();
 
-	// stop the timer that keeps the display on
-	if (0 != parent->m_iTimeoutKeepScreenOn)
-	{
-		g_source_remove(parent->m_iTimeoutKeepScreenOn);
-		parent->m_iTimeoutKeepScreenOn = 0;
-	}
+	// let the display blank again now that the show is over
+	parent->SetScreenAwake(false);
+}
+
+void QuiverImpl::ViewerEventHandler::HandleVideoPlaybackStarted(ViewerEventPtr event_ptr)
+{ (void)event_ptr;
+	parent->SetScreenAwake(true);
+}
+
+void QuiverImpl::ViewerEventHandler::HandleVideoPlaybackStopped(ViewerEventPtr event_ptr)
+{ (void)event_ptr;
+	parent->SetScreenAwake(false);
 }
 
 

@@ -18,6 +18,8 @@ public:
 	void EmitCursorChangedEvent();
 	void EmitSlideShowStartedEvent();
 	void EmitSlideShowStoppedEvent();
+	void EmitVideoPlaybackStartedEvent();
+	void EmitVideoPlaybackStoppedEvent();
 
 private:
 	ViewerSignal m_sigCursorChanged;
@@ -25,6 +27,8 @@ private:
 	ViewerSignal m_sigItemActivated;
 	ViewerSignal m_sigSlideShowStarted;
 	ViewerSignal m_sigSlideShowStopped;
+	ViewerSignal m_sigVideoPlaybackStarted;
+	ViewerSignal m_sigVideoPlaybackStopped;
 	
 	
 };

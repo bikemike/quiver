@@ -20,6 +20,12 @@ void ViewerEventSource::AddEventHandler(IEventHandlerPtr handler)
 	
 	c = m_sigSlideShowStopped.connect( boost::bind(&IViewerEventHandler::HandleSlideShowStopped,h,_1) );
 	MapConnection(handler,c);
+
+	c = m_sigVideoPlaybackStarted.connect( boost::bind(&IViewerEventHandler::HandleVideoPlaybackStarted,h,_1) );
+	MapConnection(handler,c);
+
+	c = m_sigVideoPlaybackStopped.connect( boost::bind(&IViewerEventHandler::HandleVideoPlaybackStopped,h,_1) );
+	MapConnection(handler,c);
 }
 
 
@@ -51,5 +57,17 @@ void ViewerEventSource::EmitSlideShowStoppedEvent()
 {
 	ViewerEventPtr n( new ViewerEvent(shared_from_this()) );
 	m_sigSlideShowStopped(n);
+}
+
+void ViewerEventSource::EmitVideoPlaybackStartedEvent()
+{
+	ViewerEventPtr n( new ViewerEvent(shared_from_this()) );
+	m_sigVideoPlaybackStarted(n);
+}
+
+void ViewerEventSource::EmitVideoPlaybackStoppedEvent()
+{
+	ViewerEventPtr n( new ViewerEvent(shared_from_this()) );
+	m_sigVideoPlaybackStopped(n);
 }
 
