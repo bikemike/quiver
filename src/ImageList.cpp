@@ -162,7 +162,7 @@ public:
 	
 	void Sort();
 	void Sort(bool bUpdateCurrentIndex);
-	void Sort(ImageList::SortBy o,bool descending, bool bUpdateCurrentIndex);
+	void Sort(ImageList::SortBy o, bool descending, bool bUpdateCurrentIndex, bool bAsync = false);
 
 	static gpointer AsyncSortThread(gpointer data);
 	static gboolean AsyncSortCommit(gpointer data);
@@ -505,7 +505,7 @@ std::vector<QuiverFile> ImageList::GetQuiverFiles()
 }
 
 
-void ImageList::Sort(SortBy o, bool bSortAscending)
+void ImageList::Sort(SortBy o, bool bSortAscending, bool bAsync)
 {
 	unsigned int iOldIndex = GetCurrentIndex();	
 	bool bNewOrder = false;
@@ -514,7 +514,7 @@ void ImageList::Sort(SortBy o, bool bSortAscending)
 		bNewOrder = true;
 	}
 	
-	m_ImageListImplPtr->Sort(o, bSortAscending, true);
+	m_ImageListImplPtr->Sort(o, bSortAscending, true, bAsync);
 
 	if (bNewOrder || iOldIndex != GetCurrentIndex())
 	{
@@ -779,9 +779,11 @@ ImageList::ImageListImpl::ImageListImpl(ImageList *pImageList)
 
 ImageList::ImageListImpl::~ImageListImpl()
 {
+	m_pLifetimeToken.reset();
 	StopAsyncLoad();
 	StopAsyncSort();
-	m_pLifetimeToken.reset();
+	m_bAbortAsyncLoad = true;
+	m_bAbortAsyncSort = true;
 	Clear();
 }
 
@@ -2037,7 +2039,7 @@ public:
 	}
 };
 
-void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurrentIndex)
+void ImageList::ImageListImpl::Sort(ImageList::SortBy o, bool bSortAscend, bool bUpdateCurrentIndex, bool bAsync)
 {
 	StopAsyncSort();
 
@@ -2069,18 +2071,21 @@ void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool b
 			break;
 		case ImageList::SORT_BY_DATE:
 		{
-			size_t uncached = 0;
-			for (const auto& f : m_QuiverFileList)
+			if (bAsync)
 			{
-				if (!f.IsFolder() && !f.HasCachedTimeT())
+				size_t uncached = 0;
+				for (const auto& f : m_QuiverFileList)
 				{
-					uncached++;
+					if (!f.IsFolder() && !f.HasCachedTimeT())
+					{
+						uncached++;
+					}
 				}
-			}
-			if (uncached > 0)
-			{
-				StartAsyncSortByDate(bSortAscend, bUpdateCurrentIndex, strURI);
-				return;
+				if (uncached > 0)
+				{
+					StartAsyncSortByDate(bSortAscend, bUpdateCurrentIndex, strURI);
+					return;
+				}
 			}
 			SortByDate sortby;
 			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);

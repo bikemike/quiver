@@ -35,6 +35,8 @@ bool FileConflictCheck::Check(const std::vector<Mapping>& vectMappings,
 
 		results[i].strSrcName = (NULL != srcname) ? srcname : "";
 		results[i].strDstName = (NULL != dstname) ? dstname : "";
+		results[i].strDstRelPath = vectMappings[i].strDstRelPath;
+		results[i].strDstURI = vectMappings[i].strDstURI;
 
 		const std::string& mime = vectMappings[i].strContentType;
 		if (!mime.empty())

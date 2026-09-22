@@ -77,7 +77,7 @@ public:
 	QuiverFile operator[](unsigned int n);
 	QuiverFile const operator[](unsigned int n) const;
 
-	void Sort(SortBy o, bool bSortAscending = true);
+	void Sort(SortBy o, bool bSortAscending = true, bool bAsync = false);
 
 public:
 	class ImageListImpl;

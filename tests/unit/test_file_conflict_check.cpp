@@ -54,6 +54,16 @@ TEST_CASE("FileConflictCheck Collision Detection", "[unit][conflict][fast]")
         REQUIRE_FALSE(results[1].HasConflict());
     }
 
+    SECTION("Relative destination path is preserved in results")
+    {
+        mappings.emplace_back("file:///tmp/quiver_test/a.jpg", "file:///tmp/quiver_test/2026/09/a.jpg", "2026/09");
+        bool hasConflict = FileConflictCheck::Check(mappings, results);
+        REQUIRE_FALSE(hasConflict);
+        REQUIRE(results.size() == 1);
+        REQUIRE(results[0].strDstRelPath == "2026/09");
+        REQUIRE(results[0].strDstURI == "file:///tmp/quiver_test/2026/09/a.jpg");
+    }
+
     SECTION("Cancellation token aborts check")
     {
         mappings.emplace_back("file:///tmp/quiver_test/a.jpg", "file:///tmp/quiver_test/target.jpg");

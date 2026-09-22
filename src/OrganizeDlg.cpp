@@ -19,6 +19,187 @@ extern GtkApplication *g_pApp;
 #include <thread>
 #include <utility>
 
+extern "C"
+{
+#include "strnatcmp.h"
+}
+
+// human-readable local path for a folder URI
+static std::string organize_friendly_folder_path(const std::string& uri)
+{
+	if (uri.empty())
+		return std::string();
+	GFile* file = g_file_new_for_uri(uri.c_str());
+	gchar* path = g_file_get_path(file);
+	g_object_unref(file);
+	if (NULL != path)
+	{
+		std::string strPath(path);
+		g_free(path);
+		return strPath;
+	}
+	return uri;
+}
+
+enum
+{
+	ORGANIZE_PREVIEW_COL_ICON = 0,
+	ORGANIZE_PREVIEW_COL_SRC,
+	ORGANIZE_PREVIEW_COL_PATH,
+	ORGANIZE_PREVIEW_COL_DST,
+	ORGANIZE_PREVIEW_COL_CONFLICT,
+	ORGANIZE_PREVIEW_COL_COUNT
+};
+
+#define PREVIEW_ROW_CAP 200
+
+static const char* organize_preview_icon_pixbuf(const std::string& strIconName)
+{
+	if (strIconName.empty())
+		return NULL;
+	return strIconName.c_str();
+}
+
+// row item type for the preview column view
+typedef struct {
+	GObject  parent_instance;
+	gchar*   icon_name;
+	gchar*   src_name;
+	gchar*   rel_path;
+	gchar*   dst_name;
+	gchar*   conflict;
+} OrganizePreviewItem;
+
+typedef struct {
+	GObjectClass parent_class;
+} OrganizePreviewItemClass;
+
+#define ORGANIZE_PREVIEW_ITEM_TYPE (organize_preview_item_get_type())
+#define ORGANIZE_PREVIEW_ITEM(obj) \
+	(G_TYPE_CHECK_INSTANCE_CAST((obj), ORGANIZE_PREVIEW_ITEM_TYPE, OrganizePreviewItem))
+
+G_DEFINE_TYPE(OrganizePreviewItem, organize_preview_item, G_TYPE_OBJECT)
+
+static void organize_preview_item_finalize (GObject* object)
+{
+	OrganizePreviewItem* item = ORGANIZE_PREVIEW_ITEM(object);
+	g_free(item->icon_name);
+	g_free(item->src_name);
+	g_free(item->rel_path);
+	g_free(item->dst_name);
+	g_free(item->conflict);
+	G_OBJECT_CLASS(organize_preview_item_parent_class)->finalize(object);
+}
+
+static void organize_preview_item_class_init (OrganizePreviewItemClass* klass)
+{
+	G_OBJECT_CLASS(klass)->finalize = organize_preview_item_finalize;
+}
+
+static void organize_preview_item_init (OrganizePreviewItem* item)
+{
+	item->icon_name = NULL;
+	item->src_name = NULL;
+	item->rel_path = NULL;
+	item->dst_name = NULL;
+	item->conflict = NULL;
+}
+
+static OrganizePreviewItem* organize_preview_item_new (const gchar* icon,
+	const gchar* src, const gchar* rel_path, const gchar* dst, const gchar* conflict)
+{
+	OrganizePreviewItem* item = static_cast<OrganizePreviewItem*>(
+		g_object_new(ORGANIZE_PREVIEW_ITEM_TYPE, NULL));
+	item->icon_name = g_strdup(icon);
+	item->src_name = g_strdup(src);
+	item->rel_path = g_strdup(rel_path);
+	item->dst_name = g_strdup(dst);
+	item->conflict = g_strdup(conflict);
+	return item;
+}
+
+static void organize_preview_icon_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	GtkWidget* image = gtk_image_new();
+	gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
+	gtk_widget_set_margin_start(image, 6);
+	gtk_widget_set_margin_end(image, 6);
+	gtk_list_item_set_child(list_item, image);
+}
+
+static void organize_preview_icon_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	OrganizePreviewItem* item =
+		ORGANIZE_PREVIEW_ITEM(gtk_list_item_get_item(list_item));
+	GtkWidget* image = gtk_list_item_get_child(list_item);
+	if (item && item->icon_name)
+		gtk_image_set_from_icon_name(GTK_IMAGE(image), item->icon_name);
+	else
+		gtk_image_clear(GTK_IMAGE(image));
+}
+
+static void organize_preview_text_setup (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory; (void)user_data;
+	GtkWidget* label = gtk_label_new(NULL);
+	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+	gtk_widget_set_hexpand(label, TRUE);
+	gtk_list_item_set_child(list_item, label);
+}
+
+static void organize_preview_text_bind (GtkSignalListItemFactory* factory, GtkListItem* list_item, gpointer user_data)
+{ (void)factory;
+	int iCol = GPOINTER_TO_INT(user_data);
+	OrganizePreviewItem* item =
+		ORGANIZE_PREVIEW_ITEM(gtk_list_item_get_item(list_item));
+	GtkWidget* label = gtk_list_item_get_child(list_item);
+	if (!item)
+	{
+		gtk_label_set_text(GTK_LABEL(label), "");
+		return;
+	}
+	const char* szText = NULL;
+	switch (iCol)
+	{
+		case ORGANIZE_PREVIEW_COL_SRC:      szText = item->src_name; break;
+		case ORGANIZE_PREVIEW_COL_PATH:     szText = item->rel_path; break;
+		case ORGANIZE_PREVIEW_COL_DST:      szText = item->dst_name; break;
+		default:                            szText = item->conflict; break;
+	}
+	gboolean bConflicted =
+		(NULL != item->conflict && '\0' != item->conflict[0]);
+	if (bConflicted && ORGANIZE_PREVIEW_COL_CONFLICT == iCol)
+	{
+		gchar* esc = g_markup_escape_text(szText ? szText : "", -1);
+		gchar* markup =
+			g_strdup_printf("<span foreground=\"#e01b24\">%s</span>", esc);
+		gtk_label_set_markup(GTK_LABEL(label), markup);
+		g_free(markup);
+		g_free(esc);
+	}
+	else
+	{
+		gtk_label_set_text(GTK_LABEL(label), szText ? szText : "");
+	}
+}
+
+static GtkListItemFactory* organize_preview_column_factory (int iCol)
+{
+	GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
+	if (ORGANIZE_PREVIEW_COL_ICON == iCol)
+	{
+		g_signal_connect(factory, "setup", G_CALLBACK(organize_preview_icon_setup), NULL);
+		g_signal_connect(factory, "bind", G_CALLBACK(organize_preview_icon_bind), NULL);
+	}
+	else
+	{
+		g_signal_connect(factory, "setup", G_CALLBACK(organize_preview_text_setup), NULL);
+		g_signal_connect(factory, "bind", G_CALLBACK(organize_preview_text_bind),
+			GINT_TO_POINTER(iCol));
+	}
+	return factory;
+}
+
 class OrganizeDlg::OrganizeDlgPriv
 {
 public:
@@ -30,9 +211,10 @@ public:
 		bool                          bDone;
 		bool                          bFound;
 		double                        dProgress;
+		std::string                   strStatus;
 		FileConflictCheck::ResultList vectResults;
 
-		ConflictShared() : bDone(false), bFound(false), dProgress(0.) {}
+		ConflictShared() : bDone(false), bFound(false), dProgress(0.), strStatus("Checking for conflicts…") {}
 	};
 
 // constructor, destructor
@@ -89,9 +271,13 @@ public:
 
 	GtkEntry*               m_pEntryFolderName;
 	GtkLabel*               m_pLabelExample;
+	GtkWidget*              m_pLabelTemplateInfo;
 	GtkWidget*              m_pLabelWarning;
+	GtkWidget*              m_pLabelStatus;
 	GtkProgressBar*         m_pProgressBar;
-	GtkWidget*              m_pBtnViewConflicts;
+	GtkWidget*              m_pScrolledPreview;
+	GtkWidget*              m_pTreeViewPreview;
+	GListStore*             m_pListStorePreview;
 
 	guint                   m_iConflictCheckID;
 	guint                   m_iConflictPollID;
@@ -184,9 +370,8 @@ std::string OrganizeDlg::GetInputFolder() const
 void OrganizeDlg::SetInputFolder(std::string dir)
 {
 	m_PrivPtr->m_strSrcFolder = dir;
-	if (m_PrivPtr->m_bLoadedDlg && NULL != m_PrivPtr->m_pFCBtnSourceFolder)
+	if (m_PrivPtr->m_bLoadedDlg)
 	{
-		gtk_button_set_label(GTK_BUTTON(m_PrivPtr->m_pFCBtnSourceFolder), dir.c_str());
 		m_PrivPtr->UpdateUI();
 	}
 }
@@ -213,20 +398,26 @@ bool OrganizeDlg::GetRenameFiles() const
 
 
 // prototypes
-static void  on_clicked (GtkButton *button, gpointer   user_data);
+static void on_clicked (GtkButton *button, gpointer   user_data);
 static void on_folder_change (GtkButton *button, gpointer user_data);
 static void on_editable_changed (GtkEditable *editable, gpointer user_data);
+static void on_spin_changed (GtkSpinButton *spin_button, gpointer user_data);
 static void combo_changed (GObject *widget, gpointer user_data);
 static gboolean conflict_check_timeout_cb (gpointer user_data);
 static gboolean conflict_poll_cb (gpointer user_data);
-static void on_view_conflicts_clicked (GtkButton *button, gpointer user_data);
 
 
 OrganizeDlg::OrganizeDlgPriv::OrganizeDlgPriv(OrganizeDlg *parent) :
         m_pOrganizeDlg(parent)
 {
 	m_pDialogOrganize = NULL;
+	m_pLabelTemplateInfo = NULL;
 	m_pLabelWarning = NULL;
+	m_pLabelStatus = NULL;
+	m_pProgressBar = NULL;
+	m_pScrolledPreview = NULL;
+	m_pTreeViewPreview = NULL;
+	m_pListStorePreview = NULL;
 	m_iConflictCheckID = 0;
 	m_iConflictPollID = 0;
 	m_pConflictCancel = NULL;
@@ -313,12 +504,30 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 	m_pTglBtnSubfolders       = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_subfolders") );
 	m_pTglBtnRenameFiles      = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "organize_cb_rename_files") );
 
+	m_pLabelTemplateInfo      = GTK_WIDGET( gtk_builder_get_object(m_pGtkBuilder, "label_filename_tempate_info") );
+
 	GtkWidget* src_cont = GTK_WIDGET( gtk_builder_get_object(m_pGtkBuilder, "organize_align_source_folder") );
 	GtkWidget* dst_cont = GTK_WIDGET( gtk_builder_get_object(m_pGtkBuilder, "organize_align_dest_folder") );
 		m_pFCBtnSourceFolder = gtk_button_new_with_label("Choose Source Folder…");
-		gtk_widget_set_halign(m_pFCBtnSourceFolder, GTK_ALIGN_START);
+		gtk_widget_set_halign(m_pFCBtnSourceFolder, GTK_ALIGN_FILL);
+		gtk_widget_set_hexpand(m_pFCBtnSourceFolder, TRUE);
 		m_pFCBtnDestFolder = gtk_button_new_with_label("Choose Destination Folder…");
-		gtk_widget_set_halign(m_pFCBtnDestFolder, GTK_ALIGN_START);
+		gtk_widget_set_halign(m_pFCBtnDestFolder, GTK_ALIGN_FILL);
+		gtk_widget_set_hexpand(m_pFCBtnDestFolder, TRUE);
+		{
+			GtkWidget* lblSrc = gtk_button_get_child(GTK_BUTTON(m_pFCBtnSourceFolder));
+			if (GTK_IS_LABEL(lblSrc))
+			{
+				gtk_label_set_xalign(GTK_LABEL(lblSrc), 0.0);
+				gtk_label_set_ellipsize(GTK_LABEL(lblSrc), PANGO_ELLIPSIZE_START);
+			}
+			GtkWidget* lblDst = gtk_button_get_child(GTK_BUTTON(m_pFCBtnDestFolder));
+			if (GTK_IS_LABEL(lblDst))
+			{
+				gtk_label_set_xalign(GTK_LABEL(lblDst), 0.0);
+				gtk_label_set_ellipsize(GTK_LABEL(lblDst), PANGO_ELLIPSIZE_START);
+			}
+		}
 		if (NULL != src_cont)
 			gtk_box_append(GTK_BOX(src_cont), m_pFCBtnSourceFolder);
 		if (NULL != dst_cont)
@@ -352,7 +561,7 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		gtk_label_set_attributes(m_pLabelExample, attrs);
 		pango_attr_list_unref(attrs);
 
-		gtk_window_set_default_size(GTK_WINDOW(m_pDialogOrganize), 540, 480);
+		gtk_window_set_default_size(GTK_WINDOW(m_pDialogOrganize), 780, 580);
 
 		gtk_drop_down_set_selected(m_pComboTemplateFolder, 0);
 
@@ -362,14 +571,50 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		if (!strPhotoLibrary.empty())
 		{
 			m_strDestFolder = strPhotoLibrary;
-			if (NULL != m_pFCBtnDestFolder)
-			{
-				gtk_button_set_label(GTK_BUTTON(m_pFCBtnDestFolder), m_strDestFolder.c_str());
-			}
 		}
 
 		GtkWidget* content_area =
 			gtk_window_get_child(GTK_WINDOW(m_pDialogOrganize));
+
+		m_pScrolledPreview = gtk_scrolled_window_new();
+		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(m_pScrolledPreview),
+			GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+		gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(m_pScrolledPreview), TRUE);
+		gtk_widget_set_vexpand(m_pScrolledPreview, TRUE);
+		gtk_widget_set_size_request(m_pScrolledPreview, -1, 150);
+
+		m_pListStorePreview = g_list_store_new(ORGANIZE_PREVIEW_ITEM_TYPE);
+		GtkSingleSelection* sel =
+			gtk_single_selection_new(G_LIST_MODEL(m_pListStorePreview));
+		m_pTreeViewPreview =
+			gtk_column_view_new(GTK_SELECTION_MODEL(sel));
+
+		{
+			GtkColumnViewColumn* column =
+				gtk_column_view_column_new("", organize_preview_column_factory(ORGANIZE_PREVIEW_COL_ICON));
+			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewPreview), column);
+		}
+		static const char* szTitles[] = { NULL, "Original Name", "New Path", "New Name", "Conflict" };
+		for (int c = ORGANIZE_PREVIEW_COL_SRC ; c <= ORGANIZE_PREVIEW_COL_CONFLICT ; c++)
+		{
+			GtkColumnViewColumn* column =
+				gtk_column_view_column_new(szTitles[c], organize_preview_column_factory(c));
+			gtk_column_view_column_set_expand(column, TRUE);
+			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewPreview), column);
+		}
+
+		gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(m_pScrolledPreview),
+			m_pTreeViewPreview);
+		gtk_box_append(GTK_BOX(content_area), m_pScrolledPreview);
+
+		m_pLabelStatus = gtk_label_new(NULL);
+		gtk_label_set_use_markup(GTK_LABEL(m_pLabelStatus), TRUE);
+		gtk_label_set_wrap(GTK_LABEL(m_pLabelStatus), TRUE);
+		gtk_label_set_xalign(GTK_LABEL(m_pLabelStatus), 0.0);
+		gtk_box_append(GTK_BOX(content_area), m_pLabelStatus);
+
+		m_pProgressBar = GTK_PROGRESS_BAR(gtk_progress_bar_new());
+		gtk_box_append(GTK_BOX(content_area), GTK_WIDGET(m_pProgressBar));
 
 		m_pLabelWarning = gtk_label_new(NULL);
 		gtk_label_set_use_markup(GTK_LABEL(m_pLabelWarning), TRUE);
@@ -378,15 +623,6 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		gtk_label_set_wrap_mode(GTK_LABEL(m_pLabelWarning), PANGO_WRAP_WORD_CHAR);
 		gtk_widget_set_margin_top(m_pLabelWarning, 6);
 		gtk_box_append(GTK_BOX(content_area), m_pLabelWarning);
-
-		m_pBtnViewConflicts = gtk_button_new_with_mnemonic("_View Conflicts…");
-		gtk_widget_set_halign(m_pBtnViewConflicts, GTK_ALIGN_START);
-		g_signal_connect(m_pBtnViewConflicts,
-			"clicked",(GCallback)on_view_conflicts_clicked,this);
-		gtk_box_append(GTK_BOX(content_area), m_pBtnViewConflicts);
-
-		m_pProgressBar = GTK_PROGRESS_BAR(gtk_progress_bar_new());
-		gtk_box_append(GTK_BOX(content_area), GTK_WIDGET(m_pProgressBar));
 	}
 }
 
@@ -394,7 +630,37 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 {
 	if (m_bLoadedDlg)
 	{
-		std::string strLabel = m_strDestFolder;
+		if (NULL != m_pFCBtnSourceFolder)
+		{
+			std::string strSrc = organize_friendly_folder_path(m_strSrcFolder);
+			gtk_button_set_label(GTK_BUTTON(m_pFCBtnSourceFolder),
+				strSrc.empty() ? "Choose Source Folder…" : strSrc.c_str());
+			gtk_widget_set_tooltip_text(m_pFCBtnSourceFolder,
+				strSrc.empty() ? "Choose Source Folder…" : strSrc.c_str());
+			GtkWidget* lbl = gtk_button_get_child(GTK_BUTTON(m_pFCBtnSourceFolder));
+			if (GTK_IS_LABEL(lbl))
+			{
+				gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+				gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_START);
+			}
+		}
+		if (NULL != m_pFCBtnDestFolder)
+		{
+			std::string strDst = organize_friendly_folder_path(m_strDestFolder);
+			gtk_button_set_label(GTK_BUTTON(m_pFCBtnDestFolder),
+				strDst.empty() ? "Choose Destination Folder…" : strDst.c_str());
+			gtk_widget_set_tooltip_text(m_pFCBtnDestFolder,
+				strDst.empty() ? "Choose Destination Folder…" : strDst.c_str());
+			GtkWidget* lbl = gtk_button_get_child(GTK_BUTTON(m_pFCBtnDestFolder));
+			if (GTK_IS_LABEL(lbl))
+			{
+				gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+				gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_START);
+			}
+		}
+
+		std::string strDestDisplay = organize_friendly_folder_path(m_strDestFolder);
+		std::string strLabel = strDestDisplay.empty() ? m_strDestFolder : strDestDisplay;
 		GDateTime* time = g_date_time_new_now_local();
 
 		strLabel += G_DIR_SEPARATOR_S;
@@ -410,16 +676,81 @@ void OrganizeDlg::OrganizeDlgPriv::UpdateUI()
 		}
 		g_date_time_unref(time);
 		gtk_label_set_text(m_pLabelExample, strLabel.c_str());
+		gtk_widget_set_tooltip_text(GTK_WIDGET(m_pLabelExample), strLabel.c_str());
 
 		gtk_widget_set_sensitive(GTK_WIDGET(m_pEntryTemplateFile), GetRenameFiles() ? TRUE : FALSE);
-
-		if (0 != m_iConflictCheckID)
+		if (NULL != m_pLabelTemplateInfo)
 		{
-			g_source_remove(m_iConflictCheckID);
-			m_iConflictCheckID = 0;
+			gtk_widget_set_sensitive(m_pLabelTemplateInfo, GetRenameFiles() ? TRUE : FALSE);
 		}
-		m_iConflictCheckID =
-			g_timeout_add(400, conflict_check_timeout_cb, this);
+
+		if (m_strSrcFolder.empty() || m_strDestFolder.empty())
+		{
+			if (0 != m_iConflictCheckID)
+			{
+				g_source_remove(m_iConflictCheckID);
+				m_iConflictCheckID = 0;
+			}
+			CancelConflictCheck();
+			if (0 != m_iConflictPollID)
+			{
+				g_source_remove(m_iConflictPollID);
+				m_iConflictPollID = 0;
+			}
+			m_bConflictFound = false;
+			if (NULL != m_pListStorePreview)
+				g_list_store_remove_all(m_pListStorePreview);
+			if (NULL != m_pLabelStatus)
+			{
+				gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+					"<span foreground=\"#77767e\">Please select both a source and destination folder.</span>");
+				gtk_widget_set_visible(m_pLabelStatus, TRUE);
+			}
+			if (NULL != m_pProgressBar)
+				gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), FALSE);
+			if (NULL != m_pLabelWarning)
+				gtk_widget_set_visible(m_pLabelWarning, FALSE);
+			gtk_widget_set_sensitive(m_pBtnOK, FALSE);
+		}
+		else
+		{
+			// A change invalidates the previous dry-run: retire its completed
+			// state now so the poll doesn't re-apply stale results before the
+			// debounced re-check fires, letting the pending feedback stick.
+			CancelConflictCheck();
+			m_bConflictKeyValid = false;
+
+			// Immediate visual feedback that conflict checking is pending / running
+			if (NULL != m_pLabelStatus)
+			{
+				gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+					"<span foreground=\"#77767e\">Checking for conflicts…</span>");
+				gtk_widget_set_visible(m_pLabelStatus, TRUE);
+			}
+			if (NULL != m_pProgressBar)
+			{
+				gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), TRUE);
+				gtk_progress_bar_pulse(m_pProgressBar);
+			}
+			if (NULL != m_pLabelWarning)
+			{
+				gtk_widget_set_visible(m_pLabelWarning, FALSE);
+			}
+			gtk_widget_set_sensitive(m_pBtnOK, FALSE);
+
+			if (0 == m_iConflictPollID)
+			{
+				m_iConflictPollID = g_timeout_add(80, conflict_poll_cb, this);
+			}
+
+			if (0 != m_iConflictCheckID)
+			{
+				g_source_remove(m_iConflictCheckID);
+				m_iConflictCheckID = 0;
+			}
+			m_iConflictCheckID =
+				g_timeout_add(300, conflict_check_timeout_cb, this);
+		}
 	}
 }
 
@@ -469,6 +800,9 @@ void OrganizeDlg::OrganizeDlgPriv::ConnectSignals()
 
 		g_signal_connect(m_pEntryTemplateFile,
 			"changed",(GCallback)on_editable_changed,this);
+
+		g_signal_connect(m_pSpinExtension,
+			"value-changed",(GCallback)on_spin_changed,this);
 
 	}
 	
@@ -573,7 +907,7 @@ bool OrganizeDlg::OrganizeDlgPriv::ValidateInput()
 			bIsValid = false;
 			gchar* detail = g_strdup_printf(
 				"%d file(s) would collide with existing or generated names. "
-				"Use the conflict list to review them.",
+				"Please resolve the conflicts shown in the table.",
 				(int)nConflicts);
 			GtkAlertDialog* alert = gtk_alert_dialog_new("%s", detail);
 			gtk_alert_dialog_show(alert, GTK_WINDOW(m_pDialogOrganize));
@@ -595,10 +929,25 @@ bool OrganizeDlg::OrganizeDlgPriv::CollectAndCheck(const OrganizeTask::Options& 
 	gpointer pUserData,
 	FileConflictCheck::ResultList& vectResults)
 {
+	if (NULL != pUserData)
+	{
+		ConflictShared* pState = static_cast<ConflictShared*>(pUserData);
+		std::lock_guard<std::mutex> lock(pState->mutex);
+		pState->strStatus = "Scanning source folder…";
+	}
+
 	std::vector<FileConflictCheck::Mapping> vectMappings;
 	if (!OrganizeTask::ComputeMappings(opts, vectMappings))
 	{
 		return false;
+	}
+
+	if (NULL != pUserData &&
+		(NULL == pCancellable || !g_cancellable_is_cancelled(pCancellable)))
+	{
+		ConflictShared* pState = static_cast<ConflictShared*>(pUserData);
+		std::lock_guard<std::mutex> lock(pState->mutex);
+		pState->strStatus = "Checking for conflicts…";
 	}
 
 	return FileConflictCheck::Check(
@@ -616,16 +965,10 @@ void OrganizeDlg::OrganizeDlgPriv::StartConflictCheck()
 {
 	CancelConflictCheck();
 
-	if (0 != m_iConflictPollID)
-	{
-		g_source_remove(m_iConflictPollID);
-		m_iConflictPollID = 0;
-	}
-
 	m_bConflictKeyValid = false;
 
-	gtk_widget_set_visible(m_pLabelWarning, FALSE);
-	gtk_widget_set_visible(m_pBtnViewConflicts, FALSE);
+	if (NULL != m_pLabelWarning)
+		gtk_widget_set_visible(m_pLabelWarning, FALSE);
 
 	OrganizeTask::Options opts;
 
@@ -647,12 +990,32 @@ void OrganizeDlg::OrganizeDlgPriv::StartConflictCheck()
 	if (opts.strSrcDirURI.empty() || opts.strDestDirURI.empty())
 	{
 		m_bConflictFound = false;
-		gtk_widget_set_sensitive(m_pBtnOK, TRUE);
+		if (NULL != m_pListStorePreview)
+			g_list_store_remove_all(m_pListStorePreview);
+		if (NULL != m_pLabelStatus)
+		{
+			gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+				"<span foreground=\"#77767e\">Please select both a source and destination folder.</span>");
+			gtk_widget_set_visible(m_pLabelStatus, TRUE);
+		}
+		if (NULL != m_pProgressBar)
+			gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), FALSE);
+		gtk_widget_set_sensitive(m_pBtnOK, FALSE);
 		return;
 	}
 
 	gtk_widget_set_sensitive(m_pBtnOK, FALSE);
-	gtk_progress_bar_set_fraction(m_pProgressBar, 0.);
+	if (NULL != m_pProgressBar)
+	{
+		gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), TRUE);
+		gtk_progress_bar_pulse(m_pProgressBar);
+	}
+	if (NULL != m_pLabelStatus)
+	{
+		gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+			"<span foreground=\"#77767e\">Checking for conflicts…</span>");
+		gtk_widget_set_visible(m_pLabelStatus, TRUE);
+	}
 
 	int iGeneration = ++(*m_pConflictGeneration);
 
@@ -690,7 +1053,10 @@ void OrganizeDlg::OrganizeDlgPriv::StartConflictCheck()
 			}
 		}).detach();
 
-	m_iConflictPollID = g_timeout_add(100, conflict_poll_cb, this);
+	if (0 == m_iConflictPollID)
+	{
+		m_iConflictPollID = g_timeout_add(80, conflict_poll_cb, this);
+	}
 }
 
 void OrganizeDlg::OrganizeDlgPriv::CancelConflictCheck()
@@ -710,13 +1076,23 @@ void OrganizeDlg::OrganizeDlgPriv::CancelConflictCheck()
 
 void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 {
-	gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), FALSE);
+	if (NULL != m_pProgressBar)
+		gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), FALSE);
 
 	{
 		std::lock_guard<std::mutex> lock(state.mutex);
 		m_vectConflicts = state.vectResults;
 		m_bConflictFound = state.bFound;
 	}
+
+	// conflicted rows first, then by name (natural order)
+	std::stable_sort(m_vectConflicts.begin(), m_vectConflicts.end(),
+		[](const FileConflictCheck::Result& a, const FileConflictCheck::Result& b)
+		{
+			if (a.HasConflict() != b.HasConflict())
+				return a.HasConflict();
+			return 0 > strnatcasecmp(a.strSrcName.c_str(), b.strSrcName.c_str());
+		});
 
 	size_t nConflicts = 0;
 	for (size_t i = 0 ; i < m_vectConflicts.size() ; i++)
@@ -725,34 +1101,83 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 			nConflicts++;
 	}
 
-	if (m_bConflictFound && !m_vectConflicts.empty())
+	// live preview table
+	if (NULL != m_pListStorePreview)
 	{
-		std::string strDetails;
-		size_t nShown = MIN(nConflicts, (size_t)3);
-		for (size_t i = 0 ; nShown > 0 ; i++)
+		g_list_store_remove_all(m_pListStorePreview);
+		const size_t nRows = MIN(m_vectConflicts.size(), PREVIEW_ROW_CAP);
+		for (size_t i = 0 ; i < nRows ; i++)
 		{
-			if (!m_vectConflicts[i].HasConflict())
-				continue;
-			strDetails += "\n" + m_vectConflicts[i].strSrcName
-				+ " -> " + m_vectConflicts[i].strDstName;
-			nShown--;
+			const FileConflictCheck::Result& r = m_vectConflicts[i];
+			gchar* szIcon = organize_preview_icon_pixbuf(r.strIconName)
+				? g_strdup(r.strIconName.c_str()) : NULL;
+			OrganizePreviewItem* item = organize_preview_item_new(
+				szIcon, r.strSrcName.c_str(), r.strDstRelPath.c_str(),
+				r.strDstName.c_str(), r.strConflictWith.c_str());
+			g_free(szIcon);
+			g_list_store_append(m_pListStorePreview, item);
+			g_object_unref(item);
 		}
-		if (nConflicts > 3)
+		if (m_vectConflicts.size() > PREVIEW_ROW_CAP)
 		{
-			char szMore[64];
-			g_snprintf(szMore, sizeof(szMore), "\n… and %d more",
-				(int)(nConflicts - 3));
-			strDetails += szMore;
+			char szMore[128];
+			g_snprintf(szMore, sizeof(szMore), "… and %d more files",
+				(int)(m_vectConflicts.size() - PREVIEW_ROW_CAP));
+			OrganizePreviewItem* item = organize_preview_item_new(
+				NULL, szMore, NULL, NULL, NULL);
+			g_list_store_append(m_pListStorePreview, item);
+			g_object_unref(item);
+		}
+	}
+
+	if (0 == m_vectConflicts.size())
+	{
+		if (NULL != m_pLabelStatus)
+		{
+			gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+				"<span foreground=\"#77767e\">No supported files found "
+				"in source folder.</span>");
+		}
+		if (NULL != m_pLabelWarning)
+			gtk_widget_set_visible(m_pLabelWarning, FALSE);
+	}
+	else if (m_bConflictFound)
+	{
+		if (NULL != m_pLabelStatus)
+		{
+			gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+				(("<span foreground=\"#e01b24\"><b>")
+				+ std::to_string(nConflicts)
+				+ (1 == nConflicts ? " conflict" : " conflicts")
+				+ " found.</b></span>").c_str());
 		}
 
 		std::string strMsg = "<span foreground=\"#e01b24\"><b>Organize conflict:</b> "
 			+ std::to_string(nConflicts)
 			+ " file(s) would collide with existing or generated names."
-			+ "</span>" + strDetails;
-		gtk_label_set_markup(GTK_LABEL(m_pLabelWarning), strMsg.c_str());
+			"</span>";
+		if (NULL != m_pLabelWarning)
+		{
+			gtk_label_set_markup(GTK_LABEL(m_pLabelWarning), strMsg.c_str());
+			gtk_widget_set_visible(m_pLabelWarning, TRUE);
+		}
+	}
+	else
+	{
+		if (NULL != m_pLabelWarning)
+			gtk_widget_set_visible(m_pLabelWarning, FALSE);
+		if (NULL != m_pLabelStatus)
+		{
+			std::string strCount = std::to_string(m_vectConflicts.size());
+			gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+				(("<span foreground=\"#2ec27e\">Ready: <b>")
+				+ strCount
+				+ (1 == m_vectConflicts.size() ? " file" : " files")
+				+ "</b> to organize.</span>").c_str());
+		}
 	}
 
-	gtk_widget_set_sensitive(m_pBtnOK, !m_bConflictFound);
+	gtk_widget_set_sensitive(m_pBtnOK, !m_bConflictFound && !m_vectConflicts.empty());
 
 	m_strConflictKey = GetConflictInputKey();
 	m_bConflictKeyValid = true;
@@ -788,7 +1213,7 @@ static void on_folder_selected(GObject* source, GAsyncResult* res, gpointer data
 	if (folder != NULL)
 	{
 		gchar* uri = g_file_get_uri(folder);
-		*(ctx->second) = uri;
+		*(ctx->second) = uri ? uri : "";
 		g_free(uri);
 		g_object_unref(folder);
 		ctx->first->UpdateUI();
@@ -814,7 +1239,7 @@ static void on_folder_change (GtkButton *button, gpointer user_data)
 		on_folder_selected, ctx);
 }
 
-static void  on_clicked (GtkButton *button, gpointer   user_data)
+static void on_clicked (GtkButton *button, gpointer user_data)
 {
 	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
 	if (GTK_BUTTON(priv->m_pBtnOK) == button)
@@ -826,6 +1251,13 @@ static void  on_clicked (GtkButton *button, gpointer   user_data)
 			gtk_widget_set_visible(priv->m_pDialogOrganize, FALSE);
 		}
 	}
+}
+
+static void on_spin_changed (GtkSpinButton *spin_button, gpointer user_data)
+{
+	(void)spin_button;
+	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
+	priv->UpdateUI();
 }
 
 static void on_editable_changed (GtkEditable *editable, gpointer user_data)
@@ -859,14 +1291,35 @@ static gboolean conflict_poll_cb (gpointer user_data)
 
 	double dProgress = 0.;
 	bool bDone = false;
+	std::string strStatus;
 	{
 		std::lock_guard<std::mutex> lock(pState->mutex);
 		dProgress = pState->dProgress;
 		bDone = pState->bDone;
+		strStatus = pState->strStatus;
 	}
 
-	gtk_progress_bar_set_fraction(priv->m_pProgressBar,
-		CLAMP(dProgress, 0., 1.));
+	if (NULL != priv->m_pProgressBar)
+	{
+		if (dProgress > 0.)
+		{
+			gtk_progress_bar_set_fraction(priv->m_pProgressBar,
+				CLAMP(dProgress, 0., 1.));
+		}
+		else
+		{
+			gtk_progress_bar_pulse(priv->m_pProgressBar);
+		}
+	}
+
+	if (!strStatus.empty() && NULL != priv->m_pLabelStatus)
+	{
+		std::string strMarkup =
+			"<span foreground=\"#77767e\">" + strStatus + "</span>";
+		gtk_label_set_markup(GTK_LABEL(priv->m_pLabelStatus),
+			strMarkup.c_str());
+		gtk_widget_set_visible(priv->m_pLabelStatus, TRUE);
+	}
 
 	if (!bDone)
 		return TRUE;
@@ -874,13 +1327,6 @@ static gboolean conflict_poll_cb (gpointer user_data)
 	priv->m_iConflictPollID = 0;
 	priv->ApplyConflictResults(*pState);
 	return FALSE;
-}
-
-static void on_view_conflicts_clicked (GtkButton *button, gpointer user_data)
-{ (void)button;
-	OrganizeDlg::OrganizeDlgPriv *priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
-	FileConflictCheck::ShowResultsDialog(
-		GTK_WINDOW(priv->m_pDialogOrganize), priv->m_vectConflicts);
 }
 
 

@@ -860,6 +860,8 @@
   </object>
   <object class="GtkWindow" id="OrganizeDialog">
     <property name="title" translatable="1">Organize</property>
+    <property name="default-width">780</property>
+    <property name="default-height">580</property>
     <child>
       <object class="GtkBox" id="dialog-vbox8">
         <property name="orientation">vertical</property>
@@ -870,146 +872,186 @@
         <property name="margin-bottom">16</property>
         <child>
           <object class="GtkBox" id="vbox20">
-            <property name="orientation">vertical</property>
-            <property name="spacing">10</property>
+            <property name="orientation">horizontal</property>
+            <property name="spacing">20</property>
             <child>
-              <object class="GtkGrid" id="table3">
-                <property name="column-spacing">12</property>
-                <property name="row-spacing">8</property>
-                <child>
-                  <placeholder />
-                </child>
-                <child>
-                  <object class="GtkLabel" id="label28">
-                    <property name="xalign">0</property>
-                    <property name="label" translatable="1">Folder suffix</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">6</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkEntry" id="organize_entry_folder_name">
-                    <property name="focusable">1</property>
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">6</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="label26">
-                    <property name="xalign">0</property>
-                    <property name="yalign">0</property>
-                    <property name="label" translatable="1">&lt;b&gt;Destination:&lt;/b&gt;</property>
-                    <property name="use_markup">1</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">3</property>
-                      <property name="column-span">2</property>
-                    </layout>
-                    <property name="margin-top">10</property>
-                    <property name="margin-bottom">10</property>
-                  </object>
-                </child>
+              <object class="GtkBox" id="vbox_organize_folders">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <property name="hexpand">1</property>
                 <child>
                   <object class="GtkLabel" id="label25">
                     <property name="xalign">0</property>
-                    <property name="yalign">0</property>
-                    <property name="label" translatable="1">&lt;b&gt;Source:&lt;/b&gt;</property>
+                    <property name="label" translatable="1">&lt;b&gt;Folder Structure&lt;/b&gt;</property>
                     <property name="use_markup">1</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">0</property>
-                      <property name="column-span">2</property>
-                    </layout>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkLabel" id="label18">
-                    <property name="xalign">0</property>
-                    <property name="label" translatable="1">Base output folder</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">4</property>
-                    </layout>
+                  <object class="GtkGrid" id="table3">
+                    <property name="column-spacing">10</property>
+                    <property name="row-spacing">8</property>
+                    <child>
+                      <object class="GtkLabel" id="organize_label_source">
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="1">Source:</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">0</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="organize_align_source_folder">
+                        <property name="orientation">horizontal</property>
+                        <property name="hexpand">1</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">0</property>
+                        </layout>
+                        <child>
+                          <placeholder />
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkCheckButton" id="organize_cb_subfolders">
+                        <property name="label" translatable="1">Include subfolders</property>
+                        <property name="focusable">1</property>
+                        <property name="active">1</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">1</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="label18">
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="1">Destination:</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">2</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="organize_align_dest_folder">
+                        <property name="orientation">horizontal</property>
+                        <property name="hexpand">1</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">2</property>
+                        </layout>
+                        <child>
+                          <placeholder />
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="label19">
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="1">Folder template:</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">3</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkDropDown" id="organize_combo_template">
+                        <property name="hexpand">1</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">3</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="label28">
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="1">Folder suffix:</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">4</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="organize_entry_folder_name">
+                        <property name="focusable">1</property>
+                        <property name="hexpand">1</property>
+                        <property name="placeholder-text" translatable="1">Optional, e.g. Vacation</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">4</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="label31">
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="1">Extend day by:</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">5</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="hbox9">
+                        <property name="spacing">6</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">5</property>
+                        </layout>
+                        <child>
+                          <object class="GtkSpinButton" id="organize_spinbutton_day_offset">
+                            <property name="focusable">1</property>
+                            <property name="adjustment">adjustment8</property>
+                            <property name="snap_to_ticks">1</property>
+                            <property name="numeric">1</property>
+                            <property name="value">3</property>
+                            <property name="tooltip-text" translatable="1">Photos taken before this hour count towards the previous day (e.g. 2:47 AM on May 2nd organizes as May 1st)</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="label32">
+                            <property name="xalign">0</property>
+                            <property name="label" translatable="1">hours</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="label33">
+                        <property name="xalign">0</property>
+                        <property name="label" translatable="1">&lt;small&gt;Late-night photos count towards previous day&lt;/small&gt;</property>
+                        <property name="use_markup">1</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">6</property>
+                        </layout>
+                      </object>
+                    </child>
                   </object>
                 </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkSeparator" id="organize_sep_v">
+                <property name="orientation">vertical</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="vbox_organize_renaming">
+                <property name="orientation">vertical</property>
+                <property name="spacing">8</property>
+                <property name="hexpand">1</property>
                 <child>
-                  <object class="GtkLabel" id="label19">
+                  <object class="GtkLabel" id="label_hdr_naming">
                     <property name="xalign">0</property>
-                    <property name="label" translatable="1">Folder template</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">5</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="label24">
-                    <property name="xalign">0</property>
-                    <property name="label" translatable="1">Example Output Location:</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">10</property>
-                      <property name="column-span">2</property>
-                    </layout>
-                    <property name="margin-top">10</property>
-                    <property name="margin-bottom">10</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="organize_label_example_output">
-                    <property name="xalign">0</property>
+                    <property name="label" translatable="1">&lt;b&gt;File Renaming&lt;/b&gt;</property>
                     <property name="use_markup">1</property>
-                    <property name="ellipsize">start</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">11</property>
-                      <property name="column-span">2</property>
-                    </layout>
-                    <property name="margin-start">10</property>
-                    <property name="margin-end">10</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkCheckButton" id="organize_cb_subfolders">
-                    <property name="label" translatable="1">include subfolders</property>
-                    <property name="focusable">1</property>
-                    <property name="active">1</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">2</property>
-                      <property name="column-span">2</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkBox" id="organize_align_source_folder">
-                    <child>
-                      <placeholder />
-                    </child>
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">0</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">1</property>
-                      <property name="column-span">2</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkBox" id="organize_align_dest_folder">
-                    <child>
-                      <placeholder />
-                    </child>
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">0</property>
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">4</property>
-                    </layout>
                   </object>
                 </child>
                 <child>
@@ -1017,105 +1059,72 @@
                     <property name="label" translatable="1">Rename files</property>
                     <property name="focusable">1</property>
                     <property name="active">1</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">7</property>
-                      <property name="column-span">2</property>
-                    </layout>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkLabel" id="label_filename_template">
-                    <property name="xalign">0</property>
-                    <property name="label" translatable="1">Filename template</property>
-                    <layout>
-                      <property name="column">0</property>
-                      <property name="row">8</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkEntry" id="organize_entry_filename_template">
-                    <property name="focusable">1</property>
-                    <property name="invisible_char">•</property>
-                    <property name="text" translatable="1">%Y-%m-%d %H.%M.%S-##</property>
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">8</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="label_filename_tempate_info">
-                    <property name="xalign">0</property>
-                    <property name="label" translatable="1">Template variables:
-%Y = Year, %m  = month, %d = day, 
-%H = hour, %M = minute, %S = second
-# = count (more # symbols will cause padding)</property>
-                    <attributes>
-                      <attribute name="scale" value="0.75" />
-                    </attributes>
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">9</property>
-                    </layout>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkDropDown" id="organize_combo_template">
-                    <layout>
-                      <property name="column">1</property>
-                      <property name="row">5</property>
-                    </layout>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox" id="vbox29">
-                <property name="orientation">vertical</property>
-                <property name="vexpand">1</property>
-                <property name="spacing">2</property>
-                <child>
-                  <object class="GtkBox" id="hbox9">
-                    <property name="vexpand">1</property>
-                    <property name="spacing">5</property>
+                  <object class="GtkGrid" id="grid_organize_renaming">
+                    <property name="column-spacing">10</property>
+                    <property name="row-spacing">6</property>
                     <child>
-                      <object class="GtkLabel" id="label31">
+                      <object class="GtkLabel" id="label_filename_template">
                         <property name="xalign">0</property>
-                        <property name="label" translatable="1">Extend day by</property>
+                        <property name="label" translatable="1">Template:</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkSpinButton" id="organize_spinbutton_day_offset">
+                      <object class="GtkEntry" id="organize_entry_filename_template">
                         <property name="focusable">1</property>
-                        <property name="adjustment">adjustment8</property>
-                        <property name="snap_to_ticks">1</property>
-                        <property name="numeric">1</property>
-                        <property name="value">3</property>
+                        <property name="hexpand">1</property>
+                        <property name="text" translatable="1">%Y-%m-%d %H.%M.%S-##</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">0</property>
+                        </layout>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkLabel" id="label32">
+                      <object class="GtkLabel" id="label_filename_tempate_info">
                         <property name="xalign">0</property>
-                        <property name="label" translatable="1">hours</property>
+                        <property name="use_markup">1</property>
+                        <property name="label" translatable="1">&lt;small&gt;&lt;b&gt;%Y&lt;/b&gt; Year   &lt;b&gt;%m&lt;/b&gt; Month   &lt;b&gt;%d&lt;/b&gt; Day   &lt;b&gt;##&lt;/b&gt; Counter
+&lt;b&gt;%H&lt;/b&gt; Hour   &lt;b&gt;%M&lt;/b&gt; Minute   &lt;b&gt;%S&lt;/b&gt; Second&lt;/small&gt;</property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">1</property>
+                        </layout>
                       </object>
                     </child>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkBox" id="alignment6">
-                    <property name="vexpand">1</property>
+                  <object class="GtkSeparator" id="sep_example">
+                    <property name="margin-top">4</property>
+                    <property name="margin-bottom">4</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="vbox_example_output">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
                     <child>
-                      <object class="GtkLabel" id="label33">
+                      <object class="GtkLabel" id="label24">
                         <property name="xalign">0</property>
-                        <property name="label" translatable="1">&lt;small&gt;Example: if day is extended by 3 hours, a picture taken at 2:47am on May 2nd will be organized as if it were taken on May 1st&lt;/small&gt;</property>
+                        <property name="label" translatable="1">&lt;b&gt;Example Destination:&lt;/b&gt;</property>
                         <property name="use_markup">1</property>
-                        <property name="wrap">1</property>
                       </object>
                     </child>
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">0</property>
+                    <child>
+                      <object class="GtkLabel" id="organize_label_example_output">
+                        <property name="xalign">0</property>
+                        <property name="use_markup">1</property>
+                        <property name="ellipsize">start</property>
+                        <property name="selectable">1</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>

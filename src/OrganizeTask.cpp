@@ -263,7 +263,8 @@ bool OrganizeTask::ComputeMappings(const Options& opts,
 
 		std::string strDstPath = strDstDir + G_DIR_SEPARATOR_S + strFilename;
 
-		vectMappings.push_back(FileConflictCheck::Mapping(f.GetURI(), strDstPath));
+		vectMappings.push_back(FileConflictCheck::Mapping(
+			f.GetURI(), strDstPath, strFolder + opts.strAppendedText));
 		vectMappings.back().strContentType =
 			(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
 

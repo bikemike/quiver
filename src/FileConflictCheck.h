@@ -24,10 +24,13 @@ public:
 		std::string strSrcURI;
 		std::string strDstURI;
 		std::string strContentType; // mime type of the source file
+		std::string strDstRelPath;  // relative destination directory (if applicable)
 
 		Mapping() {}
 		Mapping(const std::string& src, const std::string& dst)
 			: strSrcURI(src), strDstURI(dst) {}
+		Mapping(const std::string& src, const std::string& dst, const std::string& relPath)
+			: strSrcURI(src), strDstURI(dst), strDstRelPath(relPath) {}
 	};
 
 	struct Result
@@ -37,6 +40,8 @@ public:
 		std::string strConflictWith; // human readable description, empty if none
 		std::string strTypeDescription; // e.g. "MP4 video"
 		std::string strIconName;        // themed icon name, e.g. "video-x-generic"
+		std::string strDstRelPath;   // destination relative folder path
+		std::string strDstURI;       // destination full URI
 
 		bool HasConflict() const { return !strConflictWith.empty(); }
 	};

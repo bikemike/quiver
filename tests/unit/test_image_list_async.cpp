@@ -156,7 +156,7 @@ TEST_CASE("ImageList async folder load: filename sort skips eager Exif parsing a
     REQUIRE(handler->m_dLastFraction == 1.0);
 
     // When sorting by date, it queries dates and caches them
-    list->Sort(ImageList::SORT_BY_DATE);
+    list->Sort(ImageList::SORT_BY_DATE, true, true);
     pump_until([&] { return (*list)[0].HasCachedTimeT(); });
     REQUIRE((*list)[0].HasCachedTimeT());
 

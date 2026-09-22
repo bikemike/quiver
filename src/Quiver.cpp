@@ -3723,7 +3723,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 		bool bAsc = ( FALSE == QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SORT_DESCENDING) );
 
 		gint sortby = QuiverUtils::GetRadioActionCurrent(szAction);
-		pQuiverImpl->m_ImageListPtr->Sort((ImageList::SortBy)sortby,bAsc);
+		pQuiverImpl->m_ImageListPtr->Sort((ImageList::SortBy)sortby, bAsc, true);
 
 		bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW);
 

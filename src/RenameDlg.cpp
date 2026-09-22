@@ -242,7 +242,6 @@ enum
 {
 	PREVIEW_COL_ICON = 0,
 	PREVIEW_COL_SRC,
-	PREVIEW_COL_TYPE,
 	PREVIEW_COL_DST,
 	PREVIEW_COL_CONFLICT,
 	PREVIEW_COL_COUNT
@@ -260,7 +259,6 @@ typedef struct {
 	GObject  parent_instance;
 	gchar*   icon_name;
 	gchar*   src_name;
-	gchar*   type_desc;
 	gchar*   dst_name;
 	gchar*   conflict;
 } RenamePreviewItem;
@@ -280,7 +278,6 @@ static void rename_preview_item_finalize (GObject* object)
 	RenamePreviewItem* item = RENAME_PREVIEW_ITEM(object);
 	g_free(item->icon_name);
 	g_free(item->src_name);
-	g_free(item->type_desc);
 	g_free(item->dst_name);
 	g_free(item->conflict);
 	G_OBJECT_CLASS(rename_preview_item_parent_class)->finalize(object);
@@ -295,19 +292,17 @@ static void rename_preview_item_init (RenamePreviewItem* item)
 {
 	item->icon_name = NULL;
 	item->src_name = NULL;
-	item->type_desc = NULL;
 	item->dst_name = NULL;
 	item->conflict = NULL;
 }
 
 static RenamePreviewItem* rename_preview_item_new (const gchar* icon,
-	const gchar* src, const gchar* type, const gchar* dst, const gchar* conflict)
+	const gchar* src, const gchar* dst, const gchar* conflict)
 {
 	RenamePreviewItem* item = static_cast<RenamePreviewItem*>(
 		g_object_new(RENAME_PREVIEW_ITEM_TYPE, NULL));
 	item->icon_name = g_strdup(icon);
 	item->src_name = g_strdup(src);
-	item->type_desc = g_strdup(type);
 	item->dst_name = g_strdup(dst);
 	item->conflict = g_strdup(conflict);
 	return item;
@@ -357,7 +352,6 @@ static void preview_text_bind (GtkSignalListItemFactory* factory, GtkListItem* l
 	switch (iCol)
 	{
 		case PREVIEW_COL_SRC:    szText = item->src_name;   break;
-		case PREVIEW_COL_TYPE:   szText = item->type_desc;  break;
 		case PREVIEW_COL_DST:    szText = item->dst_name;   break;
 		default:                 szText = item->conflict;   break;
 	}
@@ -563,7 +557,7 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 				gtk_column_view_column_new("", preview_column_factory(PREVIEW_COL_ICON));
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewPreview), column);
 		}
-		static const char* szTitles[] = { NULL, "Original Name", "Type", "New Name", "Conflict" };
+		static const char* szTitles[] = { NULL, "Original Name", "New Name", "Conflict" };
 		for (int c = PREVIEW_COL_SRC ; c <= PREVIEW_COL_CONFLICT ; c++)
 		{
 			GtkColumnViewColumn* column =
@@ -811,7 +805,12 @@ void RenameDlg::RenameDlgPriv::StartConflictCheck()
 	m_bConflictKeyValid = false;
 
 	gtk_widget_set_visible(m_pLabelWarning, FALSE);
-	gtk_widget_set_visible(m_pLabelStatus, FALSE);
+	if (NULL != m_pLabelStatus)
+	{
+		gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
+			"<span foreground=\"#77767e\">Checking for conflicts…</span>");
+		gtk_widget_set_visible(m_pLabelStatus, TRUE);
+	}
 
 	std::string strTemplate = gtk_editable_get_text(GTK_EDITABLE(m_pEntryTemplate));
 
@@ -846,7 +845,11 @@ void RenameDlg::RenameDlgPriv::StartConflictCheck()
 	}
 
 	gtk_widget_set_sensitive(m_pBtnOK, FALSE);
-	gtk_progress_bar_set_fraction(m_pProgressBar, 0.);
+	if (NULL != m_pProgressBar)
+	{
+		gtk_widget_set_visible(GTK_WIDGET(m_pProgressBar), TRUE);
+		gtk_progress_bar_pulse(m_pProgressBar);
+	}
 
 	int iGeneration = ++(*m_pConflictGeneration);
 
@@ -937,7 +940,7 @@ void RenameDlg::RenameDlgPriv::ApplyConflictResults(ConflictShared& state)
 		gchar* szIcon = preview_icon_pixbuf(r.strIconName)
 			? g_strdup(r.strIconName.c_str()) : NULL;
 		RenamePreviewItem* item = rename_preview_item_new(
-			szIcon, r.strSrcName.c_str(), r.strTypeDescription.c_str(),
+			szIcon, r.strSrcName.c_str(),
 			r.strDstName.c_str(), r.strConflictWith.c_str());
 		g_free(szIcon);
 		g_list_store_append(m_pListStorePreview, item);
@@ -949,7 +952,7 @@ void RenameDlg::RenameDlgPriv::ApplyConflictResults(ConflictShared& state)
 		g_snprintf(szMore, sizeof(szMore), "… and %d more files",
 			(int)(m_vectConflicts.size() - PREVIEW_ROW_CAP));
 		RenamePreviewItem* item = rename_preview_item_new(
-			NULL, szMore, NULL, NULL, NULL);
+			NULL, szMore, NULL, NULL);
 		g_list_store_append(m_pListStorePreview, item);
 		g_object_unref(item);
 	}

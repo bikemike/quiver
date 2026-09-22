@@ -277,7 +277,7 @@ bool RenameTask::ComputeMappings(std::string strSrcDirURI,
 	listFiles.push_back(strSrcDirURI);
 
 	imgListPtr->SetImageList(&listFiles, false);
-	imgListPtr->Sort(sortBy);
+	imgListPtr->Sort(sortBy, true, false);
 
 	std::vector<QuiverFile> vectQuiverFiles = imgListPtr->GetQuiverFiles();
 
@@ -398,7 +398,7 @@ void RenameTask::Run()
 		listFiles.push_back(m_strSrcDirURI);
 
 		imgListPtr->SetImageList(&listFiles, false);
-		imgListPtr->Sort(m_eSortBy);
+		imgListPtr->Sort(m_eSortBy, true, false);
 
 		m_vectQuiverFiles = imgListPtr->GetQuiverFiles();
 	}
