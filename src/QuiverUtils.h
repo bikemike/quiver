@@ -16,6 +16,20 @@ namespace QuiverUtils
 	GdkPixbuf * GdkPixbufExifReorientate(GdkPixbuf * pixbuf, int orientation);
 #endif
 
+	/* Filmstrip (sprocket-hole) decoration for video thumbnails.
+	 *
+	 * The libquiver icon view draws a strip of sprocket holes along the left
+	 * and right edges of each video thumbnail at snapshot time.  `thumb_natural_max_dim`
+	 * is the larger of the loaded thumbnail's natural width and height, which
+	 * matches the size the thumbnail the loader produced (see IconViewThumbLoader):
+	 * normal 128px thumbnails get the small filmstrip.png pattern, while
+	 * 256px thumbnails get the dedicated filmstrip-big.png pattern.  The strip
+	 * is scaled with the same ratio as the thumbnail when drawn, so it always
+	 * matches the thumbnail at any drawn size.  The strip is transient: drawn
+	 * on top of the thumbnail only, never baked into the cached or saved
+	 * thumbnail. */
+	std::string GetFilmstripPath(gint thumb_natural_max_dim);
+
 	/* New GSimpleAction based action system (replaces GtkUIManager/GtkAction).
 	 *
 	 * The shared GSimpleActionGroup takes the place of the old GtkUIManager.

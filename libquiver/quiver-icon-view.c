@@ -145,6 +145,11 @@ struct _QuiverIconViewPrivate
 	GDestroyNotify callback_get_overlay_pixbuf_data_destroy;
 #endif
 
+	QuiverIconViewGetFilmstripTextureFunc callback_get_filmstrip_texture;
+	gpointer callback_get_filmstrip_texture_data;
+	GDestroyNotify callback_get_filmstrip_texture_data_destroy;
+	gboolean filmstrip_enabled;
+
 	CellItem *cell_items;
 	gulong n_cell_items;
 };
@@ -1165,6 +1170,81 @@ quiver_icon_view_snapshot_cell_at (QuiverIconView *iconview,
 		else
 		{
 			gtk_snapshot_append_texture(snapshot, texture, &thumb_bounds);
+		}
+
+		/* Filmstrip (sprocket-hole) decoration for video thumbnails.
+		 *
+		 * The strip is composited into the snapshot at draw time only, on top
+		 * of the already-drawn thumbnail.  It is never written back into the
+		 * texture, so the decoration is not baked into any thumbnail the app
+		 * saves (freedesktop cache, app cache, or user files): only the plain
+		 * texture is ever serialized.  There is no caching here either -- the
+		 * strip texture is used transiently during snapshotting and unrefd.
+		 *
+		 * The strip is scaled proportionally with the thumbnail (the strip's
+		 * width equals natural strip width times (drawn thumb height / natural
+		 * thumb height)), so it grows and shrinks with the thumbnail without
+		 * changing relative size, and it is tiled vertically to the drawn
+		 * thumbnail height.  Tiles are always drawn at full size: any tile
+		 * that would run past the bottom of the thumbnail is cropped by the
+		 * clip pushed below, never squeezed to fit. */
+		if (!is_drag_icon && iconview->priv->filmstrip_enabled
+			&& NULL != iconview->priv->callback_get_filmstrip_texture)
+		{
+			gint natural_thumb_w = (gint)gdk_texture_get_width(texture);
+			gint natural_thumb_h = (gint)gdk_texture_get_height(texture);
+			gint drawn_thumb_w = (gint)(thumb_bounds.size.width + 0.5);
+			gint drawn_thumb_h = (gint)(thumb_bounds.size.height + 0.5);
+
+			if (natural_thumb_h > 0 && drawn_thumb_h > 0)
+			{
+				gdouble k = (gdouble)drawn_thumb_h / (gdouble)natural_thumb_h;
+				QuiverIconViewFilmstripSide side;
+
+				for (side = QUIVER_ICON_VIEW_FILMSTRIP_LEFT;
+				     side < QUIVER_ICON_VIEW_FILMSTRIP_COUNT; side++)
+				{
+					GdkTexture *strip = (*iconview->priv->callback_get_filmstrip_texture)(
+						iconview, current_cell,
+						natural_thumb_w, natural_thumb_h,
+						drawn_thumb_w, drawn_thumb_h, side,
+						iconview->priv->callback_get_filmstrip_texture_data);
+					if (NULL == strip)
+						continue;
+
+					gint strip_natural_w = (gint)gdk_texture_get_width(strip);
+					gint strip_natural_h = (gint)gdk_texture_get_height(strip);
+
+					if (strip_natural_w > 0 && strip_natural_h > 0)
+					{
+						gint strip_drawn_w = MAX(1, (gint)(strip_natural_w * k + 0.5));
+						gint tile_h = MAX(1, (gint)(strip_natural_h * k + 0.5));
+						gdouble edge_x = (side == QUIVER_ICON_VIEW_FILMSTRIP_LEFT)
+							? thumb_bounds.origin.x
+							: thumb_bounds.origin.x + thumb_bounds.size.width - strip_drawn_w;
+
+						gtk_snapshot_push_clip(snapshot, &thumb_bounds);
+
+						/* Tile vertically to the drawn thumbnail height at full size.  The
+						 * clip pushed above crops the overflow past the bottom
+						 * of the thumbnail, so the pattern is cut off cleanly
+						 * instead of being scaled/squeezed. */
+						gdouble tile_y;
+						for (tile_y = 0.0; tile_y < drawn_thumb_h; tile_y += tile_h)
+						{
+							graphene_rect_t tile;
+							graphene_rect_init(&tile, (float)edge_x,
+								(float)(thumb_bounds.origin.y + tile_y),
+								(float)strip_drawn_w, (float)tile_h);
+							gtk_snapshot_append_texture(snapshot, strip, &tile);
+						}
+
+						gtk_snapshot_pop(snapshot);
+					}
+
+					g_object_unref(strip);
+				}
+			}
 		}
 
 		if (!is_drag_icon && current_cell == iconview->priv->prelight_cell)
@@ -4226,5 +4306,43 @@ void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
 	iconview->priv->callback_get_overlay_pixbuf_data_destroy = destroy;
 
 }
+
+/* Set (or clear) the callback that supplies the filmstrip (sprocket-hole)
+ * strip used to decorate the left/right edges of video thumbnails at draw
+ * time.  The callback is invoked once per side of each cell during the
+ * snapshot; it may return NULL for "no strip on this side".  It is never
+ * invoked while building a drag icon.  Setting this to NULL (or an icon view
+ * that returns NULL for every side) removes the decoration entirely. */
+void
+quiver_icon_view_set_get_filmstrip_texture_func (QuiverIconView *iconview,
+	QuiverIconViewGetFilmstripTextureFunc func,gpointer data,GDestroyNotify destroy)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	if (iconview->priv->callback_get_filmstrip_texture_data_destroy)
+		(*iconview->priv->callback_get_filmstrip_texture_data_destroy)(iconview->priv->callback_get_filmstrip_texture_data);
+
+	iconview->priv->callback_get_filmstrip_texture = func;
+	iconview->priv->callback_get_filmstrip_texture_data = data;
+	iconview->priv->callback_get_filmstrip_texture_data_destroy = destroy;
+
+}
+
+gboolean
+quiver_icon_view_get_filmstrip_enabled (QuiverIconView *iconview)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), FALSE);
+
+	return iconview->priv->filmstrip_enabled;
+}
+
+void
+quiver_icon_view_set_filmstrip_enabled (QuiverIconView *iconview, gboolean enabled)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+
+	iconview->priv->filmstrip_enabled = enabled;
+}
+
 #endif
 /* end public functions */

@@ -34,6 +34,7 @@
 #define QUIVER_PREFS_BROWSER                       "browser"
 #define QUIVER_PREFS_BROWSER_THUMB_SIZE            "thumb_size"
 #define QUIVER_PREFS_BROWSER_THUMBS_SQUARE         "thumbs_square"
+#define QUIVER_PREFS_BROWSER_THUMBS_FILMSTRIP      "thumbs_filmstrip"
 #define QUIVER_PREFS_BROWSER_FOLDER_HPANE          "folder_hpane"
 #define QUIVER_PREFS_BROWSER_FOLDER_VPANE          "folder_vpane"
 #define QUIVER_PREFS_BROWSER_PREVIEW_SHOW          "preview_show"

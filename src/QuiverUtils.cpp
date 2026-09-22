@@ -1571,4 +1571,18 @@ void ConnectUnmodifiedAccelerators() {
 		return label;
 	}
 
+	/* Filmstrip (sprocket-hole) decoration assets (see QuiverUtils.h).  Normal
+	 * 128px thumbnails use the small filmstrip.png pattern on both edges like
+	 * real film sprocket rows; 256px thumbnails use the dedicated
+	 * filmstrip-big.png pattern.  No per-side asset is involved: the same
+	 * pattern is used on both the left and right edges of the thumbnail, and
+	 * the strip is scaled by the same ratio as the thumbnail when drawn. */
+	std::string GetFilmstripPath(gint thumb_natural_max_dim)
+	{
+		const char *name = (thumb_natural_max_dim > 128)
+			? "filmstrip-big.png"
+			: "filmstrip.png";
+		return quiver_get_resource_path(name);
+	}
+
 }

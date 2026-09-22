@@ -84,6 +84,10 @@ static GdkPixbuf* thumbnail_pixbuf_callback(QuiverIconView *iconview, gulong cel
 #endif
 static GdkTexture* icon_texture_callback(QuiverIconView *iconview, gulong cell, gpointer user_data);
 static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data);
+static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong cell,
+	gint thumb_natural_w, gint thumb_natural_h,
+	gint thumb_drawn_w, gint thumb_drawn_h,
+	QuiverIconViewFilmstripSide side, gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
 
@@ -776,6 +780,7 @@ public:
 	void       CancelPlayPauseAnimation();
 
 	ImageCache m_ThumbnailCache;
+	ImageCache m_FilmstripCache;
 
 	double m_dPlaybackSpeed;
 	GtkWidget* m_pSpeedButton;
@@ -5214,6 +5219,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 		quiver_icon_view_set_icon_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
 		quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
 		quiver_icon_view_set_overlay_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_get_filmstrip_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
 #if HAVE_GDK_PIXBUF
 		quiver_icon_view_set_thumbnail_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
 		quiver_icon_view_set_icon_pixbuf_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
@@ -6483,6 +6489,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iPlayAnimTickId(0),
 	m_iPlayAnimStartTime(0),
 	m_ThumbnailCache(100),
+	m_FilmstripCache(8),
 	m_dPlaybackSpeed(1.0),
 	m_pSpeedButton(NULL),
 	m_pSpeedLabel(NULL),
@@ -7084,11 +7091,14 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 #endif
 	quiver_icon_view_set_thumbnail_texture_func(QUIVER_ICON_VIEW(m_pIconView),thumbnail_texture_callback,this,NULL);
 	quiver_icon_view_set_icon_texture_func(QUIVER_ICON_VIEW(m_pIconView),icon_texture_callback,this,NULL);
+	quiver_icon_view_set_get_filmstrip_texture_func(QUIVER_ICON_VIEW(m_pIconView),filmstrip_texture_callback,this,NULL);
 	quiver_icon_view_set_scroll_type(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_SCROLL_SMOOTH_CENTER);
 	int iIconSize = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SIZE, 128);
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(m_pIconView),iIconSize,iIconSize);
 	bool bFilmstripSquare = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SQUARE, false);
 	quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(m_pIconView), bFilmstripSquare);
+	bool bFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_FILMSTRIP, true);
+	quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(m_pIconView), bFilmstrip);
 	m_ThumbnailLoader.SetIconDimensions(iIconSize, iIconSize);
 	m_ThumbnailLoader.SetMapped(gtk_widget_get_mapped(m_pIconView));
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
@@ -8140,6 +8150,30 @@ static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong c
 	return texture;
 }
 
+static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong cell,
+	gint thumb_natural_w, gint thumb_natural_h,
+	gint thumb_drawn_w, gint thumb_drawn_h,
+	QuiverIconViewFilmstripSide side, gpointer user_data)
+{ (void)iconview; (void)thumb_drawn_w; (void)thumb_drawn_h; (void)side;
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	QuiverFile f = pViewerImpl->m_ImageListPtr->Get(cell);
+	if (!f.IsVideo())
+		return NULL;
+
+	std::string path = QuiverUtils::GetFilmstripPath(MAX(thumb_natural_w, thumb_natural_h));
+	GdkTexture* texture = pViewerImpl->m_FilmstripCache.GetTexture(path);
+	if (NULL == texture)
+	{
+		texture = gdk_texture_new_from_filename(path.c_str(), NULL);
+		if (NULL != texture)
+		{
+			pViewerImpl->m_FilmstripCache.AddTexture(path, texture);
+		}
+	}
+
+	return texture;
+}
+
 void Viewer::ViewerImpl::QueueIconViewUpdate(int timeout)
 {
 	if (!m_iTimeoutUpdateListID)
@@ -8443,6 +8477,14 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 						set_widget_bg_color(parent->m_pIconView, &color);
 				}
 			}
+		}
+	}
+	else if ( QUIVER_PREFS_BROWSER == event->GetSection () )
+	{
+		if (QUIVER_PREFS_BROWSER_THUMBS_FILMSTRIP == event->GetKey() )
+		{
+			quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewBoolean());
+			quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
 		}
 	}
 	else if ( QUIVER_PREFS_VIEWER == event->GetSection () )

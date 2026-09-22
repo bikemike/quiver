@@ -108,6 +108,47 @@ void quiver_icon_view_set_icon_size(QuiverIconView *iconview, guint width,guint 
 void quiver_icon_view_set_cell_padding(QuiverIconView *iconview,guint padding);
 void quiver_icon_view_set_thumbnails_square(QuiverIconView *iconview, gboolean square);
 gboolean quiver_icon_view_get_thumbnails_square(QuiverIconView *iconview);
+
+/* Filmstrip (sprocket-hole) decoration.
+ *
+ * The icon view can draw a repeating sprocket-hole strip along the left and
+ * right edges of each video thumbnail at snapshot time.  This is decoration
+ * only: it is rendered on top of the thumbnail in the snapshot and is never
+ * baked into (or saved from) the thumbnail texture, so the files stored by
+ * the app (including the freedesktop cache) always stay undecorated.
+ *
+ * A per-cell callback supplies the strip for each side.  The sides are two
+ * independent slots so an app can supply a different (e.g. mirrored) asset
+ * per side if it wants to, though nothing requires it: an app that only has
+ * one shared pattern can ignore the side argument.  A value of NULL from the
+ * callback means "no strip on this side".  The callback may be (un)set at any
+ * time; setting it to NULL removes the decoration.
+ */
+typedef enum _QuiverIconViewFilmstripSide
+{
+	QUIVER_ICON_VIEW_FILMSTRIP_LEFT = 0,
+	QUIVER_ICON_VIEW_FILMSTRIP_RIGHT,
+	QUIVER_ICON_VIEW_FILMSTRIP_COUNT
+} QuiverIconViewFilmstripSide;
+
+/* Called for each side of a cell.  Provides the natural (source) thumbnail
+ * size and the size the thumbnail is drawn at in the cell, so the callback
+ * can pick an appropriately-tweaked asset and scale it proportionally with
+ * the thumbnail.  Returns a texture to tile on that side, or NULL for none. */
+typedef GdkTexture* (*QuiverIconViewGetFilmstripTextureFunc) (
+	QuiverIconView *iconview, gulong cell,
+	gint thumb_natural_w, gint thumb_natural_h,
+	gint thumb_drawn_w, gint thumb_drawn_h,
+	QuiverIconViewFilmstripSide side,
+	gpointer user_data);
+
+void quiver_icon_view_set_get_filmstrip_texture_func(
+	QuiverIconView *iconview,
+	QuiverIconViewGetFilmstripTextureFunc func,
+	gpointer user_data, GDestroyNotify destroy_notify);
+
+gboolean quiver_icon_view_get_filmstrip_enabled(QuiverIconView *iconview);
+void quiver_icon_view_set_filmstrip_enabled(QuiverIconView *iconview, gboolean enabled);
 void quiver_icon_view_get_icon_size(QuiverIconView *iconview, guint* width,guint* height);
 guint quiver_icon_view_get_cell_padding(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_width(QuiverIconView *iconview);

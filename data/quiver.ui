@@ -1238,6 +1238,15 @@
                           </object>
                         </child>
                         <child>
+                          <object class="GtkCheckButton" id="chkbtn_general_thumbs_filmstrip">
+                            <property name="valign">center</property>
+                            <property name="label" translatable="1">Decorate video thumbnails with filmstrip frame</property>
+                            <property name="focusable">1</property>
+                            <property name="use_underline">1</property>
+                            <property name="active">1</property>
+                          </object>
+                        </child>
+                        <child>
                           <object class="GtkBox" id="vbox11">
                             <property name="orientation">vertical</property>
                             <property name="valign">center</property>

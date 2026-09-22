@@ -300,6 +300,7 @@ public:
 	ImageCache m_ThumbnailCache;
 	ImageCache m_IconCache;
 	ImageCache m_IconOverlayCache;
+	ImageCache m_FilmstripCache;
 	
 	guint m_iTimeoutUpdateListID;
 	guint m_iTimeoutHideLocationID;
@@ -586,6 +587,10 @@ static GdkPixbuf* overlay_pixbuf_callback(QuiverIconView* iconview, gulong cell,
 static GdkTexture* icon_texture_callback(QuiverIconView *iconview, gulong cell, gpointer user_data);
 static GdkTexture* thumbnail_texture_callback(QuiverIconView *iconview, gulong cell, gint* actual_width, gint* actual_height, gpointer user_data);
 static GdkTexture* overlay_texture_callback(QuiverIconView* iconview, gulong cell, QuiverIconOverlayType type, gpointer user_data);
+static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong cell,
+	gint thumb_natural_w, gint thumb_natural_h,
+	gint thumb_drawn_w, gint thumb_drawn_h,
+	QuiverIconViewFilmstripSide side, gpointer user_data);
 static gchar* text_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
@@ -715,6 +720,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_ThumbnailCache(100),
 	m_IconCache(100),
 	m_IconOverlayCache(100),
+	m_FilmstripCache(8),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
 	m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
@@ -939,6 +945,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	quiver_icon_view_set_icon_texture_func(QUIVER_ICON_VIEW(m_pIconView),icon_texture_callback,this,NULL);
 	quiver_icon_view_set_overlay_texture_func(QUIVER_ICON_VIEW(m_pIconView),overlay_texture_callback,this,NULL);
 	quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(m_pIconView),(QuiverIconViewGetTextFunc)text_pixbuf_callback,this,NULL);
+	quiver_icon_view_set_get_filmstrip_texture_func(QUIVER_ICON_VIEW(m_pIconView),filmstrip_texture_callback,this,NULL);
 
 	g_signal_connect (G_OBJECT (hscale), "value_changed",
 	      G_CALLBACK (icon_size_value_changed), this);
@@ -1038,6 +1045,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	bool bThumbsSquare = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_SQUARE, false);
 	quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(m_pIconView), bThumbsSquare);
 
+	bool bFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_FILMSTRIP, true);
+	quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(m_pIconView), bFilmstrip);
+
 }
 
 bool Browser::BrowserImpl::IsTrashMode() const
@@ -1068,6 +1078,7 @@ Browser::BrowserImpl::~BrowserImpl()
 		quiver_icon_view_set_icon_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
 		quiver_icon_view_set_overlay_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
 		quiver_icon_view_set_text_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
+		quiver_icon_view_set_get_filmstrip_texture_func(QUIVER_ICON_VIEW(m_pIconView), NULL, NULL, NULL);
 	}
 
 	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
@@ -1971,6 +1982,30 @@ static GdkTexture* overlay_texture_callback(QuiverIconView* iconview, gulong cel
 				}
 			}
 			g_free(icon_name);
+		}
+	}
+
+	return texture;
+}
+
+static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong cell,
+	gint thumb_natural_w, gint thumb_natural_h,
+	gint thumb_drawn_w, gint thumb_drawn_h,
+	QuiverIconViewFilmstripSide side, gpointer user_data)
+{ (void)iconview; (void)thumb_drawn_w; (void)thumb_drawn_h; (void)side;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	QuiverFile f = (*b->m_ImageListPtr)[cell];
+	if (!f.IsVideo())
+		return NULL;
+
+	std::string path = QuiverUtils::GetFilmstripPath(MAX(thumb_natural_w, thumb_natural_h));
+	GdkTexture* texture = b->m_FilmstripCache.GetTexture(path);
+	if (NULL == texture)
+	{
+		texture = gdk_texture_new_from_filename(path.c_str(), NULL);
+		if (NULL != texture)
+		{
+			b->m_FilmstripCache.AddTexture(path, texture);
 		}
 	}
 
@@ -3397,6 +3432,11 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 		{
 			quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewBoolean());
 			parent->m_ThumbnailLoader.UpdateList(true);
+		}
+		else if (QUIVER_PREFS_BROWSER_THUMBS_FILMSTRIP == event->GetKey() )
+		{
+			quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewBoolean());
+			quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
 		}
 	}
 }

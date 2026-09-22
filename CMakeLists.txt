@@ -103,10 +103,8 @@ install(FILES
     data/quiver-toolbar.ui
     data/play.png
     data/pause.png
-    data/filmholes.png
-    data/filmholes-big.png
-    data/filmholes-big-left.png
-    data/filmholes-big-right.png
+    data/filmstrip.png
+    data/filmstrip-big.png
     DESTINATION ${CMAKE_INSTALL_DATADIR}/quiver
 )
 
