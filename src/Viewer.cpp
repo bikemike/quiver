@@ -8506,6 +8506,9 @@ static gboolean timeout_update_scrollbars(gpointer user_data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	pViewerImpl->UpdateScrollbars();
+	/* one-shot: clear the slot or the next removal fires
+	 * "Source ID ... was not found when attempting to remove it" */
+	pViewerImpl->m_iTimeoutScrollbars = 0;
 
 	return FALSE;
 }
