@@ -567,3 +567,15 @@ TEST_CASE("Background Preference Change Integration", "[gui][preferences][backgr
     prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_USE_THEME_COLOR, true);
 }
 
+TEST_CASE("Browser Add Bookmark Action Registration", "[unit][browser][bookmarks]")
+{
+    REQUIRE_DISPLAY();
+
+    Browser browser;
+    browser.RegisterActions();
+
+    GAction *action = QuiverUtils::GetAction("BrowserAddBookmark");
+    REQUIRE(action != nullptr);
+}
+
+

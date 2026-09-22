@@ -99,6 +99,7 @@ namespace QuiverFileOps
 	bool   UndoStackRecordMove(const std::vector<UndoFilePair>& pairs);
 	bool   UndoStackRecordCopy(const std::vector<std::string>& copied_dsts);
 	bool   UndoStackRecordRotate(const std::string& uri, int direction);
+	void   UndoStackDropRotate(const std::string& uri);
 	bool   UndoStackRecordNewFolder(const std::string& folder_uri);
 
 	bool   UndoStackHasItems();

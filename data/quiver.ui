@@ -1488,6 +1488,7 @@
                           <object class="GtkCheckButton" id="chkbtn_viewer_filmstrip_overlay">
                             <property name="valign">center</property>
                             <property name="label" translatable="1">Film strip as overlay</property>
+                            <property name="active">1</property>
                             <property name="focusable">1</property>
                             <property name="use_underline">1</property>
                           </object>

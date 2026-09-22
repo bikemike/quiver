@@ -81,6 +81,43 @@ TEST_CASE("ShortcutManager Default Action Registry", "[unit][shortcuts][fast]")
         REQUIRE(std::find(ccw_def->default_accels.begin(), ccw_def->default_accels.end(), "bracketleft") != ccw_def->default_accels.end());
         REQUIRE(std::find(ccw_def->default_accels.begin(), ccw_def->default_accels.end(), "l") == ccw_def->default_accels.end());
     }
+
+    SECTION("Browser standard defaults")
+    {
+        const ShortcutActionDef *parent_def = sm.GetAction("GoFolderParent");
+        REQUIRE(parent_def != nullptr);
+        REQUIRE(parent_def->category == "Browser");
+        REQUIRE(std::find(parent_def->default_accels.begin(), parent_def->default_accels.end(), "<Alt>Up") != parent_def->default_accels.end());
+        REQUIRE(std::find(parent_def->default_accels.begin(), parent_def->default_accels.end(), "BackSpace") != parent_def->default_accels.end());
+        REQUIRE(parent_def->is_browser_only == true);
+        REQUIRE_FALSE(parent_def->is_viewer_only);
+    }
+
+    SECTION("Properties and Window defaults")
+    {
+        const ShortcutActionDef *props_def = sm.GetAction("ViewProperties");
+        REQUIRE(props_def != nullptr);
+        REQUIRE(props_def->category == "Viewer Display");
+        REQUIRE(std::find(props_def->default_accels.begin(), props_def->default_accels.end(), "<Alt>Return") != props_def->default_accels.end());
+        REQUIRE(std::find(props_def->default_accels.begin(), props_def->default_accels.end(), "<Alt>KP_Enter") != props_def->default_accels.end());
+        REQUIRE_FALSE(props_def->is_viewer_only);
+        REQUIRE_FALSE(props_def->is_browser_only);
+
+        const ShortcutActionDef *close_def = sm.GetAction("Close");
+        REQUIRE(close_def != nullptr);
+        REQUIRE(std::find(close_def->default_accels.begin(), close_def->default_accels.end(), "<Alt>F4") != close_def->default_accels.end());
+        REQUIRE(std::find(close_def->default_accels.begin(), close_def->default_accels.end(), "q") != close_def->default_accels.end());
+        REQUIRE(std::find(close_def->default_accels.begin(), close_def->default_accels.end(), "<Control>q") != close_def->default_accels.end());
+    }
+
+    SECTION("SuppressAllAccelerators for text input")
+    {
+        REQUIRE_FALSE(sm.AreAllSuppressed());
+        sm.SuppressAllAccelerators(true);
+        REQUIRE(sm.AreAllSuppressed());
+        sm.SuppressAllAccelerators(false);
+        REQUIRE_FALSE(sm.AreAllSuppressed());
+    }
 }
 
 TEST_CASE("ShortcutManager Multi-Key Customization", "[unit][shortcuts][fast]")
@@ -180,6 +217,7 @@ TEST_CASE("ShortcutManager Unmodified Key Detection", "[unit][shortcuts][fast]")
     REQUIRE(ShortcutManager::IsUnmodifiedAccel("<Shift>l"));
     REQUIRE(ShortcutManager::IsUnmodifiedAccel("Right"));
     REQUIRE(ShortcutManager::IsUnmodifiedAccel("Left"));
+    REQUIRE(ShortcutManager::IsUnmodifiedAccel("BackSpace"));
 
     // Modified keys
     REQUIRE_FALSE(ShortcutManager::IsUnmodifiedAccel("<Control>o"));
@@ -261,6 +299,11 @@ TEST_CASE("ShortcutManager Dynamic Tooltips", "[unit][shortcuts][fast]")
     REQUIRE(prev_tt.find("Previous Image") != std::string::npos);
     REQUIRE(prev_tt.find("Left") != std::string::npos);
     REQUIRE(prev_tt.find("Backspace") == std::string::npos);
+
+    std::string parent_tt = sm.GetTooltipForAction("GoFolderParent", "Parent Folder");
+    REQUIRE(parent_tt.find("Parent Folder") != std::string::npos);
+    REQUIRE(parent_tt.find("Alt+Up") != std::string::npos);
+    REQUIRE(parent_tt.find("BackSpace") != std::string::npos);
 
     // Callbacks verification
     bool callback_called = false;

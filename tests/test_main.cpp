@@ -2,6 +2,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
+extern "C" {
+#include <libavutil/log.h>
+}
 #include <string>
 #include <cstdlib>
 #include "test_helpers.h"
@@ -43,6 +46,9 @@ std::string QuiverTest_GetDataDir()
 
 int main(int argc, char* argv[])
 {
+    // Suppress FFmpeg stderr noise
+    av_log_set_level(AV_LOG_ERROR);
+
     // Initialize GStreamer if available
     gst_init_check(&argc, &argv, nullptr);
 

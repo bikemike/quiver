@@ -14,6 +14,7 @@ public:
 	virtual void HandleItemAdded(ImageListEventPtr event) = 0;
 	virtual void HandleItemRemoved(ImageListEventPtr event) = 0;
 	virtual void HandleItemChanged(ImageListEventPtr event) = 0;
+	virtual void HandleLoadProgress(double fraction, int current, int total) { (void)fraction; (void)current; (void)total; }
 
 	virtual ~IImageListEventHandler(){};
 };

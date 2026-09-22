@@ -4,11 +4,16 @@
 #include <gtk/gtk.h>
 #include <gio/gio.h>
 #include <string>
+#include <list>
 
 #include "QuiverFileOps.h"
 
 namespace QuiverUtils
 {
+	/* Prompt user to add a bookmark for the given list of URIs.
+	 * Displays BookmarkAddEditDlg prefilled with folder names.
+	 * Returns true if the bookmark was created and added. */
+	bool PromptAddBookmark(const std::list<std::string>& uris);
 	GdkTexture * TextureExifReorientate(GdkTexture * texture, int orientation);
 	GdkTexture * ScaleTexture(GdkTexture * texture, int dest_w, int dest_h);
 #if HAVE_GDK_PIXBUF
@@ -19,16 +24,15 @@ namespace QuiverUtils
 	/* Filmstrip (sprocket-hole) decoration for video thumbnails.
 	 *
 	 * The libquiver icon view draws a strip of sprocket holes along the left
-	 * and right edges of each video thumbnail at snapshot time.  `thumb_natural_max_dim`
-	 * is the larger of the loaded thumbnail's natural width and height, which
-	 * matches the size the thumbnail the loader produced (see IconViewThumbLoader):
-	 * normal 128px thumbnails get the small filmstrip.png pattern, while
-	 * 256px thumbnails get the dedicated filmstrip-big.png pattern.  The strip
-	 * is scaled with the same ratio as the thumbnail when drawn, so it always
-	 * matches the thumbnail at any drawn size.  The strip is transient: drawn
-	 * on top of the thumbnail only, never baked into the cached or saved
-	 * thumbnail. */
-	std::string GetFilmstripPath(gint thumb_natural_max_dim);
+	 * and right edges of each video thumbnail at snapshot time.  `thumb_dim`
+	 * is the drawn thumbnail dimension: 128px thumbnails (or thumbnails scaled
+	 * smaller than 128) get the small filmstrip.png pattern, while 256px
+	 * thumbnails (or thumbnails scaled smaller than 256) get the dedicated
+	 * filmstrip-big.png pattern.  The strip is scaled with the same ratio as
+	 * the thumbnail when drawn, so it always matches the thumbnail at any drawn
+	 * size.  The strip is transient: drawn on top of the thumbnail only, never
+	 * baked into the cached or saved thumbnail. */
+	std::string GetFilmstripPath(gint thumb_dim);
 
 	/* New GSimpleAction based action system (replaces GtkUIManager/GtkAction).
 	 *
@@ -59,6 +63,7 @@ namespace QuiverUtils
 	void AddAccelGroup(GtkWindow *window);
 	void DisconnectUnmodifiedAccelerators();         // overload
 	void ConnectUnmodifiedAccelerators();            // overload
+	void SuppressAllAccelerators(bool suppress);
 
 	/* Modal "OK / Cancel style" confirmation dialog.  Shows `message` (wrapped)
 	 * with `accept_label` on the accept button.  Returns TRUE when accepted.

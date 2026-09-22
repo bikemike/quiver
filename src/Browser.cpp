@@ -10,6 +10,7 @@
 #include <list>
 #include <map>
 #include <set>
+#include <string_view>
 
 #include <gdk/gdkkeysyms.h>
 
@@ -292,6 +293,8 @@ public:
 	/* Drag-and-drop: set in the drag-motion handler; used in the drop
 	 * handler to know whether the external source offered MOVE or COPY. */
 	GdkDragAction m_eDropAction;
+	bool m_bDraggingSelection;
+	std::set<std::string> m_setDraggedURIs;
 
 	StatusbarPtr m_StatusbarPtr;
 	
@@ -334,6 +337,14 @@ public:
 	GtkWidget *m_pContextMenuTitleLabel;
 	/* Overlay wrapping the icon view (see GetIconViewOverlay()). */
 	GtkWidget *m_pIconViewOverlay;
+
+	GtkWidget *m_pLoadingOverlayBox;
+	GtkWidget *m_pLoadingOverlayLabel;
+	GtkWidget *m_pLoadingOverlayBar;
+
+	void ShowLoadingProgress(const std::string& text, double fraction);
+	void HideLoadingProgress();
+	void HandleLoadProgress(double fraction, int current, int total);
 	
 /* nested classes */
 	//class ViewerEventHandler;
@@ -346,6 +357,7 @@ public:
 		virtual void HandleItemAdded(ImageListEventPtr event);
 		virtual void HandleItemRemoved(ImageListEventPtr event);
 		virtual void HandleItemChanged(ImageListEventPtr event);
+		virtual void HandleLoadProgress(double fraction, int current, int total);
 	private:
 		Browser::BrowserImpl *parent;
 	};
@@ -439,6 +451,7 @@ static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_BROWSER_COPY                               "BrowserCopy"
 #define ACTION_BROWSER_PASTE                              "BrowserPaste"
 #define ACTION_BROWSER_NEW_FOLDER                         "BrowserNewFolder"
+#define ACTION_BROWSER_ADD_BOOKMARK                       "BrowserAddBookmark"
 #define ACTION_BROWSER_RENAME                             "BrowserRename"
 #define ACTION_BROWSER_SELECT_ALL                         "BrowserSelectAll"
 #define ACTION_BROWSER_TRASH                              "BrowserTrash"
@@ -493,6 +506,15 @@ std::string Browser::GetCurrentFolderChild()
 		}
 	}
 	return item;
+}
+
+GdkModifierType Browser::GetLastActivateModifiers() const
+{
+	if (m_BrowserImplPtr && m_BrowserImplPtr->m_pIconView)
+	{
+		return quiver_icon_view_get_last_activate_modifiers(QUIVER_ICON_VIEW(m_BrowserImplPtr->m_pIconView));
+	}
+	return (GdkModifierType)0;
 }
 
 FolderTreePtr Browser::GetFolderTree()
@@ -568,6 +590,16 @@ GtkWidget* Browser::GetIconViewOverlay()
 	return m_BrowserImplPtr->m_pIconViewOverlay;
 }
 
+void Browser::ShowLoadingProgress(const std::string& text, double fraction)
+{
+	m_BrowserImplPtr->ShowLoadingProgress(text, fraction);
+}
+
+void Browser::HideLoadingProgress()
+{
+	m_BrowserImplPtr->HideLoadingProgress();
+}
+
 
 //=============================================================================
 //=============================================================================
@@ -608,6 +640,8 @@ static gboolean iconview_key_press_cb(GtkEventControllerKey *controller, guint k
 
 static GdkContentProvider* browser_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data);
 static void browser_drag_source_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data);
+static void browser_drag_source_end(GtkDragSource *source, GdkDrag *drag, gboolean delete_data, gpointer user_data);
+static gboolean browser_drag_source_cancel(GtkDragSource *source, GdkDrag *drag, GdkDragCancelReason reason, gpointer user_data);
 static gboolean browser_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer user_data);
 static void browser_drop_leave_cb(GtkDropTarget *target, gpointer user_data);
 static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer user_data);
@@ -622,7 +656,7 @@ static void entry_focus_in ( GtkEventControllerFocus *controller, gpointer user_
 { (void)controller; 
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
-	QuiverUtils::DisconnectUnmodifiedAccelerators();
+	QuiverUtils::SuppressAllAccelerators(true);
 	gtk_widget_set_visible(pBrowserImpl->m_pLocationEntry, TRUE);
 	if (0 != pBrowserImpl->m_iTimeoutHideLocationID)
 	{
@@ -635,6 +669,7 @@ static gboolean timeout_hide_location (gpointer data)
 {
 	GtkWidget *widget = (GtkWidget*)data;
 	gtk_widget_set_visible(widget, FALSE);
+	QuiverUtils::SuppressAllAccelerators(false);
 	return FALSE;
 }
 
@@ -642,7 +677,7 @@ static void entry_focus_out ( GtkEventControllerFocus *controller, gpointer user
 { (void)controller; 
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)user_data;
 
-	QuiverUtils::ConnectUnmodifiedAccelerators();
+	QuiverUtils::SuppressAllAccelerators(false);
 
 	if (0 == pBrowserImpl->m_iTimeoutHideLocationID)
 	{
@@ -746,7 +781,11 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_bContextMenuPending = false;
 	m_bContextMenuOnEmptyArea = false;
 	m_eDropAction = GDK_ACTION_COPY;
+	m_bDraggingSelection = false;
 	m_pIconViewOverlay = NULL;
+	m_pLoadingOverlayBox = NULL;
+	m_pLoadingOverlayLabel = NULL;
+	m_pLoadingOverlayBar = NULL;
 	/*
 	 * layout for the browser gui:
 	 * hpaned
@@ -815,6 +854,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 			G_CALLBACK(browser_drag_source_prepare), this);
 		g_signal_connect(drag_source, "drag-begin",
 			G_CALLBACK(browser_drag_source_begin), this);
+		g_signal_connect(drag_source, "drag-end",
+			G_CALLBACK(browser_drag_source_end), this);
+		g_signal_connect(drag_source, "drag-cancel",
+			G_CALLBACK(browser_drag_source_cancel), this);
 		gtk_widget_add_controller(GTK_WIDGET(m_pIconView),
 			GTK_EVENT_CONTROLLER(drag_source));
 
@@ -849,6 +892,27 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_overlay_set_child(GTK_OVERLAY(m_pIconViewOverlay), scrolled_window);
 	gtk_widget_set_hexpand(m_pIconViewOverlay, TRUE);
 	gtk_widget_set_vexpand(m_pIconViewOverlay, TRUE);
+
+	m_pLoadingOverlayBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	gtk_widget_add_css_class(m_pLoadingOverlayBox, "osd");
+	gtk_widget_add_css_class(m_pLoadingOverlayBox, "viewer-overlay-bar");
+	gtk_widget_add_css_class(m_pLoadingOverlayBox, "browser-loading-hud");
+	gtk_widget_set_halign(m_pLoadingOverlayBox, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pLoadingOverlayBox, GTK_ALIGN_END);
+	gtk_widget_set_margin_bottom(m_pLoadingOverlayBox, 50);
+
+	m_pLoadingOverlayLabel = gtk_label_new("Loading folder...");
+	gtk_widget_add_css_class(m_pLoadingOverlayLabel, "time-label");
+	gtk_widget_set_halign(m_pLoadingOverlayLabel, GTK_ALIGN_CENTER);
+	gtk_box_append(GTK_BOX(m_pLoadingOverlayBox), m_pLoadingOverlayLabel);
+
+	m_pLoadingOverlayBar = gtk_progress_bar_new();
+	gtk_widget_set_size_request(m_pLoadingOverlayBar, 220, -1);
+	gtk_box_append(GTK_BOX(m_pLoadingOverlayBox), m_pLoadingOverlayBar);
+
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pIconViewOverlay), m_pLoadingOverlayBox);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pIconViewOverlay), m_pLoadingOverlayBox, FALSE);
+	gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);
 	
 	hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
@@ -1040,6 +1104,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		thumb_size = 128.;
 	}
 	gtk_range_set_value(GTK_RANGE(hscale),thumb_size);
+	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(m_pIconView), (gint)thumb_size, (gint)thumb_size);
 	m_ThumbnailLoader.SetIconDimensions((guint)thumb_size, (guint)thumb_size);
 
 	bool bThumbsSquare = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_SQUARE, false);
@@ -1194,6 +1259,7 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_COPY, "<Control>C", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_PASTE, "<Control>V", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_NEW_FOLDER, "<Control><Shift>N", browser_action_handler_cb, this);
+	QuiverUtils::AddSimpleAction(ACTION_BROWSER_ADD_BOOKMARK, NULL, browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RENAME, "F2", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_SELECT_ALL, "<Control>A", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH, "Delete", browser_action_handler_cb, this);
@@ -1992,13 +2058,14 @@ static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong c
 	gint thumb_natural_w, gint thumb_natural_h,
 	gint thumb_drawn_w, gint thumb_drawn_h,
 	QuiverIconViewFilmstripSide side, gpointer user_data)
-{ (void)iconview; (void)thumb_drawn_w; (void)thumb_drawn_h; (void)side;
+{ (void)iconview; (void)thumb_natural_w; (void)thumb_natural_h; (void)side;
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	QuiverFile f = (*b->m_ImageListPtr)[cell];
 	if (!f.IsVideo())
 		return NULL;
 
-	std::string path = QuiverUtils::GetFilmstripPath(MAX(thumb_natural_w, thumb_natural_h));
+	gint thumb_drawn_max = MAX(thumb_drawn_w, thumb_drawn_h);
+	std::string path = QuiverUtils::GetFilmstripPath(thumb_drawn_max);
 	GdkTexture* texture = b->m_FilmstripCache.GetTexture(path);
 	if (NULL == texture)
 	{
@@ -2138,14 +2205,15 @@ static void iconview_leave_notify(GtkEventControllerMotion *controller, gpointer
 static gboolean
 entry_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data)
 { (void)controller; (void)state; (void)user_data; (void)keycode;
- GtkWidget *widget = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller)));
+	GtkWidget *widget = GTK_WIDGET(gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller)));
 	switch(keyval)
 	{
 		case GDK_KEY_Escape:
 			gtk_widget_set_visible(widget, FALSE);
-			break;
+			QuiverUtils::SuppressAllAccelerators(false);
+			return GDK_EVENT_STOP;
 	}
-	return FALSE;
+	return GDK_EVENT_PROPAGATE;
 }
 
 static void 
@@ -2363,6 +2431,20 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 		QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
 	const gboolean bHasSelection = (NULL != selection);
 	const gboolean bHasClipboard = QuiverFileOps::ClipboardHasItems() ? TRUE : FALSE;
+	bool bHasFolder = false;
+	for (const GList *it = selection; it != NULL; it = it->next)
+	{
+		guint item = (guint)(uintptr_t)it->data;
+		if (item < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+		{
+			QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
+			if (f.IsFolder())
+			{
+				bHasFolder = true;
+				break;
+			}
+		}
+	}
 	{
 		GAction *a;
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_COPY)))
@@ -2376,6 +2458,20 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 			std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
 			bool canCreate = !bTrash && (dirs.size() == 1) && QuiverUtils::IsDirectoryURI(dirs.front().c_str());
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), canCreate);
+		}
+		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_ADD_BOOKMARK)))
+		{
+			bool canBookmark = !bTrash;
+			if (bEmptyArea)
+			{
+				std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
+				canBookmark = canBookmark && (dirs.size() == 1) && QuiverUtils::IsDirectoryURI(dirs.front().c_str());
+			}
+			else
+			{
+				canBookmark = canBookmark && bHasFolder;
+			}
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), canBookmark);
 		}
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_RENAME)))
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && !bTrash);
@@ -2425,6 +2521,8 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 			{
 				browser_menu_item(menu, "New Folder", "quiver." ACTION_BROWSER_NEW_FOLDER,
 					"<Primary><Shift>n", NULL, "folder-new-symbolic");
+				browser_menu_item(menu, "Add Bookmark", "quiver." ACTION_BROWSER_ADD_BOOKMARK,
+					NULL, NULL, "bookmark-new-symbolic");
 			}
 		}
 		/* Empty-area menu: "Undo Delete" only makes sense here and only when
@@ -2458,6 +2556,11 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 				"<Control>v", NULL, "edit-paste-symbolic");
 		browser_menu_item(menu, "Rename", "quiver." ACTION_BROWSER_RENAME,
 			"F2", NULL, "document-edit-symbolic");
+		if (bHasFolder)
+		{
+			browser_menu_item(menu, "Add Bookmark", "quiver." ACTION_BROWSER_ADD_BOOKMARK,
+				NULL, NULL, "bookmark-new-symbolic");
+		}
 		GMenu *actions_section = g_menu_new();
 		browser_menu_item(actions_section, "Move To Trash", "quiver." ACTION_BROWSER_TRASH,
 			"Delete", NULL, "user-trash-symbolic");
@@ -2490,7 +2593,12 @@ static void entry_activate(GtkEntry *entry, gpointer user_data)
 	list<string> file_list;
 	file_list.push_back(entry_text);
 	b->m_ImageListPtr->SetImageList(&file_list);
-	
+	gtk_widget_set_visible(GTK_WIDGET(entry), FALSE);
+	QuiverUtils::SuppressAllAccelerators(false);
+	if (b->m_pIconView)
+	{
+		gtk_widget_grab_focus(b->m_pIconView);
+	}
 }
 
 static void browser_imageview_magnification_changed(QuiverImageView *imageview,gpointer data)
@@ -2587,6 +2695,28 @@ static void browser_drag_source_begin(GtkDragSource *source, GdkDrag *drag, gpoi
 	}
 }
 
+static bool is_same_or_child_uri(std::string_view candidate, std::string_view parent)
+{
+	if (candidate.empty() || parent.empty())
+		return false;
+
+	while (candidate.length() > 1 && candidate.back() == '/')
+		candidate.remove_suffix(1);
+
+	while (parent.length() > 1 && parent.back() == '/')
+		parent.remove_suffix(1);
+
+	if (candidate == parent)
+		return true;
+
+	if (candidate.starts_with(parent))
+	{
+		if (candidate.length() > parent.length() && candidate[parent.length()] == '/')
+			return true;
+	}
+	return false;
+}
+
 /* Drag the whole selection out of the icon view.  Copy-only, so dropping
  * elsewhere can never destroy the sources (a MOVE would require the external
  * target to move files it only sees as URIs). */
@@ -2596,7 +2726,11 @@ static GdkContentProvider* browser_drag_source_prepare(GtkDragSource *source, gd
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(b->m_pIconView);
 	gulong cell = quiver_icon_view_get_cell_for_xy(iconview, (gint)x, (gint)y);
 	if (G_MAXULONG == cell)
+	{
+		b->m_bDraggingSelection = false;
+		b->m_setDraggedURIs.clear();
 		return NULL;
+	}
 	GdkModifierType state = (GdkModifierType)0;
 	GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(source));
 	if (ev != NULL)
@@ -2624,13 +2758,44 @@ static GdkContentProvider* browser_drag_source_prepare(GtkDragSource *source, gd
 	g_list_free(sel);
 	std::list<std::string> uris = browser_selected_uris(b);
 	if (uris.empty())
+	{
+		b->m_bDraggingSelection = false;
+		b->m_setDraggedURIs.clear();
 		return NULL;
+	}
+	b->m_bDraggingSelection = true;
+	b->m_setDraggedURIs.clear();
+	for (const auto &u : uris)
+	{
+		b->m_setDraggedURIs.insert(u);
+	}
 	/* Alt-drag offers plain file-path text only (no file list), so drops
 	 * into text editors/terminals insert the paths instead of the target
 	 * treating the drag as files to open. */
 	bool bCutDrag = (0 == (state & GDK_CONTROL_MASK));
 	return QuiverClipboard::MakeContentProvider(uris, bCutDrag,
 		0 != (state & GDK_ALT_MASK));
+}
+
+static void browser_drag_source_end(GtkDragSource *source, GdkDrag *drag, gboolean delete_data, gpointer user_data)
+{ (void)source; (void)drag; (void)delete_data;
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	if (b != NULL)
+	{
+		b->m_bDraggingSelection = false;
+		b->m_setDraggedURIs.clear();
+	}
+}
+
+static gboolean browser_drag_source_cancel(GtkDragSource *source, GdkDrag *drag, GdkDragCancelReason reason, gpointer user_data)
+{ (void)source; (void)drag; (void)reason;
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	if (b != NULL)
+	{
+		b->m_bDraggingSelection = false;
+		b->m_setDraggedURIs.clear();
+	}
+	return FALSE;
 }
 
 static gboolean browser_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer user_data)
@@ -2654,6 +2819,44 @@ static gboolean browser_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble
 		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
 		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
 		return GDK_EVENT_PROPAGATE;
+	}
+
+	if (b->m_bDraggingSelection || !b->m_setDraggedURIs.empty())
+	{
+		bool bExcluded = false;
+		if (quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(b->m_pIconView), cell))
+		{
+			bExcluded = true;
+		}
+		else
+		{
+			const char *cell_uri = f.GetURI();
+			if (cell_uri != NULL && '\0' != cell_uri[0])
+			{
+				if (b->m_setDraggedURIs.count(cell_uri) > 0)
+				{
+					bExcluded = true;
+				}
+				else
+				{
+					for (const auto &u : b->m_setDraggedURIs)
+					{
+						if (is_same_or_child_uri(cell_uri, u))
+						{
+							bExcluded = true;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if (bExcluded)
+		{
+			quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+			gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
+			return GDK_EVENT_PROPAGATE;
+		}
 	}
 
 	quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), cell);
@@ -2739,6 +2942,15 @@ static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdou
 	if (target_uri == NULL || '\0' == target_uri[0])
 		return GDK_EVENT_PROPAGATE;
 
+	if (b->m_bDraggingSelection || !b->m_setDraggedURIs.empty())
+	{
+		if (quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(b->m_pIconView), cell) ||
+		    b->m_setDraggedURIs.count(target_uri) > 0)
+		{
+			return GDK_EVENT_PROPAGATE;
+		}
+	}
+
 	std::list<std::string> uris;
 	bool bCut = false;
 	const char *text = g_value_get_string(value);
@@ -2747,7 +2959,7 @@ static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdou
 
 	for (const auto &u : uris)
 	{
-		if (u == target_uri)
+		if (is_same_or_child_uri(target_uri, u))
 			return GDK_EVENT_PROPAGATE;
 	}
 
@@ -2991,6 +3203,37 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 		g_object_unref(child);
 		g_object_unref(parent);
 		g_free(folder_name);
+	}
+	else if (0 == strcmp(szAction, ACTION_BROWSER_ADD_BOOKMARK))
+	{
+		std::list<std::string> uris;
+		if (pBrowserImpl->m_bContextMenuOnEmptyArea)
+		{
+			uris = pBrowserImpl->m_ImageListPtr->GetFolderList();
+		}
+		else
+		{
+			GList *selection = quiver_icon_view_get_selection(
+				QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+			for (const GList *it = selection; it != NULL; it = it->next)
+			{
+				guint item = (guint)(uintptr_t)it->data;
+				if (item < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+				{
+					QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
+					if (f.IsFolder())
+					{
+						uris.push_back(f.GetURI());
+					}
+				}
+			}
+			g_list_free(selection);
+		}
+
+		if (!uris.empty())
+		{
+			QuiverUtils::PromptAddBookmark(uris);
+		}
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_RENAME))
 	{
@@ -3261,6 +3504,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 //=============================================================================
 void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 { (void)event; 
+	parent->HideLoadingProgress();
 	// get the list of files and folders in the image list
 	list<string> dirs  = parent->m_ImageListPtr->GetFolderList();
 	list<string> files = parent->m_ImageListPtr->GetFileList();
@@ -3377,6 +3621,101 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleItemChanged(ImageListEve
 	
 }
 
+void Browser::BrowserImpl::ImageListEventHandler::HandleLoadProgress(double fraction, int current, int total)
+{
+	parent->HandleLoadProgress(fraction, current, total);
+}
+
+void Browser::BrowserImpl::ShowLoadingProgress(const std::string& text, double fraction)
+{
+	if (!m_pLoadingOverlayBox)
+		return;
+
+	if (m_pLoadingOverlayLabel)
+	{
+		gtk_label_set_text(GTK_LABEL(m_pLoadingOverlayLabel), text.c_str());
+	}
+
+	if (m_pLoadingOverlayBar)
+	{
+		if (fraction < 0.0)
+		{
+			gtk_progress_bar_pulse(GTK_PROGRESS_BAR(m_pLoadingOverlayBar));
+		}
+		else
+		{
+			gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pLoadingOverlayBar), fraction);
+		}
+	}
+
+	gtk_widget_set_visible(m_pLoadingOverlayBox, TRUE);
+
+	if (m_StatusbarPtr)
+	{
+		if (fraction < 0.0)
+		{
+			m_StatusbarPtr->PulseProgress();
+		}
+		else
+		{
+			m_StatusbarPtr->SetProgressFraction(fraction);
+		}
+		m_StatusbarPtr->SetText(text);
+	}
+}
+
+void Browser::BrowserImpl::HideLoadingProgress()
+{
+	if (m_pLoadingOverlayBox)
+	{
+		gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);
+	}
+	if (m_pLoadingOverlayBar)
+	{
+		gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pLoadingOverlayBar), 0.0);
+	}
+	if (m_StatusbarPtr)
+	{
+		m_StatusbarPtr->SetProgressFraction(0.0);
+		m_StatusbarPtr->SetText("");
+	}
+}
+
+void Browser::BrowserImpl::HandleLoadProgress(double fraction, int current, int total)
+{
+	if (fraction >= 1.0)
+	{
+		HideLoadingProgress();
+		return;
+	}
+
+	char szMsg[128] = {0};
+	if (fraction < 0.0)
+	{
+		if (current > 0)
+		{
+			snprintf(szMsg, sizeof(szMsg), "Loading folder... (%d items)", current);
+		}
+		else
+		{
+			snprintf(szMsg, sizeof(szMsg), "Loading folder...");
+		}
+	}
+	else
+	{
+		if (total > 0)
+		{
+			snprintf(szMsg, sizeof(szMsg), "Reading dates... %d / %d", current, total);
+		}
+		else
+		{
+			snprintf(szMsg, sizeof(szMsg), "Loading... %d%%", (int)(fraction * 100));
+		}
+	}
+
+	ShowLoadingProgress(szMsg, fraction);
+}
+
 void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(PreferencesEventPtr event)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -3450,11 +3789,13 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	{
 		const std::list<std::string>& uris = event->GetURIs();
 		// landing on the first item mirrors the bookmark menu behavior
+		parent->ShowLoadingProgress("Loading folder...", -1.0);
 		parent->m_ImageListPtr->UpdateImageListAsync(&uris, event->GetRecursive(), true);
 		return;
 	}
 
 	list<string> listFolders = parent->m_FolderTreePtr->GetSelectedFolders();
+	parent->ShowLoadingProgress("Loading folder...", -1.0);
 	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders, false, true);
 }
 

@@ -14,11 +14,15 @@ public:
 	typedef boost::signals2::signal<void (ImageListEventPtr)> ImageListSignal;
 	typedef boost::shared_ptr<ImageListSignal> ImageListSignalPtr;
 
+	typedef boost::signals2::signal<void (double fraction, int current, int total)> LoadProgressSignal;
+	typedef boost::shared_ptr<LoadProgressSignal> LoadProgressSignalPtr;
+
 	ImageListEventSource() : m_sigContentsChangedPtr(new ImageListSignal()),
 									m_sigCurrentIndexChangedPtr(new ImageListSignal()),
 									m_sigItemAddedPtr(new ImageListSignal()),
 									m_sigItemRemovedPtr(new ImageListSignal()),
-									m_sigItemChangedPtr(new ImageListSignal())
+									m_sigItemChangedPtr(new ImageListSignal()),
+									m_sigLoadProgressPtr(new LoadProgressSignal())
 	{};
 	
 	virtual ~ImageListEventSource(){};
@@ -30,6 +34,7 @@ public:
 	void EmitItemAddedEvent(unsigned int iIndex);
 	void EmitItemRemovedEvent(unsigned int iIndex);
 	void EmitItemChangedEvent(unsigned int iIndex);
+	void EmitLoadProgress(double fraction, int current, int total);
 	
 private:
 	ImageListSignalPtr m_sigContentsChangedPtr;
@@ -37,6 +42,7 @@ private:
 	ImageListSignalPtr m_sigItemAddedPtr; // affected range
 	ImageListSignalPtr m_sigItemRemovedPtr; // affected range
 	ImageListSignalPtr m_sigItemChangedPtr; // affected range
+	LoadProgressSignalPtr m_sigLoadProgressPtr;
 
 };
 

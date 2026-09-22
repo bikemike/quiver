@@ -192,6 +192,7 @@ public:
 	void LoadExifData();
 	int GetOrientation();
 	time_t GetTimeT(bool fromExif = true);
+	bool HasCachedTimeT() const;
 	
 	std::shared_ptr<Exiv2::ExifData> GetExifData();
 	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
@@ -223,7 +224,7 @@ public:
  	std::shared_ptr<Exiv2::ExifData> m_ExifData;
  	std::shared_ptr<Exiv2::ExifData> m_ExifDataOriginal;
 
- 	std::recursive_mutex m_MetadataMutex;
+ 	mutable std::recursive_mutex m_MetadataMutex;
  	
 	IptcData* m_pIPTCData;
 	DBData* m_pDBData;
@@ -1004,6 +1005,8 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 		{
 			try
 			{
+				static std::mutex s_exiv2GlobalMutex;
+				std::lock_guard<std::mutex> exivLock(s_exiv2GlobalMutex);
 				auto image = Exiv2::ImageFactory::open(szPath);
 				image->readMetadata();
 
@@ -1303,7 +1306,13 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 	}
 
 	return m_cachedTimeT;
-}	
+}
+
+bool QuiverFile::QuiverFileImpl::HasCachedTimeT() const
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+	return m_cachedTimeT != 0;
+}
 
 
 
@@ -1996,6 +2005,15 @@ void QuiverFile::RemoveCachedThumbnail(int iSize /* = 0*/)
 time_t QuiverFile::GetTimeT(bool fromExif /* = true */) const
 {
 	return m_QuiverFilePtr->GetTimeT(fromExif);
+}
+
+bool QuiverFile::HasCachedTimeT() const
+{
+	if (m_QuiverFilePtr)
+	{
+		return m_QuiverFilePtr->HasCachedTimeT();
+	}
+	return false;
 }
 
 static gchar* quiver_thumbnail_hash_filename(const char* uri)

@@ -99,5 +99,37 @@ TEST_CASE("FFmpeg Video Decoding and Probing via QuiverVideoOps", "[lib][ffmpeg]
     }
 #endif
 
+    SECTION("Video display matrix rotation handling")
+    {
+        const char* rotatedVideoPath = "/workspace/PXL_20250626_001254423.mp4";
+        if (g_file_test(rotatedVideoPath, G_FILE_TEST_EXISTS))
+        {
+            gchar* rotUri = g_filename_to_uri(rotatedVideoPath, NULL, NULL);
+            REQUIRE(rotUri != NULL);
+
+            gint width = 0, height = 0;
+            gboolean ok = QuiverVideoOps::Probe(rotUri, NULL, &width, &height);
+            REQUIRE(ok == TRUE);
+            // Display dimensions must be swapped to portrait (1080x1920)
+            REQUIRE(width == 1080);
+            REQUIRE(height == 1920);
+
+            GdkTexture* tex = QuiverVideoOps::LoadTexture(rotUri);
+            REQUIRE(tex != nullptr);
+            REQUIRE(gdk_texture_get_width(tex) == 1080);
+            REQUIRE(gdk_texture_get_height(tex) == 1920);
+            g_object_unref(tex);
+
+#if HAVE_GDK_PIXBUF
+            GdkPixbuf* pb = QuiverVideoOps::LoadPixbuf(rotUri);
+            REQUIRE(pb != nullptr);
+            REQUIRE(gdk_pixbuf_get_width(pb) == 1080);
+            REQUIRE(gdk_pixbuf_get_height(pb) == 1920);
+            g_object_unref(pb);
+#endif
+            g_free(rotUri);
+        }
+    }
+
     g_free(videoUri);
 }

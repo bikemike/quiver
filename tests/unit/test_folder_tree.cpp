@@ -46,6 +46,18 @@ public:
     }
 };
 
+class FolderTreeTestSelectionHandler : public IFolderTreeEventHandler
+{
+public:
+    int selectionEvents = 0;
+
+    void HandleSelectionChanged(FolderTreeEventPtr event) override
+    {
+        (void)event;
+        selectionEvents++;
+    }
+};
+
 TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gui]")
 {
     REQUIRE_DISPLAY();
@@ -129,6 +141,10 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
     SECTION("Mouse click on a folder row checks it off")
     {
         FolderTreePtr tree(new FolderTree());
+        boost::shared_ptr<FolderTreeTestSelectionHandler> selHandler(
+            new FolderTreeTestSelectionHandler());
+        tree->AddEventHandler(boost::static_pointer_cast<IEventHandler>(selHandler));
+
         GtkWidget* box = tree->GetWidget();
         REQUIRE(box != nullptr);
         REQUIRE(GTK_IS_BOX(box));
@@ -177,14 +193,44 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
             return nullptr;
         };
 
-        GtkGestureClick* row_gesture = find_gesture(first_child, find_gesture);
-        if (row_gesture)
+        GtkGestureClick* row_gesture0 = find_gesture(first_child, find_gesture);
+        REQUIRE(row_gesture0 != nullptr);
+
+        // Simulate mouse click on folder row 0 body (icon/label at x=50, y=10)
+        g_signal_emit_by_name(row_gesture0, "pressed", 1, 50.0, 10.0);
+        g_signal_emit_by_name(row_gesture0, "released", 1, 50.0, 10.0);
+        while (g_main_context_iteration(NULL, FALSE));
+
+        std::list<std::string> selList0 = tree->GetSelectedFolders();
+        REQUIRE(selList0.size() == 1);
+        std::string uri0 = selList0.front();
+        REQUIRE(selHandler->selectionEvents == 1);
+
+        // Simulate mouse click on the empty white space of row 1 (far to the right of label at x=350, y=10)
+        GtkWidget* second_child = gtk_widget_get_next_sibling(first_child);
+        if (second_child)
         {
-            // Simulate mouse click
-            g_signal_emit_by_name(row_gesture, "pressed", 1, 10.0, 10.0);
-            g_signal_emit_by_name(row_gesture, "released", 1, 10.0, 10.0);
-            std::list<std::string> selList = tree->GetSelectedFolders();
-            REQUIRE(selList.size() == 1);
+            GtkGestureClick* row_gesture1 = find_gesture(second_child, find_gesture);
+            REQUIRE(row_gesture1 != nullptr);
+
+            g_signal_emit_by_name(row_gesture1, "pressed", 1, 350.0, 10.0);
+            g_signal_emit_by_name(row_gesture1, "released", 1, 350.0, 10.0);
+            while (g_main_context_iteration(NULL, FALSE));
+
+            std::list<std::string> selList1 = tree->GetSelectedFolders();
+            REQUIRE(selList1.size() == 1);
+            REQUIRE(selList1.front() != uri0);
+            REQUIRE(selHandler->selectionEvents == 2);
+
+            // Clicking white space of row 0 again (at x=300, y=5) unchecks row 1 and checks row 0
+            g_signal_emit_by_name(row_gesture0, "pressed", 1, 300.0, 5.0);
+            g_signal_emit_by_name(row_gesture0, "released", 1, 300.0, 5.0);
+            while (g_main_context_iteration(NULL, FALSE));
+
+            std::list<std::string> selListBack = tree->GetSelectedFolders();
+            REQUIRE(selListBack.size() == 1);
+            REQUIRE(selListBack.front() == uri0);
+            REQUIRE(selHandler->selectionEvents == 3);
         }
 
         gtk_window_set_child(GTK_WINDOW(win), nullptr);
@@ -1174,4 +1220,18 @@ TEST_CASE("FolderTree Left/Right arrow navigation and Menu key", "[unit][foldert
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
 }
+
+TEST_CASE("FolderTree Add Bookmark context menu action", "[unit][foldertree][bookmarks]")
+{
+    REQUIRE_DISPLAY();
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* sidebar = tree->GetWidget();
+    REQUIRE(sidebar != nullptr);
+
+    GAction* action = QuiverUtils::GetAction("FolderTreeAddBookmark");
+    REQUIRE(action != nullptr);
+    CHECK(g_action_get_enabled(action) == TRUE);
+}
+
 

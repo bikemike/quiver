@@ -231,3 +231,324 @@ TEST_CASE("QuiverIconView Resize Top-Left Preservation and Scroll Callback", "[g
     g_object_unref(scrolled);
 }
 
+struct FilmstripTestContext {
+    GdkTexture *strip_tex_128 = nullptr;
+    GdkTexture *strip_tex_256 = nullptr;
+    GdkTexture *thumb_tex = nullptr;
+    bool callback_called = false;
+    gint last_drawn_w = 0;
+    gint last_drawn_h = 0;
+};
+
+static void collect_texture_bounds(GskRenderNode *node, std::vector<graphene_rect_t> &bounds)
+{
+    if (!node) return;
+    GskRenderNodeType type = gsk_render_node_get_node_type(node);
+    if (type == GSK_TEXTURE_NODE)
+    {
+        graphene_rect_t b;
+        gsk_render_node_get_bounds(node, &b);
+        bounds.push_back(b);
+    }
+    else if (type == GSK_CONTAINER_NODE)
+    {
+        guint n = gsk_container_node_get_n_children(node);
+        for (guint i = 0; i < n; i++)
+            collect_texture_bounds(gsk_container_node_get_child(node, i), bounds);
+    }
+    else if (type == GSK_CLIP_NODE)
+    {
+        collect_texture_bounds(gsk_clip_node_get_child(node), bounds);
+    }
+    else if (type == GSK_TRANSFORM_NODE)
+    {
+        collect_texture_bounds(gsk_transform_node_get_child(node), bounds);
+    }
+}
+
+static GdkTexture* test_filmstrip_cb(QuiverIconView *iv, gulong cell,
+    gint nw, gint nh, gint dw, gint dh,
+    QuiverIconViewFilmstripSide side, gpointer user_data)
+{
+    (void)iv; (void)cell; (void)nw; (void)nh; (void)side;
+    auto *ctx = static_cast<FilmstripTestContext*>(user_data);
+    ctx->callback_called = true;
+    ctx->last_drawn_w = dw;
+    ctx->last_drawn_h = dh;
+
+    gint max_dim = std::max(dw, dh);
+    GdkTexture *chosen = (max_dim > 128) ? ctx->strip_tex_256 : ctx->strip_tex_128;
+    if (chosen)
+        g_object_ref(chosen);
+    return chosen;
+}
+
+static GdkTexture* test_thumb_texture_cb(QuiverIconView *iv, gulong cell,
+    gint *aw, gint *ah, gpointer user_data)
+{
+    (void)iv; (void)cell;
+    auto *ctx = static_cast<FilmstripTestContext*>(user_data);
+    if (ctx->thumb_tex)
+    {
+        *aw = gdk_texture_get_width(ctx->thumb_tex);
+        *ah = gdk_texture_get_height(ctx->thumb_tex);
+        g_object_ref(ctx->thumb_tex);
+    }
+    return ctx->thumb_tex;
+}
+
+static gulong test_single_item_cb(QuiverIconView *iv, gpointer user_data)
+{
+    (void)iv; (void)user_data;
+    return 1;
+}
+
+TEST_CASE("QuiverIconView Filmstrip Overlay Scaling and Asset Selection", "[gui][filmstrip]")
+{
+    REQUIRE_DISPLAY();
+
+    FilmstripTestContext ctx;
+    // filmstrip.png is 9x35; filmstrip-big.png is 23x80
+    ctx.strip_tex_128 = create_test_texture(9, 35, 0x000000FF);
+    ctx.strip_tex_256 = create_test_texture(23, 80, 0x000000FF);
+    REQUIRE(ctx.strip_tex_128 != nullptr);
+    REQUIRE(ctx.strip_tex_256 != nullptr);
+
+    GtkWidget *scrolled = gtk_scrolled_window_new();
+    GtkWidget *iconview = quiver_icon_view_new();
+    REQUIRE(QUIVER_IS_ICON_VIEW(iconview));
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), iconview);
+
+    quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(iconview), test_single_item_cb, &ctx, NULL);
+    quiver_icon_view_set_thumbnail_texture_func(QUIVER_ICON_VIEW(iconview), test_thumb_texture_cb, &ctx, NULL);
+    quiver_icon_view_set_get_filmstrip_texture_func(QUIVER_ICON_VIEW(iconview), test_filmstrip_cb, &ctx, NULL);
+    quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(iconview), TRUE);
+
+    SECTION("128px icon size uses 128px strip at 1.0 scale (width 9, tile 35)")
+    {
+        ctx.thumb_tex = create_test_texture(128, 72, 0xFFFFFFFF);
+        quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(iconview), 128, 128);
+        gtk_widget_allocate(scrolled, 400, 300, -1, NULL);
+
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(iconview)->snapshot(iconview, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        REQUIRE(node != nullptr);
+
+        REQUIRE(ctx.callback_called == true);
+        CHECK(ctx.last_drawn_w == 128);
+        CHECK(ctx.last_drawn_h == 72);
+
+        std::vector<graphene_rect_t> bounds;
+        collect_texture_bounds(node, bounds);
+        gsk_render_node_unref(node);
+
+        // Find filmstrip tile bounds (width 9, height 35)
+        bool found_tile = false;
+        for (const auto &b : bounds)
+        {
+            if ((int)(b.size.width + 0.5) == 9 && (int)(b.size.height + 0.5) == 35)
+                found_tile = true;
+        }
+        CHECK(found_tile == true);
+        g_object_unref(ctx.thumb_tex);
+    }
+
+    SECTION("64px icon size uses 128px strip scaled by 0.5 (width 5, tile 18)")
+    {
+        ctx.thumb_tex = create_test_texture(64, 36, 0xFFFFFFFF);
+        quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(iconview), 64, 64);
+        gtk_widget_allocate(scrolled, 400, 300, -1, NULL);
+
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(iconview)->snapshot(iconview, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        REQUIRE(node != nullptr);
+
+        REQUIRE(ctx.callback_called == true);
+        CHECK(ctx.last_drawn_w == 64);
+        CHECK(ctx.last_drawn_h == 36);
+
+        std::vector<graphene_rect_t> bounds;
+        collect_texture_bounds(node, bounds);
+        gsk_render_node_unref(node);
+
+        // Scale factor: 64 / 128.0 = 0.5
+        // strip_drawn_w: round(9 * 0.5) = 5
+        // tile_h: round(35 * 0.5) = 18
+        bool found_tile = false;
+        for (const auto &b : bounds)
+        {
+            if ((int)(b.size.width + 0.5) == 5 && (int)(b.size.height + 0.5) == 18)
+                found_tile = true;
+        }
+        CHECK(found_tile == true);
+        g_object_unref(ctx.thumb_tex);
+    }
+
+    SECTION("256px icon size uses large strip at 1.0 scale (width 23, tile 80)")
+    {
+        ctx.thumb_tex = create_test_texture(256, 144, 0xFFFFFFFF);
+        quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(iconview), 256, 256);
+        gtk_widget_allocate(scrolled, 600, 500, -1, NULL);
+
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(iconview)->snapshot(iconview, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        REQUIRE(node != nullptr);
+
+        REQUIRE(ctx.callback_called == true);
+        CHECK(ctx.last_drawn_w == 256);
+        CHECK(ctx.last_drawn_h == 144);
+
+        std::vector<graphene_rect_t> bounds;
+        collect_texture_bounds(node, bounds);
+        gsk_render_node_unref(node);
+
+        // Large strip 23x80 at scale 1.0
+        bool found_tile = false;
+        for (const auto &b : bounds)
+        {
+            if ((int)(b.size.width + 0.5) == 23 && (int)(b.size.height + 0.5) == 80)
+                found_tile = true;
+        }
+        CHECK(found_tile == true);
+        g_object_unref(ctx.thumb_tex);
+    }
+
+    SECTION("192px icon size uses large strip scaled by 0.75 (width 17, tile 60)")
+    {
+        ctx.thumb_tex = create_test_texture(192, 108, 0xFFFFFFFF);
+        quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(iconview), 192, 192);
+        gtk_widget_allocate(scrolled, 600, 500, -1, NULL);
+
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(iconview)->snapshot(iconview, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        REQUIRE(node != nullptr);
+
+        REQUIRE(ctx.callback_called == true);
+        CHECK(ctx.last_drawn_w == 192);
+        CHECK(ctx.last_drawn_h == 108);
+
+        std::vector<graphene_rect_t> bounds;
+        collect_texture_bounds(node, bounds);
+        gsk_render_node_unref(node);
+
+        // Scale factor: 192 / 256.0 = 0.75
+        // strip_drawn_w: round(23 * 0.75) = 17
+        // tile_h: round(80 * 0.75) = 60
+        bool found_tile = false;
+        for (const auto &b : bounds)
+        {
+            if ((int)(b.size.width + 0.5) == 17 && (int)(b.size.height + 0.5) == 60)
+                found_tile = true;
+        }
+        CHECK(found_tile == true);
+        g_object_unref(ctx.thumb_tex);
+    }
+
+    SECTION("Disabled filmstrip skips callback")
+    {
+        ctx.thumb_tex = create_test_texture(128, 72, 0xFFFFFFFF);
+        quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(iconview), FALSE);
+        quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(iconview), 128, 128);
+        gtk_widget_allocate(scrolled, 400, 300, -1, NULL);
+
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(iconview)->snapshot(iconview, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        REQUIRE(node != nullptr);
+        gsk_render_node_unref(node);
+
+        CHECK(ctx.callback_called == false);
+        g_object_unref(ctx.thumb_tex);
+    }
+
+    SECTION("Stock icon fallback skips filmstrip callback")
+    {
+        ctx.thumb_tex = nullptr; // Simulates thumbnail still loading
+        quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(iconview), 128, 128);
+        gtk_widget_allocate(scrolled, 400, 300, -1, NULL);
+
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        GTK_WIDGET_GET_CLASS(iconview)->snapshot(iconview, snapshot);
+        GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+        if (node)
+            gsk_render_node_unref(node);
+
+        CHECK(ctx.callback_called == false);
+    }
+
+    g_object_unref(ctx.strip_tex_128);
+    g_object_unref(ctx.strip_tex_256);
+    g_object_ref_sink(scrolled);
+    g_object_unref(scrolled);
+}
+
+TEST_CASE("QuiverIconView Activate Modifiers", "[iconview][activate]")
+{
+    REQUIRE_DISPLAY();
+
+    GtkWidget *iconview = quiver_icon_view_new();
+    REQUIRE(iconview != nullptr);
+
+    // Default modifiers should be 0
+    CHECK(quiver_icon_view_get_last_activate_modifiers(QUIVER_ICON_VIEW(iconview)) == (GdkModifierType)0);
+
+    // Set and get modifiers (e.g. Shift / Control)
+    quiver_icon_view_set_last_activate_modifiers(QUIVER_ICON_VIEW(iconview), GDK_SHIFT_MASK);
+    CHECK((quiver_icon_view_get_last_activate_modifiers(QUIVER_ICON_VIEW(iconview)) & GDK_SHIFT_MASK) != 0);
+
+    quiver_icon_view_set_last_activate_modifiers(QUIVER_ICON_VIEW(iconview), GDK_CONTROL_MASK);
+    CHECK((quiver_icon_view_get_last_activate_modifiers(QUIVER_ICON_VIEW(iconview)) & GDK_CONTROL_MASK) != 0);
+
+    quiver_icon_view_set_last_activate_modifiers(QUIVER_ICON_VIEW(iconview), (GdkModifierType)0);
+    CHECK(quiver_icon_view_get_last_activate_modifiers(QUIVER_ICON_VIEW(iconview)) == (GdkModifierType)0);
+
+    g_object_ref_sink(iconview);
+    g_object_unref(iconview);
+}
+
+TEST_CASE("QuiverIconView Cell Selected Check", "[iconview][selection]")
+{
+    REQUIRE_DISPLAY();
+
+    GtkWidget *iconview = quiver_icon_view_new();
+    REQUIRE(iconview != nullptr);
+
+    // Set 4 items
+    quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(iconview), test_n_items_cb, NULL, NULL);
+
+    // Initially no cell is selected
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 0) == FALSE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 1) == FALSE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 2) == FALSE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 3) == FALSE);
+
+    // Out of bounds check
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 99) == FALSE);
+
+    // Select cells 1 and 2
+    GList *sel = nullptr;
+    sel = g_list_append(sel, (gpointer)(uintptr_t)1);
+    sel = g_list_append(sel, (gpointer)(uintptr_t)2);
+    quiver_icon_view_set_selection(QUIVER_ICON_VIEW(iconview), sel);
+    g_list_free(sel);
+
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 0) == FALSE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 1) == TRUE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 2) == TRUE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 3) == FALSE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 100) == FALSE);
+
+    // Clear selection
+    quiver_icon_view_set_selection(QUIVER_ICON_VIEW(iconview), nullptr);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 1) == FALSE);
+    CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), 2) == FALSE);
+
+    g_object_ref_sink(iconview);
+    g_object_unref(iconview);
+}
+
+

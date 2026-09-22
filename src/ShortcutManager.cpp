@@ -178,6 +178,11 @@ void ShortcutManager::RegisterDefaultActions()
         "Start or pause slideshow presentation",
         {"s"}, {"s"}, true
     });
+    m_actions.push_back({
+        "ViewProperties", "Viewer Display", "Properties Pane",
+        "Toggle file properties and metadata pane",
+        {"<Alt>Return", "<Alt>KP_Enter"}, {"<Alt>Return", "<Alt>KP_Enter"}, false
+    });
 
     // File & Window
     m_actions.push_back({
@@ -203,7 +208,7 @@ void ShortcutManager::RegisterDefaultActions()
     m_actions.push_back({
         "Close", "File & Window", "Close / Quit",
         "Close viewer or exit application",
-        {"<Control>q", "q", "<Control>w", "Escape"}, {"<Control>q", "q", "<Control>w", "Escape"}, false
+        {"<Control>q", "q", "<Control>w", "Escape", "<Alt>F4"}, {"<Control>q", "q", "<Control>w", "Escape", "<Alt>F4"}, false
     });
     m_actions.push_back({
         "Preferences", "File & Window", "Preferences",
@@ -220,37 +225,37 @@ void ShortcutManager::RegisterDefaultActions()
     m_actions.push_back({
         "BrowserOpenLocation", "Browser", "Open Location Bar",
         "Focus folder path text entry",
-        {"<Control>l"}, {"<Control>l"}, false
+        {"<Control>l"}, {"<Control>l"}, false, true
     });
     m_actions.push_back({
         "BrowserHistoryBack", "Browser", "History Back",
         "Navigate to previous folder in history",
-        {"<Alt>Left"}, {"<Alt>Left"}, false
+        {"<Alt>Left"}, {"<Alt>Left"}, false, true
     });
     m_actions.push_back({
         "BrowserHistoryForward", "Browser", "History Forward",
         "Navigate to next folder in history",
-        {"<Alt>Right"}, {"<Alt>Right"}, false
+        {"<Alt>Right"}, {"<Alt>Right"}, false, true
     });
     m_actions.push_back({
         "GoFolderParent", "Browser", "Parent Folder",
         "Navigate to parent directory",
-        {"<Alt>Up"}, {"<Alt>Up"}, false
+        {"<Alt>Up", "BackSpace"}, {"<Alt>Up", "BackSpace"}, false, true
     });
     m_actions.push_back({
         "BrowserSelectAll", "Browser", "Select All",
         "Select all items in browser",
-        {"<Control>a"}, {"<Control>a"}, false
+        {"<Control>a"}, {"<Control>a"}, false, true
     });
     m_actions.push_back({
         "BrowserTrash", "Browser", "Move to Trash",
         "Move selected file(s) to trash",
-        {"Delete"}, {"Delete"}, false
+        {"Delete"}, {"Delete"}, false, true
     });
     m_actions.push_back({
         "BrowserReload", "Browser", "Reload",
         "Refresh folder contents",
-        {"<Control>r"}, {"<Control>r"}, false
+        {"<Control>r"}, {"<Control>r"}, false, true
     });
 }
 
@@ -399,8 +404,24 @@ void ShortcutManager::ApplyShortcutsForAction(const std::string &action_name)
 
     gchar *detailed_name = g_strdup_printf("quiver.%s", def->action_name.c_str());
 
+    // If all accelerators are suppressed (e.g. typing into address bar)
+    if (m_bAllSuppressed) {
+        const gchar *empty[] = {NULL};
+        gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
+        g_free(detailed_name);
+        return;
+    }
+
     // If in browser mode and action is viewer-only, disable accelerators
     if (!m_bInViewerMode && def->is_viewer_only) {
+        const gchar *empty[] = {NULL};
+        gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
+        g_free(detailed_name);
+        return;
+    }
+
+    // If in viewer mode and action is browser-only, disable accelerators
+    if (m_bInViewerMode && def->is_browser_only) {
         const gchar *empty[] = {NULL};
         gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
         g_free(detailed_name);
@@ -460,6 +481,13 @@ void ShortcutManager::SuppressUnmodifiedAccelerators(bool suppress)
     ApplyShortcuts();
 }
 
+void ShortcutManager::SuppressAllAccelerators(bool suppress)
+{
+    if (m_bAllSuppressed == suppress) return;
+    m_bAllSuppressed = suppress;
+    ApplyShortcuts();
+}
+
 void ShortcutManager::LoadFromPreferences()
 {
     PreferencesPtr prefs = Preferences::GetInstance();
@@ -476,6 +504,9 @@ void ShortcutManager::LoadFromPreferences()
                 if (!norm.empty()) {
                     loaded.push_back(norm);
                 }
+            }
+            if (def.action_name == "GoFolderParent" && loaded.size() == 1 && loaded[0] == "<Alt>Up") {
+                loaded.push_back("BackSpace");
             }
             def.current_accels = loaded;
         } else {

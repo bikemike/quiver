@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "Preferences.h"
+#include "QuiverPrefs.h"
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <cstring>
@@ -87,4 +88,18 @@ TEST_CASE_METHOD(TestPreferencesFixture, "Preferences Get/Set and Default Values
         prefs->RemoveSection("TempSec");
         REQUIRE_FALSE(prefs->HasSection("TempSec"));
     }
+}
+
+TEST_CASE_METHOD(TestPreferencesFixture, "Filmstrip Default Preferences", "[unit][prefs][fast]")
+{
+    PreferencesPtr prefs = Preferences::GetInstance();
+    REQUIRE(prefs != nullptr);
+
+    // Default filmstrip position should be RIGHT (3)
+    int fpos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_RIGHT);
+    REQUIRE(fpos == FSTRIP_POS_RIGHT);
+
+    // Default filmstrip overlay should be true
+    bool overlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
+    REQUIRE(overlay == true);
 }

@@ -8,6 +8,9 @@
 #include <string>
 
 #include "ImageList.h"
+#include "IImageListEventHandler.h"
+#include "Browser.h"
+#include "Statusbar.h"
 #include "test_helpers.h"
 
 // Fills a directory with a small set of sample image files so the async
@@ -104,4 +107,101 @@ TEST_CASE("ImageList async folder load: selectFirstItem lands on the first item"
     pump_until([&] { return loaded_folder(uriC); });
     REQUIRE(list->GetSize() == 4);
     REQUIRE(list->GetCurrentIndex() == 0);
+}
+
+class TestProgressHandler : public IImageListEventHandler
+{
+public:
+    int m_iProgressCount = 0;
+    double m_dLastFraction = -2.0;
+
+    virtual void HandleContentsChanged(ImageListEventPtr event) { (void)event; }
+    virtual void HandleCurrentIndexChanged(ImageListEventPtr event) { (void)event; }
+    virtual void HandleItemAdded(ImageListEventPtr event) { (void)event; }
+    virtual void HandleItemRemoved(ImageListEventPtr event) { (void)event; }
+    virtual void HandleItemChanged(ImageListEventPtr event) { (void)event; }
+    virtual void HandleLoadProgress(double fraction, int current, int total)
+    {
+        (void)current;
+        (void)total;
+        m_iProgressCount++;
+        m_dLastFraction = fraction;
+    }
+};
+
+TEST_CASE("ImageList async folder load: filename sort skips eager Exif parsing and emits progress",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dir = make_temp_dir();
+    seed_dir(dir, 4);
+    std::string uri = path_to_uri(dir);
+
+    ImageListPtr list(new ImageList());
+    boost::shared_ptr<TestProgressHandler> handler(new TestProgressHandler());
+    list->AddEventHandler(handler);
+
+    std::list<std::string> folders = { uri };
+    list->UpdateImageListAsync(&folders);
+
+    pump_until([&] { return list->GetSize() >= 4; });
+    REQUIRE(list->GetSize() == 4);
+
+    // Verify eager Exif parsing was skipped: HasCachedTimeT() is false before GetTimeT is called
+    REQUIRE_FALSE((*list)[0].HasCachedTimeT());
+
+    // Verify progress events were emitted and completed at 1.0
+    REQUIRE(handler->m_iProgressCount > 0);
+    REQUIRE(handler->m_dLastFraction == 1.0);
+
+    // When sorting by date, it queries dates and caches them
+    list->Sort(ImageList::SORT_BY_DATE);
+    pump_until([&] { return (*list)[0].HasCachedTimeT(); });
+    REQUIRE((*list)[0].HasCachedTimeT());
+
+    list->RemoveEventHandler(handler);
+}
+
+TEST_CASE("ImageList: StopAsyncLoad and destruction safety",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dir = make_temp_dir();
+    seed_dir(dir, 10);
+    std::string uri = path_to_uri(dir);
+
+    std::list<std::string> folders = { uri };
+
+    // Test StopAsyncLoad cleans up running thread without issue
+    {
+        ImageListPtr list(new ImageList());
+        list->UpdateImageListAsync(&folders);
+        list->StopAsyncLoad();
+        list->StopAsyncSort();
+    }
+
+    // Test destruction while load is queued or running
+    {
+        ImageListPtr list(new ImageList());
+        list->UpdateImageListAsync(&folders);
+        // List destructor runs immediately on scope exit
+    }
+}
+
+TEST_CASE("Browser loading overlay and statusbar HUD integration",
+          "[unit][browser][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    BrowserPtr browser(new Browser());
+    StatusbarPtr statusbar(new Statusbar());
+    browser->SetStatusbar(statusbar);
+
+    // Show loading progress
+    browser->ShowLoadingProgress("Loading test folder...", 0.5);
+
+    // Hide loading progress
+    browser->HideLoadingProgress();
 }

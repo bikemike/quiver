@@ -92,6 +92,7 @@ public:
 	int GetOrientation() ;
 	
 	time_t GetTimeT(bool fromExif = true) const;
+	bool HasCachedTimeT() const;
 	
 	double GetLoadTimeInSeconds() const;
 	

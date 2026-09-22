@@ -308,6 +308,22 @@ void Statusbar::StopProgressPulse()
 	gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar),1);
 }	
 
+void Statusbar::SetProgressFraction(double fraction)
+{
+	if (m_StatusbarImplPtr && m_StatusbarImplPtr->m_pProgressbar)
+	{
+		gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar), fraction);
+	}
+}
+
+void Statusbar::PulseProgress()
+{
+	if (m_StatusbarImplPtr && m_StatusbarImplPtr->m_pProgressbar)
+	{
+		gtk_progress_bar_pulse(GTK_PROGRESS_BAR(m_StatusbarImplPtr->m_pProgressbar));
+	}
+}
+
 
 void Statusbar::SignalAreaPrepared(GdkPixbufLoader *loader)
 { (void)loader; 

@@ -354,7 +354,7 @@ void PreferencesDlg::PreferencesDlgPriv::UpdateUI()
 		
 		// sync the ui to the pref items
 			
-		int iFilmstripPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
+		int iFilmstripPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_RIGHT);
 		gtk_drop_down_set_selected(m_pComboFilmstripPos, (guint)iFilmstripPos);
 
 		int iHudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);

@@ -75,6 +75,7 @@ struct _QuiverIconViewPrivate
 	gulong cursor_cell_first;
 	
 	gboolean mouse_button_is_down;
+	GdkModifierType last_activate_modifiers;
 
 	gboolean idle_load_running;
 	QuiverIconViewScrollType scroll_type;
@@ -596,6 +597,7 @@ quiver_icon_view_init(QuiverIconView *iconview)
 
 	/* the following item is for multiselect */
 	iconview->priv->cursor_cell_first = G_MAXULONG;
+	iconview->priv->last_activate_modifiers = (GdkModifierType)0;
 
 
 	gtk_widget_set_focusable(GTK_WIDGET(iconview),TRUE);
@@ -1181,14 +1183,13 @@ quiver_icon_view_snapshot_cell_at (QuiverIconView *iconview,
 		 * texture is ever serialized.  There is no caching here either -- the
 		 * strip texture is used transiently during snapshotting and unrefd.
 		 *
-		 * The strip is scaled proportionally with the thumbnail (the strip's
-		 * width equals natural strip width times (drawn thumb height / natural
-		 * thumb height)), so it grows and shrinks with the thumbnail without
-		 * changing relative size, and it is tiled vertically to the drawn
-		 * thumbnail height.  Tiles are always drawn at full size: any tile
-		 * that would run past the bottom of the thumbnail is cropped by the
-		 * clip pushed below, never squeezed to fit. */
-		if (!is_drag_icon && iconview->priv->filmstrip_enabled
+		 * 256px thumbnails use the large filmstrip pattern (filmstrip-big.png),
+		 * while 128px thumbnails use the non-large pattern (filmstrip.png).
+		 * When thumbnails are scaled smaller than 256 or 128, the overlay
+		 * scales by the same proportional amount.  Tiles are tiled vertically
+		 * to the drawn thumbnail height and cropped at the bottom of the
+		 * thumbnail by the clip pushed below. */
+		if (!is_drag_icon && !stock && iconview->priv->filmstrip_enabled
 			&& NULL != iconview->priv->callback_get_filmstrip_texture)
 		{
 			gint natural_thumb_w = (gint)gdk_texture_get_width(texture);
@@ -1196,9 +1197,11 @@ quiver_icon_view_snapshot_cell_at (QuiverIconView *iconview,
 			gint drawn_thumb_w = (gint)(thumb_bounds.size.width + 0.5);
 			gint drawn_thumb_h = (gint)(thumb_bounds.size.height + 0.5);
 
-			if (natural_thumb_h > 0 && drawn_thumb_h > 0)
+			if (natural_thumb_h > 0 && drawn_thumb_h > 0 && drawn_thumb_w > 0)
 			{
-				gdouble k = (gdouble)drawn_thumb_h / (gdouble)natural_thumb_h;
+				gint thumb_drawn_max = MAX(drawn_thumb_w, drawn_thumb_h);
+				gdouble base_size = (thumb_drawn_max > 128) ? 256.0 : 128.0;
+				gdouble k = (gdouble)thumb_drawn_max / base_size;
 				QuiverIconViewFilmstripSide side;
 
 				for (side = QUIVER_ICON_VIEW_FILMSTRIP_LEFT;
@@ -3018,6 +3021,12 @@ quiver_icon_view_gesture_pressed (GtkGestureClick *gesture,
 	else if (2 == n_press)
 	{
 		/* Double click */
+		GdkModifierType state = 0;
+		GdkEvent *ev = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(gesture));
+		if (ev != NULL)
+			state = gdk_event_get_modifier_state(ev);
+		iconview->priv->last_activate_modifiers = state;
+
 		gulong cell = quiver_icon_view_get_cell_for_xy (iconview,ix,iy);
 		if (cell != G_MAXULONG)
 		{
@@ -3389,6 +3398,7 @@ quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 	{
 		case GDK_KEY_Return:
 		case GDK_KEY_KP_Enter:
+			iconview->priv->last_activate_modifiers = state;
 			quiver_icon_view_activate_cell(iconview,iconview->priv->cursor_cell);
 			new_cursor_cell = iconview->priv->cursor_cell;
 			break;
@@ -3679,6 +3689,18 @@ void quiver_icon_view_activate_cell(QuiverIconView *iconview,gulong cell)
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
 	
 	g_signal_emit(iconview,iconview_signals[SIGNAL_CELL_ACTIVATED],0,cell);
+}
+
+GdkModifierType quiver_icon_view_get_last_activate_modifiers(QuiverIconView *iconview)
+{
+	g_return_val_if_fail (QUIVER_IS_ICON_VIEW (iconview), (GdkModifierType)0);
+	return iconview->priv->last_activate_modifiers;
+}
+
+void quiver_icon_view_set_last_activate_modifiers(QuiverIconView *iconview, GdkModifierType mods)
+{
+	g_return_if_fail (QUIVER_IS_ICON_VIEW (iconview));
+	iconview->priv->last_activate_modifiers = mods;
 }
 
 static
@@ -4100,6 +4122,16 @@ GList* quiver_icon_view_get_selection(QuiverIconView *iconview)
 		}
 	}
 	return selection;
+}
+
+gboolean quiver_icon_view_is_cell_selected(QuiverIconView *iconview, gulong cell)
+{
+	g_return_val_if_fail(QUIVER_IS_ICON_VIEW(iconview), FALSE);
+	if (cell < iconview->priv->n_cell_items)
+	{
+		return iconview->priv->cell_items[cell].selected;
+	}
+	return FALSE;
 }
 
 void quiver_icon_view_get_visible_range(QuiverIconView *iconview,gulong *first, gulong *last)

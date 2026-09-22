@@ -16,6 +16,10 @@ GtkApplication *g_pApp = NULL;
 #include <errno.h>
 #include <exiv2/error.hpp>
 
+extern "C" {
+#include <libavutil/log.h>
+}
+
 #include "QuiverStockIcons.h"
 
 #include "IBrowserEventHandler.h"
@@ -421,6 +425,11 @@ QuiverImpl::~QuiverImpl()
 	 * The manual unrefs of tree-owned widgets have been removed from those
 	 * destructors, so tearing the sub-objects down first is now safe; the
 	 * window destroy at the end frees whatever is still parented. */
+	if (m_ImageListPtr)
+	{
+		m_ImageListPtr->StopAsyncLoad();
+		m_ImageListPtr->StopAsyncSort();
+	}
 	m_ImageListPtr.reset();
 	m_BrowserPtr.reset();
 	m_ViewerPtr.reset();
@@ -976,16 +985,28 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 	struct PromptData {
 		gint response; /* -1 = waiting, 0 = save, 1 = discard, 2 = cancel */
 		gboolean neverAsk;
+		gboolean bAllowCancel;
 		GMainLoop *loop;
 	};
 
-	PromptData data = { -1, FALSE, g_main_loop_new(NULL, FALSE) };
+	PromptData data = { -1, FALSE, bAllowCancel ? TRUE : FALSE, g_main_loop_new(NULL, FALSE) };
+
+	/* Make sure the mouse cursor is visible and not idle-hidden, even in fullscreen. */
+	if (m_ViewerPtr)
+	{
+		m_ViewerPtr->ResetIdleCursor();
+	}
+	if (m_pQuiverWindow)
+	{
+		gtk_widget_set_cursor(m_pQuiverWindow, NULL);
+	}
 
 	GtkWidget *dlg = gtk_window_new();
 	gtk_window_set_title(GTK_WINDOW(dlg), _("Save changes?"));
 	gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(m_pQuiverWindow));
 	gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
 	gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+	gtk_widget_set_cursor_from_name(dlg, "default");
 
 	GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
 	gtk_widget_set_margin_start(vbox, 18);
@@ -1017,7 +1038,7 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 	{
 		GtkWidget *btnCancel = gtk_button_new_with_label(_("Cancel"));
 		g_signal_connect(btnCancel, "clicked",
-			G_CALLBACK(+[](gpointer ud) {
+			G_CALLBACK(+[](GtkButton *, gpointer ud) {
 				auto *d = static_cast<PromptData*>(ud);
 				d->response = 2;
 				g_main_loop_quit(d->loop);
@@ -1027,7 +1048,7 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 
 	GtkWidget *btnDiscard = gtk_button_new_with_label(_("Discard Changes"));
 	g_signal_connect(btnDiscard, "clicked",
-		G_CALLBACK(+[](gpointer ud) {
+		G_CALLBACK(+[](GtkButton *, gpointer ud) {
 			auto *d = static_cast<PromptData*>(ud);
 			d->response = 1;
 			g_main_loop_quit(d->loop);
@@ -1036,12 +1057,30 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 
 	GtkWidget *btnSave = gtk_button_new_with_label(_("Save"));
 	g_signal_connect(btnSave, "clicked",
-		G_CALLBACK(+[](gpointer ud) {
+		G_CALLBACK(+[](GtkButton *, gpointer ud) {
 			auto *d = static_cast<PromptData*>(ud);
 			d->response = 0;
 			g_main_loop_quit(d->loop);
 		}), &data);
 	gtk_box_append(GTK_BOX(hbox), btnSave);
+
+	gtk_window_set_default_widget(GTK_WINDOW(dlg), btnSave);
+
+	/* Escape cancels (or discards if cancel is not allowed). */
+	GtkEventController *key_ctrl = gtk_event_controller_key_new();
+	gtk_event_controller_set_propagation_phase(key_ctrl, GTK_PHASE_CAPTURE);
+	gtk_widget_add_controller(dlg, key_ctrl);
+	g_signal_connect(key_ctrl, "key-pressed",
+		G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType, gpointer user_data) -> gboolean {
+			if (keyval == GDK_KEY_Escape)
+			{
+				auto *d = static_cast<PromptData*>(user_data);
+				d->response = d->bAllowCancel ? 2 : 1;
+				g_main_loop_quit(d->loop);
+				return TRUE;
+			}
+			return FALSE;
+		}), &data);
 
 	/* Treat the close button as Cancel / Discard. */
 	g_signal_connect(dlg, "close-request",
@@ -1062,6 +1101,11 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 
 	gtk_window_destroy(GTK_WINDOW(dlg));
 
+	if (m_ViewerPtr)
+	{
+		m_ViewerPtr->RefreshAutoHideTimer();
+	}
+
 	if (bNeverAsk)
 	{
 		prefsPtr->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_SAVE_ON_NAVIGATE, "always");
@@ -1073,7 +1117,12 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 	}
 	else if (response == 1)
 	{
-		/* Discard: nothing to do. */
+		/* Discard: revert modifications by reloading original file info from disk. */
+		if (m_CurrentQuiverFile.GetURI())
+		{
+			QuiverFileOps::UndoStackDropRotate(m_CurrentQuiverFile.GetURI());
+		}
+		m_CurrentQuiverFile.Reload();
 	}
 	else
 	{
@@ -1120,6 +1169,11 @@ void QuiverImpl::SaveAs()
 
 bool QuiverImpl::CanClose()
 {
+	if (m_ImageListPtr)
+	{
+		m_ImageListPtr->StopAsyncLoad();
+		m_ImageListPtr->StopAsyncSort();
+	}
 	if (!gtk_window_is_fullscreen(GTK_WINDOW(m_pQuiverWindow)))
 	{
 		gtk_window_get_default_size(GTK_WINDOW(m_pQuiverWindow), &m_iAppWidth, &m_iAppHeight);
@@ -1441,6 +1495,8 @@ void QuiverImpl::RebuildMenubar()
 	 * g_object_ref_sink() above — each rebuild finds them still alive and simply
 	 * re-attaches them to the freshly-created slots. */
 	gtk_popover_menu_set_menu_model(GTK_POPOVER_MENU(m_pMenuPopover), G_MENU_MODEL(appMenu));
+	gtk_widget_insert_action_group(m_pMenuPopover, "quiver",
+		G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
 	gtk_popover_menu_add_child(GTK_POPOVER_MENU(m_pMenuPopover), m_pMenuZoomRow, "zoom-row");
 	gtk_popover_menu_add_child(GTK_POPOVER_MENU(m_pMenuPopover), m_pMenuRotateRow, "rotate-row");
 	QuiverUtils::EnablePopoverMenuIcons(m_pMenuPopover);
@@ -1916,10 +1972,7 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_OPEN_FOLDER, "<Control>f", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_SAVE, "<Control>s", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_SAVE_AS, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE, "<Alt>F4", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE_2, "q", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE_3, "<Control>q", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE_4, "<Control>w", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE, "<Control>q", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ESCAPE, "Escape", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_PREFERENCES, "<Control>p", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UI_MODE_BROWSER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
@@ -2128,6 +2181,26 @@ void Quiver::Init()
 				"  background-color: alpha(currentColor, 0.15);"
 				"  margin-top: 6px;"
 				"  margin-bottom: 6px;"
+				"}"
+				".browser-loading-hud {"
+				"  background-color: rgba(30, 30, 30, 0.85);"
+				"  border-radius: 10px;"
+				"  padding: 8px 16px;"
+				"  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);"
+				"}"
+				".browser-loading-hud label {"
+				"  color: #ffffff;"
+				"  font-size: 12px;"
+				"  font-weight: 500;"
+				"}"
+				".browser-loading-hud progressbar trough {"
+				"  min-height: 6px;"
+				"  border-radius: 3px;"
+				"  background-color: rgba(255, 255, 255, 0.2);"
+				"}"
+				".browser-loading-hud progressbar progress {"
+				"  min-height: 6px;"
+				"  border-radius: 3px;"
 				"}");
 			gtk_style_context_add_provider_for_display(
 				gdk_display_get_default(), GTK_STYLE_PROVIDER(sCssProvider),
@@ -2259,9 +2332,15 @@ void Quiver::Init()
 	gtk_paned_set_resize_start_child(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), TRUE);
 	gtk_paned_set_resize_end_child(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), FALSE);
 	gtk_paned_set_shrink_start_child(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), TRUE);
-	gtk_paned_set_shrink_end_child(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), TRUE);
+	gtk_paned_set_shrink_end_child(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), FALSE);
 
-	int hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS, m_QuiverImplPtr->m_iAppWidth/2);
+	gtk_widget_set_size_request(m_QuiverImplPtr->m_pNBProperties, 180, -1);
+
+	int hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS, 0);
+	if (hpaned_pos <= 50 || hpaned_pos >= m_QuiverImplPtr->m_iAppWidth - 50)
+	{
+		hpaned_pos = m_QuiverImplPtr->m_iAppWidth > 400 ? m_QuiverImplPtr->m_iAppWidth - 300 : m_QuiverImplPtr->m_iAppWidth / 2;
+	}
 	gtk_paned_set_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea),hpaned_pos);
 
 	// pack the main gui area with the rest of the gui components
@@ -2424,7 +2503,17 @@ void Quiver::SaveSettings()
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_TOP,m_QuiverImplPtr->m_iAppY);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WIDTH,m_QuiverImplPtr->m_iAppWidth);
 	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HEIGHT,m_QuiverImplPtr->m_iAppHeight);
-	prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS,gtk_paned_get_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea)));
+	if (gtk_widget_get_visible(m_QuiverImplPtr->m_pNBProperties))
+	{
+		int pos = gtk_paned_get_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea));
+		int total_w = gtk_widget_get_width(m_QuiverImplPtr->m_pHPanedMainArea);
+		if (total_w <= 0)
+			total_w = m_QuiverImplPtr->m_iAppWidth;
+		if (total_w > 0 && pos > 50 && pos < total_w - 50)
+		{
+			prefsPtr->SetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_HPANE_POS, pos);
+		}
+	}
 }
 
 
@@ -2528,6 +2617,9 @@ int main (int argc, char **argv)
 
 	/* Suppress Exiv2 stderr spam for corrupt/truncated metadata */
 	Exiv2::LogMsg::setLevel(Exiv2::LogMsg::mute);
+
+	/* Suppress FFmpeg stderr chatter (demuxer stream warnings, swscaler pixel formats) */
+	av_log_set_level(AV_LOG_ERROR);
 
  	/* init threads */
 	//g_type_init ();
@@ -3080,11 +3172,17 @@ void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_
 { (void)event_ptr; 
 	if (0 != parent->m_ImageListPtr->GetSize() && parent->m_ImageListPtr->GetCurrent().IsFolder())
 	{
-	    list<string> file_list;
-		string currentItem = parent->m_BrowserPtr->GetCurrentFolderChild();
-	    file_list.push_back(parent->m_ImageListPtr->GetCurrent().GetURI());
-		parent->m_ImageListPtr->SetImageList(&file_list);
-		parent->m_ImageListPtr->SetCurrentFile(currentItem);
+		list<string> file_list;
+		GdkModifierType mods = parent->m_BrowserPtr->GetLastActivateModifiers();
+		bool bSelectPreview = (0 != (mods & (GDK_SHIFT_MASK | GDK_CONTROL_MASK)));
+		string currentItem;
+		if (bSelectPreview)
+		{
+			currentItem = parent->m_BrowserPtr->GetCurrentFolderChild();
+		}
+		file_list.push_back(parent->m_ImageListPtr->GetCurrent().GetURI());
+		parent->m_BrowserPtr->ShowLoadingProgress("Loading folder...", -1.0);
+		parent->m_ImageListPtr->UpdateImageListAsync(&file_list, false, !bSelectPreview, currentItem);
 	}
 	else
 	{
@@ -3199,9 +3297,38 @@ void Quiver::OnShowProperties(bool bShow /* = true */)
 	if (bShow)
 	{
 		gtk_widget_set_visible(m_QuiverImplPtr->m_pNBProperties, TRUE);
+		int total_w = gtk_widget_get_width(m_QuiverImplPtr->m_pHPanedMainArea);
+		if (total_w <= 0)
+		{
+			total_w = m_QuiverImplPtr->m_iAppWidth;
+		}
+		int pos = gtk_paned_get_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea));
+		int saved_pos = prefsPtr->GetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_HPANE_POS, 0);
+
+		if (saved_pos > 50 && saved_pos < total_w - 50)
+		{
+			gtk_paned_set_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), saved_pos);
+		}
+		else if (pos <= 50 || pos >= total_w - 50)
+		{
+			int new_pos = total_w > 400 ? total_w - 300 : total_w * 3 / 4;
+			gtk_paned_set_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), new_pos);
+		}
+
+		if (m_QuiverImplPtr->m_ImageListPtr && m_QuiverImplPtr->m_ImageListPtr->GetSize() > 0)
+		{
+			QuiverFile f = m_QuiverImplPtr->m_ImageListPtr->GetCurrent();
+			m_QuiverImplPtr->m_PropertyView.SetQuiverFile(f);
+		}
 	}
 	else
 	{
+		int pos = gtk_paned_get_position(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea));
+		int total_w = gtk_widget_get_width(m_QuiverImplPtr->m_pHPanedMainArea);
+		if (total_w > 0 && pos > 50 && pos < total_w - 50)
+		{
+			prefsPtr->SetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_HPANE_POS, pos);
+		}
 		gtk_widget_set_visible(m_QuiverImplPtr->m_pNBProperties, FALSE);
 	}
 }
@@ -4021,62 +4148,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 		files = pQuiverImpl->m_ImageListPtr->GetFileList();
 		folders.insert(folders.end(), files.begin(), files.end());
 
-		string strBaseName;
-		gchar * bookmark_name = NULL;
-
-		if (0 == folders.size())
-		{
-			// no bookmark to add
-		}	
-		else
-		{
-			gchar* filename = g_filename_from_uri(folders.front().c_str(),NULL,NULL);
-
-			if (NULL != filename)
-			{
-				gchar* basename = g_path_get_basename(filename);
-				if (NULL != basename)
-				{
-					strBaseName = basename;
-					g_free(basename);
-				}
-				g_free(filename);
-			}
-
-			if ( 1 == folders.size() )
-			{
-				bookmark_name = g_strdup(strBaseName.c_str());
-			}
-			else
-			{
-				if ( 2 < folders.size() )
-				{
-					bookmark_name = g_strdup_printf("%s (and %d other folders)", strBaseName.c_str(), (int)(folders.size()-1));
-				}
-				else
-				{
-					bookmark_name = g_strdup_printf("%s (and 1 other folder)", strBaseName.c_str());
-				}
-			}
-		}
-
-		if (NULL != bookmark_name)
-		{
-			Bookmark b(bookmark_name, "","",folders,false);
-			BookmarkAddEditDlg dlg(b);
-
-			dlg.Run();
-			if (!dlg.Cancelled())
-			{
-				Bookmark newbm = dlg.GetBookmark();
-				if (!newbm.GetName().empty())
-				{
-					pQuiverImpl->m_BookmarksPtr->AddBookmark(newbm);
-				}
-			}
-			g_free(bookmark_name);
-		}
-
+		QuiverUtils::PromptAddBookmark(folders);
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_BOOKMARKS_EDIT))
 	{

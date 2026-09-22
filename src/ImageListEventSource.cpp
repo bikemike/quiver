@@ -21,6 +21,9 @@ void ImageListEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 	c = m_sigItemChangedPtr->connect( boost::bind(&IImageListEventHandler::HandleItemChanged,h,_1) );
 	MapConnection(handler,c);
+
+	c = m_sigLoadProgressPtr->connect( boost::bind(&IImageListEventHandler::HandleLoadProgress,h,_1,_2,_3) );
+	MapConnection(handler,c);
 }
 
 void ImageListEventSource::EmitContentsChangedEvent()
@@ -54,5 +57,10 @@ void ImageListEventSource::EmitItemChangedEvent(unsigned int iIndex)
 {
 	ImageListEventPtr event( new ImageListEvent(shared_from_this(),ImageListEvent::ITEM_CHANGED,iIndex) );
 	(*m_sigItemChangedPtr)(event);
+}
+
+void ImageListEventSource::EmitLoadProgress(double fraction, int current, int total)
+{
+	(*m_sigLoadProgressPtr)(fraction, current, total);
 }
 

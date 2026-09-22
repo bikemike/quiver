@@ -627,4 +627,23 @@ TEST_CASE("QuiverUtils EnablePopoverMenuIcons and Preferences UI", "[unit][popov
     g_object_unref(b_ui);
 }
 
+TEST_CASE("QuiverUtils GetFilmstripPath Selection", "[unit][filmstrip][fast]")
+{
+    // For 128px or smaller thumbnails, use filmstrip.png
+    CHECK(QuiverUtils::GetFilmstripPath(128).find("filmstrip.png") != std::string::npos);
+    CHECK(QuiverUtils::GetFilmstripPath(96).find("filmstrip.png") != std::string::npos);
+    CHECK(QuiverUtils::GetFilmstripPath(64).find("filmstrip.png") != std::string::npos);
+    CHECK(QuiverUtils::GetFilmstripPath(32).find("filmstrip.png") != std::string::npos);
+
+    // For larger thumbnails (> 128px, up to 256px), use filmstrip-big.png
+    CHECK(QuiverUtils::GetFilmstripPath(129).find("filmstrip-big.png") != std::string::npos);
+    CHECK(QuiverUtils::GetFilmstripPath(192).find("filmstrip-big.png") != std::string::npos);
+    CHECK(QuiverUtils::GetFilmstripPath(256).find("filmstrip-big.png") != std::string::npos);
+}
+
+TEST_CASE("QuiverUtils PromptAddBookmark Empty URIs", "[unit][bookmarks][fast]")
+{
+    // Empty URIs returns false without prompting
+    CHECK(QuiverUtils::PromptAddBookmark({}) == false);
+}
 

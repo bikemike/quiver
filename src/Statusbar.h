@@ -35,6 +35,8 @@ public:
 	
 	void StartProgressPulse();
 	void StopProgressPulse();
+	void SetProgressFraction(double fraction);
+	void PulseProgress();
 
 	virtual void SetQuiverFile(QuiverFile quiverFile);
 	

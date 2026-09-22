@@ -68,6 +68,8 @@ public:
 	void SetFilmstripHiddenByFS(bool bHidden);
 	bool IsFilmstripHiddenByFS() const;
 	void UpdateHUDPosition();
+	void ResetIdleCursor();
+	void RefreshAutoHideTimer();
 
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;

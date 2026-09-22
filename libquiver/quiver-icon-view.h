@@ -154,6 +154,8 @@ guint quiver_icon_view_get_cell_padding(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_width(QuiverIconView *iconview);
 guint quiver_icon_view_get_cell_height(QuiverIconView *iconview);
 void quiver_icon_view_activate_cell(QuiverIconView *iconview,gulong cell);
+GdkModifierType quiver_icon_view_get_last_activate_modifiers(QuiverIconView *iconview);
+void quiver_icon_view_set_last_activate_modifiers(QuiverIconView *iconview, GdkModifierType mods);
 
 gulong quiver_icon_view_get_cursor_cell(QuiverIconView *iconview);
 void quiver_icon_view_set_cursor_cell(QuiverIconView *iconview,gulong new_cursor_cell);
@@ -179,6 +181,7 @@ void quiver_icon_view_scroll_to_cell_with_callback(
 
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection);
 GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
+gboolean quiver_icon_view_is_cell_selected(QuiverIconView *iconview, gulong cell);
 
 void quiver_icon_view_get_visible_range(QuiverIconView *iconview,gulong *first, gulong *last);
 

@@ -7,6 +7,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/display.h>
+#include <libavutil/log.h>
 #include <libswscale/swscale.h>
 }
 
@@ -15,6 +16,7 @@ extern "C" {
 #include <utility>
 #include <memory>
 #include <algorithm>
+#include <mutex>
 
 #include <libquiver/quiver-pixbuf-utils.h>
 #include "QuiverUtils.h"
@@ -40,20 +42,25 @@ static AVRational quiver_video_stream_aspect_ratio(AVStream* st)
 	return (AVRational){1, 1};
 }
 
-static int frame_rotation_deg(AVFrame* frame, AVDictionary* metadata)
+static int normalize_rotation_deg(double deg)
+{
+	if (deg < 0) deg += 360.0;
+	while (deg >= 360.0) deg -= 360.0;
+	int d = (int)(deg + 0.5) % 360;
+	if (d == 0) return 0;
+	if (d == 90) return 90;
+	if (d == 180) return 180;
+	if (d == 270) return 270;
+	return 0;
+}
+
+static int frame_rotation_deg(AVFrame* frame, AVDictionary* metadata, AVStream* st = NULL)
 {
 	AVDictionaryEntry* e = av_dict_get(metadata, "rotate", NULL, 0);
 	if (e != NULL)
 	{
 		double deg = g_ascii_strtod(e->value, NULL);
-		if (deg < 0) deg += 360.0;
-		while (deg >= 360.0) deg -= 360.0;
-		int d = (int)(deg + 0.5) % 360;
-		if (d == 0) return 0;
-		if (d == 90) return 90;
-		if (d == 180) return 180;
-		if (d == 270) return 270;
-		return 0;
+		return normalize_rotation_deg(deg);
 	}
 
 	if (frame != NULL)
@@ -61,16 +68,26 @@ static int frame_rotation_deg(AVFrame* frame, AVDictionary* metadata)
 		AVFrameSideData* sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX);
 		if (sd != NULL && sd->size >= 36)
 		{
-			double deg = av_display_rotation_get((int32_t*)sd->data);
-			if (deg < 0) deg += 360.0;
-			while (deg >= 360.0) deg -= 360.0;
-			int d = (int)(deg + 0.5) % 360;
-			if (d == 0) return 0;
-			if (d == 90) return 90;
-			if (d == 180) return 180;
-			if (d == 270) return 270;
+			// av_display_rotation_get() returns counter-clockwise degrees.
+			// Negate it to get clockwise degrees (matching "rotate" metadata).
+			double deg = -av_display_rotation_get((int32_t*)sd->data);
+			return normalize_rotation_deg(deg);
 		}
 	}
+
+	if (st != NULL && st->codecpar != NULL)
+	{
+		for (int s = 0; s < st->codecpar->nb_coded_side_data; s++)
+		{
+			if (st->codecpar->coded_side_data[s].type == AV_PKT_DATA_DISPLAYMATRIX &&
+			    st->codecpar->coded_side_data[s].size >= 36)
+			{
+				double deg = -av_display_rotation_get((int32_t*)st->codecpar->coded_side_data[s].data);
+				return normalize_rotation_deg(deg);
+			}
+		}
+	}
+
 	return 0;
 }
 /* avformat_open_input() expects a native filesystem path, not a URI: it will
@@ -114,8 +131,17 @@ struct VideoSession {
 	std::shared_ptr<VideoInterruptContext> cb_ctx;
 };
 
+static std::once_flag s_avInitOnce;
+static void init_av_logging()
+{
+	std::call_once(s_avInitOnce, []() {
+		av_log_set_level(AV_LOG_ERROR);
+	});
+}
+
 static VideoSession open_session(const gchar* uri, VideoAbortFn abort_fn = NULL, gpointer abort_data = NULL)
 {
+	init_av_logging();
 	VideoSession s;
 	std::string path;
 	if (!uri_to_path(uri, path))
@@ -204,10 +230,16 @@ static void close_session(VideoSession& s)
 	s = VideoSession();
 }
 
-/* Decode and discard frames until the first one is produced, returning the
- * first frame's rotation (0/90/180/270).  Returns 0 if no frame is decodable. */
 static int probe_rotation(VideoSession& s)
 {
+	int r = frame_rotation_deg(NULL, s.st->metadata, s.st);
+	if (r != 0) return r;
+	if (s.fmt->metadata != NULL)
+	{
+		r = frame_rotation_deg(NULL, s.fmt->metadata, s.st);
+		if (r != 0) return r;
+	}
+
 	AVPacket* pkt = av_packet_alloc();
 	AVFrame* fr = av_frame_alloc();
 	int rotation = 0;
@@ -224,7 +256,7 @@ static int probe_rotation(VideoSession& s)
 		av_packet_unref(pkt);
 		while (avcodec_receive_frame(s.ctx, fr) == 0)
 		{
-			rotation = frame_rotation_deg(fr, s.st->metadata);
+			rotation = frame_rotation_deg(fr, s.st->metadata, s.st);
 			av_frame_unref(fr);
 			goto out;
 		}
@@ -441,7 +473,7 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 
 			int frame_w = frame->width;
 			int frame_h = frame->height;
-			int rotation = frame_rotation_deg(frame, st->metadata);
+			int rotation = frame_rotation_deg(frame, st->metadata, st);
 
 			if (position_ns < 0)
 			{
@@ -480,7 +512,7 @@ done:
 	{
 		int last_w = last_frame->width;
 		int last_h = last_frame->height;
-		int last_rotation = frame_rotation_deg(last_frame, st->metadata);
+		int last_rotation = frame_rotation_deg(last_frame, st->metadata, st);
 		result = frame_to_texture(last_frame, last_w, last_h,
 		                          par_ratio.num, par_ratio.den,
 		                          target_width, target_height, last_rotation);
@@ -552,8 +584,8 @@ static GdkPixbuf* frame_to_pixbuf(AVFrame* frame, int width, int height,
 	if (rotation != 0)
 	{
 		GdkPixbufRotation rot =
-			(rotation == 90)  ? GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE :
-			(rotation == 270) ? GDK_PIXBUF_ROTATE_CLOCKWISE :
+			(rotation == 90)  ? GDK_PIXBUF_ROTATE_CLOCKWISE :
+			(rotation == 270) ? GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE :
 			GDK_PIXBUF_ROTATE_UPSIDEDOWN;
 		GdkPixbuf* rotated = gdk_pixbuf_rotate_simple(out, rot);
 		g_object_unref(out);
@@ -634,7 +666,7 @@ static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 
 			int frame_w = frame->width;
 			int frame_h = frame->height;
-			int rotation = frame_rotation_deg(frame, st->metadata);
+			int rotation = frame_rotation_deg(frame, st->metadata, st);
 
 			if (position_ns < 0)
 			{
@@ -671,7 +703,7 @@ done_pixbuf:
 	{
 		int last_w = last_frame->width;
 		int last_h = last_frame->height;
-		int last_rotation = frame_rotation_deg(last_frame, st->metadata);
+		int last_rotation = frame_rotation_deg(last_frame, st->metadata, st);
 		result = frame_to_pixbuf(last_frame, last_w, last_h,
 		                         target_width, target_height, last_rotation);
 	}

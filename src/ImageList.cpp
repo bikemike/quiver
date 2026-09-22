@@ -3,6 +3,8 @@
 #include <iostream>
 #include <algorithm>
 #include <random>
+#include <memory>
+#include <atomic>
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
@@ -79,6 +81,7 @@ typedef std::vector<QuiverFile> QuiverFileList;
 
 struct AsyncFolderLoadData
 {
+	std::weak_ptr<int> lifetimeToken;
 	ImageList::ImageListImpl* impl;
 	gint uiGeneration;
 	std::list<std::string> folders;
@@ -88,6 +91,17 @@ struct AsyncFolderLoadData
 	std::string strCurrentURI;
 	bool bRecursive;
 	bool bSelectFirstItem;
+};
+
+struct AsyncSortData
+{
+	std::weak_ptr<int> lifetimeToken;
+	ImageList::ImageListImpl* impl;
+	gint uiGeneration;
+	std::vector<QuiverFile> files;
+	bool bSortAscend;
+	bool bUpdateCurrentIndex;
+	std::string strURI;
 };
 
 const char* const szFileInfoAttributes =
@@ -150,6 +164,13 @@ public:
 	void Sort(bool bUpdateCurrentIndex);
 	void Sort(ImageList::SortBy o,bool descending, bool bUpdateCurrentIndex);
 
+	static gpointer AsyncSortThread(gpointer data);
+	static gboolean AsyncSortCommit(gpointer data);
+	void StartAsyncSortByDate(bool bSortAscend, bool bUpdateCurrentIndex, const std::string& strURI);
+	void StopAsyncLoad();
+	void StopAsyncSort();
+	void PostAsyncLoadProgress(gint uiGeneration, double fraction, int current, int total);
+	void PostAsyncSortProgress(gint uiGeneration, double fraction, int current, int total);
 	
 /* member variables */
 	
@@ -170,19 +191,21 @@ public:
 	
 	guint m_iTimeoutPathChanged;
 	
-	
-	
-	
-	
 	unsigned int m_iCurrentIndex;
 
+	std::shared_ptr<int> m_pLifetimeToken;
 	gint m_uiAsyncLoadGeneration;
+	gint m_uiAsyncSortGeneration;
 
 	ImageList::SortBy m_SortBy;
 	bool m_bSortAscend;
 	bool m_bEnableMonitor;
 
+	GThread* m_pAsyncLoadThread;
+	std::atomic<bool> m_bAbortAsyncLoad;
 
+	GThread* m_pAsyncSortThread;
+	std::atomic<bool> m_bAbortAsyncSort;
 };
 
 // sort functions
@@ -737,6 +760,7 @@ void monitor_callback (
 ImageList::ImageListImpl::ImageListImpl(ImageList *pImageList)
 {
 	m_pImageList = pImageList;
+	m_pLifetimeToken = std::make_shared<int>(1);
 	
 	LoadMimeTypes();
 	m_SortBy = ImageList::SORT_BY_FILENAME_NATURAL;
@@ -744,11 +768,55 @@ ImageList::ImageListImpl::ImageListImpl(ImageList *pImageList)
 	m_bSortAscend = true;
 	m_iCurrentIndex = 0;
 	m_uiAsyncLoadGeneration = 0;
+	m_uiAsyncSortGeneration = 0;
+
+	m_pAsyncLoadThread = NULL;
+	m_bAbortAsyncLoad = false;
+
+	m_pAsyncSortThread = NULL;
+	m_bAbortAsyncSort = false;
 }
 
 ImageList::ImageListImpl::~ImageListImpl()
 {
+	StopAsyncLoad();
+	StopAsyncSort();
+	m_pLifetimeToken.reset();
 	Clear();
+}
+
+void ImageList::ImageListImpl::StopAsyncLoad()
+{
+	m_bAbortAsyncLoad = true;
+	g_atomic_int_inc(&m_uiAsyncLoadGeneration);
+	if (m_pAsyncLoadThread)
+	{
+		g_thread_join(m_pAsyncLoadThread);
+		m_pAsyncLoadThread = NULL;
+	}
+	m_bAbortAsyncLoad = false;
+}
+
+void ImageList::ImageListImpl::StopAsyncSort()
+{
+	m_bAbortAsyncSort = true;
+	g_atomic_int_inc(&m_uiAsyncSortGeneration);
+	if (m_pAsyncSortThread)
+	{
+		g_thread_join(m_pAsyncSortThread);
+		m_pAsyncSortThread = NULL;
+	}
+	m_bAbortAsyncSort = false;
+}
+
+void ImageList::StopAsyncLoad()
+{
+	m_ImageListImplPtr->StopAsyncLoad();
+}
+
+void ImageList::StopAsyncSort()
+{
+	m_ImageListImplPtr->StopAsyncSort();
 }
 
 
@@ -1266,6 +1334,61 @@ bool ImageList::ImageListImpl::AddFile(const gchar* uri, GFileInfo *info)
 	return bAdded;
 }
 
+struct AsyncProgressMsg
+{
+	std::weak_ptr<int> lifetimeToken;
+	ImageList::ImageListImpl* impl;
+	gint uiGeneration;
+	double fraction;
+	int current;
+	int total;
+	bool isSort;
+};
+
+static gboolean async_progress_idle_cb(gpointer data)
+{
+	AsyncProgressMsg* msg = (AsyncProgressMsg*)data;
+	auto token = msg->lifetimeToken.lock();
+	if (token)
+	{
+		ImageList::ImageListImpl* impl = msg->impl;
+		if (!msg->isSort)
+		{
+			if (!impl->m_bAbortAsyncLoad && g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) == msg->uiGeneration)
+			{
+				impl->m_pImageList->EmitLoadProgress(msg->fraction, msg->current, msg->total);
+			}
+		}
+		else
+		{
+			if (!impl->m_bAbortAsyncSort && g_atomic_int_get(&impl->m_uiAsyncSortGeneration) == msg->uiGeneration)
+			{
+				impl->m_pImageList->EmitLoadProgress(msg->fraction, msg->current, msg->total);
+			}
+		}
+	}
+	delete msg;
+	return G_SOURCE_REMOVE;
+}
+
+void ImageList::ImageListImpl::PostAsyncLoadProgress(gint uiGeneration, double fraction, int current, int total)
+{
+	if (m_bAbortAsyncLoad || g_atomic_int_get(&m_uiAsyncLoadGeneration) != uiGeneration)
+		return;
+
+	AsyncProgressMsg* msg = new AsyncProgressMsg{m_pLifetimeToken, this, uiGeneration, fraction, current, total, false};
+	g_idle_add(async_progress_idle_cb, msg);
+}
+
+void ImageList::ImageListImpl::PostAsyncSortProgress(gint uiGeneration, double fraction, int current, int total)
+{
+	if (m_bAbortAsyncSort || g_atomic_int_get(&m_uiAsyncSortGeneration) != uiGeneration)
+		return;
+
+	AsyncProgressMsg* msg = new AsyncProgressMsg{m_pLifetimeToken, this, uiGeneration, fraction, current, total, true};
+	g_idle_add(async_progress_idle_cb, msg);
+}
+
 static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncFolderLoadData* pData)
 {
 	GFileEnumerator* enumerator = g_file_enumerate_children(dir, szFileInfoAttributes,
@@ -1277,8 +1400,8 @@ static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncF
 	GFileInfo* info = NULL;
 	while (NULL != (info = g_file_enumerator_next_file(enumerator, NULL, NULL)))
 	{
-		// a newer load has been started, so stop enumerating
-		if (g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
+		// a newer load has been started, or abort requested, so stop enumerating
+		if (impl->m_bAbortAsyncLoad || g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
 		{
 			g_object_unref(info);
 			break;
@@ -1304,6 +1427,13 @@ static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncF
 			{
 				pData->dirs.push_back(child_uri);
 				EnumerateChildren(impl, child, pData);
+				if (impl->m_bAbortAsyncLoad || g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
+				{
+					g_object_unref(info);
+					g_object_unref(child);
+					g_free(child_uri);
+					break;
+				}
 			}
 			else if (ImageList::ImageListImpl::ShouldAddFile(child_uri, info))
 			{
@@ -1318,6 +1448,11 @@ static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncF
 		g_object_unref(info);
 		g_object_unref(child);
 		g_free(child_uri);
+
+		if (pData->quiverFiles.size() % 100 == 0)
+		{
+			impl->PostAsyncLoadProgress(pData->uiGeneration, -1.0, (int)pData->quiverFiles.size(), 0);
+		}
 	}
 	g_object_unref(enumerator);
 }
@@ -1350,7 +1485,7 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 	for (itr = pData->folders.begin(); pData->folders.end() != itr; ++itr)
 	{
 		// a newer load has been started, so stop enumerating
-		if (g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
+		if (impl->m_bAbortAsyncLoad || g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
 			break;
 
 		GFile* entry = g_file_new_for_commandline_arg(itr->c_str());
@@ -1402,14 +1537,35 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 		g_object_unref(entry);
 	}
 
-	// resolve lazy metadata (creation dates) here on the loader thread so
-	// the commit-time sort on the GUI thread never blocks on I/O
-	for (auto& f : pData->quiverFiles)
+	// resolve lazy metadata (creation dates) on the loader thread ONLY
+	// if sorting by EXIF date. For all other sort orders (by name,
+	// natural, modification date, file size, etc.), skip EXIF parsing!
+	if (impl->m_SortBy == ImageList::SORT_BY_DATE)
 	{
-		f.GetTimeT();
+		size_t total = pData->quiverFiles.size();
+		size_t count = 0;
+		for (auto& f : pData->quiverFiles)
+		{
+			if (impl->m_bAbortAsyncLoad || g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
+				break;
+
+			f.GetTimeT();
+			count++;
+			if (count % 25 == 0 || count == total)
+			{
+				impl->PostAsyncLoadProgress(pData->uiGeneration, (double)count / (double)total, (int)count, (int)total);
+			}
+		}
 	}
 
-	g_idle_add(AsyncFolderLoadCommit, pData);
+	if (!impl->m_bAbortAsyncLoad && g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) == pData->uiGeneration)
+	{
+		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, AsyncFolderLoadCommit, pData, [](gpointer d){ delete (AsyncFolderLoadData*)d; });
+	}
+	else
+	{
+		delete pData;
+	}
 
 	return NULL;
 }
@@ -1417,20 +1573,22 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 gboolean ImageList::ImageListImpl::AsyncFolderLoadCommit(gpointer data)
 {
 	AsyncFolderLoadData* pData = (AsyncFolderLoadData*)data;
-
-	if (g_atomic_int_get(&pData->impl->m_uiAsyncLoadGeneration) == pData->uiGeneration)
+	auto token = pData->lifetimeToken.lock();
+	if (token)
 	{
 		ImageListImpl* impl = pData->impl;
-		size_t iOldSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
-		impl->CommitFolderLoad(pData);
-		size_t iNewSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
-		if (!(0 == iOldSize && 0 == iNewSize))
+		if (!impl->m_bAbortAsyncLoad && g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) == pData->uiGeneration)
 		{
-			impl->m_pImageList->EmitContentsChangedEvent();
+			size_t iOldSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
+			impl->CommitFolderLoad(pData);
+			size_t iNewSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
+			if (!(0 == iOldSize && 0 == iNewSize))
+			{
+				impl->m_pImageList->EmitContentsChangedEvent();
+			}
+			impl->m_pImageList->EmitLoadProgress(1.0, 0, 0);
 		}
 	}
-
-	delete pData;
 
 	return FALSE;
 }
@@ -1512,9 +1670,12 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 	}
 }
 
-void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive, bool bSelectFirstItem)
+void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive, bool bSelectFirstItem, const std::string& strSelectURI)
 {
 	ImageListImpl* impl = m_ImageListImplPtr.get();
+
+	impl->StopAsyncLoad();
+	impl->StopAsyncSort();
 
 	if (0 == file_list->size())
 	{
@@ -1527,6 +1688,7 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 		{
 			EmitContentsChangedEvent();
 		}
+		EmitLoadProgress(1.0, 0, 0);
 		return;
 	}
 
@@ -1563,8 +1725,8 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	// snapshot the current image so it can be reselected after the load
 	// (unless the caller wants to land on the first item, like an
 	// "open bookmark" action)
-	string strCurrentURI;
-	if (0 < impl->m_QuiverFileList.size() && !bSelectFirstItem)
+	string strCurrentURI = strSelectURI;
+	if (strCurrentURI.empty() && 0 < impl->m_QuiverFileList.size() && !bSelectFirstItem)
 	{
 		strCurrentURI = impl->m_QuiverFileList[impl->m_iCurrentIndex].GetURI();
 	}
@@ -1572,6 +1734,7 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	gint uiGeneration = g_atomic_int_add(&impl->m_uiAsyncLoadGeneration, 1) + 1;
 
 	AsyncFolderLoadData* pData = new AsyncFolderLoadData();
+	pData->lifetimeToken = impl->m_pLifetimeToken;
 	pData->impl = impl;
 	pData->uiGeneration = uiGeneration;
 	pData->strCurrentURI = strCurrentURI;
@@ -1579,8 +1742,9 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	pData->bRecursive = bRecursive;
 	pData->bSelectFirstItem = bSelectFirstItem;
 
-	GThread* thread = g_thread_new("quiver-folder-load", ImageList::ImageListImpl::AsyncFolderLoadThread, pData);
-	g_thread_unref(thread);
+	impl->m_bAbortAsyncLoad = false;
+	EmitLoadProgress(-1.0, 0, 0);
+	impl->m_pAsyncLoadThread = g_thread_new("quiver-folder-load", ImageList::ImageListImpl::AsyncFolderLoadThread, pData);
 }
 
 
@@ -1875,6 +2039,8 @@ public:
 
 void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool bUpdateCurrentIndex)
 {
+	StopAsyncSort();
+
 	m_SortBy = o;
 	m_bSortAscend = bSortAscend;
 	
@@ -1903,16 +2069,27 @@ void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool b
 			break;
 		case ImageList::SORT_BY_DATE:
 		{
+			size_t uncached = 0;
+			for (const auto& f : m_QuiverFileList)
+			{
+				if (!f.IsFolder() && !f.HasCachedTimeT())
+				{
+					uncached++;
+				}
+			}
+			if (uncached > 0)
+			{
+				StartAsyncSortByDate(bSortAscend, bUpdateCurrentIndex, strURI);
+				return;
+			}
 			SortByDate sortby;
 			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
-			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
 			break;
 		}
 		case ImageList::SORT_BY_DATE_MODIFIED:
 		{
 			SortByDateModified sortby;
 			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
-			//std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), SortByFilename());
 			break;
 		}
 		case ImageList::SORT_BY_RANDOM:
@@ -1938,6 +2115,86 @@ void ImageList::ImageListImpl::Sort(ImageList::SortBy o,bool bSortAscend, bool b
 			SetCurrentImage(strURI);
 		}
 	}
+}
+
+void ImageList::ImageListImpl::StartAsyncSortByDate(bool bSortAscend, bool bUpdateCurrentIndex, const std::string& strURI)
+{
+	StopAsyncSort();
+
+	gint uiGeneration = g_atomic_int_add(&m_uiAsyncSortGeneration, 1) + 1;
+	m_bAbortAsyncSort = false;
+	m_pImageList->EmitLoadProgress(0.0, 0, (int)m_QuiverFileList.size());
+
+	AsyncSortData* pData = new AsyncSortData();
+	pData->lifetimeToken = m_pLifetimeToken;
+	pData->impl = this;
+	pData->uiGeneration = uiGeneration;
+	pData->files = m_QuiverFileList;
+	pData->bSortAscend = bSortAscend;
+	pData->bUpdateCurrentIndex = bUpdateCurrentIndex;
+	pData->strURI = strURI;
+
+	m_pAsyncSortThread = g_thread_new("quiver-sort-date", AsyncSortThread, pData);
+}
+
+gpointer ImageList::ImageListImpl::AsyncSortThread(gpointer data)
+{
+	AsyncSortData* pData = (AsyncSortData*)data;
+	ImageListImpl* impl = pData->impl;
+
+	size_t total = pData->files.size();
+	size_t processed = 0;
+	for (size_t i = 0; i < total; ++i)
+	{
+		if (impl->m_bAbortAsyncSort || g_atomic_int_get(&impl->m_uiAsyncSortGeneration) != pData->uiGeneration)
+			break;
+
+		pData->files[i].GetTimeT();
+		processed++;
+		if (processed % 25 == 0 || processed == total)
+		{
+			impl->PostAsyncSortProgress(pData->uiGeneration, (double)processed / (double)total, (int)processed, (int)total);
+		}
+	}
+
+	if (!impl->m_bAbortAsyncSort && g_atomic_int_get(&impl->m_uiAsyncSortGeneration) == pData->uiGeneration)
+	{
+		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, AsyncSortCommit, pData, [](gpointer d){ delete (AsyncSortData*)d; });
+	}
+	else
+	{
+		delete pData;
+	}
+
+	return NULL;
+}
+
+gboolean ImageList::ImageListImpl::AsyncSortCommit(gpointer data)
+{
+	AsyncSortData* pData = (AsyncSortData*)data;
+	auto token = pData->lifetimeToken.lock();
+	if (token)
+	{
+		ImageListImpl* impl = pData->impl;
+		if (!impl->m_bAbortAsyncSort && g_atomic_int_get(&impl->m_uiAsyncSortGeneration) == pData->uiGeneration)
+		{
+			impl->m_QuiverFileList = std::move(pData->files);
+			SortByDate sortby;
+			std::sort(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(), sortby);
+			if (!pData->bSortAscend)
+			{
+				std::reverse(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end());
+			}
+			if (pData->bUpdateCurrentIndex && !pData->strURI.empty())
+			{
+				impl->SetCurrentImage(pData->strURI);
+			}
+			impl->m_pImageList->EmitContentsChangedEvent();
+			impl->m_pImageList->EmitLoadProgress(1.0, 0, 0);
+		}
+	}
+
+	return FALSE;
 }
 
 

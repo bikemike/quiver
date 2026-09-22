@@ -183,6 +183,7 @@ static void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata);
 static void folder_tree_action_paste_into(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static void folder_tree_action_new_folder(GSimpleAction* action, GVariant* parameter, gpointer userdata);
+static void folder_tree_action_add_bookmark(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static gboolean folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata);
 static void folder_tree_drop_leave_cb(GtkDropTarget *target, gpointer userdata);
 static gboolean folder_tree_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata);
@@ -1160,7 +1161,7 @@ static guint shortcuts_get_focused_position(FolderTree::FolderTreeImpl* impl)
 
 static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, double x, double y)
 {
-	(void)n_press; (void)x; (void)y;
+	(void)n_press;
 	GtkWidget* w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 	FolderTree::FolderTreeImpl* impl = static_cast<FolderTree::FolderTreeImpl*>(
 		g_object_get_data(G_OBJECT(w), "sc-impl"));
@@ -1169,7 +1170,21 @@ static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 	guint pos = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(w), "sc-pos"));
 	if (!impl || !item) return;
 
+	GtkWidget* target = gtk_widget_pick(w, x, y, GTK_PICK_DEFAULT);
+	GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "sc-check"));
+	if (!check)
+	{
+		GtkWidget* li = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "list-item"));
+		if (li) check = GTK_WIDGET(g_object_get_data(G_OBJECT(li), "sc-check"));
+	}
+	if (target != NULL && (GTK_IS_CHECK_BUTTON(target) || (check && (target == check || gtk_widget_is_ancestor(target, check)))))
+	{
+		return;
+	}
+
 	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	if (button == 0)
+		button = 1;
 	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
 
 	if (button == 1)
@@ -1250,7 +1265,21 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 	guint pos = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(w), "bm-pos"));
 	if (!impl || !item) return;
 
+	GtkWidget* target = gtk_widget_pick(w, x, y, GTK_PICK_DEFAULT);
+	GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "bm-check"));
+	if (!check)
+	{
+		GtkWidget* li = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "list-item"));
+		if (li) check = GTK_WIDGET(g_object_get_data(G_OBJECT(li), "bm-check"));
+	}
+	if (target != NULL && (GTK_IS_CHECK_BUTTON(target) || (check && (target == check || gtk_widget_is_ancestor(target, check)))))
+	{
+		return;
+	}
+
 	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	if (button == 0)
+		button = 1;
 	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
 
 	if (button == 1)
@@ -1498,15 +1527,43 @@ static void folder_tree_row_on_clicked(GtkGestureClick* gesture, int n_press, do
 	if (pos != G_MAXUINT)
 		impl->m_iFocusedTreePos = pos;
 
-	// If the click is on the expander arrow of an expandable row, let GtkTreeExpander handle it
 	GtkWidget* target = gtk_widget_pick(w, x, y, GTK_PICK_DEFAULT);
-	if (target != NULL && g_strcmp0(G_OBJECT_TYPE_NAME(target), "GtkBuiltinIcon") == 0 &&
-	    row != NULL && gtk_tree_list_row_is_expandable(row))
+
+	// If click is on or within the checkbox, let the check button handle its own toggled event
+	GtkWidget* check = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "f-check"));
+	if (!check)
+	{
+		GtkWidget* li = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "list-item"));
+		if (li) check = GTK_WIDGET(g_object_get_data(G_OBJECT(li), "f-check"));
+	}
+	if (target != NULL && (GTK_IS_CHECK_BUTTON(target) || (check && (target == check || gtk_widget_is_ancestor(target, check)))))
+	{
+		return;
+	}
+
+	// If the click is on the expander arrow of an expandable row, let GtkTreeExpander handle it
+	GtkWidget* expander = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "f-expander"));
+	GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(w), "f-row-box"));
+	if (target != NULL && expander != NULL && (target == expander || gtk_widget_is_ancestor(target, expander)))
+	{
+		if (g_strcmp0(G_OBJECT_TYPE_NAME(target), "GtkBuiltinIcon") == 0 &&
+		    row != NULL && gtk_tree_list_row_is_expandable(row))
+		{
+			if (!row_box || !gtk_widget_is_ancestor(target, row_box))
+			{
+				return;
+			}
+		}
+	}
+	else if (target != NULL && g_strcmp0(G_OBJECT_TYPE_NAME(target), "GtkBuiltinIcon") == 0 &&
+	         row != NULL && gtk_tree_list_row_is_expandable(row))
 	{
 		return;
 	}
 
 	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	if (button == 0)
+		button = 1;
 	GdkModifierType state = gtk_event_controller_get_current_event_state(GTK_EVENT_CONTROLLER(gesture));
 
 	if (button == 1)
@@ -1632,7 +1689,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			"    color: @theme_fg_color;\n"
 			"}\n"
 			".compact-tree row {\n"
-			"    padding: 0 4px;\n"
+			"    padding: 0;\n"
 			"    margin: 0;\n"
 			"    border-radius: 4px;\n"
 			"    min-height: 22px;\n"
@@ -1649,7 +1706,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			"}\n"
 			".compact-tree-row {\n"
 			"    min-height: 22px;\n"
-			"    padding: 0;\n"
+			"    padding: 0 4px;\n"
 			"}\n"
 			".sidebar-row.drop-hover,\n"
 			".compact-tree-row.drop-hover {\n"
@@ -1672,6 +1729,11 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		// build: hbox [ check, row_box[ image, label ] ]
 		GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 		gtk_widget_add_css_class(hbox, "sidebar-row");
+		gtk_widget_set_hexpand(hbox, TRUE);
+		gtk_widget_set_vexpand(hbox, TRUE);
+		gtk_widget_set_halign(hbox, GTK_ALIGN_FILL);
+		gtk_widget_set_valign(hbox, GTK_ALIGN_FILL);
+		gtk_widget_set_focusable(hbox, TRUE);
 
 		GtkWidget* check = gtk_check_button_new();
 		gtk_widget_set_margin_start(check, 2);
@@ -1707,7 +1769,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
 		gtk_widget_set_hexpand(row_box, TRUE);
-		gtk_widget_set_valign(row_box, GTK_ALIGN_CENTER);
+		gtk_widget_set_vexpand(row_box, TRUE);
+		gtk_widget_set_halign(row_box, GTK_ALIGN_FILL);
+		gtk_widget_set_valign(row_box, GTK_ALIGN_FILL);
 		GtkWidget* image = gtk_image_new();
 		gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
 		gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
@@ -1734,7 +1798,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			}
 			shortcut_row_on_clicked(gesture, n_press, x, y);
 		}), NULL);
-		gtk_widget_add_controller(row_box, GTK_EVENT_CONTROLLER(row_click));
+		gtk_widget_add_controller(hbox, GTK_EVENT_CONTROLLER(row_click));
 
 		gtk_list_item_set_child(list_item, hbox);
 		g_object_set_data(G_OBJECT(list_item), "sc-check", check);
@@ -1742,6 +1806,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(list_item), "sc-row-box", row_box);
 		g_object_set_data(G_OBJECT(list_item), "sc-image", image);
 		g_object_set_data(G_OBJECT(list_item), "sc-label", label);
+		g_object_set_data(G_OBJECT(hbox), "sc-check", check);
+		g_object_set_data(G_OBJECT(hbox), "sc-row-box", row_box);
 	}), NULL);
 
 	g_signal_connect(sc_factory, "bind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item, gpointer user_data) {
@@ -1771,6 +1837,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(hbox), "sc-impl", impl);
 		g_object_set_data(G_OBJECT(hbox), "sc-pos", GUINT_TO_POINTER(pos));
 		g_object_set_data(G_OBJECT(hbox), "list-item", list_item);
+		g_object_set_data(G_OBJECT(hbox), "sc-check", check);
+		g_object_set_data(G_OBJECT(hbox), "sc-row-box", row_box);
 
 		g_object_set_data(G_OBJECT(row_box), "sc-item", item);
 		g_object_set_data(G_OBJECT(row_box), "sc-impl", impl);
@@ -1824,7 +1892,10 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			gtk_widget_remove_css_class(hbox, "drop-hover");
 			g_object_set_data(G_OBJECT(hbox), "sc-item", NULL);
 			g_object_set_data(G_OBJECT(hbox), "sc-impl", NULL);
+			g_object_set_data(G_OBJECT(hbox), "sc-pos", NULL);
 			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
+			g_object_set_data(G_OBJECT(hbox), "sc-check", NULL);
+			g_object_set_data(G_OBJECT(hbox), "sc-row-box", NULL);
 		}
 		GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "sc-row-box"));
 		if (row_box)
@@ -1875,6 +1946,11 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		// build: hbox [ check, row_box[ image, label ] ] (mirrors shortcuts)
 		GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 		gtk_widget_add_css_class(hbox, "sidebar-row");
+		gtk_widget_set_hexpand(hbox, TRUE);
+		gtk_widget_set_vexpand(hbox, TRUE);
+		gtk_widget_set_halign(hbox, GTK_ALIGN_FILL);
+		gtk_widget_set_valign(hbox, GTK_ALIGN_FILL);
+		gtk_widget_set_focusable(hbox, TRUE);
 
 		GtkWidget* check = gtk_check_button_new();
 		gtk_widget_set_margin_start(check, 2);
@@ -1956,7 +2032,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
 		gtk_widget_set_hexpand(row_box, TRUE);
-		gtk_widget_set_valign(row_box, GTK_ALIGN_CENTER);
+		gtk_widget_set_vexpand(row_box, TRUE);
+		gtk_widget_set_halign(row_box, GTK_ALIGN_FILL);
+		gtk_widget_set_valign(row_box, GTK_ALIGN_FILL);
 		GtkWidget* image = gtk_image_new();
 		gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
 		gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
@@ -1983,7 +2061,7 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			}
 			bookmark_row_on_clicked(gesture, n_press, x, y);
 		}), NULL);
-		gtk_widget_add_controller(row_box, GTK_EVENT_CONTROLLER(row_click));
+		gtk_widget_add_controller(hbox, GTK_EVENT_CONTROLLER(row_click));
 
 		gtk_list_item_set_child(list_item, hbox);
 		g_object_set_data(G_OBJECT(list_item), "bm-check", check);
@@ -1991,6 +2069,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(list_item), "bm-row-box", row_box);
 		g_object_set_data(G_OBJECT(list_item), "bm-image", image);
 		g_object_set_data(G_OBJECT(list_item), "bm-label", label);
+		g_object_set_data(G_OBJECT(hbox), "bm-check", check);
+		g_object_set_data(G_OBJECT(hbox), "bm-row-box", row_box);
 	}), NULL);
 
 	g_signal_connect(bm_factory, "bind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item, gpointer user_data) {
@@ -2020,6 +2100,8 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(hbox), "bm-impl", impl);
 		g_object_set_data(G_OBJECT(hbox), "bm-pos", GUINT_TO_POINTER(pos));
 		g_object_set_data(G_OBJECT(hbox), "list-item", list_item);
+		g_object_set_data(G_OBJECT(hbox), "bm-check", check);
+		g_object_set_data(G_OBJECT(hbox), "bm-row-box", row_box);
 
 		g_object_set_data(G_OBJECT(row_box), "bm-item", item);
 		g_object_set_data(G_OBJECT(row_box), "bm-impl", impl);
@@ -2073,7 +2155,10 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			gtk_widget_remove_css_class(hbox, "drop-hover");
 			g_object_set_data(G_OBJECT(hbox), "bm-item", NULL);
 			g_object_set_data(G_OBJECT(hbox), "bm-impl", NULL);
+			g_object_set_data(G_OBJECT(hbox), "bm-pos", NULL);
 			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
+			g_object_set_data(G_OBJECT(hbox), "bm-check", NULL);
+			g_object_set_data(G_OBJECT(hbox), "bm-row-box", NULL);
 		}
 		GtkWidget* row_box = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "bm-row-box"));
 		if (row_box)
@@ -2147,6 +2232,11 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		// build: hbox [ check, expander[ icon, label ] ]
 		GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 		gtk_widget_add_css_class(hbox, "compact-tree-row");
+		gtk_widget_set_hexpand(hbox, TRUE);
+		gtk_widget_set_vexpand(hbox, TRUE);
+		gtk_widget_set_halign(hbox, GTK_ALIGN_FILL);
+		gtk_widget_set_valign(hbox, GTK_ALIGN_FILL);
+		gtk_widget_set_focusable(hbox, TRUE);
 
 		GtkWidget* check = gtk_check_button_new();
 		gtk_widget_set_margin_start(check, 4);
@@ -2181,14 +2271,17 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			}
 		}), NULL);
 		gtk_box_append(GTK_BOX(hbox), check);
-		g_object_set_data(G_OBJECT(list_item), "f-check", check);
 
 		GtkWidget* expander = gtk_tree_expander_new();
 		gtk_widget_set_hexpand(expander, TRUE);
-		gtk_widget_set_valign(expander, GTK_ALIGN_CENTER);
+		gtk_widget_set_vexpand(expander, TRUE);
+		gtk_widget_set_halign(expander, GTK_ALIGN_FILL);
+		gtk_widget_set_valign(expander, GTK_ALIGN_FILL);
 		GtkWidget* row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
 		gtk_widget_set_hexpand(row_box, TRUE);
-		gtk_widget_set_valign(row_box, GTK_ALIGN_CENTER);
+		gtk_widget_set_vexpand(row_box, TRUE);
+		gtk_widget_set_halign(row_box, GTK_ALIGN_FILL);
+		gtk_widget_set_valign(row_box, GTK_ALIGN_FILL);
 		GtkWidget* image = gtk_image_new();
 		gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
 		gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
@@ -2216,14 +2309,20 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			}
 			folder_tree_row_on_clicked(gesture, n_press, x, y);
 		}), NULL);
-		gtk_widget_add_controller(expander, GTK_EVENT_CONTROLLER(row_click));
+		gtk_widget_add_controller(hbox, GTK_EVENT_CONTROLLER(row_click));
 
 		gtk_list_item_set_child(list_item, hbox);
+		g_object_set_data(G_OBJECT(list_item), "f-check", check);
 		g_object_set_data(G_OBJECT(list_item), "f-hbox", hbox);
 		g_object_set_data(G_OBJECT(list_item), "f-row-box", row_box);
 		g_object_set_data(G_OBJECT(list_item), "f-image", image);
 		g_object_set_data(G_OBJECT(list_item), "f-label", label);
 		g_object_set_data(G_OBJECT(list_item), "f-expander", expander);
+		g_object_set_data(G_OBJECT(hbox), "f-check", check);
+		g_object_set_data(G_OBJECT(hbox), "f-expander", expander);
+		g_object_set_data(G_OBJECT(hbox), "f-row-box", row_box);
+		g_object_set_data(G_OBJECT(hbox), "f-image", image);
+		g_object_set_data(G_OBJECT(hbox), "f-label", label);
 	}), NULL);
 
 	g_signal_connect(factory, "bind", G_CALLBACK(+[](GtkListItemFactory* fact, GtkListItem* list_item, gpointer user_data) {
@@ -2254,7 +2353,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		g_object_set_data(G_OBJECT(hbox), "dir-impl", impl);
 		g_object_set_data(G_OBJECT(hbox), "dir-row", row);
 		g_object_set_data(G_OBJECT(hbox), "list-item", list_item);
+		g_object_set_data(G_OBJECT(hbox), "f-check", check);
 		g_object_set_data(G_OBJECT(hbox), "f-expander", expander);
+		g_object_set_data(G_OBJECT(hbox), "f-row-box", row_box);
 
 		g_object_set_data(G_OBJECT(expander), "dir-item", item);
 		g_object_set_data(G_OBJECT(expander), "dir-impl", impl);
@@ -2320,7 +2421,9 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			g_object_set_data(G_OBJECT(hbox), "dir-impl", NULL);
 			g_object_set_data(G_OBJECT(hbox), "dir-row", NULL);
 			g_object_set_data(G_OBJECT(hbox), "list-item", NULL);
+			g_object_set_data(G_OBJECT(hbox), "f-check", NULL);
 			g_object_set_data(G_OBJECT(hbox), "f-expander", NULL);
+			g_object_set_data(G_OBJECT(hbox), "f-row-box", NULL);
 		}
 		GtkWidget* expander = GTK_WIDGET(g_object_get_data(G_OBJECT(list_item), "f-expander"));
 		if (expander)
@@ -2433,6 +2536,12 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 		{
 			GSimpleAction *a = g_simple_action_new("FolderTreeNewFolder", G_VARIANT_TYPE_STRING);
 			g_signal_connect(a, "activate", G_CALLBACK(folder_tree_action_new_folder), this);
+			QuiverUtils::AddAction(G_ACTION(a));
+		}
+		if (NULL == QuiverUtils::GetAction("FolderTreeAddBookmark"))
+		{
+			GSimpleAction *a = g_simple_action_new("FolderTreeAddBookmark", G_VARIANT_TYPE_STRING);
+			g_signal_connect(a, "activate", G_CALLBACK(folder_tree_action_add_bookmark), this);
 			QuiverUtils::AddAction(G_ACTION(a));
 		}
 	}
@@ -3075,6 +3184,20 @@ folder_tree_action_new_folder (GSimpleAction* action, GVariant* parameter, gpoin
 	g_free(folder_name);
 }
 
+static void
+folder_tree_action_add_bookmark (GSimpleAction* action, GVariant* parameter, gpointer userdata)
+{ (void)action; (void)userdata;
+	if (NULL == parameter)
+		return;
+
+	const gchar* uri = g_variant_get_string(parameter, NULL);
+	if (NULL == uri || '\0' == uri[0])
+		return;
+
+	std::list<std::string> uris = { uri };
+	QuiverUtils::PromptAddBookmark(uris);
+}
+
 void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata)
 {
@@ -3092,8 +3215,15 @@ void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 	{
 		GMenuItem *new_folder = g_menu_item_new("New Folder", NULL);
 		g_menu_item_set_action_and_target(new_folder, "quiver.FolderTreeNewFolder", "s", target_uri);
+		g_menu_item_set_attribute(new_folder, "icon", "s", "folder-new-symbolic");
 		g_menu_append_item(folder_section, new_folder);
 		g_object_unref(new_folder);
+
+		GMenuItem *add_bookmark = g_menu_item_new("Add Bookmark", NULL);
+		g_menu_item_set_action_and_target(add_bookmark, "quiver.FolderTreeAddBookmark", "s", target_uri);
+		g_menu_item_set_attribute(add_bookmark, "icon", "s", "bookmark-new-symbolic");
+		g_menu_append_item(folder_section, add_bookmark);
+		g_object_unref(add_bookmark);
 	}
 
 	if (TreePasteMode::PASTE_NONE != paste_mode &&

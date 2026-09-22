@@ -2172,7 +2172,7 @@ void Viewer::ViewerImpl::CancelFilmstripHide()
 void Viewer::ViewerImpl::AddFilmstrip()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	int iFilmstripPos = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
+	int iFilmstripPos = prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_RIGHT);
 	bool bOverlay = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
 
 	/* remove filmstrip from its current parent (if any) */
@@ -2414,6 +2414,10 @@ timeout_event_motion_notify (gpointer user_data)
 
 	// ...and while pointer is over the viewer overlay bar
 	if (!bKeepVisible && (pViewerImpl->m_bPointerOverOverlayBar || pViewerImpl->IsPointerOverControls()))
+		bKeepVisible = TRUE;
+
+	GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(pViewerImpl->m_pOverlay));
+	if (!bKeepVisible && root && GTK_IS_WINDOW(root) && !gtk_window_is_active(GTK_WINDOW(root)))
 		bKeepVisible = TRUE;
 
 	if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
@@ -7740,6 +7744,28 @@ void Viewer::UpdateHUDPosition()
 		m_ViewerImplPtr->UpdateHUDPosition();
 }
 
+void Viewer::ResetIdleCursor()
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->CancelControlsFade();
+		viewer_set_idle_cursor(m_ViewerImplPtr.get(), false);
+		if (0 != m_ViewerImplPtr->m_iTimeoutMouseMotionNotify)
+		{
+			g_source_remove(m_ViewerImplPtr->m_iTimeoutMouseMotionNotify);
+			m_ViewerImplPtr->m_iTimeoutMouseMotionNotify = 0;
+		}
+	}
+}
+
+void Viewer::RefreshAutoHideTimer()
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->RefreshAutoHideTimer();
+	}
+}
+
 int Viewer::GetCurrentOrientation()
 {
 	return m_ViewerImplPtr->GetCurrentOrientation();	
@@ -8197,13 +8223,14 @@ static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong c
 	gint thumb_natural_w, gint thumb_natural_h,
 	gint thumb_drawn_w, gint thumb_drawn_h,
 	QuiverIconViewFilmstripSide side, gpointer user_data)
-{ (void)iconview; (void)thumb_drawn_w; (void)thumb_drawn_h; (void)side;
+{ (void)iconview; (void)thumb_natural_w; (void)thumb_natural_h; (void)side;
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
 	QuiverFile f = pViewerImpl->m_ImageListPtr->Get(cell);
 	if (!f.IsVideo())
 		return NULL;
 
-	std::string path = QuiverUtils::GetFilmstripPath(MAX(thumb_natural_w, thumb_natural_h));
+	gint thumb_drawn_max = MAX(thumb_drawn_w, thumb_drawn_h);
+	std::string path = QuiverUtils::GetFilmstripPath(thumb_drawn_max);
 	GdkTexture* texture = pViewerImpl->m_FilmstripCache.GetTexture(path);
 	if (NULL == texture)
 	{
@@ -8335,7 +8362,7 @@ void Viewer::ViewerImpl::UpdateHUDPosition()
 	{
 		bFilmstripVisible = bFilmstripVisible && QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP);
 	}
-	int filmstripPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
+	int filmstripPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_RIGHT);
 	bool bOverlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
 
 	int offset = 0;

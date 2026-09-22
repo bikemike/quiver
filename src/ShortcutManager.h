@@ -14,6 +14,7 @@ struct ShortcutActionDef {
     std::vector<std::string> default_accels;   // Default accelerators in GTK syntax
     std::vector<std::string> current_accels;   // Active accelerators
     bool is_viewer_only = false;               // If true, suppressed in Browser mode
+    bool is_browser_only = false;              // If true, suppressed in Viewer mode
 };
 
 class ShortcutManager {
@@ -40,6 +41,8 @@ public:
     void SetViewerMode(bool in_viewer);
     void SuppressUnmodifiedAccelerators(bool suppress);
     bool AreUnmodifiedSuppressed() const { return m_bUnmodifiedSuppressed; }
+    void SuppressAllAccelerators(bool suppress);
+    bool AreAllSuppressed() const { return m_bAllSuppressed; }
 
     void LoadFromPreferences();
     void SaveToPreferences();
@@ -71,6 +74,7 @@ private:
     std::vector<ShortcutActionDef> m_actions;
     bool m_bInViewerMode = false;
     bool m_bUnmodifiedSuppressed = false;
+    bool m_bAllSuppressed = false;
     bool m_bInitialized = false;
 };
 

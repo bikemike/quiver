@@ -1,6 +1,7 @@
 #ifndef FILE_BROWSER_H
 #define FILE_BROWSER_H
 
+#include <gtk/gtk.h>
 #include <boost/shared_ptr.hpp>
 
 #include "ImageList.h"
@@ -37,12 +38,16 @@ public:
 	std::list<unsigned int> GetSelection();
 
 	std::string GetCurrentFolderChild();
+	GdkModifierType GetLastActivateModifiers() const;
 
 	FolderTreePtr GetFolderTree();
 
 	/* Overlay wrapping the icon view; floating chrome (e.g. the undo-delete
 	 * toast) can be parented on top of the image grid. */
 	GtkWidget *GetIconViewOverlay();
+
+	void ShowLoadingProgress(const std::string& text, double fraction);
+	void HideLoadingProgress();
 
 	class BrowserImpl;
 private:

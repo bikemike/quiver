@@ -555,6 +555,28 @@ namespace QuiverFileOps
 		return true;
 	}
 
+	void UndoStackDropRotate(const std::string& uri)
+	{
+		if (uri.empty()) return;
+		bool changed = false;
+		for (auto it = s_undoStack.begin(); it != s_undoStack.end(); )
+		{
+			if (it->type == UNDO_TYPE_ROTATE && it->rotate_uri == uri)
+			{
+				it = s_undoStack.erase(it);
+				changed = true;
+			}
+			else
+			{
+				++it;
+			}
+		}
+		if (changed)
+		{
+			NotifyTrashUndoChanged(UNDO_RESTORED_OP, 0);
+		}
+	}
+
 	bool UndoStackRecordNewFolder(const std::string& folder_uri)
 	{
 		if (folder_uri.empty())

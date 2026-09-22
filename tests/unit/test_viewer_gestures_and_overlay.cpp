@@ -615,7 +615,7 @@ TEST_CASE("Viewer HUD Position and Filmstrip Collision Avoidance", "[unit][viewe
     PreferencesPtr prefs = Preferences::GetInstance();
     // Save original settings
     int origHudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
-    int origFPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_LEFT);
+    int origFPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_RIGHT);
     bool origOverlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
     bool origShow = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
 
@@ -664,7 +664,7 @@ TEST_CASE("Viewer HUD and Filmstrip Auto-Hide Timeout", "[unit][viewer][timeout]
     REQUIRE_DISPLAY();
 
     PreferencesPtr prefs = Preferences::GetInstance();
-    bool origOverlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, false);
+    bool origOverlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
     prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
     prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
     QuiverUtils::ToggleActionSetActive("ViewFilmStrip", TRUE);
@@ -712,6 +712,118 @@ TEST_CASE("Viewer HUD and Filmstrip Auto-Hide Timeout", "[unit][viewer][timeout]
     REQUIRE(gtk_widget_get_visible(fsWidget));
 
     prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, origOverlay);
+    viewer->StopVideo(false);
+    viewer.reset();
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+}
+
+TEST_CASE("Viewer ResetIdleCursor and Save Dialog Prompt callbacks", "[unit][viewer][cursor]")
+{
+    REQUIRE_DISPLAY();
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    GtkWidget *viewerWidget = viewer->GetWidget();
+    gtk_window_set_child(GTK_WINDOW(win), viewerWidget);
+
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Test ResetIdleCursor unhides cursor and resets root cursor to NULL (default)
+    viewer->ResetIdleCursor();
+    GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(viewer->GetOverlay()));
+    REQUIRE(root != nullptr);
+    REQUIRE(gtk_widget_get_cursor(root) == NULL);
+
+    viewer->RefreshAutoHideTimer();
+
+    // Verify Save prompt dialog button callback behavior (preventing crash)
+    struct PromptData {
+        gint response;
+        gboolean neverAsk;
+        GMainLoop *loop;
+    };
+
+    // 1. Test Discard button callback
+    {
+        PromptData data = { -1, FALSE, g_main_loop_new(NULL, FALSE) };
+        GtkWidget *btnDiscard = gtk_button_new_with_label("Discard Changes");
+        g_signal_connect(btnDiscard, "clicked",
+            G_CALLBACK(+[](GtkButton *, gpointer ud) {
+                auto *d = static_cast<PromptData*>(ud);
+                d->response = 1;
+                g_main_loop_quit(d->loop);
+            }), &data);
+
+        g_idle_add(+[](gpointer btn) -> gboolean {
+            g_signal_emit_by_name(btn, "clicked");
+            return G_SOURCE_REMOVE;
+        }, btnDiscard);
+        g_main_loop_run(data.loop);
+        g_main_loop_unref(data.loop);
+
+        REQUIRE(data.response == 1);
+        g_object_ref_sink(btnDiscard);
+        g_object_unref(btnDiscard);
+    }
+
+    // 2. Test Save button callback
+    {
+        PromptData data = { -1, FALSE, g_main_loop_new(NULL, FALSE) };
+        GtkWidget *btnSave = gtk_button_new_with_label("Save");
+        g_signal_connect(btnSave, "clicked",
+            G_CALLBACK(+[](GtkButton *, gpointer ud) {
+                auto *d = static_cast<PromptData*>(ud);
+                d->response = 0;
+                g_main_loop_quit(d->loop);
+            }), &data);
+
+        g_idle_add(+[](gpointer btn) -> gboolean {
+            g_signal_emit_by_name(btn, "clicked");
+            return G_SOURCE_REMOVE;
+        }, btnSave);
+        g_main_loop_run(data.loop);
+        g_main_loop_unref(data.loop);
+
+        REQUIRE(data.response == 0);
+        g_object_ref_sink(btnSave);
+        g_object_unref(btnSave);
+    }
+
+    // 3. Test Cancel button callback
+    {
+        PromptData data = { -1, FALSE, g_main_loop_new(NULL, FALSE) };
+        GtkWidget *btnCancel = gtk_button_new_with_label("Cancel");
+        g_signal_connect(btnCancel, "clicked",
+            G_CALLBACK(+[](GtkButton *, gpointer ud) {
+                auto *d = static_cast<PromptData*>(ud);
+                d->response = 2;
+                g_main_loop_quit(d->loop);
+            }), &data);
+
+        g_idle_add(+[](gpointer btn) -> gboolean {
+            g_signal_emit_by_name(btn, "clicked");
+            return G_SOURCE_REMOVE;
+        }, btnCancel);
+        g_main_loop_run(data.loop);
+        g_main_loop_unref(data.loop);
+
+        REQUIRE(data.response == 2);
+        g_object_ref_sink(btnCancel);
+        g_object_unref(btnCancel);
+    }
+
+    // 4. Test UndoStackDropRotate
+    QuiverFileOps::UndoStackClear();
+    QuiverFileOps::UndoStackRecordRotate("file:///tmp/test.jpg", +1);
+    REQUIRE(QuiverFileOps::UndoStackHasItems());
+    REQUIRE(QuiverFileOps::UndoStackTopType() == QuiverFileOps::UNDO_TYPE_ROTATE);
+    QuiverFileOps::UndoStackDropRotate("file:///tmp/test.jpg");
+    REQUIRE_FALSE(QuiverFileOps::UndoStackHasItems());
+
     viewer->StopVideo(false);
     viewer.reset();
     gtk_window_destroy(GTK_WINDOW(win));

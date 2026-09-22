@@ -2,6 +2,8 @@
 #include "QuiverUtils.h"
 #include "ShortcutManager.h"
 #include "quiver-i18n.h"
+#include "BookmarkAddEditDlg.h"
+#include "Bookmarks.h"
 
 extern "C" {
 #include <libswscale/swscale.h>
@@ -493,10 +495,59 @@ void AddAccelGroup(GtkWindow* /*window*/) {
 
 void DisconnectUnmodifiedAccelerators() {
 		ShortcutManager::GetInstance().SuppressUnmodifiedAccelerators(true);
+		if (!g_pApp || !g_accelEntries) return;
+		for (guint i = 0; i < g_accelEntries->len; i++) {
+			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
+			if (ShortcutManager::GetInstance().GetAction(entry->action_name) != nullptr)
+				continue;
+			guint mask = GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK;
+			if ((entry->mods & mask) == 0) {
+				gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
+				const gchar *empty[] = {NULL};
+				gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
+				g_free(detailed_name);
+			}
+		}
 	}
 
 void ConnectUnmodifiedAccelerators() {
 		ShortcutManager::GetInstance().SuppressUnmodifiedAccelerators(false);
+		if (!g_pApp || !g_accelEntries) return;
+		for (guint i = 0; i < g_accelEntries->len; i++) {
+			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
+			if (ShortcutManager::GetInstance().GetAction(entry->action_name) != nullptr)
+				continue;
+			guint mask = GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK;
+			if ((entry->mods & mask) == 0) {
+				gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
+				gchar *accel_str = gtk_accelerator_name(entry->keyval, entry->mods);
+				const gchar *accels[] = {accel_str, NULL};
+				gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
+				g_free(accel_str);
+				g_free(detailed_name);
+			}
+		}
+	}
+
+void SuppressAllAccelerators(bool suppress) {
+		ShortcutManager::GetInstance().SuppressAllAccelerators(suppress);
+		if (!g_pApp || !g_accelEntries) return;
+		for (guint i = 0; i < g_accelEntries->len; i++) {
+			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
+			if (ShortcutManager::GetInstance().GetAction(entry->action_name) != nullptr)
+				continue;
+			gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
+			if (suppress) {
+				const gchar *empty[] = {NULL};
+				gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
+			} else {
+				gchar *accel_str = gtk_accelerator_name(entry->keyval, entry->mods);
+				const gchar *accels[] = {accel_str, NULL};
+				gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
+				g_free(accel_str);
+			}
+			g_free(detailed_name);
+		}
 	}
 
 	void BindBuilderAccelerators(GtkBuilder *builder) {
@@ -1610,12 +1661,72 @@ void ConnectUnmodifiedAccelerators() {
 	 * filmstrip-big.png pattern.  No per-side asset is involved: the same
 	 * pattern is used on both the left and right edges of the thumbnail, and
 	 * the strip is scaled by the same ratio as the thumbnail when drawn. */
-	std::string GetFilmstripPath(gint thumb_natural_max_dim)
+	std::string GetFilmstripPath(gint thumb_dim)
 	{
-		const char *name = (thumb_natural_max_dim > 128)
+		const char *name = (thumb_dim > 128)
 			? "filmstrip-big.png"
 			: "filmstrip.png";
 		return quiver_get_resource_path(name);
+	}
+
+	bool PromptAddBookmark(const std::list<std::string>& uris)
+	{
+		if (uris.empty())
+			return false;
+
+		std::string strBaseName;
+		gchar* filename = g_filename_from_uri(uris.front().c_str(), NULL, NULL);
+		if (filename != NULL)
+		{
+			gchar* basename = g_path_get_basename(filename);
+			if (basename != NULL)
+			{
+				strBaseName = basename;
+				g_free(basename);
+			}
+			g_free(filename);
+		}
+		if (strBaseName.empty())
+		{
+			strBaseName = uris.front();
+		}
+
+		gchar *bookmark_name = NULL;
+		if (1 == uris.size())
+		{
+			bookmark_name = g_strdup(strBaseName.c_str());
+		}
+		else if (2 == uris.size())
+		{
+			bookmark_name = g_strdup_printf("%s (and 1 other folder)", strBaseName.c_str());
+		}
+		else
+		{
+			bookmark_name = g_strdup_printf("%s (and %d other folders)", strBaseName.c_str(), (int)(uris.size() - 1));
+		}
+
+		bool added = false;
+		if (NULL != bookmark_name)
+		{
+			Bookmark b(bookmark_name, "", "", uris, false);
+			BookmarkAddEditDlg dlg(b);
+			dlg.Run();
+			if (!dlg.Cancelled())
+			{
+				Bookmark newbm = dlg.GetBookmark();
+				if (!newbm.GetName().empty())
+				{
+					BookmarksPtr bmPtr = Bookmarks::GetInstance();
+					if (bmPtr)
+					{
+						bmPtr->AddBookmark(newbm);
+						added = true;
+					}
+				}
+			}
+			g_free(bookmark_name);
+		}
+		return added;
 	}
 
 }
