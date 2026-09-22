@@ -681,6 +681,7 @@ public:
 	// video zoom (in-pipeline crop, optionally HW-accelerated upscale)
 	void SetVideoZoom(gdouble zoom);
 	void ApplyVideoZoom();
+	void RotateVideo(bool clockwise);
 	int GetVideoUserRotation() const { return m_iVideoUserRotation; }
 
 
@@ -6796,9 +6797,21 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_size_request(m_pCenterPlayBtn, 76, 76);
 	GtkWidget *center_play_icon = gtk_image_new_from_icon_name("media-playback-start-symbolic");
 	gtk_image_set_pixel_size(GTK_IMAGE(center_play_icon), 38);
+	gtk_widget_set_can_target(center_play_icon, FALSE);
 	gtk_button_set_child(GTK_BUTTON(m_pCenterPlayBtn), center_play_icon);
 	gtk_widget_set_tooltip_text(m_pCenterPlayBtn, "Play Video (Space / Click)");
 	g_signal_connect_swapped(G_OBJECT(m_pCenterPlayBtn), "clicked", G_CALLBACK(viewer_play_button_clicked_cb), this);
+	{
+		GtkEventController *scroll = gtk_event_controller_scroll_new(
+			(GtkEventControllerScrollFlags)GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES);
+		g_signal_connect(scroll, "scroll", G_CALLBACK(viewer_scrollwheel_event), this);
+		gtk_widget_add_controller(m_pCenterPlayBtn, scroll);
+	}
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pCenterPlayBtn, motion);
+	}
 	gtk_widget_set_visible(m_pCenterPlayBtn, FALSE);
 	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pCenterPlayBtn);
 	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pCenterPlayBtn, FALSE);

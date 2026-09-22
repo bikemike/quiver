@@ -6,6 +6,7 @@
 #include "ImageList.h"
 #include "QuiverFile.h"
 #include "QuiverUtils.h"
+#include "QuiverRotatedPaintable.h"
 #include "quiver-image-view.h"
 #include "Preferences.h"
 #include "QuiverPrefs.h"
@@ -830,5 +831,168 @@ TEST_CASE("Viewer ResetIdleCursor and Save Dialog Prompt callbacks", "[unit][vie
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
 }
+
+TEST_CASE("QuiverRotatedPaintable functionality", "[unit][viewer][paintable]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string imgDir = QuiverTest_GetImagesDir();
+    GdkTexture *tex = gdk_texture_new_from_filename((imgDir + "/sample_4k.jpg").c_str(), NULL);
+    REQUIRE(tex != nullptr);
+
+    int origW = gdk_texture_get_width(tex);
+    int origH = gdk_texture_get_height(tex);
+    REQUIRE(origW > 0);
+    REQUIRE(origH > 0);
+
+    QuiverRotatedPaintable *rp = quiver_rotated_paintable_new(GDK_PAINTABLE(tex));
+    REQUIRE(rp != nullptr);
+    REQUIRE(quiver_rotated_paintable_get_rotation(rp) == 0);
+    REQUIRE(gdk_paintable_get_intrinsic_width(GDK_PAINTABLE(rp)) == origW);
+    REQUIRE(gdk_paintable_get_intrinsic_height(GDK_PAINTABLE(rp)) == origH);
+
+    // 90 degrees clockwise
+    quiver_rotated_paintable_set_rotation(rp, 90);
+    REQUIRE(quiver_rotated_paintable_get_rotation(rp) == 90);
+    REQUIRE(gdk_paintable_get_intrinsic_width(GDK_PAINTABLE(rp)) == origH);
+    REQUIRE(gdk_paintable_get_intrinsic_height(GDK_PAINTABLE(rp)) == origW);
+
+    // 180 degrees
+    quiver_rotated_paintable_set_rotation(rp, 180);
+    REQUIRE(quiver_rotated_paintable_get_rotation(rp) == 180);
+    REQUIRE(gdk_paintable_get_intrinsic_width(GDK_PAINTABLE(rp)) == origW);
+    REQUIRE(gdk_paintable_get_intrinsic_height(GDK_PAINTABLE(rp)) == origH);
+
+    // 270 degrees
+    quiver_rotated_paintable_set_rotation(rp, 270);
+    REQUIRE(quiver_rotated_paintable_get_rotation(rp) == 270);
+    REQUIRE(gdk_paintable_get_intrinsic_width(GDK_PAINTABLE(rp)) == origH);
+    REQUIRE(gdk_paintable_get_intrinsic_height(GDK_PAINTABLE(rp)) == origW);
+
+    // Normalization check: -90 degrees -> 270 degrees
+    quiver_rotated_paintable_set_rotation(rp, -90);
+    REQUIRE(quiver_rotated_paintable_get_rotation(rp) == 270);
+
+    // 360 degrees -> 0
+    quiver_rotated_paintable_set_rotation(rp, 360);
+    REQUIRE(quiver_rotated_paintable_get_rotation(rp) == 0);
+
+    // Snapshot testing
+    GtkSnapshot *snap = gtk_snapshot_new();
+    quiver_rotated_paintable_set_rotation(rp, 90);
+    gdk_paintable_snapshot(GDK_PAINTABLE(rp), snap, origH, origW);
+    GskRenderNode *node = gtk_snapshot_free_to_node(snap);
+    REQUIRE(node != nullptr);
+    gsk_render_node_unref(node);
+
+    // get_current_image testing
+    GdkPaintable *cur = gdk_paintable_get_current_image(GDK_PAINTABLE(rp));
+    REQUIRE(cur != nullptr);
+    REQUIRE(QUIVER_IS_ROTATED_PAINTABLE(cur));
+    REQUIRE(quiver_rotated_paintable_get_rotation(QUIVER_ROTATED_PAINTABLE(cur)) == 90);
+    g_object_unref(cur);
+
+    g_object_unref(rp);
+    g_object_unref(tex);
+}
+
+TEST_CASE("Viewer video rotation functionality", "[unit][viewer][video]")
+{
+    REQUIRE_DISPLAY();
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    REQUIRE(viewer != nullptr);
+    REQUIRE(viewer->GetVideoUserRotation() == 0);
+
+    // Rotate clockwise: 0 -> 90 -> 180 -> 270 -> 0
+    viewer->RotateVideo(true);
+    CHECK(viewer->GetVideoUserRotation() == 90);
+
+    viewer->RotateVideo(true);
+    CHECK(viewer->GetVideoUserRotation() == 180);
+
+    viewer->RotateVideo(true);
+    CHECK(viewer->GetVideoUserRotation() == 270);
+
+    viewer->RotateVideo(true);
+    CHECK(viewer->GetVideoUserRotation() == 0);
+
+    // Rotate counter-clockwise: 0 -> 270 -> 180
+    viewer->RotateVideo(false);
+    CHECK(viewer->GetVideoUserRotation() == 270);
+
+    viewer->RotateVideo(false);
+    CHECK(viewer->GetVideoUserRotation() == 180);
+
+    // StopVideo resets rotation
+    viewer->StopVideo(false);
+    CHECK(viewer->GetVideoUserRotation() == 0);
+
+    viewer.reset();
+}
+
+TEST_CASE("Viewer center play button scrollwheel navigation", "[unit][viewer][playbtn]")
+{
+    REQUIRE_DISPLAY();
+
+    GtkWidget *win = gtk_window_new();
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    GtkWidget *vw = viewer->GetWidget();
+    gtk_window_set_child(GTK_WINDOW(win), vw);
+    viewer->Show();
+    gtk_window_present(GTK_WINDOW(win));
+
+    GtkWidget *playBtn = viewer->GetCenterPlayButton();
+    REQUIRE(playBtn != nullptr);
+
+    // Verify playBtn has a GtkEventControllerScroll attached
+    GtkEventControllerScroll *scrollCtrl = nullptr;
+    GListModel *controllers = gtk_widget_observe_controllers(playBtn);
+    REQUIRE(controllers != nullptr);
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); ++i)
+    {
+        GObject *c = G_OBJECT(g_list_model_get_item(controllers, i));
+        if (GTK_IS_EVENT_CONTROLLER_SCROLL(c))
+        {
+            scrollCtrl = GTK_EVENT_CONTROLLER_SCROLL(c);
+            g_object_unref(c);
+            break;
+        }
+        g_object_unref(c);
+    }
+    g_object_unref(controllers);
+    REQUIRE(scrollCtrl != nullptr);
+
+    // Setup an ImageList with two items
+    ImageListPtr list(new ImageList());
+    std::string imgDir = QuiverTest_GetImagesDir();
+    std::list<std::string> files;
+    files.push_back(imgDir + "/sample_4k.jpg");
+    files.push_back(imgDir + "/sample_video.mp4");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    while (g_main_context_iteration(NULL, FALSE));
+
+    REQUIRE(list->GetCurrentIndex() == 0);
+
+    // Scroll forward (dy = 1.0) on the play button controller
+    gboolean handled = FALSE;
+    g_signal_emit_by_name(scrollCtrl, "scroll", 0.0, 1.0, &handled);
+    CHECK(handled == TRUE);
+    CHECK(list->GetCurrentIndex() == 1);
+
+    // Scroll backward (dy = -1.0) on the play button controller
+    handled = FALSE;
+    g_signal_emit_by_name(scrollCtrl, "scroll", 0.0, -1.0, &handled);
+    CHECK(handled == TRUE);
+    CHECK(list->GetCurrentIndex() == 0);
+
+    viewer->StopVideo(false);
+    viewer.reset();
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+}
+
 
 
