@@ -46,7 +46,6 @@ GtkCheckButton*        m_pToggleStartFS;
 	GtkCheckButton*    m_pToggleViewerFilmstripSquare;
 	GtkCheckButton*    m_pToggleThumbsFilmstrip;
 
-	GtkCheckButton*        m_pToggleGIFAnimation;
 	GtkCheckButton*        m_pToggleSlideShowTransition;
 	GtkCheckButton*        m_pToggleSlideShowHideFilmStrip;
 	GtkCheckButton*        m_pToggleSlideShowRotateToMaximize;
@@ -285,8 +284,6 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 		m_pToggleSlideShowTransition     = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_transition") );
 		m_pToggleSlideShowHideFilmStrip  = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_hide_filmstrip") );
 		
-		m_pToggleGIFAnimation      = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_viewer_enable_gif_anim") );
-
 		m_pToggleSlideShowRotateToMaximize  = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_rotate_to_maximize") );
 
 		m_pToggleSlideShowRandomOrder  = GTK_CHECK_BUTTON( gtk_builder_get_object (m_pGtkBuilder, "chkbtn_slideshow_random_order") );
@@ -331,7 +328,6 @@ void PreferencesDlg::PreferencesDlgPriv::LoadWidgets()
 			NULL != m_pToggleSlideShowFS && 
 			NULL != m_pToggleSlideShowTransition && 
 			NULL != m_pToggleSlideShowHideFilmStrip && 
-			NULL != m_pToggleGIFAnimation && 
 			NULL != m_pToggleSlideShowRotateToMaximize && 
 			NULL != m_pToggleSlideShowRandomOrder && 
 			NULL != m_pToggleFilmstripOverlay && 

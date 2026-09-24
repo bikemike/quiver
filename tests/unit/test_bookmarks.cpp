@@ -9,8 +9,11 @@
 
 struct TestBookmarksFixture {
     char m_tmpPath[256];
+    char m_prevConfig[256];
 
     TestBookmarksFixture() {
+        strncpy(m_prevConfig, g_szConfigFilePath, sizeof(m_prevConfig) - 1);
+        m_prevConfig[sizeof(m_prevConfig) - 1] = '\0';
         strncpy(m_tmpPath, "/tmp/quiver_test_bm_XXXXXX.ini", sizeof(m_tmpPath) - 1);
         int fd = g_mkstemp(m_tmpPath);
         if (fd >= 0) {
@@ -25,6 +28,8 @@ struct TestBookmarksFixture {
     ~TestBookmarksFixture() {
         Bookmarks::Reset();
         Preferences::Reset();
+        strncpy(g_szConfigFilePath, m_prevConfig, sizeof(m_prevConfig) - 1);
+        g_szConfigFilePath[sizeof(m_prevConfig) - 1] = '\0';
         g_unlink(m_tmpPath);
     }
 };
@@ -82,6 +87,82 @@ TEST_CASE_METHOD(TestBookmarksFixture, "Bookmarks CRUD Operations", "[unit][book
         REQUIRE(bm->Remove(id));
         REQUIRE(bm->GetBookmarks().empty());
         REQUIRE(bm->GetBookmark(id) == nullptr);
+    }
+
+    SECTION("Changes persist to preferences file")
+    {
+        Bookmark b("Persist", "Desc", "folder",
+            {"file:///home/user/a", "file:///home/user/b"}, true);
+        REQUIRE(bm->AddBookmark(b));
+        int id = bm->GetBookmarks()[0].GetID();
+
+        Bookmarks::Reset();
+        BookmarksPtr bm2 = Bookmarks::GetInstance();
+        const Bookmark* reloaded = bm2->GetBookmark(id);
+        REQUIRE(reloaded != nullptr);
+        REQUIRE(reloaded->GetName() == "Persist");
+        REQUIRE(reloaded->GetRecursive() == true);
+        REQUIRE(reloaded->GetURIs() ==
+            std::list<std::string>{"file:///home/user/a", "file:///home/user/b"});
+
+        Bookmark updated = *reloaded;
+        updated.SetRecursive(false);
+        REQUIRE(bm2->UpdateBookmark(updated));
+
+        Bookmarks::Reset();
+        BookmarksPtr bm3 = Bookmarks::GetInstance();
+        const Bookmark* upd = bm3->GetBookmark(id);
+        REQUIRE(upd != nullptr);
+        REQUIRE(upd->GetRecursive() == false);
+    }
+
+    SECTION("Recursive flag survives full application restart (disk round-trip)")
+    {
+        Bookmark b("Rec", "Recursive folder bookmark", "folder",
+            {"file:///home/user/photos"}, true);
+        REQUIRE(bm->AddBookmark(b));
+        int id = bm->GetBookmarks()[0].GetID();
+
+        /* Simulate quitting the app: drop every handle, then destroy the
+         * singletons; the Preferences destructor flushes its modified
+         * keyfile to disk. */
+        bm.reset();
+        Bookmarks::Reset();
+        Preferences::Reset();
+
+        /* Simulate relaunch: fresh Bookmarks reads the keyfile back off disk. */
+        BookmarksPtr bm2 = Bookmarks::GetInstance();
+        const Bookmark* reloaded = bm2->GetBookmark(id);
+        REQUIRE(reloaded != nullptr);
+        REQUIRE(reloaded->GetRecursive() == true);
+        REQUIRE(reloaded->GetURIs() == std::list<std::string>{"file:///home/user/photos"});
+
+        /* Flip the flag, persist, restart again: new value must come back. */
+        Bookmark updated = *reloaded;
+        updated.SetRecursive(false);
+        REQUIRE(bm2->UpdateBookmark(updated));
+
+        bm2.reset();
+        Bookmarks::Reset();
+        Preferences::Reset();
+        BookmarksPtr bm3 = Bookmarks::GetInstance();
+        const Bookmark* flipped = bm3->GetBookmark(id);
+        REQUIRE(flipped != nullptr);
+        REQUIRE(flipped->GetRecursive() == false);
+        REQUIRE(flipped->GetName() == "Rec");
+    }
+
+    SECTION("Remove bookmark clears it from preferences")
+    {
+        Bookmark b("Temp", "To delete", "trash", {"file:///tmp"}, false);
+        bm->AddBookmark(b);
+        int id = bm->GetBookmarks()[0].GetID();
+        REQUIRE(bm->Remove(id));
+        REQUIRE(bm->GetBookmark(id) == nullptr);
+
+        Bookmarks::Reset();
+        BookmarksPtr bm2 = Bookmarks::GetInstance();
+        REQUIRE(bm2->GetBookmarks().empty());
     }
 
     SECTION("MoveUp and MoveDown ordering")

@@ -217,9 +217,12 @@ public:
 	void UpdateBookmarkSectionVisibility();
 	void ReloadShortcuts();
 	void PopulateTreeModel(GListStore *roots);
+	std::list<std::string> GetSelectedFolders() const;
+	bool GetSelectedFoldersRecursive() const;
 
 	void SetSelectedFolders(std::list<std::string> &uris);
-	std::list<std::string> GetSelectedFolders() const;
+	std::list<std::string> GetSelectedURIsFromModels() const;
+	std::list<std::string> GetAddBookmarkURIs(const std::string& clicked_uri) const;
 	void ClearAllCheckboxes();
 	void SetCheckboxForItem(DirItem* item, gboolean value);
 	guint FindItemPosition(DirItem* target);
@@ -315,6 +318,20 @@ GtkWidget* FolderTree::GetBookmarksWidget() const
 std::list<std::string> FolderTree::GetSelectedFolders() const
 {
 	return m_FolderTreeImplPtr->GetSelectedFolders();	
+}
+
+bool FolderTree::GetSelectedFoldersRecursive() const
+{
+	return m_FolderTreeImplPtr->GetSelectedFoldersRecursive();
+}
+
+std::list<std::string> FolderTree::GetAddBookmarkURIs(const std::string& clicked_uri) const
+{
+	if (m_FolderTreeImplPtr)
+	{
+		return m_FolderTreeImplPtr->GetAddBookmarkURIs(clicked_uri);
+	}
+	return std::list<std::string>();
 }
 
 void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
@@ -469,16 +486,37 @@ std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedFolders() const
 
 	if (m_pBookmarkStore)
 	{
+		BookmarksPtr bmPtr = Bookmarks::GetInstance();
 		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
 		for (guint i = 0 ; i < n ; i++)
 		{
 			DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
 			if (item)
 			{
-				if (item->checked && item->uri)
+				if (item->checked)
 				{
-					if (seen.insert(item->uri).second)
+					/* A checked bookmark contributes EVERY folder it points
+					 * at, not just the row's single display URI. */
+					if (item->bookmark_id >= 0 && bmPtr)
+					{
+						const Bookmark* bm = bmPtr->GetBookmark(item->bookmark_id);
+						if (bm)
+						{
+							for (const auto& uri : bm->GetURIs())
+							{
+								if (seen.insert(uri).second)
+									listSelectedFolders.push_back(uri);
+							}
+						}
+						else if (item->uri && seen.insert(item->uri).second)
+						{
+							listSelectedFolders.push_back(item->uri);
+						}
+					}
+					else if (item->uri && seen.insert(item->uri).second)
+					{
 						listSelectedFolders.push_back(item->uri);
+					}
 				}
 				g_object_unref(item);
 			}
@@ -503,6 +541,128 @@ std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedFolders() const
 	}
 
 	return listSelectedFolders;
+}
+
+bool FolderTree::FolderTreeImpl::GetSelectedFoldersRecursive() const
+{
+	/* A combined selection is loadable recursively when any checked item asks
+	 * for recursion -- currently only bookmarks carry a recursive flag. */
+	if (!m_pBookmarkStore)
+		return false;
+	BookmarksPtr bmPtr = Bookmarks::GetInstance();
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+	for (guint i = 0 ; i < n ; i++)
+	{
+		DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+		if (item)
+		{
+			if (item->checked && item->bookmark_id >= 0 && bmPtr)
+			{
+				const Bookmark* bm = bmPtr->GetBookmark(item->bookmark_id);
+				if (bm && bm->GetRecursive())
+				{
+					g_object_unref(item);
+					return true;
+				}
+			}
+			g_object_unref(item);
+		}
+	}
+	return false;
+}
+
+std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedURIsFromModels() const
+{
+	/* The URI list the "Add Bookmark" action must use: the rows that are
+	 * actually SELECTED (highlighted) in the folder tree, shortcuts and
+	 * bookmark lists -- NOT the checkbox state that feeds the combined
+	 * picture list.  Shift-range clicks and focus moves can leave these
+	 * two notions out of sync, and the user's intent on right-click is the
+	 * highlighted selection. */
+	std::list<std::string> uris;
+	std::set<std::string> seen;
+
+	if (m_pTreeListModel && m_pSelectionModel)
+	{
+		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pTreeListModel));
+		for (guint i = 0; i < n; i++)
+		{
+			if (!gtk_selection_model_is_selected(GTK_SELECTION_MODEL(m_pSelectionModel), i))
+				continue;
+			GtkTreeListRow* row = gtk_tree_list_model_get_row(m_pTreeListModel, i);
+			if (NULL == row)
+				continue;
+			DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
+			if (item && item->uri && seen.insert(item->uri).second)
+				uris.push_back(item->uri);
+			if (item) g_object_unref(item);
+			g_object_unref(row);
+		}
+	}
+
+	if (m_pShortcutsStore && m_pShortcutsSelectionModel)
+	{
+		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pShortcutsStore));
+		for (guint i = 0; i < n; i++)
+		{
+			if (!gtk_selection_model_is_selected(GTK_SELECTION_MODEL(m_pShortcutsSelectionModel), i))
+				continue;
+			DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pShortcutsStore), i));
+			if (item)
+			{
+				if (item->uri && seen.insert(item->uri).second)
+					uris.push_back(item->uri);
+				g_object_unref(item);
+			}
+		}
+	}
+
+	if (m_pBookmarkStore && m_pBookmarkSelectionModel)
+	{
+		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+		for (guint i = 0; i < n; i++)
+		{
+			if (!gtk_selection_model_is_selected(GTK_SELECTION_MODEL(m_pBookmarkSelectionModel), i))
+				continue;
+			DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+			if (item)
+			{
+				if (item->uri && seen.insert(item->uri).second)
+					uris.push_back(item->uri);
+				g_object_unref(item);
+			}
+		}
+	}
+
+	return uris;
+}
+
+std::list<std::string> FolderTree::FolderTreeImpl::GetAddBookmarkURIs(const std::string& clicked_uri) const
+{
+	/* "Add Bookmark" follows the row SELECTION (highlighted folders), not the
+	 * checkbox state used for the combined picture list. */
+	std::list<std::string> selected = GetSelectedURIsFromModels();
+
+	/* Right-clicking a folder that is part of the current selection bookmarks
+	 * the whole selection; clicking anything outside it (or with no
+	 * selection) bookmarks just the clicked folder. */
+	if (!clicked_uri.empty() && !selected.empty())
+	{
+		for (const std::string& uri : selected)
+		{
+			if (uri == clicked_uri)
+			{
+				return selected;
+			}
+		}
+	}
+
+	std::list<std::string> uris;
+	if (!clicked_uri.empty())
+	{
+		uris.push_back(clicked_uri);
+	}
+	return uris;
 }
 
 void FolderTree::FolderTreeImpl::ClearAllCheckboxes()
@@ -575,6 +735,13 @@ void FolderTree::FolderTreeImpl::SyncShortcutSelectionForURI(const gchar* uri, g
 			if (it->uri && 0 == g_strcmp0(it->uri, target))
 			{
 				dir_item_set_checked(it, value);
+				if (m_pShortcutsSelectionModel)
+				{
+					if (value)
+						gtk_selection_model_select_item(GTK_SELECTION_MODEL(m_pShortcutsSelectionModel), i, FALSE);
+					else
+						gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(m_pShortcutsSelectionModel), i);
+				}
 			}
 			g_object_unref(it);
 		}
@@ -591,6 +758,13 @@ void FolderTree::FolderTreeImpl::SyncShortcutSelectionForURI(const gchar* uri, g
 				if (it->uri && 0 == g_strcmp0(it->uri, target))
 				{
 					dir_item_set_checked(it, value);
+					if (m_pBookmarkSelectionModel)
+					{
+						if (value)
+							gtk_selection_model_select_item(GTK_SELECTION_MODEL(m_pBookmarkSelectionModel), i, FALSE);
+						else
+							gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(m_pBookmarkSelectionModel), i);
+					}
 				}
 				g_object_unref(it);
 			}
@@ -1978,14 +2152,16 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 					if (active)
 					{
-						/* Checking a bookmark behaves like clicking its row
-						 * (or the bookmark menu entry): open every folder of
-						 * the bookmark, honoring "include subfolders". */
-						impl->ClearAllCheckboxes();
+						/* Checking a bookmark toggles it into the "combined
+						 * list" selection, exactly like a folder checkbox: it
+						 * stays checked alongside the others and feeds
+						 * GetSelectedFolders() -> EmitSelectionChangedEvent.
+						 * Every folder the bookmark points at is expanded later
+						 * when the selection is read (see GetSelectedFolders). */
 						dir_item_set_checked(item, TRUE);
 						if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
 						{
-							gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, TRUE);
+							gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos, FALSE);
 						}
 						if (NULL != bm)
 						{
@@ -1996,10 +2172,12 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 								impl->SyncTreeSelectionForURI(uri->c_str(), TRUE);
 								impl->SyncShortcutSelectionForURI(uri->c_str(), TRUE);
 							}
-							impl->m_pFolderTree->EmitBookmarkOpenEvent(uris, bm->GetRecursive());
-							return;
 						}
-						impl->SyncTreeSelectionForURI(item->uri, TRUE);
+						else
+						{
+							impl->SyncTreeSelectionForURI(item->uri, TRUE);
+							impl->SyncShortcutSelectionForURI(item->uri, TRUE);
+						}
 					}
 					else
 					{
@@ -3186,15 +3364,21 @@ folder_tree_action_new_folder (GSimpleAction* action, GVariant* parameter, gpoin
 
 static void
 folder_tree_action_add_bookmark (GSimpleAction* action, GVariant* parameter, gpointer userdata)
-{ (void)action; (void)userdata;
-	if (NULL == parameter)
+{ (void)action;
+	/* A right-click on a folder that is part of the current (checkbox)
+	 * selection should bookmark the whole selection, not just that one item. */
+	FolderTree::FolderTreeImpl* impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl)
 		return;
 
-	const gchar* uri = g_variant_get_string(parameter, NULL);
-	if (NULL == uri || '\0' == uri[0])
+	const char* clicked_uri = (NULL != parameter)
+		? g_variant_get_string(parameter, NULL) : NULL;
+
+	std::list<std::string> uris = impl->GetAddBookmarkURIs(
+		(NULL != clicked_uri) ? clicked_uri : "");
+	if (uris.empty())
 		return;
 
-	std::list<std::string> uris = { uri };
 	QuiverUtils::PromptAddBookmark(uris);
 }
 
@@ -3646,6 +3830,24 @@ view_capture_button_press (GtkEventController *controller, GdkEvent *event, gpoi
 
 	double x = 0, y = 0;
 	gdk_event_get_position(event, &x, &y);
+
+	/* gdk_event_get_position reports surface (toplevel) coordinates, but
+	 * gtk_widget_pick() and view_popup_menu_at() take coordinates in this
+	 * list view's own space.  Translate, otherwise lower rows are misread as
+	 * empty area and the popover lands offset below the cursor. */
+	{
+		GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(treeview));
+		if (root != NULL && root != treeview)
+		{
+			graphene_point_t in = GRAPHENE_POINT_INIT((float)x, (float)y);
+			graphene_point_t out;
+			if (gtk_widget_compute_point(root, treeview, &in, &out))
+			{
+				x = out.x;
+				y = out.y;
+			}
+		}
+	}
 
 	/* Row clicks are handled by the per-row gestures (their widgets carry the
 	 * item data), so only the empty area on the list's background is handled

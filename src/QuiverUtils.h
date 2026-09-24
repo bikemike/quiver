@@ -91,6 +91,11 @@ namespace QuiverUtils
 	/* Normalize a path or URI to a canonical URI string */
 	std::string NormalizeURI(const char *uri_or_path);
 
+	/* Return a friendly display string for a URI or path.
+	 * Local file:// URI is converted to the filesystem path; other schemes
+	 * and plain local paths are returned unchanged. */
+	std::string GetDisplayPath(const char *uri_or_path);
+
 	/* Check if a URI or path points to an existing directory */
 	bool IsDirectoryURI(const char *uri);
 

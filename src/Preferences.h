@@ -19,7 +19,16 @@ class Preferences : public virtual PreferencesEventSource
 public:
 
 	static PreferencesPtr GetInstance();
-	static void Reset() { c_pPreferencesPtr.reset(); }
+	static void Reset() {
+		if (c_pPreferencesPtr)
+		{
+			fprintf(stderr, "[quiver] Preferences::Reset () refs=%ld\n",
+				(long)c_pPreferencesPtr.use_count());
+			c_pPreferencesPtr->SaveFile(true);
+			c_pPreferencesPtr.reset();
+			fprintf(stderr, "[quiver] Preferences::Reset done\n");
+		}
+	}
 
 	~Preferences();
 
@@ -51,8 +60,13 @@ public:
 private:
 	Preferences();
 
+	static gboolean PreferencesSaveTimeout(gpointer user_data);
+	void ScheduleSaveFile();
+	void SaveFile(bool bOnExit);
+
 	static PreferencesPtr c_pPreferencesPtr;
 	bool m_bModified;
+	guint m_iSaveTimerID;
 	GKeyFile *m_KeyFile;
 };
 

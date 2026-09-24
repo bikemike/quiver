@@ -3795,8 +3795,9 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	}
 
 	list<string> listFolders = parent->m_FolderTreePtr->GetSelectedFolders();
+	bool bFoldersRecursive = parent->m_FolderTreePtr->GetSelectedFoldersRecursive();
 	parent->ShowLoadingProgress("Loading folder...", -1.0);
-	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders, false, true);
+	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders, bFoldersRecursive, true);
 }
 
 

@@ -222,6 +222,7 @@ bool Bookmarks::AddBookmark(Bookmark bookmark)
 		m_BookmarksImplPtr->m_mapBookmarkOrder[bookmark.GetID()] = sort_val;
 		m_mapBookmarks[bookmark.GetID()] = bookmark;
 		EmitBookmarkChangedEvent(BookmarksEvent::BOOKMARK_ADDED);
+		SaveToPreferences();
 	}
 	else
 	{
@@ -266,6 +267,8 @@ bool Bookmarks::Remove(int id)
 	{
 		m_BookmarksImplPtr->m_mapBookmarkOrder.erase(itr2);
 	}
+
+	SaveToPreferences();
 
 	return rval;
 }
@@ -326,6 +329,7 @@ bool Bookmarks::UpdateBookmark(Bookmark bookmark)
 		itr->second = bookmark;
 		bUpdated = true;
 		EmitBookmarkChangedEvent(BookmarksEvent::BOOKMARK_CHANGED);
+		SaveToPreferences();
 	}
 	return bUpdated;
 }
@@ -358,6 +362,7 @@ bool Bookmarks::MoveUp (int id)
 			m_BookmarksImplPtr->m_mapBookmarkOrder[id] = new_orderid;
 			m_BookmarksImplPtr->m_mapBookmarkOrder[swapID] = orderid;
 			EmitBookmarkChangedEvent(BookmarksEvent::BOOKMARK_CHANGED);
+			SaveToPreferences();
 			return true;
 		}
 	}
@@ -393,11 +398,12 @@ bool Bookmarks::MoveDown (int id)
 			m_BookmarksImplPtr->m_mapBookmarkOrder[id] = new_orderid;
 			m_BookmarksImplPtr->m_mapBookmarkOrder[swapID] = orderid;
 			EmitBookmarkChangedEvent(BookmarksEvent::BOOKMARK_CHANGED);
+			SaveToPreferences();
 			return true;
 		}
 	}
 	return false;
-}
 
+}
 
 

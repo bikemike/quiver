@@ -2,6 +2,7 @@
 
 #include "BookmarkAddEditDlg.h"
 #include "QuiverStockIcons.h"
+#include "QuiverUtils.h"
 
 extern GtkApplication *g_pApp;
 
@@ -125,7 +126,8 @@ static void location_text_bind (GtkSignalListItemFactory* factory, GtkListItem* 
 		gtk_label_set_text(GTK_LABEL(label), "");
 		return;
 	}
-	gtk_label_set_text(GTK_LABEL(label), item->uri ? item->uri : "");
+	std::string display = QuiverUtils::GetDisplayPath(item->uri);
+	gtk_label_set_text(GTK_LABEL(label), display.empty() ? "" : display.c_str());
 }
 
 static GtkListItemFactory* location_column_factory ()

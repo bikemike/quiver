@@ -73,6 +73,10 @@ public:
 	void UpdateHUDPosition();
 	void ResetIdleCursor();
 	void RefreshAutoHideTimer();
+	/* Leaving fullscreen produces no motion event, so a pointer that was
+	 * auto-hidden while idle in fullscreen would stay invisible. Restore
+	 * it and bring the controls back exactly as a motion event would. */
+	void OnExitFullscreen();
 
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;

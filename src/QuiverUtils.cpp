@@ -820,6 +820,24 @@ void SuppressAllAccelerators(bool suppress) {
 		return res;
 	}
 
+	std::string GetDisplayPath(const char *uri_or_path)
+	{
+		if (NULL == uri_or_path || '\0' == uri_or_path[0])
+			return std::string();
+		if (strstr(uri_or_path, "://") == NULL)
+			return std::string(uri_or_path);
+		if (g_str_has_prefix(uri_or_path, "file://"))
+		{
+			GFile *f = g_file_new_for_uri(uri_or_path);
+			char *path = g_file_get_path(f);
+			std::string res = path ? path : uri_or_path;
+			g_free(path);
+			g_object_unref(f);
+			return res;
+		}
+		return std::string(uri_or_path);
+	}
+
 	bool IsDirectoryURI(const char *uri)
 	{
 		if (NULL == uri)

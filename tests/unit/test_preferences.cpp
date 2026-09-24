@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include "Preferences.h"
 #include "QuiverPrefs.h"
+#include "Bookmarks.h"
+#include "ExternalTools.h"
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <cstring>
@@ -102,4 +104,43 @@ TEST_CASE_METHOD(TestPreferencesFixture, "Filmstrip Default Preferences", "[unit
     // Default filmstrip overlay should be true
     bool overlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
     REQUIRE(overlay == true);
+}
+
+TEST_CASE_METHOD(TestPreferencesFixture, "Reset flushes even with dangling references", "[unit][prefs][fast]")
+{
+    // Bookmarks and ExternalTools hold PreferencesPtr internals, and their
+    // dialog singletons keep them alive past Quiver's CloseReal resets, which
+    // leaks the Preferences singleton (its destructor - and the exit save -
+    // never runs). Reset() must therefore flush the file regardless of how
+    // many references to the Preferences object are outstanding.
+    BookmarksPtr bookmarksKeeper = Bookmarks::GetInstance();
+    ExternalToolsPtr toolsKeeper = ExternalTools::GetInstance();
+    REQUIRE(bookmarksKeeper != nullptr);
+    REQUIRE(toolsKeeper != nullptr);
+
+    PreferencesPtr prefs = Preferences::GetInstance();
+    REQUIRE(prefs != nullptr);
+    prefs->SetBoolean("PrefsTest", "DetachedRef", true);
+
+    Bookmarks::Reset();
+    ExternalTools::Reset();
+
+    // Preferences object must still be alive (leaked refs), mirroring the
+    // CloseReal order where these two Resets run before Preferences::Reset().
+    REQUIRE(prefs != nullptr);
+    REQUIRE(bookmarksKeeper != nullptr);
+    REQUIRE(toolsKeeper != nullptr);
+
+    Preferences::Reset();
+
+    GKeyFile *kf = g_key_file_new();
+    REQUIRE(g_key_file_load_from_file(kf, g_szConfigFilePath, G_KEY_FILE_NONE, NULL));
+    REQUIRE(g_key_file_get_boolean(kf, "PrefsTest", "DetachedRef", NULL) == true);
+    g_key_file_free(kf);
+
+    // Clean up the leaked references so the fixture teardown is tidy.
+    bookmarksKeeper.reset();
+    toolsKeeper.reset();
+    Bookmarks::Reset();
+    ExternalTools::Reset();
 }

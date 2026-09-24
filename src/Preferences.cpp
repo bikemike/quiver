@@ -1,5 +1,6 @@
 
 #include <iostream>
+#include <stdio.h>
 
 #include <glib.h>
 #include <glib/gstdio.h>
@@ -19,6 +20,7 @@ PreferencesPtr Preferences::c_pPreferencesPtr;
 Preferences::Preferences()
 {
 	m_bModified = false;
+	m_iSaveTimerID = 0;
 	m_KeyFile = g_key_file_new();
  gboolean loaded = g_key_file_load_from_file(m_KeyFile,g_szConfigFilePath,(GKeyFileFlags)0/*(G_KEY_FILE_KEEP_COMMENTS|G_KEY_FILE_KEEP_TRANSLATIONS)*/, NULL);
 
@@ -34,6 +36,7 @@ Preferences::Preferences()
 			g_key_file_set_boolean(m_KeyFile,
 				QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, TRUE);
 			m_bModified = true;
+		ScheduleSaveFile();
 		}
 
 		gboolean has_pos = g_key_file_has_key(m_KeyFile,
@@ -43,21 +46,61 @@ Preferences::Preferences()
 			g_key_file_set_integer(m_KeyFile,
 				QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_POSITION, FSTRIP_POS_RIGHT);
 			m_bModified = true;
+		ScheduleSaveFile();
 		}
+	}
+
+	if (m_bModified)
+	{
+		ScheduleSaveFile();
+	}
+}
+
+gboolean Preferences::PreferencesSaveTimeout(gpointer user_data)
+{
+	Preferences *prefs = static_cast<Preferences*>(user_data);
+	prefs->SaveFile(false);
+	return FALSE;
+}
+
+void Preferences::ScheduleSaveFile()
+{
+	/* Debounce: coalesce bursts of preference writes into one disk write. */
+	if (0 == m_iSaveTimerID)
+	{
+		m_iSaveTimerID = g_timeout_add(1000,
+			&Preferences::PreferencesSaveTimeout, this);
+	}
+}
+
+void Preferences::SaveFile(bool bOnExit)
+{
+	/* A fired timeout is already consumed; an exit-triggered call must have
+	 * the pending timer (if any) removed first so its source can't fire on a
+	 * dead instance. */
+	if (0 != m_iSaveTimerID)
+	{
+		g_source_remove(m_iSaveTimerID);
+		m_iSaveTimerID = 0;
+	}
+
+	if (m_bModified)
+	{
+		gsize clength;
+		gchar *contents = g_key_file_to_data (m_KeyFile, &clength, NULL);
+		g_file_set_contents(g_szConfigFilePath,contents,clength,NULL);
+		fprintf(stderr, "[quiver] %s %s (%" G_GSIZE_FORMAT " bytes)\n",
+			bOnExit ? "saved-on-exit" : "auto-saved",
+			g_szConfigFilePath, clength);
+		g_free(contents);
+		m_bModified = false;
 	}
 }
 
 Preferences::~Preferences()
 {
-	if (m_bModified)
-	{
-		gsize clength;
-		gchar *contents = g_key_file_to_data (m_KeyFile, &clength, NULL);
-	
-		g_file_set_contents(g_szConfigFilePath,contents,clength,NULL);
-	
-		g_free(contents);
-	}
+	fprintf(stderr, "[quiver] ~Preferences entered (modified=%d)\n", m_bModified ? 1 : 0);
+	SaveFile(true);
 	g_key_file_free(m_KeyFile);
 
 }
@@ -285,6 +328,7 @@ void Preferences::SetValue(std::string section, std::string key, std::string val
 	{
 		g_key_file_set_value(m_KeyFile,section.c_str(),key.c_str(), value.c_str());
 		m_bModified = true;
+		ScheduleSaveFile();
 		
 		PreferencesEvent::PreferencesEventType type;
 		if (!bHasKey)
@@ -311,6 +355,7 @@ void Preferences::SetLocaleString(std::string section, std::string key, std::str
 	{
 		g_key_file_set_locale_string(m_KeyFile,section.c_str(),key.c_str(), locale.c_str(), value.c_str());
 		m_bModified = true;
+		ScheduleSaveFile();
 		
 		EmitPreferenceChanged(PreferencesEvent::PREFERENCE_CHANGED,
 			section,key,locale, strOldValue, value);
@@ -327,6 +372,7 @@ void Preferences::SetBoolean(std::string section, std::string key, bool value)
 	{
 		g_key_file_set_boolean(m_KeyFile,section.c_str(),key.c_str(), value ? TRUE : FALSE);
 		m_bModified = true;
+		ScheduleSaveFile();
 		
 		PreferencesEvent::PreferencesEventType type;
 		if (!bHasKey)
@@ -349,6 +395,7 @@ void Preferences::SetInteger(std::string section, std::string key, int value)
 	{
 		g_key_file_set_integer(m_KeyFile,section.c_str(),key.c_str(), value);
 		m_bModified = true;
+		ScheduleSaveFile();
 		
 		PreferencesEvent::PreferencesEventType type;
 		if (!bHasKey)
@@ -391,6 +438,7 @@ void Preferences::SetStringList(std::string section, std::string key, std::list<
 		}
 
 		m_bModified = true;
+		ScheduleSaveFile();
 		PreferencesEvent::PreferencesEventType type;
 		if (!bHasKey)
 		{
@@ -438,6 +486,7 @@ void Preferences::SetBooleanList(std::string section, std::string key, std::list
 		}
 
 		m_bModified = true;
+		ScheduleSaveFile();
 		PreferencesEvent::PreferencesEventType type;
 		if (!bHasKey)
 		{
@@ -480,6 +529,7 @@ void Preferences::SetIntegerList(std::string section, std::string key, std::list
 		}
 
 		m_bModified = true;
+		ScheduleSaveFile();
 		PreferencesEvent::PreferencesEventType type;
 		if (!bHasKey)
 		{
@@ -500,6 +550,7 @@ void Preferences::RemoveSection(std::string section)
 	{
 		g_key_file_remove_group(m_KeyFile,section.c_str(), NULL);
 		m_bModified = true;
+		ScheduleSaveFile();
 	}
 }
 
@@ -509,6 +560,7 @@ void Preferences::RemoveKey(std::string section,std::string key)
 	{
 		g_key_file_remove_key(m_KeyFile,section.c_str(), key.c_str(), NULL);
 		m_bModified = true;
+		ScheduleSaveFile();
 	}
 }
 

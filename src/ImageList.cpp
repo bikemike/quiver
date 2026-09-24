@@ -1757,7 +1757,10 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 
 	/* Record the list definition (folder set + recursive flag) up front, so
 	 * GetAttributes() reflects the requested view even while the async load
-	 * is still running. */
+	 * is still running.  Snapshot the *previous* recursive flag first: the
+	 * skip-if-unchanged check below must also detect a pure recursive/non-
+	 * recursive switch for the same folder set. */
+	gboolean bOldRecursive = (impl->m_pAttributes && impl->m_pAttributes->GetRecursive());
 	impl->SetAttributes(file_list, NULL, bRecursive);
 
 	if (0 == file_list->size())
@@ -1799,7 +1802,7 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 			setOldFolders.insert(itr2->first);
 		}
 
-		if (setOldFolders == setNewFolders && 0 < impl->m_QuiverFileList.size())
+		if (setOldFolders == setNewFolders && bOldRecursive == bRecursive && 0 < impl->m_QuiverFileList.size())
 		{
 			return;
 		}

@@ -5150,7 +5150,6 @@ viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdou
 static void 
 viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
 {
-	(void)n_press;
 	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
@@ -5165,6 +5164,18 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 		{
 			g_action_activate(fs, NULL);
 		}
+		return;
+	}
+
+	// Double-click on a playing video returns to the browser, matching the
+	// image view's double-click toggle.  (The video preview shown in the
+	// image view is already handled by QuiverImageView's "activated"
+	// signal; the playing video surface has no such signal.)
+	if (1 == button && 2 == n_press
+		&& (widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
+		&& pViewerImpl->IsVideo())
+	{
+		pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 		return;
 	}
 
@@ -8002,6 +8013,20 @@ void Viewer::ResetIdleCursor()
 			g_source_remove(m_ViewerImplPtr->m_iTimeoutMouseMotionNotify);
 			m_ViewerImplPtr->m_iTimeoutMouseMotionNotify = 0;
 		}
+	}
+}
+
+void Viewer::OnExitFullscreen()
+{
+	if (m_ViewerImplPtr)
+	{
+		viewer_set_idle_cursor(m_ViewerImplPtr.get(), false);
+		viewer_controls_show(m_ViewerImplPtr.get());
+		m_ViewerImplPtr->m_bControlsVisible = true;
+		if (m_ViewerImplPtr->IsVideo())
+			m_ViewerImplPtr->UpdateTimelineVisibility();
+		m_ViewerImplPtr->StartControlsFade(true);
+		m_ViewerImplPtr->RefreshAutoHideTimer();
 	}
 }
 

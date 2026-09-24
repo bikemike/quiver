@@ -1990,6 +1990,14 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 					pQuiverImpl->m_ViewerPtr->ShowFilmstripOverlay();
 			}
 		}
+
+		/* Leaving fullscreen via the keyboard produces no motion event, so
+		 * restore the pointer and controls that were auto-hidden while
+		 * fullscreen exactly as a motion event would. */
+		if (pQuiverImpl->m_bViewerMode)
+		{
+			pQuiverImpl->m_ViewerPtr->OnExitFullscreen();
+		}
 	}
 	
 	// update the fullscreen toggle state without running the activate

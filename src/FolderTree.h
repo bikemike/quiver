@@ -22,6 +22,16 @@ public:
 
 	void SetSelectedFolders(std::list<std::string> &uris);
 	std::list<std::string> GetSelectedFolders() const;
+	/* True when any checked item of the combined selection requires its
+	 * folders to be loaded recursively (currently: a checked bookmark whose
+	 * "include subfolders" option is on). */
+	bool GetSelectedFoldersRecursive() const;
+	/* URIs to bookmark when the user triggers "Add Bookmark" for clicked_uri:
+	 * the whole highlighted row SELECTION (folder tree / shortcuts /
+	 * bookmarks lists) when the clicked folder is part of it, otherwise just
+	 * the clicked folder.  This intentionally follows the selection, not the
+	 * checkbox state that drives the combined picture list. */
+	std::list<std::string> GetAddBookmarkURIs(const std::string& clicked_uri) const;
 	void AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name);
 	void RemoveFolder(const char *folder_uri);
 

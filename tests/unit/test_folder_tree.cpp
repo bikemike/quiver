@@ -825,14 +825,32 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
 
     BookmarksPtr bm = Bookmarks::GetInstance();
     std::list<std::string> uris = { uriA, uriB };
-    Bookmark b("Multi Folder Check Test", "desc", "folder-symbolic", uris, true);
-    REQUIRE(bm->AddBookmark(b));
-    int added_id = bm->GetBookmarks().back().GetID();
+    Bookmark b1("Check Test Recursive", "desc", "folder-symbolic", uris, true);
+    REQUIRE(bm->AddBookmark(b1));
+    int added_id1 = bm->GetBookmarks().back().GetID();
+    std::string subC = base + "/subC";
+    g_mkdir_with_parents(subC.c_str(), 0755);
+    std::string uriC = folder_tree_test_path_to_uri(subC);
+    std::list<std::string> uris2 = { uriC };
+    Bookmark b2("Check Test Flat", "desc", "folder-symbolic", uris2, false);
+    REQUIRE(bm->AddBookmark(b2));
+    int added_id2 = bm->GetBookmarks().back().GetID();
+    /* Persistence writes bookmarks to the shared config file, so remove the
+     * test bookmarks on EVERY path (including REQUIRE failures) to avoid
+     * leaving stale bookmarks that break later test runs. */
+    struct AutoRemoveBookmark {
+        BookmarksPtr bm;
+        int id;
+        ~AutoRemoveBookmark() { if (bm) bm->Remove(id); }
+    } cleanup1{ bm, added_id1 }, cleanup2{ bm, added_id2 };
 
     FolderTreePtr tree(new FolderTree());
     boost::shared_ptr<FolderTreeTestBookmarkHandler> handler(
         new FolderTreeTestBookmarkHandler());
+    boost::shared_ptr<FolderTreeTestSelectionHandler> selHandler(
+        new FolderTreeTestSelectionHandler());
     tree->AddEventHandler(boost::static_pointer_cast<IEventHandler>(handler));
+    tree->AddEventHandler(boost::static_pointer_cast<IEventHandler>(selHandler));
 
     GtkWidget* win = gtk_window_new();
     gtk_window_set_child(GTK_WINDOW(win), tree->GetWidget());
@@ -840,23 +858,29 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
     gtk_window_present(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
 
-    // Grab the bookmark row's checkbox (bound to the row's DirItem once
-    // the list item is realized).
+    // Grab the bookmark rows' checkboxes (bound to each row's DirItem once
+    // the list items are realized).
     GtkWidget* bm_widget = tree->GetBookmarksWidget();
     REQUIRE(bm_widget != nullptr);
     GtkSelectionModel* bm_sel = gtk_list_view_get_model(GTK_LIST_VIEW(bm_widget));
     REQUIRE(bm_sel != nullptr);
-    REQUIRE(g_list_model_get_n_items(G_LIST_MODEL(bm_sel)) == 1);
-    GObject* item = (GObject*)g_list_model_get_item(G_LIST_MODEL(bm_sel), 0);
-    REQUIRE(item != nullptr);
-    GtkWidget* check = GTK_WIDGET(g_object_get_data(item, "bound-check"));
-    g_object_unref(item);
-    REQUIRE(check != nullptr);
+    REQUIRE(g_list_model_get_n_items(G_LIST_MODEL(bm_sel)) == 2);
+    GObject* item0 = (GObject*)g_list_model_get_item(G_LIST_MODEL(bm_sel), 0);
+    GObject* item1 = (GObject*)g_list_model_get_item(G_LIST_MODEL(bm_sel), 1);
+    REQUIRE(item0 != nullptr);
+    REQUIRE(item1 != nullptr);
+    GtkWidget* check0 = GTK_WIDGET(g_object_get_data(item0, "bound-check"));
+    GtkWidget* check1 = GTK_WIDGET(g_object_get_data(item1, "bound-check"));
+    g_object_unref(item0);
+    g_object_unref(item1);
+    REQUIRE(check0 != nullptr);
+    REQUIRE(check1 != nullptr);
 
-    // Toggling the bookmark checkbox must behave like opening the bookmark:
-    // both folders checked in the tree and a bookmark-open event emitted with
-    // all URIs and the bookmark's recursion flag.
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(check), TRUE);
+    // Toggling a bookmark checkbox behaves like a combined-list folder
+    // checkbox: the bookmark stays part of the multi-check selection (no
+    // exclusive bookmark-open event) BUT every folder it points at joins the
+    // list and its "include subfolders" flag is honored.
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check0), TRUE);
     while (g_main_context_iteration(NULL, FALSE));
 
     std::list<std::string> res = tree->GetSelectedFolders();
@@ -864,21 +888,50 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
     REQUIRE(std::find(res.begin(), res.end(), uriA) != res.end());
     REQUIRE(std::find(res.begin(), res.end(), uriB) != res.end());
 
-    REQUIRE(handler->bookmarkOpens == 1);
-    REQUIRE(handler->lastRecursive == true);
-    REQUIRE(handler->lastUris.size() == 2);
-    REQUIRE(std::find(handler->lastUris.begin(), handler->lastUris.end(), uriA) != handler->lastUris.end());
-    REQUIRE(std::find(handler->lastUris.begin(), handler->lastUris.end(), uriB) != handler->lastUris.end());
+    REQUIRE(handler->bookmarkOpens == 0);
+    REQUIRE(selHandler->selectionEvents >= 1);
+    REQUIRE(tree->GetSelectedFoldersRecursive() == true);
 
-    // Unchecking must clear the bookmark's folders from the tree selection.
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(check), FALSE);
+    // Checking a SECOND bookmark must NOT clear the first one: the combined
+    // selection accumulates, all folders from both bookmarks are present, and
+    // recursion stays on because the first bookmark asks for it.
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check1), TRUE);
+    while (g_main_context_iteration(NULL, FALSE));
+    REQUIRE(gtk_check_button_get_active(GTK_CHECK_BUTTON(check0)) == TRUE);
+
+    res = tree->GetSelectedFolders();
+    REQUIRE(res.size() == 3);
+    REQUIRE(std::find(res.begin(), res.end(), uriA) != res.end());
+    REQUIRE(std::find(res.begin(), res.end(), uriB) != res.end());
+    REQUIRE(std::find(res.begin(), res.end(), uriC) != res.end());
+    REQUIRE(tree->GetSelectedFoldersRecursive() == true);
+    REQUIRE(handler->bookmarkOpens == 0);
+    REQUIRE(selHandler->selectionEvents >= 2);
+
+    // Unchecking the recursive bookmark must drop its folders and clear the
+    // recursive flag while leaving the other bookmark checked.
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check0), FALSE);
+    while (g_main_context_iteration(NULL, FALSE));
+    REQUIRE(gtk_check_button_get_active(GTK_CHECK_BUTTON(check0)) == FALSE);
+    REQUIRE(gtk_check_button_get_active(GTK_CHECK_BUTTON(check1)) == TRUE);
+
+    res = tree->GetSelectedFolders();
+    REQUIRE(res.size() == 1);
+    REQUIRE(std::find(res.begin(), res.end(), uriC) != res.end());
+    REQUIRE(tree->GetSelectedFoldersRecursive() == false);
+    REQUIRE(handler->bookmarkOpens == 0);
+
+    // Unchecking the last bookmark clears the selection entirely.
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check1), FALSE);
     while (g_main_context_iteration(NULL, FALSE));
     REQUIRE(tree->GetSelectedFolders().size() == 0);
+    REQUIRE(tree->GetSelectedFoldersRecursive() == false);
 
     gtk_window_set_child(GTK_WINDOW(win), nullptr);
     gtk_window_destroy(GTK_WINDOW(win));
 
-    bm->Remove(added_id);
+    bm->Remove(added_id1);
+    bm->Remove(added_id2);
 }
 
 TEST_CASE("FolderTree drop expand on folder with many subfolders materializes rows",
@@ -1232,6 +1285,61 @@ TEST_CASE("FolderTree Add Bookmark context menu action", "[unit][foldertree][boo
     GAction* action = QuiverUtils::GetAction("FolderTreeAddBookmark");
     REQUIRE(action != nullptr);
     CHECK(g_action_get_enabled(action) == TRUE);
+
+    SECTION("Add Bookmark follows the row selection, not the checkbox state")
+    {
+        /* The shortcuts list is a real GtkListView: its selection model is
+         * reachable through the public widget, so the test can drive the
+         * highlighted selection exactly as Ctrl/Shift clicks would.  Home is
+         * always row 0 and Trash is always the last shortcut row, so their
+         * URIs are deterministic regardless of the environment. */
+        GtkWidget* shortcuts = tree->GetShortcutsWidget();
+        REQUIRE(shortcuts != nullptr);
+        GtkSelectionModel* sc_sel = gtk_list_view_get_model(GTK_LIST_VIEW(shortcuts));
+        REQUIRE(sc_sel != nullptr);
+        guint n = g_list_model_get_n_items(G_LIST_MODEL(sc_sel));
+        REQUIRE(n >= 2);
+
+        std::string home_uri = folder_tree_test_path_to_uri(g_get_home_dir());
+        std::string trash_uri = "trash:///";
+
+        // Select only in the selection model; the checkboxes are NOT touched.
+        gtk_selection_model_select_item(sc_sel, 0, FALSE);
+        gtk_selection_model_select_item(sc_sel, n - 1, FALSE);
+        while (g_main_context_iteration(NULL, FALSE));
+
+        // Right-clicking one of the selected shortcuts must bookmark both.
+        std::list<std::string> uris_from_selection = tree->GetAddBookmarkURIs(home_uri);
+        REQUIRE(uris_from_selection.size() == 2);
+        REQUIRE(std::find(uris_from_selection.begin(), uris_from_selection.end(), home_uri) != uris_from_selection.end());
+        REQUIRE(std::find(uris_from_selection.begin(), uris_from_selection.end(), trash_uri) != uris_from_selection.end());
+
+        // The selection -- not the (untouched) checkbox state -- is what
+        // feeds the bookmark list.
+        REQUIRE(tree->GetSelectedFolders().size() == 0);
+
+        // Clearing the selection: the clicked folder is used alone.
+        gtk_selection_model_unselect_all(sc_sel);
+        while (g_main_context_iteration(NULL, FALSE));
+        std::list<std::string> uris_no_selection = tree->GetAddBookmarkURIs(home_uri);
+        REQUIRE(uris_no_selection.size() == 1);
+        REQUIRE(uris_no_selection.front() == home_uri);
+
+        // Right-clicking a folder OUTSIDE the selection bookmarks only it.
+        gtk_selection_model_select_item(sc_sel, 0, FALSE);
+        gtk_selection_model_select_item(sc_sel, n - 1, FALSE);
+        while (g_main_context_iteration(NULL, FALSE));
+        std::string outside = folder_tree_test_path_to_uri(
+            folder_tree_test_make_temp_dir());
+        std::list<std::string> uris_outside = tree->GetAddBookmarkURIs(outside);
+        REQUIRE(uris_outside.size() == 1);
+        REQUIRE(uris_outside.front() == outside);
+
+        // No clicked folder and no selection: nothing to bookmark.
+        gtk_selection_model_unselect_all(sc_sel);
+        while (g_main_context_iteration(NULL, FALSE));
+        REQUIRE(tree->GetAddBookmarkURIs("").empty());
+    }
 }
 
 
