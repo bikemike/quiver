@@ -140,15 +140,29 @@ namespace QuiverUtils
 		if (!pixbuf)
 			return NULL;
 
-		GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
+		gint width = gdk_pixbuf_get_width(pixbuf);
+		gint height = gdk_pixbuf_get_height(pixbuf);
+		if (width <= 0 || height <= 0)
+			return NULL;
+
+		gsize rowstride = (gsize)gdk_pixbuf_get_rowstride(pixbuf);
+		gsize n_bytes = (gsize)height * rowstride;
+
+		/* Snapshot the pixels: a texture must not alias the pixbuf's backing
+		 * store, which may be mutated (animation iterators reuse one pixbuf
+		 * for every frame) or freed after this call returns. */
+		guchar *buf = (guchar*)g_malloc(n_bytes);
+		memcpy(buf, gdk_pixbuf_get_pixels(pixbuf), n_bytes);
+
+		GBytes *bytes = g_bytes_new_take(buf, n_bytes);
 		gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
 		GdkMemoryFormat fmt = has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8;
 		GdkTexture *tex = gdk_memory_texture_new(
-			gdk_pixbuf_get_width(pixbuf),
-			gdk_pixbuf_get_height(pixbuf),
+			width,
+			height,
 			fmt,
 			bytes,
-			gdk_pixbuf_get_rowstride(pixbuf)
+			rowstride
 		);
 		g_bytes_unref(bytes);
 		return tex;

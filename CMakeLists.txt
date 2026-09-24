@@ -20,8 +20,13 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 # Image decoding backend options
-option(ENABLE_GLYCIN "Enable libglycin backend for image loading" OFF)
-option(ENABLE_GDK_PIXBUF "Enable GdkPixbuf loader backend for image loading" ON)
+option(ENABLE_GLYCIN "Enable libglycin backend for image loading" ON)
+option(ENABLE_GDK_PIXBUF "Enable GdkPixbuf loader backend for image loading" OFF)
+
+if (NOT ENABLE_GLYCIN AND NOT ENABLE_GDK_PIXBUF)
+  message(FATAL_ERROR "At least one image decoding backend must be enabled: "
+    "enable ENABLE_GLYCIN and/or ENABLE_GDK_PIXBUF.")
+endif()
 
 # Find Packages
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.12)

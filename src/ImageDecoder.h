@@ -41,6 +41,17 @@ public:
                                          GCancellable *cancellable = NULL,
                                          GError **error = NULL);
 
+#if HAVE_GLYCIN
+    // Decode an animated image through glycin into backend-neutral frame
+    // textures.  Returns the first-frame texture (transfer full) on success
+    // and hands back *frames / *delays_ms (each texture owns one reference);
+    // the caller must release them with quiver_animation_frames_free().
+    // *n_frames = 1 for a still image; returns NULL on failure.
+    static GdkTexture* DecodeFileAnimation(GFile *file, GdkTexture ***frames,
+                                           gint **delays_ms, gsize *n_frames,
+                                           GError **error);
+#endif
+
 #if HAVE_GDK_PIXBUF
     // Decode image from memory bytes (e.g. EXIF embedded thumbnail) to GdkPixbuf
     static GdkPixbuf* DecodeBytesPixbuf(GBytes *bytes, const char *mimetype = NULL,

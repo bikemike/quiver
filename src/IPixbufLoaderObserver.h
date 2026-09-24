@@ -7,6 +7,22 @@
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #endif
 
+/* Release a decoded animation frame set.  Each texture in @frames carries
+ * one owned reference; both arrays are freed with g_free(). */
+static inline void quiver_animation_frames_free(GdkTexture **frames, gint *delays_ms, gsize n_frames)
+{
+	if (frames != NULL)
+	{
+		for (gsize i = 0; i < n_frames; i++)
+		{
+			if (frames[i] != NULL)
+				g_object_unref(frames[i]);
+		}
+		g_free(frames);
+	}
+	g_free(delays_ms);
+}
+
 class IPixbufLoaderObserver
 {
 public:
@@ -19,7 +35,23 @@ public:
 	// custom calls
 	virtual void SetPixbuf(GdkPixbuf * pixbuf) = 0;
 	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf,gint width, gint height, bool bResetViewMode = true) = 0;
+
 #endif
+
+	/* Animated (multi-frame) image delivery, backend-neutral: the frames are
+	 * plain GdkTextures with per-frame delays in milliseconds.  The caller
+	 * transfers ownership of @frames and @delays_ms (each texture carries one
+	 * owned reference); implementations must release them with
+	 * quiver_animation_frames_free() when done.  The default shows the first
+	 * frame as a still image, so observers that do not animate behave exactly
+	 * as they did for stills. */
+	virtual void SetAnimationFrames(GdkTexture **frames, gint *delays_ms, gsize n_frames,
+	                                gint width, gint height, bool bResetViewMode = true)
+	{
+		GdkTexture *still = (frames != NULL && n_frames > 0) ? frames[0] : NULL;
+		SetTextureAtSize(still, width, height, bResetViewMode);
+		quiver_animation_frames_free(frames, delays_ms, n_frames);
+	}
 
 	// modern texture calls
 	virtual void SetTexture(GdkTexture * texture)

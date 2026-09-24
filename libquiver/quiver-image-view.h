@@ -94,6 +94,14 @@ void quiver_image_view_set_texture(QuiverImageView *imageview, GdkTexture *textu
 void quiver_image_view_set_texture_at_size(QuiverImageView *imageview, GdkTexture *texture, int width, int height);
 void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTexture *texture, int width, int height, gboolean reset_view_mode);
 
+/* Animated image delivery (backend-neutral).  @frames must contain at least
+ * two textures with matching per-frame @delays_ms; the widget refs its own
+ * copies and plays the loop until another image is set. */
+void quiver_image_view_set_animation_frames(QuiverImageView *imageview,
+                                            GdkTexture **frames, gint *delays_ms,
+                                            gsize n_frames, int width, int height,
+                                            gboolean reset_view_mode);
+
 QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview);
 QuiverImageViewMode quiver_image_view_get_view_mode_unmagnified(QuiverImageView *imageview);
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode);

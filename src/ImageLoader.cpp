@@ -2,17 +2,174 @@
 
 #include "ImageLoader.h"
 #include "ImageDecoder.h"
+#include "IPixbufLoaderObserver.h"
 #include "QuiverUtils.h"
 #include "QuiverVideoOps.h"
 
 #include <gio/gio.h>
 #include <gst/gst.h>
+#include <vector>
+
+#if HAVE_GDK_PIXBUF
+#include <gdk-pixbuf/gdk-pixbuf-animation.h>
+#endif
 
 #include <libquiver/quiver-pixbuf-utils.h>
 #include <string.h>
 #include <sched.h>
 
 using namespace std;
+
+/* returns TRUE for mime types that we want to decode through GdkPixbuf even
+ * when a faster backend is available, so that animated images (currently
+ * GIF) are decoded with their animation intact. */
+static bool quiver_is_animation_capable_mime(const char *mime)
+{
+	return (NULL != mime && 0 == g_ascii_strcasecmp(mime, "image/gif"));
+}
+
+#if HAVE_GDK_PIXBUF
+/* True when @pb has exactly the width/height/channels of the previously
+ * captured frame and identical pixel content.  GdkPixbufAnimationIter hands
+ * back the same pixbuf for consecutive frames and only mutates its buffer,
+ * so this must be checked before the iterator advances again. */
+static bool quiver_pixbuf_matches(const GdkPixbuf *pb, const std::vector<guchar> &prev,
+                                  gint prev_w, gint prev_h, gint prev_nch)
+{
+	if (prev.empty())
+		return false;
+	gint w = gdk_pixbuf_get_width(pb);
+	gint h = gdk_pixbuf_get_height(pb);
+	gint nch = gdk_pixbuf_get_n_channels(pb);
+	if (w != prev_w || h != prev_h || nch != prev_nch)
+		return false;
+	gint rs = gdk_pixbuf_get_rowstride(pb);
+	if (rs < (w * nch) || (gsize)h * (gsize)rs > prev.size())
+		return false;
+	const guchar *pix = gdk_pixbuf_get_pixels(pb);
+	for (gint y = 0; y < h; y++)
+	{
+		if (memcmp(pix + (gsize)y * rs, prev.data() + (gsize)y * rs, (gsize)w * nch) != 0)
+			return false;
+	}
+	return true;
+}
+
+/* Extract backend-neutral frame textures from a GdkPixbuf animation.  Each
+ * texture inside *frames carries one owned reference; the caller releases the
+ * arrays with quiver_animation_frames_free().  Per-frame delays are in
+ * milliseconds (first frame = 0, displayed immediately).  Hard caps bound
+ * pathological files, mirroring the glycin decoder. */
+static void LoadAnimatedFramesFromPixbuf(GdkPixbufAnimation *anim,
+                                         GdkTexture ***frames,
+                                         gint **delays_ms,
+                                         gsize *n_frames)
+{
+	*frames = NULL;
+	*delays_ms = NULL;
+	*n_frames = 0;
+
+	if (NULL == anim || gdk_pixbuf_animation_is_static_image(anim))
+		return;
+
+	const gsize kMaxFrames = 512;
+	const guint64 kMaxPixels = 64u * 1024 * 1024;
+
+	GdkPixbufAnimationIter *iter = gdk_pixbuf_animation_get_iter(anim, NULL);
+	if (NULL == iter)
+		return;
+
+	std::vector<GdkTexture*> vec_frames;
+	std::vector<gint> vec_delays;
+	guint64 total_pixels = 0;
+
+	/* The GIF frame table often pads long stretches with pixel-identical
+	 * repeats of the same composited image (e.g. every entry of a static
+	 * region carries its own 100 ms delay, or an encoder stores each frame
+	 * several times).  Playing every raw table entry bakes those repeats into
+	 * minutes of frozen output, so consecutive identical frames are collapsed
+	 * into one texture that keeps the delay of the first entry in the run.
+	 * The iterator reuses one pixbuf, so a snapshot of the previous frame is
+	 * kept for comparison. */
+	std::vector<guchar> prev_pixels;
+	gint prev_width = 0, prev_height = 0, prev_nch = 0;
+
+	auto push_frame = [&](GdkPixbuf *pb, gint delay_ms) -> bool {
+		GdkTexture *tex = QuiverUtils::PixbufToTexture(pb);
+		if (NULL == tex)
+			return false;
+		gint w = gdk_pixbuf_get_width(pb);
+		gint h = gdk_pixbuf_get_height(pb);
+		gint rs = gdk_pixbuf_get_rowstride(pb);
+		gint nch = gdk_pixbuf_get_n_channels(pb);
+		if (rs > 0 && h > 0)
+		{
+			const guchar *pix = gdk_pixbuf_get_pixels(pb);
+			if (pix)
+			{
+				prev_pixels.assign((gsize)h * (gsize)rs, 0);
+				memcpy(prev_pixels.data(), pix, (gsize)h * (gsize)rs);
+				prev_width = w;
+				prev_height = h;
+				prev_nch = nch;
+			}
+		}
+		total_pixels += (guint64)w * (guint64)h;
+		vec_frames.push_back(tex);
+		vec_delays.push_back(delay_ms < 0 ? 0 : delay_ms);
+		return true;
+	};
+
+	GdkPixbuf *first_pb = gdk_pixbuf_animation_iter_get_pixbuf(iter);
+	if (NULL != first_pb)
+	{
+		gint delay_ms = gdk_pixbuf_animation_iter_get_delay_time(iter);
+		push_frame(first_pb, delay_ms);
+	}
+
+	while (vec_frames.size() < kMaxFrames
+		&& gdk_pixbuf_animation_iter_advance(iter, NULL))
+	{
+		GdkPixbuf *frame_pb = gdk_pixbuf_animation_iter_get_pixbuf(iter);
+		if (NULL == frame_pb)
+			break;
+
+		gint delay_ms = gdk_pixbuf_animation_iter_get_delay_time(iter);
+		delay_ms = delay_ms < 0 ? 0 : delay_ms;
+
+		/* Pixel-identical to the previously captured frame?  Drop this
+		 * repeat: it is padding for a static region rather than a new
+		 * drawing state, so it must not extend the visible hold time. */
+		if (quiver_pixbuf_matches(frame_pb, prev_pixels, prev_width, prev_height, prev_nch))
+			continue;
+
+		total_pixels += (guint64)gdk_pixbuf_get_width(frame_pb) * (guint64)gdk_pixbuf_get_height(frame_pb);
+		if (total_pixels > kMaxPixels)
+			break;
+
+		if (!push_frame(frame_pb, delay_ms))
+			break;
+	}
+
+	g_object_unref(iter);
+
+	if (vec_frames.size() < 2)
+	{
+		for (size_t i = 0; i < vec_frames.size(); i++)
+			g_object_unref(vec_frames[i]);
+		return;
+	}
+
+	*frames = (GdkTexture**)g_new0(GdkTexture*, vec_frames.size());
+	*delays_ms = (gint*)g_new0(gint, vec_frames.size());
+	for (size_t i = 0; i < vec_frames.size(); i++)
+	{
+		(*frames)[i] = vec_frames[i];
+		(*delays_ms)[i] = vec_delays[i];
+	}
+	*n_frames = vec_frames.size();
+}
+#endif
 
 // this matrix calculates the orientation needed
 // to get from [source] orientation to a [dest]
@@ -475,6 +632,9 @@ void ImageLoader::Load()
 				bool bLoadedQuickPreview = LoadQuickPreview();
 				bool bAborted = false;
 				bool bGlycinTransformed = false;
+				GdkTexture **anim_frames = NULL;
+				gint *anim_delays = NULL;
+				gsize anim_count = 0;
 
 				if (m_Command.quiverFile.IsVideo())
 				{
@@ -525,6 +685,8 @@ void ImageLoader::Load()
 				}
 				else
 				{
+
+#if HAVE_GLYCIN
 					if (ImageDecoder::GetBackend() != ImageDecoderBackend::PIXBUF)
 					{
 						GFile* gfile = g_file_new_for_uri(m_Command.quiverFile.GetURI());
@@ -543,7 +705,7 @@ void ImageLoader::Load()
 
 							Timer loadTimer;
 							GError *pDecodeError = NULL;
-							texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, &pDecodeError);
+							texture = ImageDecoder::DecodeFileAnimation(gfile, &anim_frames, &anim_delays, &anim_count, &pDecodeError);
 							if (NULL != texture)
 							{
 								if (NULL != pDecodeError)
@@ -569,12 +731,16 @@ void ImageLoader::Load()
 							}
 						}
 					}
+#endif
 
 #if HAVE_GDK_PIXBUF
 					if (NULL == texture && !CommandsPending())
 					{
-						GdkPixbufLoader* loader = gdk_pixbuf_loader_new_with_mime_type (m_Command.quiverFile.GetMimeType(), NULL);	
-						
+						const char *mime = m_Command.quiverFile.GetMimeType();
+						bool bAnimatedMime = quiver_is_animation_capable_mime(mime);
+
+						GdkPixbufLoader* loader = gdk_pixbuf_loader_new_with_mime_type (mime, NULL);
+
 						list<IPixbufLoaderObserver*>::iterator itr;
 						g_mutex_lock(&m_csObservers);
 						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
@@ -582,7 +748,7 @@ void ImageLoader::Load()
 							if (m_Command.params.reload && m_Command.params.fullsize)
 							{
 							}
-							else
+							else if (!bAnimatedMime)
 							{
 								(*itr)->ConnectSignalSizePrepared(loader);
 							}
@@ -593,10 +759,37 @@ void ImageLoader::Load()
 
 						if (rval)
 						{
-							GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
-							if (NULL != pixbuf)
+							GdkPixbufAnimation *anim = gdk_pixbuf_loader_get_animation(loader);
+							if (NULL != anim && !gdk_pixbuf_animation_is_static_image(anim))
 							{
-								texture = QuiverUtils::PixbufToTexture(pixbuf);
+								/* Animated image: extract backend-neutral frame
+								 * textures; the first frame becomes the still. */
+								gint anim_w = gdk_pixbuf_animation_get_width(anim);
+								gint anim_h = gdk_pixbuf_animation_get_height(anim);
+								if (anim_w > 0 && anim_h > 0 && !m_Command.quiverFile.IsWidthHeightSet())
+								{
+									m_Command.quiverFile.SetWidth(anim_w);
+									m_Command.quiverFile.SetHeight(anim_h);
+								}
+
+								GdkPixbuf *static_pb = gdk_pixbuf_animation_get_static_image(anim);
+								if (NULL != static_pb)
+								{
+									texture = QuiverUtils::PixbufToTexture(static_pb);
+								}
+
+								if (NULL != texture)
+								{
+									LoadAnimatedFramesFromPixbuf(anim, &anim_frames, &anim_delays, &anim_count);
+								}
+							}
+							else
+							{
+								GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+								if (NULL != pixbuf)
+								{
+									texture = QuiverUtils::PixbufToTexture(pixbuf);
+								}
 							}
 						}
 						g_object_unref(loader);
@@ -620,39 +813,56 @@ void ImageLoader::Load()
 					{
 						texture = reorient_texture(texture, orientation);
 					}
-					
-					list<IPixbufLoaderObserver*>::iterator itr;
-					g_mutex_lock(&m_csObservers);
-					for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+
+if (NULL != anim_frames && orientation > 1)
 					{
-						gint width,height;
-						width = m_Command.quiverFile.GetWidth();
-						height = m_Command.quiverFile.GetHeight();
-						if (4 < orientation)
-						{
-							swap(width,height);
-						}
-						if (m_Command.params.reload)
-						{
-							(*itr)->SetTextureAtSize(texture,width,height,false);
-						}
-						else
-						{
-							bool bResetViewMode = !bLoadedQuickPreview;
-							(*itr)->SetTextureAtSize(texture,width,height,bResetViewMode);
-						}
+						/* The animation frames cannot be cleanly re-orientated
+						 * with the still texture, so fall back to the rotated
+						 * first frame only. */
+						quiver_animation_frames_free(anim_frames, anim_delays, anim_count);
+						anim_frames = NULL;
+						anim_delays = NULL;
+						anim_count = 0;
 					}
-					g_mutex_unlock(&m_csObservers);
+					
+					gint width,height;
+					width = m_Command.quiverFile.GetWidth();
+					height = m_Command.quiverFile.GetHeight();
+					if (4 < orientation)
+					{
+						swap(width,height);
+					}
 
 					gint *pOrientation = g_new(int,1);
 					*pOrientation = orientation;
 					g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pOrientation,g_free);
 
-					m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(),texture);
-					if (bLoadWasFailed)
+if (NULL != anim_frames && anim_count >= 2)
+						{
+							m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), texture, anim_frames, anim_delays, anim_count);
+							quiver_animation_frames_free(anim_frames, anim_delays, anim_count);
+							anim_frames = NULL;
+							anim_delays = NULL;
+							anim_count = 0;
+						}
+						else
+						{
+							if (NULL != anim_frames)
+							{
+								quiver_animation_frames_free(anim_frames, anim_delays, anim_count);
+								anim_frames = NULL;
+								anim_delays = NULL;
+								anim_count = 0;
+							}
+							m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), texture);
+						}
+						if (bLoadWasFailed)
 					{
 						m_ImageCache.RemoveFailure(m_Command.quiverFile.GetURI());
 					}
+
+					bool bResetViewMode = m_Command.params.reload ? false : !bLoadedQuickPreview;
+					NotifyObservers(texture, width, height, bResetViewMode);
 					g_object_unref(texture);
 				}
 				else
@@ -688,7 +898,7 @@ void ImageLoader::Load()
 		{
 			// load from cache
 			gint *pOrientation = (gint*)g_object_get_data(G_OBJECT (texture), "quiver-orientation");
-		
+
 			if (NULL != pOrientation && m_Command.params.orientation != *pOrientation)
 			{
 				int new_orientation = reorientation_matrix[*pOrientation][m_Command.params.orientation];
@@ -702,25 +912,33 @@ void ImageLoader::Load()
 					*pNewOrientation = m_Command.params.orientation;
 					g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pNewOrientation, g_free);
 
-					m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), texture);
+					GdkTexture **cached_frames = NULL;
+					gint *cached_delays = NULL;
+					gsize cached_count = m_ImageCache.GetAnimationFrames(m_Command.quiverFile.GetURI(), &cached_frames, &cached_delays);
+					if (cached_count >= 2)
+					{
+						m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), texture, cached_frames, cached_delays, cached_count);
+					}
+					else
+					{
+						m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), texture);
+					}
+					if (NULL != cached_frames)
+					{
+						quiver_animation_frames_free(cached_frames, cached_delays, cached_count);
+					}
 				}
 			}
 
-			list<IPixbufLoaderObserver*>::iterator itr;
-			g_mutex_lock(&m_csObservers);
-			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+			gint width,height;
+			width = m_Command.quiverFile.GetWidth();
+			height = m_Command.quiverFile.GetHeight();
+			if (4 < m_Command.params.orientation)
 			{
-				gint width,height;
-				width = m_Command.quiverFile.GetWidth();
-				height = m_Command.quiverFile.GetHeight();
-				if (4 < m_Command.params.orientation)
-				{
-					swap(width,height);
-				}
-				bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-				(*itr)->SetTextureAtSize(texture,width,height,bResetViewMode);
+				swap(width,height);
 			}
-			g_mutex_unlock(&m_csObservers);
+			bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+			NotifyObservers(texture, width, height, bResetViewMode);
 			g_object_unref(texture);
 		}
 	}	
@@ -733,6 +951,9 @@ void ImageLoader::Load()
 				bool bAborted = false;
 				bool bGlycinTransformed = false;
 				GdkTexture *cache_texture = NULL;
+				GdkTexture **anim_frames = NULL;
+				gint *anim_delays = NULL;
+				gsize anim_count = 0;
 
 				if (m_Command.quiverFile.IsVideo())
 				{
@@ -764,6 +985,8 @@ void ImageLoader::Load()
 				}
 				else
 				{
+
+#if HAVE_GLYCIN
 					if (ImageDecoder::GetBackend() != ImageDecoderBackend::PIXBUF)
 					{
 						GFile* gfile = g_file_new_for_uri(m_Command.quiverFile.GetURI());
@@ -782,7 +1005,7 @@ void ImageLoader::Load()
 
 							Timer loadTimer;
 							GError *pDecodeError = NULL;
-							cache_texture = ImageDecoder::DecodeFileTexture(gfile, m_Command.quiverFile.GetMimeType(), NULL, &pDecodeError);
+							cache_texture = ImageDecoder::DecodeFileAnimation(gfile, &anim_frames, &anim_delays, &anim_count, &pDecodeError);
 							if (NULL != cache_texture)
 							{
 								if (NULL != pDecodeError)
@@ -802,13 +1025,17 @@ void ImageLoader::Load()
 							g_object_unref(gfile);
 						}
 					}
+#endif
 
 #if HAVE_GDK_PIXBUF
 					if (NULL == cache_texture && !CommandsPending())
 					{
-						GdkPixbufLoader* ldr = gdk_pixbuf_loader_new_with_mime_type (m_Command.quiverFile.GetMimeType(), NULL);	
-					
-						if (!m_Command.params.fullsize)
+						const char *mime = m_Command.quiverFile.GetMimeType();
+						bool bAnimatedMime = quiver_is_animation_capable_mime(mime);
+
+						GdkPixbufLoader* ldr = gdk_pixbuf_loader_new_with_mime_type (mime, NULL);
+
+						if (!m_Command.params.fullsize && !bAnimatedMime)
 						{
 							list<IPixbufLoaderObserver*>::iterator itr;
 							g_mutex_lock(&m_csObservers);
@@ -823,10 +1050,35 @@ void ImageLoader::Load()
 
 						if (rval)
 						{
-							GdkPixbuf *pb = gdk_pixbuf_loader_get_pixbuf(ldr);
-							if (NULL != pb)
+							GdkPixbufAnimation *anim = gdk_pixbuf_loader_get_animation(ldr);
+							if (NULL != anim && !gdk_pixbuf_animation_is_static_image(anim))
 							{
-								cache_texture = QuiverUtils::PixbufToTexture(pb);
+								gint anim_w = gdk_pixbuf_animation_get_width(anim);
+								gint anim_h = gdk_pixbuf_animation_get_height(anim);
+								if (anim_w > 0 && anim_h > 0 && !m_Command.quiverFile.IsWidthHeightSet())
+								{
+									m_Command.quiverFile.SetWidth(anim_w);
+									m_Command.quiverFile.SetHeight(anim_h);
+								}
+
+								GdkPixbuf *static_pb = gdk_pixbuf_animation_get_static_image(anim);
+								if (NULL != static_pb)
+								{
+									cache_texture = QuiverUtils::PixbufToTexture(static_pb);
+								}
+
+								if (NULL != cache_texture)
+								{
+									LoadAnimatedFramesFromPixbuf(anim, &anim_frames, &anim_delays, &anim_count);
+								}
+							}
+							else
+							{
+								GdkPixbuf *pb = gdk_pixbuf_loader_get_pixbuf(ldr);
+								if (NULL != pb)
+								{
+									cache_texture = QuiverUtils::PixbufToTexture(pb);
+								}
 							}
 						}
 
@@ -850,6 +1102,16 @@ void ImageLoader::Load()
 						{
 							cache_texture = reorient_texture(cache_texture, orientation);
 						}
+
+if (NULL != anim_frames && orientation > 1)
+						{
+							/* Animated frames cannot be re-orientated cleanly;
+							 * cache only the rotated first frame. */
+							quiver_animation_frames_free(anim_frames, anim_delays, anim_count);
+							anim_frames = NULL;
+							anim_delays = NULL;
+							anim_count = 0;
+						}
 						
 						gint *pOrientation = g_new(int,1);
 						*pOrientation = m_Command.params.orientation;
@@ -859,28 +1121,51 @@ void ImageLoader::Load()
 
 				if (NULL != cache_texture)
 				{
-					if (CACHE_LOAD == m_Command.params.state)
+					if (NULL != anim_frames && anim_count >= 2)
 					{
-						list<IPixbufLoaderObserver*>::iterator itr;
-						g_mutex_lock(&m_csObservers);
-						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+						if (CACHE_LOAD == m_Command.params.state)
 						{
-							gint width,height;
-							width = m_Command.quiverFile.GetWidth();
-							height = m_Command.quiverFile.GetHeight();
-							if (4 < m_Command.params.orientation)
-							{
-								swap(width,height);
-							}
-							bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-							(*itr)->SetTextureAtSize(cache_texture,width,height,bResetViewMode);
+							m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), cache_texture, anim_frames, anim_delays, anim_count);
 						}
-						g_mutex_unlock(&m_csObservers);
-						m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(),cache_texture);
+						else
+						{
+							m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), cache_texture, anim_frames, anim_delays, anim_count, 0);
+						}
+						quiver_animation_frames_free(anim_frames, anim_delays, anim_count);
+						anim_frames = NULL;
+						anim_delays = NULL;
+						anim_count = 0;
 					}
 					else
 					{
-						m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(),cache_texture,0);
+						if (NULL != anim_frames)
+						{
+							quiver_animation_frames_free(anim_frames, anim_delays, anim_count);
+							anim_frames = NULL;
+							anim_delays = NULL;
+							anim_count = 0;
+						}
+						if (CACHE_LOAD == m_Command.params.state)
+						{
+							m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), cache_texture);
+						}
+						else
+						{
+							m_ImageCache.AddTexture(m_Command.quiverFile.GetURI(), cache_texture, 0);
+						}
+					}
+
+					if (CACHE_LOAD == m_Command.params.state)
+					{
+						gint width,height;
+						width = m_Command.quiverFile.GetWidth();
+						height = m_Command.quiverFile.GetHeight();
+						if (4 < m_Command.params.orientation)
+						{
+							swap(width,height);
+						}
+						bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+						NotifyObservers(cache_texture, width, height, bResetViewMode);
 					}
 					g_object_unref(cache_texture);
 				}
@@ -907,6 +1192,44 @@ void ImageLoader::Load()
 			}
 		}
 	}
+}
+
+/* Deliver the decoded image (or the cached animation for it) to every
+ * registered observer.  When the file was decoded as animated, each observer
+ * receives its own copy of the cached frame list instead of the still texture
+ * so the image views can play it. */
+void ImageLoader::NotifyObservers(GdkTexture *texture, gint width, gint height, bool bResetViewMode)
+{
+	GdkTexture **frames = NULL;
+	gint *delays = NULL;
+	gsize count = m_ImageCache.GetAnimationFrames(m_Command.quiverFile.GetURI(), &frames, &delays);
+
+	list<IPixbufLoaderObserver*>::iterator itr;
+	g_mutex_lock(&m_csObservers);
+	for (itr = m_observers.begin(); itr != m_observers.end(); ++itr)
+	{
+		if (count >= 2)
+		{
+			/* The receiver owns this copy and releases it with
+			 * quiver_animation_frames_free(). */
+			GdkTexture **of = (GdkTexture**)g_new0(GdkTexture*, count);
+			gint *od = (gint*)g_new0(gint, count);
+			for (gsize i = 0; i < count; i++)
+			{
+				of[i] = (NULL != frames[i]) ? (GdkTexture*)g_object_ref(frames[i]) : NULL;
+				od[i] = delays ? delays[i] : 0;
+			}
+			(*itr)->SetAnimationFrames(of, od, count, width, height, bResetViewMode);
+		}
+		else
+		{
+			(*itr)->SetTextureAtSize(texture, width, height, bResetViewMode);
+		}
+	}
+	g_mutex_unlock(&m_csObservers);
+
+	if (NULL != frames)
+		quiver_animation_frames_free(frames, delays, count);
 }
 
 #if HAVE_GDK_PIXBUF

@@ -5,6 +5,7 @@
 #include <set>
 #include <unordered_map>
 #include <mutex>
+#include <glib.h>
 
 #if HAVE_GDK_PIXBUF
 struct _GdkPixbuf;
@@ -19,6 +20,11 @@ typedef struct _CacheItem
 #if HAVE_GDK_PIXBUF
 	GdkPixbuf * pPixbuf;
 #endif
+	/* backend-neutral animation: frame textures plus per-frame delay (ms).
+	 * Each texture inside animation_frames carries one owned reference. */
+	GdkTexture ** animation_frames;
+	gint * animation_delays;
+	gsize animation_count;
 	unsigned long time;
 } CacheItem;
 
@@ -45,6 +51,16 @@ public:
 	GdkTexture * GetTexture(std::string filename);
 	void AddTexture(std::string filename, GdkTexture * texture);
 	void AddTexture(std::string filename, GdkTexture * texture, unsigned long time);
+	/* store an animated image: @frames/@delays hold @count frame textures
+	 * (each given texture is reffed for the cache; the caller keeps the
+	 * arrays and must free them itself). */
+	void AddTexture(std::string filename, GdkTexture * texture, GdkTexture ** frames, gint * delays, gsize count);
+	void AddTexture(std::string filename, GdkTexture * texture, GdkTexture ** frames, gint * delays, gsize count, unsigned long time);
+	/* returns >1 for a cached animation.  On success hands back freshly
+	 * allocated @frames/@delays (each texture reffed for the caller) that the
+	 * caller must release with quiver_animation_frames_free(); 0 if the file
+	 * has no cached animation. */
+	gsize GetAnimationFrames(std::string filename, GdkTexture *** frames, gint ** delays);
 	bool RemoveTexture(std::string filename);
 
 	bool InCache(std::string filename);

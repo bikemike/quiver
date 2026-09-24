@@ -671,7 +671,9 @@ GdkPixbuf* ImageDecoder::GlycinDecodeFilePixbuf(GFile *file, GCancellable *cance
     g_object_unref(loader);
     return pb;
 }
+#endif
 
+#if HAVE_GLYCIN
 GdkTexture* ImageDecoder::GlycinDecodeFileTexture(GFile *file, GCancellable *cancellable, GError **error)
 {
     DecodeSlotGuard slot;
@@ -705,6 +707,127 @@ GdkTexture* ImageDecoder::GlycinDecodeFileTexture(GFile *file, GCancellable *can
         g_object_set_data(G_OBJECT(tex), "glycin-transformed", GINT_TO_POINTER(1));
     }
     return tex;
+}
+
+// -------------------------------------------------------------------------
+// Animated image decode (glycin frame iterator)
+// -------------------------------------------------------------------------
+static const gsize      kMaxAnimationFrames  = 512;
+static const guint64    kMaxAnimationPixels  = 64u * 1024 * 1024;
+
+GdkTexture* ImageDecoder::DecodeFileAnimation(GFile *file, GdkTexture ***frames,
+                                              gint **delays_ms, gsize *n_frames,
+                                              GError **error)
+{
+    *frames = NULL;
+    *delays_ms = NULL;
+    *n_frames = 0;
+
+    if (!file)
+        return NULL;
+
+    DecodeSlotGuard slot;
+
+    GlyLoader *loader = gly_loader_new(file);
+    if (!loader)
+        return NULL;
+
+    gly_loader_set_apply_transformations(loader, TRUE);
+
+    GlyImage *image = gly_loader_load(loader, error);
+    if (!image)
+    {
+        g_object_unref(loader);
+        return NULL;
+    }
+
+    std::vector<GdkTexture*> vec_frames;
+    std::vector<gint> vec_delays;
+    GBytes *first_bytes = NULL;
+    guint64 total_pixels = 0;
+    GdkTexture *first_texture = NULL;
+
+    while (vec_frames.size() < kMaxAnimationFrames)
+    {
+        GError *ferr = NULL;
+        GlyFrame *frame = gly_image_next_frame(image, &ferr);
+        if (!frame)
+        {
+            if (ferr)
+                g_error_free(ferr);
+            break;
+        }
+
+        guint32 w = gly_frame_get_width(frame);
+        guint32 h = gly_frame_get_height(frame);
+        int64_t delay_us = gly_frame_get_delay(frame);
+
+        /* glycin loops a resumed animation back to the first frame, so detect
+         * the end by comparing every later frame against the first one.  The
+         * first frame of a still image carries a zero delay and a single
+         * frame is all we capture. */
+        if (vec_frames.empty())
+        {
+            GBytes *b = gly_frame_get_buf_bytes(frame);
+            first_bytes = (NULL != b) ? g_bytes_ref(b) : NULL;
+        }
+        else
+        {
+            GBytes *b = gly_frame_get_buf_bytes(frame);
+            if (NULL == b || (NULL != first_bytes && g_bytes_compare(first_bytes, b) == 0))
+            {
+                /* Empty buffer, or looped back to the first frame: end. */
+                g_object_unref(frame);
+                break;
+            }
+        }
+
+        GdkTexture *tex = frame_to_texture(frame);
+        g_object_unref(frame);
+        if (!tex)
+            break;
+
+        total_pixels += (guint64)w * (guint64)h;
+        if (total_pixels > kMaxAnimationPixels)
+        {
+            g_object_unref(tex);
+            break;
+        }
+
+        if (vec_frames.empty())
+        {
+            first_texture = tex;
+            g_object_set_data(G_OBJECT(tex), "glycin-transformed", GINT_TO_POINTER(1));
+        }
+
+        gint delay_ms = (delay_us <= 0) ? 0 : (gint)((delay_us + 500) / 1000);
+        if (delay_ms < 0)
+            delay_ms = 0;
+        vec_frames.push_back(tex);
+        vec_delays.push_back(delay_ms);
+    }
+
+    if (NULL != first_bytes)
+        g_bytes_unref(first_bytes);
+
+    g_object_unref(image);
+    g_object_unref(loader);
+
+    if (vec_frames.empty())
+        return NULL;
+
+    *frames = (GdkTexture**)g_new0(GdkTexture*, vec_frames.size());
+    *delays_ms = (gint*)g_new0(gint, vec_frames.size());
+    for (size_t i = 0; i < vec_frames.size(); i++)
+    {
+        (*frames)[i] = vec_frames[i];
+        (*delays_ms)[i] = vec_delays[i];
+    }
+    *n_frames = vec_frames.size();
+    /* The first frame is also the still texture returned to the caller, so it
+     * carries its own reference in addition to the one held by the frame
+     * array (the caller unrefs both independently). */
+    return (GdkTexture*)g_object_ref(first_texture);
 }
 #endif
 
@@ -903,7 +1026,9 @@ GdkPixbuf* ImageDecoder::GlycinDecodeBytesPixbuf(GBytes *bytes, GCancellable *ca
     g_object_unref(loader);
     return pb;
 }
+#endif
 
+#if HAVE_GLYCIN
 GdkTexture* ImageDecoder::GlycinDecodeBytesTexture(GBytes *bytes, GCancellable *cancellable, GError **error)
 {
     DecodeSlotGuard slot;

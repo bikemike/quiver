@@ -1,5 +1,6 @@
 #include <config.h>
 #include "ImageCache.h"
+#include "IPixbufLoaderObserver.h"
 #include "QuiverUtils.h"
 
 #include <gtk/gtk.h>
@@ -24,6 +25,13 @@ void ImageCache::FreeCacheItem(CacheItem &item)
 		item.pPixbuf = NULL;
 	}
 #endif
+	if (item.animation_frames != NULL)
+	{
+		quiver_animation_frames_free(item.animation_frames, item.animation_delays, item.animation_count);
+		item.animation_frames = NULL;
+		item.animation_delays = NULL;
+		item.animation_count = 0;
+	}
 }
 
 ImageCache::ImageCache(unsigned int size)
@@ -70,6 +78,105 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture)
 	AddTexture(filename, texture, CurrentTimeInMilliseconds());
 }
 
+void ImageCache::AddTexture(string filename, GdkTexture * texture, GdkTexture ** frames, gint * delays, gsize count)
+{
+	AddTexture(filename, texture, frames, delays, count, CurrentTimeInMilliseconds());
+}
+
+void ImageCache::AddTexture(string filename, GdkTexture * texture, GdkTexture ** frames, gint * delays, gsize count, unsigned long time)
+{
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
+	if (m_mapImageCache.end() != itr)
+	{
+		FreeCacheItem(itr->second);
+		itr->second.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
+#if HAVE_GDK_PIXBUF
+		itr->second.pPixbuf = NULL;
+#endif
+		if (frames != NULL && count > 0)
+		{
+			itr->second.animation_count = count;
+			itr->second.animation_frames = (GdkTexture**)g_new0(GdkTexture*, count);
+			itr->second.animation_delays = (gint*)g_new0(gint, count);
+			for (gsize i = 0; i < count; i++)
+			{
+				itr->second.animation_frames[i] = frames[i] ? (GdkTexture*)g_object_ref(frames[i]) : NULL;
+				itr->second.animation_delays[i] = delays ? delays[i] : 0;
+			}
+		}
+		itr->second.time = time;
+		return;
+	}
+
+	if (m_mapImageCache.size() >= m_iCacheSize)
+	{
+		ImageCacheMap::iterator oldest = m_mapImageCache.begin();
+		for (itr = oldest; itr != m_mapImageCache.end(); ++itr)
+		{
+			if (itr->second.time < oldest->second.time)
+			{
+				oldest = itr;
+			}
+		}
+
+		if (m_mapImageCache.end() != oldest)
+		{
+			FreeCacheItem(oldest->second);
+			m_mapImageCache.erase(oldest);
+		}
+	}
+
+	CacheItem c = {};
+	c.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
+#if HAVE_GDK_PIXBUF
+	c.pPixbuf = NULL;
+#endif
+	if (frames != NULL && count > 0)
+	{
+		c.animation_count = count;
+		c.animation_frames = (GdkTexture**)g_new0(GdkTexture*, count);
+		c.animation_delays = (gint*)g_new0(gint, count);
+		for (gsize i = 0; i < count; i++)
+		{
+			c.animation_frames[i] = frames[i] ? (GdkTexture*)g_object_ref(frames[i]) : NULL;
+			c.animation_delays[i] = delays ? delays[i] : 0;
+		}
+	}
+	c.time = time;
+	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
+}
+
+gsize ImageCache::GetAnimationFrames(string filename, GdkTexture *** frames, gint ** delays)
+{
+	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+
+	*frames = NULL;
+	*delays = NULL;
+
+	ImageCacheMap::iterator itr = m_mapImageCache.find(filename);
+	if (m_mapImageCache.end() != itr)
+	{
+		itr->second.time = CurrentTimeInMilliseconds();
+		gsize count = itr->second.animation_count;
+		if (count >= 2 && itr->second.animation_frames != NULL)
+		{
+			GdkTexture **f = (GdkTexture**)g_new0(GdkTexture*, count);
+			gint *d = (gint*)g_new0(gint, count);
+			for (gsize i = 0; i < count; i++)
+			{
+				f[i] = itr->second.animation_frames[i] ? (GdkTexture*)g_object_ref(itr->second.animation_frames[i]) : NULL;
+				d[i] = itr->second.animation_delays ? itr->second.animation_delays[i] : 0;
+			}
+			*frames = f;
+			*delays = d;
+			return count;
+		}
+	}
+	return 0;
+}
+
 unsigned int ImageCache::GetSize()
 {
 	std::lock_guard<std::mutex> lock(m_MutexImageCache);
@@ -110,9 +217,6 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long
 	{
 		FreeCacheItem(itr->second);
 		itr->second.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
-#if HAVE_GDK_PIXBUF
-		itr->second.pPixbuf = NULL;
-#endif
 		itr->second.time = time;
 		return;
 	}

@@ -4339,6 +4339,8 @@ void quiver_icon_view_set_overlay_pixbuf_func (QuiverIconView *iconview,
 
 }
 
+#endif
+
 /* Set (or clear) the callback that supplies the filmstrip (sprocket-hole)
  * strip used to decorate the left/right edges of video thumbnails at draw
  * time.  The callback is invoked once per side of each cell during the
@@ -4376,5 +4378,4 @@ quiver_icon_view_set_filmstrip_enabled (QuiverIconView *iconview, gboolean enabl
 	iconview->priv->filmstrip_enabled = enabled;
 }
 
-#endif
 /* end public functions */

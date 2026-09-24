@@ -48,6 +48,13 @@ struct _QuiverImageViewPrivate
 	gint pixbuf_width_next;
 	gint pixbuf_height_next;
 
+	/* backend-neutral animation: frame textures with per-frame delays (ms).
+	 * Each texture in animation_frames carries one owned reference. */
+	GdkTexture **animation_frames;
+	gint *animation_delays;
+	gsize animation_n_frames;
+	gsize animation_frame_index;
+
 	QuiverImageViewMode view_mode;
 	QuiverImageViewMode view_mode_last;
 
@@ -257,6 +264,10 @@ static void quiver_image_view_start_animation(QuiverImageView *imageview);
 static void quiver_image_view_add_animation_timeout(QuiverImageView *imageview);
 static gboolean quiver_image_view_timeout_animation(gpointer data);
 #endif
+
+static void quiver_image_view_animation_frames_stop(QuiverImageView *imageview);
+static void quiver_image_view_animation_frames_start(QuiverImageView *imageview);
+static gboolean quiver_image_view_animation_frames_timeout(gpointer data);
 
 static void quiver_image_view_transition_start(QuiverImageView *imageview);
 static void quiver_image_view_transition_stop(QuiverImageView *imageview);
@@ -579,6 +590,7 @@ quiver_image_view_dispose(GObject *object)
 	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(object);
 
 	quiver_image_view_transition_stop(imageview);
+	quiver_image_view_animation_frames_stop(imageview);
 
 	if (0 != imageview->priv->magnification_timeout_id)
 	{
@@ -609,6 +621,8 @@ quiver_image_view_dispose(GObject *object)
 		g_source_remove(imageview->priv->animation_timeout_id);
 		imageview->priv->animation_timeout_id = 0;
 	}
+
+	quiver_image_view_animation_frames_stop(imageview);
 
 	quiver_image_view_stop_smooth_scroll_slowdown(imageview);
 
@@ -1692,6 +1706,68 @@ static gboolean quiver_image_view_timeout_animation(gpointer data)
 }
 #endif
 
+static void quiver_image_view_animation_frames_stop(QuiverImageView *imageview)
+{
+	if (0 != imageview->priv->animation_timeout_id)
+	{
+		g_source_remove(imageview->priv->animation_timeout_id);
+		imageview->priv->animation_timeout_id = 0;
+	}
+	if (NULL != imageview->priv->animation_frames)
+	{
+		for (gsize i = 0; i < imageview->priv->animation_n_frames; i++)
+		{
+			if (NULL != imageview->priv->animation_frames[i])
+				g_object_unref(imageview->priv->animation_frames[i]);
+		}
+		g_free(imageview->priv->animation_frames);
+		imageview->priv->animation_frames = NULL;
+	}
+	g_free(imageview->priv->animation_delays);
+	imageview->priv->animation_delays = NULL;
+	imageview->priv->animation_n_frames = 0;
+	imageview->priv->animation_frame_index = 0;
+}
+
+static gboolean quiver_image_view_animation_frames_timeout(gpointer data)
+{
+	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(data);
+	imageview->priv->animation_timeout_id = 0;
+
+	if (NULL == imageview->priv->animation_frames || imageview->priv->animation_n_frames < 2)
+		return G_SOURCE_REMOVE;
+
+	imageview->priv->animation_frame_index++;
+	if (imageview->priv->animation_frame_index >= imageview->priv->animation_n_frames)
+		imageview->priv->animation_frame_index = 0;
+
+	GdkTexture *next = imageview->priv->animation_frames[imageview->priv->animation_frame_index];
+	if (NULL != next && next != imageview->priv->texture)
+	{
+		if (NULL != imageview->priv->texture)
+			g_object_unref(imageview->priv->texture);
+		imageview->priv->texture = g_object_ref(next);
+		if (gtk_widget_get_mapped(GTK_WIDGET(imageview)))
+			gtk_widget_queue_draw(GTK_WIDGET(imageview));
+	}
+
+	gint delay = imageview->priv->animation_delays[imageview->priv->animation_frame_index];
+	imageview->priv->animation_timeout_id =
+		g_timeout_add(delay > 0 ? delay : 1, quiver_image_view_animation_frames_timeout, imageview);
+
+	return G_SOURCE_REMOVE;
+}
+
+static void quiver_image_view_animation_frames_start(QuiverImageView *imageview)
+{
+	if (imageview->priv->animation_n_frames < 2)
+		return;
+	imageview->priv->animation_frame_index = 0;
+	gint delay = imageview->priv->animation_delays[0];
+	imageview->priv->animation_timeout_id =
+		g_timeout_add(delay > 0 ? delay : 1, quiver_image_view_animation_frames_timeout, imageview);
+}
+
 static gboolean
 quiver_image_view_transition_tick(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer user_data)
 {
@@ -2011,6 +2087,7 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 	}
 
 	quiver_image_view_transition_stop(imageview);
+	quiver_image_view_animation_frames_stop(imageview);
 
 	if (reset_view_mode)
 	{
@@ -2131,6 +2208,38 @@ void quiver_image_view_set_pixbuf_at_size_ex(QuiverImageView *imageview, GdkPixb
 	}
 }
 #endif
+
+void quiver_image_view_set_animation_frames(QuiverImageView *imageview,
+                                            GdkTexture **frames, gint *delays_ms,
+                                            gsize n_frames, int width, int height,
+                                            gboolean reset_view_mode)
+{
+	GtkWidget* widget = GTK_WIDGET(imageview);
+
+	/* Route through the still-image setter so view mode, sizing, adjustments
+	 * and transitions behave exactly as they do for a still image; that also
+	 * stops any animation that is currently playing. */
+	quiver_image_view_set_texture_at_size_ex(imageview,
+		(frames != NULL && n_frames > 0) ? frames[0] : NULL, width, height, reset_view_mode);
+
+	if (NULL == frames || n_frames < 2)
+		return;
+
+	imageview->priv->animation_n_frames = n_frames;
+	imageview->priv->animation_frames = g_new0(GdkTexture*, n_frames);
+	imageview->priv->animation_delays = g_new0(gint, n_frames);
+	for (gsize i = 0; i < n_frames; i++)
+	{
+		imageview->priv->animation_frames[i] = (NULL != frames[i]) ? g_object_ref(frames[i]) : NULL;
+		imageview->priv->animation_delays[i] = (NULL != delays_ms) ? delays_ms[i] : 100;
+	}
+	imageview->priv->animation_frame_index = 0;
+
+	if (1 == gtk_widget_get_width(widget) || 1 == gtk_widget_get_height(widget))
+		return;
+
+	quiver_image_view_animation_frames_start(imageview);
+}
 
 void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
 {
@@ -2820,6 +2929,8 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 		g_source_remove(imageview->priv->animation_timeout_id);
 		imageview->priv->animation_timeout_id = 0;
 	}
+
+	quiver_image_view_animation_frames_stop(imageview);
 	
 #if HAVE_GDK_PIXBUF
 	if (NULL != imageview->priv->pixbuf_animation_iter)

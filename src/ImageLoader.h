@@ -77,6 +77,7 @@ private:
 #if HAVE_GDK_PIXBUF
 	bool LoadPixbuf(GdkPixbufLoader *loader, bool* bAborted = NULL);
 #endif
+	void NotifyObservers(GdkTexture *texture, gint width, gint height, bool bResetViewMode);
 	bool CommandsPending();
 	static gboolean abort_video_load(gpointer data);
 	

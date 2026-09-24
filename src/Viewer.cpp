@@ -421,6 +421,17 @@ struct AsyncTextureData {
 	bool bAtSize;
 };
 
+/* Animation frame set handed across a thread boundary; owns its frames until
+ * the idle callback replaces them and releases them. */
+struct AsyncAnimationFramesData {
+	ViewPixbufTarget *pTarget;
+	GdkTexture **frames;
+	gint *delays;
+	gsize count;
+	gint width, height;
+	gboolean bReset;
+};
+
 /* toggle the "failed to load" indicator for the viewer image view.
  * SetPixbuf(NULL) is only ever dispatched by the image loader for a failed
  * load (or for a previously-failed image), so NULL == show the indicator. */
@@ -466,6 +477,20 @@ static gboolean idle_set_texture_v(gpointer data) {
 		}
 	}
 	if (p->texture) g_object_unref(p->texture);
+	view_pixbuf_target_unref(p->pTarget);
+	delete p;
+	return FALSE;
+}
+
+static gboolean idle_set_animation_frames_v(gpointer data) {
+	AsyncAnimationFramesData *p = (AsyncAnimationFramesData*)data;
+	if (p->pTarget->pImageView != NULL)
+	{
+		show_image_load_error(p->pTarget->pErrorLabel, FALSE);
+		quiver_image_view_set_animation_frames(p->pTarget->pImageView,
+			p->frames, p->delays, p->count, p->width, p->height, p->bReset);
+	}
+	quiver_animation_frames_free(p->frames, p->delays, p->count);
 	view_pixbuf_target_unref(p->pTarget);
 	delete p;
 	return FALSE;
@@ -540,6 +565,21 @@ public:
 			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, width, height, bReset, true};
 			view_pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_texture_v, data, NULL);
+		}
+	};
+	virtual void SetAnimationFrames(GdkTexture **frames, gint *delays_ms, gsize n_frames,
+	                               gint width, gint height, bool bResetViewMode = true ){
+		gboolean bReset = bResetViewMode ? TRUE : FALSE;
+		if (ThreadUtil::IsGUIThread()) {
+			show_image_load_error(m_pTarget->pErrorLabel, false);
+			quiver_image_view_set_animation_frames(m_pTarget->pImageView,
+				frames, delays_ms, n_frames, width, height, bReset);
+			quiver_animation_frames_free(frames, delays_ms, n_frames);
+		} else {
+			AsyncAnimationFramesData *data = new AsyncAnimationFramesData{
+				m_pTarget, frames, delays_ms, n_frames, width, height, bReset};
+			view_pixbuf_target_ref(m_pTarget);
+			g_idle_add_full(G_PRIORITY_HIGH, idle_set_animation_frames_v, data, NULL);
 		}
 	};
 	
