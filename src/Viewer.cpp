@@ -130,6 +130,7 @@ static void viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdoub
 static void viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
 static void viewer_video_options_create_popup_cb(GtkMenuButton *button, gpointer user_data);
 static void viewer_snapshot_button_clicked_cb(GtkButton *button, gpointer user_data);
+static void viewer_slideshow_resume_clicked_cb(gpointer user_data);
 static void viewer_video_rw_cb(gpointer user_data);
 static void viewer_video_ff_cb(gpointer user_data);
 static void viewer_frame_step_back_cb(gpointer user_data);
@@ -609,10 +610,12 @@ public:
 		m_bIsPlaying = isPlaying;
 
 		/* surface playback transitions so the app can keep the screen awake
-		 * while a video is actually playing */
-		if (isPlaying && !bWasPlaying)
+		 * while a video is actually playing.  Skip during teardown: emitting
+		 * would call m_pViewer->shared_from_this(), which throws bad_weak_ptr
+		 * while the Viewer itself is being destroyed. */
+		if (!m_bShuttingDown && isPlaying && !bWasPlaying)
 			m_pViewer->EmitVideoPlaybackStartedEvent();
-		else if (!isPlaying && bWasPlaying)
+		else if (!m_bShuttingDown && !isPlaying && bWasPlaying)
 			m_pViewer->EmitVideoPlaybackStoppedEvent();
 
 		if (0 != m_iTimeoutPlayProgress)
@@ -644,8 +647,14 @@ public:
 			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
 			/* show center play button when paused/stopped on video */
 			UpdateCenterPlayButtonVisibility();
-			/* a pause (click or keyboard) must not leave the pointer hidden */
-			viewer_set_idle_cursor(this, false);
+			/* A pause (click or keyboard) must not leave the pointer hidden.
+			 * But the slideshow machine stops the video on every advance
+			 * (SetImageIndex -> StopVideo), and that must not flash the
+			 * pointer back on while the show is running and the user is idle. */
+			if (!(m_bSlideShowRunning && !m_bSlideShowPaused))
+			{
+				viewer_set_idle_cursor(this, false);
+			}
 			RefreshAutoHideTimer();
 		}
 
@@ -774,6 +783,11 @@ public:
 	guint m_iTimeoutMouseMotionNotify;
 	guint m_iTimeoutPlayProgress;
 
+	/* "Slideshow paused. [Resume]" pill, shown while a slideshow is paused
+	 * (on an image or a video) so the user can both see the paused state and
+	 * resume without hunting for a hotkey. */
+	GtkWidget *m_pSlideShowPausedPill;
+
 	int   m_iSlideShowDuration;
 	int   m_iSlideShowWaitCount;
 	bool  m_bSlideShowLoop;
@@ -783,6 +797,10 @@ public:
 	bool m_bMaximizeViewabe;
 
 	bool m_bIsPlaying;
+	/* Set at the top of ~ViewerImpl: suppresses event emission (which would
+	 * call m_pViewer->shared_from_this(), fatal during the Viewer's own
+	 * destruction) once teardown has begun. */
+	bool m_bShuttingDown;
 	GtkWidget* m_pPlayAnimWidget;
 	GtkWidget* m_pPlayAnimImage;
 	guint      m_iPlayAnimTickId;
@@ -901,6 +919,10 @@ public:
 	SlideShowState m_SlideShowPrePauseState;
 	bool  m_bSlideShowRunning;
 	bool  m_bSlideShowPaused;
+	/* True only while the slideshow's own state machine is calling
+	 * SetImageIndex (timeout_advance_slideshow).  Lets SetImageIndex tell a
+	 * machine-driven advance apart from user navigation. */
+	bool  m_bSlideShowMachineAdvancing;
 
 	// Viewer Control Overlays (floating HUD controls)
 	GtkWidget* m_pViewerOverlayBar;
@@ -941,6 +963,16 @@ public:
 	void SlideShowPause();
 	void SlideShowResume();
 	void SlideShowTogglePause();
+
+	/* Manual-navigation handling: when the user moves the current item
+	 * mid-show (arrow keys, scroll wheel, filmstrip, etc.), pause the show
+	 * so the item they selected is not skipped past by the machine's stale
+	 * timer.  A manual resume (click, hotkey, or the paused pill's Resume
+	 * button) restarts the show on the current item. */
+	void HandleSlideShowManualNavigation();
+	/* "Slideshow paused. [Resume]" pill helpers. */
+	void ShowSlideShowPausedPill();
+	void HideSlideShowPausedPill();
 
 	bool        m_bVideoPreviewClick = false;
 	gdouble     m_dVideoPreviewClickX = 0.0;
@@ -1097,6 +1129,18 @@ void Viewer::ViewerImpl::UpdateUI()
 		
 	}
 	QuiverUtils::SetActionsSensitive(pszActionsVideo, G_N_ELEMENTS(pszActionsVideo), IsVideo());
+
+	/* The play/pause keys (space/k/P) must also work while a slideshow is
+	 * running on an image, so the show can be paused/resumed from the
+	 * keyboard without first navigating back to a video. */
+	{
+		const char *pszPlayPauseActions[] = {
+			ACTION_VIEWER_VIDEO_PLAY,
+			ACTION_VIEWER_VIDEO_PLAY_2,
+		};
+		QuiverUtils::SetActionsSensitive(pszPlayPauseActions, G_N_ELEMENTS(pszPlayPauseActions),
+			IsVideo() || m_bSlideShowRunning);
+	}
 	
 	{
 		/* For videos the zoom factor is applied in the pipeline (from the fit
@@ -1125,11 +1169,12 @@ void Viewer::ViewerImpl::UpdateUI()
 			if (IsVideo())
 			{
 				bCanZoomFit = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW
-				               || m_dVideoZoomFinal > m_dVideoZoomMin + 0.005);
+				               && quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH)
+				              || m_dVideoZoomFinal > m_dVideoZoomMin + 0.005;
 			}
 			else
 			{
-				bCanZoomFit = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+				bCanZoomFit = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
 			}
 		}
 
@@ -1591,6 +1636,17 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		}
 			
 		g_signal_handlers_unblock_by_func(m_pIconView,(gpointer)viewer_iconview_cursor_changed,this);
+
+		/* If the current item changed because the user navigated (arrow keys,
+		 * scroll wheel, filmstrip, First/Last/Next/Previous actions) while a
+		 * slideshow is running, re-seat the show on the new item.  Videos get
+		 * a short grace countdown before auto-playing so rapid scrolling
+		 * never triggers playback.  Skip this for the state machine's own
+		 * advance (m_bSlideShowMachineAdvancing). */
+		if (m_bSlideShowRunning && !m_bSlideShowPaused && !m_bSlideShowMachineAdvancing)
+		{
+			HandleSlideShowManualNavigation();
+		}
 	}
 	
 	m_ImageListPtr->UnblockHandler(m_ImageListEventHandlerPtr);
@@ -1862,7 +1918,7 @@ static GdkCursor* viewer_blank_cursor(Viewer::ViewerImpl* p)
  * gdk_window_set_cursor call was commented out under a FIXME). */
 static void viewer_set_idle_cursor(Viewer::ViewerImpl* p, bool hidden)
 {
-	GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(p->m_pOverlay));
+GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(p->m_pOverlay));
 	if (NULL == root)
 		return;
 	gtk_widget_set_cursor(root, hidden ? viewer_blank_cursor(p) : NULL);
@@ -2921,7 +2977,9 @@ static void viewer_overlay_zoom_out_cb(Viewer::ViewerImpl *p)
 static void viewer_overlay_zoom_fit_cb(Viewer::ViewerImpl *p)
 {
 	(void)p;
-	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_FIT);
+	/* The HUD zoom-fit button applies the default fit mode, which is
+	 * "fit window, stretched". */
+	GAction *act = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_FIT_STRETCH);
 	if (act) g_action_activate(act, NULL);
 }
 
@@ -3100,9 +3158,27 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_PLAY) || 0 == strcmp(szAction,ACTION_VIEWER_VIDEO_PLAY_2))
 	{
-		if (pViewerImpl->m_pViewer && pViewerImpl->m_pViewer->IsSlideShowRunning())
+		if (pViewerImpl->IsVideo())
 		{
+			/* On a video the play/pause keys toggle video playback directly,
+			 * even mid-slideshow (this is what makes playing during the
+			 * manual-nav grace countdown work).  If the slideshow itself is
+			 * paused, resume the whole show — SlideShowResume() restarts the
+			 * stopped video and the show's machine together. */
+			if (pViewerImpl->m_pViewer && pViewerImpl->m_pViewer->IsSlideShowPaused())
+			{
+				pViewerImpl->m_pViewer->SlideShowResume();
+			}
+			else
+			{
+				pViewerImpl->PlayPauseVideo();
+			}
+		}
+		else if (pViewerImpl->m_pViewer && pViewerImpl->m_pViewer->IsSlideShowRunning())
+		{
+			/* On an image during a slideshow the keys pause/resume the show. */
 			pViewerImpl->m_pViewer->SlideShowTogglePause();
+			pViewerImpl->TriggerPlayPauseAnimation(!pViewerImpl->m_bSlideShowPaused);
 		}
 		else
 		{
@@ -4614,6 +4690,16 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 				viewer_set_controls_visible(this, true);
 				UpdateTimelineVisibility();
 				TriggerPlayPauseAnimation(false);
+
+				/* Freeze the slideshow at this video when the user manually
+				 * pauses a video that was playing as part of the show (via
+				 * hotkey, video click, or the play button), so the machine
+				 * doesn't advance past it.  SlideShowPause() records the
+				 * PLAYING_VIDEO state, so resuming continues this video. */
+				if (m_bSlideShowRunning && !m_bSlideShowPaused && m_pViewer)
+				{
+					m_pViewer->SlideShowPause();
+				}
 			}
 			else
 			{
@@ -4987,13 +5073,21 @@ viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdou
 	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	if (widget == pViewerImpl->m_pImageView && pViewerImpl->IsVideo() && pViewerImpl->m_bVideoPreviewClick)
+	if (widget == pViewerImpl->m_pImageView && pViewerImpl->m_bVideoPreviewClick)
 	{
 		pViewerImpl->m_bVideoPreviewClick = false;
 		if (ABS(x - pViewerImpl->m_dVideoPreviewClickX) < 5.
 			&& ABS(y - pViewerImpl->m_dVideoPreviewClickY) < 5.)
 		{
-			pViewerImpl->PlayPauseVideo();
+			if (pViewerImpl->IsVideo())
+			{
+				pViewerImpl->PlayPauseVideo();
+			}
+			else if (pViewerImpl->m_bSlideShowRunning && pViewerImpl->m_pViewer)
+			{
+				pViewerImpl->m_pViewer->SlideShowTogglePause();
+				pViewerImpl->TriggerPlayPauseAnimation(!pViewerImpl->m_bSlideShowPaused);
+			}
 		}
 		pViewerImpl->RefreshAutoHideTimer();
 	}
@@ -5059,7 +5153,8 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 		}
 		else if (1 == button)
 		{
-			if (widget == pViewerImpl->m_pImageView && pViewerImpl->IsVideo())
+			if (widget == pViewerImpl->m_pImageView &&
+				(pViewerImpl->IsVideo() || pViewerImpl->m_bSlideShowRunning))
 			{
 				pViewerImpl->m_bVideoPreviewClick = true;
 				pViewerImpl->m_dVideoPreviewClickX = x;
@@ -5260,6 +5355,7 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 
 Viewer::ViewerImpl::~ViewerImpl()
 {
+	m_bShuttingDown = true;
 	ShortcutManager::GetInstance().RemoveShortcutsChangedCallback(viewer_shortcuts_changed_cb, this);
 	if (m_spAlive)
 	{
@@ -6463,6 +6559,15 @@ static void viewer_play_button_clicked_cb(gpointer user_data)
 	}
 }
 
+static void viewer_slideshow_resume_clicked_cb(gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->m_pViewer)
+	{
+		p->m_pViewer->SlideShowResume();
+	}
+}
+
 static void viewer_video_ff_cb(gpointer user_data)
 {
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
@@ -6583,6 +6688,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iVideoZoomIdle(0),
 	m_ImageListPtr(new ImageList()),
 	m_bIsPlaying(false),
+	m_bShuttingDown(false),
 	m_pPlayAnimWidget(NULL),
 	m_pPlayAnimImage(NULL),
 	m_iPlayAnimTickId(0),
@@ -6701,6 +6807,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		".time-label { color: #ffffff; font-size: 12px; font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.7); }\n"
 		".play-anim-badge { border-radius: 9999px; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; outline: none; padding: 0; min-width: 0; min-height: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.35); }\n"
 		".image-load-error { color: rgba(255, 255, 255, 1.0); font-size: 18px; padding: 20px; border-radius: 12px; background-color: alpha(#000, 0.55); }\n"
+		".slideshow-resume-pill { color: rgba(255, 255, 255, 1.0); font-size: 14px; padding: 8px 16px; border-radius: 9999px; background-color: alpha(#000, 0.6); font-weight: 500; }\n"
+		".slideshow-resume-btn { color: #ffffff; font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 9999px; background-color: alpha(#ffffff, 0.18); border: 1px solid alpha(#ffffff, 0.4); }\n"
+		".slideshow-resume-btn:hover { background-color: alpha(#ffffff, 0.30); }\n"
 		".media-btn-blank { min-width: 2.4em; min-height: 2.4em; padding: 4px; }\n"
 		".viewer-overlay-bar { background-color: rgba(30, 30, 30, 0.75); border-radius: 10px; padding: 4px 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }\n"
 		".timeline-overlay-bar { background: transparent; border: none; box-shadow: none; padding: 0 4px; }\n"
@@ -6720,6 +6829,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iTimeoutScrollbars = 0;
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutSlideshowID = 0;
+	m_pSlideShowPausedPill = NULL;
+	m_bSlideShowMachineAdvancing = false;
 	m_iTimeoutClickID = 0;
 	m_iTimeoutMouseMotionNotify = 0;
 	m_VideoZoomType = VIDEO_ZOOM_SOFTWARE;
@@ -6964,7 +7075,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomOutBtn);
 
 	// Slot 6: Zoom Fit
-	m_pViewerZoomFitBtn = make_overlay_btn("zoom-fit-best-symbolic", "Zoom to Fit Window", G_CALLBACK(viewer_overlay_zoom_fit_cb));
+	m_pViewerZoomFitBtn = make_overlay_btn("zoom-fit-best-symbolic", "Zoom to Fit Window (Stretched)", G_CALLBACK(viewer_overlay_zoom_fit_cb));
 	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomFitBtn);
 
 	// Slot 7: Zoom In (+)
@@ -7115,6 +7226,26 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pImageErrorLabel);
 	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pImageErrorLabel, FALSE);
 	gtk_widget_set_visible(m_pImageErrorLabel, FALSE);
+
+	/* "Slideshow paused. [Resume]" pill, shown while a slideshow is paused
+	 * (on an image or a video) so the user can see the paused state and
+	 * resume with a click. */
+	m_pSlideShowPausedPill = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+	gtk_widget_add_css_class(m_pSlideShowPausedPill, "slideshow-resume-pill");
+	GtkWidget* pSlideShowPausedLabel = gtk_label_new("Slideshow paused.");
+	GtkWidget* pSlideShowResumeBtn = gtk_button_new_with_label("Resume");
+	gtk_widget_add_css_class(pSlideShowResumeBtn, "slideshow-resume-btn");
+	gtk_box_append(GTK_BOX(m_pSlideShowPausedPill), pSlideShowPausedLabel);
+	gtk_box_append(GTK_BOX(m_pSlideShowPausedPill), pSlideShowResumeBtn);
+	gtk_widget_set_halign(m_pSlideShowPausedPill, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pSlideShowPausedPill, GTK_ALIGN_START);
+	gtk_widget_set_margin_top(m_pSlideShowPausedPill, 16);
+	gtk_widget_set_can_target(m_pSlideShowPausedPill, TRUE);
+	g_signal_connect_swapped(G_OBJECT(pSlideShowResumeBtn), "clicked",
+		G_CALLBACK(viewer_slideshow_resume_clicked_cb), this);
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pSlideShowPausedPill);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pSlideShowPausedPill, FALSE);
+	gtk_widget_set_visible(m_pSlideShowPausedPill, FALSE);
 
 	gtk_grid_attach (GTK_GRID (m_pGrid), m_pOverlay, 0, 0, 1, 1);
 
@@ -7892,7 +8023,9 @@ static gboolean timeout_advance_slideshow (gpointer data)
 				
 				if (!bStop)
 				{
+					pViewerImpl->m_bSlideShowMachineAdvancing = true;
 					pViewerImpl->SetImageIndex(iNextIndex,true,false);
+					pViewerImpl->m_bSlideShowMachineAdvancing = false;
 
 					++pViewerImpl->m_iSlideShowWaitCount;
 					pViewerImpl->m_iTimeoutSlideshowID 
@@ -7933,7 +8066,23 @@ static gboolean timeout_advance_slideshow (gpointer data)
 		case Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO:
 			{
 
-				pViewerImpl->PlayPauseVideo();
+				/* If the user already started this video themselves (space,
+				 * click, or play button) during the ~1s preview window, it is
+				 * playing right now: don't route through PlayPauseVideo() —
+				 * it would toggle it back to paused.  Otherwise let the
+				 * machine start playback. */
+				bool bUserStarted = false;
+				if (pViewerImpl->IsPlaying())
+				{
+					gchar* uri = NULL;
+					g_object_get(G_OBJECT(pViewerImpl->m_pPipeline), "current-uri", &uri, NULL);
+					bUserStarted = (0 == g_strcmp0(uri, pViewerImpl->m_ImageListPtr->GetCurrent().GetURI()));
+					g_free(uri);
+				}
+				if (!bUserStarted)
+				{
+					pViewerImpl->PlayPauseVideo();
+				}
 				pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAYING_VIDEO;
 				pViewerImpl->m_iTimeoutSlideshowID 
 						= g_timeout_add(SLIDESHOW_WAIT_DURATION,timeout_advance_slideshow, pViewerImpl);
@@ -7960,6 +8109,50 @@ static gboolean timeout_advance_slideshow (gpointer data)
 	return FALSE;
 }
 
+/* Called from SetImageIndex when the current item was changed by the user
+ * (arrow keys, scroll wheel, filmstrip, First/Last/Next/Previous actions)
+ * while a slideshow is running.  The state machine still holds a stale
+ * advance/cache timer aimed at the previously shown item, so we cancel it
+ * and pause the show: the user is browsing manually, and the item they
+ * selected must not be skipped past by the machine (e.g. an ADVANCE slot
+ * would move straight past a manually chosen video, which is exactly the
+ * reported bug).  A manual resume (click, hotkey, or the paused pill's
+ * Resume button) restarts the show on the current item. */
+void Viewer::ViewerImpl::HandleSlideShowManualNavigation()
+{
+	if (!m_bSlideShowRunning || m_bSlideShowPaused)
+	{
+		return;
+	}
+
+	if (0 != m_iTimeoutSlideshowID)
+	{
+		g_source_remove(m_iTimeoutSlideshowID);
+		m_iTimeoutSlideshowID = 0;
+	}
+
+	if (m_pViewer)
+	{
+		m_pViewer->SlideShowPause();
+	}
+}
+
+void Viewer::ViewerImpl::ShowSlideShowPausedPill()
+{
+	if (m_pSlideShowPausedPill)
+	{
+		gtk_widget_set_visible(m_pSlideShowPausedPill, TRUE);
+	}
+}
+
+void Viewer::ViewerImpl::HideSlideShowPausedPill()
+{
+	if (m_pSlideShowPausedPill)
+	{
+		gtk_widget_set_visible(m_pSlideShowPausedPill, FALSE);
+	}
+}
+
 void Viewer::StopVideo(bool reloadImage)
 {
 	if (m_ViewerImplPtr)
@@ -7972,9 +8165,23 @@ void Viewer::SlideShowStart()
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	bool bTransition = prefsPtr->GetBoolean(QUIVER_PREFS_SLIDESHOW,QUIVER_PREFS_SLIDESHOW_TRANSITION,true);
-	
+
+	/* If the viewer hasn't synced to the current (browser-selected) item yet
+	 * — Viewer::Show() may have queued an idle to do so — flush that sync
+	 * now, before the show is marked running.  Otherwise the deferred
+	 * SetImageIndex would look like a manual navigation and immediately
+	 * pause the freshly started show. */
+	if (0 != m_ViewerImplPtr->m_iIdleSetIndex)
+	{
+		g_source_remove(m_ViewerImplPtr->m_iIdleSetIndex);
+		m_ViewerImplPtr->m_iIdleSetIndex = 0;
+		m_ViewerImplPtr->SetImageIndex(m_ViewerImplPtr->m_ImageListPtr->GetCurrentIndex(), true);
+	}
+
 	m_ViewerImplPtr->m_bSlideShowRunning = true;
 	m_ViewerImplPtr->m_bSlideShowPaused = false;
+	m_ViewerImplPtr->HideSlideShowPausedPill();
+	m_ViewerImplPtr->TriggerPlayPauseAnimation(true);
 	m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_ADVANCE;
 	m_ViewerImplPtr->m_iSlideShowWaitCount = 0;
 
@@ -8022,6 +8229,7 @@ void Viewer::SlideShowPause()
 		return;
 
 	m_ViewerImplPtr->m_bSlideShowPaused = true;
+	m_ViewerImplPtr->ShowSlideShowPausedPill();
 	m_ViewerImplPtr->m_SlideShowPrePauseState = m_ViewerImplPtr->m_SlideShowState;
 	m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_PAUSED;
 	if (0 != m_ViewerImplPtr->m_iTimeoutSlideshowID)
@@ -8042,24 +8250,34 @@ void Viewer::SlideShowResume()
 		return;
 
 	m_ViewerImplPtr->m_bSlideShowPaused = false;
+	m_ViewerImplPtr->HideSlideShowPausedPill();
 	m_ViewerImplPtr->m_SlideShowState = m_ViewerImplPtr->m_SlideShowPrePauseState;
 	if (m_ViewerImplPtr->m_SlideShowState == ViewerImpl::SLIDESHOW_STATE_PAUSED)
 	{
 		m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_ADVANCE;
 	}
 
-	if (m_ViewerImplPtr->IsVideo() && !m_ViewerImplPtr->IsPlaying())
+	if (m_ViewerImplPtr->IsVideo())
 	{
-		m_ViewerImplPtr->PlayPauseVideo();
+		/* Resume on a video always seats the machine in PLAYING_VIDEO so the
+		 * show stays on this clip until it actually ends (this also covers
+		 * the case where the user paused on an image, navigated to a video
+		 * and started playback manually, then resumes). */
+		if (!m_ViewerImplPtr->IsPlaying())
+		{
+			m_ViewerImplPtr->PlayPauseVideo();
+		}
 		m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_PLAYING_VIDEO;
 		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(SLIDESHOW_WAIT_DURATION, timeout_advance_slideshow, m_ViewerImplPtr.get());
 	}
 	else
 	{
-		int duration = (m_ViewerImplPtr->m_SlideShowState == ViewerImpl::SLIDESHOW_STATE_CACHE)
-			? MAX(10, m_ViewerImplPtr->m_iSlideShowDuration - m_ViewerImplPtr->m_iSlideShowWaitCount * SLIDESHOW_WAIT_DURATION)
-			: SLIDESHOW_WAIT_DURATION;
-		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(duration, timeout_advance_slideshow, m_ViewerImplPtr.get());
+		/* Resume on an image: restart the dwell timer on the current image so
+		 * the show stays put for a full slide duration instead of jumping
+		 * straight to the next item. */
+		m_ViewerImplPtr->m_iSlideShowWaitCount = 0;
+		m_ViewerImplPtr->m_SlideShowState = ViewerImpl::SLIDESHOW_STATE_ADVANCE;
+		m_ViewerImplPtr->m_iTimeoutSlideshowID = g_timeout_add(m_ViewerImplPtr->m_iSlideShowDuration, timeout_advance_slideshow, m_ViewerImplPtr.get());
 	}
 	m_ViewerImplPtr->UpdateSlideshowButton();
 }
@@ -8347,6 +8565,8 @@ void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
 	m_bSlideShowRunning = false;
 	m_bSlideShowPaused = false;
 
+	HideSlideShowPausedPill();
+
 	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_pImageView),FALSE);
 
 	if (0 != m_iTimeoutSlideshowID)
@@ -8413,7 +8633,7 @@ void Viewer::ViewerImpl::UpdateHUDTooltips()
 	if (m_pViewerZoomOutBtn)
 		gtk_widget_set_tooltip_text(m_pViewerZoomOutBtn, sm.GetTooltipForAction("ZoomOut", "Zoom Out").c_str());
 	if (m_pViewerZoomFitBtn)
-		gtk_widget_set_tooltip_text(m_pViewerZoomFitBtn, sm.GetTooltipForAction("ZoomFit", "Zoom to Fit Window").c_str());
+		gtk_widget_set_tooltip_text(m_pViewerZoomFitBtn, sm.GetTooltipForAction("ZoomFitStretch", "Zoom to Fit Window (Stretched)").c_str());
 	if (m_pViewerZoomInBtn)
 		gtk_widget_set_tooltip_text(m_pViewerZoomInBtn, sm.GetTooltipForAction("ZoomIn", "Zoom In").c_str());
 	if (m_pSnapBtn)

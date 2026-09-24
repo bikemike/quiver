@@ -176,7 +176,7 @@ void ShortcutManager::RegisterDefaultActions()
     m_actions.push_back({
         "SlideShow", "Viewer Display", "Start Slideshow",
         "Start or pause slideshow presentation",
-        {"s"}, {"s"}, true
+        {"s"}, {"s"}, false
     });
     m_actions.push_back({
         "ViewProperties", "Viewer Display", "Properties Pane",
