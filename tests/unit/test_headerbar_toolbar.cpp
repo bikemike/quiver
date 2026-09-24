@@ -110,6 +110,33 @@ TEST_CASE("Toolbar UI Layout and Widget Order", "[unit][gui][toolbar]")
         REQUIRE(firstToolbarChild == sharedBox);
     }
 
+    SECTION("Recently-viewed button is a standalone object, not in shared_box")
+    {
+        GtkWidget *recentBtn = GTK_WIDGET(gtk_builder_get_object(builder, "button_recent"));
+        REQUIRE(recentBtn != nullptr);
+        REQUIRE(GTK_IS_MENU_BUTTON(recentBtn));
+
+        const gchar *icon = gtk_menu_button_get_icon_name(GTK_MENU_BUTTON(recentBtn));
+        REQUIRE(icon != nullptr);
+        REQUIRE(std::string(icon) == "document-open-recent-symbolic");
+
+        const gchar *tip = gtk_widget_get_tooltip_text(recentBtn);
+        REQUIRE(tip != nullptr);
+        REQUIRE(std::string(tip) == "Recently Viewed");
+
+        // The button is not action-bound; Recents are driven by its menu model.
+        REQUIRE(gtk_actionable_get_action_name(GTK_ACTIONABLE(recentBtn)) == nullptr);
+
+        // It is a top-level object in the builder (parented into the headerbar
+        // end at runtime), and must not be inside the shared toolbar box.
+        REQUIRE(gtk_widget_get_parent(recentBtn) == nullptr);
+        for (GtkWidget *child = gtk_widget_get_first_child(sharedBox); child;
+             child = gtk_widget_get_next_sibling(child))
+        {
+            REQUIRE(child != recentBtn);
+        }
+    }
+
     SECTION("Browser box has no folder-tree / open-folder controls")
     {
         for (GtkWidget *child = gtk_widget_get_first_child(browserBox); child;
@@ -510,29 +537,70 @@ TEST_CASE("HeaderBar and Toolbar Integration", "[gui][headerbar]")
     REQUIRE(headerBar != nullptr);
     gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(headerBar), TRUE);
 
-    // Hamburger button
-    GtkWidget *menuButton = gtk_menu_button_new();
-    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menuButton), "open-menu-symbolic");
-    gtk_header_bar_pack_end(GTK_HEADER_BAR(headerBar), menuButton);
+    SECTION("Recently-viewed button packs left of the preferences button")
+    {
+        // Same pack order as QuiverImpl::CreateUI: end items go [recent][pref][menu]
+        // from the right window edge, so the recent button sits just left of the
+        // preferences gear.
+        GtkWidget *menuButton = gtk_menu_button_new();
+        gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menuButton), "open-menu-symbolic");
+        GtkWidget *prefButton = gtk_button_new_from_icon_name("preferences-system-symbolic");
+        gtk_actionable_set_action_name(GTK_ACTIONABLE(prefButton), "quiver.Preferences");
+        GtkWidget *recentBtn = gtk_menu_button_new();
+        gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(recentBtn), "document-open-recent-symbolic");
+        gtk_widget_set_tooltip_text(recentBtn, "Recently Viewed");
 
-    // Preferences button
-    GtkWidget *prefButton = gtk_button_new_from_icon_name("preferences-system-symbolic");
-    gtk_actionable_set_action_name(GTK_ACTIONABLE(prefButton), "quiver.Preferences");
-    gtk_header_bar_pack_end(GTK_HEADER_BAR(headerBar), prefButton);
+        gtk_header_bar_pack_end(GTK_HEADER_BAR(headerBar), menuButton);
+        gtk_header_bar_pack_end(GTK_HEADER_BAR(headerBar), prefButton);
+        gtk_header_bar_pack_end(GTK_HEADER_BAR(headerBar), recentBtn);
 
-    // Browser with headerbar
-    Browser browser;
-    browser.SetToolbar(headerBar);
+        // All three live in the headerbar's internal end box.
+        GtkWidget *endBox = gtk_widget_get_parent(recentBtn);
+        REQUIRE(endBox != nullptr);
+        REQUIRE(gtk_widget_get_parent(menuButton) == endBox);
+        REQUIRE(gtk_widget_get_parent(prefButton) == endBox);
 
-    // On browser show, thumbnail sizer is packed into the header bar
-    browser.Show();
+        // Recent immediately precedes Preferences in the end box (its left
+        // neighbour; the window controls, if any, come later).
+        int recentIdx = -1, prefIdx = -1, i = 0;
+        for (GtkWidget *c = gtk_widget_get_first_child(endBox); c;
+             c = gtk_widget_get_next_sibling(c))
+        {
+            if (c == recentBtn) recentIdx = i;
+            if (c == prefButton) prefIdx = i;
+            ++i;
+        }
+        REQUIRE(recentIdx >= 0);
+        REQUIRE(prefIdx >= 0);
+        REQUIRE(recentIdx == prefIdx - 1);
+    }
 
-    // On browser hide, thumbnail sizer is removed cleanly
-    browser.Hide();
+    SECTION("Thumbnail sizer pack/unpack")
+    {
+        // Hamburger button
+        GtkWidget *menuButton = gtk_menu_button_new();
+        gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menuButton), "open-menu-symbolic");
+        gtk_header_bar_pack_end(GTK_HEADER_BAR(headerBar), menuButton);
 
-    // Can show again without issue
-    browser.Show();
-    browser.Hide();
+        // Preferences button
+        GtkWidget *prefButton = gtk_button_new_from_icon_name("preferences-system-symbolic");
+        gtk_actionable_set_action_name(GTK_ACTIONABLE(prefButton), "quiver.Preferences");
+        gtk_header_bar_pack_end(GTK_HEADER_BAR(headerBar), prefButton);
+
+        // Browser with headerbar
+        Browser browser;
+        browser.SetToolbar(headerBar);
+
+        // On browser show, thumbnail sizer is packed into the header bar
+        browser.Show();
+
+        // On browser hide, thumbnail sizer is removed cleanly
+        browser.Hide();
+
+        // Can show again without issue
+        browser.Show();
+        browser.Hide();
+    }
 }
 
 TEST_CASE("Background Preference Change Integration", "[gui][preferences][background]")

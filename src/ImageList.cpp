@@ -171,6 +171,14 @@ public:
 	void StopAsyncSort();
 	void PostAsyncLoadProgress(gint uiGeneration, double fraction, int current, int total);
 	void PostAsyncSortProgress(gint uiGeneration, double fraction, int current, int total);
+
+	/* Update m_pAttributes to the given folder set + recursive flag, allocating
+	 * a new object only when the definition actually changed (so unchanged
+	 * views keep the same ImageListAttributes pointer identity).  When
+	 * pMergeExisting is non-NULL its contents are appended (deduped) to the
+	 * folders first, for the Add()/UpdateImageList() merge paths. */
+	void SetAttributes(const std::list<std::string>* pNewFolders,
+		const std::list<std::string>* pMergeExisting, bool bRecursive);
 	
 /* member variables */
 	
@@ -200,6 +208,11 @@ public:
 	ImageList::SortBy m_SortBy;
 	bool m_bSortAscend;
 	bool m_bEnableMonitor;
+
+	/* The definition (root folder set + recursive flag) this list is built
+	 * from.  Shared with consumers like the recently-viewed list, which hold
+	 * their own pointer to it. */
+	ImageListAttributesPtr m_pAttributes;
 
 	GThread* m_pAsyncLoadThread;
 	std::atomic<bool> m_bAbortAsyncLoad;
@@ -486,6 +499,11 @@ std::list<std::string> ImageList::GetFolderList()
 	{
 		listFolders.push_back(itr->first);
 	}	return listFolders;
+}
+
+ImageListAttributesPtr ImageList::GetAttributes() const
+{
+	return m_ImageListImplPtr->m_pAttributes;
 }
 
 std::list<std::string> ImageList::GetFileList()
@@ -775,6 +793,8 @@ ImageList::ImageListImpl::ImageListImpl(ImageList *pImageList)
 
 	m_pAsyncSortThread = NULL;
 	m_bAbortAsyncSort = false;
+
+	m_pAttributes.reset();
 }
 
 ImageList::ImageListImpl::~ImageListImpl()
@@ -881,6 +901,51 @@ bool ImageList::ImageListImpl::SetCurrentImage(string uri)
 	return false;
 }
 
+
+void ImageList::ImageListImpl::SetAttributes(const std::list<std::string>* pNewFolders,
+	const std::list<std::string>* pMergeExisting, bool bRecursive)
+{
+	std::list<std::string> combined;
+	if (NULL != pMergeExisting)
+	{
+		combined = *pMergeExisting;
+	}
+	if (NULL != pNewFolders)
+	{
+		for (std::list<std::string>::const_iterator itr = pNewFolders->begin();
+				pNewFolders->end() != itr; ++itr)
+		{
+			bool bFound = false;
+			for (std::list<std::string>::const_iterator it = combined.begin();
+					combined.end() != it; ++it)
+			{
+				if (*it == *itr)
+				{
+					bFound = true;
+					break;
+				}
+			}
+			if (!bFound)
+			{
+				combined.push_back(*itr);
+			}
+		}
+	}
+
+	/* Content-equal definition: keep the existing object so pointer identity
+	 * (shared with e.g. recently-viewed entries) is preserved. */
+	if (m_pAttributes && m_pAttributes->Matches(combined, bRecursive))
+	{
+		m_pAttributes->SetFolders(combined);
+		m_pAttributes->SetRecursive(bRecursive);
+		return;
+	}
+
+	ImageListAttributesPtr attrs(new ImageListAttributes());
+	attrs->SetFolders(combined);
+	attrs->SetRecursive(bRecursive);
+	m_pAttributes = attrs;
+}
 
 void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool bRecursive/* = false*/)
 {
@@ -1007,6 +1072,17 @@ void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool
 		SetCurrentImage(strCurrentURI);
 	}
 	
+	/* Record the list definition for the merged result.  When items already
+	 * existed the previous folders are kept and the new ones appended. */
+	{
+		std::list<std::string> existing;
+		if (!bNewList && m_pAttributes)
+		{
+			existing = m_pAttributes->GetFolders();
+		}
+		SetAttributes(file_list, bNewList ? NULL : &existing, bRecursive);
+	}
+
 	// sort - update the current index if the 
 	// string is not empty
 	Sort(!strCurrentURI.empty());
@@ -1679,6 +1755,11 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	impl->StopAsyncLoad();
 	impl->StopAsyncSort();
 
+	/* Record the list definition (folder set + recursive flag) up front, so
+	 * GetAttributes() reflects the requested view even while the async load
+	 * is still running. */
+	impl->SetAttributes(file_list, NULL, bRecursive);
+
 	if (0 == file_list->size())
 	{
 		// discard any in-flight loads
@@ -1747,6 +1828,21 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	impl->m_bAbortAsyncLoad = false;
 	EmitLoadProgress(-1.0, 0, 0);
 	impl->m_pAsyncLoadThread = g_thread_new("quiver-folder-load", ImageList::ImageListImpl::AsyncFolderLoadThread, pData);
+}
+
+void ImageList::UpdateImageListAsync(ImageListAttributesPtr attributes, bool bSelectFirstItem, const std::string& strSelectURI)
+{
+	if (!attributes)
+	{
+		return;
+	}
+
+	/* Install the attributes object directly so its pointer identity is
+	 * preserved for shared holders (recently-viewed entries), then load the
+	 * folder set it describes. */
+	m_ImageListImplPtr->m_pAttributes = attributes;
+	std::list<std::string> folders = attributes->GetFolders();
+	UpdateImageListAsync(&folders, attributes->GetRecursive(), bSelectFirstItem, strSelectURI);
 }
 
 

@@ -7,6 +7,7 @@
 #include "QuiverFile.h"
 #include "ImageListEventSource.h"
 #include "IImageListView.h"
+#include "ImageListAttributes.h"
 
 
 class ImageList : public virtual IImageListView
@@ -32,8 +33,16 @@ public:
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(const std::list<std::string> *file_list);
 	void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false, bool bSelectFirstItem = false, const std::string& strSelectURI = "");
+	/* Load the folder set described by attributes, installing that exact
+	 * attributes object as this list's current definition so its pointer
+	 * identity is preserved for shared holders ("recently viewed"). */
+	void UpdateImageListAsync(ImageListAttributesPtr attributes, bool bSelectFirstItem = false, const std::string& strSelectURI = "");
 	void StopAsyncLoad();
 	void StopAsyncSort();
+
+	/* The definition (root folder set + recursive flag) this list was built
+	 * from.  May be NULL before the first load completes. */
+	ImageListAttributesPtr GetAttributes() const;
 
 	static void AddIgnoredExtension(std::string ext);
 	static void ClearIgnoreList(std::string ext);

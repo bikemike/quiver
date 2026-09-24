@@ -10,6 +10,7 @@ set(QUIVER_CORE_SOURCES
     ImageCache.cpp
     ImageList.cpp
     ImageListEventSource.cpp
+    ImageListAttributes.cpp
     ImageListFilter.cpp
     ImageDecoder.cpp
     ImageLoader.cpp
@@ -37,6 +38,7 @@ set(QUIVER_CORE_SOURCES
     BookmarkAddEditDlg.cpp
     Bookmarks.cpp
     BrowserHistory.cpp
+    RecentItems.cpp
     TaskEventSource.cpp
     TaskManagerDlg.cpp
     TaskManager.cpp

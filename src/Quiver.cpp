@@ -47,6 +47,8 @@ extern "C" {
 #include "OrganizeDlg.h"
 #include "OrganizeTask.h"
 
+#include "RecentItems.h"
+
 #include "RenameDlg.h"
 #include "RenameTask.h"
 
@@ -140,6 +142,14 @@ public:
 	void OnUndoDelete();                 // Ctrl+Z / undo button: restore newest batch
 	void OnUndoDeleteAt(unsigned int pos); // menu: restore a specific batch
 	void TakeMeToRestored();             // "take me there": open the restore target in the browser
+
+	/* Recently-viewed items: recorded on every displayed item (except folders
+	 * and slideshow machine advances), exposed as a header-bar menu button,
+	 * and pruned when an item is deleted.  Clicking an entry re-opens the item
+	 * inside the image list it was originally viewed in. */
+	void RecordRecentView(const QuiverFile& f);
+	void RebuildRecentMenu();
+	void OnOpenRecent(const std::string& uri);
 	/* Parent the toast into whichever overlay is active for the current mode
 	 * (browser icon view vs. viewer image view). */
 	void ParentUndoToast();
@@ -325,6 +335,11 @@ public:
 	
 	GMenu *m_pBookmarkMenu;
 	GMenu *m_pExternalToolsMenu;
+	/* Live "Recently Viewed" menu behind the header-bar recent button (see
+	 * RebuildRecentMenu()). */
+	GMenu *m_pRecentMenu;
+	GtkWidget *m_pToolbarRecentBtn;
+	RecentItems m_RecentItems;
 };
 
 
@@ -379,6 +394,8 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 
 	m_pBookmarkMenu = NULL;
 	m_pExternalToolsMenu = NULL;
+	m_pRecentMenu = g_menu_new();
+	m_pToolbarRecentBtn = NULL;
 
 	// add ignored extensions
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
@@ -940,6 +957,33 @@ static void quiver_trash_undo_changed_cb(
 	gpointer user_data)
 {
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)user_data;
+
+	/* Items that were just trashed are no longer viewable: prune them from
+	 * the recently-viewed list (the top undo batch is the fresh delete). */
+	if (QuiverFileOps::TRASH_UNDO_DELETED == reason && 0 != count)
+	{
+		if (QuiverFileOps::UndoStackHasItems())
+		{
+			const QuiverFileOps::UndoEntry* entry = QuiverFileOps::UndoStackEntryAt(0);
+			if (NULL != entry)
+			{
+				std::list<std::string> deletedURIs;
+				for (std::list<QuiverFile>::const_iterator itr = entry->trashed_files.begin();
+						entry->trashed_files.end() != itr; ++itr)
+				{
+					if (itr->GetURI())
+					{
+						deletedURIs.push_back(itr->GetURI());
+					}
+				}
+				if (0 < deletedURIs.size() && 0 < pQuiverImpl->m_RecentItems.RemoveAllByURIs(deletedURIs))
+				{
+					pQuiverImpl->RebuildRecentMenu();
+				}
+			}
+		}
+	}
+
 	pQuiverImpl->RebuildRecentDeletionsMenu();
 	pQuiverImpl->ShowTrashToast(reason, count);
 }
@@ -1256,10 +1300,142 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
 #define ACTION_QUIVER_ESCAPE                                 "QuiverEscape"
+#define ACTION_QUIVER_OPEN_RECENT                            "OpenRecent"
 #define ACTION_VIEWER_VIEW_FILM_STRIP                        "ViewFilmStrip"
 #define ACTION_QUIVER_CLOSE_2                                ACTION_QUIVER_CLOSE"_2"
 #define ACTION_QUIVER_CLOSE_3                                ACTION_QUIVER_CLOSE"_3"
 #define ACTION_QUIVER_CLOSE_4                                ACTION_QUIVER_CLOSE"_4"
+
+/* Recently-viewed items. */
+
+void QuiverImpl::RecordRecentView(const QuiverFile& f)
+{
+	/* Files only: folders are navigated to, not "viewed". */
+	if (f.IsFolder())
+	{
+		return;
+	}
+	if (NULL == f.GetURI())
+	{
+		return;
+	}
+	/* The slideshow's machine advances must not flood the list; it is active
+	 * for the whole show, so nothing records while a slideshow runs. */
+	if (QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW))
+	{
+		return;
+	}
+
+	ImageListAttributesPtr attrs = m_ImageListPtr ? m_ImageListPtr->GetAttributes()
+		: ImageListAttributesPtr();
+	if (!attrs || attrs->IsEmpty())
+	{
+		return;
+	}
+
+	m_RecentItems.Record(f.GetURI(), attrs);
+	RebuildRecentMenu();
+}
+
+void QuiverImpl::RebuildRecentMenu()
+{
+	if (NULL == m_pRecentMenu)
+	{
+		return;
+	}
+
+	while (g_menu_model_get_n_items(G_MENU_MODEL(m_pRecentMenu)) > 0)
+	{
+		g_menu_remove(m_pRecentMenu, 0);
+	}
+
+	if (0 == m_RecentItems.GetSize())
+	{
+		/* Inert placeholder (no action) so the submenu is non-empty. */
+		GMenu *emptySection = g_menu_new();
+		g_menu_append(emptySection, "No recently viewed items", NULL);
+		g_menu_append_section(m_pRecentMenu, NULL, G_MENU_MODEL(emptySection));
+		g_object_unref(emptySection);
+		return;
+	}
+
+	const std::deque<RecentItems::Entry>& entries = m_RecentItems.GetEntries();
+	GMenu *section = g_menu_new();
+	for (std::deque<RecentItems::Entry>::const_iterator itr = entries.begin();
+			entries.end() != itr; ++itr)
+	{
+		const RecentItems::Entry& entry = *itr;
+		gchar *name = g_path_get_basename(entry.uri.c_str());
+		/* The action takes a string parameter, so the item must carry the
+		 * matching "target" attribute ("action-target" is not a GMenuModel
+		 * attribute); without it GTK renders the row insensitive. */
+		GMenuItem *item = g_menu_item_new(name, NULL);
+		g_free(name);
+		g_menu_item_set_action_and_target_value(item,
+			"quiver." ACTION_QUIVER_OPEN_RECENT,
+			g_variant_new_string(entry.uri.c_str()));
+		g_menu_append_item(section, item);
+		g_object_unref(item);
+	}
+	g_menu_append_section(m_pRecentMenu, NULL, G_MENU_MODEL(section));
+	g_object_unref(section);
+}
+
+void QuiverImpl::OnOpenRecent(const std::string& uri)
+{
+	if (uri.empty())
+	{
+		return;
+	}
+
+	const RecentItems::Entry* entry = m_RecentItems.Find(uri);
+	if (NULL == entry || !entry->pAttributes)
+	{
+		m_RecentItems.RemoveByURI(uri);
+		RebuildRecentMenu();
+		return;
+	}
+
+	ImageListAttributesPtr current = m_ImageListPtr ? m_ImageListPtr->GetAttributes()
+		: ImageListAttributesPtr();
+
+	/* Same list as the item was viewed in: jump the selection in place and
+	 * stay in whatever mode the user is currently in.  Identity match first,
+	 * then a content-equality fallback for a re-created list with the same
+	 * definition. */
+	bool bSameList = (current == entry->pAttributes)
+		|| (current && entry->pAttributes->Matches(*current));
+	if (bSameList && 0 < m_ImageListPtr->GetSize())
+	{
+		const char* pszCurrentURI = m_ImageListPtr->GetCurrent().GetURI();
+		if (pszCurrentURI && uri == pszCurrentURI)
+		{
+			return; // already on this item
+		}
+		if (m_ImageListPtr->SetCurrentFile(uri))
+		{
+			return;
+		}
+		/* The item no longer exists in the current list (e.g. deleted out from
+		 * under the app); fall through to reload its original context. */
+	}
+	else if (bSameList)
+	{
+		return;
+	}
+
+	/* Different list context: restore the item inside the image list it was
+	 * originally viewed in — re-load that folder set and select the item.
+	 * Land in the viewer, since the point is to view the item again. */
+	if (NULL != m_pQuiver)
+	{
+		m_pQuiver->ShowViewer();
+	}
+	if (m_ImageListPtr)
+	{
+		m_ImageListPtr->UpdateImageListAsync(entry->pAttributes, false, uri);
+	}
+}
 
 /* GMenu-based menu handling for GtkPopoverMenuBar.
 
@@ -1720,6 +1896,10 @@ void Quiver::ImageChanged()
 		
 		m_QuiverImplPtr->m_CurrentQuiverFile = f;
 		
+		/* Track the item as "recently viewed" (before the slideshow gate
+		 * silently drops machine-advance passes). */
+		m_QuiverImplPtr->RecordRecentView(f);
+		
 		/* Rebuild the hamburger menu when the still <-> video context flips
 		 * so its Image / Video submenus match the current file. */
 		bool bIsVideo = f.IsVideo();
@@ -2056,6 +2236,20 @@ void Quiver::Init()
 	/* Track single-item restores so the toast can offer "take me there". */
 	QuiverFileOps::SetTrashRestoredChangedCallback(quiver_trash_restored_changed_cb, m_QuiverImplPtr.get());
 
+	/* Open a recently-viewed item: parameterised by the item's URI. */
+	{
+		GSimpleAction *recentAct = g_simple_action_new(ACTION_QUIVER_OPEN_RECENT, G_VARIANT_TYPE_STRING);
+		g_signal_connect(recentAct, "activate",
+			G_CALLBACK(+[](GSimpleAction*, GVariant *parameter, gpointer user_data) {
+				if (NULL != parameter)
+				{
+					QuiverImpl *p = (QuiverImpl*)user_data;
+					p->OnOpenRecent(g_variant_get_string(parameter, NULL));
+				}
+			}), m_QuiverImplPtr.get());
+		QuiverUtils::AddAction(G_ACTION(recentAct));
+	}
+
 	/* Track new folder undo */
 	QuiverFileOps::SetNewFolderUndoCallback(quiver_new_folder_undo_cb, m_QuiverImplPtr.get());
 
@@ -2111,9 +2305,16 @@ void Quiver::Init()
 	gtk_widget_set_focus_on_click(m_QuiverImplPtr->m_pPrefButton, FALSE);
 	gtk_widget_set_focusable(m_QuiverImplPtr->m_pPrefButton, FALSE);
 
-	/* Pack headerbar end items: hamburger menu button at far right, preferences gear to its left */
+	/* Pack headerbar end items: hamburger menu button at far right, preferences
+	 * gear to its left, and the "Recently Viewed" button to the left of the
+	 * preferences button (pack_end inserts each new widget further inward). */
 	gtk_header_bar_pack_end(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar), m_QuiverImplPtr->m_pMenuButton);
 	gtk_header_bar_pack_end(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar), m_QuiverImplPtr->m_pPrefButton);
+	if (m_QuiverImplPtr->m_pToolbarRecentBtn)
+	{
+		gtk_header_bar_pack_end(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar),
+			m_QuiverImplPtr->m_pToolbarRecentBtn);
+	}
 
 	/* Give the browser the headerbar so it can insert its thumb-size widget at the end */
 	m_QuiverImplPtr->m_BrowserPtr->SetToolbar(m_QuiverImplPtr->m_pHeaderBar);
@@ -2989,6 +3190,21 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 	pQuiverImpl->m_pUIModeViewerBtn    = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_viewer"));
 	pQuiverImpl->m_pUIModeBrowserBtn   = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_browser"));
 
+	/* "Recently Viewed" button: its menu model is the live recent menu, which
+	 * RebuildRecentMenu() repopulates as items are viewed or deleted.  The
+	 * button is a standalone object in the .ui file and is packed into the
+	 * headerbar end (left of the preferences button) in CreateUI(). */
+	pQuiverImpl->m_pToolbarRecentBtn   = GTK_WIDGET(gtk_builder_get_object(builder, "button_recent"));
+	if (pQuiverImpl->m_pToolbarRecentBtn)
+	{
+		gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(pQuiverImpl->m_pToolbarRecentBtn),
+			G_MENU_MODEL(pQuiverImpl->m_pRecentMenu));
+		/* Must not steal keyboard focus from the content area (same rule as the
+		 * rest of the toolbar/headerbar widgets). */
+		gtk_widget_set_focus_on_click(pQuiverImpl->m_pToolbarRecentBtn, FALSE);
+		gtk_widget_set_focusable(pQuiverImpl->m_pToolbarRecentBtn, FALSE);
+	}
+
 	/* Keep the builder alive so its objects stay referenced; the widgets are
 	 * later parented into the window tree. */
 	pQuiverImpl->m_pToolbar = toolbar;
@@ -3766,6 +3982,13 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	else if(0 == strcmp(szAction,ACTION_QUIVER_SAVE_AS))
 	{
 		pQuiverImpl->SaveAs();	
+	}
+	else if (0 == strcmp(szAction, ACTION_QUIVER_OPEN_RECENT))
+	{
+		if (NULL != parameter)
+		{
+			pQuiverImpl->OnOpenRecent(g_variant_get_string(parameter, NULL));
+		}
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_NAME)
 	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_NAME_NATURAL)

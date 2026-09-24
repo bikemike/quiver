@@ -10,6 +10,7 @@ set(UNIT_TEST_SOURCES
     unit/test_timer.cpp
     unit/test_image_cache.cpp
     unit/test_browser_history.cpp
+    unit/test_recent_items.cpp
     unit/test_file_conflict_check.cpp
     unit/test_preferences.cpp
     unit/test_bookmarks.cpp

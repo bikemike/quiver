@@ -4,7 +4,7 @@
     Main application toolbar.
 
     The toolbar is a GtkBox made of three child boxes:
-      * shared_box  - shown in both modes; holds the full-screen toggle on the
+      * shared_box  - shown in both modes; reserved for shared controls on the
                       far left, before the per-mode controls
       * browser_box - shown only in browser mode
       * viewer_box  - shown only in viewer mode
@@ -12,6 +12,11 @@
     each state's toolbar group is an independent, per-state container (its own
     "placeholder").  Because they are distinct boxes, unmerging one state never
     disturbs the other state's controls.
+
+    The "Recently Viewed" menu button (button_recent) is a standalone object in
+    this file; C++ packs it into the headerbar END, immediately to the left of
+    the preferences button, so it sits on the opposite side of the headerbar
+    from the toolbar's mode controls.
 
     Toggle buttons bind to stateful boolean actions so GtkToggleButton reflects
     the active state automatically.
@@ -122,5 +127,14 @@
         </child>
       </object>
     </child>
+  </object>
+
+  <!-- "Recently Viewed" menu button.  Kept out of QuiverToolbar: it is a
+       standalone widget parented at runtime into the headerbar end, to the
+       left of the preferences button.  Its live menu model (GMenu) is set by
+       QuiverImpl::RebuildRecentMenu(). -->
+  <object class="GtkMenuButton" id="button_recent">
+    <property name="icon-name">document-open-recent-symbolic</property>
+    <property name="tooltip-text">Recently Viewed</property>
   </object>
 </interface>
