@@ -133,8 +133,8 @@ public:
 	{
 		for (unsigned int i = 0; i < G_N_ELEMENTS(ThumbnailSizes); i++)
 		{
-			// 1mb = 1024 * 1024;
-			int cache_size = 4 * 1024 * 1024; // 2mb
+			// 16 MB per bucket eliminates eviction churn while staying lightweight
+			int cache_size = 16 * 1024 * 1024;
 			
 			int n_images = cache_size / (ThumbnailSizes[i].size * ThumbnailSizes[i].size * 4);
 			m_mapThumbnailCache.insert(std::pair<int,ImageCache*>(ThumbnailSizes[i].size,new ImageCache(n_images)));
@@ -406,6 +406,7 @@ std::string QuiverFile::QuiverFileImpl::GetFileName() const
 
 GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 	GFileInfo* gFileInfo = NULL;
 
 	if ((m_fDataExists & QUIVER_FILE_DATA_INFO) && m_pGFileInfo)
@@ -540,6 +541,7 @@ GdkPixbuf * QuiverFile::QuiverFileImpl::GetExifThumbnail()
 
 bool QuiverFile::QuiverFileImpl::HasThumbnail(int iSize)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 	bool bExists = false;
 	ThumbnailSize* thumbSize = NULL;
 	
@@ -772,7 +774,8 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 			if (IsVideo())
 			{
 				gint n = 1, d = 1;
-				GdkTexture *video_tex = QuiverVideoOps::LoadTexture(m_szURI, &n, &d, -1, size, size, abort_fn, abort_data);
+				gint vw = 0, vh = 0;
+				GdkTexture *video_tex = QuiverVideoOps::LoadTexture(m_szURI, &n, &d, -1, size, size, abort_fn, abort_data, &vw, &vh);
 				if (NULL != video_tex)
 				{
 					/* The texture is already pixel-aspect corrected by the grab,
@@ -780,25 +783,16 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 					guint tex_width = gdk_texture_get_width(video_tex);
 					guint tex_height = gdk_texture_get_height(video_tex);
 
-					/* Cache the TRUE display dimensions, not the downscaled
-					 * thumb-bound size, so "actual size" rendering shows the
-					 * real frame size. */
-					gint vw = 0, vh = 0;
-					gint pn = 1, pd = 1; /* probe reports coded dims + PAR */
-					if (QuiverVideoOps::Probe(m_szURI, NULL, &vw, &vh, &pn, &pd) && vw > 0 && vh > 0)
-					{
-						if (pn > pd)
-							vw = (gint)((vw * pn) / double(pd) + .5);
-						else
-							vh = (gint)((vh * pd) / double(pn) + .5);
-					}
-					else
+					if (vw <= 0 || vh <= 0)
 					{
 						vw = (gint)tex_width;
 						vh = (gint)tex_height;
 					}
-					m_iWidth = vw;
-					m_iHeight = vh;
+					{
+						std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+						m_iWidth = vw;
+						m_iHeight = vh;
+					}
 
 					if (tex_width > (guint)size || tex_height > (guint)size)
 					{
@@ -1469,6 +1463,7 @@ std::string QuiverFile::QuiverFileImpl::GetFilePath() const
 
 int QuiverFile::QuiverFileImpl::GetWidth()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 	if (-1 == m_iWidth)
 	{
 		if (IsVideo())
@@ -1481,6 +1476,7 @@ int QuiverFile::QuiverFileImpl::GetWidth()
 
 int QuiverFile::QuiverFileImpl::GetHeight()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 	if (-1 == m_iHeight)
 	{
 		if (IsVideo())
@@ -1669,10 +1665,12 @@ double QuiverFile::GetLoadTimeInSeconds() const
 
 void QuiverFile::SetWidth(int w)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_QuiverFilePtr->m_MetadataMutex);
 	m_QuiverFilePtr->m_iWidth = w;
 }
 void QuiverFile::SetHeight(int h)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_QuiverFilePtr->m_MetadataMutex);
 	m_QuiverFilePtr->m_iHeight = h;
 }
 
@@ -1722,6 +1720,7 @@ static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *wi
 
 bool QuiverFile::IsWidthHeightSet() const
 {
+	std::lock_guard<std::recursive_mutex> lock(m_QuiverFilePtr->m_MetadataMutex);
 	return (-1 != m_QuiverFilePtr->m_iWidth && -1 != m_QuiverFilePtr->m_iHeight);
 }
 

@@ -50,7 +50,9 @@ namespace QuiverVideoOps
 		gint target_width = 0,
 		gint target_height = 0,
 		VideoAbortFn abort_fn = NULL,
-		gpointer abort_data = NULL);
+		gpointer abort_data = NULL,
+		gint* natural_width = NULL,
+		gint* natural_height = NULL);
 #endif
 
 	GdkTexture* LoadTexture(const gchar *uri,
@@ -60,7 +62,9 @@ namespace QuiverVideoOps
 		gint target_width = 0,
 		gint target_height = 0,
 		VideoAbortFn abort_fn = NULL,
-		gpointer abort_data = NULL);
+		gpointer abort_data = NULL,
+		gint* natural_width = NULL,
+		gint* natural_height = NULL);
 
 	/* Cheap metadata-only query (does not decode a frame).
 	 * Fills duration_ns (may be NULL), width/height (may be NULL), and the
@@ -70,7 +74,9 @@ namespace QuiverVideoOps
 		gint* width = NULL,
 		gint* height = NULL,
 		gint* pixel_aspect_ratio_numerator = NULL,
-		gint* pixel_aspect_ratio_denominator = NULL);
+		gint* pixel_aspect_ratio_denominator = NULL,
+		VideoAbortFn abort_fn = NULL,
+		gpointer abort_data = NULL);
 }
 
 #endif

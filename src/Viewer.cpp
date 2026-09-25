@@ -1650,19 +1650,38 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 
 		gtk_window_set_default_size (GTK_WINDOW (m_pNavigationWindow),1,1);
 		QuiverFile f = m_ImageListPtr->GetCurrent();
-		GdkTexture *nav_tex = NULL;
-		if (f.HasThumbnail(128)) {
-			nav_tex = f.GetThumbnailTexture(128);
-		}
-		if (NULL == nav_tex && f.HasThumbnail(256)) {
-			nav_tex = f.GetThumbnailTexture(256);
-		}
-		
-		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),nav_tex);
-		
-		if (NULL != nav_tex)
+		if (gtk_widget_get_visible(m_pNavigationWindow))
 		{
-			g_object_unref(nav_tex);
+			GdkTexture *nav_tex = NULL;
+			if (f.HasThumbnail(128)) {
+				nav_tex = f.GetThumbnailTexture(128);
+			}
+			if (NULL == nav_tex && f.HasThumbnail(256)) {
+				nav_tex = f.GetThumbnailTexture(256);
+			}
+			quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),nav_tex);
+			if (NULL != nav_tex)
+			{
+				g_object_unref(nav_tex);
+			}
+		}
+
+		GdkTexture *cached_thumb = m_ThumbnailCache.GetTexture(f.GetURI());
+		if (NULL != cached_thumb)
+		{
+			int w = f.GetWidth();
+			int h = f.GetHeight();
+			if (w <= 0 || h <= 0)
+			{
+				w = gdk_texture_get_width(cached_thumb);
+				h = gdk_texture_get_height(cached_thumb);
+			}
+			if (4 < f.GetOrientation())
+			{
+				swap(w, h);
+			}
+			quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(m_pImageView), cached_thumb, w, h, TRUE);
+			g_object_unref(cached_thumb);
 		}
 		
 		LoadImage(f);
@@ -4408,6 +4427,20 @@ viewer_navigation_button_press_event(GtkGestureClick *gesture, gint n_press, gdo
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)userdata;
 	
+	QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+	GdkTexture *nav_tex = NULL;
+	if (f.HasThumbnail(128)) {
+		nav_tex = f.GetThumbnailTexture(128);
+	}
+	if (NULL == nav_tex && f.HasThumbnail(256)) {
+		nav_tex = f.GetThumbnailTexture(256);
+	}
+	quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(pViewerImpl->m_pNavigationControl),nav_tex);
+	if (NULL != nav_tex)
+	{
+		g_object_unref(nav_tex);
+	}
+
 	gtk_widget_set_visible(pViewerImpl->m_pNavigationWindow, TRUE);
 
 	gint w,h;
@@ -7397,6 +7430,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(m_pIconView), bFilmstrip);
 	m_ThumbnailLoader.SetIconDimensions(iIconSize, iIconSize);
 	m_ThumbnailLoader.SetMapped(gtk_widget_get_mapped(m_pIconView));
+	m_ThumbnailLoader.SetNumCachePages(3);
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(viewer_iconview_cell_activated),this);
@@ -7462,6 +7496,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	}
 	gboolean bQuickPreview = (gboolean)prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_QUICK_PREVIEW, true);
 	m_ImageLoader.EnableQuickPreview(bQuickPreview);
+	m_ImageLoader.SetThumbnailCache(&m_ThumbnailCache);
 	
 
 	// set up the gstreamer pipeline
@@ -9048,12 +9083,6 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 		return;
 
 	bool is_mapped = m_bMapped.load(std::memory_order_relaxed);
-	bool is_working = m_pViewerImpl->m_ImageLoader.IsWorking();
-
-	if (is_working)
-	{
-		usleep(100000);
-	}
 
 	if (is_mapped && m_pViewerImpl->m_ImageListPtr && item.m_ulIndex < m_pViewerImpl->m_ImageListPtr->GetSize())
 	{
@@ -9068,8 +9097,6 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 		 * whose aspect ratio is far from the square cell.  Thumbnails always
 		 * stay proportional (aspect-ratio preserving), both here and in the
 		 * freedesktop.org thumbnail cache. */
-		guint uiLoadW = bSquare ? uiWidth * 2 : uiWidth;
-		guint uiLoadH = bSquare ? uiHeight * 2 : uiHeight;
 
 		GdkTexture *texture = NULL;
 		texture = m_pViewerImpl->m_ThumbnailCache.GetTexture(f.GetURI());				
@@ -9089,19 +9116,26 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 			thumb_width = gdk_texture_get_width(texture);
 			thumb_height = gdk_texture_get_height(texture);
 			
-			quiver_rect_get_bound_size(uiLoadW,uiLoadH, &bound_width,&bound_height,FALSE);
-			if (thumb_width != bound_width || thumb_height != bound_height)
+			quiver_rect_get_bound_size(uiWidth, uiHeight, &bound_width, &bound_height, FALSE);
+			if (bound_width > 0 && bound_height > 0 && thumb_width == bound_width && thumb_height == bound_height)
 			{
-				// need a new thumbnail because the current cached size
-				// is not the same as the size needed
+				// Cache hit! Thumbnail is already present in cache at the target size.
 				g_object_unref(texture);
-				texture = NULL;
+				return;
 			}
-				
+
+			// need a new thumbnail because the current cached size
+			// is not the same as the size needed
+			g_object_unref(texture);
+			texture = NULL;
 		}
 
 		if (NULL == texture)
 		{
+			if (m_pViewerImpl->m_ImageLoader.IsWorking())
+			{
+				usleep(2000);
+			}
 			/* In square mode fetch a 2x source so the center-crop keeps its
 			 * resolution when the image aspect differs a lot from the cell. */
 			guint iMaxSide = std::max(uiWidth,uiHeight);
@@ -9140,7 +9174,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 			pInvData->iconview = m_pViewerImpl->m_pIconView;
 			pInvData->index = item.m_ulIndex;
 			pInvData->aliveToken = m_spAlive;
-			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_invalidate_cell_v, pInvData, NULL); } else { idle_invalidate_cell_v(pInvData); }
+			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_invalidate_cell_v, pInvData, NULL); } else { idle_invalidate_cell_v(pInvData); }
 		}
 	}
 }
@@ -9180,7 +9214,7 @@ void Viewer::ViewerImpl::ViewerThumbLoader::SetIsRunning(bool bIsRunning)
 	pData->statusbar = m_pViewerImpl->m_StatusbarPtr.get();
 	pData->is_running = bIsRunning;
 	pData->aliveToken = m_spAlive;
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_set_is_running_v, pData, NULL); } else { idle_set_is_running_v(pData); }
+	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_set_is_running_v, pData, NULL); } else { idle_set_is_running_v(pData); }
 }
 
 void Viewer::ViewerImpl::ViewerThumbLoader::SetCacheSize(guint uiCacheSize)

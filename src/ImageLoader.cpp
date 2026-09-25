@@ -224,6 +224,7 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 	
 	AddPixbufLoaderObserver(this);
 	m_iLoadOrientation = 1;
+	m_pThumbnailCache = nullptr;
 
 	m_bStopThread = false;
 	m_bWorking = false;
@@ -475,13 +476,25 @@ bool ImageLoader::LoadQuickPreview()
 	{
 		GdkTexture *thumb_tex = NULL;
 		
-		if (m_Command.quiverFile.HasThumbnail(256))
+		if (m_pThumbnailCache)
+		{
+			thumb_tex = m_pThumbnailCache->GetTexture(m_Command.quiverFile.GetURI());
+		}
+		if (NULL == thumb_tex && m_Command.quiverFile.HasThumbnail(256))
 		{
 			thumb_tex = m_Command.quiverFile.GetThumbnailTexture(256);
+			if (NULL != thumb_tex && m_pThumbnailCache)
+			{
+				m_pThumbnailCache->AddTexture(m_Command.quiverFile.GetURI(), thumb_tex);
+			}
 		}
 		if (NULL == thumb_tex && m_Command.quiverFile.HasThumbnail(128))
 		{
 			thumb_tex = m_Command.quiverFile.GetThumbnailTexture(128);
+			if (NULL != thumb_tex && m_pThumbnailCache)
+			{
+				m_pThumbnailCache->AddTexture(m_Command.quiverFile.GetURI(), thumb_tex);
+			}
 		}
 	
 		if (NULL != thumb_tex)
@@ -497,12 +510,22 @@ bool ImageLoader::LoadQuickPreview()
 			bool bVideo = m_Command.quiverFile.IsVideo();
 			if (bVideo)
 			{
-				gint vw = 0, vh = 0;
-				if (QuiverVideoOps::Probe(m_Command.quiverFile.GetURI(), NULL, &vw, &vh, NULL, NULL)
-					&& vw > 0 && vh > 0)
+				if (m_Command.quiverFile.IsWidthHeightSet())
 				{
-					width = vw;
-					height = vh;
+					width = m_Command.quiverFile.GetWidth();
+					height = m_Command.quiverFile.GetHeight();
+				}
+				else
+				{
+					gint vw = 0, vh = 0;
+					if (QuiverVideoOps::Probe(m_Command.quiverFile.GetURI(), NULL, &vw, &vh, NULL, NULL, abort_video_load, this)
+						&& vw > 0 && vh > 0)
+					{
+						width = vw;
+						height = vh;
+						m_Command.quiverFile.SetWidth(vw);
+						m_Command.quiverFile.SetHeight(vh);
+					}
 				}
 			}
 			
@@ -640,9 +663,10 @@ void ImageLoader::Load()
 				{
 					Timer loadTimer;
 					gint n=1, d=1;
+					gint vw = 0, vh = 0;
 					texture = ImageDecoder::DecodeVideoTexture(m_Command.quiverFile.GetURI(), &n, &d,
 						-1, m_Command.params.max_width, m_Command.params.max_height,
-						abort_video_load, this);
+						abort_video_load, this, &vw, &vh);
 					if (NULL == texture && CommandsPending())
 						bAborted = true;
 					if (NULL != texture)
@@ -652,21 +676,7 @@ void ImageLoader::Load()
 						guint tex_width  = gdk_texture_get_width(texture);
 						guint tex_height = gdk_texture_get_height(texture);
 
-						/* Store the TRUE frame dimensions so the "actual size"
-						 * view renders the real display size.  Only correct a
-						 * value when it disagrees with what this decode knows;
-						 * leave thumbnail-metadata dimensions alone when they
-						 * already match. */
-						gint vw = 0, vh = 0;
-						gint pn = 1, pd = 1; /* probe reports coded dims + PAR */
-						if (QuiverVideoOps::Probe(m_Command.quiverFile.GetURI(), NULL, &vw, &vh, &pn, &pd) && vw > 0 && vh > 0)
-						{
-							if (pn > pd)
-								vw = (gint)((vw * pn) / double(pd) + .5);
-							else
-								vh = (gint)((vh * pd) / double(pn) + .5);
-						}
-						else
+						if (vw <= 0 || vh <= 0)
 						{
 							vw = (gint)tex_width;
 							vh = (gint)tex_height;
@@ -959,25 +969,28 @@ if (NULL != anim_frames && anim_count >= 2)
 				{
 					Timer loadTimer;
 					gint n=1, d=1;
+					gint vw = 0, vh = 0;
 					cache_texture = ImageDecoder::DecodeVideoTexture(m_Command.quiverFile.GetURI(), &n, &d,
 						-1, m_Command.params.max_width, m_Command.params.max_height,
-						abort_video_load, this);
+						abort_video_load, this, &vw, &vh);
 					if (NULL == cache_texture && CommandsPending())
 						bAborted = true;
 					if (NULL != cache_texture)
 					{
-						guint tex_width  = gdk_texture_get_width(cache_texture);
-						guint tex_height = gdk_texture_get_height(cache_texture);
-
-						if (n > d)
-							tex_width = (guint)((tex_width * n) / float(d) + .5);
-						else
-							tex_height = (guint)((tex_height * d) / float(n) + .5);
+						if (vw <= 0 || vh <= 0)
+						{
+							vw = (gint)gdk_texture_get_width(cache_texture);
+							vh = (gint)gdk_texture_get_height(cache_texture);
+							if (n > d)
+								vw = (gint)((vw * n) / double(d) + .5);
+							else if (d > n)
+								vh = (gint)((vh * d) / double(n) + .5);
+						}
 
 						if (!m_Command.quiverFile.IsWidthHeightSet())
 						{
-							m_Command.quiverFile.SetWidth(tex_width);
-							m_Command.quiverFile.SetHeight(tex_height);
+							m_Command.quiverFile.SetWidth(vw);
+							m_Command.quiverFile.SetHeight(vh);
 						}
 
 						m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());

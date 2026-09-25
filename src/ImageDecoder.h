@@ -88,7 +88,9 @@ public:
                                          gint target_width = 0,
                                          gint target_height = 0,
                                          QuiverVideoOps::VideoAbortFn abort_fn = NULL,
-                                         gpointer abort_data = NULL);
+                                         gpointer abort_data = NULL,
+                                         gint *natural_width = NULL,
+                                         gint *natural_height = NULL);
 #endif
 
     // Decode still-frame preview from video container as modern GdkTexture
@@ -99,7 +101,9 @@ public:
                                           gint target_width = 0,
                                           gint target_height = 0,
                                           QuiverVideoOps::VideoAbortFn abort_fn = NULL,
-                                          gpointer abort_data = NULL);
+                                          gpointer abort_data = NULL,
+                                          gint *natural_width = NULL,
+                                          gint *natural_height = NULL);
 
 private:
     static ImageDecoderBackend s_backend;

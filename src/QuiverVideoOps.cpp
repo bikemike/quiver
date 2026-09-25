@@ -160,8 +160,8 @@ static VideoSession open_session(const gchar* uri, VideoAbortFn abort_fn = NULL,
 	s.fmt->interrupt_callback.opaque = s.cb_ctx.get();
 
 	AVDictionary* opts = NULL;
-	av_dict_set(&opts, "probesize", "5000000", 0); // 5 MB
-	av_dict_set(&opts, "analyzeduration", "2000000", 0); // 2 seconds
+	av_dict_set(&opts, "probesize", "1000000", 0); // 1 MB
+	av_dict_set(&opts, "analyzeduration", "500000", 0); // 500 ms
 
 	if (avformat_open_input(&s.fmt, path.c_str(), NULL, &opts) != 0)
 	{
@@ -209,7 +209,7 @@ static VideoSession open_session(const gchar* uri, VideoAbortFn abort_fn = NULL,
 		return s;
 	}
 
-	s.ctx->thread_count = 1;
+	s.ctx->thread_count = 2;
 	if (avcodec_open2(s.ctx, dec, NULL) < 0)
 	{
 		avcodec_free_context(&s.ctx);
@@ -401,10 +401,32 @@ static GdkTexture* frame_to_texture(AVFrame* frame, int width, int height,
 	}
 }
 
+static void compute_natural_dimensions(int frame_w, int frame_h, int rotation,
+                                      AVRational par_ratio,
+                                      gint* natural_width, gint* natural_height)
+{
+	if (natural_width == NULL && natural_height == NULL)
+		return;
+
+	int nat_w = frame_w;
+	int nat_h = frame_h;
+	if (par_ratio.num > par_ratio.den)
+		nat_w = (gint)((nat_w * par_ratio.num) / (double)par_ratio.den + .5);
+	else if (par_ratio.den > par_ratio.num)
+		nat_h = (gint)((nat_h * par_ratio.den) / (double)par_ratio.num + .5);
+
+	if (rotation == 90 || rotation == 270)
+		std::swap(nat_w, nat_h);
+
+	if (natural_width) *natural_width = nat_w;
+	if (natural_height) *natural_height = nat_h;
+}
+
 static GdkTexture* grab_frame_texture(const gchar* uri,
 	gint64 position_ns, gint target_width, gint target_height,
 	gint* aspect_n, gint* aspect_d,
-	VideoAbortFn abort_fn, gpointer abort_data)
+	VideoAbortFn abort_fn, gpointer abort_data,
+	gint* natural_width = NULL, gint* natural_height = NULL)
 {
 	GdkTexture* result = NULL;
 
@@ -480,6 +502,7 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 				result = frame_to_texture(frame, frame_w, frame_h,
 				                          par_ratio.num, par_ratio.den,
 				                          target_width, target_height, rotation);
+				compute_natural_dimensions(frame_w, frame_h, rotation, par_ratio, natural_width, natural_height);
 				av_frame_unref(frame);
 				goto done;
 			}
@@ -494,6 +517,7 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 					result = frame_to_texture(frame, frame_w, frame_h,
 					                          par_ratio.num, par_ratio.den,
 					                          target_width, target_height, rotation);
+					compute_natural_dimensions(frame_w, frame_h, rotation, par_ratio, natural_width, natural_height);
 					av_frame_unref(frame);
 					goto done;
 				}
@@ -516,6 +540,7 @@ done:
 		result = frame_to_texture(last_frame, last_w, last_h,
 		                          par_ratio.num, par_ratio.den,
 		                          target_width, target_height, last_rotation);
+		compute_natural_dimensions(last_w, last_h, last_rotation, par_ratio, natural_width, natural_height);
 	}
 	av_packet_free(&pkt);
 	av_frame_free(&frame);
@@ -599,7 +624,8 @@ static GdkPixbuf* frame_to_pixbuf(AVFrame* frame, int width, int height,
 static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 	gint64 position_ns, gint target_width, gint target_height,
 	gint* aspect_n, gint* aspect_d,
-	VideoAbortFn abort_fn, gpointer abort_data)
+	VideoAbortFn abort_fn, gpointer abort_data,
+	gint* natural_width = NULL, gint* natural_height = NULL)
 {
 	GdkPixbuf* result = NULL;
 
@@ -622,6 +648,8 @@ static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 		*aspect_n = par.num;
 		*aspect_d = par.den;
 	}
+
+	AVRational par_ratio = quiver_video_stream_aspect_ratio(st);
 
 	if (position_ns >= 0)
 	{
@@ -672,6 +700,7 @@ static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 			{
 				result = frame_to_pixbuf(frame, frame_w, frame_h,
 				                         target_width, target_height, rotation);
+				compute_natural_dimensions(frame_w, frame_h, rotation, par_ratio, natural_width, natural_height);
 				av_frame_unref(frame);
 				goto done_pixbuf;
 			}
@@ -685,6 +714,7 @@ static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 				{
 					result = frame_to_pixbuf(frame, frame_w, frame_h,
 					                         target_width, target_height, rotation);
+					compute_natural_dimensions(frame_w, frame_h, rotation, par_ratio, natural_width, natural_height);
 					av_frame_unref(frame);
 					goto done_pixbuf;
 				}
@@ -706,6 +736,7 @@ done_pixbuf:
 		int last_rotation = frame_rotation_deg(last_frame, st->metadata, st);
 		result = frame_to_pixbuf(last_frame, last_w, last_h,
 		                         target_width, target_height, last_rotation);
+		compute_natural_dimensions(last_w, last_h, last_rotation, par_ratio, natural_width, natural_height);
 	}
 	av_packet_free(&pkt);
 	av_frame_free(&frame);
@@ -722,11 +753,13 @@ GdkPixbuf* LoadPixbuf(const gchar *uri,
 	gint target_width,
 	gint target_height,
 	VideoAbortFn abort_fn,
-	gpointer abort_data)
+	gpointer abort_data,
+	gint* natural_width,
+	gint* natural_height)
 {
 	return grab_frame_pixbuf(uri, position_ns, target_width, target_height,
 	                         pixel_aspect_ratio_numerator, pixel_aspect_ratio_denominator,
-	                         abort_fn, abort_data);
+	                         abort_fn, abort_data, natural_width, natural_height);
 }
 #endif
 
@@ -737,11 +770,13 @@ GdkTexture* LoadTexture(const gchar *uri,
 	gint target_width,
 	gint target_height,
 	VideoAbortFn abort_fn,
-	gpointer abort_data)
+	gpointer abort_data,
+	gint* natural_width,
+	gint* natural_height)
 {
 	return grab_frame_texture(uri, position_ns, target_width, target_height,
 	                          pixel_aspect_ratio_numerator, pixel_aspect_ratio_denominator,
-	                          abort_fn, abort_data);
+	                          abort_fn, abort_data, natural_width, natural_height);
 }
 
 gboolean Probe(const gchar *uri,
@@ -749,9 +784,11 @@ gboolean Probe(const gchar *uri,
 	gint* width,
 	gint* height,
 	gint* pixel_aspect_ratio_numerator,
-	gint* pixel_aspect_ratio_denominator)
+	gint* pixel_aspect_ratio_denominator,
+	VideoAbortFn abort_fn,
+	gpointer abort_data)
 {
-	VideoSession s = open_session(uri);
+	VideoSession s = open_session(uri, abort_fn, abort_data);
 	if (!s.ok)
 		return FALSE;
 

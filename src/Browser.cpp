@@ -1076,6 +1076,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	IPixbufLoaderObserverPtr tmp ( new ImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView)) );
 	m_ImageViewPixbufLoaderObserverPtr = tmp;
 	m_ImageLoader.AddPixbufLoaderObserver(m_ImageViewPixbufLoaderObserverPtr.get());
+	m_ImageLoader.SetThumbnailCache(&m_ThumbnailCache);
 
 	gtk_widget_set_visible(m_pBrowserWidget, TRUE);
 	gtk_widget_set_visible(m_pBrowserWidget, FALSE);
@@ -1464,6 +1465,23 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 		
 		if (gtk_widget_get_mapped(m_pImageView))
 		{
+			GdkTexture *cached_thumb = m_ThumbnailCache.GetTexture(f.GetURI());
+			if (NULL != cached_thumb)
+			{
+				int w = f.GetWidth();
+				int h = f.GetHeight();
+				if (w <= 0 || h <= 0)
+				{
+					w = gdk_texture_get_width(cached_thumb);
+					h = gdk_texture_get_height(cached_thumb);
+				}
+				if (4 < f.GetOrientation())
+				{
+					swap(w, h);
+				}
+				quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(m_pImageView), cached_thumb, w, h, TRUE);
+				g_object_unref(cached_thumb);
+			}
 			
 			m_ImageLoader.LoadImageAtSize(f,width,height);
 			
@@ -2154,15 +2172,19 @@ static void iconview_motion_notify(GtkEventControllerMotion *controller, gdouble
 		if (0 <= cx && 0 <= cy && cx < (gint)width && cy < (gint)height)
 		{
 			double percent = double(cx) / width;
-			ImageListPtr lstPtr(new ImageList());
-			lstPtr->SetImageList(f.GetURI());
-			unsigned int listSize = lstPtr->GetSize();
+			if (b->m_strPeekFolderURI != f.GetURI() || !b->m_pPeekImageList)
+			{
+				b->m_strPeekFolderURI = f.GetURI();
+				b->m_pPeekImageList.reset(new ImageList());
+				b->m_pPeekImageList->SetImageList(b->m_strPeekFolderURI.c_str());
+			}
+			unsigned int listSize = b->m_pPeekImageList ? b->m_pPeekImageList->GetSize() : 0;
 			if (0 != listSize)
 			{
 				unsigned int index = (unsigned int)(listSize * percent);
 				index = std::min(index, listSize - 1);
 
-				QuiverFile child = (*lstPtr)[index];
+				QuiverFile child = (*b->m_pPeekImageList)[index];
 
 				std::string uri_old = b->m_mapFolderToFile[f.GetURI()];
 				std::string uri_new = child.GetURI();
@@ -3879,18 +3901,25 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			thumb_height = gdk_texture_get_height(texture);
 			
 			quiver_rect_get_bound_size(uiLoadW,uiLoadH, &bound_width,&bound_height,FALSE);
-			if (thumb_width != bound_width || thumb_height != bound_height)
+			if (bound_width > 0 && bound_height > 0 && thumb_width == bound_width && thumb_height == bound_height)
 			{
-				// need a new thumbnail because the current cached size
-				// is not the same as the size needed
+				// Cache hit! Thumbnail is already present in cache at the target size.
 				g_object_unref(texture);
-				texture = NULL;
+				return;
 			}
-				
+
+			// need a new thumbnail because the current cached size
+			// is not the same as the size needed
+			g_object_unref(texture);
+			texture = NULL;
 		}
 
 		if (NULL == texture)
 		{
+			if (m_pBrowserImpl->m_ImageLoader.IsWorking())
+			{
+				usleep(2000);
+			}
 			guint iMaxSide = std::max(uiLoadW,uiLoadH);
 			texture = f.GetThumbnailTexture(iMaxSide);
 		}
@@ -3928,7 +3957,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			pInvData->iconview = m_pBrowserImpl->m_pIconView;
 			pInvData->index = item.m_ulIndex;
 			pInvData->aliveToken = m_spAlive;
-			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_invalidate_cell, pInvData, NULL); } else { idle_invalidate_cell(pInvData); }
+			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_invalidate_cell, pInvData, NULL); } else { idle_invalidate_cell(pInvData); }
 		}
 	}
 }
@@ -3979,7 +4008,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::SetIsRunning(bool bIsRunning)
 	pData->statusbar = m_pBrowserImpl->m_StatusbarPtr.get();
 	pData->is_running = bIsRunning;
 	pData->aliveToken = m_spAlive;
-	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_HIGH, idle_set_is_running, pData, NULL); } else { idle_set_is_running(pData); }
+	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_set_is_running, pData, NULL); } else { idle_set_is_running(pData); }
 }
 
 void Browser::BrowserImpl::BrowserThumbLoader::SetCacheSize(guint uiCacheSize)

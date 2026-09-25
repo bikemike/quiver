@@ -1408,11 +1408,14 @@ GdkPixbuf* ImageDecoder::DecodeVideoPreview(const gchar *uri,
                                             gint target_width,
                                             gint target_height,
                                             QuiverVideoOps::VideoAbortFn abort_fn,
-                                            gpointer abort_data)
+                                            gpointer abort_data,
+                                            gint *natural_width,
+                                            gint *natural_height)
 {
     return QuiverVideoOps::LoadPixbuf(uri, aspect_n, aspect_d, position_ns,
                                       target_width, target_height,
-                                      abort_fn, abort_data);
+                                      abort_fn, abort_data,
+                                      natural_width, natural_height);
 }
 #endif
 
@@ -1423,11 +1426,14 @@ GdkTexture* ImageDecoder::DecodeVideoTexture(const gchar *uri,
                                              gint target_width,
                                              gint target_height,
                                              QuiverVideoOps::VideoAbortFn abort_fn,
-                                             gpointer abort_data)
+                                             gpointer abort_data,
+                                             gint *natural_width,
+                                             gint *natural_height)
 {
     return QuiverVideoOps::LoadTexture(uri, aspect_n, aspect_d, position_ns,
                                        target_width, target_height,
-                                       abort_fn, abort_data);
+                                       abort_fn, abort_data,
+                                       natural_width, natural_height);
 }
 
 

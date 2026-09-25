@@ -268,7 +268,9 @@ void Statusbar::SetDateTime()
 {
 	if (m_StatusbarImplPtr->m_CurrentQuiverFile.GetURI())
 	{
-		time_t time = m_StatusbarImplPtr->m_CurrentQuiverFile.GetTimeT();
+		time_t time = m_StatusbarImplPtr->m_CurrentQuiverFile.HasCachedTimeT()
+			? m_StatusbarImplPtr->m_CurrentQuiverFile.GetTimeT(true)
+			: m_StatusbarImplPtr->m_CurrentQuiverFile.GetTimeT(false);
 		SetDateTime( time );
 	}	
 }

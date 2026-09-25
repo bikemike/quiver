@@ -71,6 +71,7 @@ public:
 	bool IsWorking();
 	void EnableQuickPreview(bool bQuickPreview){m_bQuickPreview = bQuickPreview;};
 	void SetLoadOrientation(int iLoadOrientation){m_iLoadOrientation=iLoadOrientation;};
+	void SetThumbnailCache(ImageCache* pCache) { m_pThumbnailCache = pCache; }
 	
 private:	
 	void Load();
@@ -93,6 +94,7 @@ private:
 	std::list<IPixbufLoaderObserver*> m_observers;
 
 	ImageCache m_ImageCache;
+	ImageCache* m_pThumbnailCache;
 	
 	typedef struct _Command
 	{
