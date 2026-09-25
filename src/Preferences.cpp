@@ -59,6 +59,7 @@ Preferences::Preferences()
 gboolean Preferences::PreferencesSaveTimeout(gpointer user_data)
 {
 	Preferences *prefs = static_cast<Preferences*>(user_data);
+	prefs->m_iSaveTimerID = 0;
 	prefs->SaveFile(false);
 	return FALSE;
 }

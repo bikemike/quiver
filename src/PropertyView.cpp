@@ -1888,6 +1888,7 @@ static gboolean property_view_idle_load(gpointer data)
 {
 	PropertyView::PropertyViewImpl *pImpl =
 		static_cast<PropertyView::PropertyViewImpl*>(data);
+	pImpl->m_iIdleLoadID = 0;
 	pImpl->LoadProperties();
 	return FALSE;
 }

@@ -667,8 +667,9 @@ static void entry_focus_in ( GtkEventControllerFocus *controller, gpointer user_
 
 static gboolean timeout_hide_location (gpointer data)
 {
-	GtkWidget *widget = (GtkWidget*)data;
-	gtk_widget_set_visible(widget, FALSE);
+	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)data;
+	pBrowserImpl->m_iTimeoutHideLocationID = 0;
+	gtk_widget_set_visible(pBrowserImpl->m_pLocationEntry, FALSE);
 	QuiverUtils::SuppressAllAccelerators(false);
 	return FALSE;
 }
@@ -681,7 +682,7 @@ static void entry_focus_out ( GtkEventControllerFocus *controller, gpointer user
 
 	if (0 == pBrowserImpl->m_iTimeoutHideLocationID)
 	{
-		pBrowserImpl->m_iTimeoutHideLocationID = g_timeout_add(10,timeout_hide_location,pBrowserImpl->m_pLocationEntry);
+		pBrowserImpl->m_iTimeoutHideLocationID = g_timeout_add(10,timeout_hide_location,pBrowserImpl);
 	}
 }
 
@@ -1188,6 +1189,12 @@ Browser::BrowserImpl::~BrowserImpl()
 	{
 		g_source_remove(m_iTimeoutUpdateListID);
 		m_iTimeoutUpdateListID = 0;
+	}
+
+	if (0 != m_iTimeoutHideLocationID)
+	{
+		g_source_remove(m_iTimeoutHideLocationID);
+		m_iTimeoutHideLocationID = 0;
 	}
 
 	if (m_pFolderPeekThreadPool)
