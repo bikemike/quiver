@@ -15,6 +15,8 @@ and manage bookmarks.
 | pkg-config        | Locating libraries            | `pkg-config`                   | `pkgconf-pkg-config`            |
 | GTK 4            | GUI toolkit                   | `libgtk-4-dev`                 | `gtk4-devel`                    |
 | GLib / GIO        | Core library & I/O            | `libglib2.0-dev`               | `glib2-devel`                   |
+| libglycin         | Sandboxed image decoding      | `libglycin-2-dev`, `glycin-loaders` | `glycin-devel`, `glycin-loaders` |
+| libexiv2          | EXIF metadata editing         | `libexiv2-dev`                 | `exiv2-devel`                   |
 | libexif           | EXIF metadata reading         | `libexif-dev`                  | `libexif-devel`                 |
 | SQLite            | Database storage              | `libsqlite3-dev`               | `sqlite-devel`                  |
 | GStreamer 1.0     | Video playback                | `libgstreamer1.0-dev`          | `gstreamer1-devel`              |
@@ -81,6 +83,8 @@ The binary is produced at `build/src/quiver`.
 | Option            | Default                  | Description                         |
 | ----------------- | ------------------------ | ----------------------------------- |
 | `-DCMAKE_BUILD_TYPE` | `Release`            | Build type (e.g. `Debug`, `Release`) |
+| `-DENABLE_GLYCIN` | `ON`                     | Enable libglycin backend for image loading |
+| `-DENABLE_GDK_PIXBUF` | `OFF`                | Enable GdkPixbuf loader backend for image loading |
 | `-DQUIVER_DATADIR` | `<source>/data`      | Directory containing `quiver.ui`    |
 | `-DBUILD_TESTING` | `ON`                    | Build and register tests            |
 
