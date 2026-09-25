@@ -17,6 +17,15 @@ echo "==> Installing into AppDir staging area..."
 rm -rf "${APP_DIR}"
 DESTDIR="${APP_DIR}" cmake --install "${BUILD_DIR}"
 
+if [ -d /usr/libexec/glycin-loaders ]; then
+    mkdir -p "${APP_DIR}/usr/libexec"
+    cp -r /usr/libexec/glycin-loaders "${APP_DIR}/usr/libexec/"
+fi
+if [ -d /usr/share/glycin-loaders ]; then
+    mkdir -p "${APP_DIR}/usr/share"
+    cp -r /usr/share/glycin-loaders "${APP_DIR}/usr/share/"
+fi
+
 echo "==> Downloading linuxdeploy tools..."
 mkdir -p "${BUILD_DIR}/tools"
 cd "${BUILD_DIR}/tools"

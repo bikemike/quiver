@@ -28,6 +28,7 @@ jobs:
             libgstreamer-plugins-bad1.0-dev \
             libexiv2-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
             libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev \
+            libglycin-2-dev glycin-loaders \
             catch2 xvfb \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
@@ -82,7 +83,8 @@ jobs:
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \
             libexiv2-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
-            libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev
+            libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev \
+            libglycin-2-dev glycin-loaders
 
       - name: Build AppImage
         run: ./packaging/appimage/build-appimage.sh
@@ -100,7 +102,7 @@ jobs:
     name: Build Flatpak
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-46
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
       options: --privileged
     steps:
       - name: Checkout source

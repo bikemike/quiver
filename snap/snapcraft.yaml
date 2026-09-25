@@ -46,7 +46,10 @@ parts:
       - libjpeg-dev
       - zlib1g-dev
       - libboost-dev
+      - libglycin-2-dev
     stage-packages:
+      - libglycin-2-0
+      - glycin-loaders
       - gstreamer1.0-plugins-good
       - gstreamer1.0-plugins-bad
       - gstreamer1.0-plugins-ugly
