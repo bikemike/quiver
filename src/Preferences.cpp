@@ -90,9 +90,6 @@ void Preferences::SaveFile(bool bOnExit)
 		gsize clength;
 		gchar *contents = g_key_file_to_data (m_KeyFile, &clength, NULL);
 		g_file_set_contents(g_szConfigFilePath,contents,clength,NULL);
-		fprintf(stderr, "[quiver] %s %s (%" G_GSIZE_FORMAT " bytes)\n",
-			bOnExit ? "saved-on-exit" : "auto-saved",
-			g_szConfigFilePath, clength);
 		g_free(contents);
 		m_bModified = false;
 	}
@@ -100,10 +97,8 @@ void Preferences::SaveFile(bool bOnExit)
 
 Preferences::~Preferences()
 {
-	fprintf(stderr, "[quiver] ~Preferences entered (modified=%d)\n", m_bModified ? 1 : 0);
 	SaveFile(true);
 	g_key_file_free(m_KeyFile);
-
 }
 
 PreferencesPtr Preferences::GetInstance()

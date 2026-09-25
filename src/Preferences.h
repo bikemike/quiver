@@ -22,11 +22,8 @@ public:
 	static void Reset() {
 		if (c_pPreferencesPtr)
 		{
-			fprintf(stderr, "[quiver] Preferences::Reset () refs=%ld\n",
-				(long)c_pPreferencesPtr.use_count());
 			c_pPreferencesPtr->SaveFile(true);
 			c_pPreferencesPtr.reset();
-			fprintf(stderr, "[quiver] Preferences::Reset done\n");
 		}
 	}
 
