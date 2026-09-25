@@ -5560,6 +5560,10 @@ Viewer::ViewerImpl::~ViewerImpl()
 	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
 	m_ImageLoader.RemovePixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
 
+	/* Quiesce the loader before m_ThumbnailCache (which it is bridged to)
+	 * is destroyed below. */
+	m_ImageLoader.StopThread();
+
 	/* popovers are parented to viewer widgets (buttons / icon view); unparent
 	 * them NOW while their parents are still alive, or they would be left with
 	 * a dangling parent pointer when the widget tree below is destroyed */
@@ -7430,7 +7434,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(m_pIconView), bFilmstrip);
 	m_ThumbnailLoader.SetIconDimensions(iIconSize, iIconSize);
 	m_ThumbnailLoader.SetMapped(gtk_widget_get_mapped(m_pIconView));
-	m_ThumbnailLoader.SetNumCachePages(3);
 	quiver_icon_view_set_drag_behavior(QUIVER_ICON_VIEW(m_pIconView),QUIVER_ICON_VIEW_DRAG_BEHAVIOR_SCROLL);
 
 	g_signal_connect(G_OBJECT(m_pIconView),"cell_activated",G_CALLBACK(viewer_iconview_cell_activated),this);

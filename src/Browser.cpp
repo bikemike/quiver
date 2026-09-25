@@ -1149,6 +1149,7 @@ Browser::BrowserImpl::~BrowserImpl()
 
 	m_ImageLoader.RemovePixbufLoaderObserver(m_StatusbarPtr.get());
 	m_ImageLoader.RemovePixbufLoaderObserver(m_ImageViewPixbufLoaderObserverPtr.get());
+	m_ImageLoader.StopThread();
 	
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	gdouble value = gtk_range_get_value (GTK_RANGE(hscale));

@@ -72,6 +72,10 @@ public:
 	void EnableQuickPreview(bool bQuickPreview){m_bQuickPreview = bQuickPreview;};
 	void SetLoadOrientation(int iLoadOrientation){m_iLoadOrientation=iLoadOrientation;};
 	void SetThumbnailCache(ImageCache* pCache) { m_pThumbnailCache = pCache; }
+
+	/* Stop the worker thread and wait for it to exit. Idempotent; ensures
+	 * thread is joined before any caller-owned bridged caches are destroyed. */
+	void StopThread();
 	
 private:	
 	void Load();
@@ -108,6 +112,7 @@ private:
 	
 	bool m_bStopThread;
 	std::atomic<bool> m_bWorking;
+	std::atomic<bool> m_bThreadJoined;
 	int m_iLoadOrientation;
 	bool m_bQuickPreview;
 };

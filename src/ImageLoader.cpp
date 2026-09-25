@@ -228,20 +228,29 @@ ImageLoader::ImageLoader() : m_ImageCache(4)
 
 	m_bStopThread = false;
 	m_bWorking = false;
+	m_bThreadJoined = false;
 	m_bQuickPreview = true;
 	//Timer t("ImageLoader::Start()");
 	pthread_create(&m_pthread_id, NULL, run, this);
 }
 
-ImageLoader::~ImageLoader()
+void ImageLoader::StopThread()
 {
 	pthread_mutex_lock (&m_CommandMutex);
 	m_bStopThread = true;
 	pthread_cond_signal(&m_Condition);
 	pthread_mutex_unlock (&m_CommandMutex);
 
-	pthread_join(m_pthread_id,NULL);
-	
+	if (!m_bThreadJoined.exchange(true))
+	{
+		pthread_join(m_pthread_id, NULL);
+	}
+}
+
+ImageLoader::~ImageLoader()
+{
+	StopThread();
+
 	pthread_cond_destroy(&m_Condition);
 	pthread_mutex_destroy(&m_CommandMutex);
 
