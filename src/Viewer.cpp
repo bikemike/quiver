@@ -92,6 +92,13 @@ static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong c
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
 
+/* Navigation control geometry.  The control is pinned to the bottom-right
+ * corner with the same inset from the right edge as from the bottom one; the
+ * fallbacks are only used before the widgets have been measured. */
+#define NAV_CONTROL_EDGE_MARGIN    16
+#define NAV_CONTROL_FALLBACK_WIDTH 154 /* max control size + pill padding/border */
+#define PILL_ROW_FALLBACK_WIDTH    540
+
 static void viewer_radio_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data);
 
@@ -112,10 +119,7 @@ static void viewer_volume_value_changed (GtkRange *range, gdouble value, gpointe
 
 static gboolean viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble value, gpointer user_data);
 
-static void viewer_navigation_button_press_event(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer userdata);
-void navigation_control_button_release_event (GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer userdata);
-// FIXME: remove
-//static GtkTableChild * GetGtkTableChild(GtkTable * table,GtkWidget	*widget_to_get);
+
 
 
 
@@ -760,15 +764,13 @@ public:
 	GtkWidget * m_pScrollbarH;
 	GtkWidget * m_pScrollbarV;
 
-	GtkWidget *m_pNavigationBox;
-
 	GtkWidget *m_pHBox;
 	GtkWidget *m_pVBox;
 	
 	gdouble m_dAdjustmentValueLastH;
 	gdouble m_dAdjustmentValueLastV;
 	
-	GtkWidget *m_pNavigationWindow;
+	GtkWidget *m_pNavControlPill;
 	GtkWidget *m_pNavigationControl;
 
 	GtkWidget* m_pMediaControls;
@@ -934,6 +936,13 @@ public:
 	bool        m_bControlsFadingIn;
 	double      m_dControlsFadeOpacity;
 
+	/* navigation control fade: it only exists while the image is larger than
+	 * the viewport, so it animates in/out instead of popping */
+	guint       m_iTimeoutNavControlFade = 0; // fade animation timer ID (0 = not running)
+	bool        m_bNavControlFadingIn    = false; // true = fading in, false = fading out
+	double      m_dNavControlFadeOpacity = 0.0;  // current opacity during fade
+	bool        m_bNavControlShown       = false; // last applied show state (transition edge)
+
 	gboolean    m_bSeekDragging;
 
 	/* last pointer position in surface coords (to ignore synthetic motion
@@ -998,6 +1007,14 @@ public:
 	void UpdateSlideshowButton();
 	void UpdateHUDTooltips();
 	void UpdateHUDPosition();
+	void UpdateNavigationControl();
+	bool UpdateNavigationControlTexture();
+	void UpdateNavControlPosition();
+	void UpdateNavControlVisibility();
+	void StartNavControlFade(bool fadeIn);
+	void CancelNavControlFade();
+	void ApplyNavControlMinSize(bool bApply);
+	bool IsNavControlNeeded() const;
 	bool IsSlideShowRunning() const { return m_bSlideShowRunning; }
 	bool IsSlideShowPaused() const { return m_bSlideShowPaused; }
 	void SlideShowPause();
@@ -1371,11 +1388,6 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 	gint sb_width = gtk_widget_get_width(pScrollbarV);
 	gint sb_height = gtk_widget_get_height(pScrollbarH);
 	
-	GtkWidget * pNavigationBox = m_pNavigationBox;
-
-// FIXME: remove
-	//GtkTableChild * child = GetGtkTableChild(GTK_TABLE(m_pGrid),m_pImageView);
-	
 	gint area_w = gtk_widget_get_width(m_pGrid);
 	gint area_h = gtk_widget_get_height(m_pGrid);
 
@@ -1389,7 +1401,6 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 		// hide h hide v
 		gtk_widget_set_visible(pScrollbarV, FALSE); 	
 		gtk_widget_set_visible(pScrollbarH, FALSE);
-		gtk_widget_set_visible(pNavigationBox, FALSE);
 
 	}
 	else if ( (area_w < width && area_h < height) ||
@@ -1399,19 +1410,16 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 		// show h show v
 		gtk_widget_set_visible(pScrollbarV, TRUE); 	
 		gtk_widget_set_visible(pScrollbarH, TRUE);
-		gtk_widget_set_visible(pNavigationBox, TRUE);
 	}
 	else if (area_w < width)
 	{
 		// show h hide v
-		gtk_widget_set_visible(pNavigationBox, TRUE);	
 		gtk_widget_set_visible(pScrollbarV, FALSE);
 		gtk_widget_set_visible(pScrollbarH, TRUE);		
 	}
 	else if (area_h < height)
 	{
 		// hide h show v
-		gtk_widget_set_visible(pNavigationBox, TRUE);	
 		gtk_widget_set_visible(pScrollbarH, FALSE);
 		gtk_widget_set_visible(pScrollbarV, TRUE);	
 	}
@@ -1420,7 +1428,6 @@ void Viewer::ViewerImpl::UpdateScrollbars()
 		// hide h hide v
 		gtk_widget_set_visible(pScrollbarV, FALSE); 	
 		gtk_widget_set_visible(pScrollbarH, FALSE);
-		gtk_widget_set_visible(pNavigationBox, FALSE);
 	}
 
 	m_iTimeoutScrollbars = 0;
@@ -1648,23 +1655,8 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		}
 		UpdateCenterPlayButtonVisibility();
 
-		gtk_window_set_default_size (GTK_WINDOW (m_pNavigationWindow),1,1);
 		QuiverFile f = m_ImageListPtr->GetCurrent();
-		if (gtk_widget_get_visible(m_pNavigationWindow))
-		{
-			GdkTexture *nav_tex = NULL;
-			if (f.HasThumbnail(128)) {
-				nav_tex = f.GetThumbnailTexture(128);
-			}
-			if (NULL == nav_tex && f.HasThumbnail(256)) {
-				nav_tex = f.GetThumbnailTexture(256);
-			}
-			quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),nav_tex);
-			if (NULL != nav_tex)
-			{
-				g_object_unref(nav_tex);
-			}
-		}
+		UpdateNavigationControl();
 
 		GdkTexture *cached_thumb = m_ThumbnailCache.GetTexture(f.GetURI());
 		if (NULL != cached_thumb)
@@ -3178,6 +3170,8 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		else
 		{
 			quiver_image_view_rotate(imageview,TRUE);
+			if (pViewerImpl->m_pNavigationControl)
+				quiver_navigation_control_rotate(QUIVER_NAVIGATION_CONTROL(pViewerImpl->m_pNavigationControl), TRUE);
 			pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CW][pViewerImpl->GetCurrentOrientation()] );
 			if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
 			{
@@ -3196,6 +3190,8 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		else
 		{
 			quiver_image_view_rotate(imageview,FALSE);
+			if (pViewerImpl->m_pNavigationControl)
+				quiver_navigation_control_rotate(QUIVER_NAVIGATION_CONTROL(pViewerImpl->m_pNavigationControl), FALSE);
 			pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_ROTATE_CCW][pViewerImpl->GetCurrentOrientation()] );
 			if (pViewerImpl->m_ImageListPtr && pViewerImpl->m_ImageListPtr->GetSize() > 0)
 			{
@@ -3208,11 +3204,15 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	else if (0 == strcmp(szAction,ACTION_VIEWER_FLIP_H) || 0 == strcmp(szAction,ACTION_VIEWER_FLIP_H_2))
 	{
 		quiver_image_view_flip(imageview,TRUE);
+		if (pViewerImpl->m_pNavigationControl)
+			quiver_navigation_control_flip(QUIVER_NAVIGATION_CONTROL(pViewerImpl->m_pNavigationControl), TRUE);
 		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_FLIP_H][pViewerImpl->GetCurrentOrientation()] );
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_FLIP_V) || 0 == strcmp(szAction,ACTION_VIEWER_FLIP_V_2))
 	{
 		quiver_image_view_flip(imageview,FALSE);
+		if (pViewerImpl->m_pNavigationControl)
+			quiver_navigation_control_flip(QUIVER_NAVIGATION_CONTROL(pViewerImpl->m_pNavigationControl), FALSE);
 		pViewerImpl->SetCurrentOrientation( orientation_matrix[ORIENTATION_FLIP_V][pViewerImpl->GetCurrentOrientation()] );
 	}
 	else if (0 == strcmp(szAction,ACTION_VIEWER_VIDEO_PLAY) || 0 == strcmp(szAction,ACTION_VIEWER_VIDEO_PLAY_2))
@@ -4420,65 +4420,6 @@ static void viewer_volume_button_middle_click_cb(GtkGestureClick *gesture, gint 
 }
 
 
-static void
-viewer_navigation_button_press_event(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer userdata)
-{
-	(void)gesture; (void)n_press;
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)userdata;
-	
-	QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
-	GdkTexture *nav_tex = NULL;
-	if (f.HasThumbnail(128)) {
-		nav_tex = f.GetThumbnailTexture(128);
-	}
-	if (NULL == nav_tex && f.HasThumbnail(256)) {
-		nav_tex = f.GetThumbnailTexture(256);
-	}
-	quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(pViewerImpl->m_pNavigationControl),nav_tex);
-	if (NULL != nav_tex)
-	{
-		g_object_unref(nav_tex);
-	}
-
-	gtk_widget_set_visible(pViewerImpl->m_pNavigationWindow, TRUE);
-
-	gint w,h;
-	gtk_window_get_default_size(GTK_WINDOW (pViewerImpl->m_pNavigationWindow),&w,&h);
-  	int ww, wh, pos_x,pos_y;
-  	ww = w+2;
-  	wh = h+2;
-  	
-  	pos_x = (int)x - ww/2;
-  	pos_y = (int)y - wh/2;
-  		
-	
-  	GdkDisplay *display = gdk_display_get_default();
-    GdkMonitor *monitor = gdk_display_get_monitor_at_surface(display, gtk_native_get_surface(gtk_widget_get_native(pViewerImpl->m_pNavigationWindow)));
-    GdkRectangle workarea;
-    gdk_monitor_get_geometry(monitor, &workarea);
-    if (workarea.width < pos_x + ww)
-        pos_x = workarea.width - ww;
-    else if (0 > pos_x)
-        pos_x = 0;
-    if (workarea.height < pos_y + wh)
-        pos_y = workarea.height - wh;
-  	else if (0 > pos_y)
-  		pos_y = 0;
-	
-	GdkDisplay* nav_display = gtk_widget_get_display(GTK_WIDGET(gtk_widget_get_root(pViewerImpl->m_pNavigationWindow)));
-	(void)nav_display;
-}
-
-void navigation_control_button_release_event (GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer data )
-{
-	(void)gesture; (void)n_press; (void)x; (void)y;
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)data;
-
-	gtk_widget_set_visible(pViewerImpl->m_pNavigationWindow, FALSE);
-}
-
 static GdkContentProvider* signal_drag_source_prepare(GtkDragSource *source, gdouble x, gdouble y, gpointer user_data)
 { (void)x; (void)y; 
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
@@ -5548,6 +5489,11 @@ Viewer::ViewerImpl::~ViewerImpl()
 	{
 		g_source_remove(m_iTimeoutControlsFade);
 		m_iTimeoutControlsFade = 0;
+	}
+	if (0 != m_iTimeoutNavControlFade)
+	{
+		g_source_remove(m_iTimeoutNavControlFade);
+		m_iTimeoutNavControlFade = 0;
 	}
 	if (0 != m_iVideoZoomTimeoutID)
 	{
@@ -6757,6 +6703,7 @@ static void viewer_shortcuts_changed_cb(gpointer user_data)
 
 Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) : 
 	
+	m_pHBox(NULL),
 	m_pTimeElapsedLabel(NULL),
 	m_pTimeDurationLabel(NULL),
 	m_pControlsBox(NULL),
@@ -6905,7 +6852,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		".submenu-icon-btn { border-radius: 6px; min-width: 2.2em; min-height: 2.2em; padding: 4px; }\n"
 		".center-play-btn { border-radius: 9999px; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; outline: none; padding: 0; min-width: 76px; min-height: 76px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.35); }\n"
 		".center-play-btn:hover { background-color: rgba(10, 10, 10, 0.85); border: none; }\n"
-		".center-play-btn:focus, .center-play-btn:focus-visible { outline: none; border: none; }\n");
+		".center-play-btn:focus, .center-play-btn:focus-visible { outline: none; border: none; }\n"
+		".nav-control-pill { border-radius: 10px; padding: 6px; background-color: alpha(#000, 0.65); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.15); }\n");
 	gtk_style_context_add_provider_for_display(gdk_display_get_default(),
 		GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
 	g_object_unref(cssProvider);
@@ -6918,6 +6866,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutSlideshowID = 0;
 	m_pSlideShowPausedPill = NULL;
+	m_pNavControlPill = NULL;
+	m_pNavigationControl = NULL;
 	m_bSlideShowMachineAdvancing = false;
 	m_iTimeoutClickID = 0;
 	m_iTimeoutMouseMotionNotify = 0;
@@ -6952,17 +6902,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	m_pScrollbarV = gtk_scrollbar_new (GTK_ORIENTATION_VERTICAL, m_pAdjustmentV);
 	m_pScrollbarH = gtk_scrollbar_new (GTK_ORIENTATION_HORIZONTAL, m_pAdjustmentH);
-	
-	m_pNavigationBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-
-	GtkWidget *image = gtk_image_new_from_icon_name(get_fullscreen_icon_name(false));
-	gtk_box_append (GTK_BOX (m_pNavigationBox), image);
-
-	{
-		GtkGesture *click = gtk_gesture_click_new();
-		g_signal_connect(click, "pressed", G_CALLBACK(viewer_navigation_button_press_event), this);
-		gtk_widget_add_controller(m_pNavigationBox, GTK_EVENT_CONTROLLER(click));
-	}
 
 	
 
@@ -7474,23 +7413,20 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_visible(m_pHBox, TRUE);
 	gtk_widget_set_visible(m_pHBox, FALSE);
 	
-	m_pNavigationWindow = gtk_window_new ();
+	m_pNavControlPill = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_widget_add_css_class(m_pNavControlPill, "nav-control-pill");
+	gtk_widget_set_halign(m_pNavControlPill, GTK_ALIGN_END);
+	gtk_widget_set_valign(m_pNavControlPill, GTK_ALIGN_END);
+	gtk_widget_set_margin_end(m_pNavControlPill, 16);
+	gtk_widget_set_margin_bottom(m_pNavControlPill, 16);
+	gtk_widget_set_can_target(m_pNavControlPill, TRUE);
+
 	m_pNavigationControl = quiver_navigation_control_new_with_adjustments (m_pAdjustmentH, m_pAdjustmentV);
+	gtk_box_append(GTK_BOX(m_pNavControlPill), m_pNavigationControl);
 
-	// GTK4: navigation control release handled via gesture click controller
-	{
-		GtkGesture *click = gtk_gesture_click_new();
-		g_signal_connect(click, "released", G_CALLBACK(navigation_control_button_release_event), this);
-		gtk_widget_add_controller(m_pNavigationControl, GTK_EVENT_CONTROLLER(click));
-	}
-	gtk_window_set_decorated(GTK_WINDOW(m_pNavigationWindow), FALSE);
-	gtk_window_set_transient_for(GTK_WINDOW(m_pNavigationWindow), GTK_WINDOW(gtk_widget_get_root(m_pImageView)));
-
-	GtkWidget * frame = gtk_frame_new(NULL);
-
-	
-	gtk_frame_set_child (GTK_FRAME(frame), m_pNavigationControl);
-	gtk_window_set_child (GTK_WINDOW(m_pNavigationWindow), frame);
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pNavControlPill);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pNavControlPill, FALSE);
+	gtk_widget_set_visible(m_pNavControlPill, FALSE);
 	
 	bool bShowFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW,true);
 	if (!bShowFilmstrip)
@@ -7793,8 +7729,6 @@ Viewer::Viewer() : m_ViewerImplPtr(new Viewer::ViewerImpl(this))
 Viewer::~Viewer()
 {
 	m_ViewerImplPtr->SlideShowStop(false);
-	
-	gtk_window_destroy(GTK_WINDOW(m_ViewerImplPtr->m_pNavigationWindow));
 }
 
 GtkWidget *Viewer::GetWidget()
@@ -7863,6 +7797,7 @@ void Viewer::Show()
 
 
 	m_ViewerImplPtr->m_ImageListPtr->UnblockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
+	m_ViewerImplPtr->UpdateNavigationControl();
 
 }
 
@@ -8317,6 +8252,7 @@ void Viewer::SlideShowStart()
 	}
 
 	m_ViewerImplPtr->UpdateSlideshowButton();
+	m_ViewerImplPtr->UpdateNavigationControl();
 	m_ViewerImplPtr->UpdateUI();
 }
 
@@ -8687,6 +8623,7 @@ void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
 		m_pViewer->EmitSlideShowStoppedEvent();
 	}
 
+	UpdateNavigationControl();
 	UpdateUI();
 }
 
@@ -8831,6 +8768,230 @@ void Viewer::ViewerImpl::UpdateHUDPosition()
 		if (m_pVolumeButton)
 			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVolumeButton), GTK_ARROW_UP);
 	}
+
+	UpdateNavControlPosition();
+	/* the reserved width depends on where the pill row lives */
+	ApplyNavControlMinSize(m_bNavControlShown);
+}
+
+void Viewer::ViewerImpl::UpdateNavControlPosition()
+{
+	if (!m_pNavControlPill)
+		return;
+
+	/* The nav control is anchored in the bottom-right corner with the same
+	 * inset on both edges, regardless of where the filmstrip lives: it is a
+	 * viewer overlay that only surfaces on pointer hover, so offsetting it
+	 * for the filmstrip would only push it away from the corner the user
+	 * asked for.  A vertical scrollbar occupying the rightmost strip of the
+	 * grid is narrower than this inset, so the control never sits on it. */
+	gtk_widget_set_margin_end(m_pNavControlPill, NAV_CONTROL_EDGE_MARGIN);
+	gtk_widget_set_margin_bottom(m_pNavControlPill, NAV_CONTROL_EDGE_MARGIN);
+}
+
+bool Viewer::ViewerImpl::UpdateNavigationControlTexture()
+{
+	if (!m_pNavigationControl)
+		return false;
+
+	if (!m_ImageListPtr || m_ImageListPtr->GetSize() == 0 || IsVideo())
+	{
+		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+		return false;
+	}
+
+	QuiverFile f = m_ImageListPtr->GetCurrent();
+	GdkTexture *nav_tex = NULL;
+	if (f.HasThumbnail(128)) {
+		nav_tex = f.GetThumbnailTexture(128);
+	}
+	if (NULL == nav_tex && f.HasThumbnail(256)) {
+		nav_tex = f.GetThumbnailTexture(256);
+	}
+	if (NULL == nav_tex) {
+		nav_tex = m_ThumbnailCache.GetTexture(f.GetURI());
+	}
+	if (NULL == nav_tex) {
+		nav_tex = f.GetThumbnailTexture(128);
+	}
+
+	quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), nav_tex);
+	if (NULL != nav_tex)
+	{
+		g_object_unref(nav_tex);
+	}
+	return NULL != nav_tex;
+}
+
+/* The nav control only earns its corner when the image does not fit: with
+ * upper = MAX(viewport, image) on both axes, an upper that exceeds the page
+ * size means there is something to scroll to, i.e. the image is zoomed in or
+ * simply larger than the viewer. */
+bool Viewer::ViewerImpl::IsNavControlNeeded() const
+{
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	if (!prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL, false))
+		return false;
+	if (m_ImageListPtr == NULL || m_ImageListPtr->GetSize() == 0 || IsVideo())
+		return false;
+	if (m_bSlideShowRunning)
+		return false;
+	if (m_pAdjustmentH == NULL || m_pAdjustmentV == NULL)
+		return false;
+
+	const double eps = 0.5;
+	return (gtk_adjustment_get_upper(m_pAdjustmentH) >
+	        gtk_adjustment_get_page_size(m_pAdjustmentH) + eps) ||
+	       (gtk_adjustment_get_upper(m_pAdjustmentV) >
+	        gtk_adjustment_get_page_size(m_pAdjustmentV) + eps);
+}
+
+void Viewer::ViewerImpl::ApplyNavControlMinSize(bool bApply)
+{
+	if (m_pHBox == NULL)
+		return;
+
+	if (!bApply)
+	{
+		gtk_widget_set_size_request(m_pHBox, -1, -1);
+		return;
+	}
+
+	PreferencesPtr prefs = Preferences::GetInstance();
+	int hudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
+	if (hudPos == HUD_POS_TOP)
+	{
+		/* the pill row sits at the top, far away from the bottom-right
+		 * corner: nothing to keep clear of */
+		gtk_widget_set_size_request(m_pHBox, -1, -1);
+		return;
+	}
+
+	/* The nav control and the pill row are both anchored to the bottom, so
+	 * they can only be kept apart horizontally.  Measure what is actually
+	 * there (theme, font scale and the set of visible pill buttons all move
+	 * these numbers) and reserve just enough width that the control can
+	 * never end up on top of - and swallowing clicks from - the pill row. */
+	int nav_min = 0, nav_nat = 0;
+	int bar_min = 0, bar_nat = 0;
+	if (m_pNavControlPill)
+		gtk_widget_measure(m_pNavControlPill, GTK_ORIENTATION_HORIZONTAL, -1, &nav_min, &nav_nat, NULL, NULL);
+	if (m_pViewerOverlayBar)
+		gtk_widget_measure(m_pViewerOverlayBar, GTK_ORIENTATION_HORIZONTAL, -1, &bar_min, &bar_nat, NULL, NULL);
+
+	int nav_w = MAX(nav_min, nav_nat);
+	if (nav_w <= 0)
+		nav_w = NAV_CONTROL_FALLBACK_WIDTH;
+	int bar_w = MAX(bar_min, bar_nat);
+	if (bar_w <= 0)
+		bar_w = PILL_ROW_FALLBACK_WIDTH;
+
+	/* pill row centred  ->  bar_w/2 + inset + nav_w must fit on one side,
+	 * and the pill row itself has to fit across the whole viewer */
+	int min_w = bar_w / 2 + NAV_CONTROL_EDGE_MARGIN + nav_w;
+	min_w = MAX(min_w, bar_w + 2 * NAV_CONTROL_EDGE_MARGIN);
+
+	gtk_widget_set_size_request(m_pHBox, min_w, -1);
+}
+
+static gboolean nav_control_fade_cb(gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+
+	if (p->m_bNavControlFadingIn)
+	{
+		p->m_dNavControlFadeOpacity = MIN(p->m_dNavControlFadeOpacity + FADE_STEP, 1.0);
+		gtk_widget_set_opacity(p->m_pNavControlPill, p->m_dNavControlFadeOpacity);
+		if (p->m_dNavControlFadeOpacity >= 1.0)
+		{
+			p->m_iTimeoutNavControlFade = 0;
+			return G_SOURCE_REMOVE;
+		}
+	}
+	else
+	{
+		p->m_dNavControlFadeOpacity = MAX(p->m_dNavControlFadeOpacity - FADE_STEP, 0.0);
+		gtk_widget_set_opacity(p->m_pNavControlPill, p->m_dNavControlFadeOpacity);
+		if (p->m_dNavControlFadeOpacity <= 0.0)
+		{
+			gtk_widget_set_visible(p->m_pNavControlPill, FALSE);
+			p->ApplyNavControlMinSize(false);
+			p->m_iTimeoutNavControlFade = 0;
+			return G_SOURCE_REMOVE;
+		}
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+void Viewer::ViewerImpl::CancelNavControlFade()
+{
+	if (0 != m_iTimeoutNavControlFade)
+	{
+		g_source_remove(m_iTimeoutNavControlFade);
+		m_iTimeoutNavControlFade = 0;
+	}
+}
+
+void Viewer::ViewerImpl::StartNavControlFade(bool fadeIn)
+{
+	CancelNavControlFade();
+	m_bNavControlFadingIn = fadeIn;
+	m_iTimeoutNavControlFade = g_timeout_add(FADE_INTERVAL, nav_control_fade_cb, this);
+}
+
+/* Zoom/resize driver: cheap enough to run on every adjustment change, it
+ * only does work on a transition edge. */
+void Viewer::ViewerImpl::UpdateNavControlVisibility()
+{
+	if (NULL == m_pNavControlPill)
+		return;
+
+	bool bNeeded = IsNavControlNeeded();
+	if (bNeeded)
+	{
+		UpdateNavControlPosition();
+		/* without a thumbnail there is nothing to draw: leave the state
+		 * untouched so a later call can still show the control once one
+		 * lands */
+		bNeeded = UpdateNavigationControlTexture();
+	}
+
+	if (bNeeded == m_bNavControlShown)
+		return;
+
+	m_bNavControlShown = bNeeded;
+
+	if (bNeeded)
+	{
+		/* keep the control out of the pill row's way for as long as it is
+		 * on screen, then fade it in from the current opacity */
+		ApplyNavControlMinSize(true);
+		if (m_dNavControlFadeOpacity >= 1.0)
+			m_dNavControlFadeOpacity = 0.0;
+		gtk_widget_set_opacity(m_pNavControlPill, m_dNavControlFadeOpacity);
+		gtk_widget_set_visible(m_pNavControlPill, TRUE);
+		StartNavControlFade(true);
+	}
+	else if (gtk_widget_get_visible(m_pNavControlPill))
+	{
+		StartNavControlFade(false);
+	}
+	else
+	{
+		CancelNavControlFade();
+		ApplyNavControlMinSize(false);
+	}
+}
+
+void Viewer::ViewerImpl::UpdateNavigationControl()
+{
+	if (NULL == m_pNavControlPill || NULL == m_pNavigationControl)
+		return;
+
+	if (!IsNavControlNeeded())
+		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+
+	UpdateNavControlVisibility();
 }
 
 static gboolean timeout_update_scrollbars(gpointer user_data)
@@ -8847,7 +9008,12 @@ static gboolean timeout_update_scrollbars(gpointer user_data)
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data)
 { (void)adjustment; 
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	
+
+	/* "changed" fires whenever the image stops fitting the viewport (zoom,
+	 * view mode, window resize): that is exactly when the nav control has to
+	 * fade in or out. */
+	pViewerImpl->UpdateNavControlVisibility();
+
 	if (0 != pViewerImpl->m_iTimeoutScrollbars)
 	{
 		g_source_remove(pViewerImpl->m_iTimeoutScrollbars);
@@ -9014,6 +9180,10 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		else if (QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE == event->GetKey() )
 		{
 			parent->UpdateScrollbars();
+		}
+		else if (QUIVER_PREFS_VIEWER_NAV_CONTROL == event->GetKey() )
+		{
+			parent->UpdateNavigationControl();
 		}
 	}
 	else if (QUIVER_PREFS_SLIDESHOW == event->GetSection() )
@@ -9225,4 +9395,19 @@ void Viewer::ViewerImpl::ViewerThumbLoader::SetCacheSize(guint uiCacheSize)
 	if (IsStopped() || !m_spAlive || !*m_spAlive || !m_pViewerImpl)
 		return;
 	m_pViewerImpl->m_ThumbnailCache.SetSize(uiCacheSize);
+}
+
+GtkWidget *Viewer::GetNavControlPill() const
+{
+	return m_ViewerImplPtr->m_pNavControlPill;
+}
+
+GtkWidget *Viewer::GetNavigationControl() const
+{
+	return m_ViewerImplPtr->m_pNavigationControl;
+}
+
+void Viewer::UpdateNavigationControl()
+{
+	m_ViewerImplPtr->UpdateNavigationControl();
 }

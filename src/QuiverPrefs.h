@@ -56,6 +56,7 @@
 #define QUIVER_PREFS_VIEWER_SCROLLBARS_HIDE        "hide_scrollbars"
 #define QUIVER_PREFS_VIEWER_ROTATE_FOR_BEST_FIT    "rotate_for_best_fit"
 #define QUIVER_PREFS_VIEWER_HUD_POSITION           "hud_position"
+#define QUIVER_PREFS_VIEWER_NAV_CONTROL            "nav_control"
 
 // slideshow preferences
 #define QUIVER_PREFS_SLIDESHOW                     "slideshow"
