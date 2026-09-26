@@ -109,6 +109,11 @@ void ShortcutManager::RegisterDefaultActions()
         "Save current video frame to an image file",
         {}, {}, true
     });
+    m_actions.push_back({
+        "VideoMute", "Video Playback", "Mute Audio",
+        "Toggle video audio playback mute",
+        {"m"}, {"m"}, true
+    });
 
     // Image Manipulation
     m_actions.push_back({
