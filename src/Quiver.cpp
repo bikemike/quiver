@@ -338,6 +338,7 @@ public:
 	/* Live "Recently Viewed" menu behind the header-bar recent button (see
 	 * RebuildRecentMenu()). */
 	GMenu *m_pRecentMenu;
+	GtkWidget *m_pRecentPopover;
 	GtkWidget *m_pToolbarRecentBtn;
 	RecentItems m_RecentItems;
 };
@@ -395,6 +396,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pBookmarkMenu = NULL;
 	m_pExternalToolsMenu = NULL;
 	m_pRecentMenu = g_menu_new();
+	m_pRecentPopover = NULL;
 	m_pToolbarRecentBtn = NULL;
 
 	// add ignored extensions
@@ -1339,46 +1341,165 @@ void QuiverImpl::RecordRecentView(const QuiverFile& f)
 
 void QuiverImpl::RebuildRecentMenu()
 {
-	if (NULL == m_pRecentMenu)
+	if (NULL != m_pRecentMenu)
 	{
-		return;
+		while (g_menu_model_get_n_items(G_MENU_MODEL(m_pRecentMenu)) > 0)
+		{
+			g_menu_remove(m_pRecentMenu, 0);
+		}
+
+		if (0 == m_RecentItems.GetSize())
+		{
+			/* Inert placeholder (no action) so the submenu is non-empty. */
+			GMenu *emptySection = g_menu_new();
+			g_menu_append(emptySection, "No recently viewed items", NULL);
+			g_menu_append_section(m_pRecentMenu, NULL, G_MENU_MODEL(emptySection));
+			g_object_unref(emptySection);
+		}
+		else
+		{
+			const std::deque<RecentItems::Entry>& entries = m_RecentItems.GetEntries();
+			GMenu *section = g_menu_new();
+			for (std::deque<RecentItems::Entry>::const_iterator itr = entries.begin();
+					entries.end() != itr; ++itr)
+			{
+				const RecentItems::Entry& entry = *itr;
+				gchar *name = g_path_get_basename(entry.uri.c_str());
+				/* The action takes a string parameter, so the item must carry the
+				 * matching "target" attribute ("action-target" is not a GMenuModel
+				 * attribute); without it GTK renders the row insensitive. */
+				GMenuItem *item = g_menu_item_new(name, NULL);
+				g_free(name);
+				g_menu_item_set_action_and_target_value(item,
+					"quiver." ACTION_QUIVER_OPEN_RECENT,
+					g_variant_new_string(entry.uri.c_str()));
+				g_menu_append_item(section, item);
+				g_object_unref(item);
+			}
+			g_menu_append_section(m_pRecentMenu, NULL, G_MENU_MODEL(section));
+			g_object_unref(section);
+		}
 	}
 
-	while (g_menu_model_get_n_items(G_MENU_MODEL(m_pRecentMenu)) > 0)
+	if (NULL != m_pRecentPopover)
 	{
-		g_menu_remove(m_pRecentMenu, 0);
-	}
+		GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+		gtk_widget_set_margin_start(content_box, 10);
+		gtk_widget_set_margin_end(content_box, 10);
+		gtk_widget_set_margin_top(content_box, 10);
+		gtk_widget_set_margin_bottom(content_box, 10);
 
-	if (0 == m_RecentItems.GetSize())
-	{
-		/* Inert placeholder (no action) so the submenu is non-empty. */
-		GMenu *emptySection = g_menu_new();
-		g_menu_append(emptySection, "No recently viewed items", NULL);
-		g_menu_append_section(m_pRecentMenu, NULL, G_MENU_MODEL(emptySection));
-		g_object_unref(emptySection);
-		return;
-	}
+		GtkWidget *header_lbl = gtk_label_new(NULL);
+		gtk_label_set_markup(GTK_LABEL(header_lbl), "<b>Recently Viewed</b>");
+		gtk_widget_set_halign(header_lbl, GTK_ALIGN_START);
+		gtk_box_append(GTK_BOX(content_box), header_lbl);
 
-	const std::deque<RecentItems::Entry>& entries = m_RecentItems.GetEntries();
-	GMenu *section = g_menu_new();
-	for (std::deque<RecentItems::Entry>::const_iterator itr = entries.begin();
-			entries.end() != itr; ++itr)
-	{
-		const RecentItems::Entry& entry = *itr;
-		gchar *name = g_path_get_basename(entry.uri.c_str());
-		/* The action takes a string parameter, so the item must carry the
-		 * matching "target" attribute ("action-target" is not a GMenuModel
-		 * attribute); without it GTK renders the row insensitive. */
-		GMenuItem *item = g_menu_item_new(name, NULL);
-		g_free(name);
-		g_menu_item_set_action_and_target_value(item,
-			"quiver." ACTION_QUIVER_OPEN_RECENT,
-			g_variant_new_string(entry.uri.c_str()));
-		g_menu_append_item(section, item);
-		g_object_unref(item);
+		if (0 == m_RecentItems.GetSize())
+		{
+			GtkWidget *empty_lbl = gtk_label_new("No recently viewed items");
+			gtk_widget_add_css_class(empty_lbl, "dim-label");
+			gtk_widget_set_margin_top(empty_lbl, 16);
+			gtk_widget_set_margin_bottom(empty_lbl, 16);
+			gtk_widget_set_margin_start(empty_lbl, 24);
+			gtk_widget_set_margin_end(empty_lbl, 24);
+			gtk_box_append(GTK_BOX(content_box), empty_lbl);
+		}
+		else
+		{
+			GtkWidget *sw = gtk_scrolled_window_new();
+			gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
+				GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+			gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(sw), TRUE);
+			gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(sw), 420);
+
+			GtkWidget *flowbox = gtk_flow_box_new();
+			gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(flowbox), GTK_SELECTION_NONE);
+			gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(flowbox), 4);
+			gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(flowbox), 3);
+			gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(flowbox), 6);
+			gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(flowbox), 6);
+
+			const std::deque<RecentItems::Entry>& entries = m_RecentItems.GetEntries();
+			for (std::deque<RecentItems::Entry>::const_iterator itr = entries.begin();
+					entries.end() != itr; ++itr)
+			{
+				const RecentItems::Entry& entry = *itr;
+				GtkWidget *item_btn = gtk_button_new();
+				gtk_widget_add_css_class(item_btn, "flat");
+				gtk_widget_set_can_focus(item_btn, TRUE);
+
+				GtkWidget *item_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+				gtk_widget_set_size_request(item_box, 88, 108);
+
+				QuiverFile qf(entry.uri.c_str());
+				GdkTexture *tex = qf.GetThumbnailTexture(128);
+				GtkWidget *thumb_w = NULL;
+				if (tex)
+				{
+					thumb_w = gtk_picture_new_for_paintable(GDK_PAINTABLE(tex));
+					gtk_picture_set_can_shrink(GTK_PICTURE(thumb_w), TRUE);
+#if GTK_CHECK_VERSION(4, 8, 0)
+					gtk_picture_set_content_fit(GTK_PICTURE(thumb_w), GTK_CONTENT_FIT_CONTAIN);
+#else
+					gtk_picture_set_keep_aspect_ratio(GTK_PICTURE(thumb_w), TRUE);
+#endif
+					g_object_unref(tex);
+				}
+				else
+				{
+					thumb_w = gtk_image_new_from_icon_name(qf.IsVideo() ? "video-x-generic" : "image-x-generic");
+					gtk_image_set_pixel_size(GTK_IMAGE(thumb_w), 64);
+				}
+				gtk_widget_set_size_request(thumb_w, 80, 80);
+				gtk_widget_set_halign(thumb_w, GTK_ALIGN_CENTER);
+				gtk_widget_set_valign(thumb_w, GTK_ALIGN_CENTER);
+				gtk_box_append(GTK_BOX(item_box), thumb_w);
+
+				gchar *name = g_path_get_basename(entry.uri.c_str());
+				GtkWidget *name_lbl = gtk_label_new(name);
+				gtk_label_set_ellipsize(GTK_LABEL(name_lbl), PANGO_ELLIPSIZE_MIDDLE);
+				gtk_label_set_max_width_chars(GTK_LABEL(name_lbl), 11);
+				gtk_label_set_lines(GTK_LABEL(name_lbl), 1);
+				gtk_widget_set_size_request(name_lbl, 80, -1);
+				gtk_widget_set_halign(name_lbl, GTK_ALIGN_CENTER);
+				gtk_box_append(GTK_BOX(item_box), name_lbl);
+
+				gtk_button_set_child(GTK_BUTTON(item_btn), item_box);
+				gtk_widget_set_tooltip_text(item_btn, name);
+				g_free(name);
+
+				struct RecentClickData {
+					QuiverImpl* pQuiver;
+					std::string uri;
+				};
+				RecentClickData* clickData = new RecentClickData{this, entry.uri};
+				g_signal_connect_data(item_btn, "clicked",
+					G_CALLBACK(+[](GtkButton*, gpointer ud) {
+						RecentClickData* d = static_cast<RecentClickData*>(ud);
+						if (d && d->pQuiver)
+						{
+							d->pQuiver->OnOpenRecent(d->uri);
+							if (d->pQuiver->m_pRecentPopover)
+							{
+								gtk_popover_popdown(GTK_POPOVER(d->pQuiver->m_pRecentPopover));
+							}
+						}
+					}),
+					clickData,
+					+[](gpointer ud, GClosure*) {
+						delete static_cast<RecentClickData*>(ud);
+					},
+					(GConnectFlags)0);
+
+				gtk_flow_box_append(GTK_FLOW_BOX(flowbox), item_btn);
+			}
+
+			gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), flowbox);
+			gtk_box_append(GTK_BOX(content_box), sw);
+		}
+
+		gtk_popover_set_child(GTK_POPOVER(m_pRecentPopover), content_box);
 	}
-	g_menu_append_section(m_pRecentMenu, NULL, G_MENU_MODEL(section));
-	g_object_unref(section);
 }
 
 void QuiverImpl::OnOpenRecent(const std::string& uri)
@@ -1879,7 +2000,7 @@ void  Quiver::signal_drag_data_delete  (GtkWidget *widget,GdkDragContext *contex
 
 void Quiver::SetWindowTitle(string s)
 {
-	string title = "quiver - " + s;
+	string title = s.empty() ? "quiver" : "quiver - " + s;
 	gtk_window_set_title (GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow), title.c_str());
 }
 
@@ -2874,13 +2995,16 @@ int main (int argc, char **argv)
 	/* Suppress FFmpeg stderr chatter (demuxer stream warnings, swscaler pixel formats) */
 	av_log_set_level(AV_LOG_ERROR);
 
+	g_set_prgname("quiver");
+	g_set_application_name(_("quiver"));
+
  	/* init threads */
 	//g_type_init ();
 
 	/* Initialize the widget set */
 	gtk_init ();
 
-	g_pApp = gtk_application_new("com.github.bikemike.quiver", G_APPLICATION_NON_UNIQUE);
+	g_pApp = gtk_application_new(NULL, G_APPLICATION_NON_UNIQUE);
 	g_signal_connect(g_pApp, "activate", G_CALLBACK(on_app_activate), NULL);
 
 	gst_init(&argc, &argv);
@@ -3205,12 +3329,14 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 	pQuiverImpl->m_pToolbarRecentBtn   = GTK_WIDGET(gtk_builder_get_object(builder, "button_recent"));
 	if (pQuiverImpl->m_pToolbarRecentBtn)
 	{
-		gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(pQuiverImpl->m_pToolbarRecentBtn),
-			G_MENU_MODEL(pQuiverImpl->m_pRecentMenu));
+		pQuiverImpl->m_pRecentPopover = gtk_popover_new();
+		gtk_menu_button_set_popover(GTK_MENU_BUTTON(pQuiverImpl->m_pToolbarRecentBtn),
+			pQuiverImpl->m_pRecentPopover);
 		/* Must not steal keyboard focus from the content area (same rule as the
 		 * rest of the toolbar/headerbar widgets). */
 		gtk_widget_set_focus_on_click(pQuiverImpl->m_pToolbarRecentBtn, FALSE);
 		gtk_widget_set_focusable(pQuiverImpl->m_pToolbarRecentBtn, FALSE);
+		pQuiverImpl->RebuildRecentMenu();
 	}
 
 	/* Keep the builder alive so its objects stay referenced; the widgets are

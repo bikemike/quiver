@@ -90,6 +90,8 @@ struct AsyncFolderLoadData
 	std::list<QuiverFile> quiverFiles;
 	std::string strCurrentURI;
 	bool bRecursive;
+	bool bHasRecursiveFolders;
+	std::set<std::string> recursiveFolders;
 	bool bSelectFirstItem;
 };
 
@@ -120,7 +122,7 @@ const char* const szFileInfoAttributes =
 	G_FILE_ATTRIBUTE_TIME_MODIFIED ","
 	G_FILE_ATTRIBUTE_TIME_CREATED;
 
-static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncFolderLoadData* pData);
+static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncFolderLoadData* pData, bool bRecursive);
 
 std::vector<std::string> ImageList::m_vectIgnorgedExtensions;
 
@@ -178,7 +180,8 @@ public:
 	 * pMergeExisting is non-NULL its contents are appended (deduped) to the
 	 * folders first, for the Add()/UpdateImageList() merge paths. */
 	void SetAttributes(const std::list<std::string>* pNewFolders,
-		const std::list<std::string>* pMergeExisting, bool bRecursive);
+		const std::list<std::string>* pMergeExisting, bool bRecursive,
+		const std::set<std::string>& recursiveFolders = std::set<std::string>());
 	
 /* member variables */
 	
@@ -903,7 +906,8 @@ bool ImageList::ImageListImpl::SetCurrentImage(string uri)
 
 
 void ImageList::ImageListImpl::SetAttributes(const std::list<std::string>* pNewFolders,
-	const std::list<std::string>* pMergeExisting, bool bRecursive)
+	const std::list<std::string>* pMergeExisting, bool bRecursive,
+	const std::set<std::string>& recursiveFolders)
 {
 	std::list<std::string> combined;
 	if (NULL != pMergeExisting)
@@ -934,16 +938,18 @@ void ImageList::ImageListImpl::SetAttributes(const std::list<std::string>* pNewF
 
 	/* Content-equal definition: keep the existing object so pointer identity
 	 * (shared with e.g. recently-viewed entries) is preserved. */
-	if (m_pAttributes && m_pAttributes->Matches(combined, bRecursive))
+	if (m_pAttributes && m_pAttributes->Matches(combined, bRecursive, recursiveFolders))
 	{
 		m_pAttributes->SetFolders(combined);
 		m_pAttributes->SetRecursive(bRecursive);
+		m_pAttributes->SetRecursiveFolders(recursiveFolders);
 		return;
 	}
 
 	ImageListAttributesPtr attrs(new ImageListAttributes());
 	attrs->SetFolders(combined);
 	attrs->SetRecursive(bRecursive);
+	attrs->SetRecursiveFolders(recursiveFolders);
 	m_pAttributes = attrs;
 }
 
@@ -1467,7 +1473,36 @@ void ImageList::ImageListImpl::PostAsyncSortProgress(gint uiGeneration, double f
 	g_idle_add(async_progress_idle_cb, msg);
 }
 
-static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncFolderLoadData* pData)
+static bool is_folder_in_recursive_set(const std::string& path_or_uri, const char* entry_uri, const std::set<std::string>& recursiveSet)
+{
+	if (recursiveSet.find(path_or_uri) != recursiveSet.end())
+		return true;
+	if (entry_uri && recursiveSet.find(entry_uri) != recursiveSet.end())
+		return true;
+
+	std::string s1 = path_or_uri;
+	if (!s1.empty() && s1.back() == '/') {
+		s1.pop_back();
+		if (recursiveSet.find(s1) != recursiveSet.end()) return true;
+	} else if (!s1.empty()) {
+		s1.push_back('/');
+		if (recursiveSet.find(s1) != recursiveSet.end()) return true;
+	}
+
+	if (entry_uri) {
+		std::string s2 = entry_uri;
+		if (!s2.empty() && s2.back() == '/') {
+			s2.pop_back();
+			if (recursiveSet.find(s2) != recursiveSet.end()) return true;
+		} else if (!s2.empty()) {
+			s2.push_back('/');
+			if (recursiveSet.find(s2) != recursiveSet.end()) return true;
+		}
+	}
+	return false;
+}
+
+static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncFolderLoadData* pData, bool bRecursive)
 {
 	GFileEnumerator* enumerator = g_file_enumerate_children(dir, szFileInfoAttributes,
 			G_FILE_QUERY_INFO_NONE, NULL, NULL);
@@ -1501,10 +1536,10 @@ static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncF
 
 		if (G_FILE_TYPE_DIRECTORY == type)
 		{
-			if (pData->bRecursive)
+			if (bRecursive)
 			{
 				pData->dirs.push_back(child_uri);
-				EnumerateChildren(impl, child, pData);
+				EnumerateChildren(impl, child, pData, bRecursive);
 				if (impl->m_bAbortAsyncLoad || g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
 				{
 					g_object_unref(info);
@@ -1576,7 +1611,15 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 
 			if (G_FILE_TYPE_DIRECTORY == entryType)
 			{
-				EnumerateChildren(impl, entry, pData);
+				bool bFolderRecursive = pData->bRecursive;
+				if (pData->bHasRecursiveFolders)
+				{
+					char* entry_uri = g_file_get_uri(entry);
+					bFolderRecursive = is_folder_in_recursive_set(*itr, entry_uri, pData->recursiveFolders);
+					if (entry_uri)
+						g_free(entry_uri);
+				}
+				EnumerateChildren(impl, entry, pData, bFolderRecursive);
 			}
 			else if (G_FILE_TYPE_REGULAR == entryType && bSingleFile)
 			{
@@ -1588,7 +1631,7 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 					pData->strCurrentURI = file_uri;
 					g_free(file_uri);
 
-					EnumerateChildren(impl, parent, pData);
+					EnumerateChildren(impl, parent, pData, false);
 
 					char* parent_uri = g_file_get_uri(parent);
 					pData->dirs.push_back(parent_uri);
@@ -1748,20 +1791,28 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 	}
 }
 
-void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive, bool bSelectFirstItem, const std::string& strSelectURI)
+void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive, bool bSelectFirstItem, const std::string& strSelectURI, const std::set<std::string>* pRecursiveFolders)
 {
 	ImageListImpl* impl = m_ImageListImplPtr.get();
 
 	impl->StopAsyncLoad();
 	impl->StopAsyncSort();
 
-	/* Record the list definition (folder set + recursive flag) up front, so
+	/* Record the list definition (folder set + recursive flag + recursive folders) up front, so
 	 * GetAttributes() reflects the requested view even while the async load
-	 * is still running.  Snapshot the *previous* recursive flag first: the
+	 * is still running.  Snapshot the *previous* recursive settings first: the
 	 * skip-if-unchanged check below must also detect a pure recursive/non-
 	 * recursive switch for the same folder set. */
+	std::set<std::string> newRecursiveFolders;
+	if (pRecursiveFolders != NULL)
+	{
+		newRecursiveFolders = *pRecursiveFolders;
+	}
+	std::set<std::string> oldRecursiveFolders = (impl->m_pAttributes)
+		? impl->m_pAttributes->GetRecursiveFolders()
+		: std::set<std::string>();
 	gboolean bOldRecursive = (impl->m_pAttributes && impl->m_pAttributes->GetRecursive());
-	impl->SetAttributes(file_list, NULL, bRecursive);
+	impl->SetAttributes(file_list, NULL, bRecursive, newRecursiveFolders);
 
 	if (0 == file_list->size())
 	{
@@ -1802,7 +1853,10 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 			setOldFolders.insert(itr2->first);
 		}
 
-		if (setOldFolders == setNewFolders && bOldRecursive == bRecursive && 0 < impl->m_QuiverFileList.size())
+		if (setOldFolders == setNewFolders &&
+		    bOldRecursive == bRecursive &&
+		    oldRecursiveFolders == newRecursiveFolders &&
+		    0 < impl->m_QuiverFileList.size())
 		{
 			return;
 		}
@@ -1827,6 +1881,15 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	pData->folders = *file_list;
 	pData->bRecursive = bRecursive;
 	pData->bSelectFirstItem = bSelectFirstItem;
+	if (pRecursiveFolders != NULL)
+	{
+		pData->bHasRecursiveFolders = true;
+		pData->recursiveFolders = *pRecursiveFolders;
+	}
+	else
+	{
+		pData->bHasRecursiveFolders = false;
+	}
 
 	impl->m_bAbortAsyncLoad = false;
 	EmitLoadProgress(-1.0, 0, 0);
@@ -1845,7 +1908,8 @@ void ImageList::UpdateImageListAsync(ImageListAttributesPtr attributes, bool bSe
 	 * folder set it describes. */
 	m_ImageListImplPtr->m_pAttributes = attributes;
 	std::list<std::string> folders = attributes->GetFolders();
-	UpdateImageListAsync(&folders, attributes->GetRecursive(), bSelectFirstItem, strSelectURI);
+	std::set<std::string> recursiveFolders = attributes->GetRecursiveFolders();
+	UpdateImageListAsync(&folders, attributes->GetRecursive(), bSelectFirstItem, strSelectURI, &recursiveFolders);
 }
 
 

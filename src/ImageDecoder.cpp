@@ -649,7 +649,7 @@ GdkPixbuf* ImageDecoder::GlycinDecodeFilePixbuf(GFile *file, GCancellable *cance
     if (!loader)
         return NULL;
 
-    gly_loader_set_apply_transformations(loader, FALSE);
+    gly_loader_set_apply_transformations(loader, TRUE);
 
     GlyImage *image = gly_loader_load(loader, error);
     if (!image)
@@ -910,12 +910,15 @@ GdkPixbuf* ImageDecoder::PixbufDecodeFilePixbuf(GFile *file, const char *mimetyp
 
     gdk_pixbuf_loader_close(loader, error);
     GdkPixbuf *pb = gdk_pixbuf_loader_get_pixbuf(loader);
+    GdkPixbuf *oriented = NULL;
     if (pb)
-        g_object_ref(pb);
+    {
+        oriented = gdk_pixbuf_apply_embedded_orientation(pb);
+    }
 
     g_object_unref(loader);
     g_object_unref(inStream);
-    return pb;
+    return oriented;
 }
 #endif
 

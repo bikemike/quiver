@@ -28,7 +28,7 @@ jobs:
             libgstreamer-plugins-bad1.0-dev \
             libexiv2-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
             libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev \
-            libglycin-2-dev glycin-loaders \
+            libgdk-pixbuf-2.0-dev \
             catch2 xvfb \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
@@ -38,6 +38,8 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DENABLE_GLYCIN=OFF \
+            -DENABLE_GDK_PIXBUF=ON \
             -DBUILD_TESTING=ON
 
       - name: Build
@@ -84,7 +86,7 @@ jobs:
             libgstreamer-plugins-bad1.0-dev \
             libexiv2-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
             libsqlite3-dev libjpeg-dev zlib1g-dev libboost-dev \
-            libglycin-2-dev glycin-loaders
+            libgdk-pixbuf-2.0-dev
 
       - name: Build AppImage
         run: ./packaging/appimage/build-appimage.sh

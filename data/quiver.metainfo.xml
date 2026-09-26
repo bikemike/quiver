@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.github.bikemike.quiver</id>
+  <id>quiver.desktop</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
-  <name>Quiver</name>
+  <name>quiver</name>
   <summary>Fast and responsive image viewer and photo manager</summary>
   <description>
     <p>
@@ -27,7 +27,7 @@
   <provides>
     <binary>quiver</binary>
   </provides>
-  <developer id="com.github.bikemike">
+  <developer>
     <name>Mike Morrison</name>
   </developer>
   <releases>

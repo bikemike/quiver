@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=com.github.bikemike.quiver
-Exec=/usr/bin/quiver

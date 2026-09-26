@@ -437,36 +437,44 @@ TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gu
 
         // Children of box: shortcuts list view, separator, bookmarks
         // section, tree list view
-        GtkWidget* first_child = gtk_widget_get_first_child(box);
-        REQUIRE(first_child == sc_widget);
-        GtkWidget* sep = gtk_widget_get_next_sibling(first_child);
+        // Single outer scrollbar wrapping all 3 sections
+        GtkWidget* main_sw = gtk_widget_get_first_child(box);
+        REQUIRE(main_sw != nullptr);
+        REQUIRE(GTK_IS_SCROLLED_WINDOW(main_sw));
+
+        GtkWidget* sw_child = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(main_sw));
+        REQUIRE(sw_child != nullptr);
+        GtkWidget* content_box = GTK_IS_VIEWPORT(sw_child) ? gtk_viewport_get_child(GTK_VIEWPORT(sw_child)) : sw_child;
+        REQUIRE(content_box != nullptr);
+        REQUIRE(GTK_IS_BOX(content_box));
+
+        // Section 1: Shortcuts expander containing sc_widget
+        GtkWidget* sc_expander = gtk_widget_get_first_child(content_box);
+        REQUIRE(sc_expander != nullptr);
+        REQUIRE(GTK_IS_EXPANDER(sc_expander));
+        REQUIRE(gtk_expander_get_child(GTK_EXPANDER(sc_expander)) == sc_widget);
+
+        // Separator between shortcuts and bookmarks/folders
+        GtkWidget* sep = gtk_widget_get_next_sibling(sc_expander);
         REQUIRE(sep != nullptr);
         REQUIRE(GTK_IS_SEPARATOR(sep));
+
+        // Section 2: Bookmarks section containing bookmark expander with bm_widget
         GtkWidget* bm_section = gtk_widget_get_next_sibling(sep);
         REQUIRE(bm_section != nullptr);
         GtkWidget* bm_widget = tree->GetBookmarksWidget();
         REQUIRE(bm_widget != nullptr);
         REQUIRE(GTK_IS_LIST_VIEW(bm_widget));
-        GtkWidget* walk = gtk_widget_get_first_child(bm_section);
-        REQUIRE(walk != nullptr);
-        REQUIRE(GTK_IS_LABEL(walk));
-        GtkWidget* bm_child = gtk_widget_get_next_sibling(walk);
-        REQUIRE(GTK_IS_SCROLLED_WINDOW(bm_child));
-        REQUIRE(gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(bm_child)) == bm_widget);
-        REQUIRE(gtk_scrolled_window_get_propagate_natural_height(GTK_SCROLLED_WINDOW(bm_child)) == TRUE);
-        REQUIRE(gtk_scrolled_window_get_max_content_height(GTK_SCROLLED_WINDOW(bm_child)) == 180);
-        GtkWidget* tree_sibling = gtk_widget_get_next_sibling(bm_section);
-        while (tree_sibling != tree_widget && tree_sibling != nullptr)
-        {
-            if (GTK_IS_SCROLLED_WINDOW(tree_sibling) &&
-                gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(tree_sibling)) == tree_widget)
-            {
-                tree_sibling = tree_widget;
-                break;
-            }
-            tree_sibling = gtk_widget_get_next_sibling(tree_sibling);
-        }
-        REQUIRE(tree_sibling == tree_widget);
+        GtkWidget* bm_expander = gtk_widget_get_first_child(bm_section);
+        REQUIRE(bm_expander != nullptr);
+        REQUIRE(GTK_IS_EXPANDER(bm_expander));
+        REQUIRE(gtk_expander_get_child(GTK_EXPANDER(bm_expander)) == bm_widget);
+
+        // Section 3: Folders expander containing tree_widget
+        GtkWidget* folder_expander = gtk_widget_get_next_sibling(bm_section);
+        REQUIRE(folder_expander != nullptr);
+        REQUIRE(GTK_IS_EXPANDER(folder_expander));
+        REQUIRE(gtk_expander_get_child(GTK_EXPANDER(folder_expander)) == tree_widget);
 
         // Verify CSS classes and styling attributes
         REQUIRE(gtk_widget_has_css_class(box, "sidebar"));
@@ -891,6 +899,10 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
     REQUIRE(handler->bookmarkOpens == 0);
     REQUIRE(selHandler->selectionEvents >= 1);
     REQUIRE(tree->GetSelectedFoldersRecursive() == true);
+    std::set<std::string> rec = tree->GetSelectedRecursiveFolders();
+    REQUIRE(rec.find(uriA) != rec.end());
+    REQUIRE(rec.find(uriB) != rec.end());
+    REQUIRE(rec.find(uriC) == rec.end());
 
     // Checking a SECOND bookmark must NOT clear the first one: the combined
     // selection accumulates, all folders from both bookmarks are present, and
@@ -905,6 +917,10 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
     REQUIRE(std::find(res.begin(), res.end(), uriB) != res.end());
     REQUIRE(std::find(res.begin(), res.end(), uriC) != res.end());
     REQUIRE(tree->GetSelectedFoldersRecursive() == true);
+    rec = tree->GetSelectedRecursiveFolders();
+    REQUIRE(rec.find(uriA) != rec.end());
+    REQUIRE(rec.find(uriB) != rec.end());
+    REQUIRE(rec.find(uriC) == rec.end());
     REQUIRE(handler->bookmarkOpens == 0);
     REQUIRE(selHandler->selectionEvents >= 2);
 
@@ -919,6 +935,7 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
     REQUIRE(res.size() == 1);
     REQUIRE(std::find(res.begin(), res.end(), uriC) != res.end());
     REQUIRE(tree->GetSelectedFoldersRecursive() == false);
+    REQUIRE(tree->GetSelectedRecursiveFolders().empty());
     REQUIRE(handler->bookmarkOpens == 0);
 
     // Unchecking the last bookmark clears the selection entirely.
@@ -1340,6 +1357,119 @@ TEST_CASE("FolderTree Add Bookmark context menu action", "[unit][foldertree][boo
         while (g_main_context_iteration(NULL, FALSE));
         REQUIRE(tree->GetAddBookmarkURIs("").empty());
     }
+}
+
+TEST_CASE("FolderTree collapsible sections", "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* box = tree->GetWidget();
+    REQUIRE(box != nullptr);
+    REQUIRE(GTK_IS_BOX(box));
+
+    // Initially all 3 sections are expanded
+    CHECK(tree->GetShortcutsExpanded() == true);
+    CHECK(tree->GetBookmarksExpanded() == true);
+    CHECK(tree->GetFoldersExpanded() == true);
+
+    // Can collapse and re-expand Shortcuts
+    tree->SetShortcutsExpanded(false);
+    CHECK(tree->GetShortcutsExpanded() == false);
+    tree->SetShortcutsExpanded(true);
+    CHECK(tree->GetShortcutsExpanded() == true);
+
+    // Can collapse and re-expand Bookmarks
+    tree->SetBookmarksExpanded(false);
+    CHECK(tree->GetBookmarksExpanded() == false);
+    tree->SetBookmarksExpanded(true);
+    CHECK(tree->GetBookmarksExpanded() == true);
+
+    // Can collapse and re-expand Folders
+    tree->SetFoldersExpanded(false);
+    CHECK(tree->GetFoldersExpanded() == false);
+    tree->SetFoldersExpanded(true);
+    CHECK(tree->GetFoldersExpanded() == true);
+
+    // SetSelectedFolders automatically re-expands Folders if collapsed
+    tree->SetFoldersExpanded(false);
+    CHECK(tree->GetFoldersExpanded() == false);
+    std::string home_uri = folder_tree_test_path_to_uri(g_get_home_dir());
+    std::list<std::string> sel = { home_uri };
+    tree->SetSelectedFolders(sel);
+    CHECK(tree->GetFoldersExpanded() == true);
+}
+
+TEST_CASE("FolderTree does not show hidden folders", "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string temp_dir = folder_tree_test_make_temp_dir();
+    std::string visible_sub = temp_dir + "/visible_folder";
+    std::string hidden_sub = temp_dir + "/.hidden_folder";
+    g_mkdir(visible_sub.c_str(), 0755);
+    g_mkdir(hidden_sub.c_str(), 0755);
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), tree->GetWidget());
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    std::string temp_uri = folder_tree_test_path_to_uri(temp_dir);
+    std::list<std::string> sel = { temp_uri };
+    tree->SetSelectedFolders(sel);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Now reveal visible_sub to force expanding temp_dir's subdirectories
+    std::string vis_uri = folder_tree_test_path_to_uri(visible_sub);
+    sel = { vis_uri };
+    tree->SetSelectedFolders(sel);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Verify visible_sub is in the selected folders
+    std::list<std::string> selected = tree->GetSelectedFolders();
+    REQUIRE(std::find(selected.begin(), selected.end(), vis_uri) != selected.end());
+
+    // Verify hidden_sub is NOT present anywhere in the list model
+    GtkWidget* tree_widget = tree->GetTreeWidget();
+    REQUIRE(tree_widget != nullptr);
+    GtkListView* lv = GTK_LIST_VIEW(tree_widget);
+    GtkSelectionModel* model = gtk_list_view_get_model(lv);
+    REQUIRE(model != nullptr);
+    REQUIRE(g_list_model_get_n_items(G_LIST_MODEL(model)) >= 1);
+    auto find_label = [](GtkWidget* w, auto& self) -> GtkLabel* {
+        if (GTK_IS_LABEL(w)) return GTK_LABEL(w);
+        for (GtkWidget* c = gtk_widget_get_first_child(w); c != nullptr; c = gtk_widget_get_next_sibling(c))
+        {
+            GtkLabel* l = self(c, self);
+            if (l) return l;
+        }
+        return nullptr;
+    };
+
+    bool found_visible = false;
+    bool found_hidden = false;
+    for (GtkWidget* ch = gtk_widget_get_first_child(tree_widget); ch != nullptr; ch = gtk_widget_get_next_sibling(ch))
+    {
+        GtkLabel* l = find_label(ch, find_label);
+        if (l && gtk_label_get_text(l))
+        {
+            const char* txt = gtk_label_get_text(l);
+            if (strcmp(txt, "visible_folder") == 0)
+                found_visible = true;
+            if (strcmp(txt, ".hidden_folder") == 0)
+                found_hidden = true;
+        }
+    }
+    CHECK(found_visible == true);
+    CHECK(found_hidden == false);
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+    g_rmdir(visible_sub.c_str());
+    g_rmdir(hidden_sub.c_str());
+    g_rmdir(temp_dir.c_str());
 }
 
 

@@ -20,6 +20,7 @@
 
 using namespace std;
 
+#if HAVE_GDK_PIXBUF
 /* returns TRUE for mime types that we want to decode through GdkPixbuf even
  * when a faster backend is available, so that animated images (currently
  * GIF) are decoded with their animation intact. */
@@ -27,8 +28,6 @@ static bool quiver_is_animation_capable_mime(const char *mime)
 {
 	return (NULL != mime && 0 == g_ascii_strcasecmp(mime, "image/gif"));
 }
-
-#if HAVE_GDK_PIXBUF
 /* True when @pb has exactly the width/height/channels of the previously
  * captured frame and identical pixel content.  GdkPixbufAnimationIter hands
  * back the same pixbuf for consecutive frames and only mutates its buffer,

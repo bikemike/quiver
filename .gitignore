@@ -89,3 +89,5 @@ scratch/
 tests/images/*
 !tests/images/.gitkeep
 !tests/images/sample_4k.jpg
+!tests/images/sample_video.mp4
+!tests/images/sample_rotated.jpg
