@@ -1528,7 +1528,7 @@ void SuppressAllAccelerators(bool suppress) {
 				{
 					gtk_widget_set_visible(image, TRUE);
 					gtk_widget_set_margin_end(image, 6);
-					if (start_box && GTK_IS_BOX(start_box))
+					if (start_box && GTK_IS_BOX(start_box) && NULL == gtk_widget_get_first_child(start_box))
 					{
 						gtk_widget_set_visible(start_box, FALSE);
 					}
