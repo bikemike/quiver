@@ -252,6 +252,12 @@ public:
 
 	void QueueIconViewUpdate(int timeout = 50 /* ms */);
 
+	/* The sidebar column (vpaned) holds two independently toggleable panes:
+	 * the folder tree notebook and the preview image view.  It is only hidden
+	 * once both are hidden, so switching the sidebar off doesn't take the
+	 * preview with it (and vice versa). */
+	void UpdateSidebarPanes();
+
 /* member variables */
 	FolderTreePtr m_FolderTreePtr;
 	bool m_bFolderTreeEvent;
@@ -462,6 +468,12 @@ static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_BROWSER_VIEW_SIDEBAR                       "BrowserViewSidebar"
 #define ACTION_BROWSER_ZOOM_IN                            "BrowserZoomIn"
 #define ACTION_BROWSER_ZOOM_OUT                           "BrowserZoomOut"
+
+/* Floors for the two sidebar panes.  Both panes are non-resizable, so these
+ * are what stops a small window (or a divider position persisted from a bigger
+ * one) from squeezing a pane to nothing and taking its grabber with it. */
+#define MIN_SIDEBAR_WIDTH  120
+#define MIN_PREVIEW_HEIGHT 96
 
 
 
@@ -742,10 +754,7 @@ void notebook_page_removed  (GtkNotebook *notebook,
 	if (0 == gtk_notebook_get_n_pages(notebook))
 	{
 		gtk_widget_set_visible(GTK_WIDGET(notebook), FALSE);
-		if (!gtk_widget_get_visible(pBrowserImpl->m_pImageView))
-		{
-			gtk_widget_set_visible(pBrowserImpl->vpaned, FALSE);
-		}
+		pBrowserImpl->UpdateSidebarPanes();
 	}
 }
 
@@ -875,11 +884,11 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	}
 	m_pImageView = quiver_image_view_new();
 
+	/* Both sidebar panes start from their own preference; the column they
+	 * share is then shown only if at least one of them is (see
+	 * UpdateSidebarPanes below). */
 	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
-	if (bShowPreview)
-	{
-		gtk_widget_set_visible(m_pImageView, TRUE);
-	}
+	gtk_widget_set_visible(m_pImageView, bShowPreview);
 
 	scrolled_window = gtk_scrolled_window_new();
 	
@@ -924,7 +933,15 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_widget_set_vexpand(vbox, TRUE);
 	gtk_box_append (GTK_BOX (vbox), hbox);
 	gtk_box_append (GTK_BOX (vbox), m_pIconViewOverlay);
-	gtk_widget_set_vexpand(m_pImageView, TRUE);
+	/* the preview keeps the height the divider gives it; it must not ask for
+	 * more when the sidebar column is resized */
+	gtk_widget_set_vexpand(m_pImageView, FALSE);
+	/* a floor under the sidebar column: resizing the window may not squeeze the
+	 * folder tree (and with it the divider the user has to grab) to nothing */
+	gtk_widget_set_size_request(vpaned, MIN_SIDEBAR_WIDTH, -1);
+	/* likewise a floor under the preview, so the divider can never be pushed
+	 * past the bottom edge and strand the preview off-screen */
+	gtk_widget_set_size_request(m_pImageView, -1, MIN_PREVIEW_HEIGHT);
 	
 	gtk_paned_set_start_child(GTK_PANED(vpaned),m_pNotebook);
 	gtk_paned_set_end_child(GTK_PANED(vpaned),m_pImageView);
@@ -932,12 +949,24 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_paned_set_start_child(GTK_PANED(hpaned),vpaned);
 	gtk_paned_set_end_child(GTK_PANED(hpaned),vbox);
 
-	// in GTK4, paned children must be explicitly allowed to resize/shrink
+	/* In GTK4, paned children must be explicitly allowed to resize/shrink.
+	 *
+	 * A paned with both children resizable scales the divider proportionally
+	 * when the paned is resized, which is what made the folder tree creep
+	 * wider every time the window grew.  Give each paned exactly one resizer:
+	 *   hpaned  the end child (the icon view) takes every pixel of growth, so
+	 *           the sidebar column keeps the width the user set;
+	 *   vpaned  the start child (the folder tree) takes the vertical growth,
+	 *           so the preview keeps the height the user set.
+	 * shrink-start stays enabled on both (the user can still drag the
+	 * divider); shrink-end is disabled on the vpaned so the preview cannot be
+	 * dragged shut, which keeps the divider -- the only way to bring the
+	 * preview back -- permanently on-screen. */
 	gtk_paned_set_resize_start_child(GTK_PANED(vpaned), TRUE);
-	gtk_paned_set_resize_end_child(GTK_PANED(vpaned), TRUE);
+	gtk_paned_set_resize_end_child(GTK_PANED(vpaned), FALSE);
 	gtk_paned_set_shrink_start_child(GTK_PANED(vpaned), TRUE);
-	gtk_paned_set_shrink_end_child(GTK_PANED(vpaned), TRUE);
-	gtk_paned_set_resize_start_child(GTK_PANED(hpaned), TRUE);
+	gtk_paned_set_shrink_end_child(GTK_PANED(vpaned), FALSE);
+	gtk_paned_set_resize_start_child(GTK_PANED(hpaned), FALSE);
 	gtk_paned_set_resize_end_child(GTK_PANED(hpaned), TRUE);
 	gtk_paned_set_shrink_start_child(GTK_PANED(hpaned), TRUE);
 	gtk_paned_set_shrink_end_child(GTK_PANED(hpaned), TRUE);
@@ -947,11 +976,23 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_widget_set_hexpand(vbox, TRUE);
 	gtk_widget_set_vexpand(vbox, TRUE);
 	
-	// set the size of the hpane and vpane
+	// set the size of the hpane and vpane.  GtkPaned::set_position doesn't
+	// clamp, so a position persisted from a larger window is applied as-is
+	// and clamped against the real allocation on the first size-allocate (see
+	// gtk_paned_calc_position) -- which also rewrites the sane value back to
+	// the preferences, healing a stale setting.
 	int hpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_HPANE,200);
+	if (hpaned_pos < 0)
+	{
+		hpaned_pos = 0;
+	}
 	gtk_paned_set_position(GTK_PANED(hpaned),hpaned_pos);
 
 	int vpaned_pos = prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDER_VPANE,300);
+	if (vpaned_pos < 0)
+	{
+		vpaned_pos = 0;
+	}
 	gtk_paned_set_position(GTK_PANED(vpaned),vpaned_pos);
 	
 	
@@ -966,12 +1007,9 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pSWFolderTree = pFolderTree;
 	gtk_widget_set_visible(pFolderTree, TRUE);
 	gtk_notebook_append_page(GTK_NOTEBOOK(m_pNotebook), pFolderTree, gtk_label_new("Folders"));	
-	gtk_widget_set_visible(m_pNotebook, TRUE);
-
-	if (!prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
-	{	
-		gtk_widget_set_visible(vpaned, FALSE);
-	}
+	gtk_widget_set_visible(m_pNotebook,
+		prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true));
+	UpdateSidebarPanes();
 
 	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_pNotebook));
 	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_pNotebook),TRUE);
@@ -1115,6 +1153,18 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	bool bFilmstrip = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_FILMSTRIP, true);
 	quiver_icon_view_set_filmstrip_enabled(QUIVER_ICON_VIEW(m_pIconView), bFilmstrip);
 
+}
+
+void Browser::BrowserImpl::UpdateSidebarPanes()
+{
+	/* The folder tree and the preview share the sidebar column, but each has
+	 * its own toggle.  Show the column while either of them is on so the two
+	 * toggles stay independent -- hiding the column used to hide whichever
+	 * pane happened to be inside it, which left a pane switched on in the
+	 * menu with nothing on screen. */
+	bool bAnyVisible = (gtk_widget_get_visible(m_pNotebook) ||
+						gtk_widget_get_visible(m_pImageView));
+	gtk_widget_set_visible(vpaned, bAnyVisible);
 }
 
 bool Browser::BrowserImpl::IsTrashMode() const
@@ -1280,10 +1330,10 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::AddToggleAction(ACTION_BROWSER_VIEW_PREVIEW, "<Control><Shift>p", TRUE, browser_action_handler_cb, this);
 
 	/* initial toggle state from preferences */
-	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW);
+	bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
 	QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_PREVIEW, bShowPreview ? TRUE : FALSE);
 
-	bool bShowFolderTree = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW);
+	bool bShowFolderTree = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true);
 	QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_SIDEBAR, bShowFolderTree ? TRUE : FALSE);
 }
 
@@ -3044,9 +3094,11 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_SIDEBAR))
 	{
+		/* Only the folder tree follows this toggle; the preview has its own
+		 * (and the column they share is re-evaluated by UpdateSidebarPanes). */
 		if( QuiverUtils::ToggleActionGetActive(szAction) )
 		{
-			gtk_widget_set_visible(pBrowserImpl->vpaned, TRUE);
+			gtk_widget_set_visible(pBrowserImpl->m_pNotebook, TRUE);
 			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 			if (!bFullscreen)
 			{
@@ -3055,18 +3107,23 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 		}
 		else
 		{
-			gtk_widget_set_visible(pBrowserImpl->vpaned, FALSE);
+			gtk_widget_set_visible(pBrowserImpl->m_pNotebook, FALSE);
 			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 			if (!bFullscreen)
 			{
 				prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,false);
 			}
 		}
+		pBrowserImpl->UpdateSidebarPanes();
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_PREVIEW))
 	{
+		/* Both directions have to touch the widget: only the "off" branch used
+		 * to, so switching the preview back on updated the menu and the saved
+		 * setting while leaving the pane hidden until the next restart. */
 		if( QuiverUtils::ToggleActionGetActive(szAction) )
 		{
+			gtk_widget_set_visible(pBrowserImpl->m_pImageView, TRUE);
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
 		}
 		else
@@ -3074,6 +3131,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			gtk_widget_set_visible(pBrowserImpl->m_pImageView, FALSE);	
 			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
 		}
+		pBrowserImpl->UpdateSidebarPanes();
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_OPEN_LOCATION))
 	{
@@ -3827,8 +3885,13 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	list<string> listFolders = parent->m_FolderTreePtr->GetSelectedFolders();
 	bool bFoldersRecursive = parent->m_FolderTreePtr->GetSelectedFoldersRecursive();
 	std::set<std::string> recursiveFolders = parent->m_FolderTreePtr->GetSelectedRecursiveFolders();
+	/* Ticking a folder extends the list already on screen, so the viewer keeps
+	 * its place: on the first item it stays there, otherwise the current item
+	 * stays selected wherever the merged list put it.  A plain row click
+	 * navigates instead and still lands on the first item of the new folder. */
+	bool bPreserveIndex = (NULL == event) || event->PreserveCurrentIndex();
 	parent->ShowLoadingProgress("Loading folder...", -1.0);
-	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders, bFoldersRecursive, true, "", &recursiveFolders);
+	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders, bFoldersRecursive, !bPreserveIndex, "", &recursiveFolders, bPreserveIndex);
 }
 
 

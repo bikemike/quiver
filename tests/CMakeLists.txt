@@ -35,6 +35,7 @@ set(UNIT_TEST_SOURCES
     unit/test_organize_task.cpp
     unit/test_adjust_date_task.cpp
     unit/test_video_controls.cpp
+    unit/test_browser_panes.cpp
     unit/test_folder_tree.cpp
     unit/test_headerbar_toolbar.cpp
     unit/test_shortcut_manager.cpp

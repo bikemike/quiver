@@ -1496,14 +1496,16 @@ static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 		{
 			impl->ClearAllCheckboxes();
 			dir_item_set_checked(item, TRUE);
-			if (impl->m_pShortcutsSelectionModel && pos != G_MAXUINT)
+			if (				impl->m_pShortcutsSelectionModel && pos != G_MAXUINT)
 			{
 				gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pShortcutsSelectionModel), pos, TRUE);
 			}
 			impl->SyncTreeSelectionForURI(item->uri, TRUE);
 		}
 		gtk_widget_grab_focus(w);
-		impl->m_pFolderTree->EmitSelectionChangedEvent();
+		// this click cleared every other checkbox: it navigates, so the
+		// rebuilt list starts at its first item
+		impl->m_pFolderTree->EmitSelectionChangedEvent(false);
 	}
 	else if (button == 2)
 	{
@@ -1625,7 +1627,9 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 			impl->SyncTreeSelectionForURI(item->uri, TRUE);
 		}
 		gtk_widget_grab_focus(w);
-		impl->m_pFolderTree->EmitSelectionChangedEvent();
+		// plain click: the other checkboxes were just cleared, so this is a
+		// navigation and the rebuilt list starts at its first item
+		impl->m_pFolderTree->EmitSelectionChangedEvent(false);
 	}
 	else if (button == 2)
 	{
@@ -1816,7 +1820,9 @@ static gboolean shortcuts_on_key_press(GtkEventControllerKey *controller, guint 
 					gtk_selection_model_select_item(sel, cursor_pos, TRUE);
 					pFolderTreeImpl->SyncTreeSelectionForURI(item->uri, TRUE);
 					g_object_unref(item);
-					pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent();
+					// Enter on a single row cleared the other checkboxes:
+					// navigate, so the rebuilt list starts at its first item
+					pFolderTreeImpl->m_pFolderTree->EmitSelectionChangedEvent(false);
 				}
 			}
 		}
@@ -1926,7 +1932,9 @@ static void folder_tree_row_on_clicked(GtkGestureClick* gesture, int n_press, do
 			gtk_tree_list_row_set_expanded(row, !gtk_tree_list_row_get_expanded(row));
 		}
 		gtk_widget_grab_focus(w);
-		impl->m_pFolderTree->EmitSelectionChangedEvent();
+		// plain click: the other checkboxes were just cleared, so this is a
+		// navigation and the rebuilt list starts at its first item
+		impl->m_pFolderTree->EmitSelectionChangedEvent(false);
 	}
 	else if (button == 2)
 	{

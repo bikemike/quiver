@@ -34,7 +34,12 @@ public:
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(const std::list<std::string> *file_list);
-	void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false, bool bSelectFirstItem = false, const std::string& strSelectURI = "", const std::set<std::string>* pRecursiveFolders = NULL);
+	/* bPreserveCurrentIndex is for a request that merely extends the list
+	 * already on screen (checking a folder in the folder tree), so the
+	 * viewer keeps its place: a viewer on the first item stays on index 0,
+	 * while any other index follows the current item to wherever the rebuilt
+	 * list put it.  Mutually exclusive with bSelectFirstItem. */
+	void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false, bool bSelectFirstItem = false, const std::string& strSelectURI = "", const std::set<std::string>* pRecursiveFolders = NULL, bool bPreserveCurrentIndex = false);
 	/* Load the folder set described by attributes, installing that exact
 	 * attributes object as this list's current definition so its pointer
 	 * identity is preserved for shared holders ("recently viewed"). */

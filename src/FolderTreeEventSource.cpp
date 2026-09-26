@@ -11,9 +11,10 @@ void FolderTreeEventSource::AddEventHandler(IEventHandlerPtr handler)
 
 }
 
-void FolderTreeEventSource::EmitSelectionChangedEvent()
+void FolderTreeEventSource::EmitSelectionChangedEvent(bool bPreserveCurrentIndex /* = true */)
 {
 	FolderTreeEventPtr n( new FolderTreeEvent(shared_from_this()) );
+	n->SetPreserveCurrentIndex(bPreserveCurrentIndex);
 	m_sigSelectionChanged(n);
 }
 

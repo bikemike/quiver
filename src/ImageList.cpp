@@ -93,6 +93,9 @@ struct AsyncFolderLoadData
 	bool bHasRecursiveFolders;
 	std::set<std::string> recursiveFolders;
 	bool bSelectFirstItem;
+	/* the viewer sat on the first item when the load was requested; see
+	 * UpdateImageListAsync(..., bPreserveCurrentIndex) */
+	bool bHoldFirstIndex;
 };
 
 struct AsyncSortData
@@ -1767,7 +1770,10 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 
 	m_iCurrentIndex = 0;
 	bool bFoundURI = false;
-	if (!pData->bSelectFirstItem && !pData->strCurrentURI.empty())
+	/* Holding the first index is about the position, not the item: the file
+	 * that happens to be first must not drag the selection to wherever it
+	 * moved to in the rebuilt list. */
+	if (!pData->bHoldFirstIndex && !pData->bSelectFirstItem && !pData->strCurrentURI.empty())
 	{
 		bFoundURI = SetCurrentImage(pData->strCurrentURI);
 	}
@@ -1792,7 +1798,7 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 	}
 }
 
-void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive, bool bSelectFirstItem, const std::string& strSelectURI, const std::set<std::string>* pRecursiveFolders)
+void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive, bool bSelectFirstItem, const std::string& strSelectURI, const std::set<std::string>* pRecursiveFolders, bool bPreserveCurrentIndex /* = false */)
 {
 	ImageListImpl* impl = m_ImageListImplPtr.get();
 
@@ -1863,11 +1869,15 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 		}
 	}
 
+	/* Holding the first index means the *position* the user was on, not the
+	 * file that occupied it, so there is nothing to reselect afterwards. */
+	bool bHoldFirstIndex = bPreserveCurrentIndex && 0 == impl->m_iCurrentIndex;
+
 	// snapshot the current image so it can be reselected after the load
 	// (unless the caller wants to land on the first item, like an
-	// "open bookmark" action)
+	// "open bookmark" action, or the viewer was on the first item already)
 	string strCurrentURI = strSelectURI;
-	if (strCurrentURI.empty() && 0 < impl->m_QuiverFileList.size() && !bSelectFirstItem)
+	if (strCurrentURI.empty() && 0 < impl->m_QuiverFileList.size() && !bSelectFirstItem && !bHoldFirstIndex)
 	{
 		strCurrentURI = impl->m_QuiverFileList[impl->m_iCurrentIndex].GetURI();
 	}
@@ -1882,6 +1892,7 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	pData->folders = *file_list;
 	pData->bRecursive = bRecursive;
 	pData->bSelectFirstItem = bSelectFirstItem;
+	pData->bHoldFirstIndex = bHoldFirstIndex;
 	if (pRecursiveFolders != NULL)
 	{
 		pData->bHasRecursiveFolders = true;

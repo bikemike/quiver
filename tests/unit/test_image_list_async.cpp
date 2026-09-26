@@ -37,6 +37,15 @@ static std::string make_temp_dir()
     return std::string(dir);
 }
 
+// A seeded subdirectory, so sibling folders can be given names that decide
+// their sort order relative to each other.
+static std::string make_sub_dir(const std::string& parent, const std::string& name)
+{
+    std::string dir = parent + "/" + name;
+    REQUIRE(g_mkdir(dir.c_str(), 0755) == 0);
+    return dir;
+}
+
 static std::string path_to_uri(const std::string& path)
 {
     gchar* uri = g_filename_to_uri(path.c_str(), nullptr, nullptr);
@@ -107,6 +116,84 @@ TEST_CASE("ImageList async folder load: selectFirstItem lands on the first item"
     pump_until([&] { return loaded_folder(uriC); });
     REQUIRE(list->GetSize() == 4);
     REQUIRE(list->GetCurrentIndex() == 0);
+}
+
+TEST_CASE("ImageList async folder load: preserveCurrentIndex holds the viewer's place",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    // Sibling folders named so the sort order is known: a < b, so adding "a"
+    // to a list of "b" pushes every one of b's files along by four slots.
+    std::string root = make_temp_dir();
+    seed_dir(make_sub_dir(root, "a"), 4);
+    seed_dir(make_sub_dir(root, "b"), 4);
+
+    std::string uriA = path_to_uri(root + "/a");
+    std::string uriB = path_to_uri(root + "/b");
+
+    std::list<std::string> foldersB = { uriB };
+    std::list<std::string> foldersAB = { uriB, uriA };
+
+    // Wait until the list is built from exactly the given folder set (an
+    // unchanged request is skipped by the loader, so "settled" is not "grew").
+    auto loaded = [](const ImageListPtr& list, const std::list<std::string>& folders) {
+        std::list<std::string> current = list->GetFolderList();
+        for (const auto& uri : folders)
+            if (std::find(current.begin(), current.end(), uri) == current.end())
+                return false;
+        return current.size() == folders.size();
+    };
+
+    auto list_of_b_at = [&](unsigned int index) {
+        ImageListPtr list(new ImageList());
+        list->UpdateImageListAsync(&foldersB);
+        pump_until([&] { return loaded(list, foldersB); });
+        REQUIRE(list->GetSize() == 4);
+        REQUIRE(list->SetCurrentIndex(index));
+        return list;
+    };
+
+    SECTION("on the first item")
+    {
+        // The position is what is being held: b/img0 is first before the load
+        // and would be pushed to index 4 by it, but the viewer stays on 0.
+        ImageListPtr list = list_of_b_at(0);
+        std::string before = list->GetCurrent().GetURI();
+        list->UpdateImageListAsync(&foldersAB, false, false, "", nullptr, true);
+        pump_until([&] { return loaded(list, foldersAB); });
+        REQUIRE(list->GetSize() == 8);
+        CHECK(list->GetCurrentIndex() == 0);
+        CHECK(list->GetCurrent().GetURI() != before);
+        CHECK(list->GetCurrent().GetURI() == uriA + "/img0.jpg");
+    }
+
+    SECTION("off the first item")
+    {
+        // Any other index follows the current file: b/img2 moves 2 -> 6.
+        ImageListPtr list = list_of_b_at(2);
+        std::string before = list->GetCurrent().GetURI();
+        list->UpdateImageListAsync(&foldersAB, false, false, "", nullptr, true);
+        pump_until([&] { return loaded(list, foldersAB); });
+        REQUIRE(list->GetSize() == 8);
+        CHECK(list->GetCurrentIndex() == 6);
+        CHECK(list->GetCurrent().GetURI() == before);
+    }
+
+    SECTION("current file is not in the rebuilt list")
+    {
+        // The folder holding the current file was unchecked: nothing to
+        // follow, so the viewer falls back to the first item.
+        ImageListPtr list = list_of_b_at(2);
+        std::string before = list->GetCurrent().GetURI();
+        REQUIRE(before == uriB + "/img2.jpg");
+        std::list<std::string> foldersA = { uriA };
+        list->UpdateImageListAsync(&foldersA, false, false, "", nullptr, true);
+        pump_until([&] { return loaded(list, foldersA); });
+        REQUIRE(list->GetSize() == 4);
+        CHECK(list->GetCurrentIndex() == 0);
+        CHECK(list->GetCurrent().GetURI() != before);
+    }
 }
 
 class TestProgressHandler : public IImageListEventHandler
