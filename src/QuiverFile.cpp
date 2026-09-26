@@ -625,7 +625,16 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 		auto ori_itr = png_meta.find("Thumb::Image::Orientation");
 		if (ori_itr != png_meta.end())
 		{
-			m_iOrientation = atoi(ori_itr->second.c_str());
+			int thumb_ori = atoi(ori_itr->second.c_str());
+			if ((m_fDataLoaded & QUIVER_FILE_DATA_EXIF) && m_iOrientation != 0 && thumb_ori != m_iOrientation)
+			{
+				valid = false;
+				save_thumbnail_to_cache = TRUE;
+			}
+			else
+			{
+				m_iOrientation = thumb_ori;
+			}
 		}
 
 		auto mtime_itr = png_meta.find("Thumb::MTime");
@@ -691,6 +700,10 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 			{
 				guint act_width = img_width;
 				guint act_height = img_height;
+				if (4 < m_iOrientation)
+				{
+					std::swap(act_width, act_height);
+				}
 				quiver_rect_get_bound_size(thumbSize->size, thumbSize->size, &act_width, &act_height, FALSE);
 
 				if ((int)act_width != thumb_w || (int)act_height != thumb_h)
@@ -747,13 +760,29 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 			thumb_texture = GetExifThumbnailTexture();
 			if (NULL != thumb_texture)
 			{
+				if (1 < GetOrientation())
+				{
+					GdkTexture *new_tex = QuiverUtils::TextureExifReorientate(thumb_texture, GetOrientation());
+					if (NULL != new_tex)
+					{
+						g_object_unref(thumb_texture);
+						thumb_texture = new_tex;
+					}
+				}
+
 				guint size = thumbSize->size;
 				guint tex_width = gdk_texture_get_width(thumb_texture);
 				guint tex_height = gdk_texture_get_height(thumb_texture);
 				double thumb_ratio = tex_width / (double)tex_height;
-				double actual_ratio = GetWidth() / (double)GetHeight();
+				int act_w = GetWidth();
+				int act_h = GetHeight();
+				if (4 < GetOrientation())
+				{
+					std::swap(act_w, act_h);
+				}
+				double actual_ratio = (act_h > 0) ? (act_w / (double)act_h) : 1.0;
 
-				if (thumb_ratio == actual_ratio && (tex_width >= size || tex_height >= size))
+				if (fabs(thumb_ratio - actual_ratio) < 0.05 && (tex_width >= size || tex_height >= size))
 				{
 					quiver_rect_get_bound_size(size, size, &tex_width, &tex_height, FALSE);
 					GdkTexture *scaled = QuiverUtils::ScaleTexture(thumb_texture, tex_width, tex_height);
@@ -828,6 +857,11 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 
 				thumb_texture = ImageDecoder::DecodeFileTexture(gfile, GetMimeType(), NULL, &tmp_error);
 				g_object_unref(gfile);
+				if (tmp_error)
+				{
+					g_error_free(tmp_error);
+					tmp_error = NULL;
+				}
 
 				if (NULL != thumb_texture)
 				{
@@ -872,15 +906,6 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 
 	g_free(thumb_path);
 
-	if (NULL != thumb_texture && 1 < GetOrientation())
-	{
-		GdkTexture *new_tex = QuiverUtils::TextureExifReorientate(thumb_texture, GetOrientation());
-		if (NULL != new_tex)
-		{
-			g_object_unref(thumb_texture);
-			thumb_texture = new_tex;
-		}
-	}
 
 	if (NULL != thumb_texture)
 	{
@@ -1497,7 +1522,10 @@ int QuiverFile::QuiverFileImpl::GetOrientation()
 		return 1;
 	}
 
-	LoadExifData();
+	if (0 == m_iOrientation && !(m_fDataLoaded & QUIVER_FILE_DATA_EXIF))
+	{
+		LoadExifData();
+	}
 
 	// if we have loaded the exif data or the orientation flag is set,
 	// check the exif data for the orientation value.

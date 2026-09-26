@@ -22,9 +22,13 @@ void ImageListAttributes::AddFolder(const std::string& rFolder)
 }
 
 bool ImageListAttributes::Matches(const std::list<std::string>& rFolders,
-		bool bRecursive) const
+		bool bRecursive, const std::set<std::string>& rRecursiveFolders) const
 {
 	if (m_bRecursive != bRecursive)
+	{
+		return false;
+	}
+	if (m_RecursiveFolders != rRecursiveFolders)
 	{
 		return false;
 	}
@@ -33,4 +37,10 @@ bool ImageListAttributes::Matches(const std::list<std::string>& rFolders,
 		return false;
 	}
 	return std::equal(m_Folders.begin(), m_Folders.end(), rFolders.begin());
+}
+
+bool ImageListAttributes::Matches(const std::list<std::string>& rFolders,
+		bool bRecursive) const
+{
+	return Matches(rFolders, bRecursive, std::set<std::string>());
 }

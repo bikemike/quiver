@@ -19,15 +19,6 @@ endif()
 # Find pkg-config
 find_package(PkgConfig REQUIRED)
 
-# Image decoding backend options
-option(ENABLE_GLYCIN "Enable libglycin backend for image loading" ON)
-option(ENABLE_GDK_PIXBUF "Enable GdkPixbuf loader backend for image loading" OFF)
-
-if (NOT ENABLE_GLYCIN AND NOT ENABLE_GDK_PIXBUF)
-  message(FATAL_ERROR "At least one image decoding backend must be enabled: "
-    "enable ENABLE_GLYCIN and/or ENABLE_GDK_PIXBUF.")
-endif()
-
 # Find Packages
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.12)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
@@ -36,9 +27,21 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavut
 pkg_check_modules(LIBSQLITE REQUIRED IMPORTED_TARGET sqlite3)
 pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-app-1.0 gstreamer-pbutils-1.0)
 
+# Image decoding backend options
+option(ENABLE_GLYCIN "Enable libglycin backend for image loading" ON)
+option(ENABLE_GDK_PIXBUF "Enable GdkPixbuf loader backend for image loading" ON)
+
 if (ENABLE_GLYCIN)
-  pkg_check_modules(GLYCIN REQUIRED IMPORTED_TARGET glycin-2)
-  set(HAVE_GLYCIN 1)
+  pkg_check_modules(GLYCIN IMPORTED_TARGET glycin-2)
+  if (GLYCIN_FOUND)
+    set(HAVE_GLYCIN 1)
+  else()
+    if (NOT ENABLE_GDK_PIXBUF)
+      message(STATUS "libglycin-2 not found; falling back to GdkPixbuf backend")
+      set(ENABLE_GDK_PIXBUF ON)
+    endif()
+    set(HAVE_GLYCIN 0)
+  endif()
 else()
   set(HAVE_GLYCIN 0)
 endif()
@@ -48,6 +51,11 @@ if (ENABLE_GDK_PIXBUF)
   set(HAVE_GDK_PIXBUF 1)
 else()
   set(HAVE_GDK_PIXBUF 0)
+endif()
+
+if (NOT HAVE_GLYCIN AND NOT HAVE_GDK_PIXBUF)
+  message(FATAL_ERROR "At least one image decoding backend must be enabled: "
+    "install libglycin-2-dev or libgdk-pixbuf-2.0-dev.")
 endif()
 
 # JPEG, ZLIB and Threads
@@ -139,14 +147,10 @@ install(FILES data/quiver.desktop
 )
 
 # 5. AppStream metadata
-install(FILES data/com.github.bikemike.quiver.metainfo.xml
+install(FILES data/quiver.metainfo.xml
     DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
 )
 
-# 6. DBus service
-install(FILES data/com.github.bikemike.quiver.service
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services
-)
 
 # ==============================================================================
 # CPack Packaging Configuration

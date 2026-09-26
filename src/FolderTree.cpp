@@ -17,6 +17,8 @@
 #include "QuiverClipboard.h"
 #include "Bookmarks.h"
 #include "IBookmarksEventHandler.h"
+#include "QuiverPrefs.h"
+#include "Preferences.h"
 
 #define QUIVER_TREE_COLUMN_TOGGLE      "column_toggle"
 #define QUIVER_FOLDER_TREE_ROOT_NAME   "Filesystem"
@@ -219,6 +221,7 @@ public:
 	void PopulateTreeModel(GListStore *roots);
 	std::list<std::string> GetSelectedFolders() const;
 	bool GetSelectedFoldersRecursive() const;
+	std::set<std::string> GetSelectedRecursiveFolders() const;
 
 	void SetSelectedFolders(std::list<std::string> &uris);
 	std::list<std::string> GetSelectedURIsFromModels() const;
@@ -244,12 +247,14 @@ public:
 	GListStore*        m_pShortcutsStore;
 	GtkMultiSelection* m_pShortcutsSelectionModel;
 	GtkListView*       m_pShortcutsListView;
+	GtkWidget*         m_pShortcutsExpander;
 	GtkWidget*         m_pSeparator;
 
 	// Bookmarks (dedicated section between the shortcuts list and the tree)
 	GListStore*        m_pBookmarkStore;
 	GtkMultiSelection* m_pBookmarkSelectionModel;
 	GtkListView*       m_pBookmarkListView;
+	GtkWidget*         m_pBookmarkExpander;
 	GtkWidget*         m_pBookmarkSection;
 	GtkWidget*         m_pBookmarkHeader;
 
@@ -258,6 +263,7 @@ public:
 	GtkTreeListModel*  m_pTreeListModel;
 	GtkMultiSelection* m_pSelectionModel;
 	GtkListView*       m_pListView;
+	GtkWidget*         m_pFolderExpander;
 	GtkWidget*         m_pDropHover;
 	DirItem*           m_pDropHoverItem;
 	gdouble            m_dDropX;
@@ -315,6 +321,45 @@ GtkWidget* FolderTree::GetBookmarksWidget() const
 	return GTK_WIDGET(m_FolderTreeImplPtr->m_pBookmarkListView);
 }
 
+void FolderTree::SetShortcutsExpanded(bool expanded)
+{
+	if (m_FolderTreeImplPtr && m_FolderTreeImplPtr->m_pShortcutsExpander)
+		gtk_expander_set_expanded(GTK_EXPANDER(m_FolderTreeImplPtr->m_pShortcutsExpander), expanded);
+}
+
+bool FolderTree::GetShortcutsExpanded() const
+{
+	if (m_FolderTreeImplPtr && m_FolderTreeImplPtr->m_pShortcutsExpander)
+		return gtk_expander_get_expanded(GTK_EXPANDER(m_FolderTreeImplPtr->m_pShortcutsExpander));
+	return true;
+}
+
+void FolderTree::SetBookmarksExpanded(bool expanded)
+{
+	if (m_FolderTreeImplPtr && m_FolderTreeImplPtr->m_pBookmarkExpander)
+		gtk_expander_set_expanded(GTK_EXPANDER(m_FolderTreeImplPtr->m_pBookmarkExpander), expanded);
+}
+
+bool FolderTree::GetBookmarksExpanded() const
+{
+	if (m_FolderTreeImplPtr && m_FolderTreeImplPtr->m_pBookmarkExpander)
+		return gtk_expander_get_expanded(GTK_EXPANDER(m_FolderTreeImplPtr->m_pBookmarkExpander));
+	return true;
+}
+
+void FolderTree::SetFoldersExpanded(bool expanded)
+{
+	if (m_FolderTreeImplPtr && m_FolderTreeImplPtr->m_pFolderExpander)
+		gtk_expander_set_expanded(GTK_EXPANDER(m_FolderTreeImplPtr->m_pFolderExpander), expanded);
+}
+
+bool FolderTree::GetFoldersExpanded() const
+{
+	if (m_FolderTreeImplPtr && m_FolderTreeImplPtr->m_pFolderExpander)
+		return gtk_expander_get_expanded(GTK_EXPANDER(m_FolderTreeImplPtr->m_pFolderExpander));
+	return true;
+}
+
 std::list<std::string> FolderTree::GetSelectedFolders() const
 {
 	return m_FolderTreeImplPtr->GetSelectedFolders();	
@@ -323,6 +368,11 @@ std::list<std::string> FolderTree::GetSelectedFolders() const
 bool FolderTree::GetSelectedFoldersRecursive() const
 {
 	return m_FolderTreeImplPtr->GetSelectedFoldersRecursive();
+}
+
+std::set<std::string> FolderTree::GetSelectedRecursiveFolders() const
+{
+	return m_FolderTreeImplPtr->GetSelectedRecursiveFolders();
 }
 
 std::list<std::string> FolderTree::GetAddBookmarkURIs(const std::string& clicked_uri) const
@@ -363,16 +413,19 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 	m_pShortcutsStore = NULL;
 	m_pShortcutsSelectionModel = NULL;
 	m_pShortcutsListView = NULL;
+	m_pShortcutsExpander = NULL;
 	m_pSeparator = NULL;
 	m_pBookmarkStore = NULL;
 	m_pBookmarkSelectionModel = NULL;
 	m_pBookmarkListView = NULL;
+	m_pBookmarkExpander = NULL;
 	m_pBookmarkSection = NULL;
 	m_pBookmarkHeader = NULL;
 	m_pListStoreRoots = NULL;
 	m_pTreeListModel = NULL;
 	m_pSelectionModel = NULL;
 	m_pListView = NULL;
+	m_pFolderExpander = NULL;
 	m_pDropHover = NULL;
 	m_pDropHoverItem = NULL;
 	m_dDropX = 0;
@@ -569,6 +622,39 @@ bool FolderTree::FolderTreeImpl::GetSelectedFoldersRecursive() const
 		}
 	}
 	return false;
+}
+
+std::set<std::string> FolderTree::FolderTreeImpl::GetSelectedRecursiveFolders() const
+{
+	std::set<std::string> recursiveFolders;
+	if (!m_pBookmarkStore)
+		return recursiveFolders;
+
+	BookmarksPtr bmPtr = Bookmarks::GetInstance();
+	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+	for (guint i = 0 ; i < n ; i++)
+	{
+		DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+		if (item)
+		{
+			if (item->checked && item->bookmark_id >= 0 && bmPtr)
+			{
+				const Bookmark* bm = bmPtr->GetBookmark(item->bookmark_id);
+				if (bm && bm->GetRecursive())
+				{
+					for (const auto& uri : bm->GetURIs())
+					{
+						std::string norm = folder_tree_normalize_uri(uri.c_str());
+						if (!norm.empty())
+							recursiveFolders.insert(norm);
+						recursiveFolders.insert(uri);
+					}
+				}
+			}
+			g_object_unref(item);
+		}
+	}
+	return recursiveFolders;
 }
 
 std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedURIsFromModels() const
@@ -1082,6 +1168,11 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 {
 	ClearAllCheckboxes();
 
+	if (m_pFolderExpander && !uris.empty() && !gtk_expander_get_expanded(GTK_EXPANDER(m_pFolderExpander)))
+	{
+		gtk_expander_set_expanded(GTK_EXPANDER(m_pFolderExpander), TRUE);
+	}
+
 	// normalize plain paths and file URIs to file:// URIs so the tree can
 	// match them; a folder passed on the command line arrives as a plain
 	// path while tree items always carry file:// URIs
@@ -1235,6 +1326,7 @@ static GListModel* create_subdirs (gpointer item_data, gpointer user_data)
 			file,
 			G_FILE_ATTRIBUTE_STANDARD_NAME ","
 			G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+			G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN ","
 			G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
 			G_FILE_ATTRIBUTE_STANDARD_ICON,
 			G_FILE_QUERY_INFO_NONE,
@@ -1246,9 +1338,20 @@ static GListModel* create_subdirs (gpointer item_data, gpointer user_data)
 			GList* listed = NULL;
 			while (NULL != (info = g_file_enumerator_next_file(enumerator, NULL, NULL)))
 			{
+				const char* name = g_file_info_get_name(info);
+				if (name && name[0] == '.')
+				{
+					g_object_unref(info);
+					continue;
+				}
+				if (g_file_info_get_is_hidden(info))
+				{
+					g_object_unref(info);
+					continue;
+				}
 				if (G_FILE_TYPE_DIRECTORY == g_file_info_get_file_type(info))
 				{
-					GFile* child_file = g_file_get_child(file, g_file_info_get_name(info));
+					GFile* child_file = g_file_get_child(file, name);
 					gchar* child_uri = g_file_get_uri(child_file);
 					gchar* display = g_strdup(g_file_info_get_display_name(info));
 					gchar* icon = folder_tree_get_icon_name_from_info(info, child_file);
@@ -1469,8 +1572,26 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 				else
 					gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos);
 			}
-			impl->SyncTreeSelectionForURI(item->uri, new_val);
-			impl->SyncShortcutSelectionForURI(item->uri, new_val);
+			const Bookmark* bm = NULL;
+			if (item->bookmark_id >= 0)
+			{
+				BookmarksPtr bmPtr = Bookmarks::GetInstance();
+				bm = bmPtr->GetBookmark(item->bookmark_id);
+			}
+			if (NULL != bm)
+			{
+				std::list<std::string> uris = bm->GetURIs();
+				for (const auto& uri : uris)
+				{
+					impl->SyncTreeSelectionForURI(uri.c_str(), new_val);
+					impl->SyncShortcutSelectionForURI(uri.c_str(), new_val);
+				}
+			}
+			else
+			{
+				impl->SyncTreeSelectionForURI(item->uri, new_val);
+				impl->SyncShortcutSelectionForURI(item->uri, new_val);
+			}
 		}
 		else
 		{
@@ -1517,7 +1638,26 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 			else
 				gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pBookmarkSelectionModel), pos);
 		}
-		impl->SyncTreeSelectionForURI(item->uri, new_val);
+		const Bookmark* bm = NULL;
+		if (item->bookmark_id >= 0)
+		{
+			BookmarksPtr bmPtr = Bookmarks::GetInstance();
+			bm = bmPtr->GetBookmark(item->bookmark_id);
+		}
+		if (NULL != bm)
+		{
+			std::list<std::string> uris = bm->GetURIs();
+			for (const auto& uri : uris)
+			{
+				impl->SyncTreeSelectionForURI(uri.c_str(), new_val);
+				impl->SyncShortcutSelectionForURI(uri.c_str(), new_val);
+			}
+		}
+		else
+		{
+			impl->SyncTreeSelectionForURI(item->uri, new_val);
+			impl->SyncShortcutSelectionForURI(item->uri, new_val);
+		}
 		gtk_widget_grab_focus(w);
 		impl->m_pFolderTree->EmitSelectionChangedEvent();
 	}
@@ -1859,8 +1999,15 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			".sidebar-section-title {\n"
 			"    font-size: 11px;\n"
 			"    font-weight: bold;\n"
-			"    opacity: 0.6;\n"
+			"    opacity: 0.7;\n"
 			"    color: @theme_fg_color;\n"
+			"}\n"
+			"expander.sidebar-expander title {\n"
+			"    min-height: 24px;\n"
+			"    padding: 2px 4px;\n"
+			"}\n"
+			"expander.sidebar-expander {\n"
+			"    margin: 1px 0;\n"
 			"}\n"
 			".compact-tree row {\n"
 			"    padding: 0;\n"
@@ -2371,24 +2518,18 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	gtk_widget_add_controller(GTK_WIDGET(m_pBookmarkListView),
 		GTK_EVENT_CONTROLLER(bm_drop));
 
-	// --- Bookmarks section: header + list, hidden when empty ---
+	// --- Bookmarks section: expander + list, hidden when empty ---
 	m_pBookmarkSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	m_pBookmarkHeader = gtk_label_new("Bookmarks");
 	gtk_widget_add_css_class(m_pBookmarkHeader, "sidebar-section-title");
 	gtk_widget_set_halign(m_pBookmarkHeader, GTK_ALIGN_START);
-	gtk_widget_set_margin_top(m_pBookmarkHeader, 4);
-	gtk_widget_set_margin_bottom(m_pBookmarkHeader, 2);
-	gtk_widget_set_margin_start(m_pBookmarkHeader, 10);
-	gtk_widget_set_margin_end(m_pBookmarkHeader, 8);
-	gtk_box_append(GTK_BOX(m_pBookmarkSection), m_pBookmarkHeader);
 
-	GtkWidget *bm_sw = gtk_scrolled_window_new();
-	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(bm_sw),
-		GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-	gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(bm_sw), TRUE);
-	gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(bm_sw), 180);
-	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(bm_sw), GTK_WIDGET(m_pBookmarkListView));
-	gtk_box_append(GTK_BOX(m_pBookmarkSection), bm_sw);
+	m_pBookmarkExpander = gtk_expander_new(NULL);
+	gtk_widget_add_css_class(m_pBookmarkExpander, "sidebar-expander");
+	gtk_expander_set_label_widget(GTK_EXPANDER(m_pBookmarkExpander), m_pBookmarkHeader);
+	gtk_expander_set_expanded(GTK_EXPANDER(m_pBookmarkExpander), TRUE);
+	gtk_expander_set_child(GTK_EXPANDER(m_pBookmarkExpander), GTK_WIDGET(m_pBookmarkListView));
+	gtk_box_append(GTK_BOX(m_pBookmarkSection), m_pBookmarkExpander);
 
 	/* Separator below the bookmark rows (before the folder tree). It lives
 	 * inside the section so it vanishes with it when there are no bookmarks. */
@@ -2669,17 +2810,77 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	gtk_widget_add_css_class(m_pWidget, "quiver-sidebar");
 	gtk_widget_add_css_class(GTK_WIDGET(m_pShortcutsListView), "navigation-sidebar");
 	gtk_widget_add_css_class(GTK_WIDGET(m_pListView), "compact-tree");
-	gtk_box_append(GTK_BOX(m_pWidget), GTK_WIDGET(m_pShortcutsListView));
-	gtk_box_append(GTK_BOX(m_pWidget), m_pSeparator);
-	gtk_box_append(GTK_BOX(m_pWidget), m_pBookmarkSection);
 
-	GtkWidget *sw = gtk_scrolled_window_new();
-	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
+	GtkWidget *main_sw = gtk_scrolled_window_new();
+	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(main_sw),
 		GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), GTK_WIDGET(m_pListView));
-	gtk_widget_set_vexpand(sw, TRUE);
-	gtk_widget_set_hexpand(sw, TRUE);
-	gtk_box_append(GTK_BOX(m_pWidget), sw);
+	gtk_widget_set_vexpand(main_sw, TRUE);
+	gtk_widget_set_hexpand(main_sw, TRUE);
+	gtk_box_append(GTK_BOX(m_pWidget), main_sw);
+
+	GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_widget_set_vexpand(content_box, TRUE);
+	gtk_widget_set_hexpand(content_box, TRUE);
+	gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(main_sw), content_box);
+
+	// Section 1: Shortcuts / Places
+	m_pShortcutsExpander = gtk_expander_new(NULL);
+	GtkWidget *sc_header = gtk_label_new("Shortcuts");
+	gtk_widget_add_css_class(sc_header, "sidebar-section-title");
+	gtk_widget_set_halign(sc_header, GTK_ALIGN_START);
+	gtk_expander_set_label_widget(GTK_EXPANDER(m_pShortcutsExpander), sc_header);
+	gtk_widget_add_css_class(m_pShortcutsExpander, "sidebar-expander");
+	gtk_expander_set_expanded(GTK_EXPANDER(m_pShortcutsExpander), TRUE);
+	gtk_expander_set_child(GTK_EXPANDER(m_pShortcutsExpander), GTK_WIDGET(m_pShortcutsListView));
+	gtk_box_append(GTK_BOX(content_box), m_pShortcutsExpander);
+
+	// Separator
+	gtk_box_append(GTK_BOX(content_box), m_pSeparator);
+
+	// Section 2: Bookmarks
+	gtk_box_append(GTK_BOX(content_box), m_pBookmarkSection);
+
+	// Section 3: Folders
+	m_pFolderExpander = gtk_expander_new(NULL);
+	GtkWidget *folder_header = gtk_label_new("Folders");
+	gtk_widget_add_css_class(folder_header, "sidebar-section-title");
+	gtk_widget_set_halign(folder_header, GTK_ALIGN_START);
+	gtk_expander_set_label_widget(GTK_EXPANDER(m_pFolderExpander), folder_header);
+	gtk_widget_add_css_class(m_pFolderExpander, "sidebar-expander");
+	gtk_expander_set_expanded(GTK_EXPANDER(m_pFolderExpander), TRUE);
+	gtk_expander_set_child(GTK_EXPANDER(m_pFolderExpander), GTK_WIDGET(m_pListView));
+	gtk_box_append(GTK_BOX(content_box), m_pFolderExpander);
+
+	// Restore expanded states from preferences
+	PreferencesPtr prefs = Preferences::GetInstance();
+	if (prefs)
+	{
+		bool bExpandShortcuts = prefs->GetBoolean(QUIVER_PREFS_BROWSER, "foldertree_expand_shortcuts", true);
+		bool bExpandBookmarks = prefs->GetBoolean(QUIVER_PREFS_BROWSER, "foldertree_expand_bookmarks", true);
+		bool bExpandFolders = prefs->GetBoolean(QUIVER_PREFS_BROWSER, "foldertree_expand_folders", true);
+		gtk_expander_set_expanded(GTK_EXPANDER(m_pShortcutsExpander), bExpandShortcuts);
+		gtk_expander_set_expanded(GTK_EXPANDER(m_pBookmarkExpander), bExpandBookmarks);
+		gtk_expander_set_expanded(GTK_EXPANDER(m_pFolderExpander), bExpandFolders);
+	}
+
+	g_signal_connect(m_pShortcutsExpander, "notify::expanded", G_CALLBACK(+[](GObject* obj, GParamSpec*, gpointer) {
+		PreferencesPtr p = Preferences::GetInstance();
+		if (p)
+			p->SetBoolean(QUIVER_PREFS_BROWSER, "foldertree_expand_shortcuts",
+				gtk_expander_get_expanded(GTK_EXPANDER(obj)));
+	}), NULL);
+	g_signal_connect(m_pBookmarkExpander, "notify::expanded", G_CALLBACK(+[](GObject* obj, GParamSpec*, gpointer) {
+		PreferencesPtr p = Preferences::GetInstance();
+		if (p)
+			p->SetBoolean(QUIVER_PREFS_BROWSER, "foldertree_expand_bookmarks",
+				gtk_expander_get_expanded(GTK_EXPANDER(obj)));
+	}), NULL);
+	g_signal_connect(m_pFolderExpander, "notify::expanded", G_CALLBACK(+[](GObject* obj, GParamSpec*, gpointer) {
+		PreferencesPtr p = Preferences::GetInstance();
+		if (p)
+			p->SetBoolean(QUIVER_PREFS_BROWSER, "foldertree_expand_folders",
+				gtk_expander_get_expanded(GTK_EXPANDER(obj)));
+	}), NULL);
 
 	// build the right-click / menu context popover
 	{

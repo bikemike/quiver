@@ -29,6 +29,8 @@ parts:
     cmake-parameters:
       - -DCMAKE_BUILD_TYPE=Release
       - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DENABLE_GLYCIN=OFF
+      - -DENABLE_GDK_PIXBUF=ON
       - -DBUILD_TESTING=OFF
     build-packages:
       - pkgconf
@@ -46,10 +48,9 @@ parts:
       - libjpeg-dev
       - zlib1g-dev
       - libboost-dev
-      - libglycin-2-dev
+      - libgdk-pixbuf-2.0-dev
     stage-packages:
-      - libglycin-2-0
-      - glycin-loaders
+      - libgdk-pixbuf-2.0-0
       - gstreamer1.0-plugins-good
       - gstreamer1.0-plugins-bad
       - gstreamer1.0-plugins-ugly

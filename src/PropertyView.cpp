@@ -1158,6 +1158,16 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 	else
 		preview_tex = m_QuiverFile.GetExifThumbnailTexture();
 
+	if (NULL != preview_tex && 1 < m_QuiverFile.GetOrientation())
+	{
+		GdkTexture *new_tex = QuiverUtils::TextureExifReorientate(preview_tex, m_QuiverFile.GetOrientation());
+		if (NULL != new_tex)
+		{
+			g_object_unref(preview_tex);
+			preview_tex = new_tex;
+		}
+	}
+
 	if (NULL != preview_tex)
 	{
 		const int maxDim = 128;

@@ -3,6 +3,7 @@
 
 #include <string>
 #include <list>
+#include <set>
 
 #include "QuiverFile.h"
 #include "ImageListEventSource.h"
@@ -32,7 +33,7 @@ public:
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(const std::list<std::string> *file_list);
-	void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false, bool bSelectFirstItem = false, const std::string& strSelectURI = "");
+	void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false, bool bSelectFirstItem = false, const std::string& strSelectURI = "", const std::set<std::string>* pRecursiveFolders = NULL);
 	/* Load the folder set described by attributes, installing that exact
 	 * attributes object as this list's current definition so its pointer
 	 * identity is preserved for shared holders ("recently viewed"). */
