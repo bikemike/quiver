@@ -78,6 +78,10 @@ public:
 	 * it and bring the controls back exactly as a motion event would. */
 	void OnExitFullscreen();
 
+	GtkWidget *GetNavControlPill() const;
+	GtkWidget *GetNavigationControl() const;
+	void UpdateNavigationControl();
+
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;
 

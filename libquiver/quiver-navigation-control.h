@@ -50,7 +50,8 @@ void       quiver_navigation_control_set_texture(QuiverNavigationControl *navcon
 #if HAVE_GDK_PIXBUF
 void       quiver_navigation_control_set_pixbuf(QuiverNavigationControl *navcontrol, GdkPixbuf *pixbuf);
 #endif
-
+void       quiver_navigation_control_rotate(QuiverNavigationControl *navcontrol, gboolean clockwise);
+void       quiver_navigation_control_flip(QuiverNavigationControl *navcontrol, gboolean horizontal);
 
 G_END_DECLS
 

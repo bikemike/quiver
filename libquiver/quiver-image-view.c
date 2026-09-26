@@ -1873,6 +1873,13 @@ static gboolean quiver_image_view_timeout_magnification(gpointer data)
 		imageview->priv->magnification_timeout_id = 0;
 		quiver_image_view_set_magnification_full(imageview,imageview->priv->magnification_final);
 		imageview->priv->zoom_anchor_center = FALSE;
+		/* The animation ticked the upper/page size of both adjustments along
+		 * the way, but "changed" is only emitted by the full setter, so tell
+		 * the listeners that the final magnification is now in effect. */
+		if (imageview->priv->hadjustment != NULL)
+			g_signal_emit_by_name(imageview->priv->hadjustment, "changed");
+		if (imageview->priv->vadjustment != NULL)
+			g_signal_emit_by_name(imageview->priv->vadjustment, "changed");
 		rval = FALSE;
 	}
 	else
