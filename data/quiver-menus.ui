@@ -114,7 +114,6 @@
         </item>
         <submenu>
           <attribute name="label">_Sort Order</attribute>
-          <attribute name="location">browser</attribute>
           <item>
             <attribute name="label">By _Name</attribute>
             <attribute name="action">quiver.SortByName</attribute>

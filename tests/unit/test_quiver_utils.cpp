@@ -576,6 +576,49 @@ TEST_CASE("QuiverUtils EnablePopoverMenuIcons and Preferences UI", "[unit][popov
 
     g_object_unref(b);
 
+    // Verify that toggle items maintain indicator and do not have indicator suppression
+    {
+        GSimpleActionGroup *ag = g_simple_action_group_new();
+        GSimpleAction *act_prop = g_simple_action_new_stateful("ViewProperties", NULL, g_variant_new_boolean(TRUE));
+        GSimpleAction *act_desc = g_simple_action_new_stateful("SortDescending", NULL, g_variant_new_boolean(FALSE));
+        g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_prop));
+        g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_desc));
+
+        GMenu *menu = g_menu_new();
+        GMenuItem *item1 = g_menu_item_new("Properties", "quiver.ViewProperties");
+        g_menu_item_set_attribute(item1, "icon", "s", "document-properties-symbolic");
+        GMenuItem *item2 = g_menu_item_new("In Descending Order", "quiver.SortDescending");
+        g_menu_item_set_attribute(item2, "icon", "s", "view-sort-descending-symbolic");
+        g_menu_append_item(menu, item1);
+        g_menu_append_item(menu, item2);
+        g_object_unref(item1);
+        g_object_unref(item2);
+
+        GtkWidget *pop = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+        gtk_widget_insert_action_group(pop, "quiver", G_ACTION_GROUP(ag));
+        QuiverUtils::EnablePopoverMenuIcons(pop);
+
+        GtkWidget *sw_test = gtk_widget_get_first_child(gtk_widget_get_first_child(pop));
+        GtkWidget *vp_test = gtk_widget_get_first_child(sw_test);
+        GtkWidget *stk_test = gtk_widget_get_first_child(vp_test);
+        GtkWidget *msb_test = gtk_widget_get_first_child(stk_test);
+        GtkWidget *box_test = gtk_widget_get_first_child(msb_test);
+        GtkWidget *mb1 = gtk_widget_get_first_child(box_test);
+        GtkWidget *mb2 = gtk_widget_get_next_sibling(mb1);
+
+        GtkWidget *start1 = gtk_widget_get_first_child(mb1);
+        GtkWidget *start2 = gtk_widget_get_first_child(mb2);
+        REQUIRE(start1 != NULL);
+        REQUIRE(start2 != NULL);
+        CHECK(gtk_widget_get_visible(start1) == TRUE);
+        CHECK(gtk_widget_get_visible(start2) == TRUE);
+        CHECK(gtk_widget_get_first_child(start1) != NULL);
+        CHECK(gtk_widget_get_first_child(start2) != NULL);
+
+        g_object_unref(menu);
+        g_object_unref(ag);
+    }
+
     // Verify preferences dialog UI
     std::string uiPath = QuiverTest_GetDataDir() + "/quiver.ui";
     GtkBuilder *b_ui = gtk_builder_new_from_file(uiPath.c_str());
