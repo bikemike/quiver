@@ -132,6 +132,10 @@
             <attribute name="action">quiver.SortByDateModified</attribute>
           </item>
           <item>
+            <attribute name="label">By File _Size</attribute>
+            <attribute name="action">quiver.SortByFileSize</attribute>
+          </item>
+          <item>
             <attribute name="label">_Randomize</attribute>
             <attribute name="action">quiver.SortByRandom</attribute>
             <attribute name="icon">media-playlist-shuffle-symbolic</attribute>
