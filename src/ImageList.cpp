@@ -230,6 +230,7 @@ class SortByFilenameNatural;
 class SortByFileExtension;
 class SortByDate;
 class SortByDateModified;
+class SortByFileSize;
 
 
 StringSet ImageList::ImageListImpl::c_setSupportedMimeTypes;
@@ -2202,6 +2203,28 @@ public:
 	}
 };
 
+class SortByFileSize
+{
+public:
+
+	bool operator()(const QuiverFile &a, const QuiverFile &b) const
+	{
+		if (a.IsFolder() && !b.IsFolder())
+			return true;
+		else if (!a.IsFolder() && b.IsFolder())
+			return false;
+
+		unsigned long long sa = a.GetFileSize();
+		unsigned long long sb = b.GetFileSize();
+		if (sa == sb)
+		{
+			SortByFilenameNatural byFile;
+			return byFile(a, b);
+		}
+		return ( sa < sb );
+	}
+};
+
 void ImageList::ImageListImpl::Sort(ImageList::SortBy o, bool bSortAscend, bool bUpdateCurrentIndex, bool bAsync)
 {
 	StopAsyncSort();
@@ -2257,6 +2280,12 @@ void ImageList::ImageListImpl::Sort(ImageList::SortBy o, bool bSortAscend, bool 
 		case ImageList::SORT_BY_DATE_MODIFIED:
 		{
 			SortByDateModified sortby;
+			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
+			break;
+		}
+		case ImageList::SORT_BY_FILE_SIZE:
+		{
+			SortByFileSize sortby;
 			std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
 			break;
 		}

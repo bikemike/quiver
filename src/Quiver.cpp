@@ -1287,6 +1287,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_SORT_BY_NAME_NATURAL                   "SortByNameNatural"
 #define ACTION_QUIVER_SORT_BY_DATE                           "SortByDate"
 #define ACTION_QUIVER_SORT_BY_DATE_MODIFIED                  "SortByDateModified"
+#define ACTION_QUIVER_SORT_BY_FILE_SIZE                      "SortByFileSize"
 #define ACTION_QUIVER_SORT_BY_RANDOM                         "SortByRandom"
 #define ACTION_QUIVER_SORT_DESCENDING                        "SortDescending"
 #define ACTION_QUIVER_FULLSCREEN                             "FullScreen"
@@ -2401,12 +2402,14 @@ void Quiver::Init()
 		ACTION_QUIVER_SORT_BY_NAME_NATURAL,
 		ACTION_QUIVER_SORT_BY_DATE,
 		ACTION_QUIVER_SORT_BY_DATE_MODIFIED,
+		ACTION_QUIVER_SORT_BY_FILE_SIZE,
 		ACTION_QUIVER_SORT_BY_RANDOM };
 	gint sort_values[] = {
 		ImageList::SORT_BY_FILENAME,
 		ImageList::SORT_BY_FILENAME_NATURAL,
 		ImageList::SORT_BY_DATE,
 		ImageList::SORT_BY_DATE_MODIFIED,
+		ImageList::SORT_BY_FILE_SIZE,
 		ImageList::SORT_BY_RANDOM };
 	QuiverUtils::AddRadioActions(sort_names, sort_values, G_N_ELEMENTS(sort_names),
 		prefsPtr->GetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, ImageList::SORT_BY_FILENAME_NATURAL),
@@ -4128,6 +4131,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_NAME_NATURAL)
 	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_DATE)
 	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_DATE_MODIFIED)
+	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_FILE_SIZE)
 	     || 0 == strcmp(szAction,ACTION_QUIVER_SORT_BY_RANDOM))
 	{
 		bool bAsc = ( FALSE == QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SORT_DESCENDING) );

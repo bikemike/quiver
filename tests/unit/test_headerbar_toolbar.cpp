@@ -445,6 +445,7 @@ TEST_CASE("Hamburger menu per-context structure", "[unit][gui][menu]")
 
         /* Arrange Items is browser-only. */
         REQUIRE(MenuHasAction(G_MENU_MODEL(m), "quiver.SortByName"));
+        REQUIRE(MenuHasAction(G_MENU_MODEL(m), "quiver.SortByFileSize"));
 
         /* Navigation / open / zoom menu items are gone in every context. */
         REQUIRE(!MenuHasAction(G_MENU_MODEL(m), "quiver.ImageFirst"));
@@ -488,6 +489,7 @@ TEST_CASE("Hamburger menu per-context structure", "[unit][gui][menu]")
 
         /* Arrange Items is browser-only. */
         REQUIRE(!MenuHasAction(G_MENU_MODEL(m), "quiver.SortByName"));
+        REQUIRE(!MenuHasAction(G_MENU_MODEL(m), "quiver.SortByFileSize"));
 
         /* Rotation is provided by the rotate row widget, not menu items. */
         REQUIRE(!MenuHasAction(G_MENU_MODEL(m), "quiver.RotateCW"));

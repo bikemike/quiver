@@ -74,7 +74,7 @@ public:
 	const char* GetMimeType();
 	GFileInfo* GetFileInfo();
 
-	unsigned long long GetFileSize();
+	unsigned long long GetFileSize() const;
 	
 	gchar* GetIconName();
 	

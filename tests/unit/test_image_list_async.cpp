@@ -205,3 +205,40 @@ TEST_CASE("Browser loading overlay and statusbar HUD integration",
     // Hide loading progress
     browser->HideLoadingProgress();
 }
+
+TEST_CASE("ImageList: Sort by file size ascending and descending",
+          "[unit][imagelist]")
+{
+    std::string dir = make_temp_dir();
+    std::string smallFile = dir + "/small.jpg";
+    std::string mediumFile = dir + "/medium.jpg";
+    std::string largeFile = dir + "/large.jpg";
+
+    std::string dataSmall(100, 'A');
+    std::string dataMedium(1000, 'B');
+    std::string dataLarge(10000, 'C');
+
+    REQUIRE(g_file_set_contents(smallFile.c_str(), dataSmall.data(), (gssize)dataSmall.size(), nullptr));
+    REQUIRE(g_file_set_contents(mediumFile.c_str(), dataMedium.data(), (gssize)dataMedium.size(), nullptr));
+    REQUIRE(g_file_set_contents(largeFile.c_str(), dataLarge.data(), (gssize)dataLarge.size(), nullptr));
+
+    std::string uri = path_to_uri(dir);
+    ImageListPtr list(new ImageList());
+    std::list<std::string> folders = { uri };
+    list->UpdateImageListAsync(&folders);
+
+    pump_until([&] { return list->GetSize() >= 3; });
+    REQUIRE(list->GetSize() == 3);
+
+    // Test SortByFileSize ascending (smallest first)
+    list->Sort(ImageList::SORT_BY_FILE_SIZE, true, false);
+    CHECK((*list)[0].GetFileSize() == 100);
+    CHECK((*list)[1].GetFileSize() == 1000);
+    CHECK((*list)[2].GetFileSize() == 10000);
+
+    // Test SortByFileSize descending (largest first)
+    list->Sort(ImageList::SORT_BY_FILE_SIZE, false, false);
+    CHECK((*list)[0].GetFileSize() == 10000);
+    CHECK((*list)[1].GetFileSize() == 1000);
+    CHECK((*list)[2].GetFileSize() == 100);
+}

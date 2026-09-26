@@ -1653,10 +1653,10 @@ GFileInfo* QuiverFile::GetFileInfo()
 	return fileInfo;
 }
 
-unsigned long long QuiverFile::GetFileSize()
+unsigned long long QuiverFile::GetFileSize() const
 {
 	long long size = 0;
-	GFileInfo *info = GetFileInfo();
+	GFileInfo *info = const_cast<QuiverFile*>(this)->GetFileInfo();
 	if (NULL != info)
 	{
 		size = g_file_info_get_size(info);
