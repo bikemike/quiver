@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "ShortcutManager.h"
 #include "Preferences.h"
+#include "Viewer.h"
 #include "test_helpers.h"
 #include <algorithm>
 #include <cstring>
@@ -63,6 +64,12 @@ TEST_CASE("ShortcutManager Default Action Registry", "[unit][shortcuts][fast]")
         REQUIRE(frame_fwd != nullptr);
         REQUIRE(std::find(frame_fwd->default_accels.begin(), frame_fwd->default_accels.end(), "<Shift>greater") != frame_fwd->default_accels.end());
         REQUIRE(std::find(frame_fwd->default_accels.begin(), frame_fwd->default_accels.end(), "<Shift>l") != frame_fwd->default_accels.end());
+
+        const ShortcutActionDef *mute_def = sm.GetAction("VideoMute");
+        REQUIRE(mute_def != nullptr);
+        REQUIRE(mute_def->category == "Video Playback");
+        REQUIRE(std::find(mute_def->default_accels.begin(), mute_def->default_accels.end(), "m") != mute_def->default_accels.end());
+        REQUIRE(mute_def->is_viewer_only == true);
     }
 
     SECTION("Image Rotation defaults free l/L")
@@ -317,4 +324,86 @@ TEST_CASE("ShortcutManager Dynamic Tooltips", "[unit][shortcuts][fast]")
 
     sm.RemoveShortcutsChangedCallback(test_cb, &callback_called);
 }
+
+TEST_CASE("ShortcutManager Viewer/Browser Mode Transition and Secondary Action Accelerators", "[unit][shortcuts]")
+{
+    REQUIRE_DISPLAY();
+    extern GtkApplication *g_pApp;
+    bool created_app = false;
+    if (!g_pApp) {
+        g_pApp = gtk_application_new("org.quiver.test.shortcuts", G_APPLICATION_NON_UNIQUE);
+        g_application_register(G_APPLICATION(g_pApp), nullptr, nullptr);
+        created_app = true;
+    }
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ShortcutManager &sm = ShortcutManager::GetInstance();
+    sm.Init();
+
+    // 1. In browser mode, viewer-only actions (ImageNext, ImagePrevious) must have no accels on g_pApp
+    sm.SetViewerMode(false);
+    gchar **accels_next = gtk_application_get_accels_for_action(g_pApp, "quiver.ImageNext");
+    REQUIRE((!accels_next || !accels_next[0]));
+    g_strfreev(accels_next);
+
+    gchar **accels_prev = gtk_application_get_accels_for_action(g_pApp, "quiver.ImagePrevious");
+    REQUIRE((!accels_prev || !accels_prev[0]));
+    g_strfreev(accels_prev);
+
+    // Duplicate legacy actions must NOT have accelerators registered on g_pApp
+    gchar **accels_next2 = gtk_application_get_accels_for_action(g_pApp, "quiver.ImageNext_2");
+    REQUIRE((!accels_next2 || !accels_next2[0]));
+    g_strfreev(accels_next2);
+
+    gchar **accels_prev2 = gtk_application_get_accels_for_action(g_pApp, "quiver.ImagePrevious_2");
+    REQUIRE((!accels_prev2 || !accels_prev2[0]));
+    g_strfreev(accels_prev2);
+
+    // 2. Switch to Viewer mode: Viewer actions get accelerators
+    sm.SetViewerMode(true);
+    accels_next = gtk_application_get_accels_for_action(g_pApp, "quiver.ImageNext");
+    REQUIRE(accels_next != nullptr);
+    bool has_page_down = false;
+    for (int i = 0; accels_next[i]; i++) {
+        if (std::string(accels_next[i]) == "Page_Down") has_page_down = true;
+    }
+    REQUIRE(has_page_down);
+    g_strfreev(accels_next);
+
+    accels_prev = gtk_application_get_accels_for_action(g_pApp, "quiver.ImagePrevious");
+    REQUIRE(accels_prev != nullptr);
+    bool has_page_up = false;
+    for (int i = 0; accels_prev[i]; i++) {
+        if (std::string(accels_prev[i]) == "Page_Up") has_page_up = true;
+    }
+    REQUIRE(has_page_up);
+    g_strfreev(accels_prev);
+
+    // 3. Switch back to Browser mode: Viewer actions must be cleared again
+    sm.SetViewerMode(false);
+    accels_next = gtk_application_get_accels_for_action(g_pApp, "quiver.ImageNext");
+    REQUIRE((!accels_next || !accels_next[0]));
+    g_strfreev(accels_next);
+
+    accels_prev = gtk_application_get_accels_for_action(g_pApp, "quiver.ImagePrevious");
+    REQUIRE((!accels_prev || !accels_prev[0]));
+    g_strfreev(accels_prev);
+
+    // And duplicate actions must STILL have NO accelerators on g_pApp, leaving Page_Up/Page_Down to QuiverIconView!
+    accels_next2 = gtk_application_get_accels_for_action(g_pApp, "quiver.ImageNext_2");
+    REQUIRE((!accels_next2 || !accels_next2[0]));
+    g_strfreev(accels_next2);
+
+    accels_prev2 = gtk_application_get_accels_for_action(g_pApp, "quiver.ImagePrevious_2");
+    REQUIRE((!accels_prev2 || !accels_prev2[0]));
+    g_strfreev(accels_prev2);
+
+    if (created_app) {
+        g_object_unref(g_pApp);
+        g_pApp = nullptr;
+    }
+}
+
 

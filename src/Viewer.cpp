@@ -7902,9 +7902,9 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_RESTORE, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS, "Left", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS_2, "Page_Up", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_PREVIOUS_2, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT, "Right", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT_2, "Page_Down", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_NEXT_2, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FIRST, "Home", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_LAST, "End", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
@@ -7912,15 +7912,15 @@ void Viewer::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ZOOM_OUT, "minus", viewer_action_handler_cb, m_ViewerImplPtr.get());
 
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CW, "r", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CW_2, "bracketright", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CW_2, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CCW, "<Shift>r", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CCW_2, "bracketleft", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_ROTATE_CCW_2, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_H, "h", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_H_2, "<Shift>v", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_H_2, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_V, "v", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_V_2, "<Shift>h", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_FLIP_V_2, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY, "space", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY_2, "k", viewer_action_handler_cb, m_ViewerImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_PLAY_2, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_FORWARD, "l", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SKIP_BACK, "j", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_VIDEO_SEEK_FWD_5, "period", viewer_action_handler_cb, m_ViewerImplPtr.get());
