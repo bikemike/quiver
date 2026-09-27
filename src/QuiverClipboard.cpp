@@ -1,5 +1,7 @@
 #include "QuiverClipboard.h"
 
+#include "QuiverFileOps.h"
+
 #include <glib.h>
 
 namespace QuiverClipboard
@@ -263,6 +265,62 @@ namespace QuiverClipboard
 		g_main_loop_quit(st->loop);
 	}
 
+	bool DropContents::Accepts(GtkDropTarget* target, const std::string& target_uri,
+		std::list<std::string>& uris, bool& cut)
+	{
+		uris.clear();
+		cut = false;
+		if (NULL == target)
+			return false;
+
+		GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+		if (NULL == drop)
+		{
+			Reset();
+			return false;
+		}
+
+		/* a different drag, or the same one whose contents have just
+		 * arrived: parse once, not on every motion event */
+		if (m_pDrop != drop)
+		{
+			m_pDrop = NULL;
+			m_Uris.clear();
+			m_bCut = false;
+
+			/* NULL until GTK has finished preloading, and NULL again when
+			 * the drag turns out to carry nothing we can use */
+			const GValue *value = gtk_drop_target_get_value(target);
+			if (NULL != value && G_VALUE_HOLDS_STRING(value))
+			{
+				const char *text = g_value_get_string(value);
+				std::list<std::string> parsed;
+				bool parsed_cut = false;
+				if (ParseClipboardText(text ? text : "", parsed, parsed_cut))
+				{
+					m_Uris.swap(parsed);
+					m_bCut = parsed_cut;
+					m_pDrop = drop;
+				}
+			}
+		}
+
+		/* still preloading, or a drag that carries no files */
+		if (m_pDrop != drop)
+			return false;
+
+		uris = m_Uris;
+		cut = m_bCut;
+		return !QuiverFileOps::DropRefused(m_Uris, target_uri);
+	}
+
+	void DropContents::Reset()
+	{
+		m_pDrop = NULL;
+		m_Uris.clear();
+		m_bCut = false;
+	}
+
 	bool GetClipboardUris(std::list<std::string>& urisOut, bool& cutOut, GdkClipboard *clipboard)
 	{
 		urisOut.clear();
@@ -300,3 +358,4 @@ namespace QuiverClipboard
 	}
 
 }
+

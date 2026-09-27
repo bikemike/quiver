@@ -47,7 +47,7 @@ enum
 	ORGANIZE_PREVIEW_COL_SRC,
 	ORGANIZE_PREVIEW_COL_PATH,
 	ORGANIZE_PREVIEW_COL_DST,
-	ORGANIZE_PREVIEW_COL_CONFLICT,
+	ORGANIZE_PREVIEW_COL_ISSUE,
 	ORGANIZE_PREVIEW_COL_COUNT
 };
 
@@ -67,7 +67,8 @@ typedef struct {
 	gchar*   src_name;
 	gchar*   rel_path;
 	gchar*   dst_name;
-	gchar*   conflict;
+	gchar*   issue;         // why this row is flagged, empty when fine
+	gboolean issue_is_error; // conflict (blocking, red) vs advisory (orange)
 } OrganizePreviewItem;
 
 typedef struct {
@@ -87,7 +88,7 @@ static void organize_preview_item_finalize (GObject* object)
 	g_free(item->src_name);
 	g_free(item->rel_path);
 	g_free(item->dst_name);
-	g_free(item->conflict);
+	g_free(item->issue);
 	G_OBJECT_CLASS(organize_preview_item_parent_class)->finalize(object);
 }
 
@@ -102,11 +103,13 @@ static void organize_preview_item_init (OrganizePreviewItem* item)
 	item->src_name = NULL;
 	item->rel_path = NULL;
 	item->dst_name = NULL;
-	item->conflict = NULL;
+	item->issue = NULL;
+	item->issue_is_error = FALSE;
 }
 
 static OrganizePreviewItem* organize_preview_item_new (const gchar* icon,
-	const gchar* src, const gchar* rel_path, const gchar* dst, const gchar* conflict)
+	const gchar* src, const gchar* rel_path, const gchar* dst,
+	const gchar* issue, gboolean issue_is_error)
 {
 	OrganizePreviewItem* item = static_cast<OrganizePreviewItem*>(
 		g_object_new(ORGANIZE_PREVIEW_ITEM_TYPE, NULL));
@@ -114,7 +117,8 @@ static OrganizePreviewItem* organize_preview_item_new (const gchar* icon,
 	item->src_name = g_strdup(src);
 	item->rel_path = g_strdup(rel_path);
 	item->dst_name = g_strdup(dst);
-	item->conflict = g_strdup(conflict);
+	item->issue = g_strdup(issue);
+	item->issue_is_error = issue_is_error;
 	return item;
 }
 
@@ -164,15 +168,14 @@ static void organize_preview_text_bind (GtkSignalListItemFactory* factory, GtkLi
 		case ORGANIZE_PREVIEW_COL_SRC:      szText = item->src_name; break;
 		case ORGANIZE_PREVIEW_COL_PATH:     szText = item->rel_path; break;
 		case ORGANIZE_PREVIEW_COL_DST:      szText = item->dst_name; break;
-		default:                            szText = item->conflict; break;
+		default:                            szText = item->issue; break;
 	}
-	gboolean bConflicted =
-		(NULL != item->conflict && '\0' != item->conflict[0]);
-	if (bConflicted && ORGANIZE_PREVIEW_COL_CONFLICT == iCol)
+	gboolean bIssue = (NULL != item->issue && '\0' != item->issue[0]);
+	if (bIssue && ORGANIZE_PREVIEW_COL_ISSUE == iCol)
 	{
 		gchar* esc = g_markup_escape_text(szText ? szText : "", -1);
-		gchar* markup =
-			g_strdup_printf("<span foreground=\"#e01b24\">%s</span>", esc);
+		gchar* markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
+			item->issue_is_error ? "#e01b24" : "#c64600", esc);
 		gtk_label_set_markup(GTK_LABEL(label), markup);
 		g_free(markup);
 		g_free(esc);
@@ -594,8 +597,8 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 				gtk_column_view_column_new("", organize_preview_column_factory(ORGANIZE_PREVIEW_COL_ICON));
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewPreview), column);
 		}
-		static const char* szTitles[] = { NULL, "Original Name", "New Path", "New Name", "Conflict" };
-		for (int c = ORGANIZE_PREVIEW_COL_SRC ; c <= ORGANIZE_PREVIEW_COL_CONFLICT ; c++)
+		static const char* szTitles[] = { NULL, "Original Name", "New Path", "New Name", "Issue" };
+		for (int c = ORGANIZE_PREVIEW_COL_SRC ; c <= ORGANIZE_PREVIEW_COL_ISSUE ; c++)
 		{
 			GtkColumnViewColumn* column =
 				gtk_column_view_column_new(szTitles[c], organize_preview_column_factory(c));
@@ -969,7 +972,6 @@ void OrganizeDlg::OrganizeDlgPriv::StartConflictCheck()
 
 	if (NULL != m_pLabelWarning)
 		gtk_widget_set_visible(m_pLabelWarning, FALSE);
-
 	OrganizeTask::Options opts;
 
 	opts.strSrcDirURI = m_strSrcFolder;
@@ -1085,12 +1087,15 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 		m_bConflictFound = state.bFound;
 	}
 
-	// conflicted rows first, then by name (natural order)
+	// blocking conflicts first, then rows whose only issue is missing date
+	// metadata, then by name (natural order)
 	std::stable_sort(m_vectConflicts.begin(), m_vectConflicts.end(),
 		[](const FileConflictCheck::Result& a, const FileConflictCheck::Result& b)
 		{
 			if (a.HasConflict() != b.HasConflict())
 				return a.HasConflict();
+			if (a.bHasDateMetadata != b.bHasDateMetadata)
+				return !a.bHasDateMetadata;
 			return 0 > strnatcasecmp(a.strSrcName.c_str(), b.strSrcName.c_str());
 		});
 
@@ -1111,9 +1116,12 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 			const FileConflictCheck::Result& r = m_vectConflicts[i];
 			gchar* szIcon = organize_preview_icon_pixbuf(r.strIconName)
 				? g_strdup(r.strIconName.c_str()) : NULL;
+			std::string strIssue = r.strConflictWith;
+			if (strIssue.empty() && !r.bHasDateMetadata)
+				strIssue = "No date metadata (uses file modification time)";
 			OrganizePreviewItem* item = organize_preview_item_new(
 				szIcon, r.strSrcName.c_str(), r.strDstRelPath.c_str(),
-				r.strDstName.c_str(), r.strConflictWith.c_str());
+				r.strDstName.c_str(), strIssue.c_str(), r.HasConflict());
 			g_free(szIcon);
 			g_list_store_append(m_pListStorePreview, item);
 			g_object_unref(item);
@@ -1124,7 +1132,7 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 			g_snprintf(szMore, sizeof(szMore), "… and %d more files",
 				(int)(m_vectConflicts.size() - PREVIEW_ROW_CAP));
 			OrganizePreviewItem* item = organize_preview_item_new(
-				NULL, szMore, NULL, NULL, NULL);
+				NULL, szMore, NULL, NULL, NULL, FALSE);
 			g_list_store_append(m_pListStorePreview, item);
 			g_object_unref(item);
 		}

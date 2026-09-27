@@ -24,7 +24,8 @@ extern "C" {
 }
 
 #include "QuiverUtils.h"
-#include "QuiverVideoOps.h"
+#include "QuiverGps.h"
+#include "QuiverSummary.h"
 #include "VideoDateEditTask.h"
 #include "TaskManager.h"
 
@@ -185,56 +186,6 @@ struct VideoInfo
 static std::map<std::string, VideoInfo> s_mapVideoInfoCache;
 static std::mutex s_avformatMutex;
 static std::once_flag s_avformatInitFlag;
-
-static double ParseRationalTriple(const std::string& str)
-{
-	double degrees = 0.;
-	double factors[3] = {1., 60., 3600.};
-	size_t pos = 0;
-	for (int i = 0; i < 3 && std::string::npos != pos; i++)
-	{
-		size_t next = str.find(' ', pos);
-		std::string token = (std::string::npos == next) ?
-			str.substr(pos) : str.substr(pos, next - pos);
-		pos = (std::string::npos == next) ? std::string::npos : next + 1;
-		size_t slash = token.find('/');
-		if (std::string::npos != slash)
-		{
-			double num = atof(token.substr(0, slash).c_str());
-			double den = atof(token.substr(slash + 1).c_str());
-			if (0. != den)
-				degrees += (num / den) * factors[i];
-		}
-	}
-	return degrees;
-}
-
-// Formats ISO 6709 coordinates used in the container "location" tag
-// (e.g. "+48.4541-123.4718/") into "lat, lon" text.
-static std::string FormatGpsLocation(const std::string& raw)
-{
-	if (raw.empty() || ('+' != raw[0] && '-' != raw[0]))
-		return raw;
-
-	size_t split = std::string::npos;
-	for (size_t j = 1; j < raw.size(); j++)
-	{
-		if (('+' == raw[j] || '-' == raw[j]) && j > 1)
-		{
-			split = j;
-			break;
-		}
-	}
-	if (std::string::npos == split)
-		return raw;
-
-	std::string lat = raw.substr(0, split);
-	std::string lon = raw.substr(split);
-	size_t slash = lon.find('/');
-	if (std::string::npos != slash)
-		lon = lon.substr(0, slash);
-	return lat + ", " + lon;
-}
 
 // Human-readable names for the color properties exiftool reports.
 static const char* ColorPrimariesName(enum AVColorPrimaries v)
@@ -515,9 +466,8 @@ static gboolean property_date_format_is_valid(const char *date);
 static void set_exif_value(std::shared_ptr<Exiv2::ExifData> pExifData,
 	const char* key, const char* new_text, Exiv2::TypeId typeId);
 static void exif_entry_activate_cb(GtkEntry *entry, gpointer user_data);
-static void exif_right_click_cb(GtkGestureClick *gesture, gint n_press,
+static void property_row_right_click_cb(GtkGestureClick *gesture, gint n_press,
 	gdouble x, gdouble y, gpointer user_data);
-static void exif_popover_closed_cb(GtkPopover *popover, gpointer user_data);
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -544,14 +494,14 @@ public:
 	GtkWidget*    m_pPageWidgets[5];
 
 	GtkWidget*    m_pSummaryColumnView;
-	GtkWidget*    m_pSummaryPreview;
-	GtkWidget*    m_pSummaryTitle;
 	GtkWidget*    m_pExifColumnView;
 	GtkWidget*    m_pXmpColumnView;
 	GtkWidget*    m_pIptcColumnView;
 	GtkWidget*    m_pVideoColumnView;
 
-	GtkWidget*    m_pExifPopover;
+	GtkWidget*    m_pRowPopover;
+
+	gboolean      m_bAccelsSuppressed;
 
 	guint         m_iIdleLoadID;
 	gboolean      m_bLoaded;
@@ -571,6 +521,58 @@ public:
 	IPreferencesEventHandlerPtr  m_PreferencesEventHandlerPtr;
 };
 
+/* Closes and frees the row context menu, if one is open.
+ *
+ * Both calls have to happen out here, never from the popover's own "closed"
+ * handler: closing emits "closed" from inside gtk_popover_popdown(), and
+ * unparenting a popover while GTK is still walking that emission frees it
+ * under GTK's feet.  So the menu simply stays parented once the user
+ * dismisses it, and it is torn down by the next right click (or by the
+ * destructor), which are both outside any emission. */
+static void property_row_close_popover(PropertyView::PropertyViewImpl* pImpl)
+{
+	if (NULL == pImpl) return;
+	GtkWidget* popover = pImpl->m_pRowPopover;
+	if (NULL == popover) return;
+	pImpl->m_pRowPopover = NULL;
+	gtk_popover_popdown(GTK_POPOVER(popover));
+	gtk_widget_unparent(popover);
+}
+
+
+/* The browser and viewer bind <Control>c to their own copy actions as
+ * application accelerators, and GTK evaluates those on a capture-phase
+ * GtkShortcutController attached to the window.  Capture runs before the
+ * bubble phase, so property_copy_key_cb() never sees the key press while
+ * those accels are live - the browser/viewer always wins, even though this
+ * pane has the focus.  The location entry solves the same problem by
+ * suspending every app accelerator while it owns the keyboard; do the same
+ * here so Ctrl-C copies the selected row value instead of a file.
+ *
+ * Both enter and leave recompute from the real focus widget rather than
+ * blindly toggling, so moving between two tabs of the pane does not briefly
+ * re-enable the accelerators. */
+static void property_pane_focus_changed(GtkEventControllerFocus* /*controller*/, gpointer user_data)
+{
+	PropertyView::PropertyViewImpl* pImpl = (PropertyView::PropertyViewImpl*)user_data;
+	if (NULL == pImpl || NULL == pImpl->m_pNotebook) return;
+
+	/* the focus widget of the window this pane lives in */
+	GtkWidget* pFocus = NULL;
+	GtkRoot* pRoot = gtk_widget_get_root(pImpl->m_pNotebook);
+	if (GTK_IS_WINDOW(pRoot))
+		pFocus = gtk_window_get_focus(GTK_WINDOW(pRoot));
+	gboolean bInside = FALSE;
+	for (GtkWidget* p = pFocus; NULL != p; p = gtk_widget_get_parent(p))
+	{
+		if (p == pImpl->m_pNotebook) { bInside = TRUE; break; }
+	}
+
+	if (bInside == pImpl->m_bAccelsSuppressed) return;
+	pImpl->m_bAccelsSuppressed = bInside;
+	QuiverUtils::SuppressAllAccelerators(bInside);
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════════
  * GtkColumnView / GtkSignalListItemFactory callbacks
@@ -578,10 +580,165 @@ public:
 
 /* --- Key-value label pair (used by Summary, XMP, IPTC tabs) --- */
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * Row level copy (right click menu, Ctrl-C)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Every property row can be copied: right click it for the context menu, or
+ * select it and press Ctrl-C.  This replaces a per-row copy button, which
+ * only ever covered one row.  The text comes from the item the cell was
+ * built from, so it works for the key/value tabs and the EXIF tab alike. */
+
+/* Name of the copy action inside the "pv" group, and the name the menu uses
+ * to reach it once the group is inserted on a column view. */
+static const char kCopyActionName[] = "copy-value";
+static const char kCopyAction[] = "pv.copy-value";
+
+static void property_copy_to_clipboard(const std::string& text)
+{
+	GdkDisplay* display = gdk_display_get_default();
+	if (NULL == display || text.empty()) return;
+	gdk_clipboard_set_text(gdk_display_get_clipboard(display), text.c_str());
+}
+
+static void copy_value_activate_cb(GSimpleAction *action, GVariant *parameter,
+	gpointer /*user_data*/)
+{
+	(void)action;
+	const char* text = (NULL != parameter) ?
+		g_variant_get_string(parameter, NULL) : NULL;
+	if (NULL != text) property_copy_to_clipboard(text);
+}
+
+/* The action group lives on the column view that shows the menu, so the
+ * menu model resolves "pv.copy-value" without needing the app to know
+ * about it. */
+static GSimpleActionGroup* property_row_action_group(GtkWidget* colview)
+{
+	GSimpleActionGroup* group = G_SIMPLE_ACTION_GROUP(
+		g_object_get_data(G_OBJECT(colview), "pv-action-group"));
+	if (NULL != group) return group;
+
+	group = g_simple_action_group_new();
+	GSimpleAction* copy = g_simple_action_new(kCopyActionName,
+		G_VARIANT_TYPE_STRING);
+	g_signal_connect(copy, "activate", G_CALLBACK(copy_value_activate_cb), NULL);
+	g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(copy));
+	g_object_unref(copy);
+	g_object_set_data_full(G_OBJECT(colview), "pv-action-group", group,
+		g_object_unref);
+	gtk_widget_insert_action_group(colview, "pv", G_ACTION_GROUP(group));
+	return group;
+}
+
+/* The text a row should copy, or an empty string when there is none. */
+static std::string property_item_value(gpointer item)
+{
+	if (NULL == item) return "";
+	if (G_TYPE_CHECK_INSTANCE_TYPE(item, property_item_get_type()))
+	{
+		PropertyItem* pi = PROPERTY_ITEM(item);
+		return (NULL != pi->value) ? pi->value : "";
+	}
+	if (G_TYPE_CHECK_INSTANCE_TYPE(item, exif_item_get_type()))
+	{
+		ExifItem* ei = EXIF_ITEM(item);
+		if (ei->is_group) return "";
+		return (NULL != ei->value_text) ? ei->value_text : "";
+	}
+	return "";
+}
+
+/* The item of the row under (x, y), or NULL when the pointer is not over a
+ * row of this column view.  Picking gives us the list item directly, so a
+ * right click does not have to rely on what happens to be selected. */
+static gpointer property_row_item_at(GtkWidget* colview, gdouble x, gdouble y)
+{
+	/* the pick is relative to the column view, so the hit is inside it */
+	GtkWidget* hit = gtk_widget_pick(colview, x, y, GTK_PICK_DEFAULT);
+	while (NULL != hit && !GTK_IS_LIST_ITEM(hit))
+		hit = gtk_widget_get_parent(hit);
+	if (NULL == hit) return NULL;
+
+	gpointer item = gtk_list_item_get_item(GTK_LIST_ITEM(hit));
+	if (NULL == item) return NULL;
+	g_object_ref(item);
+	return item;
+}
+
+/* The value of the selected row, used by the Ctrl-C shortcut. */
+static std::string property_selected_value(GtkWidget* colview)
+{
+	GtkSelectionModel* model =
+		gtk_column_view_get_model(GTK_COLUMN_VIEW(colview));
+	if (NULL == model || !GTK_IS_SINGLE_SELECTION(model)) return "";
+	GtkSingleSelection* single = GTK_SINGLE_SELECTION(model);
+	if (!gtk_single_selection_get_can_unselect(single)) return "";
+
+	const guint pos = gtk_single_selection_get_selected(single);
+	if (GTK_INVALID_LIST_POSITION == pos) return "";
+
+	gpointer item = g_list_model_get_item(G_LIST_MODEL(single), pos);
+	if (NULL == item) return "";
+	const std::string value = property_item_value(item);
+	g_object_unref(item);
+	return value;
+}
+
+/* Ctrl-C on the focused row, unless a text entry in a row is being edited,
+ * in which case the entry keeps the keystroke. */
+static gboolean property_copy_key_cb(GtkEventControllerKey *controller,
+	guint keyval, guint keycode, GdkModifierType state, gpointer colview)
+{
+	(void)controller; (void)keycode;
+	const bool bC = (GDK_KEY_c == keyval) || (GDK_KEY_C == keyval);
+	const bool bInsert = (GDK_KEY_Insert == keyval);
+	if (!bC && !bInsert) return GDK_EVENT_PROPAGATE;
+	if (0 == (state & GDK_CONTROL_MASK)) return GDK_EVENT_PROPAGATE;
+
+	/* a text entry in a row is being edited: leave the keystroke to it */
+	GtkWidget* root = gtk_widget_get_parent(GTK_WIDGET(colview));
+	while (NULL != root && !GTK_IS_WINDOW(root))
+		root = gtk_widget_get_parent(root);
+	GtkWidget* focus = (NULL != root) ?
+		gtk_window_get_focus(GTK_WINDOW(root)) : NULL;
+	if (GTK_IS_EDITABLE(focus)) return GDK_EVENT_PROPAGATE;
+
+	const std::string value = property_selected_value(GTK_WIDGET(colview));
+	if (value.empty()) return GDK_EVENT_PROPAGATE;
+
+	property_copy_to_clipboard(value);
+	return GDK_EVENT_STOP;
+}
+
+/* The context menu needs the owning impl, the key handler needs the view;
+ * both hang off the column view so one signal connection covers both. */
+static void property_attach_row_actions(GtkWidget* colview, gpointer pImpl)
+{
+	property_row_action_group(colview);
+	g_object_set_data(G_OBJECT(colview), "pv-impl", pImpl);
+
+	GtkGestureClick* rclick = GTK_GESTURE_CLICK(gtk_gesture_click_new());
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick),
+		GDK_BUTTON_SECONDARY);
+	g_signal_connect(rclick, "pressed",
+		G_CALLBACK(property_row_right_click_cb), colview);
+	gtk_widget_add_controller(colview, GTK_EVENT_CONTROLLER(rclick));
+
+	GtkEventController* keys = gtk_event_controller_key_new();
+	g_signal_connect(keys, "key-pressed",
+		G_CALLBACK(property_copy_key_cb), colview);
+	gtk_widget_add_controller(colview, keys);
+}
+
+/* Every tab's value cell is a plain label now: copying a value is a row
+ * level action (right click or Ctrl-C) and deliberately not a per-row
+ * button. */
 static void kv_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
 { (void)factory; (void)user_data;
 	GtkWidget *label = gtk_label_new(NULL);
 	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+
 	gtk_list_item_set_child(item, label); }
 
 static void kv_key_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
@@ -600,8 +757,10 @@ static void kv_key_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer
 static void kv_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
 { (void)factory; (void)user_data;
 	PropertyItem *pi = PROPERTY_ITEM(gtk_list_item_get_item(item));
-	gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(item)),
-		pi->value ? pi->value : "");
+	GtkWidget *child = gtk_list_item_get_child(item);
+	const char* value = (NULL != pi->value) ? pi->value : "";
+
+	gtk_label_set_text(GTK_LABEL(child), value);
 }
 
 static void kv_unbind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
@@ -720,12 +879,10 @@ static void exif_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpoi
 
 	if (ei->show_thumbnail && ei->thumbnail)
 	{
-		char buf[48];
-		snprintf(buf, sizeof(buf), "%dx%d",
-			gdk_texture_get_width(ei->thumbnail),
-			gdk_texture_get_height(ei->thumbnail));
-		gtk_label_set_text(GTK_LABEL(label), buf);
+		/* the embedded size is already in the property column; the picture
+		 * carries the preview itself */
 		gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(ei->thumbnail));
+		gtk_widget_set_halign(picture, GTK_ALIGN_START);
 		gtk_widget_set_visible(label, FALSE);
 		gtk_widget_set_visible(picture, TRUE);
 		gtk_widget_set_visible(entry, FALSE);
@@ -814,30 +971,6 @@ static std::string FormatTimeT(time_t t)
 	return buf;
 }
 
-static std::string GetGpsCoordinateString(std::shared_ptr<Exiv2::ExifData> pExifData,
-	const char* coordKey, const char* refKey)
-{
-	try
-	{
-		auto itCoord = pExifData->findKey(Exiv2::ExifKey(coordKey));
-		if (pExifData->end() == itCoord) return "";
-		double degrees = ParseRationalTriple(itCoord->toString());
-		std::string ref;
-		if ('\0' != refKey[0])
-		{
-			auto itRef = pExifData->findKey(Exiv2::ExifKey(refKey));
-			if (pExifData->end() != itRef) ref = itRef->toString();
-		}
-		char buf[64];
-		if (!ref.empty())
-			snprintf(buf,sizeof(buf),"%.6f (%s)",degrees,ref.c_str());
-		else
-			snprintf(buf,sizeof(buf),"%.6f",degrees);
-		return buf;
-	}
-	catch (...) { return ""; }
-}
-
 static void property_view_map(GtkWidget *widget, gpointer user_data)
 { (void)widget;
 	PropertyView::PropertyViewImpl *pImpl =
@@ -866,9 +999,8 @@ PropertyView::PropertyViewImpl::PropertyViewImpl() :
 	m_bHasXmp     = false;
 	m_bHasIptc    = false;
 	m_pNotebook   = NULL;
-	m_pSummaryPreview = NULL;
-	m_pSummaryTitle   = NULL;
-	m_pExifPopover    = NULL;
+	m_pRowPopover     = NULL;
+	m_bAccelsSuppressed = FALSE;
 	for (int i = 0; i < 5; i++) m_pPageWidgets[i] = NULL;
 
 	PreferencesPtr prefPtr = Preferences::GetInstance();
@@ -886,8 +1018,12 @@ PropertyView::PropertyViewImpl::~PropertyViewImpl()
 	PreferencesPtr prefPtr = Preferences::GetInstance();
 	prefPtr->RemoveEventHandler( m_PreferencesEventHandlerPtr );
 
-	if (NULL != m_pExifPopover)
-	{ gtk_widget_unparent(m_pExifPopover); m_pExifPopover = NULL; }
+	property_row_close_popover(this);
+	if (m_bAccelsSuppressed)
+	{
+		QuiverUtils::SuppressAllAccelerators(false);
+		m_bAccelsSuppressed = FALSE;
+	}
 	if (NULL != m_pNotebook)
 		g_object_unref(m_pNotebook);
 }
@@ -946,20 +1082,6 @@ PropertyView::PropertyView()
 				gtk_widget_set_margin_top(vbox, 8);
 				gtk_widget_set_margin_bottom(vbox, 8);
 
-				GtkWidget *preview = gtk_picture_new();
-				gtk_widget_set_halign(preview, GTK_ALIGN_CENTER);
-				gtk_widget_set_valign(preview, GTK_ALIGN_START);
-				gtk_widget_set_visible(preview, FALSE);
-				gtk_box_append(GTK_BOX(vbox), preview);
-				m_PropertyViewImplPtr->m_pSummaryPreview = preview;
-
-				GtkWidget *title = gtk_label_new(NULL);
-				gtk_label_set_xalign(GTK_LABEL(title), 0.0);
-				gtk_label_set_wrap(GTK_LABEL(title), TRUE);
-				gtk_label_set_wrap_mode(GTK_LABEL(title), PANGO_WRAP_WORD_CHAR);
-				gtk_box_append(GTK_BOX(vbox), title);
-				m_PropertyViewImplPtr->m_pSummaryTitle = title;
-
 				/* Property column */
 				GtkListItemFactory *fkey = gtk_signal_list_item_factory_new();
 				g_signal_connect(fkey, "setup", G_CALLBACK(kv_setup), NULL);
@@ -1001,13 +1123,6 @@ PropertyView::PropertyView()
 				GtkColumnViewColumn *cval = gtk_column_view_column_new("Value", fval);
 				gtk_column_view_column_set_expand(cval, TRUE);
 				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cval);
-
-				/* Right-click context menu via GtkGestureClick */
-				GtkGestureClick *rclick = GTK_GESTURE_CLICK(gtk_gesture_click_new());
-				gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick), GDK_BUTTON_SECONDARY);
-				g_signal_connect(rclick, "pressed",
-					G_CALLBACK(exif_right_click_cb), m_PropertyViewImplPtr.get());
-				gtk_widget_add_controller(colview_widget, GTK_EVENT_CONTROLLER(rclick));
 
 				gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), colview_widget);
 			}
@@ -1085,6 +1200,20 @@ PropertyView::PropertyView()
 	m_PropertyViewImplPtr->m_pIptcColumnView    = views[3];
 	m_PropertyViewImplPtr->m_pVideoColumnView   = views[4];
 
+	/* right click a row for its context menu, Ctrl-C to copy the selected
+	 * row; the EXIF tab reuses the menu for its add/remove tag entries */
+	for (int i = 0; i < 5; i++)
+		property_attach_row_actions(views[i], m_PropertyViewImplPtr.get());
+
+	/* own the keyboard while this pane has the focus, see
+	 * property_pane_focus_changed() */
+	GtkEventController* pFocusController = gtk_event_controller_focus_new();
+	g_signal_connect(pFocusController, "enter",
+		G_CALLBACK(property_pane_focus_changed), m_PropertyViewImplPtr.get());
+	g_signal_connect(pFocusController, "leave",
+		G_CALLBACK(property_pane_focus_changed), m_PropertyViewImplPtr.get());
+	gtk_widget_add_controller(m_PropertyViewImplPtr->m_pNotebook, pFocusController);
+
 	g_signal_connect(m_PropertyViewImplPtr->m_pNotebook,
 		"map", G_CALLBACK(property_view_map), m_PropertyViewImplPtr.get());
 }
@@ -1140,72 +1269,23 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 		GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
 		gtk_column_view_set_model(GTK_COLUMN_VIEW(m_pSummaryColumnView),
 			GTK_SELECTION_MODEL(sel));
-		gtk_widget_set_visible(m_pSummaryPreview, FALSE);
-		gtk_label_set_markup(GTK_LABEL(m_pSummaryTitle), "");
 		return;
 	}
 
-	/* filename heading */
-	gchar *szMarkup = g_markup_printf_escaped(
-		"<big><b>%s</b></big>", m_QuiverFile.GetFileName().c_str());
-	gtk_label_set_markup(GTK_LABEL(m_pSummaryTitle), szMarkup);
-	g_free(szMarkup);
+	/* Collect every value first, then emit the rows in the order given by
+	 * QuiverSummary::Layout().  Deciding the order while collecting is what
+	 * used to put the shared properties at different places for images and
+	 * videos, which made the rows jump around when flipping media types. */
+	std::map<std::string, std::string> values;
 
-	/* preview: EXIF thumbnail for photos, poster frame for videos */
-	GdkTexture* preview_tex = NULL;
-	if (m_bIsVideo)
-		preview_tex = QuiverVideoOps::LoadTexture(m_QuiverFile.GetURI());
-	else
-		preview_tex = m_QuiverFile.GetExifThumbnailTexture();
-
-	if (NULL != preview_tex && 1 < m_QuiverFile.GetOrientation())
-	{
-		GdkTexture *new_tex = QuiverUtils::TextureExifReorientate(preview_tex, m_QuiverFile.GetOrientation());
-		if (NULL != new_tex)
-		{
-			g_object_unref(preview_tex);
-			preview_tex = new_tex;
-		}
-	}
-
-	if (NULL != preview_tex)
-	{
-		const int maxDim = 128;
-		int w = gdk_texture_get_width(preview_tex);
-		int h = gdk_texture_get_height(preview_tex);
-		if (maxDim < w || maxDim < h)
-		{
-			double scale = ((double)w / (double)h > 1.0) ?
-				((double)maxDim / (double)w) : ((double)maxDim / (double)h);
-			int sw = (w > 0) ? (int)(w * scale + 0.5) : 1;
-			int sh = (h > 0) ? (int)(h * scale + 0.5) : 1;
-			GdkTexture* scaled = QuiverUtils::ScaleTexture(preview_tex, sw, sh);
-			if (scaled)
-			{
-				g_object_unref(preview_tex);
-				preview_tex = scaled;
-			}
-		}
-	}
-
-	if (NULL != preview_tex)
-	{
-		gtk_picture_set_paintable(GTK_PICTURE(m_pSummaryPreview), GDK_PAINTABLE(preview_tex));
-		gtk_widget_set_visible(m_pSummaryPreview, TRUE);
-		g_object_unref(preview_tex);
-	}
-	else
-	{
-		gtk_widget_set_visible(m_pSummaryPreview, FALSE);
-	}
-
-	add_row("Type", m_QuiverFile.GetMimeType());
+	values["File Name"] = m_QuiverFile.GetFileName();
+	values["Type"] = m_QuiverFile.GetMimeType();
 
 	unsigned long long size = m_QuiverFile.GetFileSize();
 	if (0 != size)
 	{
 		gchar* sz = g_format_size(size);
-		add_row("File Size", sz);
+		values["File Size"] = sz;
 		g_free(sz);
 	}
 
@@ -1215,11 +1295,29 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 		GDateTime* pMod = g_file_info_get_modification_date_time(pInfo);
 		if (NULL != pMod)
 		{
-			add_row("Last Modified", FormatTimeT(g_date_time_to_unix(pMod)));
+			values["Last Modified"] = FormatTimeT(g_date_time_to_unix(pMod));
 			g_date_time_unref(pMod);
 		}
 		g_object_unref(pInfo);
 	}
+
+	/* make and model read better together than as two rows */
+	auto combine_camera = [](const std::string& make, const std::string& model)
+	{
+		std::string out;
+		if (!make.empty()) out += make;
+		if (!model.empty())
+		{
+			if (!out.empty())
+			{
+				out += ' ';
+				/* makers often already end the make with a separator */
+				if (' ' != out[out.size() - 1]) out += ' ';
+			}
+			out += model;
+		}
+		return out;
+	};
 
 	if (m_bIsVideo)
 	{
@@ -1228,42 +1326,37 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 		g_free(szPath);
 
 		if ('\0' != info.creation_time[0])
-			add_row("Date Taken", FormatTimeT(m_QuiverFile.GetTimeT(true)));
+			values["Date Taken"] = FormatTimeT(m_QuiverFile.GetTimeT(true));
 
 		if (info.ok)
 		{
 			int secs = (int)(info.duration_seconds + 0.5);
 			gchar* dur = g_strdup_printf("%d:%02d:%02d", secs / 3600,
 				(secs / 60) % 60, secs % 60);
-			add_row("Duration", dur);
+			values["Duration"] = dur;
 			g_free(dur);
 
 			gchar* dims = g_strdup_printf("%d x %d", info.width, info.height);
-			add_row("Dimensions", dims);
+			values["Dimensions"] = dims;
 			g_free(dims);
 
-			add_row("Codecs", info.codecs);
-			add_row("Container", info.container);
-
-			if (!info.camera_make.empty())
-				add_row("Camera Make", info.camera_make.c_str());
-			if (!info.camera_model.empty())
-				add_row("Camera Model", info.camera_model.c_str());
+			values["Codecs"] = info.codecs;
+			values["Container"] = info.container;
+			values["Camera"] = combine_camera(info.camera_make,
+				info.camera_model);
 			if (!info.gps_location.empty())
-			{
-				std::string gps = FormatGpsLocation(info.gps_location);
-				add_row("GPS Location", gps.c_str());
-			}
+				values["GPS Location"] = QuiverGps::LocationFromIso6709(
+					info.gps_location);
 		}
 	}
 	else
 	{
 		gchar* dims = g_strdup_printf("%d x %d",
 			m_QuiverFile.GetWidth(), m_QuiverFile.GetHeight());
-		add_row("Dimensions", dims);
+		values["Dimensions"] = dims;
 		g_free(dims);
 
-		add_row("Date Taken", FormatTimeT(m_QuiverFile.GetTimeT(true)));
+		values["Date Taken"] = FormatTimeT(m_QuiverFile.GetTimeT(true));
 
 		if (NULL != m_ExifData.get())
 		{
@@ -1276,20 +1369,23 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 				} catch (...) {}
 				return "";
 			};
-			add_row("Camera Make", get_string("Exif.Image.Make"));
-			add_row("Camera Model", get_string("Exif.Image.Model"));
-			add_row("Software", get_string("Exif.Image.Software"));
-			add_row("Artist", get_string("Exif.Image.Artist"));
-			add_row("GPS Latitude",
-				GetGpsCoordinateString(m_ExifData,
-					"Exif.GPSInfo.GPSLatitude","Exif.GPSInfo.GPSLatitudeRef"));
-			add_row("GPS Longitude",
-				GetGpsCoordinateString(m_ExifData,
-					"Exif.GPSInfo.GPSLongitude","Exif.GPSInfo.GPSLongitudeRef"));
-			add_row("GPS Altitude",
-				GetGpsCoordinateString(m_ExifData,
-					"Exif.GPSInfo.GPSAltitude",""));
+			values["Camera"] = combine_camera(get_string("Exif.Image.Make"),
+				get_string("Exif.Image.Model"));
+			values["Software"] = get_string("Exif.Image.Software");
+			values["Artist"] = get_string("Exif.Image.Artist");
+			values["GPS Location"] = QuiverGps::LocationString(m_ExifData);
+			values["GPS Altitude"] = QuiverGps::CoordinateString(m_ExifData,
+				"Exif.GPSInfo.GPSAltitude", NULL);
 		}
+	}
+
+	/* Emit in layout order: the properties an image and a video have in
+	 * common first, then the ones specific to this media type. */
+	for (const std::string& label : QuiverSummary::Layout(m_bIsVideo))
+	{
+		auto it = values.find(label);
+		if (values.end() == it || it->second.empty()) continue;
+		add_row(label.c_str(), it->second);
 	}
 
 	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
@@ -1601,7 +1697,7 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
 			add("Camera Model", info.camera_model.c_str(), FALSE);
 		if (!info.gps_location.empty())
 		{
-			std::string gps = FormatGpsLocation(info.gps_location);
+			std::string gps = QuiverGps::FormatIso6709(info.gps_location);
 			add("GPS Location", gps.c_str(), FALSE);
 		}
 
@@ -1702,20 +1798,57 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
  * PopulateExif
  * ═══════════════════════════════════════════════════════════════════════ */
 
+/* Embedded EXIF thumbnails are typically 160x120, which is too small to
+ * tell whether the embedded preview matches the file.  Scale the longest
+ * side into a range that is actually legible without inventing detail for
+ * the oversized ones.  Takes ownership of pTexture. */
+static GdkTexture* ScaleExifThumbnailForDisplay(GdkTexture* pTexture)
+{
+	if (NULL == pTexture)
+		return NULL;
+
+	const int MIN_DIM = 256;
+	const int MAX_DIM = 512;
+
+	int w = gdk_texture_get_width(pTexture);
+	int h = gdk_texture_get_height(pTexture);
+	int longest = MAX(w, h);
+	if (MIN_DIM <= longest && longest <= MAX_DIM)
+		return pTexture;
+
+	int target = (longest < MIN_DIM) ? MIN_DIM : MAX_DIM;
+	double scale = (0 < longest) ? ((double)target / (double)longest) : 1.;
+	int sw = (w > 0) ? (int)(w * scale + 0.5) : 1;
+	int sh = (h > 0) ? (int)(h * scale + 0.5) : 1;
+
+	GdkTexture* scaled = QuiverUtils::ScaleTexture(pTexture, sw, sh);
+	if (NULL == scaled)
+		return pTexture;
+
+	g_object_unref(pTexture);
+	return scaled;
+}
+
 static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
 {
 	GListStore *store = g_list_store_new(exif_item_get_type());
 
 	if (NULL != pImpl->m_ExifData.get())
 	{
+		gchar szName[64] = {};
 		GdkTexture *tex = pImpl->m_QuiverFile.GetExifThumbnailTexture();
 		if (NULL != tex)
 		{
+			// the embedded size is what the user actually wants to know;
+			// the picture itself gets scaled for legibility
+			g_snprintf(szName, sizeof(szName), "Thumbnail (%dx%d)",
+				gdk_texture_get_width(tex), gdk_texture_get_height(tex));
 			GdkTexture *new_tex =
 				QuiverUtils::TextureExifReorientate(tex,
 					pImpl->m_QuiverFile.GetOrientation());
 			if (NULL != new_tex)
 			{ g_object_unref(tex); tex = new_tex; }
+			tex = ScaleExifThumbnailForDisplay(tex);
 		}
 
 		if (NULL != tex)
@@ -1727,7 +1860,7 @@ static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
 			g_list_store_append(store, hdr);
 
 			ExifItem *thumb_item = exif_item_new();
-			thumb_item->name = g_strdup("Thumbnail");
+			thumb_item->name = g_strdup('\0' != szName[0] ? szName : "Thumbnail");
 			thumb_item->thumbnail = tex; /* transfer ownership */
 			thumb_item->show_thumbnail = TRUE;
 			g_list_store_append(store, thumb_item);
@@ -2038,48 +2171,72 @@ static void property_value_cell_edited_callback(const char *key, const char *new
 
 
 /* ═══════════════════════════════════════════════════════════════════════
- * EXIF right-click context menu  (GtkPopoverMenu + GMenu)
+ * Row right-click context menu  (GtkPopoverMenu + GMenu)
+ *
+ * Shared by every property tab: copying the row value is offered on all of
+ * them, and the EXIF tab keeps its add/remove tag entries on top.
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static void exif_right_click_cb(GtkGestureClick *gesture, gint n_press,
+static void property_row_right_click_cb(GtkGestureClick *gesture, gint n_press,
 	gdouble x, gdouble y, gpointer user_data)
 { (void)gesture; (void)n_press;
+	GtkWidget *colview = GTK_WIDGET(user_data);
 	PropertyView::PropertyViewImpl *pImpl =
-		(PropertyView::PropertyViewImpl*)user_data;
+		(PropertyView::PropertyViewImpl*)g_object_get_data(
+			G_OBJECT(colview), "pv-impl");
+	if (NULL == pImpl) return;
 
-	if (NULL != pImpl->m_pExifPopover)
+	property_row_close_popover(pImpl);
+
+	/* the row under the pointer, falling back to the selected row */
+	gpointer item = property_row_item_at(colview, x, y);
+	if (NULL == item)
 	{
-		gtk_widget_unparent(pImpl->m_pExifPopover);
-		pImpl->m_pExifPopover = NULL;
+		GtkSelectionModel* model =
+			gtk_column_view_get_model(GTK_COLUMN_VIEW(colview));
+		if (NULL == model || !GTK_IS_SINGLE_SELECTION(model)) return;
+		GtkSingleSelection* single = GTK_SINGLE_SELECTION(model);
+		const guint pos = gtk_single_selection_get_selected(single);
+		if (GTK_INVALID_LIST_POSITION == pos) return;
+		item = g_list_model_get_item(G_LIST_MODEL(single), pos);
+		if (NULL == item) return;
 	}
-
-	/* Determine which item is at the click position */
-	GtkWidget *colview = pImpl->m_pExifColumnView;
-	GtkSingleSelection *sel = GTK_SINGLE_SELECTION(
-		gtk_column_view_get_model(GTK_COLUMN_VIEW(colview)));
-	guint pos = gtk_single_selection_get_selected(sel);
-	if (pos == GTK_INVALID_LIST_POSITION) return;
-
-	ExifItem *ei = EXIF_ITEM(g_list_model_get_item(G_LIST_MODEL(sel), pos));
-	if (NULL == ei) return;
 
 	std::string groupName;
 	std::string selectedKey;
-	gboolean is_group = ei->is_group;
+	gboolean is_group = FALSE;
 
-	if (is_group)
+	if (G_TYPE_CHECK_INSTANCE_TYPE(item, exif_item_get_type()))
 	{
-		if (ei->name) groupName = ei->name;
+		ExifItem *ei = EXIF_ITEM(item);
+		is_group = ei->is_group;
+		if (is_group)
+		{
+			if (ei->name) groupName = ei->name;
+		}
+		else
+		{
+			if (ei->full_key) selectedKey = ei->full_key;
+			try { groupName = Exiv2::ExifKey(selectedKey).groupName(); }
+			catch (...) {}
+		}
 	}
-	else
-	{
-		if (ei->full_key) selectedKey = ei->full_key;
-		try { groupName = Exiv2::ExifKey(selectedKey).groupName(); }
-		catch (...) {}
-	}
-	g_object_unref(ei);
+
+	const std::string value = property_item_value(item);
+	g_object_unref(item);
 
 	GMenu *menu = g_menu_new();
+
+	if (!value.empty())
+	{
+		GMenuItem *copy = g_menu_item_new("Copy", NULL);
+		g_menu_item_set_action_and_target_value(copy, kCopyAction,
+			g_variant_new_string(value.c_str()));
+		g_menu_item_set_attribute(copy, "icon", "s", "edit-copy-symbolic");
+		g_menu_item_set_attribute(copy, "accel", "s", "<Control>c");
+		g_menu_append_item(menu, copy);
+		g_object_unref(copy);
+	}
 
 	if (!groupName.empty())
 	{
@@ -2121,6 +2278,8 @@ static void exif_right_click_cb(GtkGestureClick *gesture, gint n_press,
 		{
 			GMenuItem *header = g_menu_item_new_submenu("Add Tag",
 				G_MENU_MODEL(addMenu));
+			g_menu_item_set_attribute(header, "icon", "s",
+				"list-add-symbolic");
 			g_menu_append_item(menu, header);
 			g_object_unref(header);
 			g_object_unref(addMenu);
@@ -2129,6 +2288,7 @@ static void exif_right_click_cb(GtkGestureClick *gesture, gint n_press,
 		if (!is_group && !selectedKey.empty())
 		{
 			GMenuItem *rm = g_menu_item_new("Remove Tag", NULL);
+			g_menu_item_set_attribute(rm, "icon", "s", "list-remove-symbolic");
 			g_object_set_data_full(G_OBJECT(rm), "kv-impl", pImpl, NULL);
 			g_object_set_data_full(G_OBJECT(rm), "kv-key",
 				g_strdup(selectedKey.c_str()), g_free);
@@ -2150,36 +2310,12 @@ static void exif_right_click_cb(GtkGestureClick *gesture, gint n_press,
 	GtkPopover *popover = GTK_POPOVER(gtk_popover_menu_new_from_model(G_MENU_MODEL(menu)));
 	g_object_unref(menu);
 
-	/* Register a GSimpleActionGroup so menu actions resolve */
-	GtkWidget *cw = colview;
-	while (cw && !GTK_IS_ROOT(cw))
-		cw = gtk_widget_get_parent(cw);
-	if (GTK_IS_ROOT(cw))
-	{
-		/* we don't want to add actions to the root; store on the colview */
-	}
-
-	/* Connect action handlers via a temporary action group */
-	GdkRectangle rect = { (int)x, (int)y, 1, 1 };
-	gtk_popover_set_pointing_to(popover, &rect);
 	gtk_widget_set_parent(GTK_WIDGET(popover), colview);
-	gtk_popover_popup(popover);
-	pImpl->m_pExifPopover = GTK_WIDGET(popover);
-
-	/* auto-dismiss on close */
-	g_signal_connect_swapped(popover, "closed",
-		G_CALLBACK(exif_popover_closed_cb), pImpl);
+	QuiverUtils::ShowContextMenuAt(popover, colview, x, y);
+	pImpl->m_pRowPopover = GTK_WIDGET(popover);
 }
 
-static void exif_popover_closed_cb(GtkPopover *popover, gpointer user_data)
-{ (void)popover;
-	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)user_data;
-	if (pImpl->m_pExifPopover)
-	{
-		gtk_widget_unparent(pImpl->m_pExifPopover);
-		pImpl->m_pExifPopover = NULL;
-	}
-}
+
 
 
 /* ═══════════════════════════════════════════════════════════════════════

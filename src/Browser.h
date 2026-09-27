@@ -49,6 +49,11 @@ public:
 	void ShowLoadingProgress(const std::string& text, double fraction);
 	void HideLoadingProgress();
 
+	/* Applies (or lifts) the "hide the sidebar in fullscreen" preference.  The
+	 * window drives this itself, so it is called from the window-state handler
+	 * rather than waiting for the browser's next UpdateUI(). */
+	void UpdateFullscreenSidebar();
+
 	class BrowserImpl;
 private:
 	boost::shared_ptr<BrowserImpl> m_BrowserImplPtr;

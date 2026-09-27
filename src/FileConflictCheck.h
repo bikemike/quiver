@@ -25,6 +25,9 @@ public:
 		std::string strDstURI;
 		std::string strContentType; // mime type of the source file
 		std::string strDstRelPath;  // relative destination directory (if applicable)
+		// false when the source has no date metadata of its own and the
+		// filesystem modification time stands in for it
+		bool bHasDateMetadata = true;
 
 		Mapping() {}
 		Mapping(const std::string& src, const std::string& dst)
@@ -42,6 +45,7 @@ public:
 		std::string strIconName;        // themed icon name, e.g. "video-x-generic"
 		std::string strDstRelPath;   // destination relative folder path
 		std::string strDstURI;       // destination full URI
+		bool bHasDateMetadata = true; // see Mapping::bHasDateMetadata
 
 		bool HasConflict() const { return !strConflictWith.empty(); }
 	};

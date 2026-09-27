@@ -257,6 +257,7 @@ rename_task_push_mapping(
 	vectMappings.push_back(FileConflictCheck::Mapping(szSrcURI, szDstURI));
 	vectMappings.back().strContentType =
 		(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
+	vectMappings.back().bHasDateMetadata = f.HasDateMetadata();
 	g_free(szDstURI);
 	g_free(szSrcURI);
 	g_object_unref(src);

@@ -243,7 +243,7 @@ enum
 	PREVIEW_COL_ICON = 0,
 	PREVIEW_COL_SRC,
 	PREVIEW_COL_DST,
-	PREVIEW_COL_CONFLICT,
+	PREVIEW_COL_ISSUE,
 	PREVIEW_COL_COUNT
 };
 
@@ -260,7 +260,8 @@ typedef struct {
 	gchar*   icon_name;
 	gchar*   src_name;
 	gchar*   dst_name;
-	gchar*   conflict;
+	gchar*   issue;         // why this row is flagged, empty when fine
+	gboolean issue_is_error; // conflict (blocking, red) vs advisory (orange)
 } RenamePreviewItem;
 
 typedef struct {
@@ -279,7 +280,7 @@ static void rename_preview_item_finalize (GObject* object)
 	g_free(item->icon_name);
 	g_free(item->src_name);
 	g_free(item->dst_name);
-	g_free(item->conflict);
+	g_free(item->issue);
 	G_OBJECT_CLASS(rename_preview_item_parent_class)->finalize(object);
 }
 
@@ -293,18 +294,21 @@ static void rename_preview_item_init (RenamePreviewItem* item)
 	item->icon_name = NULL;
 	item->src_name = NULL;
 	item->dst_name = NULL;
-	item->conflict = NULL;
+	item->issue = NULL;
+	item->issue_is_error = FALSE;
 }
 
 static RenamePreviewItem* rename_preview_item_new (const gchar* icon,
-	const gchar* src, const gchar* dst, const gchar* conflict)
+	const gchar* src, const gchar* dst, const gchar* issue,
+	gboolean issue_is_error)
 {
 	RenamePreviewItem* item = static_cast<RenamePreviewItem*>(
 		g_object_new(RENAME_PREVIEW_ITEM_TYPE, NULL));
 	item->icon_name = g_strdup(icon);
 	item->src_name = g_strdup(src);
 	item->dst_name = g_strdup(dst);
-	item->conflict = g_strdup(conflict);
+	item->issue = g_strdup(issue);
+	item->issue_is_error = issue_is_error;
 	return item;
 }
 
@@ -353,15 +357,14 @@ static void preview_text_bind (GtkSignalListItemFactory* factory, GtkListItem* l
 	{
 		case PREVIEW_COL_SRC:    szText = item->src_name;   break;
 		case PREVIEW_COL_DST:    szText = item->dst_name;   break;
-		default:                 szText = item->conflict;   break;
+		default:                 szText = item->issue;      break;
 	}
-	gboolean bConflicted =
-		(NULL != item->conflict && '\0' != item->conflict[0]);
-	if (bConflicted && PREVIEW_COL_CONFLICT == iCol)
+	gboolean bIssue = (NULL != item->issue && '\0' != item->issue[0]);
+	if (bIssue && PREVIEW_COL_ISSUE == iCol)
 	{
 		gchar* esc = g_markup_escape_text(szText ? szText : "", -1);
-		gchar* markup =
-			g_strdup_printf("<span foreground=\"#e01b24\">%s</span>", esc);
+		gchar* markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
+			item->issue_is_error ? "#e01b24" : "#c64600", esc);
 		gtk_label_set_markup(GTK_LABEL(label), markup);
 		g_free(markup);
 		g_free(esc);
@@ -557,8 +560,8 @@ void RenameDlg::RenameDlgPriv::LoadWidgets()
 				gtk_column_view_column_new("", preview_column_factory(PREVIEW_COL_ICON));
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewPreview), column);
 		}
-		static const char* szTitles[] = { NULL, "Original Name", "New Name", "Conflict" };
-		for (int c = PREVIEW_COL_SRC ; c <= PREVIEW_COL_CONFLICT ; c++)
+		static const char* szTitles[] = { NULL, "Original Name", "New Name", "Issue" };
+		for (int c = PREVIEW_COL_SRC ; c <= PREVIEW_COL_ISSUE ; c++)
 		{
 			GtkColumnViewColumn* column =
 				gtk_column_view_column_new(szTitles[c], preview_column_factory(c));
@@ -915,12 +918,15 @@ void RenameDlg::RenameDlgPriv::ApplyConflictResults(ConflictShared& state)
 		m_bConflictFound = state.bFound;
 	}
 
-	// conflicted rows first, then by name (natural order)
+	// blocking conflicts first, then rows whose only issue is missing date
+	// metadata, then by name (natural order)
 	std::stable_sort(m_vectConflicts.begin(), m_vectConflicts.end(),
 		[](const FileConflictCheck::Result& a, const FileConflictCheck::Result& b)
 		{
 			if (a.HasConflict() != b.HasConflict())
 				return a.HasConflict();
+			if (a.bHasDateMetadata != b.bHasDateMetadata)
+				return !a.bHasDateMetadata;
 			return 0 > strnatcasecmp(a.strSrcName.c_str(), b.strSrcName.c_str());
 		});
 
@@ -939,9 +945,12 @@ void RenameDlg::RenameDlgPriv::ApplyConflictResults(ConflictShared& state)
 		const FileConflictCheck::Result& r = m_vectConflicts[i];
 		gchar* szIcon = preview_icon_pixbuf(r.strIconName)
 			? g_strdup(r.strIconName.c_str()) : NULL;
+		std::string strIssue = r.strConflictWith;
+		if (strIssue.empty() && !r.bHasDateMetadata)
+			strIssue = "No date metadata (uses file modification time)";
 		RenamePreviewItem* item = rename_preview_item_new(
 			szIcon, r.strSrcName.c_str(),
-			r.strDstName.c_str(), r.strConflictWith.c_str());
+			r.strDstName.c_str(), strIssue.c_str(), r.HasConflict());
 		g_free(szIcon);
 		g_list_store_append(m_pListStorePreview, item);
 		g_object_unref(item);
@@ -952,7 +961,7 @@ void RenameDlg::RenameDlgPriv::ApplyConflictResults(ConflictShared& state)
 		g_snprintf(szMore, sizeof(szMore), "… and %d more files",
 			(int)(m_vectConflicts.size() - PREVIEW_ROW_CAP));
 		RenamePreviewItem* item = rename_preview_item_new(
-			NULL, szMore, NULL, NULL);
+			NULL, szMore, NULL, NULL, FALSE);
 		g_list_store_append(m_pListStorePreview, item);
 		g_object_unref(item);
 	}

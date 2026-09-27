@@ -93,6 +93,10 @@ public:
 	
 	time_t GetTimeT(bool fromExif = true) const;
 	bool HasCachedTimeT() const;
+	// true when the timestamp GetTimeT() reports came from real metadata
+	// (EXIF DateTimeOriginal or a video container date) rather than from
+	// the filesystem modification-time fallback
+	bool HasDateMetadata() const;
 	
 	double GetLoadTimeInSeconds() const;
 	

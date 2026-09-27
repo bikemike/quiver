@@ -14,6 +14,9 @@
 
 TEST_CASE("Toolbar UI Layout and Widget Order", "[unit][gui][toolbar]")
 {
+    /* loads a GtkBuilder UI and inspects the resulting widgets */
+    REQUIRE_DISPLAY();
+
     std::string uiPath = QuiverTest_GetDataDir() + "/quiver-toolbar.ui";
     GtkBuilder *builder = gtk_builder_new_from_file(uiPath.c_str());
     REQUIRE(builder != nullptr);

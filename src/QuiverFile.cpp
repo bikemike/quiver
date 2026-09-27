@@ -193,6 +193,8 @@ public:
 	int GetOrientation();
 	time_t GetTimeT(bool fromExif = true);
 	bool HasCachedTimeT() const;
+	bool HasDateMetadata() const;
+	bool ResolveMetadataTimeT();
 	
 	std::shared_ptr<Exiv2::ExifData> GetExifData();
 	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
@@ -252,6 +254,7 @@ public:
 
 	bool m_bThumbloadFail;
 	time_t m_cachedTimeT = 0;
+	time_t m_cachedMetadataTimeT = 0;
 };
 
 class ThreadPoolDestructor
@@ -1160,14 +1163,17 @@ static bool FileNameHasCameraPrefix(const gchar* szURI)
 		(0 == strName.compare(pos, 4, "vid_"));
 }
 
-time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
+// Resolves the file's own date metadata (EXIF DateTimeOriginal for photos,
+// a container creation date for videos) into m_cachedMetadataTimeT.  Kept
+// separate from GetTimeT so that a GetTimeT(false) call -- which caches the
+// modification time into m_cachedTimeT -- cannot mask the answer.  Callers
+// must hold m_MetadataMutex.
+bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+	if (0 != m_cachedMetadataTimeT)
+		return true;
 
-	if (m_cachedTimeT != 0)
-		return m_cachedTimeT;
-
-	if (fromExif && !IsVideo())
+	if (!IsVideo())
 	{
 		std::shared_ptr<Exiv2::ExifData> pExifData = GetExifData();
 		if (NULL != pExifData.get())
@@ -1196,13 +1202,13 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 					tm_exif_time.tm_isdst = -1;
 
 					// successfully parsed date
-					m_cachedTimeT = mktime(&tm_exif_time);
+					m_cachedMetadataTimeT = mktime(&tm_exif_time);
 				}
 
 			}
 		}
 	}
-	else if (fromExif)
+	else
 	{
 		// read the container's creation date in-process via libavformat
 		// (header-only open, no stream probing); fall through to mtime
@@ -1273,7 +1279,7 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 					if (bExplicitTZ)
 					{
 						// zoned tags parse to an absolute instant
-						m_cachedTimeT = g_date_time_to_unix(pGDate);
+						m_cachedMetadataTimeT = g_date_time_to_unix(pGDate);
 					}
 					else if (ContainerIsKnownUTCSource(pFmt) ||
 						FileNameHasCameraPrefix(m_szURI))
@@ -1290,14 +1296,14 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 							g_date_time_get_seconds(pGDate));
 						if (NULL != pUtc)
 						{
-							m_cachedTimeT = g_date_time_to_unix(pUtc);
+							m_cachedMetadataTimeT = g_date_time_to_unix(pUtc);
 							g_date_time_unref(pUtc);
 						}
 					}
 					else
 					{
 						// treat the fields as local wall clock
-						m_cachedTimeT = g_date_time_to_unix(pGDate);
+						m_cachedMetadataTimeT = g_date_time_to_unix(pGDate);
 					}
 					g_date_time_unref(pGDate);
 				}
@@ -1307,6 +1313,18 @@ time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 		}
 	}
 
+	return 0 != m_cachedMetadataTimeT;
+}
+
+time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
+	if (m_cachedTimeT != 0)
+		return m_cachedTimeT;
+
+	if (fromExif && ResolveMetadataTimeT())
+		m_cachedTimeT = m_cachedMetadataTimeT;
 
 	if (0 == m_cachedTimeT) // unable to get exif date	
 	{
@@ -1331,6 +1349,12 @@ bool QuiverFile::QuiverFileImpl::HasCachedTimeT() const
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 	return m_cachedTimeT != 0;
+}
+
+bool QuiverFile::QuiverFileImpl::HasDateMetadata() const
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+	return const_cast<QuiverFileImpl*>(this)->ResolveMetadataTimeT();
 }
 
 
@@ -2039,6 +2063,15 @@ bool QuiverFile::HasCachedTimeT() const
 	if (m_QuiverFilePtr)
 	{
 		return m_QuiverFilePtr->HasCachedTimeT();
+	}
+	return false;
+}
+
+bool QuiverFile::HasDateMetadata() const
+{
+	if (m_QuiverFilePtr)
+	{
+		return m_QuiverFilePtr->HasDateMetadata();
 	}
 	return false;
 }

@@ -12,6 +12,9 @@ set(UNIT_TEST_SOURCES
     unit/test_browser_history.cpp
     unit/test_recent_items.cpp
     unit/test_file_conflict_check.cpp
+    unit/test_file_ops.cpp
+    unit/test_gps.cpp
+    unit/test_summary_layout.cpp
     unit/test_preferences.cpp
     unit/test_bookmarks.cpp
     unit/test_external_tools.cpp

@@ -47,6 +47,16 @@ namespace QuiverUtils
 	GSimpleActionGroup* GetActionGroup();
 	void AddAction(GAction *action);
 	void RemoveAction(const char *action_name);      // for dynamically reloaded action lists
+
+	/* Drop every action `owner` registered.  The action group is global and
+	 * lives as long as the application, so a component that registers
+	 * actions with its own pointer as user_data and then goes away would
+	 * leave callbacks pointing at freed memory: the next activation (an
+	 * action toggled from anywhere, a menu item, a keybinding) would call
+	 * into it.  One action exists per name, so only the actions still owned
+	 * by `owner` are removed - a name another component has since
+	 * registered stays. */
+	void RemoveActionsFor(gpointer owner);
 	GAction* GetAction(const char *action_name);     // overload of the legacy GetAction
 	void SetActionsSensitive(const gchar **actions, gint n_actions, gboolean bSensitive); // overload
 

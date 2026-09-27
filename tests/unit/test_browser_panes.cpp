@@ -6,6 +6,7 @@
 #include "Browser.h"
 #include "Preferences.h"
 #include "QuiverPrefs.h"
+#include "QuiverUtils.h"
 #include "Statusbar.h"
 #include "test_helpers.h"
 
@@ -99,6 +100,32 @@ struct BrowserPaneFixture
     }
 };
 
+// The preferences are process-wide, so a test that flips one has to put it
+// back: leaving "window_fullscreen" set would have every later test think it
+// is running fullscreen.
+struct PrefGuard
+{
+    std::string m_section;
+    std::string m_key;
+    bool m_value;
+    bool m_hadValue;
+
+    PrefGuard(const char* section, const char* key, bool fallback)
+        : m_section(section), m_key(key), m_value(fallback)
+    {
+        m_hadValue = Preferences::GetInstance()->HasKey(m_section, m_key);
+        if (m_hadValue)
+            m_value = Preferences::GetInstance()->GetBoolean(m_section, m_key, fallback);
+    }
+    ~PrefGuard()
+    {
+        if (m_hadValue)
+            Preferences::GetInstance()->SetBoolean(m_section, m_key, m_value);
+        else
+            Preferences::GetInstance()->RemoveKey(m_section, m_key);
+    }
+};
+
 } // namespace
 
 TEST_CASE("Browser panes: growth is absorbed by the icon view, not the sidebar",
@@ -184,4 +211,74 @@ TEST_CASE("Browser panes: sidebar and preview toggles act independently",
     gtk_widget_set_visible(f.m_pPreview, FALSE);
     settle();
     CHECK(gtk_widget_get_visible(f.m_pVpaned));
+}
+
+// "Hide the folder tree in fullscreen" is about the side bar, not the tree:
+// the preview sits in the same column and has to leave fullscreen with it.
+// Before, only the tree went and the preview stayed, and the tree itself
+// lingered until the browser's next UpdateUI() happened to run (i.e. after
+// navigating), because the window-state handler never told the browser.
+TEST_CASE("Browser panes: the fullscreen preference takes the whole sidebar",
+          "[unit][browser][gui][layout]")
+{
+    REQUIRE_DISPLAY();
+    BrowserPaneFixture f;
+    // The real toggles: fullscreen drives the same actions the menu uses, and
+    // the point of the exercise is that they come back the way they were.
+    f.m_pBrowser->RegisterActions();
+
+    PrefGuard fullscreenPref(QUIVER_PREFS_APP, QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
+    PrefGuard hideInFullscreenPref(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, true);
+    PrefGuard treePref(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW, true);
+    PrefGuard previewPref(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_PREVIEW_SHOW, true);
+
+    auto prefs = Preferences::GetInstance();
+    prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);
+    prefs->SetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, true);
+
+    f.m_pBrowser->UpdateFullscreenSidebar();
+    settle();
+
+    CHECK(gtk_widget_get_visible(f.m_pVpaned) == FALSE);
+    CHECK(gtk_widget_get_visible(f.m_pNotebook) == FALSE);
+    CHECK(gtk_widget_get_visible(f.m_pPreview) == FALSE);
+    // neither menu item is left claiming a pane that is not there
+    CHECK(QuiverUtils::ToggleActionGetActive("BrowserViewSidebar") == FALSE);
+    CHECK(QuiverUtils::ToggleActionGetActive("BrowserViewPreview") == FALSE);
+    // and going fullscreen is not a decision about either pane, so the layout
+    // the user has is still the one that comes back
+    CHECK(prefs->GetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW, true));
+    CHECK(prefs->GetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_PREVIEW_SHOW, true));
+
+    prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
+    f.m_pBrowser->UpdateFullscreenSidebar();
+    settle();
+
+    CHECK(gtk_widget_get_visible(f.m_pVpaned));
+    CHECK(gtk_widget_get_visible(f.m_pNotebook));
+    CHECK(gtk_widget_get_visible(f.m_pPreview));
+
+    // A pane that was off before the fullscreen stays off after it, rather
+    // than being forced back on the way out.
+    QuiverUtils::ToggleActionSetActive("BrowserViewPreview", FALSE);
+    prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);
+    f.m_pBrowser->UpdateFullscreenSidebar();
+    CHECK(gtk_widget_get_visible(f.m_pVpaned) == FALSE);
+
+    prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
+    f.m_pBrowser->UpdateFullscreenSidebar();
+    settle();
+
+    CHECK(gtk_widget_get_visible(f.m_pVpaned));
+    CHECK(gtk_widget_get_visible(f.m_pNotebook));
+    CHECK(gtk_widget_get_visible(f.m_pPreview) == FALSE);
+
+    // With the setting off, fullscreen leaves the column exactly as it was.
+    prefs->SetBoolean(QUIVER_PREFS_BROWSER, QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS, false);
+    prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);
+    f.m_pBrowser->UpdateFullscreenSidebar();
+    settle();
+
+    CHECK(gtk_widget_get_visible(f.m_pVpaned));
+    CHECK(gtk_widget_get_visible(f.m_pNotebook));
 }

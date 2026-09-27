@@ -2065,6 +2065,15 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 			prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, true);
 		}
 
+		/* Now that the preference is written, the browser can act on it: its
+		 * UpdateUI() above only ran the app-wide part, and the browser's own
+		 * one is only reached on the next navigation, which left the sidebar
+		 * up until the user happened to click a file. */
+		if (pQuiverImpl->m_BrowserPtr)
+		{
+			pQuiverImpl->m_BrowserPtr->UpdateFullscreenSidebar();
+		}
+
 		pQuiverImpl->m_bTimeoutEventMotionNotifyRunning = true;
 		if (0 != pQuiverImpl->m_iTimeoutMouseMotionNotify)
 		{
@@ -2092,6 +2101,13 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 	else
 	{
 		prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN, false);
+
+		/* Puts the sidebar column back the way the user left it, if fullscreen
+		 * was what took it away. */
+		if (pQuiverImpl->m_BrowserPtr)
+		{
+			pQuiverImpl->m_BrowserPtr->UpdateFullscreenSidebar();
+		}
 
 		/* If unfullscreen occurs while slideshow is running, abort slideshow and restore previous view */
 		bool bInSlideShow = pQuiverImpl->m_ViewerPtr->IsSlideShowRunning();
@@ -2498,9 +2514,18 @@ void Quiver::Init()
 	// pass the extra space through to its (already expanding) children.
 	gtk_widget_set_hexpand(hbox_browser_viewer_container, TRUE);
 	gtk_widget_set_vexpand(hbox_browser_viewer_container, TRUE);
-	m_QuiverImplPtr->m_pNBProperties = gtk_notebook_new();
-	gtk_widget_set_name(m_QuiverImplPtr->m_pNBProperties ,"Quiver notebook 1");
 	
+	/* The property view is already a notebook (Summary/EXIF/XMP/IPTC/Video),
+	 * so use it directly as the side pane instead of wrapping it in a
+	 * single "Properties" tab.  This has to happen before
+	 * ToggleActionSetActive() below, which activates the action and
+	 * synchronously runs OnShowProperties() on the pane widget. */
+	m_QuiverImplPtr->m_pNBProperties = m_QuiverImplPtr->m_PropertyView.GetWidget();
+	gtk_widget_set_hexpand(m_QuiverImplPtr->m_pNBProperties, TRUE);
+	gtk_widget_set_vexpand(m_QuiverImplPtr->m_pNBProperties, TRUE);
+	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties));
+	gtk_notebook_set_scrollable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties), TRUE);
+
 	bool prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW);
 
 	QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_VIEW_PROPERTIES, prefs_show);
@@ -2515,16 +2540,9 @@ void Quiver::Init()
 		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_SORT_DESCENDING, bDec);
 	}
 
-	//FIXME: temp notebook stuff
-	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("File"));
-	//gtk_notebook_append_page(GTK_NOTEBOOK(m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Exif"));
-	gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),m_QuiverImplPtr->m_PropertyView.GetWidget(),gtk_label_new("Properties"));
-	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("IPTC"));
-	//gtk_notebook_append_page(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),gtk_drawing_area_new(),gtk_label_new("Database"));
-	gtk_notebook_popup_enable(GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties));
-	gtk_notebook_set_scrollable (GTK_NOTEBOOK(m_QuiverImplPtr->m_pNBProperties),TRUE);
-	/* gtk_notebook_append_page() above auto-shows the notebook, so re-apply
-	 * the preference here regardless of its value. */
+	/* ToggleActionSetActive() only acts when the state actually changes, so
+	 * re-apply the preference to cover a stored value matching the current
+	 * state. */
 	gtk_widget_set_visible(m_QuiverImplPtr->m_pNBProperties, prefs_show);
 	
 	// statusbar
@@ -3699,6 +3717,10 @@ void Quiver::OnShowProperties(bool bShow /* = true */)
 {
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->SetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_PROPS_SHOW, bShow);
+
+	/* The action can fire while the UI is still being built up, so ignore
+	 * a request that arrives before there is a pane to act on. */
+	if (NULL == m_QuiverImplPtr->m_pNBProperties) return;
 	
 	if (bShow)
 	{

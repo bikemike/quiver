@@ -4721,9 +4721,13 @@ static GdkContentProvider* signal_drag_source_prepare(GtkDragSource *source, gdo
 
 	std::list<std::string> uris;
 	uris.push_back(uri);
+	/* File drag by default (uri-list + gnome payload, so other folders and
+	 * file managers accept it), Alt-drag for the plain path text only.  See
+	 * the browser's drag source for the full rationale. */
 	bool bCutDrag = (0 == (state & GDK_CONTROL_MASK));
+	const bool bTextOnly = 0 != (state & GDK_ALT_MASK);
 	return QuiverClipboard::MakeContentProvider(uris, bCutDrag,
-		0 != (state & GDK_ALT_MASK));
+		bTextOnly, !bTextOnly);
 }
 
 static void signal_drag_begin (GtkDragSource *source, GdkDrag *drag, gpointer user_data)
@@ -5755,6 +5759,11 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 
 Viewer::ViewerImpl::~ViewerImpl()
 {
+	/* The action group is global and outlives this object: the actions
+	 * registered with this pointer as user_data would keep calling into
+	 * freed memory (an action toggled by a menu item, a keybinding or
+	 * UpdateUI() would run the handler below). */
+	QuiverUtils::RemoveActionsFor(this);
 	m_bShuttingDown = true;
 	StopVideoPanSlowdown();
 	ShortcutManager::GetInstance().RemoveShortcutsChangedCallback(viewer_shortcuts_changed_cb, this);

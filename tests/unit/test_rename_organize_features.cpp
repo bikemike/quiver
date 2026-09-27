@@ -9,6 +9,7 @@
 #include "QuiverPrefs.h"
 #include "test_helpers.h"
 
+#include <exiv2/exiv2.hpp>
 #include <gtk/gtk.h>
 #include <glib.h>
 #include <glib/gstdio.h>
@@ -70,6 +71,28 @@ TEST_CASE("RenameTask: SORT_BY_DATE synchronous execution without crash", "[unit
     bool ok = RenameTask::ComputeMappings(dirUri, "Img_###", ImageList::SORT_BY_DATE, mappings);
     REQUIRE(ok == true);
     REQUIRE(mappings.size() == 2);
+    // the copies carry no EXIF date, so the mtime stands in for it and the
+    // dialogs warn about it
+    for (const auto& m : mappings)
+        REQUIRE(m.bHasDateMetadata == false);
+
+    // give one copy a real EXIF date: only that mapping is exempt
+    {
+        auto image = Exiv2::ImageFactory::open(fileB.c_str());
+        REQUIRE(image.get() != nullptr);
+        image->readMetadata();
+        image->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        image->writeMetadata();
+    }
+    mappings.clear();
+    ok = RenameTask::ComputeMappings(dirUri, "Img_###", ImageList::SORT_BY_DATE, mappings);
+    REQUIRE(ok == true);
+    REQUIRE(mappings.size() == 2);
+    int nWithDate = 0;
+    for (const auto& m : mappings)
+        if (m.bHasDateMetadata)
+            nWithDate++;
+    REQUIRE(nWithDate == 1);
 
     g_free(dirUri);
     g_unlink(fileA.c_str());
@@ -121,7 +144,7 @@ TEST_CASE("Rename Dialog: Type column removed from preview table", "[unit][renam
     REQUIRE(cap.columnTitles[0] == "");
     REQUIRE(cap.columnTitles[1] == "Original Name");
     REQUIRE(cap.columnTitles[2] == "New Name");
-    REQUIRE(cap.columnTitles[3] == "Conflict");
+    REQUIRE(cap.columnTitles[3] == "Issue");
 
     for (const auto& t : cap.columnTitles)
     {
@@ -206,13 +229,13 @@ TEST_CASE("Organize Dialog: Friendly path, non-expanding spinbox, and preview co
     REQUIRE_FALSE(cap.spinVExpand);
     REQUIRE_FALSE(cap.parentVExpand);
 
-    // Column titles: "", "Original Name", "New Path", "New Name", "Conflict"
+    // Column titles: "", "Original Name", "New Path", "New Name", "Issue"
     REQUIRE(cap.columnTitles.size() == 5);
     REQUIRE(cap.columnTitles[0] == "");
     REQUIRE(cap.columnTitles[1] == "Original Name");
     REQUIRE(cap.columnTitles[2] == "New Path");
     REQUIRE(cap.columnTitles[3] == "New Name");
-    REQUIRE(cap.columnTitles[4] == "Conflict");
+    REQUIRE(cap.columnTitles[4] == "Issue");
 }
 
 TEST_CASE("Organize Dialog: 2-column layout and rename sensitivity", "[unit][organize][gui]")
@@ -441,3 +464,109 @@ TEST_CASE("Organize Dialog: template change gives immediate conflict-check feedb
     g_free(tmpDstDir);
 }
 
+
+TEST_CASE("Organize Dialog: files without date metadata are flagged in the Issue column",
+	"[unit][organize][gui][date]")
+{
+    REQUIRE_DISPLAY();
+
+    // source holds one dated and one undated copy of the sample
+    gchar* tmpSrcDir = g_dir_make_tmp("quiver_test_org_date_src_XXXXXX", NULL);
+    gchar* tmpDstDir = g_dir_make_tmp("quiver_test_org_date_dst_XXXXXX", NULL);
+    REQUIRE(tmpSrcDir != NULL);
+    REQUIRE(tmpDstDir != NULL);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    std::string datedFile = std::string(tmpSrcDir) + "/dated.jpg";
+    std::string undatedFile = std::string(tmpSrcDir) + "/undated.jpg";
+    char* contents = NULL;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+    REQUIRE(g_file_set_contents(datedFile.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(undatedFile.c_str(), contents, length, NULL));
+    g_free(contents);
+
+    {
+        auto image = Exiv2::ImageFactory::open(datedFile.c_str());
+        REQUIRE(image.get() != nullptr);
+        image->readMetadata();
+        image->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        image->writeMetadata();
+    }
+
+    gchar* srcUri = g_filename_to_uri(tmpSrcDir, NULL, NULL);
+    gchar* dstUri = g_filename_to_uri(tmpDstDir, NULL, NULL);
+    REQUIRE(srcUri != NULL);
+    REQUIRE(dstUri != NULL);
+
+    char cfgPath[256];
+    strncpy(cfgPath, "/tmp/quiver_test_org_date_XXXXXX.ini", sizeof(cfgPath) - 1);
+    cfgPath[sizeof(cfgPath) - 1] = '\0';
+    int fd = g_mkstemp(cfgPath);
+    if (fd >= 0)
+        close(fd);
+    strncpy(g_szConfigFilePath, cfgPath, sizeof(cfgPath) - 1);
+    g_szConfigFilePath[sizeof(cfgPath) - 1] = '\0';
+    Preferences::Reset();
+    PreferencesPtr prefs = Preferences::GetInstance();
+    REQUIRE(prefs != NULL);
+    prefs->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY, dstUri);
+
+    struct IssueCapture {
+        bool sawReady;
+        bool sawNoDateIssue;
+        bool sawConflictIssue;
+        int64_t startMs;
+    } cap{false, false, false, static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    g_timeout_add(10, +[](gpointer data) -> gboolean {
+        auto* cap = static_cast<IssueCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Organize");
+        if (win == NULL)
+            return G_SOURCE_CONTINUE;
+
+        std::vector<GtkWidget*> labels;
+        FindWidgetsByType(win, GTK_TYPE_LABEL, labels);
+        for (GtkWidget* l : labels)
+        {
+            const char* txt = gtk_label_get_text(GTK_LABEL(l));
+            if (txt == NULL) continue;
+            if (strstr(txt, "Ready:") != NULL)
+                cap->sawReady = true;
+            if (strstr(txt, "No date metadata") != NULL)
+                cap->sawNoDateIssue = true;
+            if (strstr(txt, "collide") != NULL)
+                cap->sawConflictIssue = true;
+        }
+
+        if (cap->sawNoDateIssue ||
+            static_cast<int64_t>(g_get_monotonic_time() / 1000) - cap->startMs > 5000)
+        {
+            gtk_window_close(GTK_WINDOW(win));
+            return G_SOURCE_REMOVE;
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    OrganizeDlg organize;
+    organize.SetInputFolder(srcUri);
+    organize.Run();
+
+    REQUIRE(cap.sawReady);
+    REQUIRE(cap.sawNoDateIssue);
+    // the dated file must not be flagged, and these two names do not collide
+    REQUIRE_FALSE(cap.sawConflictIssue);
+
+    Preferences::Reset();
+    g_unlink(cfgPath);
+    g_free(srcUri);
+    g_free(dstUri);
+    g_unlink(datedFile.c_str());
+    g_unlink(undatedFile.c_str());
+    g_rmdir(tmpSrcDir);
+    g_rmdir(tmpDstDir);
+    g_free(tmpSrcDir);
+    g_free(tmpDstDir);
+}

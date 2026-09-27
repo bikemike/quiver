@@ -51,6 +51,35 @@ namespace QuiverClipboard
 	bool ParseClipboardText(const std::string& text,
 	                        std::list<std::string>& urisOut, bool& cutOut);
 
+	/* The contents of a drop that a GtkDropTarget has preloaded, judged
+	 * against the folder the drag is currently over. */
+	class DropContents
+	{
+	public:
+		/* TRUE when the drop carries files and the shared policy allows
+		 * them on `target_uri`; the drag is then described by `uris` (a
+		 * move when `cut` is set) and the caller may offer the target.
+		 *
+		 * FALSE means the hover must not be shown as a target, and covers
+		 * two cases a caller must not tell apart: the contents are not
+		 * known yet, because GTK is still preloading them, or they are
+		 * known and the drop is refused - a file over the folder it
+		 * already lives in, a folder over itself or its own subtree, or a
+		 * drag that carries no files at all. */
+		bool Accepts(GtkDropTarget* target, const std::string& target_uri,
+			std::list<std::string>& uris, bool& cut);
+
+		/* Forget the cached contents, so the next drag is read again. */
+		void Reset();
+
+	private:
+		/* the drop `m_Uris` was parsed from; NULL while nothing is cached,
+		 * which also covers "the contents of the current drop are unknown" */
+		GdkDrop*               m_pDrop;
+		std::list<std::string> m_Uris;
+		bool                   m_bCut;
+	};
+
 	/* Best-effort read of the file URIs currently on the system clipboard.
 	 * Returns TRUE when file URIs were found.  Runs its own nested main loop,
 	 * so it must be called from the GUI thread. */

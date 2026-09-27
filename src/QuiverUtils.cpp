@@ -252,8 +252,24 @@ namespace QuiverUtils
 
 	static GSimpleActionGroup *g_pActionGroup = NULL;
 
+	/* name -> the owner that registered it, so RemoveActionsFor() can tell
+	 * its own actions from the ones a later component took over */
+	struct ActionOwner
+	{
+		gchar*  name;
+		gpointer owner;
+	};
+
+	static GPtrArray *g_actionOwners = NULL;
+
 	static GPtrArray *g_accelEntries = NULL;
 	static GPtrArray *g_radioGroups = NULL;
+
+	static void free_action_owner(gpointer data) {
+		ActionOwner *entry = (ActionOwner*)data;
+		g_free(entry->name);
+		g_free(entry);
+	}
 
 	static void free_accel_entry(gpointer data) {
 		AccelEntry *entry = (AccelEntry*)data;
@@ -344,12 +360,32 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 			g_object_ref_sink(g_pActionGroup);
 			g_accelEntries = g_ptr_array_new_with_free_func(free_accel_entry);
 			g_radioGroups = g_ptr_array_new_with_free_func(free_radio_group);
+			g_actionOwners = g_ptr_array_new_with_free_func(free_action_owner);
 		}
 	}
 
 	GSimpleActionGroup* GetActionGroup() {
 		InitActions();
 		return g_pActionGroup;
+	}
+
+	/* One action per name lives in the group: a name registered again belongs
+	 * to the new owner, so the old entry goes - otherwise the previous owner
+	 * would remove an action that is no longer its own. */
+	static void note_action_owner(const char *name, gpointer owner) {
+		if (NULL == name || NULL == g_actionOwners)
+			return;
+		for (guint i = g_actionOwners->len; i > 0; i--) {
+			ActionOwner *entry = (ActionOwner*)g_ptr_array_index(g_actionOwners, i - 1);
+			if (0 == strcmp(entry->name, name)) {
+				g_ptr_array_remove_index(g_actionOwners, i - 1);
+				break;
+			}
+		}
+		ActionOwner *entry = g_new0(ActionOwner, 1);
+		entry->name = g_strdup(name);
+		entry->owner = owner;
+		g_ptr_array_add(g_actionOwners, entry);
 	}
 
 	void AddAction(GAction *action) {
@@ -369,6 +405,37 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 			}
 		}
 		g_action_map_remove_action(G_ACTION_MAP(g_pActionGroup), action_name);
+		if (NULL != g_actionOwners) {
+			for (guint i = g_actionOwners->len; i > 0; i--) {
+				ActionOwner *entry = (ActionOwner*)g_ptr_array_index(g_actionOwners, i - 1);
+				if (0 == strcmp(entry->name, action_name)) {
+					g_ptr_array_remove_index(g_actionOwners, i - 1);
+					break;
+				}
+			}
+		}
+	}
+
+	void RemoveActionsFor(gpointer owner)
+	{
+		if (NULL == g_actionOwners || NULL == owner)
+			return;
+		/* Walk backwards and let RemoveAction() do the removing - it drops the
+		 * owner entry itself.  Taking the entry out a second time here either
+		 * indexed past the end (a burst of criticals on exit) or, when the
+		 * entry was not the last one, removed a *different* owner's entry:
+		 * that owner's action then stayed in the group pointing at a
+		 * destroyed object, which is the very thing this is here to prevent.
+		 * RemoveAction() frees the entry, hence the copy of the name. */
+		for (guint i = g_actionOwners->len; i > 0; i--)
+		{
+			ActionOwner *entry = (ActionOwner*)g_ptr_array_index(g_actionOwners, i - 1);
+			if (entry->owner != owner)
+				continue;
+			gchar *name = g_strdup(entry->name);
+			RemoveAction(name);
+			g_free(name);
+		}
 	}
 
 	GAction* GetAction(const char *action_name) {
@@ -392,6 +459,7 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 			g_signal_connect(action, "activate", G_CALLBACK(cb), user_data);
 		}
 		AddAction(G_ACTION(action));
+		note_action_owner(name, user_data);
 		if (NULL != accel && 0 != accel[0]) {
 			register_accelerator(name, accel);
 		}
@@ -408,6 +476,7 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 			g_signal_connect(action, "activate", G_CALLBACK(toggle_activate_cb), data);
 		}
 		AddAction(G_ACTION(action));
+		note_action_owner(name, user_data);
 		if (NULL != accel && 0 != accel[0]) {
 			register_accelerator(name, accel);
 		}
@@ -437,6 +506,7 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 
 			g_signal_connect(action, "activate", G_CALLBACK(radio_activate_cb), data);
 			AddAction(G_ACTION(action));
+			note_action_owner(names[i], user_data);
 		}
 		g_ptr_array_add(g_radioGroups, group);
 	}

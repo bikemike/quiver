@@ -325,6 +325,9 @@ TEST_CASE("QuiverUtils Rename Basename Selection and Extension Preservation", "[
 
     SECTION("PromptForString opens with base name selected and cancels on Escape")
     {
+        // builds a dialog, which needs a display
+        REQUIRE_DISPLAY();
+
         g_timeout_add(50, +[](gpointer) -> gboolean {
             GListModel *toplevels = gtk_window_get_toplevels();
             guint n = g_list_model_get_n_items(toplevels);
@@ -385,6 +388,9 @@ TEST_CASE("QuiverUtils Rename Basename Selection and Extension Preservation", "[
 
     SECTION("PromptForString cancels on window close")
     {
+        // builds a dialog, which needs a display
+        REQUIRE_DISPLAY();
+
         g_timeout_add(50, +[](gpointer) -> gboolean {
             GListModel *toplevels = gtk_window_get_toplevels();
             guint n = g_list_model_get_n_items(toplevels);
@@ -408,6 +414,9 @@ TEST_CASE("QuiverUtils Rename Basename Selection and Extension Preservation", "[
 
     SECTION("PromptForString accepts with custom button label")
     {
+        // builds a dialog, which needs a display
+        REQUIRE_DISPLAY();
+
         g_timeout_add(50, +[](gpointer) -> gboolean {
             GListModel *toplevels = gtk_window_get_toplevels();
             guint n = g_list_model_get_n_items(toplevels);
@@ -690,3 +699,80 @@ TEST_CASE("QuiverUtils PromptAddBookmark Empty URIs", "[unit][bookmarks][fast]")
     CHECK(QuiverUtils::PromptAddBookmark({}) == false);
 }
 
+
+// The action group is a process-wide singleton, but the components that
+// register actions in it come and go (a viewer, a browser, a sidebar).  An
+// action left behind keeps its callback and the pointer it was registered
+// with, so activating it later runs code in a destroyed object: the viewer
+// slideshow did exactly that, from UpdateUI() toggling a stale action, and
+// crashed on a widget that no longer existed.
+TEST_CASE("QuiverUtils actions are dropped with their owner", "[unit][actions][fast]")
+{
+    // two distinct owner identities, standing in for two component objects
+    int first_owner = 0;
+    int second_owner = 0;
+
+    QuiverUtils::AddSimpleAction("quiverTestOwnedAction", NULL, NULL, &first_owner);
+    REQUIRE(QuiverUtils::GetAction("quiverTestOwnedAction") != nullptr);
+
+    // the owner is gone, but not its action yet
+    QuiverUtils::RemoveActionsFor(&first_owner);
+    CHECK(QuiverUtils::GetAction("quiverTestOwnedAction") == nullptr);
+
+    // a name can only exist once in the group, so the second component's
+    // registration replaces the first one's - and must survive the first
+    // owner being dropped again
+    QuiverUtils::AddSimpleAction("quiverTestOwnedAction", NULL, NULL, &second_owner);
+    REQUIRE(QuiverUtils::GetAction("quiverTestOwnedAction") != nullptr);
+    QuiverUtils::RemoveActionsFor(&first_owner);
+    CHECK(QuiverUtils::GetAction("quiverTestOwnedAction") != nullptr);
+    QuiverUtils::RemoveActionsFor(&second_owner);
+    CHECK(QuiverUtils::GetAction("quiverTestOwnedAction") == nullptr);
+
+    // actions of other owners are left alone
+    QuiverUtils::AddSimpleAction("quiverTestKeptAction", NULL, NULL, &second_owner);
+    QuiverUtils::RemoveActionsFor(&first_owner);
+    CHECK(QuiverUtils::GetAction("quiverTestKeptAction") != nullptr);
+    QuiverUtils::RemoveActionsFor(&second_owner);
+}
+
+// Dropping one owner has to leave the *other* owners registered.  Removing a
+// matched entry twice (once directly, once through RemoveAction) took the
+// following entry with it, so the owner after it could no longer drop its own
+// action and it stayed behind pointing at freed memory; the last removal also
+// indexed past the end of the array, which showed up as a burst of
+// "ptr_array_remove_index" criticals on every exit.  Catch2 leaves GLib
+// criticals non-fatal, so both are asserted here instead of being waited for
+// in a log.
+TEST_CASE("QuiverUtils drops one owner without disturbing the next", "[unit][actions][fast]")
+{
+    int first_owner = 0;
+    int second_owner = 0;
+
+    QuiverUtils::AddSimpleAction("quiverTestFirstOwnerAction", NULL, NULL, &first_owner);
+    QuiverUtils::AddSimpleAction("quiverTestSecondOwnerAction", NULL, NULL, &second_owner);
+    REQUIRE(QuiverUtils::GetAction("quiverTestSecondOwnerAction") != nullptr);
+
+    int criticals = 0;
+    /* g_log_set_default_handler() intercepts the log and can be put back,
+     * unlike g_log_set_writer_func(), which GLib 2.88 only accepts once per
+     * process.  Catch2 leaves criticals non-fatal, so nothing else would
+     * notice them. */
+    g_log_set_default_handler(
+        [](const gchar*, GLogLevelFlags level, const gchar*, gpointer user_data)
+        {
+            if (level & (G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING))
+                ++*static_cast<int*>(user_data);
+        },
+        &criticals);
+
+    QuiverUtils::RemoveActionsFor(&first_owner);
+    g_log_set_default_handler(g_log_default_handler, NULL);
+
+    CHECK(criticals == 0);
+    CHECK(QuiverUtils::GetAction("quiverTestFirstOwnerAction") == nullptr);
+    // the second owner is still registered, so it can still drop its own
+    REQUIRE(QuiverUtils::GetAction("quiverTestSecondOwnerAction") != nullptr);
+    QuiverUtils::RemoveActionsFor(&second_owner);
+    CHECK(QuiverUtils::GetAction("quiverTestSecondOwnerAction") == nullptr);
+}

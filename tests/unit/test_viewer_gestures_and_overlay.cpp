@@ -1258,5 +1258,30 @@ TEST_CASE("Viewer Video Kinetic Scrolling and Pan Deceleration", "[unit][viewer]
 }
 
 
+// The viewer registers its actions in the global action group, which lives
+// as long as the application.  While a slideshow runs, UpdateUI() activates
+// "MaximizeForDisplay" - if a previous viewer had registered it and was
+// destroyed without removing it, that activation ran the old viewer's
+// handler on a freed object and crashed inside gtk_widget_set_visible().
+TEST_CASE("Viewer actions do not outlive the viewer", "[unit][viewer][actions]")
+{
+    REQUIRE_DISPLAY();
 
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+    REQUIRE(QuiverUtils::GetAction("ZoomIn") != nullptr);
+    REQUIRE(QuiverUtils::GetAction("MaximizeForDisplay") != nullptr);
+
+    viewer.reset();
+
+    CHECK(QuiverUtils::GetAction("ZoomIn") == nullptr);
+    CHECK(QuiverUtils::GetAction("MaximizeForDisplay") == nullptr);
+
+    // a new viewer registers them again, so a second slideshow in the same
+    // process still finds the actions it needs
+    boost::shared_ptr<Viewer> second(new Viewer());
+    second->RegisterActions();
+    CHECK(QuiverUtils::GetAction("MaximizeForDisplay") != nullptr);
+    second.reset();
+}
 

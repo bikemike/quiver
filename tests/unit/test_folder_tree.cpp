@@ -1148,6 +1148,9 @@ TEST_CASE("FolderTree drop hover expansion materializes child rows with checkbox
 TEST_CASE("FolderTree shortcuts and bookmarks have drop target controllers",
           "[unit][foldertree][gui][dnd]")
 {
+    /* builds the sidebar's widgets */
+    REQUIRE_DISPLAY();
+
     FolderTreePtr tree(new FolderTree());
     GtkWidget* sidebar = tree->GetWidget();
     REQUIRE(sidebar != nullptr);

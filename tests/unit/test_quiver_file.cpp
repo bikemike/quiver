@@ -2,8 +2,11 @@
 #include "QuiverFile.h"
 #include "ImageDecoder.h"
 #include "test_helpers.h"
+#include <exiv2/exiv2.hpp>
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 TEST_CASE("QuiverFile URI and Media Detection", "[unit][file]")
@@ -153,4 +156,65 @@ TEST_CASE("QuiverFile URI and Media Detection", "[unit][file]")
 
     g_free(videoUri);
     g_free(imageUri);
+}
+
+TEST_CASE("QuiverFile date metadata detection", "[unit][file][date]")
+{
+    std::string imagesDir = QuiverTest_GetImagesDir();
+    std::string sampleJpg = imagesDir + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    gchar* sampleUri = g_filename_to_uri(sampleJpg.c_str(), NULL, NULL);
+    REQUIRE(sampleUri != NULL);
+
+    SECTION("File without EXIF date falls back to the modification time")
+    {
+        QuiverFile qf(sampleUri);
+        // sample_4k.jpg carries no DateTimeOriginal
+        REQUIRE(qf.GetTimeT() != 0);
+        REQUIRE(qf.HasDateMetadata() == false);
+    }
+
+    SECTION("File with EXIF DateTimeOriginal reports date metadata")
+    {
+        char tmpPath[] = "/tmp/quiver_test_date_meta_XXXXXX.jpg";
+        int fd = g_mkstemp(tmpPath);
+        REQUIRE(fd >= 0);
+        close(fd);
+
+        char* contents = nullptr;
+        gsize length = 0;
+        REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+        REQUIRE(g_file_set_contents(tmpPath, contents, length, NULL));
+        g_free(contents);
+
+        {
+            auto image = Exiv2::ImageFactory::open(tmpPath);
+            REQUIRE(image.get() != nullptr);
+            image->readMetadata();
+            image->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+            image->writeMetadata();
+        }
+
+        gchar* tmpUri = g_filename_to_uri(tmpPath, NULL, NULL);
+        REQUIRE(tmpUri != NULL);
+
+        {
+            QuiverFile qf(tmpUri);
+            REQUIRE(qf.HasDateMetadata() == true);
+            REQUIRE(qf.GetTimeT() != 0);
+        }
+
+        // sorting by modification time must not hide the EXIF date
+        {
+            QuiverFile qf(tmpUri);
+            qf.GetTimeT(false);
+            REQUIRE(qf.HasDateMetadata() == true);
+        }
+
+        g_free(tmpUri);
+        g_unlink(tmpPath);
+    }
+
+    g_free(sampleUri);
 }

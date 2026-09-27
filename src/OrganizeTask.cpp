@@ -267,6 +267,7 @@ bool OrganizeTask::ComputeMappings(const Options& opts,
 			f.GetURI(), strDstPath, strFolder + opts.strAppendedText));
 		vectMappings.back().strContentType =
 			(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
+		vectMappings.back().bHasDateMetadata = f.HasDateMetadata();
 
 		if (NULL != fnProgress && 0 < vectQuiverFiles.size())
 		{

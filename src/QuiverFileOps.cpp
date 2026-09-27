@@ -10,16 +10,64 @@
 
 namespace QuiverFileOps
 {
-	static bool dest_is_inside_or_equal(const char* src_uri, const char* dest_dir_uri)
+	bool IsInsideFolder(const std::string& item_uri, const std::string& folder_uri)
 	{
-		if (!src_uri || !dest_dir_uri)
+		if (item_uri.empty() || folder_uri.empty())
 			return false;
-		GFile *sf = g_file_new_for_uri(src_uri);
-		GFile *df = g_file_new_for_uri(dest_dir_uri);
-		bool result = g_file_equal(sf, df) || g_file_has_prefix(df, sf);
-		g_object_unref(sf);
-		g_object_unref(df);
+		GFile *item = g_file_new_for_uri(item_uri.c_str());
+		GFile *folder = g_file_new_for_uri(folder_uri.c_str());
+		bool result = g_file_equal(item, folder) || g_file_has_prefix(item, folder);
+		g_object_unref(item);
+		g_object_unref(folder);
 		return result;
+	}
+
+	static bool item_in_folder(const std::string& item_uri,
+		const std::string& folder_uri)
+	{
+		/* the immediate parent, not any ancestor: /a is a real destination
+		 * for /a/b/f.jpg (the file moves out of b), while /a/b is not
+		 * (the file would land back where it started) */
+		GFile *item = g_file_new_for_uri(item_uri.c_str());
+		GFile *parent = g_file_get_parent(item);
+		GFile *folder = g_file_new_for_uri(folder_uri.c_str());
+		bool result = (NULL != parent) && g_file_equal(parent, folder);
+		if (NULL != parent)
+			g_object_unref(parent);
+		g_object_unref(item);
+		g_object_unref(folder);
+		return result;
+	}
+
+	bool DropRefused(const std::list<std::string>& items,
+		const std::string& target_folder_uri)
+	{
+		if (target_folder_uri.empty())
+			return true;
+		for (std::list<std::string>::const_iterator it = items.begin();
+			items.end() != it; ++it)
+		{
+			/* the target is the item, or sits inside it: a folder must not
+			 * be dropped into itself or its own subtree */
+			if (IsInsideFolder(target_folder_uri, *it))
+				return true;
+			/* the target is the folder the item already sits in: the
+			 * transfer would be a no-op, so do not offer it */
+			if (item_in_folder(*it, target_folder_uri))
+				return true;
+		}
+		return false;
+	}
+
+	std::string EmptyAreaDropTarget(const std::list<std::string>& roots,
+		bool bRecursive, bool root_is_directory)
+	{
+		if (bRecursive || 1 != roots.size())
+			return std::string();
+		const std::string& root = *roots.begin();
+		if (root.empty() || !root_is_directory)
+			return std::string();
+		return root;
 	}
 
 	class StatusCallback::PrivateImpl
@@ -297,8 +345,12 @@ namespace QuiverFileOps
 			if (it->empty())
 				continue;
 
-			/* Don't transfer a folder into itself or into its own subtree */
-			if (dest_is_inside_or_equal(it->c_str(), dest_folder_uri))
+			/* Don't move a folder into itself or into its own subtree: the
+			 * destination would end up inside the item being moved.  The
+			 * direction matters - asking the other way round would refuse
+			 * every file that merely lives under the destination, which is
+			 * exactly the move this drop performs. */
+			if (IsInsideFolder(dest_folder_uri, it->c_str()))
 				continue;
 
 			/* A cut of a file into its own directory is a no-op: already there */
@@ -330,6 +382,17 @@ namespace QuiverFileOps
 			}
 			const std::string dst_uri = prefix + base;
 			g_free(base);
+
+			/* The item already has this exact name here: copying or moving it
+			 * onto itself would be a no-op at best, and a conflict dialog
+			 * that answers "overwrite" must not turn it into a truncated
+			 * file. */
+			if (dst_uri == *it)
+			{
+				if (bCut && moved_out != NULL)
+					moved_out->push_back(*it);
+				continue;
+			}
 
 			bool bOverwrite = false;
 			{

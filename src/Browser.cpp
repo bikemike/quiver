@@ -258,6 +258,14 @@ public:
 	 * preview with it (and vice versa). */
 	void UpdateSidebarPanes();
 
+	/* "Hide the sidebar in fullscreen" covers the whole column - the folder
+	 * tree and the preview below it - so it is applied from one place, both
+	 * when the window changes state and when the preference itself changes.
+	 * Only the transitions do anything: re-applying it on every UpdateUI()
+	 * would keep pushing the panes back to what the preferences say and undo
+	 * the user's own toggling. */
+	void UpdateFullscreenSidebar();
+
 /* member variables */
 	FolderTreePtr m_FolderTreePtr;
 	bool m_bFolderTreeEvent;
@@ -296,11 +304,40 @@ public:
 	 * menu (paste / undo-delete) instead of the item menu. */
 	bool m_bContextMenuOnEmptyArea;
 
+	/* Set while fullscreen is keeping the sidebar column down, so leaving
+	 * fullscreen (or switching the preference off) can tell "the panes are
+	 * hidden because of fullscreen" from "the user turned them off". */
+	bool m_bSidebarHiddenByFullscreen;
+
 	/* Drag-and-drop: set in the drag-motion handler; used in the drop
 	 * handler to know whether the external source offered MOVE or COPY. */
 	GdkDragAction m_eDropAction;
 	bool m_bDraggingSelection;
 	std::set<std::string> m_setDraggedURIs;
+
+	/* What the current drop carries, and the pointer position of the last
+	 * motion event.  m_setDraggedURIs only knows about Quiver's own drag
+	 * source, so without the contents of a foreign drag the hover cannot
+	 * tell that the file manager is dragging the very file that lives in the
+	 * folder under the pointer: the drop is refused, but the folder would
+	 * still be highlighted as a target.  GTK preloads the contents, which
+	 * arrive a moment after the drag enters - notify::value then asks for
+	 * the status to be decided again at that position. */
+	QuiverClipboard::DropContents m_DropContents;
+	gdouble               m_dDropStatusX;
+	gdouble               m_dDropStatusY;
+	/* TRUE once the user has released: the drop is past the point where a
+	 * status may be set, so a payload that lands afterwards must not touch it. */
+	bool                  m_bDropFinished;
+
+	/* The empty area's destination, resolved with one stat per drag instead
+	 * of one per motion event.  Keyed by the drop and by the folder, so
+	 * either a new drag or a new list resolves it again. */
+	GdkDrop*              m_pDropBackgroundDrop;
+	std::list<std::string> m_lstDropBackgroundRoots;
+	bool                   bDropBackgroundRecursive;
+	std::string           m_strDropBackgroundUri;
+
 
 	StatusbarPtr m_StatusbarPtr;
 	
@@ -612,6 +649,11 @@ void Browser::HideLoadingProgress()
 	m_BrowserImplPtr->HideLoadingProgress();
 }
 
+void Browser::UpdateFullscreenSidebar()
+{
+	m_BrowserImplPtr->UpdateFullscreenSidebar();
+}
+
 
 //=============================================================================
 //=============================================================================
@@ -656,6 +698,7 @@ static void browser_drag_source_end(GtkDragSource *source, GdkDrag *drag, gboole
 static gboolean browser_drag_source_cancel(GtkDragSource *source, GdkDrag *drag, GdkDragCancelReason reason, gpointer user_data);
 static gboolean browser_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer user_data);
 static void browser_drop_leave_cb(GtkDropTarget *target, gpointer user_data);
+static void browser_drop_value_notify_cb(GObject *object, GParamSpec *pspec, gpointer user_data);
 static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer user_data);
 
 static void entry_activate(GtkEntry *entry, gpointer user_data);
@@ -790,8 +833,12 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pContextMenuPopover = NULL;
 	m_bContextMenuPending = false;
 	m_bContextMenuOnEmptyArea = false;
+	m_bSidebarHiddenByFullscreen = false;
 	m_eDropAction = GDK_ACTION_COPY;
 	m_bDraggingSelection = false;
+	m_dDropStatusX = 0;
+	m_dDropStatusY = 0;
+	m_bDropFinished = false;
 	m_pIconViewOverlay = NULL;
 	m_pLoadingOverlayBox = NULL;
 	m_pLoadingOverlayLabel = NULL;
@@ -873,14 +920,23 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 
 		GtkDropTarget *drop_target = gtk_drop_target_new(G_TYPE_STRING,
 			(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+		/* the folder under the pointer can only be judged against what is
+		 * being dragged, and only a preloading target knows that before the
+		 * user releases; GTK reads it, we just look at ::value.  The cost is
+		 * one read of the dragged data per drag, which for a file drag is a
+		 * URI list. */
+		gtk_drop_target_set_preload(drop_target, TRUE);
 		g_signal_connect(drop_target, "motion",
 			G_CALLBACK(browser_drop_motion_cb), this);
 		g_signal_connect(drop_target, "leave",
 			G_CALLBACK(browser_drop_leave_cb), this);
 		g_signal_connect(drop_target, "drop",
 			G_CALLBACK(browser_drop_cb), this);
+		g_signal_connect(drop_target, "notify::value",
+			G_CALLBACK(browser_drop_value_notify_cb), this);
 		gtk_widget_add_controller(GTK_WIDGET(m_pIconView),
 			GTK_EVENT_CONTROLLER(drop_target));
+
 	}
 	m_pImageView = quiver_image_view_new();
 
@@ -1167,6 +1223,44 @@ void Browser::BrowserImpl::UpdateSidebarPanes()
 	gtk_widget_set_visible(vpaned, bAnyVisible);
 }
 
+void Browser::BrowserImpl::UpdateFullscreenSidebar()
+{
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+	const bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
+	const bool bHideInFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS,true);
+
+	if (bFullscreen && bHideInFullscreen)
+	{
+		if (m_bSidebarHiddenByFullscreen)
+			return;
+		/* The preference is about the whole side bar, not the tree alone: the
+		 * preview sits in the same column and has to go with it.  Both panes
+		 * keep their own preference, so take the widgets down here and leave
+		 * the preferences alone - going fullscreen is not a change of mind
+		 * about either pane, and writing them would lose the layout the user
+		 * had for the next start. */
+		m_bSidebarHiddenByFullscreen = true;
+		gtk_widget_set_visible(m_pNotebook, FALSE);
+		gtk_widget_set_visible(m_pImageView, FALSE);
+		QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_SIDEBAR, FALSE);
+		QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_PREVIEW, FALSE);
+	}
+	else if (m_bSidebarHiddenByFullscreen)
+	{
+		/* Leaving fullscreen (or switching the preference off) puts each pane
+		 * back the way its own preference says, so a pane that was switched
+		 * off beforehand stays off instead of being forced back on. */
+		m_bSidebarHiddenByFullscreen = false;
+		const bool bShowTree = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true);
+		const bool bShowPreview = prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
+		gtk_widget_set_visible(m_pNotebook, bShowTree);
+		gtk_widget_set_visible(m_pImageView, bShowPreview);
+		QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_SIDEBAR, bShowTree);
+		QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_PREVIEW, bShowPreview);
+	}
+	UpdateSidebarPanes();
+}
+
 bool Browser::BrowserImpl::IsTrashMode() const
 {
 	list<string> dirs = m_ImageListPtr->GetFolderList();
@@ -1175,6 +1269,9 @@ bool Browser::BrowserImpl::IsTrashMode() const
 
 Browser::BrowserImpl::~BrowserImpl()
 {
+	/* the global action group outlives this object: actions still pointing
+	 * at it would call back into freed memory */
+	QuiverUtils::RemoveActionsFor(this);
 	if (m_spAlive)
 	{
 		*m_spAlive = false;
@@ -1355,7 +1452,6 @@ void Browser::BrowserImpl::SetToolbar(GtkWidget *toolbar)
 
 void Browser::BrowserImpl::UpdateUI()
 {	
-	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	GAction* action;
 	action = QuiverUtils::GetAction(ACTION_BROWSER_HISTORY_FORWARD);
 	if (NULL != action)
@@ -1368,27 +1464,7 @@ void Browser::BrowserImpl::UpdateUI()
 		g_simple_action_set_enabled(G_SIMPLE_ACTION(action),m_BrowserHistory.CanGoBack() ? TRUE : FALSE);
 	}
 
-	bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
-	if (bFullscreen)
-	{
-		if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
-		{	
-			if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS,true))
-			{
-				QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_SIDEBAR, FALSE);
-			}
-		}
-	}
-	else
-	{
-		if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true))
-		{	
-			if (prefsPtr->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS,true))
-			{
-				QuiverUtils::ToggleActionSetActive(ACTION_BROWSER_VIEW_SIDEBAR, TRUE);
-			}
-		}
-	}
+	UpdateFullscreenSidebar();
 }
 
 void Browser::BrowserImpl::Show()
@@ -2775,28 +2851,6 @@ static void browser_drag_source_begin(GtkDragSource *source, GdkDrag *drag, gpoi
 	}
 }
 
-static bool is_same_or_child_uri(std::string_view candidate, std::string_view parent)
-{
-	if (candidate.empty() || parent.empty())
-		return false;
-
-	while (candidate.length() > 1 && candidate.back() == '/')
-		candidate.remove_suffix(1);
-
-	while (parent.length() > 1 && parent.back() == '/')
-		parent.remove_suffix(1);
-
-	if (candidate == parent)
-		return true;
-
-	if (candidate.starts_with(parent))
-	{
-		if (candidate.length() > parent.length() && candidate[parent.length()] == '/')
-			return true;
-	}
-	return false;
-}
-
 /* Drag the whole selection out of the icon view.  Copy-only, so dropping
  * elsewhere can never destroy the sources (a MOVE would require the external
  * target to move files it only sees as URIs). */
@@ -2849,12 +2903,19 @@ static GdkContentProvider* browser_drag_source_prepare(GtkDragSource *source, gd
 	{
 		b->m_setDraggedURIs.insert(u);
 	}
-	/* Alt-drag offers plain file-path text only (no file list), so drops
-	 * into text editors/terminals insert the paths instead of the target
-	 * treating the drag as files to open. */
+	/* The default drag is a *file* drag: it offers text/uri-list and the
+	 * gnome copied-files payload as well as the path text, so dropping on
+	 * another folder - in Quiver, Nautilus, a desktop icon - moves or copies
+	 * the files.  Alt-drag degrades to the plain file-path text only (no file
+	 * list at all), so a drop into a text editor or terminal inserts the
+	 * paths as text instead of the target trying to open the images.
+	 *
+	 * Ctrl still picks copy over move: it flips the gnome "copy"/"cut"
+	 * header other file managers act on. */
 	bool bCutDrag = (0 == (state & GDK_CONTROL_MASK));
+	const bool bTextOnly = 0 != (state & GDK_ALT_MASK);
 	return QuiverClipboard::MakeContentProvider(uris, bCutDrag,
-		0 != (state & GDK_ALT_MASK));
+		bTextOnly, !bTextOnly);
 }
 
 static void browser_drag_source_end(GtkDragSource *source, GdkDrag *drag, gboolean delete_data, gpointer user_data)
@@ -2878,68 +2939,164 @@ static gboolean browser_drag_source_cancel(GtkDragSource *source, GdkDrag *drag,
 	return FALSE;
 }
 
+/* True when Quiver's own drag has to be refused at `target_uri`: the target
+ * is one of the items being dragged, or the same no-op and subtree cases the
+ * preloaded contents are judged by.  This needs no payload, so it also covers
+ * a drag whose contents never arrive. */
+static bool browser_drop_is_excluded(Browser::BrowserImpl* b,
+	const std::string& target_uri)
+{
+	if (b->m_setDraggedURIs.count(target_uri) > 0)
+		return true;
+	/* dragging our own items: the same no-op and subtree cases, applied to
+	 * the URIs this process is dragging */
+	std::list<std::string> dragged(b->m_setDraggedURIs.begin(), b->m_setDraggedURIs.end());
+	return QuiverFileOps::DropRefused(dragged, target_uri);
+}
+
+/* The folder the empty area of the icon view drops into.
+ *
+ * Only defined when the list has one unambiguous destination - a single
+ * non-recursive folder, i.e. an ordinary folder navigation.  A search, tag,
+ * album or recursive collection spans several roots, so there the empty
+ * space means nothing and is not a drop target. */
+static std::string browser_background_drop_target(Browser::BrowserImpl* b, GdkDrop* drop)
+{
+	if (b == NULL || !b->m_ImageListPtr)
+		return std::string();
+
+	std::list<std::string> roots;
+	bool bRecursive = false;
+	ImageListAttributesPtr attributes = b->m_ImageListPtr->GetAttributes();
+	if (attributes)
+	{
+		roots = attributes->GetFolders();
+		bRecursive = attributes->GetRecursive();
+	}
+
+	/* the same drag over the same list: reuse the answer, the stat is not free */
+	if (drop == b->m_pDropBackgroundDrop && roots == b->m_lstDropBackgroundRoots &&
+		bRecursive == b->bDropBackgroundRecursive)
+		return b->m_strDropBackgroundUri;
+
+	/* the root may be a single file (the location bar accepts one), and a
+	 * file is not a destination: ask the file system before offering it */
+	bool root_is_directory = false;
+	if (!bRecursive && 1 == roots.size())
+	{
+		GFile *file = g_file_new_for_uri(roots.begin()->c_str());
+		GError *error = NULL;
+		GFileInfo *info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_TYPE,
+			G_FILE_QUERY_INFO_NONE, NULL, &error);
+		if (NULL != info)
+		{
+			root_is_directory = (G_FILE_TYPE_DIRECTORY == g_file_info_get_file_type(info));
+			g_object_unref(info);
+		}
+		g_object_unref(file);
+		if (NULL != error)
+			g_error_free(error);
+	}
+
+	std::string result = QuiverFileOps::EmptyAreaDropTarget(roots, bRecursive, root_is_directory);
+
+	b->m_pDropBackgroundDrop = drop;
+	b->m_lstDropBackgroundRoots = roots;
+	b->bDropBackgroundRecursive = bRecursive;
+	b->m_strDropBackgroundUri = result;
+	return result;
+}
+
+static gboolean browser_drop_update_status(Browser::BrowserImpl* b,
+	GtkDropTarget* target, GdkDrop* drop, gdouble x, gdouble y);
+
 static gboolean browser_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer user_data)
 {
 	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
 	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
 	if (drop == NULL || b == NULL || !b->m_pIconView || !QUIVER_IS_ICON_VIEW(b->m_pIconView))
 		return GDK_EVENT_PROPAGATE;
+	b->m_dDropStatusX = x;
+	b->m_dDropStatusY = y;
+	b->m_bDropFinished = false;
 
+	return browser_drop_update_status(b, target, drop, x, y)
+		? GDK_EVENT_STOP : GDK_EVENT_PROPAGATE;
+}
+
+/* The contents of the drag arrive a moment after it enters, and a drag that
+ * stops moving gets no further motion event: decide the status again at the
+ * position the pointer is actually at. */
+static void browser_drop_value_notify_cb(GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+	(void)pspec;
+	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	if (b == NULL || !b->m_pIconView || !QUIVER_IS_ICON_VIEW(b->m_pIconView))
+		return;
+	GtkDropTarget *target = GTK_DROP_TARGET(object);
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	if (drop == NULL || b->m_bDropFinished)
+	{
+		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+		return;
+	}
+	browser_drop_update_status(b, target, drop, b->m_dDropStatusX, b->m_dDropStatusY);
+}
+
+/* Decide what this position means: a target with a move/copy action, or no
+ * target at all.  Returns FALSE when the drop is refused. */
+static gboolean browser_drop_update_status(Browser::BrowserImpl* b,
+	GtkDropTarget* target, GdkDrop* drop, gdouble x, gdouble y)
+{
+	/* a folder cell is a target itself; everything else is only a target on
+	 * the empty area, which belongs to the one folder the list shows. */
 	gulong cell = quiver_icon_view_get_cell_for_xy(QUIVER_ICON_VIEW(b->m_pIconView), (gint)x, (gint)y);
-	if (cell == G_MAXULONG || !b->m_ImageListPtr || cell >= b->m_ImageListPtr->GetSize())
+	bool bOnFolderCell = false;
+	std::string target_uri;
+	if (cell != G_MAXULONG && b->m_ImageListPtr && cell < b->m_ImageListPtr->GetSize())
 	{
-		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+		QuiverFile cell_file = (*b->m_ImageListPtr)[cell];
+		const char *cell_uri = cell_file.IsFolder() ? cell_file.GetURI() : NULL;
+		if (cell_uri != NULL && '\0' != cell_uri[0])
+		{
+			target_uri = cell_uri;
+			bOnFolderCell = true;
+		}
+	}
+	if (!bOnFolderCell && G_MAXULONG == cell)
+		target_uri = browser_background_drop_target(b, drop);
+
+	/* highlighting the cell under the pointer only makes sense when the
+	 * pointer is on it: the empty area has no cell to mark. */
+	gulong target_cell = bOnFolderCell ? cell : G_MAXULONG;
+
+	/* dragging our own selection and hovering one of the selected cells */
+	bool bExcluded = (bOnFolderCell && b->m_bDraggingSelection &&
+		quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(b->m_pIconView), cell));
+
+	/* What is being dragged decides whether this folder is a target at all:
+	 * a file over the folder it already lives in, or a folder over itself
+	 * or its own subtree, must not be highlighted.  While GTK is still
+	 * preloading the contents nothing is highlighted either - guessing
+	 * there is what made a refused drop look accepted.  The drop handler
+	 * applies the same policy to the value it is handed, so hover and drop
+	 * cannot disagree. */
+	std::list<std::string> drop_uris;
+	bool bDropCut = false;
+	if (!target_uri.empty() && !bExcluded)
+		bExcluded = !b->m_DropContents.Accepts(target, target_uri, drop_uris, bDropCut);
+	if (!bExcluded && !target_uri.empty())
+		bExcluded = browser_drop_is_excluded(b, target_uri);
+
+	quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView),
+		bExcluded ? G_MAXULONG : target_cell);
+
+	if (bExcluded)
+	{
 		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
 		return GDK_EVENT_PROPAGATE;
 	}
 
-	QuiverFile f = (*b->m_ImageListPtr)[cell];
-	if (!f.IsFolder())
-	{
-		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
-		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
-		return GDK_EVENT_PROPAGATE;
-	}
-
-	if (b->m_bDraggingSelection || !b->m_setDraggedURIs.empty())
-	{
-		bool bExcluded = false;
-		if (quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(b->m_pIconView), cell))
-		{
-			bExcluded = true;
-		}
-		else
-		{
-			const char *cell_uri = f.GetURI();
-			if (cell_uri != NULL && '\0' != cell_uri[0])
-			{
-				if (b->m_setDraggedURIs.count(cell_uri) > 0)
-				{
-					bExcluded = true;
-				}
-				else
-				{
-					for (const auto &u : b->m_setDraggedURIs)
-					{
-						if (is_same_or_child_uri(cell_uri, u))
-						{
-							bExcluded = true;
-							break;
-						}
-					}
-				}
-			}
-		}
-
-		if (bExcluded)
-		{
-			quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
-			gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
-			return GDK_EVENT_PROPAGATE;
-		}
-	}
-
-	quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), cell);
 	GdkDragAction actions = gdk_drop_get_actions(drop);
 	GdkDragAction chosen = (actions & GDK_ACTION_MOVE) ? GDK_ACTION_MOVE : GDK_ACTION_COPY;
 	b->m_eDropAction = chosen;
@@ -2954,6 +3111,11 @@ static void browser_drop_leave_cb(GtkDropTarget *target, gpointer user_data)
 	if (b != NULL && b->m_pIconView && QUIVER_IS_ICON_VIEW(b->m_pIconView))
 	{
 		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
+	}
+	if (b != NULL)
+	{
+		b->m_DropContents.Reset();
+		b->m_bDropFinished = false;
 	}
 }
 
@@ -3003,6 +3165,8 @@ static gboolean browser_drop_idle_cb(gpointer user_data)
 static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer user_data)
 {
 	Browser::BrowserImpl *b = (Browser::BrowserImpl*)user_data;
+	if (b != NULL)
+		b->m_bDropFinished = true;
 	if (b != NULL && b->m_pIconView && QUIVER_IS_ICON_VIEW(b->m_pIconView))
 	{
 		quiver_icon_view_set_drop_cell(QUIVER_ICON_VIEW(b->m_pIconView), G_MAXULONG);
@@ -3010,26 +3174,27 @@ static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdou
 	if (value == NULL || !G_VALUE_HOLDS_STRING(value) || b == NULL || !b->m_pIconView || !QUIVER_IS_ICON_VIEW(b->m_pIconView))
 		return GDK_EVENT_PROPAGATE;
 
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+
+	/* Same target resolution as the motion handler: the folder cell under
+	 * the pointer, else the folder the empty area belongs to. */
 	gulong cell = quiver_icon_view_get_cell_for_xy(QUIVER_ICON_VIEW(b->m_pIconView), (gint)x, (gint)y);
-	if (cell == G_MAXULONG || !b->m_ImageListPtr || cell >= b->m_ImageListPtr->GetSize())
-		return GDK_EVENT_PROPAGATE;
-
-	QuiverFile target_file = (*b->m_ImageListPtr)[cell];
-	if (!target_file.IsFolder())
-		return GDK_EVENT_PROPAGATE;
-
-	const char *target_uri = target_file.GetURI();
-	if (target_uri == NULL || '\0' == target_uri[0])
-		return GDK_EVENT_PROPAGATE;
-
-	if (b->m_bDraggingSelection || !b->m_setDraggedURIs.empty())
+	bool bOnFolderCell = false;
+	std::string target_uri;
+	if (cell != G_MAXULONG && b->m_ImageListPtr && cell < b->m_ImageListPtr->GetSize())
 	{
-		if (quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(b->m_pIconView), cell) ||
-		    b->m_setDraggedURIs.count(target_uri) > 0)
+		QuiverFile target_file = (*b->m_ImageListPtr)[cell];
+		const char *cell_uri = target_file.IsFolder() ? target_file.GetURI() : NULL;
+		if (cell_uri != NULL && '\0' != cell_uri[0])
 		{
-			return GDK_EVENT_PROPAGATE;
+			target_uri = cell_uri;
+			bOnFolderCell = true;
 		}
 	}
+	if (!bOnFolderCell && G_MAXULONG == cell)
+		target_uri = browser_background_drop_target(b, drop);
+	if (target_uri.empty())
+		return GDK_EVENT_PROPAGATE;
 
 	std::list<std::string> uris;
 	bool bCut = false;
@@ -3037,14 +3202,25 @@ static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdou
 	if (!QuiverClipboard::ParseClipboardText(text ? text : "", uris, bCut) || uris.empty())
 		return GDK_EVENT_PROPAGATE;
 
-	for (const auto &u : uris)
+	/* The value is only handed over when the user releases, so this is the
+	 * first moment the drag contents are known: the shared policy runs here
+	 * rather than while hovering, which could only be geometric.  Refusing
+	 * here leaves the file where it is and GTK finishes the drop for us. */
+	if (QuiverFileOps::DropRefused(uris, target_uri))
+		return GDK_EVENT_PROPAGATE;
+
+	/* Our own selection: never drop onto a selected cell, and never onto a
+	 * folder that is part of the drag. */
+	if (b->m_bDraggingSelection || !b->m_setDraggedURIs.empty())
 	{
-		if (is_same_or_child_uri(target_uri, u))
+		if (bOnFolderCell &&
+		    quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(b->m_pIconView), cell))
+			return GDK_EVENT_PROPAGATE;
+		if (b->m_setDraggedURIs.count(target_uri) > 0)
 			return GDK_EVENT_PROPAGATE;
 	}
 
 	/* Default to MOVE unless explicit copy was requested (e.g. Ctrl held) */
-	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
 	bool bMove = true;
 	if (drop != NULL)
 	{
@@ -3067,6 +3243,12 @@ static gboolean browser_drop_cb(GtkDropTarget *target, const GValue *value, gdou
 	data->uris = uris;
 	data->target_uri = target_uri;
 	data->bMove = bMove;
+
+	/* The value has been copied out above, and returning STOP hands the
+	 * drop back to GtkDropTarget, which finishes it for us: calling
+	 * gdk_drop_finish() here would be wrong, since the drop is only in
+	 * GDK_DROP_STATE_DROPPING while an async read is outstanding. */
+
 	g_idle_add(browser_drop_idle_cb, data);
 
 	return GDK_EVENT_STOP;
@@ -3094,12 +3276,15 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_VIEW_SIDEBAR))
 	{
-		/* Only the folder tree follows this toggle; the preview has its own
-		 * (and the column they share is re-evaluated by UpdateSidebarPanes). */
+		/* This is the folder tree's own toggle; the preview has its own, and
+		 * the column they share is re-evaluated by UpdateSidebarPanes().  The
+		 * fullscreen preference is what takes the whole column away, and it
+		 * does not touch these preferences - hence no writes while
+		 * fullscreen. */
+		const bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 		if( QuiverUtils::ToggleActionGetActive(szAction) )
 		{
 			gtk_widget_set_visible(pBrowserImpl->m_pNotebook, TRUE);
-			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 			if (!bFullscreen)
 			{
 				prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,true);
@@ -3108,7 +3293,6 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 		else
 		{
 			gtk_widget_set_visible(pBrowserImpl->m_pNotebook, FALSE);
-			bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 			if (!bFullscreen)
 			{
 				prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_FOLDERTREE_SHOW,false);
@@ -3120,16 +3304,25 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	{
 		/* Both directions have to touch the widget: only the "off" branch used
 		 * to, so switching the preview back on updated the menu and the saved
-		 * setting while leaving the pane hidden until the next restart. */
+		 * setting while leaving the pane hidden until the next restart.  As
+		 * with the folder tree, a fullscreen must not overwrite the saved
+		 * setting. */
+		const bool bFullscreen = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_WINDOW_FULLSCREEN);
 		if( QuiverUtils::ToggleActionGetActive(szAction) )
 		{
 			gtk_widget_set_visible(pBrowserImpl->m_pImageView, TRUE);
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
+			if (!bFullscreen)
+			{
+				prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,true);
+			}
 		}
 		else
 		{
 			gtk_widget_set_visible(pBrowserImpl->m_pImageView, FALSE);	
-			prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
+			if (!bFullscreen)
+			{
+				prefsPtr->SetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_PREVIEW_SHOW,false);
+			}
 		}
 		pBrowserImpl->UpdateSidebarPanes();
 	}
@@ -3855,7 +4048,13 @@ void Browser::BrowserImpl::PreferencesEventHandler::HandlePreferenceChanged(Pref
 	}
 	else if ( QUIVER_PREFS_BROWSER == event->GetSection() )
 	{
-		if (QUIVER_PREFS_BROWSER_THUMBS_SQUARE == event->GetKey() )
+		if (QUIVER_PREFS_BROWSER_FOLDERTREE_HIDE_FS == event->GetKey() )
+		{
+			/* Switching the setting while the window is already fullscreen has
+			 * to take effect there and then, not on the next fullscreen. */
+			parent->UpdateFullscreenSidebar();
+		}
+		else if (QUIVER_PREFS_BROWSER_THUMBS_SQUARE == event->GetKey() )
 		{
 			quiver_icon_view_set_thumbnails_square(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetNewBoolean());
 			parent->m_ThumbnailLoader.UpdateList(true);

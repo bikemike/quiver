@@ -187,9 +187,13 @@ static void folder_tree_action_paste_into(GSimpleAction* action, GVariant* param
 static void folder_tree_action_new_folder(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static void folder_tree_action_add_bookmark(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static gboolean folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata);
+static void folder_tree_drop_value_notify_cb(GObject *object, GParamSpec *pspec, gpointer userdata);
+static gboolean folder_tree_update_status(FolderTree::FolderTreeImpl* impl, GtkDropTarget* target);
 static void folder_tree_drop_leave_cb(GtkDropTarget *target, gpointer userdata);
 static gboolean folder_tree_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata);
 static gboolean shortcuts_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata);
+static void shortcuts_drop_value_notify_cb(GObject *object, GParamSpec *pspec, gpointer userdata);
+static gboolean shortcuts_update_status(FolderTree::FolderTreeImpl* impl, GtkDropTarget* target);
 static void shortcuts_drop_leave_cb(GtkDropTarget *target, gpointer userdata);
 static gboolean shortcuts_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata);
 static void folder_tree_cancel_drop_expand(FolderTree::FolderTreeImpl *impl);
@@ -268,6 +272,14 @@ public:
 	DirItem*           m_pDropHoverItem;
 	gdouble            m_dDropX;
 	gdouble            m_dDropY;
+
+	/* What the current drag carries, so a row can be judged against it while
+	 * the pointer is still moving; see QuiverClipboard::DropContents.
+	 * m_bDropFinished is TRUE once the user has released: the drop is then
+	 * past the point where a status may be set, so a payload that lands
+	 * afterwards must not touch it. */
+	QuiverClipboard::DropContents m_DropContents;
+	bool              m_bDropFinished;
 	guint              m_DropExpandTimer;
 	GtkTreeListRow*    m_DropExpandRow;
 	guint              m_iFocusedTreePos;
@@ -448,6 +460,9 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 
 FolderTree::FolderTreeImpl::~FolderTreeImpl()
 {
+	/* the global action group outlives this object: actions still pointing
+	 * at it would call back into freed memory */
+	QuiverUtils::RemoveActionsFor(this);
 	try {
 		BookmarksPtr bmPtr = Bookmarks::GetInstance();
 		if (bmPtr && m_pBookmarksEventHandler)
@@ -512,6 +527,7 @@ FolderTree::FolderTreeImpl::~FolderTreeImpl()
 	m_DropExpandTimer = 0;
 	m_DropExpandRow = NULL;
 	m_pWidget = NULL;
+	m_bDropFinished = false;
 }
 
 std::list<std::string> FolderTree::FolderTreeImpl::GetSelectedFolders() const
@@ -2251,8 +2267,15 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 	GtkDropTarget *sc_drop = gtk_drop_target_new(G_TYPE_STRING,
 		(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+	/* the row under the pointer can only be judged against what is being
+	 * dragged, and only a preloading target knows that before the user
+	 * releases; GTK reads it, we just look at ::value.  The cost is one read
+	 * of the dragged data per drag, which for a file drag is a URI list. */
+	gtk_drop_target_set_preload(sc_drop, TRUE);
 	g_signal_connect(sc_drop, "motion",
 		G_CALLBACK(shortcuts_drop_motion_cb), this);
+	g_signal_connect(sc_drop, "notify::value",
+		G_CALLBACK(shortcuts_drop_value_notify_cb), this);
 	g_signal_connect(sc_drop, "leave",
 		G_CALLBACK(shortcuts_drop_leave_cb), this);
 	g_signal_connect(sc_drop, "drop",
@@ -2517,8 +2540,15 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 
 	GtkDropTarget *bm_drop = gtk_drop_target_new(G_TYPE_STRING,
 		(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+	/* the row under the pointer can only be judged against what is being
+	 * dragged, and only a preloading target knows that before the user
+	 * releases; GTK reads it, we just look at ::value.  The cost is one read
+	 * of the dragged data per drag, which for a file drag is a URI list. */
+	gtk_drop_target_set_preload(bm_drop, TRUE);
 	g_signal_connect(bm_drop, "motion",
 		G_CALLBACK(shortcuts_drop_motion_cb), this);
+	g_signal_connect(bm_drop, "notify::value",
+		G_CALLBACK(shortcuts_drop_value_notify_cb), this);
 	g_signal_connect(bm_drop, "leave",
 		G_CALLBACK(shortcuts_drop_leave_cb), this);
 	g_signal_connect(bm_drop, "drop",
@@ -2794,8 +2824,15 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 	 * files into that folder.  Empty areas and non-folders reject. */
 	GtkDropTarget *tree_drop = gtk_drop_target_new(G_TYPE_STRING,
 		(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+	/* the row under the pointer can only be judged against what is being
+	 * dragged, and only a preloading target knows that before the user
+	 * releases; GTK reads it, we just look at ::value.  The cost is one read
+	 * of the dragged data per drag, which for a file drag is a URI list. */
+	gtk_drop_target_set_preload(tree_drop, TRUE);
 	g_signal_connect(tree_drop, "motion",
 		G_CALLBACK(folder_tree_drop_motion_cb), this);
+	g_signal_connect(tree_drop, "notify::value",
+		G_CALLBACK(folder_tree_drop_value_notify_cb), this);
 	g_signal_connect(tree_drop, "leave",
 		G_CALLBACK(folder_tree_drop_leave_cb), this);
 	g_signal_connect(tree_drop, "drop",
@@ -3189,19 +3226,38 @@ folder_tree_arm_drop_expand(FolderTree::FolderTreeImpl *impl, GtkTreeListRow *ro
 	}
 }
 
+static gboolean folder_tree_update_status(FolderTree::FolderTreeImpl* impl,
+	GtkDropTarget* target);
+
+/* Hovering a folder that cannot receive the drop must not look like a
+ * target: an item that already lives in the folder it is dragged over, and a
+ * folder dragged onto itself or its own subtree, are refused by the drop
+ * handler, and the row has to say so while the drag is still hovering. */
 static gboolean
-folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata)
+folder_tree_update_status(FolderTree::FolderTreeImpl* impl, GtkDropTarget* target)
 {
-	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
-	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
-	if (NULL == drop || NULL == impl)
+	if (NULL == impl)
 		return GDK_EVENT_PROPAGATE;
-	impl->m_dDropX = x;
-	impl->m_dDropY = y;
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	if (NULL == drop)
+		return GDK_EVENT_PROPAGATE;
+
 	DirItem *item = NULL;
 	GtkTreeListRow *row = NULL;
-	GtkWidget *hbox = folder_tree_row_hbox_at_pos(impl, x, y, &item, &row);
-	if (NULL == hbox || NULL == item)
+	GtkWidget *hbox = folder_tree_row_hbox_at_pos(impl, impl->m_dDropX,
+		impl->m_dDropY, &item, &row);
+	/* The drag contents decide whether this row is a target at all: a file
+	 * over the folder it already lives in, or a folder over itself or its
+	 * own subtree, must not be highlighted.  While GTK is still preloading
+	 * them nothing is highlighted either - guessing there is what made a
+	 * refused drop look accepted.  The drop handler applies the same
+	 * policy to the value it is handed. */
+	std::list<std::string> drop_uris;
+	bool bDropCut = false;
+	bool bRefused = (NULL == hbox || NULL == item || NULL == item->uri)
+		|| !impl->m_DropContents.Accepts(target, item ? item->uri : std::string(),
+			drop_uris, bDropCut);
+	if (bRefused)
 	{
 		folder_tree_clear_drop_hover(impl);
 		folder_tree_cancel_drop_expand(impl);
@@ -3223,17 +3279,76 @@ folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer
 	return GDK_EVENT_STOP;
 }
 
+static gboolean
+folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata)
+{
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl)
+		return GDK_EVENT_PROPAGATE;
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	if (NULL == drop)
+		return GDK_EVENT_PROPAGATE;
+	impl->m_dDropX = x;
+	impl->m_dDropY = y;
+	impl->m_bDropFinished = false;
+
+	return folder_tree_update_status(impl, target) ? GDK_EVENT_STOP : GDK_EVENT_PROPAGATE;
+}
+
+/* The contents of the drag arrive a moment after it enters, and a drag that
+ * stops moving gets no further motion event: decide the status again at the
+ * position the pointer is actually at. */
+static void
+folder_tree_drop_value_notify_cb(GObject *object, GParamSpec *pspec, gpointer userdata)
+{
+	(void)pspec;
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl)
+		return;
+	GtkDropTarget *target = GTK_DROP_TARGET(object);
+	if (NULL == gtk_drop_target_get_current_drop(target) || impl->m_bDropFinished)
+	{
+		folder_tree_clear_drop_hover(impl);
+		return;
+	}
+	folder_tree_update_status(impl, target);
+}
+
+static void
+shortcuts_drop_value_notify_cb(GObject *object, GParamSpec *pspec, gpointer userdata)
+{
+	(void)pspec;
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl)
+		return;
+	GtkDropTarget *target = GTK_DROP_TARGET(object);
+	if (NULL == gtk_drop_target_get_current_drop(target) || impl->m_bDropFinished)
+	{
+		folder_tree_clear_drop_hover(impl);
+		return;
+	}
+	shortcuts_update_status(impl, target);
+}
+
 static void
 folder_tree_drop_leave_cb(GtkDropTarget *target, gpointer userdata)
 { (void)target;
-	folder_tree_clear_drop_hover((FolderTree::FolderTreeImpl*)userdata);
-	folder_tree_cancel_drop_expand((FolderTree::FolderTreeImpl*)userdata);
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	folder_tree_clear_drop_hover(impl);
+	folder_tree_cancel_drop_expand(impl);
+	if (NULL != impl)
+	{
+		impl->m_DropContents.Reset();
+		impl->m_bDropFinished = false;
+	}
 }
 
 static gboolean
 folder_tree_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata)
 {
 	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL != impl)
+		impl->m_bDropFinished = true;
 	if (NULL == impl || NULL == value || !G_VALUE_HOLDS_STRING(value))
 		return GDK_EVENT_PROPAGATE;
 	DirItem *item = NULL;
@@ -3247,6 +3362,14 @@ folder_tree_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdoub
 	bool bCut = false;
 	const char *text = g_value_get_string(value);
 	if (!QuiverClipboard::ParseClipboardText(text ? text : "", uris, bCut) || uris.empty())
+		return GDK_EVENT_PROPAGATE;
+
+	/* The row's URI is the target; the value is only handed over when the
+	 * user releases, so the shared policy runs here, on the URIs the drop
+	 * really carries: a folder aimed at itself or its own subtree, or an
+	 * item dropped into the folder it already sits in.  A real ancestor
+	 * further up stays an allowed move. */
+	if (QuiverFileOps::DropRefused(uris, item->uri))
 		return GDK_EVENT_PROPAGATE;
 
 	/* Same move/copy rule as the browser icon view: a cut payload dropped
@@ -3277,6 +3400,9 @@ folder_tree_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdoub
 	data->target_uri = item->uri;
 	data->bMove = bMove;
 	data->bCut = bCut;
+
+	/* The URIs have been copied out of the drop value and returning STOP
+	 * hands the drop back to GtkDropTarget, which finishes it for us. */
 
 	g_idle_add(+[](gpointer user_data) -> gboolean {
 		FolderTreeDropData *d = static_cast<FolderTreeDropData*>(user_data);
@@ -3331,19 +3457,32 @@ shortcuts_row_hbox_at_pos(FolderTree::FolderTreeImpl *impl, GtkListView *listvie
 	return NULL;
 }
 
+static gboolean shortcuts_update_status(FolderTree::FolderTreeImpl* impl,
+	GtkDropTarget* target);
+
+/* The same refusal as the folder tree: a row that cannot receive the drop is
+ * not highlighted and offers no action. */
 static gboolean
-shortcuts_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata)
+shortcuts_update_status(FolderTree::FolderTreeImpl* impl, GtkDropTarget* target)
 {
-	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl)
+		return GDK_EVENT_PROPAGATE;
 	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
-	if (NULL == drop || NULL == impl)
+	if (NULL == drop)
 		return GDK_EVENT_PROPAGATE;
 	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
 	GtkListView *lv = GTK_IS_LIST_VIEW(widget) ? GTK_LIST_VIEW(widget) : impl->m_pShortcutsListView;
 
 	DirItem *item = NULL;
-	GtkWidget *hbox = shortcuts_row_hbox_at_pos(impl, lv, x, y, &item);
-	if (NULL == hbox || NULL == item)
+	GtkWidget *hbox = shortcuts_row_hbox_at_pos(impl, lv, impl->m_dDropX,
+		impl->m_dDropY, &item);
+	/* the same refusal as the folder tree, from the same preloaded contents */
+	std::list<std::string> drop_uris;
+	bool bDropCut = false;
+	bool bRefused = (NULL == hbox || NULL == item || NULL == item->uri)
+		|| !impl->m_DropContents.Accepts(target, item ? item->uri : std::string(),
+			drop_uris, bDropCut);
+	if (bRefused)
 	{
 		folder_tree_clear_drop_hover(impl);
 		gdk_drop_status(drop, (GdkDragAction)0, (GdkDragAction)0);
@@ -3363,17 +3502,41 @@ shortcuts_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer u
 	return GDK_EVENT_STOP;
 }
 
+static gboolean
+shortcuts_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata)
+{
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL == impl)
+		return GDK_EVENT_PROPAGATE;
+	GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+	if (NULL == drop)
+		return GDK_EVENT_PROPAGATE;
+	impl->m_dDropX = x;
+	impl->m_dDropY = y;
+	impl->m_bDropFinished = false;
+
+	return shortcuts_update_status(impl, target) ? GDK_EVENT_STOP : GDK_EVENT_PROPAGATE;
+}
+
 static void
 shortcuts_drop_leave_cb(GtkDropTarget *target, gpointer userdata)
 {
 	(void)target;
-	folder_tree_clear_drop_hover((FolderTree::FolderTreeImpl*)userdata);
+	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	folder_tree_clear_drop_hover(impl);
+	if (NULL != impl)
+	{
+		impl->m_DropContents.Reset();
+		impl->m_bDropFinished = false;
+	}
 }
 
 static gboolean
 shortcuts_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, gpointer userdata)
 {
 	FolderTree::FolderTreeImpl *impl = (FolderTree::FolderTreeImpl*)userdata;
+	if (NULL != impl)
+		impl->m_bDropFinished = true;
 	if (NULL == impl || NULL == value || !G_VALUE_HOLDS_STRING(value))
 		return GDK_EVENT_PROPAGATE;
 	GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
@@ -3417,6 +3580,9 @@ shortcuts_drop_cb(GtkDropTarget *target, const GValue *value, gdouble x, gdouble
 	data->target_uri = item->uri;
 	data->bMove = bMove;
 	data->bCut = bCut;
+
+	/* The URIs have been copied out of the drop value and returning STOP
+	 * hands the drop back to GtkDropTarget, which finishes it for us. */
 
 	g_idle_add(+[](gpointer user_data) -> gboolean {
 		ShortcutDropData *d = static_cast<ShortcutDropData*>(user_data);

@@ -64,6 +64,20 @@ TEST_CASE("FileConflictCheck Collision Detection", "[unit][conflict][fast]")
         REQUIRE(results[0].strDstURI == "file:///tmp/quiver_test/2026/09/a.jpg");
     }
 
+    SECTION("Date-metadata flag is carried into the results")
+    {
+        mappings.emplace_back("file:///tmp/quiver_test/a.jpg", "file:///tmp/quiver_test/one.jpg");
+        mappings.back().bHasDateMetadata = false;
+        mappings.emplace_back("file:///tmp/quiver_test/b.jpg", "file:///tmp/quiver_test/two.jpg");
+        mappings.back().bHasDateMetadata = true;
+
+        bool hasConflict = FileConflictCheck::Check(mappings, results);
+        REQUIRE_FALSE(hasConflict);
+        REQUIRE(results.size() == 2);
+        REQUIRE(results[0].bHasDateMetadata == false);
+        REQUIRE(results[1].bHasDateMetadata == true);
+    }
+
     SECTION("Cancellation token aborts check")
     {
         mappings.emplace_back("file:///tmp/quiver_test/a.jpg", "file:///tmp/quiver_test/target.jpg");

@@ -36,6 +36,41 @@ namespace QuiverFileOps
 	bool     ClipboardIsCut();
 	const std::list<std::string>* ClipboardGetUris();
 
+	/* True when `item_uri` is `folder_uri` itself or lives inside it.  Drop
+	 * targets use this to refuse a drop aimed at the folder the item already
+	 * lives in, and to refuse moving a folder into itself or its own subtree. */
+	bool     IsInsideFolder(const std::string& item_uri, const std::string& folder_uri);
+
+	/* Whether dropping `items` into `target_folder_uri` has to be refused.
+	 *
+	 * Refused: no target at all; the target is one of the items, or sits
+	 * inside one of them (a folder into itself or its own subtree - that
+	 * transfer destroys the tree it is applied to); or the target is the
+	 * folder the item already sits in, which would be a no-op.
+	 *
+	 * Allowed: a target further up the path.  Dragging /a/b/f.jpg onto /a is
+	 * a real move out of b, and the tree only ever shows /a as a row, so
+	 * refusing anything that merely happens to contain the item would make
+	 * those files impossible to move from here.  Both checks are
+	 * URI-aware, so a trailing slash does not change the answer.
+	 *
+	 * Pure policy: no widgets, no GdkDrop, so the hover handlers and the
+	 * drop handlers can share one answer. */
+	bool     DropRefused(const std::list<std::string>& items,
+		const std::string& target_folder_uri);
+
+	/* The folder the empty area of a list view drops into, or "" when the
+	 * empty area is not a destination.
+	 *
+	 * Only a single, non-recursive, folder root qualifies: ordinary folder
+	 * navigation.  A search, tag, album or recursive collection spans
+	 * several roots, and a lone file root is not a destination, so in those
+	 * views the empty space means nothing.  `root_is_directory` is the
+	 * result of asking the file system about `roots`; the caller owns that
+	 * (it needs GFile) and passes the answer in. */
+	std::string EmptyAreaDropTarget(const std::list<std::string>& roots,
+		bool bRecursive, bool root_is_directory);
+
 	/* Conflict resolution for paste/drop: called once per existing-destination
 	 * collision.  Return PASTE_SKIP to leave the existing file alone or
 	 * PASTE_OVERWRITE to replace it. */

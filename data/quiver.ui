@@ -1374,7 +1374,7 @@
                         <child>
                           <object class="GtkCheckButton" id="chkbtn_browser_hide_foldertree_fullscreen">
                             <property name="valign">center</property>
-                            <property name="label" translatable="1">Hide folder tree in full screen mode</property>
+                            <property name="label" translatable="1">Hide side bar in full screen mode</property>
                             <property name="focusable">1</property>
                             <property name="use_underline">1</property>
                           </object>
