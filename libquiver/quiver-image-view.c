@@ -471,7 +471,7 @@ quiver_image_view_init(QuiverImageView *imageview)
 	imageview->priv->animation_timeout_id = FALSE;
 
 	imageview->priv->scroll_draw   = TRUE;
-	imageview->priv->smooth_scroll = FALSE;
+	imageview->priv->smooth_scroll = TRUE;
 	
 	imageview->priv->reload_event_sent = FALSE;
 	
@@ -974,6 +974,8 @@ quiver_image_view_gesture_drag_begin (GtkGestureDrag *gesture,
 	imageview->priv->mouse_x1 = x;
 	imageview->priv->mouse_y1 = y;
 	imageview->priv->mouse_move_capture = TRUE;
+	quiver_image_view_stop_smooth_scroll_slowdown(imageview);
+	gettimeofday(&imageview->priv->last_motion_time, NULL);
 }
 
 static void
@@ -1002,30 +1004,34 @@ quiver_image_view_gesture_drag_update (GtkGestureDrag *gesture,
 	gettimeofday(&new_motion_time,NULL);
 	gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
 	gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+	gdouble dt = new_time - old_time;
 
 #define MAX_VELOCITY 12000
-	VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
-
-	gdouble xdist = abs_x - imageview->priv->mouse_x1;
-	gdouble ydist = abs_y - imageview->priv->mouse_y1;
-
-	vt->time     = new_time - old_time;
-	vt->angle    = atan2(ydist, xdist);
-	gdouble dist = sqrt ( (double)( ydist*ydist + xdist*xdist));
-	vt->velocity =  dist / vt->time ;
-	vt->velocity = MIN (MAX_VELOCITY, vt->velocity);
-
-	if ( 3 == g_list_length(imageview->priv->velocity_time_list) )
+	if (dt > 0.0005)
 	{
-		GList* last = g_list_last(imageview->priv->velocity_time_list);
-		g_free(last->data);
-		imageview->priv->velocity_time_list =
-			g_list_delete_link(imageview->priv->velocity_time_list,last);
-	}
-	imageview->priv->velocity_time_list =
-		g_list_prepend(imageview->priv->velocity_time_list, vt);
+		VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
 
-	imageview->priv->last_motion_time = new_motion_time;
+		gdouble xdist = abs_x - imageview->priv->mouse_x1;
+		gdouble ydist = abs_y - imageview->priv->mouse_y1;
+
+		vt->time     = dt;
+		vt->angle    = atan2(ydist, xdist);
+		gdouble dist = sqrt ( (double)( ydist*ydist + xdist*xdist));
+		vt->velocity =  dist / vt->time ;
+		vt->velocity = MIN (MAX_VELOCITY, vt->velocity);
+
+		if ( 3 <= g_list_length(imageview->priv->velocity_time_list) )
+		{
+			GList* last = g_list_last(imageview->priv->velocity_time_list);
+			g_free(last->data);
+			imageview->priv->velocity_time_list =
+				g_list_delete_link(imageview->priv->velocity_time_list,last);
+		}
+		imageview->priv->velocity_time_list =
+			g_list_prepend(imageview->priv->velocity_time_list, vt);
+
+		imageview->priv->last_motion_time = new_motion_time;
+	}
 
 	gdouble hadjust = gtk_adjustment_get_value(imageview->priv->hadjustment);
 	gdouble vadjust = gtk_adjustment_get_value(imageview->priv->vadjustment);
@@ -1058,10 +1064,15 @@ quiver_image_view_gesture_drag_end (GtkGestureDrag *gesture,
 		gdouble old_time = (gdouble)imageview->priv->last_motion_time.tv_sec + ((gdouble)imageview->priv->last_motion_time.tv_usec)/1000000;
 		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
 
-		if ( 3 == g_list_length(imageview->priv->velocity_time_list) &&
+		if (imageview->priv->smooth_scroll &&
+			imageview->priv->velocity_time_list != NULL &&
 			(0.1 > new_time - old_time) )
 		{
 			quiver_image_view_start_smooth_scroll_slowdown(imageview);
+		}
+		else
+		{
+			quiver_image_view_stop_smooth_scroll_slowdown(imageview);
 		}
 	}
 }
@@ -1233,6 +1244,7 @@ quiver_image_view_tick_smooth_scroll_slowdown(GtkWidget *widget, GdkFrameClock *
 	if (!keep_going)
 	{
 		imageview->priv->tick_id_smooth_scroll_slowdown = 0;
+		quiver_image_view_stop_smooth_scroll_slowdown(imageview);
 		return G_SOURCE_REMOVE;
 	}
 	return G_SOURCE_CONTINUE;
@@ -1247,6 +1259,7 @@ quiver_image_view_timeout_smooth_scroll_slowdown(gpointer data)
 	if (!keep_going)
 	{
 		imageview->priv->timeout_id_smooth_scroll_slowdown = 0;
+		quiver_image_view_stop_smooth_scroll_slowdown(imageview);
 		return G_SOURCE_REMOVE;
 	}
 	return G_SOURCE_CONTINUE;
@@ -1255,7 +1268,16 @@ quiver_image_view_timeout_smooth_scroll_slowdown(gpointer data)
 static void
 quiver_image_view_start_smooth_scroll_slowdown(QuiverImageView *imageview)
 {
-	quiver_image_view_stop_smooth_scroll_slowdown(imageview);
+	if (imageview->priv->tick_id_smooth_scroll_slowdown != 0)
+	{
+		gtk_widget_remove_tick_callback(GTK_WIDGET(imageview), imageview->priv->tick_id_smooth_scroll_slowdown);
+		imageview->priv->tick_id_smooth_scroll_slowdown = 0;
+	}
+	if (imageview->priv->timeout_id_smooth_scroll_slowdown != 0)
+	{
+		g_source_remove(imageview->priv->timeout_id_smooth_scroll_slowdown);
+		imageview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
 	imageview->priv->smooth_scroll_last_time = g_get_monotonic_time();
 
 	if (gtk_widget_get_mapped(GTK_WIDGET(imageview)))
@@ -2041,6 +2063,15 @@ quiver_image_view_new()
 void quiver_image_view_set_smooth_scroll(QuiverImageView *imageview,gboolean smooth_scroll)
 {
 	imageview->priv->smooth_scroll = smooth_scroll;
+	if (!smooth_scroll)
+	{
+		quiver_image_view_stop_smooth_scroll_slowdown(imageview);
+	}
+}
+
+gboolean quiver_image_view_get_smooth_scroll(QuiverImageView *imageview)
+{
+	return imageview->priv->smooth_scroll;
 }
 
 GdkTexture* quiver_image_view_get_texture(QuiverImageView *imageview)

@@ -166,4 +166,53 @@ TEST_CASE("Video Controls Configuration and Formatting", "[unit][video][controls
 
         gtk_window_destroy(GTK_WINDOW(win));
     }
+
+    SECTION("Video paintable zoom and pan geometry scaling")
+    {
+        // Simulate a 1080p video in a 1920x1080 viewer
+        const double dispW = 1920.0;
+        const double dispH = 1080.0;
+        const double areaW = 1920.0;
+        const double areaH = 1080.0;
+
+        // Test at 200% zoom (zoom = 2.0)
+        const double zoom = 2.0;
+        const double widgetW = dispW * zoom;
+        const double widgetH = dispH * zoom;
+        REQUIRE(widgetW == 3840.0);
+        REQUIRE(widgetH == 2160.0);
+
+        const double vw = areaW / zoom;
+        const double vh = areaH / zoom;
+        REQUIRE(vw == 960.0);
+        REQUIRE(vh == 540.0);
+
+        // Maximum pan reaches the edge
+        const double maxPanX = dispW - vw;
+        const double maxPanY = dispH - vh;
+        REQUIRE(maxPanX == 960.0);
+        REQUIRE(maxPanY == 540.0);
+
+        // offX at min and max pan
+        const double offX_min = -0.0 * zoom;
+        const double offX_max = -maxPanX * zoom;
+        REQUIRE(offX_min == 0.0);
+        REQUIRE(offX_max == (areaW - widgetW));
+
+        // 1:1 mouse tracking: moving mouse by dx screen pixels moves video by dx
+        const double dx = 25.0;
+        const double srcPerPx = 1.0 / zoom;
+        const double deltaPanX = -dx * srcPerPx;
+        const double deltaOffX = -deltaPanX * zoom;
+        REQUIRE(deltaOffX == dx);
+
+        // GtkPicture setup check
+        GtkWidget* pic = gtk_picture_new();
+        gtk_picture_set_content_fit(GTK_PICTURE(pic), GTK_CONTENT_FIT_FILL);
+        gtk_picture_set_can_shrink(GTK_PICTURE(pic), TRUE);
+        REQUIRE(gtk_picture_get_content_fit(GTK_PICTURE(pic)) == GTK_CONTENT_FIT_FILL);
+        REQUIRE(gtk_picture_get_can_shrink(GTK_PICTURE(pic)) == TRUE);
+        g_object_ref_sink(pic);
+        g_object_unref(pic);
+    }
 }

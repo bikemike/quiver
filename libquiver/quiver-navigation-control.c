@@ -30,7 +30,26 @@ struct _QuiverNavigationControlPrivate
 	GdkPixbuf *pixbuf;
 #endif
 
+	/* A live source (a playing video) rendered as a paintable instead of a
+	 * static texture.  A GdkPaintable is a shared content object, so the
+	 * same instance is simply referenced by both the main picture and this
+	 * widget: no frame is copied and no second decode happens.  The source
+	 * dimensions are carried explicitly because a video paintable reports
+	 * no intrinsic size. */
+	GdkPaintable *paintable;
+	int source_w;
+	int source_h;
+
 	GdkRectangle view_area_rect;
+
+	/* A view area given in normalized (0..1) source coordinates, used when
+	 * the source is not driven by the scrollable adjustments (video zoom
+	 * lives in the pipeline, not in the adjustments). */
+	gboolean has_view_norm;
+	gdouble view_norm_x;
+	gdouble view_norm_y;
+	gdouble view_norm_w;
+	gdouble view_norm_h;
 
 };
 G_DEFINE_TYPE_WITH_CODE(QuiverNavigationControl,quiver_navigation_control,GTK_TYPE_WIDGET, G_ADD_PRIVATE(QuiverNavigationControl) G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL));
@@ -106,14 +125,27 @@ static void quiver_navigation_control_gesture_drag_end (GtkGestureDrag *gesture,
 						double x,
 						double y,
 						QuiverNavigationControl *navcontrol);
-static void quiver_navigation_control_setup_controllers (QuiverNavigationControl *navcontrol);
+static void      quiver_navigation_control_setup_controllers (QuiverNavigationControl *navcontrol);
 /* end controller callback prototypes */
+
+/* start source helper prototypes */
+static void      quiver_navigation_control_get_source_size (QuiverNavigationControl *navcontrol,
+					    int *width, int *height);
+static void      quiver_navigation_control_apply_size_request (QuiverNavigationControl *navcontrol,
+					    int source_w, int source_h);
+/* end source helper prototypes */
 
 /* end private function prototypes */
 
 /* start private globals */
 
-// static guint navcontrol_signals[SIGNAL_COUNT];
+/* emitted while the miniature is dragged, in widget pixels */
+enum {
+	QUIVER_NAVIGATION_CONTROL_DRAG_DELTA,
+	QUIVER_NAVIGATION_CONTROL_SIGNAL_COUNT
+};
+
+static guint navcontrol_signals[QUIVER_NAVIGATION_CONTROL_SIGNAL_COUNT];
 
 /* end private globals */
 
@@ -134,6 +166,16 @@ quiver_navigation_control_class_init (QuiverNavigationControlClass *klass)
 
 	obj_class->set_property            = quiver_navigation_control_set_property;
 	obj_class->get_property            = quiver_navigation_control_get_property;
+
+	/* Dragging the miniature only moves an image through the adjustments set
+	 * here.  A video's pan lives in the pipeline, so the viewer needs the raw
+	 * drag distance and does the panning itself. */
+	navcontrol_signals[QUIVER_NAVIGATION_CONTROL_DRAG_DELTA] =
+		g_signal_new ("drag-delta",
+			G_TYPE_FROM_CLASS (klass),
+			G_SIGNAL_RUN_LAST,
+			0, NULL, NULL, NULL,
+			G_TYPE_NONE, 2, G_TYPE_DOUBLE, G_TYPE_DOUBLE);
 
 		/* Override properties */
 	g_object_class_override_property (obj_class, PROP_HADJUSTMENT, "hadjustment");
@@ -161,6 +203,16 @@ quiver_navigation_control_init(QuiverNavigationControl *navcontrol)
 #endif
 
 	navcontrol->priv->view_area_rect.x = -1;
+
+	navcontrol->priv->paintable = NULL;
+	navcontrol->priv->source_w = 0;
+	navcontrol->priv->source_h = 0;
+
+	navcontrol->priv->has_view_norm = FALSE;
+	navcontrol->priv->view_norm_x = 0.;
+	navcontrol->priv->view_norm_y = 0.;
+	navcontrol->priv->view_norm_w = 0.;
+	navcontrol->priv->view_norm_h = 0.;
 
 	gtk_widget_set_focusable(GTK_WIDGET(navcontrol), FALSE);
 	gtk_widget_set_can_target(GTK_WIDGET(navcontrol), TRUE);
@@ -215,6 +267,14 @@ quiver_navigation_control_finalize(GObject *object)
 	}
 #endif
 
+	if (NULL != navcontrol->priv->paintable)
+	{
+		g_signal_handlers_disconnect_by_func (navcontrol->priv->paintable,
+			(gpointer)gtk_widget_queue_draw, object);
+		g_object_unref(navcontrol->priv->paintable);
+		navcontrol->priv->paintable = NULL;
+	}
+
 	parent = g_type_class_peek_parent(klass);
 	if (parent)
 	{
@@ -240,21 +300,51 @@ quiver_navigation_control_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	gsk_rounded_rect_init_from_rect(&rounded_bounds, &bounds, 6.0f);
 	gtk_snapshot_push_rounded_clip(snapshot, &rounded_bounds);
 
-	if (navcontrol->priv->texture)
+	if (navcontrol->priv->paintable != NULL)
+	{
+		/* A live paintable is drawn with the same call the viewer's own
+		 * picture uses, so a GL-backed video frame is sampled by the
+		 * renderer instead of being copied to the CPU. */
+		int source_w = 0, source_h = 0;
+		quiver_navigation_control_get_source_size(navcontrol, &source_w, &source_h);
+		if (source_w > 0 && source_h > 0)
+		{
+			gdk_paintable_snapshot(navcontrol->priv->paintable, snapshot,
+				(double)alloc_w, (double)alloc_h);
+		}
+	}
+	else if (navcontrol->priv->texture)
 	{
 		gtk_snapshot_append_texture(snapshot, navcontrol->priv->texture, &bounds);
 	}
 
-	if (navcontrol->priv->view_area_rect.x >= 0 &&
-	    navcontrol->priv->view_area_rect.width > 0 &&
-	    navcontrol->priv->view_area_rect.height > 0)
+	GdkRectangle view_area;
+	if (navcontrol->priv->has_view_norm)
+	{
+		view_area.x = (int)(navcontrol->priv->view_norm_x * alloc_w);
+		view_area.y = (int)(navcontrol->priv->view_norm_y * alloc_h);
+		view_area.width = (int)(navcontrol->priv->view_norm_w * alloc_w);
+		view_area.height = (int)(navcontrol->priv->view_norm_h * alloc_h);
+		if (view_area.x < 0) view_area.x = 0;
+		if (view_area.y < 0) view_area.y = 0;
+		if (view_area.x + view_area.width > alloc_w) view_area.width = alloc_w - view_area.x;
+		if (view_area.y + view_area.height > alloc_h) view_area.height = alloc_h - view_area.y;
+	}
+	else
+	{
+		view_area = navcontrol->priv->view_area_rect;
+	}
+
+	if (view_area.x >= 0 &&
+	    view_area.width > 0 &&
+	    view_area.height > 0)
 	{
 		graphene_rect_t view_rect;
 		graphene_rect_init(&view_rect,
-			(float)navcontrol->priv->view_area_rect.x,
-			(float)navcontrol->priv->view_area_rect.y,
-			(float)navcontrol->priv->view_area_rect.width,
-			(float)navcontrol->priv->view_area_rect.height);
+			(float)view_area.x,
+			(float)view_area.y,
+			(float)view_area.width,
+			(float)view_area.height);
 
 		GdkRGBA fill_color = { 1.0f, 0.2f, 0.2f, 0.15f };
 		gtk_snapshot_append_color(snapshot, &fill_color, &view_rect);
@@ -273,6 +363,72 @@ quiver_navigation_control_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	}
 
 	gtk_snapshot_pop(snapshot);
+}
+
+/* The size of the content being shown, whatever kind it is: an explicit size
+ * for a live paintable, the texture's own size for a still image. */
+static void
+quiver_navigation_control_get_source_size (QuiverNavigationControl *navcontrol, int *width, int *height)
+{
+	int w = 0, h = 0;
+
+	if (navcontrol->priv->paintable != NULL)
+	{
+		w = navcontrol->priv->source_w;
+		h = navcontrol->priv->source_h;
+		if (w <= 0 || h <= 0)
+		{
+			int iw = gdk_paintable_get_intrinsic_width(navcontrol->priv->paintable);
+			int ih = gdk_paintable_get_intrinsic_height(navcontrol->priv->paintable);
+			if (iw > 0 && ih > 0)
+			{
+				w = iw;
+				h = ih;
+			}
+		}
+	}
+	else if (navcontrol->priv->texture)
+	{
+		w = gdk_texture_get_width(navcontrol->priv->texture);
+		h = gdk_texture_get_height(navcontrol->priv->texture);
+	}
+#if HAVE_GDK_PIXBUF
+	else if (navcontrol->priv->pixbuf)
+	{
+		w = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
+		h = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
+	}
+#endif
+
+	*width = w;
+	*height = h;
+}
+
+/* Size the widget like the still-image path does: the longest side fits
+ * QUIVER_NAV_CONTROL_MAX_SIZE, the other side follows the source aspect. */
+static void
+quiver_navigation_control_apply_size_request (QuiverNavigationControl *navcontrol, int source_w, int source_h)
+{
+	GtkWidget *widget = GTK_WIDGET(navcontrol);
+
+	if (source_w <= 0 || source_h <= 0)
+	{
+		gtk_widget_set_size_request(widget, 0, 0);
+		return;
+	}
+
+	int target_w, target_h;
+	if (source_w >= source_h)
+	{
+		target_w = QUIVER_NAV_CONTROL_MAX_SIZE;
+		target_h = MAX(1, (QUIVER_NAV_CONTROL_MAX_SIZE * source_h) / source_w);
+	}
+	else
+	{
+		target_h = QUIVER_NAV_CONTROL_MAX_SIZE;
+		target_w = MAX(1, (QUIVER_NAV_CONTROL_MAX_SIZE * source_w) / source_h);
+	}
+	gtk_widget_set_size_request(widget, target_w, target_h);
 }
 
 static void
@@ -310,18 +466,7 @@ quiver_navigation_control_measure (GtkWidget *widget,
 	QuiverNavigationControl *navcontrol = QUIVER_NAVIGATION_CONTROL(widget);
 
 	int tw = 0, th = 0;
-	if (navcontrol->priv->texture)
-	{
-		tw = gdk_texture_get_width(navcontrol->priv->texture);
-		th = gdk_texture_get_height(navcontrol->priv->texture);
-	}
-#if HAVE_GDK_PIXBUF
-	else if (navcontrol->priv->pixbuf)
-	{
-		tw = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-		th = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
-	}
-#endif
+	quiver_navigation_control_get_source_size(navcontrol, &tw, &th);
 
 	if (tw <= 0 || th <= 0)
 	{
@@ -442,18 +587,7 @@ void quiver_navigation_control_update_adjustments(QuiverNavigationControl *navco
 	int h = gtk_widget_get_height(widget);
 	if (w <= 0 || h <= 0)
 	{
-		if (navcontrol->priv->texture)
-		{
-			w = gdk_texture_get_width(navcontrol->priv->texture);
-			h = gdk_texture_get_height(navcontrol->priv->texture);
-		}
-#if HAVE_GDK_PIXBUF
-		else if (navcontrol->priv->pixbuf)
-		{
-			w = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-			h = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
-		}
-#endif
+		quiver_navigation_control_get_source_size(navcontrol, &w, &h);
 	}
 	if (w <= 0 || h <= 0)
 		return;
@@ -517,33 +651,99 @@ void quiver_navigation_control_set_texture (QuiverNavigationControl *navcontrol,
 	{
 		g_object_ref(texture);
 		navcontrol->priv->texture = texture;
-		
-		int tw = gdk_texture_get_width(texture);
-		int th = gdk_texture_get_height(texture);
-		int target_w, target_h;
-		if (tw >= th && tw > 0)
-		{
-			target_w = QUIVER_NAV_CONTROL_MAX_SIZE;
-			target_h = MAX(1, (QUIVER_NAV_CONTROL_MAX_SIZE * th) / tw);
-		}
-		else if (th > 0)
-		{
-			target_h = QUIVER_NAV_CONTROL_MAX_SIZE;
-			target_w = MAX(1, (QUIVER_NAV_CONTROL_MAX_SIZE * tw) / th);
-		}
-		else
-		{
-			target_w = target_h = QUIVER_NAV_CONTROL_MAX_SIZE;
-		}
-		gtk_widget_set_size_request(widget, target_w, target_h);
+
+		quiver_navigation_control_apply_size_request(navcontrol,
+			gdk_texture_get_width(texture),
+			gdk_texture_get_height(texture));
 	}
-	else
+	else if (NULL == navcontrol->priv->paintable)
 	{
+		/* a live paintable owns the size request once it is set, so only
+		 * clear it when there is nothing else keeping the widget sized -
+		 * otherwise clearing the texture would collapse the widget while a
+		 * video miniature is still driving it */
 		gtk_widget_set_size_request(widget, 0, 0);
 	}
 
 	gtk_widget_queue_resize(widget);
 	gtk_widget_queue_draw(widget);
+}
+
+void quiver_navigation_control_set_paintable (QuiverNavigationControl *navcontrol,
+	GdkPaintable *paintable, int width, int height)
+{
+	GtkWidget *widget = GTK_WIDGET(navcontrol);
+
+	if (navcontrol->priv->paintable == paintable &&
+	    navcontrol->priv->source_w == width &&
+	    navcontrol->priv->source_h == height)
+	{
+		return;
+	}
+
+	if (NULL != navcontrol->priv->paintable)
+	{
+		g_signal_handlers_disconnect_by_func (navcontrol->priv->paintable,
+			(gpointer)gtk_widget_queue_draw, widget);
+		g_object_unref(navcontrol->priv->paintable);
+		navcontrol->priv->paintable = NULL;
+	}
+
+	navcontrol->priv->source_w = width;
+	navcontrol->priv->source_h = height;
+
+	if (NULL != paintable)
+	{
+		g_object_ref(paintable);
+		navcontrol->priv->paintable = paintable;
+		g_signal_connect_swapped (paintable, "invalidate-contents",
+			G_CALLBACK (gtk_widget_queue_draw), widget);
+		quiver_navigation_control_apply_size_request(navcontrol, width, height);
+	}
+	else if (NULL == navcontrol->priv->texture)
+	{
+		/* same as above: a still texture keeps the widget sized */
+		gtk_widget_set_size_request(widget, 0, 0);
+	}
+
+	gtk_widget_queue_resize(widget);
+	gtk_widget_queue_draw(widget);
+}
+
+void quiver_navigation_control_set_view_area_normalized (QuiverNavigationControl *navcontrol,
+	gdouble x, gdouble y, gdouble width, gdouble height)
+{
+	if (width <= 0.0 || height <= 0.0)
+	{
+		if (navcontrol->priv->has_view_norm)
+		{
+			navcontrol->priv->has_view_norm = FALSE;
+			gtk_widget_queue_draw(GTK_WIDGET(navcontrol));
+		}
+	}
+	else
+	{
+		/* the caller works in source pixels, so clamp the normalized rect
+		 * to the source before storing it */
+		if (x < 0.0) x = 0.0;
+		if (y < 0.0) y = 0.0;
+		if (x + width > 1.0) width = 1.0 - x;
+		if (y + height > 1.0) height = 1.0 - y;
+
+		if (!navcontrol->priv->has_view_norm ||
+		    fabs(navcontrol->priv->view_norm_x - x) > 1e-4 ||
+		    fabs(navcontrol->priv->view_norm_y - y) > 1e-4 ||
+		    fabs(navcontrol->priv->view_norm_w - width) > 1e-4 ||
+		    fabs(navcontrol->priv->view_norm_h - height) > 1e-4)
+		{
+			navcontrol->priv->has_view_norm = TRUE;
+			navcontrol->priv->view_norm_x = x;
+			navcontrol->priv->view_norm_y = y;
+			navcontrol->priv->view_norm_w = width;
+			navcontrol->priv->view_norm_h = height;
+			gtk_widget_queue_draw(GTK_WIDGET(navcontrol));
+		}
+	}
 }
 
 #if HAVE_GDK_PIXBUF
@@ -653,18 +853,7 @@ quiver_navigation_control_adjustment_changed (GtkAdjustment *adjustment, gpointe
 	int h = gtk_widget_get_height(widget);
 	if (w <= 0 || h <= 0)
 	{
-		if (navcontrol->priv->texture)
-		{
-			w = gdk_texture_get_width(navcontrol->priv->texture);
-			h = gdk_texture_get_height(navcontrol->priv->texture);
-		}
-#if HAVE_GDK_PIXBUF
-		else if (navcontrol->priv->pixbuf)
-		{
-			w = gdk_pixbuf_get_width(navcontrol->priv->pixbuf);
-			h = gdk_pixbuf_get_height(navcontrol->priv->pixbuf);
-		}
-#endif
+		quiver_navigation_control_get_source_size(navcontrol, &w, &h);
 	}
 	if (w <= 0 || h <= 0)
 		return;
@@ -716,6 +905,8 @@ quiver_navigation_control_gesture_drag_begin (GtkGestureDrag *gesture,
 	(void)gesture;
 	gtk_widget_set_cursor_from_name(GTK_WIDGET(navcontrol), "grabbing");
 	quiver_navigation_control_update_adjustments(navcontrol, (int)x, (int)y);
+	g_signal_emit (navcontrol, navcontrol_signals[QUIVER_NAVIGATION_CONTROL_DRAG_DELTA],
+		0, x, y);
 }
 
 static void
@@ -730,6 +921,15 @@ quiver_navigation_control_gesture_drag_update (GtkGestureDrag *gesture,
 	int abs_y = (int)(start_y + y);
 
 	quiver_navigation_control_update_adjustments(navcontrol, abs_x, abs_y);
+	/* The absolute pointer position, not the per-update delta.  A delta has to
+	 * be scaled by however many source pixels one miniature pixel is worth,
+	 * and GTK's gesture deltas are not the pointer's travel: they are smoothed
+	 * and, at high zoom, the reconstructed travel overshoots the widget several
+	 * times over, so the box races to the edge while the cursor is still near
+	 * where it started.  Handing out the position lets the viewer put the box
+	 * under the pointer directly, which is 1:1 by construction. */
+	g_signal_emit (navcontrol, navcontrol_signals[QUIVER_NAVIGATION_CONTROL_DRAG_DELTA],
+		0, (double)abs_x, (double)abs_y);
 }
 
 static void

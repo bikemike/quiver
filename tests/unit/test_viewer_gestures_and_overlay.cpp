@@ -12,6 +12,7 @@
 #include "QuiverPrefs.h"
 #include <string>
 #include <vector>
+#include <fstream>
 
 TEST_CASE("Viewer Control Overlays Structure and Styling", "[unit][viewer][overlay]")
 {
@@ -394,9 +395,10 @@ TEST_CASE("Viewer Overlay Button Sensitivities and Hover Controller", "[unit][vi
     REQUIRE(gtk_widget_get_visible(centerPlay));
 
     viewer->StopVideo(false);
-    viewer.reset();
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
 }
 
 TEST_CASE("Viewer Mute and Volume Control", "[unit][viewer][mute]")
@@ -516,9 +518,10 @@ TEST_CASE("Viewer Overlay Slideshow Button and Play State", "[unit][viewer][over
     REQUIRE_FALSE(gtk_widget_has_css_class(slideshowBtn, "speed-active"));
 
     viewer->StopVideo(false);
-    viewer.reset();
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
 }
 
 TEST_CASE("Viewer Zoom In and Zoom Out Anchor Behavior", "[unit][viewer][zoom]")
@@ -622,6 +625,7 @@ TEST_CASE("Viewer HUD Position and Filmstrip Collision Avoidance", "[unit][viewe
     bool origShow = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
 
     boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
     GtkWidget *bar = viewer->GetViewerOverlayBar();
     GtkWidget *timeline = viewer->GetTimelineRow();
     REQUIRE(bar != nullptr);
@@ -669,7 +673,6 @@ TEST_CASE("Viewer HUD and Filmstrip Auto-Hide Timeout", "[unit][viewer][timeout]
     bool origOverlay = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
     prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
     prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
-    QuiverUtils::ToggleActionSetActive("ViewFilmStrip", TRUE);
 
     boost::shared_ptr<Viewer> viewer(new Viewer());
     viewer->RegisterActions();
@@ -715,9 +718,10 @@ TEST_CASE("Viewer HUD and Filmstrip Auto-Hide Timeout", "[unit][viewer][timeout]
 
     prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, origOverlay);
     viewer->StopVideo(false);
-    viewer.reset();
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
 }
 
 TEST_CASE("Viewer ResetIdleCursor and Save Dialog Prompt callbacks", "[unit][viewer][cursor]")
@@ -827,9 +831,10 @@ TEST_CASE("Viewer ResetIdleCursor and Save Dialog Prompt callbacks", "[unit][vie
     REQUIRE_FALSE(QuiverFileOps::UndoStackHasItems());
 
     viewer->StopVideo(false);
-    viewer.reset();
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
 }
 
 TEST_CASE("QuiverRotatedPaintable functionality", "[unit][viewer][paintable]")
@@ -989,10 +994,269 @@ TEST_CASE("Viewer center play button scrollwheel navigation", "[unit][viewer][pl
     CHECK(list->GetCurrentIndex() == 0);
 
     viewer->StopVideo(false);
-    viewer.reset();
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
 }
+
+TEST_CASE("Video Glitch Detector initialization and real-time monitoring", "[unit][viewer][glitch]")
+{
+    REQUIRE_DISPLAY();
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    ImageListPtr list(new ImageList());
+    std::string imgDir = QuiverTest_GetImagesDir();
+    std::list<std::string> files;
+    files.push_back(imgDir + "/sample_video.mp4");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    while (g_main_context_iteration(NULL, FALSE));
+
+    GtkWidget *playBtn = viewer->GetCenterPlayButton();
+    REQUIRE(playBtn != nullptr);
+    g_signal_emit_by_name(playBtn, "clicked");
+
+    for (int i = 0; i < 20; ++i)
+    {
+        g_usleep(15000);
+        while (g_main_context_iteration(NULL, FALSE));
+    }
+
+    std::ifstream log_file("quiver_glitch_log.txt");
+    REQUIRE(log_file.good());
+
+    viewer->StopVideo(false);
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+
+TEST_CASE("Viewer Video Kinetic Scrolling and Pan Deceleration", "[unit][viewer][video][kinetic]")
+{
+    REQUIRE_DISPLAY();
+
+    PreferencesPtr prefs = Preferences::GetInstance();
+    REQUIRE(prefs != nullptr);
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, true);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    ImageListPtr list(new ImageList());
+    std::string imgDir = QuiverTest_GetImagesDir();
+    std::list<std::string> files;
+    files.push_back(imgDir + "/sample_video.mp4");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    while (g_main_context_iteration(NULL, FALSE));
+
+    GtkWidget *playBtn = viewer->GetCenterPlayButton();
+    REQUIRE(playBtn != nullptr);
+    g_signal_emit_by_name(playBtn, "clicked");
+
+    for (int i = 0; i < 20; ++i)
+    {
+        g_usleep(15000);
+        while (g_main_context_iteration(NULL, FALSE));
+    }
+
+    // Initially at fit zoom: video should not be actively panning
+    CHECK_FALSE(viewer->IsVideoPanSlowdownActive());
+
+    // Zoom in to 2.0x so video overflows the viewport and becomes pannable
+    viewer->SetVideoZoom(2.0);
+    for (int i = 0; i < 30 && viewer->GetVideoZoom() < 1.95; ++i)
+    {
+        g_usleep(35000);
+        while (g_main_context_iteration(NULL, FALSE));
+    }
+
+    CHECK(viewer->CanVideoPan() == true);
+    CHECK(viewer->GetVideoZoom() > 1.0);
+
+    // Test 1: Record flick samples and start kinetic slowdown
+    // Simulate 3 motion samples at ~60fps (dt = 0.016s) moving right (dx = 20px)
+    viewer->RecordVideoPanSample(20.0, 0.0, 0.016);
+    viewer->RecordVideoPanSample(22.0, 0.0, 0.016);
+    viewer->RecordVideoPanSample(18.0, 0.0, 0.016);
+
+    viewer->StartVideoPanSlowdown();
+    CHECK(viewer->IsVideoPanSlowdownActive() == true);
+
+    // Initial velocity should be ~1250 px/s
+    double initialVx = viewer->GetVideoPanVelocityX();
+    CHECK(initialVx > 1000.0);
+    CHECK(initialVx < 1500.0);
+    CHECK(viewer->GetVideoPanVelocityY() == 0.0);
+
+    // Record initial pan X
+    double panX0 = viewer->GetVideoPanX();
+
+    // Iterate the main loop to drive the slowdown animation steps
+    for (int i = 0; i < 10; ++i)
+    {
+        g_usleep(16000);
+        while (g_main_context_iteration(NULL, FALSE));
+    }
+
+    // Velocity should have decayed exponentially (k ≈ 1.1206 s^-1)
+    double decayedVx = viewer->GetVideoPanVelocityX();
+    CHECK(decayedVx < initialVx);
+    CHECK(decayedVx > 0.0);
+
+    // Pan position should have shifted to follow the flick direction
+    double panX1 = viewer->GetVideoPanX();
+    CHECK(panX1 != panX0);
+
+    // Test 2: Stopping slowdown directly
+    viewer->StopVideoPanSlowdown();
+    CHECK_FALSE(viewer->IsVideoPanSlowdownActive());
+    CHECK(viewer->GetVideoPanVelocityX() == 0.0);
+    CHECK(viewer->GetVideoPanVelocityY() == 0.0);
+
+    // Test 3: Preference toggle disables kinetic slowdown
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, false);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    viewer->RecordVideoPanSample(20.0, 0.0, 0.016);
+    viewer->RecordVideoPanSample(20.0, 0.0, 0.016);
+    viewer->StartVideoPanSlowdown();
+    CHECK_FALSE(viewer->IsVideoPanSlowdownActive());
+
+    // Restore preference
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, true);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Test 4: Low speed below threshold (< 15 px/s) should not trigger slowdown
+    viewer->RecordVideoPanSample(0.1, 0.0, 0.016); // ~6 px/s
+    viewer->StartVideoPanSlowdown();
+    CHECK_FALSE(viewer->IsVideoPanSlowdownActive());
+
+    // Test 5: Clicking the mouse while kinetic scroll is in progress stops the scroll without toggling play/pause
+    GtkWidget *overlay = viewer->GetOverlay();
+    REQUIRE(overlay != nullptr);
+    GtkWidget *stack = gtk_overlay_get_child(GTK_OVERLAY(overlay));
+    REQUIRE(stack != nullptr);
+    GtkWidget *videoFixed = gtk_stack_get_child_by_name(GTK_STACK(stack), "video");
+    REQUIRE(videoFixed != nullptr);
+
+    GListModel *controllers = gtk_widget_observe_controllers(videoFixed);
+    REQUIRE(controllers != nullptr);
+    GtkGestureClick *clickGesture = nullptr;
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); ++i)
+    {
+        GObject *obj = G_OBJECT(g_list_model_get_item(controllers, i));
+        if (GTK_IS_GESTURE_CLICK(obj))
+        {
+            clickGesture = GTK_GESTURE_CLICK(obj);
+            g_object_unref(obj);
+            break;
+        }
+        g_object_unref(obj);
+    }
+    g_object_unref(controllers);
+    REQUIRE(clickGesture != nullptr);
+
+    // Start kinetic scroll again
+    viewer->RecordVideoPanSample(25.0, 0.0, 0.016);
+    viewer->RecordVideoPanSample(25.0, 0.0, 0.016);
+    viewer->StartVideoPanSlowdown();
+    CHECK(viewer->IsVideoPanSlowdownActive() == true);
+
+    bool wasPlaying = viewer->IsVideoPlaying();
+
+    // User clicks mouse on video: press at (100, 100)
+    g_signal_emit_by_name(clickGesture, "pressed", 1, 100.0, 100.0);
+    // Slowdown should be stopped immediately
+    CHECK_FALSE(viewer->IsVideoPanSlowdownActive());
+
+    // Mouse button released at (100, 100) without drag
+    g_signal_emit_by_name(clickGesture, "released", 1, 100.0, 100.0);
+
+    // Playing state must NOT have changed!
+    CHECK(viewer->IsVideoPlaying() == wasPlaying);
+
+    // Now, clicking again when slowdown is NOT in progress SHOULD toggle play/pause
+    g_signal_emit_by_name(clickGesture, "pressed", 1, 100.0, 100.0);
+    g_signal_emit_by_name(clickGesture, "released", 1, 100.0, 100.0);
+    CHECK(viewer->IsVideoPlaying() != wasPlaying);
+
+    // Test 6: Clicking over video control overlay does NOT stop kinetic scroll slowdown
+    GtkWidget *overlayBar = nullptr;
+    for (GtkWidget *child = gtk_widget_get_first_child(overlay); child != nullptr; child = gtk_widget_get_next_sibling(child))
+    {
+        if (GTK_IS_BOX(child) && gtk_widget_has_css_class(child, "viewer-overlay-bar"))
+        {
+            overlayBar = child;
+            break;
+        }
+    }
+
+    REQUIRE(overlayBar != nullptr);
+    gtk_widget_set_visible(overlayBar, TRUE);
+    gtk_widget_set_opacity(overlayBar, 1.0);
+    gtk_widget_set_size_request(overlayBar, 300, 40);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    int barW = gtk_widget_get_width(overlayBar);
+    int barH = gtk_widget_get_height(overlayBar);
+    if (barW <= 0) barW = 300;
+    if (barH <= 0) barH = 40;
+    {
+        graphene_point_t bar_center = GRAPHENE_POINT_INIT((float)barW / 2.0f, (float)barH / 2.0f);
+            graphene_point_t video_pt;
+            if (gtk_widget_compute_point(overlayBar, videoFixed, &bar_center, &video_pt))
+            {
+                // Point inside overlay bar must be detected as over controls
+                CHECK(viewer->IsPointOverControlsOrFilmstrip((double)video_pt.x, (double)video_pt.y) == true);
+                // Point in viewer canvas area must NOT be detected as over controls
+                CHECK(viewer->IsPointOverControlsOrFilmstrip(100.0, 100.0) == false);
+
+                // Start kinetic scroll slowdown
+                viewer->RecordVideoPanSample(25.0, 0.0, 0.016);
+                viewer->RecordVideoPanSample(25.0, 0.0, 0.016);
+                viewer->StartVideoPanSlowdown();
+                CHECK(viewer->IsVideoPanSlowdownActive() == true);
+
+                // Click over control overlay: press and release
+                g_signal_emit_by_name(clickGesture, "pressed", 1, (double)video_pt.x, (double)video_pt.y);
+                // Slowdown must NOT be stopped!
+                CHECK(viewer->IsVideoPanSlowdownActive() == true);
+
+                g_signal_emit_by_name(clickGesture, "released", 1, (double)video_pt.x, (double)video_pt.y);
+                CHECK(viewer->IsVideoPanSlowdownActive() == true);
+
+                // Now click over the viewer canvas area (100, 100) -> MUST stop slowdown!
+                g_signal_emit_by_name(clickGesture, "pressed", 1, 100.0, 100.0);
+                CHECK_FALSE(viewer->IsVideoPanSlowdownActive());
+                g_signal_emit_by_name(clickGesture, "released", 1, 100.0, 100.0);
+            }
+        }
+
+    // Test 7: Cleanup
+    viewer->StopVideo(false);
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+
 
 
 

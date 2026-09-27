@@ -47,6 +47,8 @@ GtkWidget *quiver_navigation_control_new ();
 GtkWidget *quiver_navigation_control_new_with_adjustments (GtkAdjustment *hadjust, GtkAdjustment *vadjust);
 
 void       quiver_navigation_control_set_texture(QuiverNavigationControl *navcontrol, GdkTexture *texture);
+void       quiver_navigation_control_set_paintable(QuiverNavigationControl *navcontrol, GdkPaintable *paintable, int width, int height);
+void       quiver_navigation_control_set_view_area_normalized(QuiverNavigationControl *navcontrol, gdouble x, gdouble y, gdouble width, gdouble height);
 #if HAVE_GDK_PIXBUF
 void       quiver_navigation_control_set_pixbuf(QuiverNavigationControl *navcontrol, GdkPixbuf *pixbuf);
 #endif

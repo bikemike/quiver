@@ -2262,6 +2262,7 @@ quiver_icon_view_tick_smooth_scroll_slowdown(GtkWidget *widget, GdkFrameClock *f
 	if (!keep_going)
 	{
 		iconview->priv->tick_id_smooth_scroll_slowdown = 0;
+		quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 		return G_SOURCE_REMOVE;
 	}
 	return G_SOURCE_CONTINUE;
@@ -2276,6 +2277,7 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 	if (!keep_going)
 	{
 		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+		quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 		return G_SOURCE_REMOVE;
 	}
 	return G_SOURCE_CONTINUE;
@@ -2284,7 +2286,16 @@ quiver_icon_view_timeout_smooth_scroll_slowdown(gpointer data)
 static void
 quiver_icon_view_start_smooth_scroll_slowdown(QuiverIconView *iconview)
 {
-	quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
+	if (0 != iconview->priv->tick_id_smooth_scroll_slowdown)
+	{
+		gtk_widget_remove_tick_callback(GTK_WIDGET(iconview), iconview->priv->tick_id_smooth_scroll_slowdown);
+		iconview->priv->tick_id_smooth_scroll_slowdown = 0;
+	}
+	if (0 != iconview->priv->timeout_id_smooth_scroll_slowdown)
+	{
+		g_source_remove(iconview->priv->timeout_id_smooth_scroll_slowdown);
+		iconview->priv->timeout_id_smooth_scroll_slowdown = 0;
+	}
 	remove_timeout_smooth_scroll(iconview);
 
 	iconview->priv->smooth_scroll_slowdown_last_time = g_get_monotonic_time();
@@ -3097,10 +3108,14 @@ quiver_icon_view_gesture_released (GtkGestureClick *gesture,
 			gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
 			gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
 			
-			if ( 3 == g_list_length(iconview->priv->velocity_time_list) &&
+			if (iconview->priv->velocity_time_list != NULL &&
 				(0.1 > new_time - old_time) )
 			{
 				quiver_icon_view_start_smooth_scroll_slowdown(iconview);
+			}
+			else
+			{
+				quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 			}
 		}
 	}
@@ -3139,6 +3154,9 @@ quiver_icon_view_gesture_drag_begin (GtkGestureDrag *gesture,
 	iconview->priv->last_x = ix;
 	iconview->priv->last_y = iy;
 	iconview->priv->drag_performed = FALSE;
+
+	quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
+	gettimeofday(&iconview->priv->last_motion_time, NULL);
 
 	gint vadjust = iconview->priv->vadjustment ? (gint)gtk_adjustment_get_value(iconview->priv->vadjustment) : 0;
 	gint hadjust = iconview->priv->hadjustment ? (gint)gtk_adjustment_get_value(iconview->priv->hadjustment) : 0;
@@ -3255,29 +3273,33 @@ quiver_icon_view_gesture_drag_update (GtkGestureDrag *gesture,
 		gettimeofday(&new_motion_time,NULL);
 		gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
 		gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
+		gdouble dt = new_time - old_time;
 		
-		VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
-		
-		vt->time = new_time - old_time;
-		vt->hvelocity = (gint)((abs_x - iconview->priv->last_x) / vt->time);
-		vt->hvelocity = MIN((gint)MAX_VELOCITY,vt->hvelocity);
-		vt->hvelocity = MAX(-(gint)MAX_VELOCITY,vt->hvelocity);
-		
-		vt->vvelocity =  (gint)((abs_y - iconview->priv->last_y) / vt->time);
-		vt->vvelocity = MIN((gint)MAX_VELOCITY,vt->vvelocity);
-		vt->vvelocity = MAX(-(gint)MAX_VELOCITY,vt->vvelocity);		
-
-		if ( 3 == g_list_length(iconview->priv->velocity_time_list) )
+		if (dt > 0.0005)
 		{
-			GList* last = g_list_last(iconview->priv->velocity_time_list);
+			VelocityTimeStruct* vt = g_malloc(sizeof(VelocityTimeStruct));
+			
+			vt->time = dt;
+			vt->hvelocity = (gint)((abs_x - iconview->priv->last_x) / vt->time);
+			vt->hvelocity = MIN((gint)MAX_VELOCITY,vt->hvelocity);
+			vt->hvelocity = MAX(-(gint)MAX_VELOCITY,vt->hvelocity);
+			
+			vt->vvelocity =  (gint)((abs_y - iconview->priv->last_y) / vt->time);
+			vt->vvelocity = MIN((gint)MAX_VELOCITY,vt->vvelocity);
+			vt->vvelocity = MAX(-(gint)MAX_VELOCITY,vt->vvelocity);		
+
+			if ( 3 <= g_list_length(iconview->priv->velocity_time_list) )
+			{
+				GList* last = g_list_last(iconview->priv->velocity_time_list);
+				g_free(last->data);
+				iconview->priv->velocity_time_list = 
+					g_list_delete_link(iconview->priv->velocity_time_list,last);	
+			}
 			iconview->priv->velocity_time_list = 
-				g_list_remove_link(iconview->priv->velocity_time_list,last);	
+				g_list_prepend(iconview->priv->velocity_time_list, vt);
+			
+			iconview->priv->last_motion_time = new_motion_time;
 		}
-		iconview->priv->velocity_time_list = 
-			g_list_prepend(iconview->priv->velocity_time_list, vt);
-		
-		
-		iconview->priv->last_motion_time = new_motion_time;
 		
 		gdouble hadjust = gtk_adjustment_get_value(iconview->priv->hadjustment);
 		gdouble vadjust = gtk_adjustment_get_value(iconview->priv->vadjustment);
@@ -3335,10 +3357,14 @@ quiver_icon_view_gesture_drag_end (GtkGestureDrag *gesture,
 			gdouble old_time = (gdouble)iconview->priv->last_motion_time.tv_sec + ((gdouble)iconview->priv->last_motion_time.tv_usec)/1000000;
 			gdouble new_time = (gdouble)new_motion_time.tv_sec + ((gdouble)new_motion_time.tv_usec)/1000000;
 			
-			if ( 3 == g_list_length(iconview->priv->velocity_time_list) &&
+			if (iconview->priv->velocity_time_list != NULL &&
 				(0.1 > new_time - old_time) )
 			{
 				quiver_icon_view_start_smooth_scroll_slowdown(iconview);
+			}
+			else
+			{
+				quiver_icon_view_stop_smooth_scroll_slowdown(iconview);
 			}
 		}
 	}

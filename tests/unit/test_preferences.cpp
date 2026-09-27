@@ -3,6 +3,7 @@
 #include "QuiverPrefs.h"
 #include "Bookmarks.h"
 #include "ExternalTools.h"
+#include "quiver-image-view.h"
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <cstring>
@@ -60,6 +61,17 @@ TEST_CASE_METHOD(TestPreferencesFixture, "Preferences Get/Set and Default Values
 
         REQUIRE(prefs->GetBoolean("Viewer", "Fullscreen") == true);
         REQUIRE(prefs->GetInteger("Viewer", "ZoomStep") == 15);
+
+        // Separate image and video navigation control preferences
+        prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL, true);
+        prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO, false);
+        REQUIRE(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL, false) == true);
+        REQUIRE(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO, true) == false);
+
+        prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL, false);
+        prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO, true);
+        REQUIRE(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL, true) == false);
+        REQUIRE(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO, false) == true);
     }
 
     SECTION("Lists of strings, ints, and bools")
@@ -144,3 +156,41 @@ TEST_CASE_METHOD(TestPreferencesFixture, "Reset flushes even with dangling refer
     Bookmarks::Reset();
     ExternalTools::Reset();
 }
+
+TEST_CASE_METHOD(TestPreferencesFixture, "Kinetic Scrolling preference support", "[unit][prefs][kinetic]")
+{
+    PreferencesPtr prefs = Preferences::GetInstance();
+    REQUIRE(prefs != nullptr);
+
+    // Verify default value is true
+    bool bDefault = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, true);
+    CHECK(bDefault == true);
+
+    // Toggle off
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, false);
+    CHECK_FALSE(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, true));
+
+    // Reset and check persistence
+    Preferences::Reset();
+    PreferencesPtr prefsReloaded = Preferences::GetInstance();
+    CHECK_FALSE(prefsReloaded->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, true));
+
+    // Toggle on
+    prefsReloaded->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, true);
+    CHECK(prefsReloaded->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, false));
+
+    // Verify QuiverImageView smooth_scroll setter/getter
+    GtkWidget *imgView = quiver_image_view_new();
+    REQUIRE(imgView != nullptr);
+    CHECK(quiver_image_view_get_smooth_scroll(QUIVER_IMAGE_VIEW(imgView)) == TRUE);
+
+    quiver_image_view_set_smooth_scroll(QUIVER_IMAGE_VIEW(imgView), FALSE);
+    CHECK(quiver_image_view_get_smooth_scroll(QUIVER_IMAGE_VIEW(imgView)) == FALSE);
+
+    quiver_image_view_set_smooth_scroll(QUIVER_IMAGE_VIEW(imgView), TRUE);
+    CHECK(quiver_image_view_get_smooth_scroll(QUIVER_IMAGE_VIEW(imgView)) == TRUE);
+
+    g_object_ref_sink(imgView);
+    g_object_unref(imgView);
+}
+

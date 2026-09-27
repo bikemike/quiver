@@ -41,6 +41,18 @@
 #include "IconViewThumbLoader.h"
 #include <memory>
 #include <atomic>
+#include <vector>
+#include <thread>
+#include <cmath>
+#include <algorithm>
+#include <iomanip>
+#include <iostream>
+#include <fstream>
+#include <gdk-pixbuf/gdk-pixbuf.h>
+#include <gst/video/gstvideoaffinetransformationmeta.h>
+#include <gst/gl/gstglsyncmeta.h>
+#include <gst/gl/gstglcontext.h>
+#include <gst/gl/gstglbufferpool.h>
 
 #include <gdk/gdkkeysyms.h>
 #include <exiv2/exiv2.hpp>
@@ -253,8 +265,10 @@ static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *
 static void video_zoom_raise_media_windows(Viewer::ViewerImpl *p);
 static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data);
 static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer user_data);
+static GstPadProbeReturn video_sink_glitch_probe_cb(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 
 #define OVERLAY_AUTO_HIDE_TIMEOUT_MS   800 /* ms before HUD / filmstrip auto-hide */
+
 
 #define ACTION_VIEWER_SLIDESHOW        "SlideShow"
 #define ACTION_VIEWER_CUT              "ViewerCut"
@@ -631,7 +645,7 @@ public:
 
 	void QueueIconViewUpdate(int timeout = 100 /* ms */);
 
-	void SlideShowStop(bool bEmitStopEvent = true);
+	void SlideShowStop(bool bEmitStopEvent = true, bool bUpdateUI = true);
 
 	bool IsPlaying() const
 	{
@@ -744,6 +758,15 @@ public:
 	void ApplyVideoZoom();
 	void RotateVideo(bool clockwise);
 	int GetVideoUserRotation() const { return m_iVideoUserRotation; }
+
+	// video pan inertia
+	void StartVideoPanSlowdown();
+	void StopVideoPanSlowdown();
+	bool VideoPanSlowdownStep(gint64 frame_time_us);
+	void RecordVideoPanSample(gdouble dx, gdouble dy, gdouble dt);
+	bool CanVideoPan() const;
+	static gboolean video_pan_slowdown_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data);
+	static gboolean video_pan_slowdown_timeout_cb(gpointer data);
 
 
 // member variables
@@ -881,13 +904,13 @@ public:
 		VIDEO_ZOOM_NVIDIA,       // NVIDIA: nvvidconv coordinate-based crop props
 		VIDEO_ZOOM_GL
 	} VideoZoomType;
-	VideoZoomType m_VideoZoomType;
-	GstElement* m_pVideoZoomInput;  // input capsfilter: permissive caps so playbin template check passes with HW decoders
-	GstElement* m_pVideoCrop;       // in-pipeline crop element for digital zoom (software path only)
-	GstElement* m_pVideoZoomConvert; // normalizes formats for the scaler
-	GstElement* m_pVideoZoomScaler; // scaler (HW-accelerated if available, else videoscale)
-	GstElement* m_pVideoZoomCaps;   // capsfilter forcing the scaled output frame size
-	GstElement* m_pVideoZoomInputCaps; // widens the chain's sink template to the decoder's memory type
+	VideoZoomType m_VideoZoomType = VIDEO_ZOOM_GL;
+	GstElement* m_pVideoZoomInput = nullptr;  // input capsfilter: permissive caps so playbin template check passes with HW decoders
+	GstElement* m_pVideoCrop = nullptr;       // in-pipeline crop element for digital zoom (software path only)
+	GstElement* m_pVideoZoomConvert = nullptr; // normalizes formats for the scaler
+	GstElement* m_pVideoZoomScaler = nullptr; // scaler (HW-accelerated if available, else videoscale)
+	GstElement* m_pVideoZoomCaps = nullptr;   // capsfilter forcing the scaled output frame size
+	GstElement* m_pVideoZoomInputCaps = nullptr; // widens the chain's sink template to the decoder's memory type
 	gdouble     m_dVideoZoom;       // current video zoom factor (1.0 = actual size, like the image view)
 	gdouble     m_dVideoZoomFinal;  // target video zoom factor for the smooth animation
 	gdouble     m_dVideoZoomMin;    // lowest zoom allowed: the fit level seen so far (1.0 when actual size)
@@ -901,6 +924,25 @@ public:
 	gboolean    m_bVideoZoomCropActive; // zoomcaps is forcing the scaled output size
 	gboolean    m_bVideoZoomInputCropActive; // zoominputcaps is forcing system-memory input for the crop
 	gboolean    m_bVideoPanning;    // left-button pan drag in progress
+	guint       m_uiVideoPanSlowdownTickID = 0;
+	guint       m_uiVideoPanSlowdownTimeoutID = 0;
+	gint64      m_iVideoPanSlowdownLastTime = 0;
+	gdouble     m_dVideoPanVelX = 0.;
+	gdouble     m_dVideoPanVelY = 0.;
+	gint64      m_iVideoPanLastMotionTime = 0;
+	gdouble     m_dVideoPanLastMotionX = 0.;
+	gdouble     m_dVideoPanLastMotionY = 0.;
+	struct VideoPanSample {
+		gdouble dx = 0.;
+		gdouble dy = 0.;
+		gdouble dt = 0.;
+	};
+	static constexpr int VIDEO_PAN_MAX_SAMPLES = 3;
+	VideoPanSample m_aVideoPanSamples[VIDEO_PAN_MAX_SAMPLES]{};
+	int         m_iVideoPanSampleCount = 0;
+	bool        m_bVideoPanSlowdownActive = false;
+	bool        m_bVideoPanSlowdownInterrupted = false;
+	bool        m_bKineticScrolling = true;
 	gboolean    m_bVideoNeedsFirstFrame; // TRUE after switching videos: defer opacity restore until new frame is decoded
 	gboolean    m_bVideoFlushPending; // TRUE between the flushing seek and the next ASYNC_DONE
 	bool        m_bVideoPagePending; // TRUE: keep the image/preview page visible until the video's first frame is ready
@@ -915,10 +957,103 @@ public:
 	gint        m_iVideoFpsDen;
 	gint        m_iVideoParN;
 	gint        m_iVideoParD;
+	// viewport rectangle of the *main* view, normalized against the frame, so
+	// the miniature can mark which part of it is on screen
+	gdouble     m_dVideoPreviewViewX;
+	gdouble     m_dVideoPreviewViewY;
+	gdouble     m_dVideoPreviewViewW;
+	gdouble     m_dVideoPreviewViewH;
+	gdouble     m_dVideoPreviewDispW;   // displayed size of the visible viewport, for drag scaling
+	gdouble     m_dVideoPreviewDispH;
+	gboolean    m_bVideoPreviewHasFrame; // the miniature sink has uploaded a real frame
+	gboolean    m_bVideoPreviewRedrawQueued; // a miniature redraw is already pending on the main thread
 	gint        m_iVideoSinkW;      // last set_size_request width  (skip if unchanged)
 	gint        m_iVideoSinkH;      // last set_size_request height
 	gint        m_iVideoSinkX;      // last layout_move x
 	gint        m_iVideoSinkY;      // last layout_move y (from caps probe)
+	gfloat      m_fVideoZoomSx = -999.0f; // cached gltransformation properties
+	gfloat      m_fVideoZoomSy = -999.0f;
+	gfloat      m_fVideoZoomTx = -999.0f;
+	gfloat      m_fVideoZoomTy = -999.0f;
+
+	struct VideoGlitchTracker
+	{
+		const char          *m_pszName = "probe";
+		std::atomic<guint64> m_uFrameIndex{0};
+		std::atomic<guint64> m_uLastGlitchFrame{0};
+		std::atomic<gint64>  m_iLastGlitchPts{-1};
+		std::atomic<guint>   m_uGlitchCount{0};
+		std::atomic<double>  m_dLastR64{1.0};
+		std::atomic<double>  m_dLastR16{1.0};
+		std::atomic<double>  m_dLastMAE{0.0};
+		std::atomic<double>  m_dLastFlicker{0.0};
+		std::atomic<bool>    m_bLastWasGlitch{false};
+
+		double               m_dRollingMAE = 5.0;
+		GstVideoInfo         m_VideoInfo{};
+		bool                 m_bHaveVideoInfo = false;
+
+		struct FrameItem
+		{
+			guint64 frame_idx{0};
+			GstClockTime pts{GST_CLOCK_TIME_NONE};
+			std::vector<uint8_t> grid;
+			float matrix[16]{};
+			bool has_matrix{false};
+		};
+		std::vector<FrameItem> m_vHistory;
+		GstClockTime         m_uLastPts{GST_CLOCK_TIME_NONE};
+
+		std::vector<uint8_t> m_vPrevRGB;
+		guint64              m_uPrevRGBFrameIdx{0};
+		int                  m_iPrevRGBW{0};
+		int                  m_iPrevRGBH{0};
+
+		std::vector<uint8_t> m_vPrevRGB2;
+		guint64              m_uPrevRGB2FrameIdx{0};
+		int                  m_iPrevRGB2W{0};
+		int                  m_iPrevRGB2H{0};
+
+		std::thread          m_SaveThread;
+
+		~VideoGlitchTracker()
+		{
+			if (m_SaveThread.joinable())
+				m_SaveThread.join();
+		}
+
+		void Reset()
+		{
+			if (m_SaveThread.joinable())
+				m_SaveThread.join();
+			m_uFrameIndex.store(0, std::memory_order_relaxed);
+			m_uLastGlitchFrame.store(0, std::memory_order_relaxed);
+			m_iLastGlitchPts.store(-1, std::memory_order_relaxed);
+			m_uGlitchCount.store(0, std::memory_order_relaxed);
+			m_dLastR64.store(1.0, std::memory_order_relaxed);
+			m_dLastR16.store(1.0, std::memory_order_relaxed);
+			m_dLastMAE.store(0.0, std::memory_order_relaxed);
+			m_dLastFlicker.store(0.0, std::memory_order_relaxed);
+			m_bLastWasGlitch.store(false, std::memory_order_relaxed);
+			m_dRollingMAE = 5.0;
+			m_vHistory.clear();
+			m_uLastPts = GST_CLOCK_TIME_NONE;
+			m_vPrevRGB.clear();
+			m_uPrevRGBFrameIdx = 0;
+			m_iPrevRGBW = 0;
+			m_iPrevRGBH = 0;
+			m_vPrevRGB2.clear();
+			m_uPrevRGB2FrameIdx = 0;
+			m_iPrevRGB2W = 0;
+			m_iPrevRGB2H = 0;
+			m_bHaveVideoInfo = false;
+		}
+	};
+
+	VideoGlitchTracker   m_DecoderGlitchTracker;
+	VideoGlitchTracker   m_SinkGlitchTracker;
+	std::atomic<gint64>  m_iLastZoomApplyTimeUs{0};
+	std::atomic<guint64> m_uZoomApplyCount{0};
 
 	/* filmstrip overlay mode */
 	bool        m_bFilmstripOverlay;   // true when filmstrip floats over the image
@@ -1003,6 +1138,9 @@ public:
 	double m_dTwoFingerPanStartVAdj;
 	double m_dTwoFingerPanStartVidX;
 	double m_dTwoFingerPanStartVidY;
+	double m_dTwoFingerPanLastOffsetX = 0.0;
+	double m_dTwoFingerPanLastOffsetY = 0.0;
+	gint64 m_iTwoFingerPanLastTime = 0;
 
 	void UpdateSlideshowButton();
 	void UpdateHUDTooltips();
@@ -1015,6 +1153,13 @@ public:
 	void CancelNavControlFade();
 	void ApplyNavControlMinSize(bool bApply);
 	bool IsNavControlNeeded() const;
+	bool IsNavPreviewEnabled() const;
+	void ConfigureVideoPreviewScale(gint dispW, gint dispH);
+	void ResetVideoPreviewViewState();
+	void UpdateVideoPreviewViewArea();
+	void ReleaseVideoPreview();
+	GstElement* BuildVideoZoomBin();
+	void RebuildVideoZoomBin();
 	bool IsSlideShowRunning() const { return m_bSlideShowRunning; }
 	bool IsSlideShowPaused() const { return m_bSlideShowPaused; }
 	void SlideShowPause();
@@ -1042,6 +1187,7 @@ public:
 	bool IsPointerOverFilmstrip() const;
 	bool IsPointerOverMediaControls() const;
 	bool IsPointerOverControls() const;
+	bool IsPointOverControlsOrFilmstrip(GtkWidget *event_widget, double x, double y) const;
 	void ShowFilmstripOverlay();
 	void HideFilmstripOverlay();
 	void UpdateFilmstripForPlayback();
@@ -1144,6 +1290,10 @@ void Viewer::ViewerImpl::SetImageList(IImageListViewPtr imgList)
 
 void Viewer::ViewerImpl::UpdateUI()
 {
+	if (m_pImageView == NULL || !G_IS_OBJECT(m_pImageView) || !QUIVER_IS_IMAGE_VIEW(m_pImageView))
+	{
+		return;
+	}
 	if (m_ImageListPtr->GetSize())
 	{
 		if ( 0 == m_ImageListPtr->GetCurrentIndex() && m_ImageListPtr->GetCurrentIndex() == m_ImageListPtr->GetSize() - 1 )
@@ -2272,6 +2422,68 @@ bool Viewer::ViewerImpl::IsPointerOverMediaControls() const
 	return IsPointerOverControls();
 }
 
+bool Viewer::ViewerImpl::IsPointOverControlsOrFilmstrip(GtkWidget *event_widget, double x, double y) const
+{
+	if (m_bPointerOverOverlayBar)
+		return true;
+
+	auto check_widget = [&](GtkWidget *ctrl) -> bool {
+		if (!ctrl || !gtk_widget_get_visible(ctrl)) return false;
+		if (gtk_widget_get_opacity(ctrl) < 0.05) return false;
+
+		int w = gtk_widget_get_width(ctrl);
+		int h = gtk_widget_get_height(ctrl);
+		if (w <= 0 || h <= 0)
+		{
+			gtk_widget_measure(ctrl, GTK_ORIENTATION_HORIZONTAL, -1, NULL, &w, NULL, NULL);
+			gtk_widget_measure(ctrl, GTK_ORIENTATION_VERTICAL, -1, NULL, &h, NULL, NULL);
+		}
+		if (w <= 0 || h <= 0) return false;
+
+		if (event_widget != NULL && gtk_widget_get_root(event_widget) != NULL
+			&& gtk_widget_get_root(ctrl) != NULL
+			&& gtk_widget_get_root(event_widget) == gtk_widget_get_root(ctrl))
+		{
+			graphene_point_t src = GRAPHENE_POINT_INIT((float)x, (float)y);
+			graphene_point_t dest;
+			if (gtk_widget_compute_point(event_widget, ctrl, &src, &dest))
+			{
+				if (dest.x >= 0 && dest.x < w && dest.y >= 0 && dest.y < h)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+
+	if (check_widget(m_pViewerOverlayBar))
+		return true;
+	if (IsVideo() && check_widget(m_pTimelineRow))
+		return true;
+	if (check_widget(m_pNavControlPill))
+		return true;
+	if (check_widget(m_pCenterPlayBtn))
+		return true;
+	if (check_widget(m_pSlideShowPausedPill))
+		return true;
+
+	if (m_bFilmstripOverlay)
+	{
+		if (check_widget(m_pFilmstripOverlayContainer))
+			return true;
+		if (check_widget(m_pFilmstripEdge))
+			return true;
+	}
+	if (check_widget(m_pIconView))
+		return true;
+
+	if (IsPointerOverControls() || IsPointerOverFilmstrip())
+		return true;
+
+	return false;
+}
+
 void Viewer::ViewerImpl::ScheduleFilmstripHide()
 {
 	if (!m_bFilmstripOverlay) return;
@@ -2719,24 +2931,45 @@ viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y,
 		&& pViewerImpl->m_bVideoPanning)
 	{
 		/* drag-to-pan: move the viewport so the video follows the pointer. */
-		gdouble srcPerPxX = 1., srcPerPxY = 1.;
-		if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
+		if (ABS(x - pViewerImpl->m_dVideoPanStartRootX) >= 5.
+			|| ABS(y - pViewerImpl->m_dVideoPanStartRootY) >= 5.)
 		{
-			gdouble vW = pViewerImpl->m_iVideoWidth;
-			gdouble vH = pViewerImpl->m_iVideoHeight;
-			if (pViewerImpl->m_iVideoUserRotation == 90 || pViewerImpl->m_iVideoUserRotation == 270)
-				swap(vW, vH);
-			gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / vW,
-				(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / vH);
-			gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
-			if (scale * zoom > 0.)
+			pViewerImpl->m_bVideoPanSlowdownInterrupted = false;
+		}
+		gdouble srcPerPx = (pViewerImpl->m_dVideoZoom > 0.) ? (1. / pViewerImpl->m_dVideoZoom) : 1.;
+		pViewerImpl->m_dVideoPanX = pViewerImpl->m_dVideoPanStartPX - (x - pViewerImpl->m_dVideoPanStartRootX) * srcPerPx;
+		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (y - pViewerImpl->m_dVideoPanStartRootY) * srcPerPx;
+
+		gint64 now = g_get_monotonic_time();
+		if (pViewerImpl->m_iVideoPanLastMotionTime > 0)
+		{
+			gdouble dt = (gdouble)(now - pViewerImpl->m_iVideoPanLastMotionTime) / 1000000.0;
+			if (dt >= 0.005)
 			{
-				srcPerPxX = 1. / (scale * zoom);
-				srcPerPxY = srcPerPxX;
+				gdouble dx = x - pViewerImpl->m_dVideoPanLastMotionX;
+				gdouble dy = y - pViewerImpl->m_dVideoPanLastMotionY;
+
+				const gdouble max_vel = 12000.0;
+				gdouble dist = std::hypot(dx, dy);
+				if (dist > max_vel * dt && dist > 0.)
+				{
+					dx = (dx / dist) * (max_vel * dt);
+					dy = (dy / dist) * (max_vel * dt);
+				}
+
+				pViewerImpl->RecordVideoPanSample(dx, dy, dt);
+				pViewerImpl->m_dVideoPanLastMotionX = x;
+				pViewerImpl->m_dVideoPanLastMotionY = y;
+				pViewerImpl->m_iVideoPanLastMotionTime = now;
 			}
 		}
-		pViewerImpl->m_dVideoPanX = pViewerImpl->m_dVideoPanStartPX - (x - pViewerImpl->m_dVideoPanStartRootX) * srcPerPxX;
-		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (y - pViewerImpl->m_dVideoPanStartRootY) * srcPerPxY;
+		else
+		{
+			pViewerImpl->m_dVideoPanLastMotionX = x;
+			pViewerImpl->m_dVideoPanLastMotionY = y;
+			pViewerImpl->m_iVideoPanLastMotionTime = now;
+		}
+
 		pViewerImpl->ApplyVideoZoom();
 		pViewerImpl->RefreshAutoHideTimer();
 		/* dragging needs the pointer visible */
@@ -2830,8 +3063,13 @@ static void viewer_two_finger_pan_begin_cb(GtkGestureDrag *gesture, gdouble star
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	if (p->IsVideo())
 	{
+		p->StopVideoPanSlowdown();
 		p->m_dTwoFingerPanStartVidX = p->m_dVideoPanX;
 		p->m_dTwoFingerPanStartVidY = p->m_dVideoPanY;
+		p->m_dTwoFingerPanLastOffsetX = 0.;
+		p->m_dTwoFingerPanLastOffsetY = 0.;
+		p->m_iTwoFingerPanLastTime = g_get_monotonic_time();
+		p->m_iVideoPanSampleCount = 0;
 	}
 	else
 	{
@@ -2849,25 +3087,40 @@ static void viewer_two_finger_pan_update_cb(GtkGestureDrag *gesture, gdouble off
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	if (p->IsVideo())
 	{
-		gdouble srcPerPxX = 1., srcPerPxY = 1.;
-		if (p->m_iVideoWidth > 0 && p->m_iVideoHeight > 0)
+		gdouble srcPerPx = (p->m_dVideoZoom > 0.) ? (1. / p->m_dVideoZoom) : 1.;
+		p->m_dVideoPanX = p->m_dTwoFingerPanStartVidX - offset_x * srcPerPx;
+		p->m_dVideoPanY = p->m_dTwoFingerPanStartVidY - offset_y * srcPerPx;
+		p->ApplyVideoZoom();
+
+		gint64 now = g_get_monotonic_time();
+		if (p->m_iTwoFingerPanLastTime > 0)
 		{
-			gdouble vW = p->m_iVideoWidth;
-			gdouble vH = p->m_iVideoHeight;
-			if (p->m_iVideoUserRotation == 90 || p->m_iVideoUserRotation == 270)
-				swap(vW, vH);
-			gdouble scale = MIN((gdouble)gtk_widget_get_width(p->m_pVideoFixed) / vW,
-				(gdouble)gtk_widget_get_height(p->m_pVideoFixed) / vH);
-			gdouble zoom = MAX(p->m_dVideoZoom, 1.0);
-			if (scale * zoom > 0.)
+			gdouble dt = (gdouble)(now - p->m_iTwoFingerPanLastTime) / 1000000.0;
+			if (dt >= 0.005)
 			{
-				srcPerPxX = 1. / (scale * zoom);
-				srcPerPxY = srcPerPxX;
+				gdouble dx = offset_x - p->m_dTwoFingerPanLastOffsetX;
+				gdouble dy = offset_y - p->m_dTwoFingerPanLastOffsetY;
+
+				const gdouble max_vel = 12000.0;
+				gdouble dist = std::hypot(dx, dy);
+				if (dist > max_vel * dt && dist > 0.)
+				{
+					dx = (dx / dist) * (max_vel * dt);
+					dy = (dy / dist) * (max_vel * dt);
+				}
+
+				p->RecordVideoPanSample(dx, dy, dt);
+				p->m_dTwoFingerPanLastOffsetX = offset_x;
+				p->m_dTwoFingerPanLastOffsetY = offset_y;
+				p->m_iTwoFingerPanLastTime = now;
 			}
 		}
-		p->m_dVideoPanX = p->m_dTwoFingerPanStartVidX - offset_x * srcPerPxX;
-		p->m_dVideoPanY = p->m_dTwoFingerPanStartVidY - offset_y * srcPerPxY;
-		p->ApplyVideoZoom();
+		else
+		{
+			p->m_dTwoFingerPanLastOffsetX = offset_x;
+			p->m_dTwoFingerPanLastOffsetY = offset_y;
+			p->m_iTwoFingerPanLastTime = now;
+		}
 	}
 	else
 	{
@@ -2898,6 +3151,45 @@ static void viewer_two_finger_pan_end_cb(GtkGestureDrag *gesture, gdouble offset
 {
 	(void)gesture; (void)offset_x; (void)offset_y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p->IsVideo())
+	{
+		gint64 now = g_get_monotonic_time();
+		if (p->m_iTwoFingerPanLastTime > 0)
+		{
+			gdouble dt = (gdouble)(now - p->m_iTwoFingerPanLastTime) / 1000000.0;
+			if (dt >= 0.005)
+			{
+				gdouble dx = offset_x - p->m_dTwoFingerPanLastOffsetX;
+				gdouble dy = offset_y - p->m_dTwoFingerPanLastOffsetY;
+				const gdouble max_vel = 12000.0;
+				gdouble dist = std::hypot(dx, dy);
+				if (dist > max_vel * dt && dist > 0.)
+				{
+					dx = (dx / dist) * (max_vel * dt);
+					dy = (dy / dist) * (max_vel * dt);
+				}
+				p->RecordVideoPanSample(dx, dy, dt);
+				p->m_dTwoFingerPanLastOffsetX = offset_x;
+				p->m_dTwoFingerPanLastOffsetY = offset_y;
+				p->m_iTwoFingerPanLastTime = now;
+			}
+		}
+
+		gdouble time_since_motion = (p->m_iTwoFingerPanLastTime > 0)
+			? (gdouble)(now - p->m_iTwoFingerPanLastTime) / 1000000.0
+			: 1.0;
+
+		if (p->m_bKineticScrolling &&
+			time_since_motion < 0.15 &&
+			p->m_iVideoPanSampleCount > 0)
+		{
+			p->StartVideoPanSlowdown();
+		}
+		else
+		{
+			p->StopVideoPanSlowdown();
+		}
+	}
 	p->RefreshAutoHideTimer();
 }
 
@@ -2930,7 +3222,7 @@ static void viewer_swipe_cb(GtkGestureSwipe *gesture, gdouble velocity_x, gdoubl
 			return;
 		}
 	}
-	if (p->IsVideo() && p->m_dVideoZoom > 1.05)
+	if (p->IsVideo() && p->CanVideoPan())
 	{
 		return;
 	}
@@ -3075,10 +3367,15 @@ static void viewer_radio_action_handler_cb(GSimpleAction *action, GVariant *para
 	viewer_action_handler_cb(action, parameter, user_data);
 }
 
+static Viewer::ViewerImpl *s_pLastRegisteredViewerImpl = NULL;
+
 static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data)
 { (void)parameter; 
-	Viewer::ViewerImpl *pViewerImpl;
-	pViewerImpl = (Viewer::ViewerImpl*)data;
+	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
+	if (pViewerImpl == NULL || pViewerImpl != s_pLastRegisteredViewerImpl)
+	{
+		return;
+	}
 	
 	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView);
 
@@ -3630,26 +3927,12 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
  			pViewerImpl->RefreshAutoHideTimer();
  			return TRUE;
  		}
- 		else if (pViewerImpl->IsVideo() && pViewerImpl->m_dVideoZoom > 1.0)
+ 		else if (pViewerImpl->CanVideoPan())
  		{
- 			gdouble srcPerPxX = 1., srcPerPxY = 1.;
-  			if (pViewerImpl->m_iVideoWidth > 0 && pViewerImpl->m_iVideoHeight > 0)
-  			{
-  				gdouble vW = pViewerImpl->m_iVideoWidth;
-  				gdouble vH = pViewerImpl->m_iVideoHeight;
-  				if (pViewerImpl->m_iVideoUserRotation == 90 || pViewerImpl->m_iVideoUserRotation == 270)
-  					swap(vW, vH);
-  				gdouble scale = MIN((gdouble)gtk_widget_get_width(pViewerImpl->m_pVideoFixed) / vW,
-  					(gdouble)gtk_widget_get_height(pViewerImpl->m_pVideoFixed) / vH);
- 				gdouble zoom = MAX(pViewerImpl->m_dVideoZoom, 1.0);
- 				if (scale * zoom > 0.)
- 				{
- 					srcPerPxX = 1. / (scale * zoom);
- 					srcPerPxY = srcPerPxX;
- 				}
- 			}
- 			pViewerImpl->m_dVideoPanX += dx * srcPerPxX;
- 			pViewerImpl->m_dVideoPanY += dy * srcPerPxY;
+ 			pViewerImpl->StopVideoPanSlowdown();
+ 			gdouble srcPerPx = (pViewerImpl->m_dVideoZoom > 0.) ? (1. / pViewerImpl->m_dVideoZoom) : 1.;
+ 			pViewerImpl->m_dVideoPanX += dx * srcPerPx;
+ 			pViewerImpl->m_dVideoPanY += dy * srcPerPx;
  			pViewerImpl->ApplyVideoZoom();
  			pViewerImpl->RefreshAutoHideTimer();
  			return TRUE;
@@ -4575,12 +4858,23 @@ gstreamer_bus_watcher(GstBus* bus, GstMessage* msg, gpointer user_data)
 
 				gst_message_parse_error (msg, &error, &debug);
 
+				GstObject *msgSrc = GST_MESSAGE_SRC(msg);
+				gboolean bPreviewError = (msgSrc != NULL
+					&& GST_IS_ELEMENT(msgSrc)
+					&& g_str_has_prefix(GST_OBJECT_NAME(msgSrc), "navpreview"));
+
 				g_warning("Video playback error: %s", error->message);
 				if (debug && *debug)
 					g_warning("Video playback error debug: %s", debug);
 				g_free (debug);
 
 				g_error_free (error);
+
+				if (bPreviewError)
+				{
+					pViewerImpl->ResetVideoPreviewViewState();
+					break;
+				}
 
 				pViewerImpl->StopVideo(true);
 
@@ -4691,12 +4985,17 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 			else
 				gtk_widget_set_opacity(m_pVideoSinkWidget, 0.0);
 		}
-		GstState current;
-		// has the right video
-		GstStateChangeReturn rval = gst_element_get_state(GST_ELEMENT(m_pPipeline), &current, NULL, GST_SECOND);
-		if (GST_STATE_CHANGE_SUCCESS == rval)
+		/* has the right video */
+		/* The toggle follows what the app already knows, not what the pipeline
+		 * reports.  get_state only answers once every sink has prerolled, so
+		 * while a preroll is pending it times out; gating the button on that
+		 * made the click either do nothing or pause a second time, and the
+		 * video could only be revived by seeking.  m_bIsPlaying is set by
+		 * every play and pause (including EOS), so it is the state the button
+		 * has been showing all along. */
+		gboolean bWasPlaying = m_bIsPlaying;
 		{
-			if (GST_STATE_PLAYING == current)
+			if (bWasPlaying)
 			{
 				SetIsPlaying(false);
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PAUSED);
@@ -4822,6 +5121,8 @@ void Viewer::ViewerImpl::SkipBack()
 
 void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 {
+	StopVideoPanSlowdown();
+	m_bVideoPanSlowdownInterrupted = false;
 	CancelPlayPauseAnimation();
 	SetIsPlaying(false);
 
@@ -4836,6 +5137,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_bVideoNeedsFirstFrame = TRUE;
 	m_bVideoFlushPending = FALSE;
 	m_bVideoPagePending = FALSE;
+	/* the miniature belongs to the video that just stopped */
+	ResetVideoPreviewViewState();
 	//gtk_widget_set_double_buffered (m_pImageView, TRUE); // Double buffering handled by gtk4sink
 
 	if (reloadImage && 0 != m_ImageListPtr->GetSize())
@@ -4856,6 +5159,8 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	m_dVideoZoom = 1.0;
 	m_dVideoZoomFinal = 1.0;
 	m_dVideoZoomMin = 1.0;
+	m_DecoderGlitchTracker.Reset();
+	m_SinkGlitchTracker.Reset();
 	m_dPlaybackSpeed = 1.0;
 	m_bVideoPlaybackStarted = false;
 	m_bVideoZoomAnchorCenter = false;
@@ -5093,14 +5398,17 @@ viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdou
 		if (ABS(x - pViewerImpl->m_dVideoPreviewClickX) < 5.
 			&& ABS(y - pViewerImpl->m_dVideoPreviewClickY) < 5.)
 		{
-			if (pViewerImpl->IsVideo())
+			if (!pViewerImpl->IsPointOverControlsOrFilmstrip(widget, x, y))
 			{
-				pViewerImpl->PlayPauseVideo();
-			}
-			else if (pViewerImpl->m_bSlideShowRunning && pViewerImpl->m_pViewer)
-			{
-				pViewerImpl->m_pViewer->SlideShowTogglePause();
-				pViewerImpl->TriggerPlayPauseAnimation(!pViewerImpl->m_bSlideShowPaused);
+				if (pViewerImpl->IsVideo())
+				{
+					pViewerImpl->PlayPauseVideo();
+				}
+				else if (pViewerImpl->m_bSlideShowRunning && pViewerImpl->m_pViewer)
+				{
+					pViewerImpl->m_pViewer->SlideShowTogglePause();
+					pViewerImpl->TriggerPlayPauseAnimation(!pViewerImpl->m_bSlideShowPaused);
+				}
 			}
 		}
 		pViewerImpl->RefreshAutoHideTimer();
@@ -5110,12 +5418,58 @@ viewer_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdou
 	{
 		pViewerImpl->m_bVideoPanning = FALSE;
 
-		/* a click (no meaningful drag) toggles play/pause */
+		/* a click (no meaningful drag) toggles play/pause, unless this click was
+		 * arresting an in-progress kinetic scroll */
 		if (ABS(x - pViewerImpl->m_dVideoPanStartRootX) < 5.
 			&& ABS(y - pViewerImpl->m_dVideoPanStartRootY) < 5.)
 		{
-			if (pViewerImpl->IsVideo())
+			pViewerImpl->StopVideoPanSlowdown();
+			if (!pViewerImpl->m_bVideoPanSlowdownInterrupted && pViewerImpl->IsVideo()
+				&& !pViewerImpl->IsPointOverControlsOrFilmstrip(widget, x, y))
+			{
 				pViewerImpl->PlayPauseVideo();
+			}
+			pViewerImpl->m_bVideoPanSlowdownInterrupted = false;
+		}
+		else
+		{
+			pViewerImpl->m_bVideoPanSlowdownInterrupted = false;
+			gint64 now = g_get_monotonic_time();
+			if (pViewerImpl->m_iVideoPanLastMotionTime > 0)
+			{
+				gdouble dt = (gdouble)(now - pViewerImpl->m_iVideoPanLastMotionTime) / 1000000.0;
+				if (dt >= 0.005)
+				{
+					gdouble dx = x - pViewerImpl->m_dVideoPanLastMotionX;
+					gdouble dy = y - pViewerImpl->m_dVideoPanLastMotionY;
+					const gdouble max_vel = 12000.0;
+					gdouble dist = std::hypot(dx, dy);
+					if (dist > max_vel * dt && dist > 0.)
+					{
+						dx = (dx / dist) * (max_vel * dt);
+						dy = (dy / dist) * (max_vel * dt);
+					}
+					pViewerImpl->RecordVideoPanSample(dx, dy, dt);
+					pViewerImpl->m_dVideoPanLastMotionX = x;
+					pViewerImpl->m_dVideoPanLastMotionY = y;
+					pViewerImpl->m_iVideoPanLastMotionTime = now;
+				}
+			}
+
+			gdouble time_since_motion = (pViewerImpl->m_iVideoPanLastMotionTime > 0)
+				? (gdouble)(now - pViewerImpl->m_iVideoPanLastMotionTime) / 1000000.0
+				: 1.0;
+
+			if (pViewerImpl->m_bKineticScrolling &&
+				time_since_motion < 0.15 &&
+				pViewerImpl->m_iVideoPanSampleCount > 0)
+			{
+				pViewerImpl->StartVideoPanSlowdown();
+			}
+			else
+			{
+				pViewerImpl->StopVideoPanSlowdown();
+			}
 		}
 		pViewerImpl->RefreshAutoHideTimer();
 	}
@@ -5129,6 +5483,10 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 	pViewerImpl = (Viewer::ViewerImpl*)user_data;
 
 	guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+	if (button == 0)
+	{
+		button = 1;
+	}
 
 	// Middle click: toggle windowed <-> fullscreen
 	if (2 == button)
@@ -5149,6 +5507,10 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 		&& (widget == pViewerImpl->m_pVideoFixed || widget == pViewerImpl->m_pVideoSinkWidget)
 		&& pViewerImpl->IsVideo())
 	{
+		if (pViewerImpl->IsPointOverControlsOrFilmstrip(widget, x, y))
+		{
+			return;
+		}
 		pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 		return;
 	}
@@ -5178,6 +5540,10 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 		}
 		else if (1 == button)
 		{
+			if (pViewerImpl->IsPointOverControlsOrFilmstrip(widget, x, y))
+			{
+				return;
+			}
 			if (widget == pViewerImpl->m_pImageView &&
 				(pViewerImpl->IsVideo() || pViewerImpl->m_bSlideShowRunning))
 			{
@@ -5189,11 +5555,20 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 			{
 				if (pViewerImpl->IsVideo())
 				{
+					bool wasSlowdownActive = pViewerImpl->m_bVideoPanSlowdownActive;
+					pViewerImpl->StopVideoPanSlowdown();
+					pViewerImpl->m_bVideoPanSlowdownInterrupted = wasSlowdownActive;
 					pViewerImpl->m_bVideoPanning = TRUE;
 					pViewerImpl->m_dVideoPanStartRootX = x;
 					pViewerImpl->m_dVideoPanStartRootY = y;
 					pViewerImpl->m_dVideoPanStartPX = pViewerImpl->m_dVideoPanX;
 					pViewerImpl->m_dVideoPanStartPY = pViewerImpl->m_dVideoPanY;
+					pViewerImpl->m_dVideoPanLastMotionX = x;
+					pViewerImpl->m_dVideoPanLastMotionY = y;
+					pViewerImpl->m_iVideoPanLastMotionTime = g_get_monotonic_time();
+					pViewerImpl->m_dVideoPanVelX = 0.;
+					pViewerImpl->m_dVideoPanVelY = 0.;
+					pViewerImpl->m_iVideoPanSampleCount = 0;
 					viewer_set_controls_visible(pViewerImpl, true);
 					pViewerImpl->RefreshAutoHideTimer();
 					return;
@@ -5381,6 +5756,7 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 Viewer::ViewerImpl::~ViewerImpl()
 {
 	m_bShuttingDown = true;
+	StopVideoPanSlowdown();
 	ShortcutManager::GetInstance().RemoveShortcutsChangedCallback(viewer_shortcuts_changed_cb, this);
 	if (m_spAlive)
 	{
@@ -5544,6 +5920,7 @@ Viewer::ViewerImpl::~ViewerImpl()
 
 	/* Disconnect all GObject signal handlers that captured `this` so no
 	 * callback fires into the freed ViewerImpl during widget tree teardown */
+	ReleaseVideoPreview();
 	if (m_pAdjustmentH && G_IS_OBJECT(m_pAdjustmentH))
 	{
 		g_signal_handlers_disconnect_by_data(m_pAdjustmentH, this);
@@ -5709,6 +6086,8 @@ G_DECLARE_FINAL_TYPE(QuiverFreelayout, quiver_freelayout, QUIVER, FREELAYOUT, Gt
 struct _QuiverFreelayout {
 	GtkWidget parent_instance;
 	GArray *children;
+	int last_alloc_w;
+	int last_alloc_h;
 };
 
 G_DEFINE_TYPE(QuiverFreelayout, quiver_freelayout, GTK_TYPE_WIDGET)
@@ -5752,10 +6131,15 @@ quiver_freelayout_size_allocate(GtkWidget *widget, int width, int height, int ba
 
 	/* GTK4: re-fit the video when this canvas is reallocated (the old
 	 * ::size-allocate signal no longer exists, so the zoom never followed
-	 * window resizes). */
+	 * window resizes). Only re-fit when the canvas dimensions actually changed,
+	 * so moving child widgets during pan does not trigger redundant re-fits. */
+	gboolean size_changed = (self->last_alloc_w != width || self->last_alloc_h != height);
+	self->last_alloc_w = width;
+	self->last_alloc_h = height;
+
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl*)g_object_get_data(
 		G_OBJECT(widget), "quiver-viewer-impl");
-	if (p != NULL && p->m_iVideoWidth > 0 && p->m_iVideoHeight > 0)
+	if (size_changed && p != NULL && p->m_iVideoWidth > 0 && p->m_iVideoHeight > 0)
 	{
 		/* keep at most one pending zoom idle so none can fire after the
 		 * ViewerImpl is gone (tracked so the destructor can cancel it) */
@@ -5768,12 +6152,32 @@ quiver_freelayout_size_allocate(GtkWidget *widget, int width, int height, int ba
 static void
 quiver_freelayout_snapshot(GtkWidget *widget, GtkSnapshot *snapshot)
 {
-	QuiverFreelayout *self = QUIVER_FREELAYOUT(widget);
-	for (guint i = 0; i < self->children->len; i++)
+	int width = gtk_widget_get_width(widget);
+	int height = gtk_widget_get_height(widget);
+	if (width > 0 && height > 0)
 	{
-		QuiverFreelayoutChild *c = &g_array_index(self->children, QuiverFreelayoutChild, i);
-		if (c->child != NULL)
-			gtk_widget_snapshot_child(widget, c->child, snapshot);
+		graphene_rect_t clip_bounds = GRAPHENE_RECT_INIT(0.f, 0.f, (float)width, (float)height);
+		gtk_snapshot_push_clip(snapshot, &clip_bounds);
+
+		QuiverFreelayout *self = QUIVER_FREELAYOUT(widget);
+		for (guint i = 0; i < self->children->len; i++)
+		{
+			QuiverFreelayoutChild *c = &g_array_index(self->children, QuiverFreelayoutChild, i);
+			if (c->child != NULL)
+				gtk_widget_snapshot_child(widget, c->child, snapshot);
+		}
+
+		gtk_snapshot_pop(snapshot);
+	}
+	else
+	{
+		QuiverFreelayout *self = QUIVER_FREELAYOUT(widget);
+		for (guint i = 0; i < self->children->len; i++)
+		{
+			QuiverFreelayoutChild *c = &g_array_index(self->children, QuiverFreelayoutChild, i);
+			if (c->child != NULL)
+				gtk_widget_snapshot_child(widget, c->child, snapshot);
+		}
 	}
 }
 
@@ -5781,6 +6185,8 @@ static void
 quiver_freelayout_init(QuiverFreelayout *self)
 {
 	self->children = g_array_new(FALSE, FALSE, sizeof(QuiverFreelayoutChild));
+	self->last_alloc_w = 0;
+	self->last_alloc_h = 0;
 }
 
 static void
@@ -5861,9 +6267,577 @@ static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data)
 	video_zoom_raise_media_windows((Viewer::ViewerImpl *)user_data);
 }
 
-static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
-{ (void)pad; 
+static void video_glitch_save_rgb_png(const uint8_t *rgb, int w, int h, const char *path)
+{
+	if (!rgb || w <= 0 || h <= 0 || !path)
+		return;
+	GdkPixbuf *pb = gdk_pixbuf_new_from_data(
+		rgb, GDK_COLORSPACE_RGB, FALSE, 8, w, h, w * 3, NULL, NULL);
+	if (pb)
+	{
+		GError *err = NULL;
+		gdk_pixbuf_save(pb, path, "png", &err, NULL);
+		if (err)
+			g_error_free(err);
+		g_object_unref(pb);
+	}
+}
+
+static void video_glitch_extract_rgb(GstVideoFrame *vf, std::vector<uint8_t> &out_rgb)
+{
+	int w = GST_VIDEO_FRAME_WIDTH(vf);
+	int h = GST_VIDEO_FRAME_HEIGHT(vf);
+	GstVideoFormat fmt = GST_VIDEO_FRAME_FORMAT(vf);
+	out_rgb.resize(w * h * 3);
+
+	if (fmt == GST_VIDEO_FORMAT_RGBA || fmt == GST_VIDEO_FORMAT_RGBx)
+	{
+		const uint8_t *src = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(vf, 0);
+		int stride = GST_VIDEO_FRAME_PLANE_STRIDE(vf, 0);
+		for (int y = 0; y < h; ++y)
+		{
+			const uint8_t *row = src + y * stride;
+			uint8_t *dst = out_rgb.data() + y * w * 3;
+			for (int x = 0; x < w; ++x)
+			{
+				dst[x * 3 + 0] = row[x * 4 + 0];
+				dst[x * 3 + 1] = row[x * 4 + 1];
+				dst[x * 3 + 2] = row[x * 4 + 2];
+			}
+		}
+	}
+	else if (fmt == GST_VIDEO_FORMAT_BGRA || fmt == GST_VIDEO_FORMAT_BGRx)
+	{
+		const uint8_t *src = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(vf, 0);
+		int stride = GST_VIDEO_FRAME_PLANE_STRIDE(vf, 0);
+		for (int y = 0; y < h; ++y)
+		{
+			const uint8_t *row = src + y * stride;
+			uint8_t *dst = out_rgb.data() + y * w * 3;
+			for (int x = 0; x < w; ++x)
+			{
+				dst[x * 3 + 0] = row[x * 4 + 2];
+				dst[x * 3 + 1] = row[x * 4 + 1];
+				dst[x * 3 + 2] = row[x * 4 + 0];
+			}
+		}
+	}
+	else if (fmt == GST_VIDEO_FORMAT_I420 || fmt == GST_VIDEO_FORMAT_YV12)
+	{
+		const uint8_t *y_data = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(vf, 0);
+		const uint8_t *u_data = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(vf, (fmt == GST_VIDEO_FORMAT_I420) ? 1 : 2);
+		const uint8_t *v_data = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(vf, (fmt == GST_VIDEO_FORMAT_I420) ? 2 : 1);
+		int y_stride = GST_VIDEO_FRAME_PLANE_STRIDE(vf, 0);
+		int u_stride = GST_VIDEO_FRAME_PLANE_STRIDE(vf, 1);
+		int v_stride = GST_VIDEO_FRAME_PLANE_STRIDE(vf, 2);
+
+		for (int y = 0; y < h; ++y)
+		{
+			const uint8_t *y_row = y_data + y * y_stride;
+			const uint8_t *u_row = u_data + (y / 2) * u_stride;
+			const uint8_t *v_row = v_data + (y / 2) * v_stride;
+			uint8_t *dst = out_rgb.data() + y * w * 3;
+			for (int x = 0; x < w; ++x)
+			{
+				int Y = y_row[x];
+				int U = u_row[x / 2] - 128;
+				int V = v_row[x / 2] - 128;
+				dst[x * 3 + 0] = (uint8_t)std::clamp((int)(Y + 1.402 * V), 0, 255);
+				dst[x * 3 + 1] = (uint8_t)std::clamp((int)(Y - 0.344136 * U - 0.714136 * V), 0, 255);
+				dst[x * 3 + 2] = (uint8_t)std::clamp((int)(Y + 1.772 * U), 0, 255);
+			}
+		}
+	}
+	else if (fmt == GST_VIDEO_FORMAT_NV12)
+	{
+		const uint8_t *y_data = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(vf, 0);
+		const uint8_t *uv_data = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(vf, 1);
+		int y_stride = GST_VIDEO_FRAME_PLANE_STRIDE(vf, 0);
+		int uv_stride = GST_VIDEO_FRAME_PLANE_STRIDE(vf, 1);
+
+		for (int y = 0; y < h; ++y)
+		{
+			const uint8_t *y_row = y_data + y * y_stride;
+			const uint8_t *uv_row = uv_data + (y / 2) * uv_stride;
+			uint8_t *dst = out_rgb.data() + y * w * 3;
+			for (int x = 0; x < w; ++x)
+			{
+				int Y = y_row[x];
+				int U = uv_row[(x / 2) * 2 + 0] - 128;
+				int V = uv_row[(x / 2) * 2 + 1] - 128;
+				dst[x * 3 + 0] = (uint8_t)std::clamp((int)(Y + 1.402 * V), 0, 255);
+				dst[x * 3 + 1] = (uint8_t)std::clamp((int)(Y - 0.344136 * U - 0.714136 * V), 0, 255);
+				dst[x * 3 + 2] = (uint8_t)std::clamp((int)(Y + 1.772 * U), 0, 255);
+			}
+		}
+	}
+}
+
+static void video_glitch_log_event(const std::string &msg)
+{
+	std::ofstream log_file("quiver_glitch_log.txt", std::ios::app);
+	if (log_file.is_open())
+	{
+		log_file << msg << "\n";
+		log_file.flush();
+	}
+}
+
+static bool is_glitch_debug_enabled()
+{
+	static int s_enabled = -1;
+	if (s_enabled == -1)
+	{
+		const char *env = g_getenv("QUIVER_DEBUG_GLITCH");
+		s_enabled = (env != NULL && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+	}
+	return s_enabled == 1;
+}
+
+static bool video_glitch_process_frame(Viewer::ViewerImpl *pViewerImpl,
+                                       Viewer::ViewerImpl::VideoGlitchTracker &tracker,
+                                       GstBuffer *buf,
+                                       Viewer::ViewerImpl::VideoGlitchTracker *peer_tracker,
+                                       bool is_sink_probe)
+{
+	if (!is_glitch_debug_enabled())
+		return false;
+
+	if (!tracker.m_bHaveVideoInfo || buf == NULL)
+		return false;
+
+	GstVideoFrame vf;
+	if (!gst_video_frame_map(&vf, &tracker.m_VideoInfo, buf, GST_MAP_READ))
+		return false;
+
+	int w = GST_VIDEO_FRAME_WIDTH(&vf);
+	int h = GST_VIDEO_FRAME_HEIGHT(&vf);
+	if (w < 128 || h < 128)
+	{
+		gst_video_frame_unmap(&vf);
+		return false;
+	}
+
+	GstVideoFormat fmt = GST_VIDEO_FRAME_FORMAT(&vf);
+	const uint8_t *plane0 = (const uint8_t *)GST_VIDEO_FRAME_PLANE_DATA(&vf, 0);
+	int stride = GST_VIDEO_FRAME_PLANE_STRIDE(&vf, 0);
+	int px_step = (fmt == GST_VIDEO_FORMAT_RGBA || fmt == GST_VIDEO_FORMAT_RGBx ||
+	               fmt == GST_VIDEO_FORMAT_BGRA || fmt == GST_VIDEO_FORMAT_BGRx) ? 4 : 1;
+
+	// 1. PTS monotonicity check
+	GstClockTime pts = GST_BUFFER_PTS(buf);
+	bool pts_jump_backward = false;
+	if (GST_CLOCK_TIME_IS_VALID(pts) && GST_CLOCK_TIME_IS_VALID(tracker.m_uLastPts))
+	{
+		if (pts < tracker.m_uLastPts)
+		{
+			GstClockTime diff = tracker.m_uLastPts - pts;
+			// A large backward jump (>= 500ms) or jump to 0 indicates a normal video loop or user seek.
+			// Reset history and baselines so frames across the discontinuity are not falsely compared.
+			if (diff >= 500 * GST_MSECOND || pts == 0)
+			{
+				tracker.m_vHistory.clear();
+				tracker.m_vPrevRGB.clear();
+				tracker.m_vPrevRGB2.clear();
+				tracker.m_dRollingMAE = 0.0;
+			}
+			else
+			{
+				// Unexpected small backward jump (e.g. 1 frame out of order) indicates an actual presentation glitch
+				pts_jump_backward = true;
+			}
+		}
+	}
+	tracker.m_uLastPts = pts;
+
+	// 2. Affine transformation metadata check
+	float curr_matrix[16]{};
+	bool has_matrix = false;
+	GstVideoAffineTransformationMeta *aff = gst_buffer_get_video_affine_transformation_meta(buf);
+	if (aff != NULL)
+	{
+		memcpy(curr_matrix, aff->matrix, sizeof(curr_matrix));
+		has_matrix = true;
+	}
+
+	// 3. Fast downsampled 32x18 grid for motion / flicker trajectory
+	constexpr int GW = 32;
+	constexpr int GH = 18;
+	std::vector<uint8_t> curr_grid(GW * GH);
+	int step_x = w / GW;
+	int step_y = h / GH;
+	for (int gy = 0; gy < GH; ++gy)
+	{
+		int py = gy * step_y;
+		const uint8_t *row = plane0 + py * stride;
+		for (int gx = 0; gx < GW; ++gx)
+		{
+			int px = gx * step_x;
+			curr_grid[gy * GW + gx] = row[px * px_step];
+		}
+	}
+
+	auto calc_mae = [](const std::vector<uint8_t> &g1, const std::vector<uint8_t> &g2) -> double {
+		if (g1.size() != g2.size() || g1.empty()) return 0.0;
+		double sum = 0.0;
+		for (size_t i = 0; i < g1.size(); ++i)
+			sum += std::abs((int)g1[i] - (int)g2[i]);
+		return sum / (double)g1.size();
+	};
+
+	double mae = 0.0;
+	if (!tracker.m_vHistory.empty())
+	{
+		mae = calc_mae(curr_grid, tracker.m_vHistory.back().grid);
+	}
+	if (tracker.m_uFrameIndex.load(std::memory_order_relaxed) > 5 && mae > 0.0)
+	{
+		tracker.m_dRollingMAE = 0.95 * tracker.m_dRollingMAE + 0.05 * mae;
+	}
+
+	// 4. Trajectory Flicker / Bounce analysis
+	double flicker_1 = 0.0;
+	double d_prev_prev2 = 0.0;
+	double d_curr_prev = mae;
+	double d_curr_prev2 = 0.0;
+	if (tracker.m_vHistory.size() >= 2)
+	{
+		d_prev_prev2 = calc_mae(tracker.m_vHistory.back().grid,
+		                        tracker.m_vHistory[tracker.m_vHistory.size() - 2].grid);
+		d_curr_prev2 = calc_mae(curr_grid,
+		                        tracker.m_vHistory[tracker.m_vHistory.size() - 2].grid);
+		flicker_1 = (d_prev_prev2 + d_curr_prev) / std::max(1.5, 2.0 * d_curr_prev2);
+	}
+
+	double flicker_2 = 0.0;
+	double d_prev2_prev3 = 0.0;
+	double d_curr_prev3 = 0.0;
+	if (tracker.m_vHistory.size() >= 3)
+	{
+		d_prev2_prev3 = calc_mae(tracker.m_vHistory[tracker.m_vHistory.size() - 2].grid,
+		                         tracker.m_vHistory[tracker.m_vHistory.size() - 3].grid);
+		d_curr_prev3 = calc_mae(curr_grid,
+		                        tracker.m_vHistory[tracker.m_vHistory.size() - 3].grid);
+		flicker_2 = (d_prev2_prev3 + d_curr_prev) / std::max(2.0, 2.0 * d_curr_prev3);
+	}
+
+	// 5. Multi-scale spatial discontinuity (vertical & horizontal at 16px and 64px)
+	auto calc_vertical_disc = [&](int step_px) -> std::pair<double, double> {
+		double disc = 0.0;
+		int count = 0;
+		for (int col = step_px; col < w - step_px / 2; col += step_px)
+		{
+			double diff = 0.0;
+			int rows = 0;
+			for (int y = 0; y < h; y += 16)
+			{
+				diff += std::abs((int)plane0[y * stride + (col - 1) * px_step] -
+				                 (int)plane0[y * stride + col * px_step]);
+				rows++;
+			}
+			if (rows > 0)
+			{
+				disc += diff / rows;
+				count++;
+			}
+		}
+		disc /= (count > 0 ? count : 1);
+
+		int offset = std::max(2, step_px / 4);
+		double base = 0.0;
+		int count_base = 0;
+		for (int col = step_px + offset; col < w - step_px / 2; col += step_px)
+		{
+			double diff = 0.0;
+			int rows = 0;
+			for (int y = 0; y < h; y += 16)
+			{
+				diff += std::abs((int)plane0[y * stride + (col - 1) * px_step] -
+				                 (int)plane0[y * stride + col * px_step]);
+				rows++;
+			}
+			if (rows > 0)
+			{
+				base += diff / rows;
+				count_base++;
+			}
+		}
+		base /= (count_base > 0 ? count_base : 1);
+		return {disc, base};
+	};
+
+	auto [disc64, disc_base] = calc_vertical_disc(64);
+	double r64 = disc64 / std::max(1.0, disc_base);
+
+	auto [disc16, disc_base16] = calc_vertical_disc(16);
+	double r16 = disc16 / std::max(1.0, disc_base16);
+
+	bool spatial_tear = (r16 >= 2.2 && (disc16 - disc_base16) >= 8.0) ||
+	                    (r64 >= 2.5 && (disc64 - disc_base) >= 8.0);
+
+	// 6. Check matrix bounce
+	bool matrix_flicker = false;
+	if (has_matrix && tracker.m_vHistory.size() >= 2 &&
+	    tracker.m_vHistory.back().has_matrix &&
+	    tracker.m_vHistory[tracker.m_vHistory.size() - 2].has_matrix)
+	{
+		float m_diff_1 = 0.0f, m_diff_2 = 0.0f, m_diff_base = 0.0f;
+		for (int i = 0; i < 16; ++i)
+		{
+			m_diff_1 += std::abs(tracker.m_vHistory.back().matrix[i] - tracker.m_vHistory[tracker.m_vHistory.size() - 2].matrix[i]);
+			m_diff_2 += std::abs(curr_matrix[i] - tracker.m_vHistory.back().matrix[i]);
+			m_diff_base += std::abs(curr_matrix[i] - tracker.m_vHistory[tracker.m_vHistory.size() - 2].matrix[i]);
+		}
+		if (m_diff_1 > 0.05f && m_diff_2 > 0.05f && m_diff_base < 0.02f)
+		{
+			matrix_flicker = true;
+		}
+	}
+
+	guint64 frame_idx = tracker.m_uFrameIndex.fetch_add(1, std::memory_order_relaxed) + 1;
+	bool is_glitch = false;
+	std::string glitch_cause;
+	guint64 glitched_frame_idx = frame_idx;
+
+	gint64 now_us = g_get_monotonic_time();
+	gint64 last_zoom_us = pViewerImpl->m_iLastZoomApplyTimeUs.load(std::memory_order_relaxed);
+	gint64 ms_since_zoom = (last_zoom_us > 0) ? ((now_us - last_zoom_us) / 1000) : -1;
+	bool is_active_zooming = (ms_since_zoom >= 0 && ms_since_zoom < 100) || pViewerImpl->m_bVideoPanning || pViewerImpl->m_bVideoPanSlowdownActive;
+
+	if (frame_idx > 5)
+	{
+		if (pts_jump_backward)
+		{
+			is_glitch = true;
+			glitch_cause = "PTS_BACKWARD_JUMP";
+		}
+		else if (!is_active_zooming && flicker_1 >= 2.5 && (d_prev_prev2 >= 4.5 || d_curr_prev >= 4.5) && (d_prev_prev2 + d_curr_prev >= 10.0))
+		{
+			is_glitch = true;
+			glitch_cause = "FLICKER_BOUNCE (1-frame transient on frame #" + std::to_string(frame_idx - 1) + ", score=" + std::to_string(flicker_1) + ")";
+			glitched_frame_idx = frame_idx - 1;
+		}
+		else if (is_active_zooming && flicker_1 >= 5.0 && (d_prev_prev2 + d_curr_prev >= 14.0))
+		{
+			is_glitch = true;
+			glitch_cause = "FLICKER_BOUNCE (1-frame transient during zoom on frame #" + std::to_string(frame_idx - 1) + ", score=" + std::to_string(flicker_1) + ")";
+			glitched_frame_idx = frame_idx - 1;
+		}
+		else if (!is_active_zooming && flicker_2 >= 3.0 && (d_prev2_prev3 >= 6.0 || d_curr_prev >= 6.0) && d_curr_prev3 < 2.5)
+		{
+			is_glitch = true;
+			glitch_cause = "FLICKER_BOUNCE_2FRAME (2-frame transient on frames #" + std::to_string(frame_idx - 2) + "-" + std::to_string(frame_idx - 1) + ", score=" + std::to_string(flicker_2) + ")";
+			glitched_frame_idx = frame_idx - 1;
+		}
+		else if (tracker.m_vHistory.size() >= 6 && d_curr_prev >= 8.0 && calc_mae(curr_grid, tracker.m_vHistory[tracker.m_vHistory.size() - 6].grid) <= 2.0)
+		{
+			is_glitch = true;
+			glitch_cause = "CYCLE_6_STALE_BUFFER (frame matches frame #" + std::to_string(tracker.m_vHistory[tracker.m_vHistory.size() - 6].frame_idx) + " from 6 frames ago)";
+		}
+		else if (spatial_tear)
+		{
+			is_glitch = true;
+			glitch_cause = "SPATIAL_TEAR (R16=" + std::to_string(r16) + ", R64=" + std::to_string(r64) + ")";
+		}
+		else if (matrix_flicker)
+		{
+			is_glitch = true;
+			glitch_cause = "AFFINE_MATRIX_BOUNCE (transform matrix reverted on frame #" + std::to_string(frame_idx - 1) + ")";
+			glitched_frame_idx = frame_idx - 1;
+		}
+	}
+	tracker.m_dLastR64.store(r64, std::memory_order_relaxed);
+	tracker.m_dLastR16.store(r16, std::memory_order_relaxed);
+	tracker.m_dLastMAE.store(mae, std::memory_order_relaxed);
+	tracker.m_dLastFlicker.store(flicker_1, std::memory_order_relaxed);
+	tracker.m_bLastWasGlitch.store(is_glitch, std::memory_order_relaxed);
+
+	if (is_glitch)
+	{
+		guint glitch_num = tracker.m_uGlitchCount.fetch_add(1, std::memory_order_relaxed) + 1;
+		guint64 prev_glitch = tracker.m_uLastGlitchFrame.exchange(glitched_frame_idx, std::memory_order_relaxed);
+		guint64 period = (prev_glitch > 0) ? (glitched_frame_idx - prev_glitch) : 0;
+
+		std::string diag;
+		if (peer_tracker && peer_tracker->m_bHaveVideoInfo)
+		{
+			bool peer_glitched = peer_tracker->m_bLastWasGlitch.load(std::memory_order_relaxed);
+			gint64 peer_glitch_pts = peer_tracker->m_iLastGlitchPts.load(std::memory_order_relaxed);
+			bool peer_glitched_near_pts = (GST_CLOCK_TIME_IS_VALID(pts) && peer_glitch_pts >= 0 &&
+			                               std::abs((gint64)pts - peer_glitch_pts) < 150 * (gint64)GST_MSECOND);
+			double peer_r16 = peer_tracker->m_dLastR16.load(std::memory_order_relaxed);
+			double peer_r64 = peer_tracker->m_dLastR64.load(std::memory_order_relaxed);
+			double peer_flicker = peer_tracker->m_dLastFlicker.load(std::memory_order_relaxed);
+
+			if (is_sink_probe)
+			{
+				if (!peer_glitched && !peer_glitched_near_pts && peer_flicker < 1.2 && peer_r16 < 1.4 && peer_r64 < 1.4)
+				{
+					diag = "DECODER IS CLEAN! Corruption occurred downstream in GL Pipeline or Sink (e.g. gltransformation / buffer pool recycling)!";
+				}
+				else
+				{
+					diag = "CORRUPTION ORIGINATES IN DECODER / DEMUX STREAM!";
+				}
+			}
+		}
+
+		std::cerr << "\n================================================================================\n";
+		std::cerr << "\033[1;31m[QUIVER PROGRAMMATIC GLITCH DETECTED #" << glitch_num << "]\033[0m\n";
+		std::cerr << "  Probe Stream:  " << (is_sink_probe ? "DISPLAY SINK (raw_sink)" : "DECODER OUTPUT (glupload input)") << "\n";
+		std::cerr << "  Trigger Frame: #" << frame_idx << " (Glitched target: #" << glitched_frame_idx << ")\n";
+		std::cerr << "  Glitch Cause:  \033[1;33m" << glitch_cause << "\033[0m\n";
+		if (GST_CLOCK_TIME_IS_VALID(pts))
+		{
+			guint pts_sec = (guint)(pts / GST_SECOND);
+			guint pts_ms = (guint)((pts % GST_SECOND) / (GST_SECOND / 1000));
+			std::cerr << "  PTS:           " << (pts_sec / 60) << ":"
+			          << std::setfill('0') << std::setw(2) << (pts_sec % 60) << "."
+			          << std::setfill('0') << std::setw(3) << pts_ms << "\n";
+		}
+		if (period > 0)
+		{
+			std::cerr << "  \033[1;33mGlitch Period: " << period << " frames since previous glitch\033[0m\n";
+		}
+		std::cerr << "  Artifacts:     Flicker=" << flicker_1 << " (Flicker2=" << flicker_2 << ")\n";
+		std::cerr << "                 R16=" << r16 << " (disc16=" << disc16 << ", base=" << disc_base16 << ")\n";
+		std::cerr << "                 R64=" << r64 << " (disc64=" << disc64 << ", base=" << disc_base << ")\n";
+		std::cerr << "                 MAE=" << mae << " (rolling baseline=" << tracker.m_dRollingMAE << ")\n";
+		std::cerr << "  Interaction:   Zoom = " << pViewerImpl->m_dVideoZoom << "x | Panning = "
+		          << (pViewerImpl->m_bVideoPanning ? "YES" : "NO")
+		          << " | Last zoom update: " << ms_since_zoom << " ms ago\n";
+		if (!diag.empty())
+		{
+			std::cerr << "  \033[1;32m===> DIAGNOSIS: " << diag << "\033[0m\n";
+		}
+
+		// Asynchronous frame capture (at most 25 capture events, spaced >= 1.0s)
+		static std::atomic<gint64> s_iLastCaptureTimeUs{0};
+		gint64 last_cap = s_iLastCaptureTimeUs.load(std::memory_order_relaxed);
+		std::string cap_info;
+		if (glitch_num <= 25 && (now_us - last_cap > 1000000))
+		{
+			s_iLastCaptureTimeUs.store(now_us, std::memory_order_relaxed);
+			if (tracker.m_SaveThread.joinable())
+				tracker.m_SaveThread.join();
+
+			if (glitched_frame_idx == frame_idx - 1 && !tracker.m_vPrevRGB.empty())
+			{
+				std::string path_glitch = "glitch_" + std::string(tracker.m_pszName) + "_frame_" + std::to_string(glitched_frame_idx) + ".png";
+				std::string path_prev = (!tracker.m_vPrevRGB2.empty()) ?
+					("glitch_" + std::string(tracker.m_pszName) + "_frame_" + std::to_string(glitched_frame_idx) + "_prev.png") : "";
+
+				tracker.m_SaveThread = std::thread([rgb = tracker.m_vPrevRGB, w = tracker.m_iPrevRGBW, h = tracker.m_iPrevRGBH, path_glitch,
+				                                    rgb_prev = tracker.m_vPrevRGB2, wp = tracker.m_iPrevRGB2W, hp = tracker.m_iPrevRGB2H, path_prev]() {
+					video_glitch_save_rgb_png(rgb.data(), w, h, path_glitch.c_str());
+					if (!path_prev.empty())
+						video_glitch_save_rgb_png(rgb_prev.data(), wp, hp, path_prev.c_str());
+				});
+
+				cap_info = "glitch=" + path_glitch;
+				std::cerr << "  Captured:      " << path_glitch << "\n";
+				if (!path_prev.empty())
+				{
+					cap_info += " prev=" + path_prev;
+					std::cerr << "  Captured Prev: " << path_prev << "\n";
+				}
+			}
+			else
+			{
+				std::vector<uint8_t> curr_rgb;
+				video_glitch_extract_rgb(&vf, curr_rgb);
+				std::string path_curr = "glitch_" + std::string(tracker.m_pszName) + "_frame_" + std::to_string(glitched_frame_idx) + ".png";
+				tracker.m_SaveThread = std::thread([curr_rgb = std::move(curr_rgb), w, h, path_curr]() {
+					video_glitch_save_rgb_png(curr_rgb.data(), w, h, path_curr.c_str());
+				});
+				cap_info = "glitch=" + path_curr;
+				std::cerr << "  Captured:      " << path_curr << "\n";
+			}
+		}
+		std::cerr << "================================================================================\n" << std::endl;
+
+		std::string log_msg = "[GLITCH #" + std::to_string(glitch_num) + "] " +
+			std::string(tracker.m_pszName) + " frame=" + std::to_string(glitched_frame_idx) +
+			" period=" + std::to_string(period) +
+			" cause=" + glitch_cause +
+			" flicker=" + std::to_string(flicker_1) +
+			" R16=" + std::to_string(r16) +
+			" R64=" + std::to_string(r64) +
+			" MAE=" + std::to_string(mae) +
+			" zoom=" + std::to_string(pViewerImpl->m_dVideoZoom) +
+			" panning=" + (pViewerImpl->m_bVideoPanning ? "1" : "0") +
+			" ms_since_zoom=" + std::to_string(ms_since_zoom) +
+			" diag=" + diag +
+			(cap_info.empty() ? "" : (" " + cap_info));
+		video_glitch_log_event(log_msg);
+	}
+
+	// Update history ring
+	Viewer::ViewerImpl::VideoGlitchTracker::FrameItem item;
+	item.frame_idx = frame_idx;
+	item.pts = pts;
+	item.grid = std::move(curr_grid);
+	memcpy(item.matrix, curr_matrix, sizeof(item.matrix));
+	item.has_matrix = has_matrix;
+	tracker.m_vHistory.push_back(std::move(item));
+	if (tracker.m_vHistory.size() > 12)
+	{
+		tracker.m_vHistory.erase(tracker.m_vHistory.begin());
+	}
+
+	// Update RGB history ring for retroactive glitch capture
+	if (is_sink_probe)
+	{
+		tracker.m_vPrevRGB2 = std::move(tracker.m_vPrevRGB);
+		tracker.m_uPrevRGB2FrameIdx = tracker.m_uPrevRGBFrameIdx;
+		tracker.m_iPrevRGB2W = tracker.m_iPrevRGBW;
+		tracker.m_iPrevRGB2H = tracker.m_iPrevRGBH;
+
+		video_glitch_extract_rgb(&vf, tracker.m_vPrevRGB);
+		tracker.m_uPrevRGBFrameIdx = frame_idx;
+		tracker.m_iPrevRGBW = w;
+		tracker.m_iPrevRGBH = h;
+	}
+
+	// Continuous telemetry logging: initialization on frame 1, heartbeat every 60 frames, or on suspicious motion
+	if (frame_idx == 1 || frame_idx % 60 == 0)
+	{
+		std::string hb = (frame_idx == 1 ? "[INIT] probe=" : "[HEARTBEAT] probe=") +
+			std::string(tracker.m_pszName) +
+			" frame=" + std::to_string(frame_idx) +
+			" zoom=" + std::to_string(pViewerImpl->m_dVideoZoom) +
+			" r16=" + std::to_string(r16) +
+			" r64=" + std::to_string(r64) +
+			" mae=" + std::to_string(mae) +
+			" flicker=" + std::to_string(flicker_1) +
+			" status=" + (is_glitch ? "GLITCH" : "CLEAN");
+		video_glitch_log_event(hb);
+	}
+	else if (flicker_1 >= 1.25 || r16 >= 1.5 || r64 >= 1.5)
+	{
+		std::string susp = "[ACTIVITY] probe=" + std::string(tracker.m_pszName) +
+			" frame=" + std::to_string(frame_idx) +
+			" zoom=" + std::to_string(pViewerImpl->m_dVideoZoom) +
+			" r16=" + std::to_string(r16) +
+			" r64=" + std::to_string(r64) +
+			" mae=" + std::to_string(mae) +
+			" flicker=" + std::to_string(flicker_1);
+		video_glitch_log_event(susp);
+	}
+
+	gst_video_frame_unmap(&vf);
+	return is_glitch;
+}
+
+static GstPadProbeReturn video_sink_glitch_probe_cb(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+{
+	(void)pad;
+	if (!is_glitch_debug_enabled())
+		return GST_PAD_PROBE_OK;
+
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	if (pViewerImpl == NULL)
+		return GST_PAD_PROBE_OK;
 
 	if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM)
 	{
@@ -5874,6 +6848,40 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 			gst_event_parse_caps(event, &caps);
 			if (caps != NULL)
 			{
+				gst_video_info_from_caps(&pViewerImpl->m_SinkGlitchTracker.m_VideoInfo, caps);
+				pViewerImpl->m_SinkGlitchTracker.m_bHaveVideoInfo = true;
+			}
+		}
+	}
+	else if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER)
+	{
+		GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+		if (buf != NULL)
+		{
+			video_glitch_process_frame(pViewerImpl, pViewerImpl->m_SinkGlitchTracker, buf, &pViewerImpl->m_DecoderGlitchTracker, true);
+		}
+	}
+	return GST_PAD_PROBE_OK;
+}
+
+static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+{ (void)pad; 
+	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	if (pViewerImpl == NULL)
+		return GST_PAD_PROBE_OK;
+
+	if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM)
+	{
+		GstEvent *event = GST_PAD_PROBE_INFO_EVENT(info);
+		if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS)
+		{
+			GstCaps *caps = NULL;
+			gst_event_parse_caps(event, &caps);
+			if (caps != NULL)
+			{
+				gst_video_info_from_caps(&pViewerImpl->m_DecoderGlitchTracker.m_VideoInfo, caps);
+				pViewerImpl->m_DecoderGlitchTracker.m_bHaveVideoInfo = true;
+
 				GstStructure *structure = gst_caps_get_structure(caps, 0);
 				gint w = 0, h = 0;
 				gst_structure_get_int(structure, "width", &w);
@@ -5895,7 +6903,31 @@ static GstPadProbeReturn video_crop_pad_probe(GstPad *pad, GstPadProbeInfo *info
 			}
 		}
 	}
+	else if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER)
+	{
+		if (is_glitch_debug_enabled())
+		{
+			GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+			if (buf != NULL)
+			{
+				video_glitch_process_frame(pViewerImpl, pViewerImpl->m_DecoderGlitchTracker, buf, &pViewerImpl->m_SinkGlitchTracker, false);
+			}
+		}
+	}
 	return GST_PAD_PROBE_OK;
+}
+
+static gboolean video_preview_redraw_idle(gpointer user_data)
+{
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p == NULL)
+		return FALSE;
+	p->m_bVideoPreviewRedrawQueued = FALSE;
+	if (p->m_spAlive == NULL || !*p->m_spAlive)
+		return FALSE;
+	if (p->m_pNavigationControl != NULL && GTK_IS_WIDGET(p->m_pNavigationControl))
+		gtk_widget_queue_draw(p->m_pNavigationControl);
+	return FALSE;
 }
 
 /* Called when the sink's paintable delivers a new frame.  After a video
@@ -5926,6 +6958,222 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 			gtk_stack_set_visible_child_name(GTK_STACK(p->m_pStack), "video");
 		}
 	}
+	if (!p->m_bVideoPreviewHasFrame && !p->m_bVideoNeedsFirstFrame)
+	{
+		p->m_bVideoPreviewHasFrame = TRUE;
+		p->UpdateNavControlVisibility();
+	}
+	if (p->m_pNavigationControl != NULL && GTK_IS_WIDGET(p->m_pNavigationControl))
+	{
+		if (!p->m_bVideoPreviewRedrawQueued)
+		{
+			p->m_bVideoPreviewRedrawQueued = TRUE;
+			g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, video_preview_redraw_idle, p, NULL);
+		}
+	}
+}
+
+/* Dragging the nav control's miniature moves the *viewport* the way dragging an
+ * image does - this is navigation, not direct manipulation, so the crop window
+ * travels with the pointer instead of against it.
+ *
+ * The control hands us the pointer's absolute position in the miniature, and
+ * the box is centred on it: pan = (pos / control size) * frame size - half the
+ * visible region, clamped to the frame.  That is the same mapping the control
+ * already applies to an image through its adjustments, and it is 1:1 by
+ * construction. */
+static void nav_control_drag_delta_cb(QuiverNavigationControl *navcontrol, gdouble px, gdouble py, gpointer user_data)
+{
+	(void)navcontrol;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p == NULL || !p->m_spAlive || !*p->m_spAlive)
+		return;
+	if (!p->IsVideo() || !p->m_pVideoFixed || !GTK_IS_WIDGET(p->m_pVideoFixed))
+		return;
+	if (p->m_iVideoWidth <= 0 || p->m_iVideoHeight <= 0)
+		return;
+
+	gdouble dispW = p->m_dVideoPreviewDispW;
+	gdouble dispH = p->m_dVideoPreviewDispH;
+	gdouble ctrlW = (gdouble)gtk_widget_get_width(p->m_pNavigationControl);
+	gdouble ctrlH = (gdouble)gtk_widget_get_height(p->m_pNavigationControl);
+	if (dispW <= 0. || dispH <= 0. || ctrlW <= 0. || ctrlH <= 0.)
+		return;
+
+	/* On screen in the nav control, the visible box has normalized dimensions
+	 * m_dVideoPreviewViewW and m_dVideoPreviewViewH. */
+	gdouble viewW_disp = p->m_dVideoPreviewViewW * dispW;
+	gdouble viewH_disp = p->m_dVideoPreviewViewH * dispH;
+	if (viewW_disp <= 0.) viewW_disp = dispW;
+	if (viewH_disp <= 0.) viewH_disp = dispH;
+
+	/* The pointer px, py is the desired center of the viewport in the nav control.
+	 * Center the visible rectangle on (px, py) in display space, clamped to [0, disp - view_disp]. */
+	gdouble target_rot_cx = (px / ctrlW) * dispW;
+	gdouble target_rot_cy = (py / ctrlH) * dispH;
+
+	gdouble x_rot_start = CLAMP(target_rot_cx - viewW_disp / 2., 0., MAX(0., dispW - viewW_disp));
+	gdouble y_rot_start = CLAMP(target_rot_cy - viewH_disp / 2., 0., MAX(0., dispH - viewH_disp));
+
+	p->m_dVideoPanX = x_rot_start;
+	p->m_dVideoPanY = y_rot_start;
+
+	/* ApplyVideoZoom re-derives the pan from the pointer over the *video* area
+	 * to keep the pixel under it fixed across a zoom change.  During a miniature
+	 * drag that is a different pointer in a different widget, so it would
+	 * overwrite the pan just set.  m_bVideoPanning is the existing "the user is
+	 * dragging, leave the pan alone" guard; borrow it for the length of the
+	 * call. */
+	gboolean bWasPanning = p->m_bVideoPanning;
+	p->m_bVideoPanning = TRUE;
+	p->ApplyVideoZoom();
+	p->m_bVideoPanning = bWasPanning;
+	p->RefreshAutoHideTimer();
+	/* dragging needs the pointer visible */
+	viewer_set_idle_cursor(p, false);
+}
+
+/* Pad probe for downstream ALLOCATION queries on PULL (return path):
+ * Hardware video decoders (VA-API, NVDEC, etc.) calculate their hardware Decoded
+ * Picture Buffer (DPB) surface pool size as (dpb_size + downstream_min_buffers).
+ * When downstream elements like gtk4paintablesink, gltransformation, or tee do not
+ * propose sufficient pool margins (defaulting to 0 or 1), the hardware decoder
+ * allocates only the bare minimum number of surfaces (e.g. 5 reference + 1 display = 6).
+ *
+ * When the pipeline branches at zoomtee into both a main display sink and a preview
+ * miniature sink, downstream queues and GTK paintable frames concurrently hold
+ * multiple buffers (main queue + preview queue + main paintable + preview paintable).
+ * With only 6 total surfaces in the pool, holding 2 to 4 buffers downstream leaves
+ * the hardware decoder with fewer free surfaces than its required reference frame count.
+ * This starves the decoder, forcing it to overwrite an active DPB reference frame and
+ * causing cyclic macroblock corruption (e.g. flashing corrupted tiles every 6 or 9 frames).
+ *
+ * By intercepting the ALLOCATION query as it returns upstream through zoomtee and
+ * zoombin's sink pad, we guarantee that the hardware decoder and intermediate GL
+ * buffer pools allocate at least 32 surfaces.  This provides ample headroom for
+ * multi-sink presentation, display vsync synchronization, and deep reference frame
+ * hierarchies without any risk of surface starvation or visual glitching. */
+static GstPadProbeReturn video_allocation_query_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+{
+	(void)user_data;
+	if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM)
+	{
+		GstQuery *query = GST_PAD_PROBE_INFO_QUERY(info);
+		if (query != NULL && GST_QUERY_TYPE(query) == GST_QUERY_ALLOCATION)
+		{
+			static thread_local bool s_bInAllocProbe = false;
+			if (s_bInAllocProbe)
+				return GST_PAD_PROBE_OK;
+			struct ScopedGuard {
+				ScopedGuard() { s_bInAllocProbe = true; }
+				~ScopedGuard() { s_bInAllocProbe = false; }
+			} guard;
+
+			// Invoke element's query handler so downstream elements and allocators populate the query
+			GstPadQueryFunction qfunc = GST_PAD_QUERYFUNC(pad);
+			if (qfunc != NULL)
+			{
+				qfunc(pad, GST_OBJECT_PARENT(pad), query);
+			}
+			else
+			{
+				gst_pad_query_default(pad, GST_OBJECT_PARENT(pad), query);
+			}
+
+			const guint target_min = 32;
+			guint n_pools = gst_query_get_n_allocation_pools(query);
+			std::string pool_desc;
+			if (n_pools > 0)
+			{
+				for (guint i = 0; i < n_pools; ++i)
+				{
+					GstBufferPool *pool = NULL;
+					guint size = 0, min_buf = 0, max_buf = 0;
+					gst_query_parse_nth_allocation_pool(query, i, &pool, &size, &min_buf, &max_buf);
+					min_buf = std::max(min_buf, target_min);
+					if (max_buf != 0 && max_buf < min_buf)
+						max_buf = min_buf;
+					gst_query_set_nth_allocation_pool(query, i, pool, size, min_buf, max_buf);
+					if (pool != NULL)
+					{
+						GstStructure *config = gst_buffer_pool_get_config(pool);
+						if (config != NULL)
+						{
+							GstCaps *pool_caps = NULL;
+							guint p_size = 0, p_min = 0, p_max = 0;
+							if (gst_buffer_pool_config_get_params(config, &pool_caps, &p_size, &p_min, &p_max))
+							{
+								p_min = std::max(p_min, target_min);
+								if (p_max != 0 && p_max < p_min) p_max = p_min;
+								gst_buffer_pool_config_set_params(config, pool_caps, p_size, p_min, p_max);
+								gst_buffer_pool_config_add_option(config, GST_BUFFER_POOL_OPTION_GL_SYNC_META);
+								gst_buffer_pool_set_config(pool, config);
+							}
+							else
+							{
+								gst_structure_free(config);
+							}
+						}
+					}
+					if (!pool_desc.empty()) pool_desc += "; ";
+					pool_desc += "pool[" + std::to_string(i) + "]=" + (pool ? G_OBJECT_TYPE_NAME(pool) : "null")
+						+ " min=" + std::to_string(min_buf) + " max=" + std::to_string(max_buf);
+					if (pool != NULL)
+						gst_object_unref(pool);
+				}
+			}
+			else
+			{
+				GstCaps *caps = NULL;
+				gboolean need_pool = FALSE;
+				gst_query_parse_allocation(query, &caps, &need_pool);
+				guint size = 0;
+				if (caps != NULL)
+				{
+					GstVideoInfo info_caps;
+					if (gst_video_info_from_caps(&info_caps, caps))
+						size = info_caps.size;
+				}
+				GstBufferPool *gl_pool = NULL;
+				Viewer::ViewerImpl *pImpl = (Viewer::ViewerImpl *)user_data;
+				if (pImpl != NULL && pImpl->m_pVideoZoomScaler != NULL)
+				{
+					GstGLContext *gl_context = NULL;
+					g_object_get(G_OBJECT(pImpl->m_pVideoZoomScaler), "context", &gl_context, NULL);
+					if (gl_context != NULL)
+					{
+						gl_pool = gst_gl_buffer_pool_new(gl_context);
+						if (gl_pool != NULL && caps != NULL)
+						{
+							GstStructure *config = gst_buffer_pool_get_config(gl_pool);
+							if (config != NULL)
+							{
+								gst_buffer_pool_config_set_params(config, caps, size, target_min, 0);
+								gst_buffer_pool_config_add_option(config, GST_BUFFER_POOL_OPTION_GL_SYNC_META);
+								gst_buffer_pool_set_config(gl_pool, config);
+							}
+						}
+						gst_object_unref(gl_context);
+					}
+				}
+				gst_query_add_allocation_pool(query, gl_pool, size, target_min, 0);
+				pool_desc = "allocated_pool=" + std::string(gl_pool ? G_OBJECT_TYPE_NAME(gl_pool) : "fallback")
+					+ " min=" + std::to_string(target_min) + " size=" + std::to_string(size);
+				if (gl_pool != NULL)
+					gst_object_unref(gl_pool);
+			}
+
+			// Ensure GL sync fences are enabled so GPU commands complete before texture reuse
+			gst_query_add_allocation_meta(query, GST_GL_SYNC_META_API_TYPE, NULL);
+
+			std::string parent_name = (pad && GST_OBJECT_PARENT(pad)) ? GST_OBJECT_NAME(GST_OBJECT_PARENT(pad)) : "unknown";
+			std::string pad_name = pad ? GST_PAD_NAME(pad) : "unknown";
+			video_glitch_log_event("[ALLOC PROBE] element=" + parent_name + " pad=" + pad_name + " " + pool_desc);
+
+			return GST_PAD_PROBE_HANDLED;
+		}
+	}
+	return GST_PAD_PROBE_OK;
 }
 
 static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
@@ -5937,11 +7185,18 @@ static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeIn
 	 * mid-stream, which fails and aborts playback with "Internal data stream
 	 * error" (qtdemux not-negotiated).  The zoom bin is self-contained: its
 	 * first element accepts whatever caps the decoder provides, so swallow
-	 * the reconfigure here instead of letting it disturb the decode chain. */
+	 * the reconfigure here instead of letting it disturb the decode chain.
+	 *
+	 * Likewise, QoS events generated downstream during heavy zoom/pan rendering
+	 * must NOT reach the hardware decoder: if the decoder drops reference frames
+	 * in response to QoS late events, subsequent P/B-frames decode with macroblock
+	 * corruption (scrambled squares of pixels).  Drop QoS events here so the
+	 * decoder always maintains clean inter-frame reference pictures. */
 	if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_EVENT_UPSTREAM)
 	{
 		GstEvent *event = GST_PAD_PROBE_INFO_EVENT(info);
-		if (GST_EVENT_TYPE(event) == GST_EVENT_RECONFIGURE)
+		if (GST_EVENT_TYPE(event) == GST_EVENT_RECONFIGURE ||
+		    GST_EVENT_TYPE(event) == GST_EVENT_QOS)
 			return GST_PAD_PROBE_DROP;
 	}
 	return GST_PAD_PROBE_OK;
@@ -5966,6 +7221,7 @@ static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeIn
 static gboolean video_zoom_timeout(gpointer data);
 void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 {
+	StopVideoPanSlowdown();
 	/* zooming with +/- or the wheel leaves the view modes and pins the
 	 * factor: the zoom is relative to the actual size (1.0 = 100%), clamped
 	 * from the fit level (the smallest scale the video has been seen at) up
@@ -6022,33 +7278,6 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 	UpdateUI();
 }
 
-static GstCaps* video_zoom_scaled_caps(GstElement *scaler, gint srcW, gint srcH)
-{
-	/* build the caps the scaler must emit: source frame size, fixated from the
-	 * element's own src template so it matches the output format the scaler
-	 * actually produces (e.g. NVMM on NVIDIA, system memory elsewhere) */
-	GstCaps *caps = NULL;
-	GstPad *srcpad = gst_element_get_static_pad(scaler, "src");
-	if (srcpad != NULL)
-	{
-		caps = gst_pad_get_pad_template_caps(srcpad);
-		gst_object_unref(srcpad);
-	}
-	if (caps == NULL || gst_caps_is_any(caps) || gst_caps_is_empty(caps))
-	{
-		if (caps != NULL)
-			gst_caps_unref(caps);
-		caps = gst_caps_new_simple("video/x-raw",
-			"width", G_TYPE_INT, srcW,
-			"height", G_TYPE_INT, srcH,
-			NULL);
-		return caps;
-	}
-	gst_caps_set_simple(caps, "width", G_TYPE_INT, srcW, "height", G_TYPE_INT, srcH, NULL);
-	GstCaps *fixed = gst_caps_fixate(caps);
-	gst_caps_unref(caps);
-	return fixed;
-}
 
 static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *py)
 {
@@ -6137,6 +7366,9 @@ static gboolean video_zoom_timeout(gpointer data)
 
 void Viewer::ViewerImpl::ApplyVideoZoom()
 {
+	m_iLastZoomApplyTimeUs.store(g_get_monotonic_time(), std::memory_order_relaxed);
+	m_uZoomApplyCount.fetch_add(1, std::memory_order_relaxed);
+
 	if (NULL == m_pVideoFixed || NULL == m_pVideoSinkWidget)
 		return;
 
@@ -6257,37 +7489,27 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	}
 	m_dVideoZoom = zoom;
 
-	/* the video display grows with the zoom until it covers the viewer area,
-	 * like an image; zooming beyond that is covered by the crop + upscale
-	 * below.  The widget is also capped so the sink's GL surface stays
-	 * within limits on huge windows; past the cap the crop covers the extra
-	 * zoom. */
-	gdouble effZoom = MIN(zoom, MIN(fillScale, 4096. / MAX(dispW, dispH)));
+	/* GTK4 paintable scaling: the video widget scales directly with zoom,
+	 * rendered as a textured quad directly on the GPU by GTK4.
+	 * GStreamer stays permanently in passthrough mode, eliminating all
+	 * buffer recycling races, pipeline renegotiations, and macroblock glitches. */
+	gdouble effZoom = zoom;
 	gdouble widgetW = dispW * effZoom;
 	gdouble widgetH = dispH * effZoom;
 
-	/* the part of the zoom the display cannot cover is a crop + upscale in
-	 * the pipeline (crop the source region and scale it back to full frame) */
-	gdouble zc = zoom / effZoom;
-	if (zc < 1.0)
-		zc = 1.0;
-	gdouble cropW = srcW / zc;
-	gdouble cropH = srcH / zc;
 
-	gboolean cropping = (zc > 1.01);
+	/* The visible region in display pixels: what the window actually shows */
+	gdouble vw = (effZoom > 0.) ? (areaW / effZoom) : dispW;
+	gdouble vh = (effZoom > 0.) ? (areaH / effZoom) : dispH;
 
-	/* the visible region in source pixels: what the window actually shows of
-	 * the (up-scaled) crop.  Computed before the pan so the centering below
-	 * aligns the viewport — not the larger crop — with the window center. */
-	gdouble vw = areaW * cropW / widgetW;
-	gdouble vh = areaH * cropH / widgetH;
+	m_dVideoPreviewDispW = dispW;
+	m_dVideoPreviewDispH = dispH;
 
-	/* keep the source pixel under the pointer fixed while the zoom changes,
+	/* keep the display coordinate under the pointer fixed while zoom changes,
 	 * so the video zooms in on the cursor; when the pointer is not over the
-	 * area (e.g. a toolbar zoom button) zoom about the center instead of the
-	 * crop's corner (skipped while dragging so the user's pan is not overridden,
-	 * and skipped for menu/toolbar zooms which should center) */
-	if (!m_bVideoPanning && m_dVideoLastWidgetW > 0.)
+	 * area (e.g. a toolbar zoom button) zoom about the center (skipped while
+	 * dragging or kinetic slowdown so user movement is not overridden) */
+	if (!m_bVideoPanning && !m_bVideoPanSlowdownActive && m_dVideoLastWidgetW > 0.)
 	{
 		gdouble px = -1., py = -1.;
 		video_zoom_get_pointer(this, &px, &py);
@@ -6296,226 +7518,101 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			px = areaW / 2.;
 			py = areaH / 2.;
 		}
-		/* 1. Find the source pixel under the pointer from the PREVIOUS frame's layout */
-		gdouble srcX, srcY;
+		/* 1. Find the display coordinate under the pointer from the PREVIOUS layout */
+		gdouble dispX, dispY;
 		if (m_dVideoLastWidgetW > areaW)
-			srcX = m_dVideoPanX + px * (srcW / m_dVideoLastZc) / m_dVideoLastWidgetW;
+			dispX = m_dVideoPanX + px * dispW / m_dVideoLastWidgetW;
 		else
-			srcX = m_dVideoPanX + (px - (areaW - m_dVideoLastWidgetW) / 2.) * (srcW / m_dVideoLastZc) / m_dVideoLastWidgetW;
+			dispX = (px - (areaW - m_dVideoLastWidgetW) / 2.) * dispW / m_dVideoLastWidgetW;
 
 		if (m_dVideoLastWidgetH > areaH)
-			srcY = m_dVideoPanY + py * (srcH / m_dVideoLastZc) / m_dVideoLastWidgetH;
+			dispY = m_dVideoPanY + py * dispH / m_dVideoLastWidgetH;
 		else
-			srcY = m_dVideoPanY + (py - (areaH - m_dVideoLastWidgetH) / 2.) * (srcH / m_dVideoLastZc) / m_dVideoLastWidgetH;
+			dispY = (py - (areaH - m_dVideoLastWidgetH) / 2.) * dispH / m_dVideoLastWidgetH;
 
-		/* 2. Compute the new pan so that the same source pixel stays under the pointer in the NEW layout */
+		/* 2. Compute the new pan so that the same coordinate stays under the pointer in the NEW layout */
 		if (widgetW > areaW)
-			m_dVideoPanX = srcX - px * (srcW / zc) / widgetW;
+			m_dVideoPanX = dispX - px * dispW / widgetW;
 		else
-			m_dVideoPanX = srcX - (px - (areaW - widgetW) / 2.) * (srcW / zc) / widgetW;
+			m_dVideoPanX = 0.;
 
 		if (widgetH > areaH)
-			m_dVideoPanY = srcY - py * (srcH / zc) / widgetH;
+			m_dVideoPanY = dispY - py * dispH / widgetH;
 		else
-			m_dVideoPanY = srcY - (py - (areaH - widgetH) / 2.) * (srcH / zc) / widgetH;
-
+			m_dVideoPanY = 0.;
 	}
-	else if (!m_bVideoPanning && m_dVideoLastWidgetW == 0.)
+	else if (!m_bVideoPanning && !m_bVideoPanSlowdownActive && m_dVideoLastWidgetW == 0.)
 	{
-		/* first ApplyVideoZoom after a reset (StopVideo / init): center the
-		 * visible viewport in the source, matching the image view's
-		 * set_default_adjustment_values centering */
-		m_dVideoPanX = MAX(0., (srcW - vw) / 2.);
-		m_dVideoPanY = MAX(0., (srcH - vh) / 2.);
+		/* first ApplyVideoZoom after a reset (StopVideo / init / rotate): center the
+		 * visible viewport in the display area */
+		m_dVideoPanX = MAX(0., (dispW - vw) / 2.);
+		m_dVideoPanY = MAX(0., (dispH - vh) / 2.);
 	}
 
-	/* The window shows a viewport of the (up-scaled) crop, and the pan is the
-	 * viewport's left/top in source pixels.  When the widget overflows the
-	 * window, it is slid so the viewport can reach the very edges of the frame
-	 * (otherwise the clip keeps the corners - e.g. a security camera's OSD
-	 * timestamp - out of reach); when it fits, the whole crop is visible and
-	 * panning moves the crop itself. */
-	gdouble cropLeftD = 0., cropTopD = 0., offX, offY;
-
+	gdouble offX, offY;
 	if (widgetW > areaW)
 	{
-		m_dVideoPanX = CLAMP(m_dVideoPanX, 0., srcW - vw);
-		gdouble d = cropW - vw;   /* crop margin the window cannot show */
-		cropLeftD = CLAMP(m_dVideoPanX - d / 2., 0., srcW - cropW);
-		offX = (cropLeftD - m_dVideoPanX) * widgetW / cropW;
+		m_dVideoPanX = CLAMP(m_dVideoPanX, 0., MAX(0., dispW - vw));
+		offX = -m_dVideoPanX * effZoom;
 	}
 	else
 	{
-		m_dVideoPanX = CLAMP(m_dVideoPanX, 0., srcW - cropW);
-		cropLeftD = m_dVideoPanX;
+		m_dVideoPanX = 0.;
 		offX = (areaW - widgetW) / 2.;
 	}
+
 	if (widgetH > areaH)
 	{
-		m_dVideoPanY = CLAMP(m_dVideoPanY, 0., srcH - vh);
-		gdouble d = cropH - vh;
-		cropTopD = CLAMP(m_dVideoPanY - d / 2., 0., srcH - cropH);
-		offY = (cropTopD - m_dVideoPanY) * widgetH / cropH;
+		m_dVideoPanY = CLAMP(m_dVideoPanY, 0., MAX(0., dispH - vh));
+		offY = -m_dVideoPanY * effZoom;
 	}
 	else
 	{
-		m_dVideoPanY = CLAMP(m_dVideoPanY, 0., srcH - cropH);
-		cropTopD = m_dVideoPanY;
+		m_dVideoPanY = 0.;
 		offY = (areaH - widgetH) / 2.;
 	}
 
-	gint cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0;
-	if (cropping)
+	/* Tell the nav control's miniature which part of the frame is on screen */
+	if (m_pVideoRotatedPaintable != NULL && dispW > 0 && dispH > 0)
 	{
-		gint cropWidth = MAX(1, (gint)(cropW + 0.5));
-		gint cropHeight = MAX(1, (gint)(cropH + 0.5));
-		cropLeft = (gint)(cropLeftD + 0.5);
-		cropTop = (gint)(cropTopD + 0.5);
-		cropRight = (gint)srcW - cropWidth - cropLeft;
-		cropBottom = (gint)srcH - cropHeight - cropTop;
+		ConfigureVideoPreviewScale((gint)dispW, (gint)dispH);
+		m_dVideoPreviewViewX = CLAMP(m_dVideoPanX / dispW, 0.0, 1.0);
+		m_dVideoPreviewViewY = CLAMP(m_dVideoPanY / dispH, 0.0, 1.0);
+		m_dVideoPreviewViewW = CLAMP(vw / dispW, 0.0, 1.0);
+		m_dVideoPreviewViewH = CLAMP(vh / dispH, 0.0, 1.0);
+		UpdateVideoPreviewViewArea();
 	}
 
-	switch (m_VideoZoomType)
-	{
-		case VIDEO_ZOOM_SOFTWARE:
-		case VIDEO_ZOOM_MEDIA_SDK:
-			if (m_pVideoCrop != NULL)
-			{
-				g_object_set(G_OBJECT(m_pVideoCrop),
-					"left", cropLeft, "right", cropRight,
-					"top", cropTop, "bottom", cropBottom,
-					NULL);
-			}
-			break;
-		case VIDEO_ZOOM_VAAPI:
-			g_object_set(G_OBJECT(m_pVideoZoomScaler),
-				"crop-left", cropLeft, "crop-right", cropRight,
-				"crop-top", cropTop, "crop-bottom", cropBottom,
-				NULL);
-			break;
-		case VIDEO_ZOOM_NVIDIA:
-			g_object_set(G_OBJECT(m_pVideoZoomScaler),
-				"left", cropLeft,
-				"right", (gint)srcW - cropRight - 1,
-				"top", cropTop,
-				"bottom", (gint)srcH - cropBottom - 1,
-				NULL);
-			break;
-		case VIDEO_ZOOM_GL:
-			if (m_pVideoZoomScaler != NULL)
-			{
-				gdouble sx = srcW / (gdouble)(srcW - cropLeft - cropRight);
-				gdouble sy = srcH / (gdouble)(srcH - cropTop - cropBottom);
-				/* gltransformation's prepare_output_buffer composes:
-				 *   result = yflip * mvp * inv_aspect
-				 * which reduces to: x_out = x*sx + tx*2, y_out = y*sy - ty*2
-				 * on the meta's [0,1]→NDC vertices.
-				 * Solve for tx/ty so cropLeft→x_out=-1, cropTop→y_out=+1. */
-				gdouble tx = (sx - 1.0) / 2.0 - cropLeft * sx / srcW;
-				gdouble ty = (sy - 1.0) / 2.0 - cropTop * sy / srcH;
+	/* A video's zoom never touches the scrollable adjustments, so the nav
+	 * control has to re-evaluate itself here: the first frame sizes the
+	 * miniature, and every zoom, pan, rotate or resize changes whether less
+	 * than the whole frame is on screen. */
+	UpdateNavControlVisibility();
 
-				g_object_set(G_OBJECT(m_pVideoZoomScaler),
-					"scale-x", (gfloat)sx,
-					"scale-y", (gfloat)sy,
-					"translation-x", (gfloat)tx,
-					"translation-y", (gfloat)ty,
-					NULL);
-			}
-			break;
-	}
-
-	/* force the scaler to upscale the cropped region back to the full frame
-	 * only while the crop is actually engaged, so the passthrough state
-	 * keeps negotiating directly with the GL sink (the known-good reference) */
-	if (m_pVideoZoomCaps != NULL)
+	/* Keep GStreamer transformation permanently at identity (passthrough) */
+	if (m_pVideoZoomScaler != NULL && m_VideoZoomType == VIDEO_ZOOM_GL)
 	{
-		if (m_VideoZoomType == VIDEO_ZOOM_SOFTWARE)
+		if (fabs(m_fVideoZoomSx - 1.0f) > 1e-4f ||
+		    fabs(m_fVideoZoomSy - 1.0f) > 1e-4f ||
+		    fabs(m_fVideoZoomTx) > 1e-4f ||
+		    fabs(m_fVideoZoomTy) > 1e-4f)
 		{
-			/* software scaler: force the output to system-memory full-frame
-			 * video permanently instead of flipping the caps with the crop.
-			 * glupload's zero-copy DMABuf EGLImage import path cannot be
-			 * re-negotiated when the videoscale output changes size/format
-			 * mid-playback ("Failed to upload buffer"), while the CPU upload
-			 * path it selects for system memory is stable.  The caps are set
-			 * once, so nothing downstream re-negotiates on later zooms. */
-			if (!m_bVideoZoomCropActive)
-			{
-				GstCaps *caps = gst_caps_new_simple("video/x-raw",
-					"width", G_TYPE_INT, (gint)srcW,
-					"height", G_TYPE_INT, (gint)srcH,
-					NULL);
-				gst_caps_set_features(caps, 0,
-					gst_caps_features_from_string("memory:SystemMemory"));
-				g_object_set(G_OBJECT(m_pVideoZoomCaps), "caps", caps, NULL);
-				gst_caps_unref(caps);
-				m_bVideoZoomCropActive = TRUE;
-			}
-		}
-		else if (m_VideoZoomType == VIDEO_ZOOM_MEDIA_SDK)
-		{
-			/* the va scaler (vapostproc) can only emit VAMemory/DMABuf, and
-			 * glupload's zero-copy DMABuf EGLImage import cannot be
-			 * re-negotiated mid-playback: glupload responds to a caps change
-			 * by sending a caps event upstream, which makes decodebin
-			 * re-negotiate the hardware decoder and aborts playback with
-			 * qtdemux "not-negotiated" or glupload "Failed to upload buffer".
-			 * Force the scaler to always emit full-frame DMABuf instead of
-			 * flipping the caps with the crop: the output caps never change
-			 * while zooming, so glupload negotiates once at startup, and a
-			 * crop change only touches the videocrop -> scaler link inside
-			 * the bin.  The videocrop itself only crops system memory, so
-			 * the first time the crop actually engages the zoominput caps
-			 * also force a VAMemory -> system-memory conversion; the reconfigure
-			 * probe on the bin's input swallows the re-negotiation so the
-			 * hardware decoder is never disturbed.  Until then the chain stays
-			 * in the fast VAMemory passthrough (no full-frame copy). */
-			if (!m_bVideoZoomCropActive)
-			{
-				GstCaps *caps = gst_caps_new_simple("video/x-raw",
-					"width", G_TYPE_INT, (gint)srcW,
-					"height", G_TYPE_INT, (gint)srcH,
-					NULL);
-				gst_caps_set_features(caps, 0,
-					gst_caps_features_from_string("memory:DMABuf"));
-				g_object_set(G_OBJECT(m_pVideoZoomCaps), "caps", caps, NULL);
-				gst_caps_unref(caps);
-				m_bVideoZoomCropActive = TRUE;
-			}
-			if (cropping && m_pVideoZoomInputCaps != NULL &&
-				!m_bVideoZoomInputCropActive)
-			{
-				GstCaps *in_caps = gst_caps_new_empty_simple("video/x-raw");
-				gst_caps_set_features(in_caps, 0,
-					gst_caps_features_from_string("memory:SystemMemory"));
-				g_object_set(G_OBJECT(m_pVideoZoomInputCaps), "caps", in_caps, NULL);
-				gst_caps_unref(in_caps);
-				m_bVideoZoomInputCropActive = TRUE;
-			}
-		}
-		else if (cropping && !m_bVideoZoomCropActive)
-		{
-			GstCaps *caps;
-			if (m_VideoZoomType == VIDEO_ZOOM_NVIDIA)
-				caps = video_zoom_scaled_caps(m_pVideoZoomScaler, (gint)srcW, (gint)srcH);
-			else
-				caps = gst_caps_new_simple("video/x-raw",
-					"width", G_TYPE_INT, (gint)srcW,
-					"height", G_TYPE_INT, (gint)srcH,
-					NULL);
-			g_object_set(G_OBJECT(m_pVideoZoomCaps), "caps", caps, NULL);
-			gst_caps_unref(caps);
-			m_bVideoZoomCropActive = TRUE;
-		}
-		else if (!cropping && m_bVideoZoomCropActive)
-		{
-			g_object_set(G_OBJECT(m_pVideoZoomCaps), "caps", NULL, NULL);
-			m_bVideoZoomCropActive = FALSE;
+			m_fVideoZoomSx = 1.0f;
+			m_fVideoZoomSy = 1.0f;
+			m_fVideoZoomTx = 0.0f;
+			m_fVideoZoomTy = 0.0f;
+			g_object_set(G_OBJECT(m_pVideoZoomScaler),
+				"scale-x", 1.0f,
+				"scale-y", 1.0f,
+				"translation-x", 0.0f,
+				"translation-y", 0.0f,
+				NULL);
 		}
 	}
 
 	/* size the video widget to the display and move it: centered when it fits,
 	 * slid against the viewport pan when it overflows (offX/offY are negative
-	 * then, and the fixed clips the part outside the window) */
+	 * then, and the freelayout clips the part outside the window) */
 	gint newW = MAX(1, (gint)(widgetW + 0.5));
 	gint newH = MAX(1, (gint)(widgetH + 0.5));
 	gint newX = (gint)(offX + 0.5);
@@ -6542,30 +7639,218 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 
 	m_dVideoLastWidgetW = widgetW;
 	m_dVideoLastWidgetH = widgetH;
-	m_dVideoLastZc = zc;
+	m_dVideoLastZc = 1.0;
+}
 
-	/* When paused, no buffers flow through gltransformation so property
-	 * changes are invisible until the next seek or state change.  Push the
-	 * new transform values through by re-seeking to the current position.
-	 * A flushing seek is safe in PAUSED and triggers exactly one buffer
-	 * through the pipeline. */
-	if (m_pPipeline != NULL)
+bool Viewer::ViewerImpl::CanVideoPan() const
+{
+	if (!IsVideo())
+		return false;
+	if (m_dVideoZoom > m_dVideoZoomMin + 0.005 || m_dVideoZoomFinal > m_dVideoZoomMin + 0.005)
+		return true;
+	if (m_pVideoFixed == NULL)
+		return false;
+	gint areaW = gtk_widget_get_width(m_pVideoFixed);
+	gint areaH = gtk_widget_get_height(m_pVideoFixed);
+	if (areaW > 0 && areaH > 0 && m_dVideoLastWidgetW > 0. && m_dVideoLastWidgetH > 0.)
 	{
-		GstState current = GST_STATE_VOID_PENDING;
-		gst_element_get_state(GST_ELEMENT(m_pPipeline), &current, NULL, 0);
-		if (current == GST_STATE_PAUSED)
-		{
-			gint64 pos = 0;
-			if (gst_element_query_position(m_pPipeline, GST_FORMAT_TIME, &pos))
-			{
-				gdouble speed = (m_dPlaybackSpeed > 0.0) ? m_dPlaybackSpeed : 1.0;
-				gst_element_seek(GST_ELEMENT(m_pPipeline), speed,
-					GST_FORMAT_TIME,
-					GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-					GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-			}
-		}
+		if (m_dVideoLastWidgetW > areaW + 0.5 || m_dVideoLastWidgetH > areaH + 0.5)
+			return true;
 	}
+	return false;
+}
+
+void Viewer::ViewerImpl::RecordVideoPanSample(gdouble dx, gdouble dy, gdouble dt)
+{
+	if (dt <= 0.0)
+		return;
+
+	if (m_iVideoPanSampleCount < VIDEO_PAN_MAX_SAMPLES)
+	{
+		m_aVideoPanSamples[m_iVideoPanSampleCount++] = {dx, dy, dt};
+	}
+	else
+	{
+		for (int i = 0; i < VIDEO_PAN_MAX_SAMPLES - 1; ++i)
+		{
+			m_aVideoPanSamples[i] = m_aVideoPanSamples[i + 1];
+		}
+		m_aVideoPanSamples[VIDEO_PAN_MAX_SAMPLES - 1] = {dx, dy, dt};
+	}
+}
+
+void Viewer::ViewerImpl::StopVideoPanSlowdown()
+{
+	m_bVideoPanSlowdownActive = false;
+	if (m_uiVideoPanSlowdownTickID != 0)
+	{
+		if (m_pVideoFixed != NULL)
+			gtk_widget_remove_tick_callback(m_pVideoFixed, m_uiVideoPanSlowdownTickID);
+		m_uiVideoPanSlowdownTickID = 0;
+	}
+	if (m_uiVideoPanSlowdownTimeoutID != 0)
+	{
+		g_source_remove(m_uiVideoPanSlowdownTimeoutID);
+		m_uiVideoPanSlowdownTimeoutID = 0;
+	}
+	m_dVideoPanVelX = 0.;
+	m_dVideoPanVelY = 0.;
+	m_iVideoPanSlowdownLastTime = 0;
+	m_iVideoPanSampleCount = 0;
+}
+
+void Viewer::ViewerImpl::StartVideoPanSlowdown()
+{
+	if (m_uiVideoPanSlowdownTickID != 0)
+	{
+		if (m_pVideoFixed != NULL)
+			gtk_widget_remove_tick_callback(m_pVideoFixed, m_uiVideoPanSlowdownTickID);
+		m_uiVideoPanSlowdownTickID = 0;
+	}
+	if (m_uiVideoPanSlowdownTimeoutID != 0)
+	{
+		g_source_remove(m_uiVideoPanSlowdownTimeoutID);
+		m_uiVideoPanSlowdownTimeoutID = 0;
+	}
+	m_bVideoPanSlowdownActive = false;
+
+	if (!m_bKineticScrolling || !CanVideoPan())
+	{
+		m_iVideoPanSampleCount = 0;
+		return;
+	}
+
+	gdouble total_dx = 0.;
+	gdouble total_dy = 0.;
+	gdouble total_dt = 0.;
+
+	for (int i = 0; i < m_iVideoPanSampleCount; ++i)
+	{
+		total_dx += m_aVideoPanSamples[i].dx;
+		total_dy += m_aVideoPanSamples[i].dy;
+		total_dt += m_aVideoPanSamples[i].dt;
+	}
+	m_iVideoPanSampleCount = 0;
+
+	if (total_dt <= 0.001)
+		return;
+
+	m_dVideoPanVelX = total_dx / total_dt; // screen pixels per second
+	m_dVideoPanVelY = total_dy / total_dt;
+
+	gdouble speed = std::hypot(m_dVideoPanVelX, m_dVideoPanVelY);
+	if (speed < 15.0)
+		return;
+
+	const gdouble max_speed = 12000.0;
+	if (speed > max_speed)
+	{
+		m_dVideoPanVelX = (m_dVideoPanVelX / speed) * max_speed;
+		m_dVideoPanVelY = (m_dVideoPanVelY / speed) * max_speed;
+	}
+
+	m_bVideoPanSlowdownActive = true;
+	m_iVideoPanSlowdownLastTime = g_get_monotonic_time();
+
+	if (m_pVideoFixed != NULL && gtk_widget_get_mapped(m_pVideoFixed))
+	{
+		m_uiVideoPanSlowdownTickID = gtk_widget_add_tick_callback(
+			m_pVideoFixed, video_pan_slowdown_tick_cb, this, NULL);
+		gtk_widget_queue_draw(m_pVideoFixed);
+	}
+	else
+	{
+		m_uiVideoPanSlowdownTimeoutID = g_timeout_add(16, video_pan_slowdown_timeout_cb, this);
+	}
+}
+
+bool Viewer::ViewerImpl::VideoPanSlowdownStep(gint64 frame_time_us)
+{
+	if (!m_bVideoPanSlowdownActive)
+		return false;
+
+	gdouble dt = 0.016;
+	if (m_iVideoPanSlowdownLastTime > 0 && frame_time_us > m_iVideoPanSlowdownLastTime)
+	{
+		dt = (gdouble)(frame_time_us - m_iVideoPanSlowdownLastTime) / 1000000.0;
+		if (dt > 0.05) dt = 0.05;
+	}
+	m_iVideoPanSlowdownLastTime = frame_time_us;
+
+	// Frame-rate independent exponential decay: k = ln(1.04) / 0.035 ≈ 1.1206 s^-1
+	gdouble decay = std::exp(-1.1206 * dt);
+	m_dVideoPanVelX *= decay;
+	m_dVideoPanVelY *= decay;
+
+	gdouble speed = std::hypot(m_dVideoPanVelX, m_dVideoPanVelY);
+	gdouble hdistance = dt * m_dVideoPanVelX;
+	gdouble vdistance = dt * m_dVideoPanVelY;
+
+	if (speed < 10.0 || (std::abs(hdistance) < 0.05 && std::abs(vdistance) < 0.05))
+	{
+		return false;
+	}
+
+	gdouble prevPanX = m_dVideoPanX;
+	gdouble prevPanY = m_dVideoPanY;
+
+	gdouble srcPerPx = (m_dVideoZoom > 0.) ? (1. / m_dVideoZoom) : 1.;
+	m_dVideoPanX -= hdistance * srcPerPx;
+	m_dVideoPanY -= vdistance * srcPerPx;
+
+	ApplyVideoZoom();
+
+	if (std::abs(m_dVideoPanX - prevPanX) < 0.001)
+		m_dVideoPanVelX = 0.;
+	if (std::abs(m_dVideoPanY - prevPanY) < 0.001)
+		m_dVideoPanVelY = 0.;
+
+	if (std::hypot(m_dVideoPanVelX, m_dVideoPanVelY) < 10.0)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+gboolean Viewer::ViewerImpl::video_pan_slowdown_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *pImpl = (Viewer::ViewerImpl *)data;
+	if (!pImpl || !pImpl->m_bVideoPanSlowdownActive)
+		return G_SOURCE_REMOVE;
+
+	gint64 frame_time = frame_clock ? gdk_frame_clock_get_frame_time(frame_clock) : g_get_monotonic_time();
+	gboolean keep_going = pImpl->VideoPanSlowdownStep(frame_time);
+	if (!keep_going)
+	{
+		pImpl->m_uiVideoPanSlowdownTickID = 0;
+		pImpl->StopVideoPanSlowdown();
+		return G_SOURCE_REMOVE;
+	}
+
+	if (pImpl->m_pVideoFixed != NULL)
+		gtk_widget_queue_draw(pImpl->m_pVideoFixed);
+
+	return G_SOURCE_CONTINUE;
+}
+
+gboolean Viewer::ViewerImpl::video_pan_slowdown_timeout_cb(gpointer data)
+{
+	Viewer::ViewerImpl *pImpl = (Viewer::ViewerImpl *)data;
+	if (!pImpl || !pImpl->m_bVideoPanSlowdownActive)
+		return G_SOURCE_REMOVE;
+
+	gint64 now = g_get_monotonic_time();
+	gboolean keep_going = pImpl->VideoPanSlowdownStep(now);
+	if (!keep_going)
+	{
+		pImpl->m_uiVideoPanSlowdownTimeoutID = 0;
+		pImpl->StopVideoPanSlowdown();
+		return G_SOURCE_REMOVE;
+	}
+
+	return G_SOURCE_CONTINUE;
 }
 
 
@@ -6802,6 +8087,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pIconView = quiver_icon_view_new();
  	m_pImageView = quiver_image_view_new();
 	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_pImageView), FALSE);
+	m_bKineticScrolling = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_KINETIC_SCROLLING, true);
+	quiver_image_view_set_smooth_scroll(QUIVER_IMAGE_VIEW(m_pImageView), m_bKineticScrolling);
 
 	gtk_widget_set_size_request(m_pImageView, 100, 100);
 
@@ -6894,8 +8181,18 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iVideoSinkH = 0;
 	m_iVideoSinkX = 0;
 	m_iVideoSinkY = 0;
+	m_dVideoPreviewViewX = 0.0;
+	m_dVideoPreviewViewY = 0.0;
+	m_dVideoPreviewViewW = 0.0;
+	m_dVideoPreviewViewH = 0.0;
+	m_dVideoPreviewDispW = 0.0;
+	m_dVideoPreviewDispH = 0.0;
+	m_bVideoPreviewHasFrame = FALSE;
+	m_bVideoPreviewRedrawQueued = FALSE;
 	m_iTimeoutPlayProgress = 0;
 	m_iSlideShowWaitCount = 0;
+	m_DecoderGlitchTracker.m_pszName = "decoder";
+	m_SinkGlitchTracker.m_pszName = "sink";
 
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
 	m_pAdjustmentV = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
@@ -7422,6 +8719,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_can_target(m_pNavControlPill, TRUE);
 
 	m_pNavigationControl = quiver_navigation_control_new_with_adjustments (m_pAdjustmentH, m_pAdjustmentV);
+	/* The widget drives the image view's scrollbars on its own; a video is
+	 * panned through the pipeline, so it needs the raw drag distance. */
+	g_signal_connect(m_pNavigationControl, "drag-delta",
+		G_CALLBACK(nav_control_drag_delta_cb), this);
 	gtk_box_append(GTK_BOX(m_pNavControlPill), m_pNavigationControl);
 
 	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pNavControlPill);
@@ -7454,177 +8755,17 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_bVideoZoomCropActive = FALSE;
 	m_bVideoZoomInputCropActive = FALSE;
 	m_bVideoPanning = FALSE;
+	StopVideoPanSlowdown();
 	m_bVideoNeedsFirstFrame = FALSE;
 	m_bVideoFlushPending = FALSE;
 	m_bVideoPagePending = FALSE;
 	m_pVideoPaintable = NULL;
-	GstElement* video_sink = NULL;
-	GstElement* gtk4glsink = gst_element_factory_make("gtk4paintablesink", NULL);
-	GstElement* glupload = NULL;
-	if (gtk4glsink != NULL)
-	{
-		if (g_object_class_find_property(G_OBJECT_GET_CLASS(gtk4glsink), "force-aspect-ratio") != NULL)
-			g_object_set(G_OBJECT(gtk4glsink), "force-aspect-ratio", TRUE, NULL);
-		g_object_get(G_OBJECT(gtk4glsink), "paintable", &m_pVideoPaintable, NULL);
-		m_pVideoRotatedPaintable = quiver_rotated_paintable_new(m_pVideoPaintable);
+	m_pVideoRotatedPaintable = quiver_rotated_paintable_new(NULL);
+	m_pVideoSinkWidget = gtk_picture_new_for_paintable(GDK_PAINTABLE(m_pVideoRotatedPaintable));
+	gtk_picture_set_content_fit(GTK_PICTURE(m_pVideoSinkWidget), GTK_CONTENT_FIT_FILL);
+	gtk_picture_set_can_shrink(GTK_PICTURE(m_pVideoSinkWidget), TRUE);
 
-		m_pVideoSinkWidget = gtk_picture_new_for_paintable(GDK_PAINTABLE(m_pVideoRotatedPaintable));
-		gtk_picture_set_content_fit(GTK_PICTURE(m_pVideoSinkWidget), GTK_CONTENT_FIT_FILL);
-		gtk_picture_set_can_shrink(GTK_PICTURE(m_pVideoSinkWidget), TRUE);
-
-		/* Restore opacity after the sink delivers a new frame. */
-		g_signal_connect(m_pVideoPaintable, "invalidate-contents", G_CALLBACK(video_paintable_invalidated_cb), this);
-
-		/* Link glupload explicitly to gtk4paintablesink (matching the
-		 * known-good `glupload ! gtk4paintablesink` pipeline).
-		 * glupload + the sink must be added to the zoombin DIRECTLY,
-		 * not wrapped in a separate glsinkbin. */
-		glupload = gst_element_factory_make("glupload", NULL);
-		if (glupload != NULL && gst_element_link(glupload, gtk4glsink))
-		{
-			video_sink = gtk4glsink;
-		}
-		else
-		{
-			if (glupload != NULL)
-				gst_object_unref(glupload);
-			glupload = NULL;
-			video_sink = gtk4glsink;
-		}
-	}
-	else
-	{
-		video_sink = gst_element_factory_make("gtk4sink", NULL);
-		if (video_sink != NULL)
-		{
-			if (g_object_class_find_property(G_OBJECT_GET_CLASS(video_sink), "force-aspect-ratio") != NULL)
-				g_object_set(G_OBJECT(video_sink), "force-aspect-ratio", TRUE, NULL);
-			g_object_get(G_OBJECT(video_sink), "paintable", &m_pVideoPaintable, NULL);
-			m_pVideoRotatedPaintable = quiver_rotated_paintable_new(m_pVideoPaintable);
-
-			m_pVideoSinkWidget = gtk_picture_new_for_paintable(GDK_PAINTABLE(m_pVideoRotatedPaintable));
-			gtk_picture_set_content_fit(GTK_PICTURE(m_pVideoSinkWidget), GTK_CONTENT_FIT_FILL);
-			gtk_picture_set_can_shrink(GTK_PICTURE(m_pVideoSinkWidget), TRUE);
-			g_signal_connect(m_pVideoPaintable, "invalidate-contents", G_CALLBACK(video_paintable_invalidated_cb), this);
-		}
-	}
-
-	/* digital video zoom: wrap the sink in a crop + scale chain so the
-	 * pipeline itself implements the zoom.  The chain is built dynamically
-	 * depending on which GPU acceleration the platform provides: NVIDIA
-	 * (nvvidconv), Intel Media SDK (videocrop + vapostproc), Intel
-	 * gstreamer-vaapi (vaapipostproc native crop) or plain software
-	 * (videocrop + videoscale).  The scaler elements accept the memory type
-	 * the decoder produces on their platform (NVMM / VAMemory / VASurface /
-	 * system), so no videoconvert is inserted into the accelerated paths. */
-	m_pVideoZoomInput = NULL;
-	m_pVideoCrop = NULL;
-	m_pVideoZoomConvert = NULL;
-	m_pVideoZoomScaler = NULL;
-	m_pVideoZoomCaps = NULL;
-	m_pVideoZoomInputCaps = NULL;
-	m_VideoZoomType = VIDEO_ZOOM_SOFTWARE;
-	if (video_sink != NULL)
-	{
-		GstElement *zoombin = gst_bin_new("videozoom");
-		GstElement *first_element = NULL;
-
-		m_VideoZoomType = VIDEO_ZOOM_GL;
-		
-		GstElement *glupload_zoom = gst_element_factory_make("glupload", "zoomupload");
-		GstElement *glcolorconvert = gst_element_factory_make("glcolorconvert", "zoomcolorconvert");
-		m_pVideoZoomScaler = gst_element_factory_make("gltransformation", "zoomtransform");
-		
-		GstElement *chain[4] = { glupload_zoom, glcolorconvert, m_pVideoZoomScaler, video_sink };
-		guint n_chain = 4;
-		first_element = chain[0];
-
-		if (m_pVideoZoomScaler != NULL)
-		{
-			g_object_set(G_OBJECT(m_pVideoZoomScaler), "ortho", TRUE, NULL);
-		}
-
-		gboolean bChainOk = TRUE;
-		guint n_added = 0;
-		for (guint i = 0; i < n_chain; ++i)
-		{
-			if (chain[i] == NULL)
-			{
-				bChainOk = FALSE;
-				break;
-			}
-			if (!gst_bin_add(GST_BIN(zoombin), chain[i]))
-			{
-				bChainOk = FALSE;
-				break;
-			}
-			n_added++;
-		}
-		if (bChainOk)
-		{
-			for (guint i = 0; i + 1 < n_chain; ++i)
-			{
-				if (!gst_element_link(chain[i], chain[i + 1]))
-				{
-					bChainOk = FALSE;
-					break;
-				}
-			}
-		}
-
-		if (bChainOk)
-		{
-			/* learn the source frame size from the incoming caps so the
-			 * crop amounts can be computed from it */
-			if (first_element != NULL)
-			{
-				GstPad *crop_sinkpad = gst_element_get_static_pad(first_element, "sink");
-				if (crop_sinkpad != NULL)
-				{
-				gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, video_crop_pad_probe, this, NULL);
-				gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, video_zoom_reconfigure_probe, this, NULL);
-
-					/* expose this pad as the bin's sink so playbin can
-					 * link to the zoombin; the capsfilter's ANY template
-					 * lets HW decoders pass the template check */
-					gst_element_add_pad(zoombin, gst_ghost_pad_new("sink", crop_sinkpad));
-
-					gst_object_unref(crop_sinkpad);
-				}
-			}
-
-			video_sink = zoombin;
-		}
-		else
-		{
-			/* chain could not be built: fall back to the plain, unwrapped sink */
-			for (guint i = 0; i < n_added; ++i)
-			{
-				gst_bin_remove(GST_BIN(zoombin), chain[i]);
-			}
-			gst_object_unref(zoombin);
-			if (m_pVideoZoomInput != NULL)
-				gst_object_unref(m_pVideoZoomInput);
-			if (m_pVideoCrop != NULL)
-				gst_object_unref(m_pVideoCrop);
-			if (m_pVideoZoomConvert != NULL)
-				gst_object_unref(m_pVideoZoomConvert);
-			if (m_pVideoZoomScaler != NULL)
-				gst_object_unref(m_pVideoZoomScaler);
-			if (m_pVideoZoomCaps != NULL)
-				gst_object_unref(m_pVideoZoomCaps);
-			if (m_pVideoZoomInputCaps != NULL)
-				gst_object_unref(m_pVideoZoomInputCaps);
-			if (glupload != NULL)
-				gst_object_unref(glupload);
-			m_pVideoCrop = NULL;
-			m_pVideoZoomConvert = NULL;
-			m_pVideoZoomScaler = NULL;
-			m_pVideoZoomCaps = NULL;
-			m_pVideoZoomInputCaps = NULL;
-			m_VideoZoomType = VIDEO_ZOOM_SOFTWARE;
-		}
-	}
+	GstElement* video_sink = BuildVideoZoomBin();
 
 	GstElement* gaudio = gst_element_factory_make("autoaudiosink", NULL);
 	if (NULL == gaudio)
@@ -7728,7 +8869,8 @@ Viewer::Viewer() : m_ViewerImplPtr(new Viewer::ViewerImpl(this))
 
 Viewer::~Viewer()
 {
-	m_ViewerImplPtr->SlideShowStop(false);
+	UnregisterActions();
+	m_ViewerImplPtr->SlideShowStop(false, false);
 }
 
 GtkWidget *Viewer::GetWidget()
@@ -7815,7 +8957,11 @@ static void viewer_rotate_undo_cb(const char* uri, int undo_direction, gpointer 
 {
 	(void)uri;
 	Viewer::ViewerImpl* impl = static_cast<Viewer::ViewerImpl*>(user_data);
-	if (impl && impl->m_pImageView && QUIVER_IS_IMAGE_VIEW(impl->m_pImageView))
+	if (impl == NULL || impl != s_pLastRegisteredViewerImpl)
+	{
+		return;
+	}
+	if (impl->m_pImageView && QUIVER_IS_IMAGE_VIEW(impl->m_pImageView))
 	{
 		QuiverImageView* imageview = QUIVER_IMAGE_VIEW(impl->m_pImageView);
 		quiver_image_view_rotate(imageview, undo_direction > 0 ? TRUE : FALSE);
@@ -7826,6 +8972,7 @@ static void viewer_rotate_undo_cb(const char* uri, int undo_direction, gpointer 
 
 void Viewer::RegisterActions()
 {
+	s_pLastRegisteredViewerImpl = m_ViewerImplPtr.get();
 	QuiverFileOps::SetRotateUndoCallback(viewer_rotate_undo_cb, m_ViewerImplPtr.get());
 
 	/* Viewer simple actions */
@@ -7908,6 +9055,41 @@ void Viewer::RegisterActions()
 	QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP,bShowFilmStrip ? TRUE : FALSE);
 
 	QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_ROTATE_FOR_BEST_FIT,m_ViewerImplPtr->m_bMaximizeViewableArea ? TRUE : FALSE);
+}
+
+void Viewer::UnregisterActions()
+{
+	if (s_pLastRegisteredViewerImpl == m_ViewerImplPtr.get())
+	{
+		s_pLastRegisteredViewerImpl = NULL;
+		QuiverFileOps::SetRotateUndoCallback(NULL, NULL);
+		const char* const actions[] = {
+			ACTION_VIEWER_CUT, ACTION_VIEWER_COPY, ACTION_VIEWER_RENAME,
+			ACTION_VIEWER_TRASH, ACTION_VIEWER_TRASH_FORCE, ACTION_VIEWER_RESTORE,
+			ACTION_VIEWER_PREVIOUS, ACTION_VIEWER_PREVIOUS_2,
+			ACTION_VIEWER_NEXT, ACTION_VIEWER_NEXT_2,
+			ACTION_VIEWER_FIRST, ACTION_VIEWER_LAST,
+			ACTION_VIEWER_ZOOM_IN, ACTION_VIEWER_ZOOM_OUT,
+			ACTION_VIEWER_ROTATE_CW, ACTION_VIEWER_ROTATE_CW_2,
+			ACTION_VIEWER_ROTATE_CCW, ACTION_VIEWER_ROTATE_CCW_2,
+			ACTION_VIEWER_FLIP_H, ACTION_VIEWER_FLIP_H_2,
+			ACTION_VIEWER_FLIP_V, ACTION_VIEWER_FLIP_V_2,
+			ACTION_VIEWER_VIDEO_PLAY, ACTION_VIEWER_VIDEO_PLAY_2,
+			ACTION_VIEWER_VIDEO_SKIP_FORWARD, ACTION_VIEWER_VIDEO_SKIP_BACK,
+			ACTION_VIEWER_VIDEO_SEEK_FWD_5, ACTION_VIEWER_VIDEO_SEEK_BACK_5,
+			ACTION_VIEWER_VIDEO_FRAME_FWD, ACTION_VIEWER_VIDEO_FRAME_BACK,
+			ACTION_VIEWER_VIDEO_SNAPSHOT, ACTION_VIEWER_VIDEO_MUTE,
+			ACTION_VIEWER_VIEW_FILM_STRIP, ACTION_VIEWER_ROTATE_FOR_BEST_FIT,
+			ACTION_VIEWER_ZOOM_FIT, ACTION_VIEWER_ZOOM_FIT_STRETCH,
+			ACTION_VIEWER_ZOOM_100, ACTION_VIEWER_ZOOM_FILL_SCREEN, ACTION_VIEWER_ZOOM,
+			"VideoSpeed025", "VideoSpeed05", "VideoSpeed10", "VideoSpeed15",
+			"VideoSpeed20", "VideoSpeed40", "VideoSpeed80", "VideoSpeed160"
+		};
+		for (size_t i = 0; i < sizeof(actions) / sizeof(actions[0]); ++i)
+		{
+			QuiverUtils::RemoveAction(actions[i]);
+		}
+	}
 }
 
 void Viewer::SetStatusbar(StatusbarPtr statusbarPtr)
@@ -8177,7 +9359,7 @@ void Viewer::ViewerImpl::HandleSlideShowManualNavigation()
 
 void Viewer::ViewerImpl::ShowSlideShowPausedPill()
 {
-	if (m_pSlideShowPausedPill)
+	if (m_pSlideShowPausedPill && G_IS_OBJECT(m_pSlideShowPausedPill) && GTK_IS_WIDGET(m_pSlideShowPausedPill))
 	{
 		gtk_widget_set_visible(m_pSlideShowPausedPill, TRUE);
 	}
@@ -8185,7 +9367,7 @@ void Viewer::ViewerImpl::ShowSlideShowPausedPill()
 
 void Viewer::ViewerImpl::HideSlideShowPausedPill()
 {
-	if (m_pSlideShowPausedPill)
+	if (m_pSlideShowPausedPill && G_IS_OBJECT(m_pSlideShowPausedPill) && GTK_IS_WIDGET(m_pSlideShowPausedPill))
 	{
 		gtk_widget_set_visible(m_pSlideShowPausedPill, FALSE);
 	}
@@ -8406,6 +9588,85 @@ int Viewer::GetVideoUserRotation() const
 	return m_ViewerImplPtr ? m_ViewerImplPtr->GetVideoUserRotation() : 0;
 }
 
+void Viewer::SetVideoZoom(double zoom)
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->SetVideoZoom(zoom);
+	}
+}
+
+double Viewer::GetVideoZoom() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoZoom : 1.0;
+}
+
+bool Viewer::IsVideoPanSlowdownActive() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_bVideoPanSlowdownActive : false;
+}
+
+double Viewer::GetVideoPanVelocityX() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanVelX : 0.0;
+}
+
+double Viewer::GetVideoPanVelocityY() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanVelY : 0.0;
+}
+
+double Viewer::GetVideoPanX() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanX : 0.0;
+}
+
+double Viewer::GetVideoPanY() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanY : 0.0;
+}
+
+bool Viewer::CanVideoPan() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->CanVideoPan() : false;
+}
+
+void Viewer::StartVideoPanSlowdown()
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->StartVideoPanSlowdown();
+	}
+}
+
+void Viewer::StopVideoPanSlowdown()
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->StopVideoPanSlowdown();
+	}
+}
+
+void Viewer::RecordVideoPanSample(double dx, double dy, double dt)
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->RecordVideoPanSample(dx, dy, dt);
+	}
+}
+
+bool Viewer::IsVideoPlaying() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->IsPlaying() : false;
+}
+
+bool Viewer::IsPointOverControlsOrFilmstrip(double x, double y) const
+{
+	if (!m_ViewerImplPtr) return false;
+	GtkWidget *area = m_ViewerImplPtr->m_pVideoFixed ? m_ViewerImplPtr->m_pVideoFixed : m_ViewerImplPtr->m_pImageView;
+	return m_ViewerImplPtr->IsPointOverControlsOrFilmstrip(area, x, y);
+}
+
 
 /*
 // FIXME: remove
@@ -8598,7 +9859,7 @@ void Viewer::ViewerImpl::QueueIconViewUpdate(int timeout)
 	}
 }
 
-void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
+void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent, bool bUpdateUI)
 {
 	bool wasRunning = m_bSlideShowRunning;
 	m_bSlideShowRunning = false;
@@ -8606,7 +9867,10 @@ void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
 
 	HideSlideShowPausedPill();
 
-	quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_pImageView),FALSE);
+	if (m_pImageView != NULL && G_IS_OBJECT(m_pImageView) && QUIVER_IS_IMAGE_VIEW(m_pImageView))
+	{
+		quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(m_pImageView), FALSE);
+	}
 
 	if (0 != m_iTimeoutSlideshowID)
 	{
@@ -8616,15 +9880,21 @@ void Viewer::ViewerImpl::SlideShowStop(bool bEmitStopEvent)
 	}
 
 	QuiverUtils::ToggleActionSetState(ACTION_VIEWER_SLIDESHOW, FALSE);
-	UpdateSlideshowButton();
+	if (bUpdateUI)
+	{
+		UpdateSlideshowButton();
+	}
 
 	if (bEmitStopEvent && wasRunning)
 	{
 		m_pViewer->EmitSlideShowStoppedEvent();
 	}
 
-	UpdateNavigationControl();
-	UpdateUI();
+	if (bUpdateUI)
+	{
+		UpdateNavigationControl();
+		UpdateUI();
+	}
 }
 
 static void update_single_slideshow_btn(GtkWidget *btn, bool isRunning, Viewer::ViewerImpl *impl)
@@ -8794,10 +10064,25 @@ bool Viewer::ViewerImpl::UpdateNavigationControlTexture()
 	if (!m_pNavigationControl)
 		return false;
 
-	if (!m_ImageListPtr || m_ImageListPtr->GetSize() == 0 || IsVideo())
+	if (!m_ImageListPtr || m_ImageListPtr->GetSize() == 0)
 	{
 		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+		quiver_navigation_control_set_paintable(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL, 0, 0);
 		return false;
+	}
+
+	/* A video is drawn from the live miniature the pipeline feeds us, so a
+	 * still poster is not needed - and looking one up on every zoom would
+	 * stall the UI on video formats with no cached thumbnail.  The miniature
+	 * paintable is only usable once it has actually received a frame: before
+	 * that it hands out uninitialized memory, which the control would draw as
+	 * garbage. */
+	if (IsVideo())
+	{
+		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+		if (m_pVideoRotatedPaintable == NULL || !m_bVideoPreviewHasFrame)
+			return false;
+		return true;
 	}
 
 	QuiverFile f = m_ImageListPtr->GetCurrent();
@@ -8823,18 +10108,383 @@ bool Viewer::ViewerImpl::UpdateNavigationControlTexture()
 	return NULL != nav_tex;
 }
 
+bool Viewer::ViewerImpl::IsNavPreviewEnabled() const
+{
+	PreferencesPtr prefs = Preferences::GetInstance();
+	return prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO, false);
+}
+
+/* Forget everything that belongs to one particular video.  The miniature size,
+ * the paintable the control draws and the viewport rectangle are per-video:
+ * without this the second video would keep the first one's miniature size
+ * (stretching the frame to the wrong aspect) and the control would keep showing
+ * the previous frame. */
+void Viewer::ViewerImpl::ResetVideoPreviewViewState()
+{
+	if (m_pNavigationControl != NULL)
+	{
+		quiver_navigation_control_set_view_area_normalized(
+			QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), 0.0, 0.0, 0.0, 0.0);
+		quiver_navigation_control_set_paintable(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),
+			NULL, 0, 0);
+		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+	}
+	m_dVideoPreviewViewX = 0.0;
+	m_dVideoPreviewViewY = 0.0;
+	m_dVideoPreviewViewW = 0.0;
+	m_dVideoPreviewViewH = 0.0;
+	m_dVideoPreviewDispW = 0.0;
+	m_dVideoPreviewDispH = 0.0;
+	m_bVideoPreviewHasFrame = FALSE;
+	m_fVideoZoomSx = -999.0f;
+	m_fVideoZoomSy = -999.0f;
+	m_fVideoZoomTx = -999.0f;
+	m_fVideoZoomTy = -999.0f;
+}
+
+/* Tell the control how big the frame is.  The miniature scales the frame to the
+ * size the nav control draws it at.  dispW/dispH already account for display
+ * orientation and user rotation. */
+void Viewer::ViewerImpl::ConfigureVideoPreviewScale(gint dispW, gint dispH)
+{
+	if (m_pNavigationControl == NULL || m_pVideoRotatedPaintable == NULL)
+		return;
+	if (dispW <= 0 || dispH <= 0)
+		return;
+
+	quiver_navigation_control_set_paintable(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),
+		GDK_PAINTABLE(m_pVideoRotatedPaintable), dispW, dispH);
+	UpdateVideoPreviewViewArea();
+}
+
+/* The miniature shows the whole frame, so mark the part of it the window
+ * actually shows.  The video zoom lives in GTK scaling rather than in the
+ * scrollable adjustments, so the rectangle comes from the zoom/pan state
+ * computed in ApplyVideoZoom() and is expressed in normalized display
+ * coordinates (the miniature is drawn through the same rotation as the main
+ * view, so a quarter turn swaps the axes and a half turn mirrors them). */
+void Viewer::ViewerImpl::UpdateVideoPreviewViewArea()
+{
+	if (m_pNavigationControl == NULL)
+		return;
+
+	if (!IsVideo() || m_pVideoRotatedPaintable == NULL)
+	{
+		quiver_navigation_control_set_view_area_normalized(
+			QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), 0.0, 0.0, 0.0, 0.0);
+		return;
+	}
+
+	quiver_navigation_control_set_view_area_normalized(
+		QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),
+		m_dVideoPreviewViewX, m_dVideoPreviewViewY,
+		m_dVideoPreviewViewW, m_dVideoPreviewViewH);
+}
+
+/* Detach the miniature from the nav control.  Because the nav control shares
+ * the main view's m_pVideoRotatedPaintable directly, only the control's reference
+ * is released here. */
+void Viewer::ViewerImpl::ReleaseVideoPreview()
+{
+	if (m_pNavigationControl != NULL)
+	{
+		quiver_navigation_control_set_view_area_normalized(
+			QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), 0.0, 0.0, 0.0, 0.0);
+		quiver_navigation_control_set_paintable(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl),
+			NULL, 0, 0);
+	}
+	m_dVideoPreviewViewX = 0.0;
+	m_dVideoPreviewViewY = 0.0;
+	m_dVideoPreviewViewW = 0.0;
+	m_dVideoPreviewViewH = 0.0;
+	m_dVideoPreviewDispW = 0.0;
+	m_dVideoPreviewDispH = 0.0;
+	m_bVideoPreviewHasFrame = FALSE;
+}
+
+GstElement* Viewer::ViewerImpl::BuildVideoZoomBin()
+{
+	ReleaseVideoPreview();
+
+	m_pVideoZoomInput = NULL;
+	m_pVideoCrop = NULL;
+	m_pVideoZoomConvert = NULL;
+	m_pVideoZoomScaler = NULL;
+	m_pVideoZoomCaps = NULL;
+	m_pVideoZoomInputCaps = NULL;
+	m_VideoZoomType = VIDEO_ZOOM_GL;
+
+	GstElement *raw_sink = gst_element_factory_make("gtk4paintablesink", NULL);
+	if (raw_sink != NULL)
+	{
+		if (g_object_class_find_property(G_OBJECT_GET_CLASS(raw_sink), "force-aspect-ratio") != NULL)
+			g_object_set(G_OBJECT(raw_sink), "force-aspect-ratio", TRUE, NULL);
+	}
+	else
+	{
+		raw_sink = gst_element_factory_make("gtk4sink", NULL);
+		if (raw_sink != NULL && g_object_class_find_property(G_OBJECT_GET_CLASS(raw_sink), "force-aspect-ratio") != NULL)
+			g_object_set(G_OBJECT(raw_sink), "force-aspect-ratio", TRUE, NULL);
+	}
+
+	if (raw_sink == NULL)
+	{
+		// Fallback for headless environments without gtk4paintablesink
+		raw_sink = gst_element_factory_make("fakesink", "fallback_fakesink");
+	}
+
+	if (raw_sink == NULL)
+	{
+		return NULL;
+	}
+
+	if (m_pVideoPaintable != NULL && G_IS_OBJECT(m_pVideoPaintable))
+	{
+		g_signal_handlers_disconnect_by_data(m_pVideoPaintable, this);
+		g_object_unref(m_pVideoPaintable);
+		m_pVideoPaintable = NULL;
+	}
+
+	if (g_object_class_find_property(G_OBJECT_GET_CLASS(raw_sink), "paintable") != NULL)
+	{
+		g_object_get(G_OBJECT(raw_sink), "paintable", &m_pVideoPaintable, NULL);
+		if (m_pVideoPaintable != NULL)
+		{
+			g_signal_connect(m_pVideoPaintable, "invalidate-contents", G_CALLBACK(video_paintable_invalidated_cb), this);
+		}
+	}
+
+	if (m_pVideoRotatedPaintable != NULL)
+	{
+		quiver_rotated_paintable_set_underlying(m_pVideoRotatedPaintable, m_pVideoPaintable);
+	}
+
+	if (g_object_class_find_property(G_OBJECT_GET_CLASS(raw_sink), "qos") != NULL)
+	{
+		g_object_set(G_OBJECT(raw_sink), "qos", FALSE, NULL);
+	}
+
+	GstElement *zoombin = gst_bin_new("videozoom");
+	GstElement *first_element = NULL;
+
+	GstElement *glupload_zoom = gst_element_factory_make("glupload", "zoomupload");
+	GstElement *glcolorconvert = gst_element_factory_make("glcolorconvert", "zoomcolorconvert");
+	m_pVideoZoomScaler = gst_element_factory_make("gltransformation", "zoomtransform");
+
+	if (m_pVideoZoomScaler != NULL)
+	{
+		g_object_set(G_OBJECT(m_pVideoZoomScaler), "ortho", TRUE, NULL);
+		if (g_object_class_find_property(G_OBJECT_GET_CLASS(m_pVideoZoomScaler), "qos") != NULL)
+			g_object_set(G_OBJECT(m_pVideoZoomScaler), "qos", FALSE, NULL);
+	}
+	if (glcolorconvert != NULL && g_object_class_find_property(G_OBJECT_GET_CLASS(glcolorconvert), "qos") != NULL)
+	{
+		g_object_set(G_OBJECT(glcolorconvert), "qos", FALSE, NULL);
+	}
+
+	GstElement *chain[4] = { glupload_zoom, glcolorconvert, m_pVideoZoomScaler, raw_sink };
+	gboolean bChainOk = TRUE;
+	guint n_added = 0;
+	GstElement *added_elements[4];
+	for (guint i = 0; i < 4; ++i)
+	{
+		if (chain[i] == NULL || !gst_bin_add(GST_BIN(zoombin), chain[i]))
+		{
+			bChainOk = FALSE;
+			break;
+		}
+		added_elements[n_added++] = chain[i];
+	}
+	if (bChainOk)
+	{
+		for (guint i = 0; i + 1 < 4; ++i)
+		{
+			if (!gst_element_link(chain[i], chain[i + 1]))
+			{
+				bChainOk = FALSE;
+				break;
+			}
+		}
+	}
+	if (bChainOk)
+	{
+		first_element = glupload_zoom;
+	}
+
+	if (bChainOk)
+	{
+		auto attach_alloc_probe = [this](GstElement *element, const char *pad_name) {
+			if (element == NULL) return;
+			GstPad *pad = gst_element_get_static_pad(element, pad_name);
+			if (pad != NULL)
+			{
+				gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
+					video_allocation_query_probe, this, NULL);
+				gst_object_unref(pad);
+			}
+		};
+
+		attach_alloc_probe(glupload_zoom, "sink");
+		attach_alloc_probe(glcolorconvert, "sink");
+		attach_alloc_probe(m_pVideoZoomScaler, "sink");
+
+		bool bGlitchDebug = is_glitch_debug_enabled();
+
+		if (first_element != NULL)
+		{
+			GstPad *crop_sinkpad = gst_element_get_static_pad(first_element, "sink");
+			if (crop_sinkpad != NULL)
+			{
+				GstPadProbeType ptype = bGlitchDebug ?
+					(GstPadProbeType)(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM | GST_PAD_PROBE_TYPE_BUFFER) :
+					GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM;
+				gst_pad_add_probe(crop_sinkpad, ptype, video_crop_pad_probe, this, NULL);
+				gst_pad_add_probe(crop_sinkpad, GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, video_zoom_reconfigure_probe, this, NULL);
+
+				gst_element_add_pad(zoombin, gst_ghost_pad_new("sink", crop_sinkpad));
+				gst_object_unref(crop_sinkpad);
+			}
+		}
+
+		GstPad *raw_sink_pad = gst_element_get_static_pad(raw_sink, "sink");
+		if (raw_sink_pad != NULL)
+		{
+			if (bGlitchDebug)
+			{
+				gst_pad_add_probe(raw_sink_pad,
+					(GstPadProbeType)(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM | GST_PAD_PROBE_TYPE_BUFFER),
+					video_sink_glitch_probe_cb, this, NULL);
+			}
+			gst_pad_add_probe(raw_sink_pad,
+				GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
+				video_allocation_query_probe, this, NULL);
+			gst_object_unref(raw_sink_pad);
+		}
+
+		video_glitch_log_event("=== Quiver Video Active (zoombin) ===");
+		if (bGlitchDebug)
+		{
+			std::cerr << "\033[1;36m[QUIVER GLITCH DETECTOR ACTIVE] Probing Decoder Output and Display Sink. Logging to quiver_glitch_log.txt\033[0m\n";
+		}
+
+		return zoombin;
+	}
+	else
+	{
+		g_object_ref(raw_sink);
+		for (guint i = 0; i < n_added; ++i)
+		{
+			gst_bin_remove(GST_BIN(zoombin), added_elements[i]);
+		}
+		gst_object_unref(zoombin);
+		if (m_pVideoZoomScaler != NULL)
+			gst_object_unref(m_pVideoZoomScaler);
+		m_pVideoCrop = NULL;
+		m_pVideoZoomConvert = NULL;
+		m_pVideoZoomScaler = NULL;
+		m_pVideoZoomCaps = NULL;
+		m_pVideoZoomInputCaps = NULL;
+		m_VideoZoomType = VIDEO_ZOOM_SOFTWARE;
+
+		bool bGlitchDebug = is_glitch_debug_enabled();
+		GstPad *raw_sink_pad = gst_element_get_static_pad(raw_sink, "sink");
+		if (raw_sink_pad != NULL)
+		{
+			if (bGlitchDebug)
+			{
+				gst_pad_add_probe(raw_sink_pad,
+					(GstPadProbeType)(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM | GST_PAD_PROBE_TYPE_BUFFER),
+					video_sink_glitch_probe_cb, this, NULL);
+			}
+			gst_pad_add_probe(raw_sink_pad,
+				GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
+				video_allocation_query_probe, this, NULL);
+			gst_object_unref(raw_sink_pad);
+		}
+
+		video_glitch_log_event("=== Quiver Video Active (fallback raw_sink) ===");
+		return raw_sink;
+	}
+}
+
+void Viewer::ViewerImpl::RebuildVideoZoomBin()
+{
+	if (m_pPipeline == NULL)
+		return;
+
+	bool hasVideo = IsVideo() && m_bVideoPlaybackStarted;
+	gint64 pos = 0;
+	bool wasPlaying = m_bIsPlaying;
+
+	if (hasVideo)
+	{
+		gst_element_query_position(GST_ELEMENT(m_pPipeline), GST_FORMAT_TIME, &pos);
+	}
+
+	gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_NULL);
+
+	ReleaseVideoPreview();
+
+	GstElement *new_sink = BuildVideoZoomBin();
+	if (new_sink != NULL)
+	{
+		g_object_set(G_OBJECT(m_pPipeline), "video-sink", new_sink, NULL);
+	}
+
+	if (hasVideo)
+	{
+		m_bVideoNeedsFirstFrame = FALSE;
+		m_bVideoFlushPending = FALSE;
+
+		g_object_set(G_OBJECT(m_pPipeline), "uri", m_ImageListPtr->GetCurrent().GetURI(), NULL);
+		g_object_set(G_OBJECT(m_pPipeline), "mute", m_bMuted ? TRUE : FALSE, NULL);
+		g_object_set(G_OBJECT(m_pPipeline), "volume", m_dVolume, NULL);
+
+		gst_element_set_state(GST_ELEMENT(m_pPipeline), wasPlaying ? GST_STATE_PLAYING : GST_STATE_PAUSED);
+		if (pos > 0)
+		{
+			gst_element_seek(GST_ELEMENT(m_pPipeline),
+				m_dPlaybackSpeed, GST_FORMAT_TIME,
+				GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
+				GST_SEEK_TYPE_SET, pos,
+				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+		}
+		ApplyVideoZoom();
+	}
+
+	UpdateNavigationControl();
+}
+
 /* The nav control only earns its corner when the image does not fit: with
  * upper = MAX(viewport, image) on both axes, an upper that exceeds the page
  * size means there is something to scroll to, i.e. the image is zoomed in or
  * simply larger than the viewer. */
 bool Viewer::ViewerImpl::IsNavControlNeeded() const
 {
-	PreferencesPtr prefsPtr = Preferences::GetInstance();
-	if (!prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL, false))
-		return false;
-	if (m_ImageListPtr == NULL || m_ImageListPtr->GetSize() == 0 || IsVideo())
+	if (m_ImageListPtr == NULL || m_ImageListPtr->GetSize() == 0)
 		return false;
 	if (m_bSlideShowRunning)
+		return false;
+
+	PreferencesPtr prefsPtr = Preferences::GetInstance();
+
+	if (IsVideo())
+	{
+		/* the video zoom lives in the pipeline, not in the scrollable
+		 * adjustments, so the image view's upper/page test below says
+		 * nothing about it.  The control is needed exactly when the window
+		 * shows less than the whole frame, which is the normalized viewport
+		 * rectangle ApplyVideoZoom() keeps up to date. */
+		if (!prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO, false))
+			return false;
+		if (m_pVideoRotatedPaintable == NULL || !m_bVideoPreviewHasFrame)
+			return false;
+		const double veps = 0.005;
+		return (m_dVideoPreviewViewW > veps && m_dVideoPreviewViewW < 1.0 - veps)
+		    || (m_dVideoPreviewViewH > veps && m_dVideoPreviewViewH < 1.0 - veps);
+	}
+
+	if (!prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL, false))
 		return false;
 	if (m_pAdjustmentH == NULL || m_pAdjustmentV == NULL)
 		return false;
@@ -8988,8 +10638,52 @@ void Viewer::ViewerImpl::UpdateNavigationControl()
 	if (NULL == m_pNavControlPill || NULL == m_pNavigationControl)
 		return;
 
-	if (!IsNavControlNeeded())
-		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+	if (IsVideo())
+	{
+		if (IsNavControlNeeded())
+		{
+			gint dispW = (gint)m_dVideoPreviewDispW;
+			gint dispH = (gint)m_dVideoPreviewDispH;
+			if (dispW <= 0 || dispH <= 0)
+			{
+				dispW = m_iVideoWidth;
+				dispH = m_iVideoHeight;
+				if (dispW > 0 && dispH > 0)
+				{
+					if (m_ImageListPtr != NULL)
+					{
+						QuiverFile vf = m_ImageListPtr->GetCurrent();
+						if (vf.GetWidth() > 0 && vf.GetHeight() > 0)
+						{
+							bool codedLandscape = (dispW > dispH);
+							bool displayLandscape = (vf.GetWidth() > vf.GetHeight());
+							if (codedLandscape != displayLandscape)
+								swap(dispW, dispH);
+						}
+					}
+					if (m_iVideoUserRotation == 90 || m_iVideoUserRotation == 270)
+					{
+						swap(dispW, dispH);
+					}
+				}
+			}
+			if (dispW > 0 && dispH > 0)
+			{
+				ConfigureVideoPreviewScale(dispW, dispH);
+				UpdateVideoPreviewViewArea();
+			}
+		}
+		else
+		{
+			quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+			quiver_navigation_control_set_paintable(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL, 0, 0);
+		}
+	}
+	else
+	{
+		if (!IsNavControlNeeded())
+			quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
+	}
 
 	UpdateNavControlVisibility();
 }
@@ -9184,6 +10878,19 @@ void Viewer::ViewerImpl::PreferencesEventHandler::HandlePreferenceChanged(Prefer
 		else if (QUIVER_PREFS_VIEWER_NAV_CONTROL == event->GetKey() )
 		{
 			parent->UpdateNavigationControl();
+		}
+		else if (QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO == event->GetKey() )
+		{
+			parent->UpdateNavigationControl();
+		}
+		else if (QUIVER_PREFS_VIEWER_KINETIC_SCROLLING == event->GetKey() )
+		{
+			parent->m_bKineticScrolling = event->GetNewBoolean();
+			quiver_image_view_set_smooth_scroll(QUIVER_IMAGE_VIEW(parent->m_pImageView), parent->m_bKineticScrolling);
+			if (!parent->m_bKineticScrolling)
+			{
+				parent->StopVideoPanSlowdown();
+			}
 		}
 	}
 	else if (QUIVER_PREFS_SLIDESHOW == event->GetSection() )

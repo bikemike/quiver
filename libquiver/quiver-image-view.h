@@ -79,6 +79,7 @@ GtkWidget *quiver_image_view_new ();
 void quiver_image_view_set_n_columns(QuiverImageView *imageview,guint n_columns);
 void quiver_image_view_set_n_rows(QuiverImageView *imageview,guint n_rows);
 void quiver_image_view_set_smooth_scroll(QuiverImageView *imageview,gboolean smooth_scroll);
+gboolean quiver_image_view_get_smooth_scroll(QuiverImageView *imageview);
 
 void quiver_image_view_set_size(QuiverImageView *imageview, guint width,guint height);
 

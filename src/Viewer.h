@@ -48,6 +48,20 @@ public:
 	void RotateVideo(bool clockwise);
 	int GetVideoUserRotation() const;
 
+	void SetVideoZoom(double zoom);
+	double GetVideoZoom() const;
+	bool IsVideoPanSlowdownActive() const;
+	double GetVideoPanVelocityX() const;
+	double GetVideoPanVelocityY() const;
+	double GetVideoPanX() const;
+	double GetVideoPanY() const;
+	bool CanVideoPan() const;
+	void StartVideoPanSlowdown();
+	void StopVideoPanSlowdown();
+	void RecordVideoPanSample(double dx, double dy, double dt);
+	bool IsVideoPlaying() const;
+	bool IsPointOverControlsOrFilmstrip(double x, double y) const;
+
 	// returns true if the view mode was reset, false if it did not need to be reset
 	bool ResetViewMode();
 
@@ -56,6 +70,7 @@ public:
 	void Hide();
 	
 	void RegisterActions();
+	void UnregisterActions();
 	void SetStatusbar(StatusbarPtr statusbarPtr);
 
 	double GetMagnification() const;
