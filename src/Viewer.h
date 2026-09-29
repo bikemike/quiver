@@ -5,6 +5,8 @@
 
 #include <boost/shared_ptr.hpp>
 
+#include <libquiver/quiver-image-view.h>
+
 #include "ViewerEventSource.h"
 #include "ImageList.h"
 #include "IImageListView.h"
@@ -38,8 +40,16 @@ public:
 	GtkWidget *GetViewerOverlayBar() const;
 	GtkWidget *GetTimelineRow() const;
 	GtkWidget *GetCenterPlayButton() const;
+	GtkWidget *GetViewModeMenuPopover() const;
 	GtkWidget *GetImageView() const;
 	bool IsVideoZoomAnchorCenter() const;
+	/* Whether handing a new image to @pImageView should reset it, given what
+	 * the caller would otherwise do (@bResetViewMode).  Every delivery route
+	 * asks: the image loader's, and the one for a thumbnail that is already
+	 * in the cache, which skips the loader entirely.  A view left in "keep
+	 * zoom and pan" is never reset, so its magnification and centre survive
+	 * the image changing. */
+	static gboolean ShouldResetViewForNewImage(GtkWidget *pImageView, bool bResetViewMode);
 
 	void ToggleMute();
 	bool IsMuted() const;
@@ -55,6 +65,20 @@ public:
 	double GetVideoPanVelocityY() const;
 	double GetVideoPanX() const;
 	double GetVideoPanY() const;
+	/* The video's own view state: the mode the viewer is in, and the *centre* of
+	 * the visible part of the frame, as a fraction (0..1) of the frame on each
+	 * axis.  A fraction of the centre, rather than of the offset, is what means
+	 * the same thing for a frame of any size or aspect ratio: the same centre
+	 * frames the same relative part of any frame, which is what switching from a
+	 * 16:9 to a 4:3 file has to preserve.  It is also what the nav control's
+	 * zoom box shows, as the box's centre. */
+	QuiverImageViewMode GetVideoViewMode() const;
+	double GetVideoPanFractionX() const;
+	double GetVideoPanFractionY() const;
+	/* Place the visible part of the frame at the given centre, as a fraction of
+	 * the frame on each axis - the same units GetVideoPanFractionX/Y report.  A
+	 * centre near an edge is clamped to where the visible part can still fit. */
+	void SetVideoPanFraction(double x, double y);
 	bool CanVideoPan() const;
 	void StartVideoPanSlowdown();
 	void StopVideoPanSlowdown();

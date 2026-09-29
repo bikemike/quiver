@@ -103,6 +103,7 @@ static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong c
 	QuiverIconViewFilmstripSide side, gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data);
+static void image_view_adjustment_value_changed (GtkAdjustment *adjustment, gpointer user_data);
 
 /* Navigation control geometry.  The control is pinned to the bottom-right
  * corner with the same inset from the right edge as from the bottom one; the
@@ -173,6 +174,8 @@ static void viewer_overlay_zoom_in_cb(Viewer::ViewerImpl *p);
 static void viewer_overlay_rotate_ccw_cb(Viewer::ViewerImpl *p);
 static void viewer_overlay_rotate_cw_cb(Viewer::ViewerImpl *p);
 static void viewer_image_submenu_create_popup_cb(GtkMenuButton *button, gpointer user_data);
+static void viewer_view_mode_create_popup_cb(GtkWidget *popover, gpointer user_data);
+static void viewer_view_mode_arrow_cb(Viewer::ViewerImpl *p);
 static void viewer_overlay_fullscreen_cb(Viewer::ViewerImpl *p);
 
 static const char* get_fullscreen_icon_name(bool bFullscreen)
@@ -262,9 +265,16 @@ static gchar* gst_time_format(gint64 time);
 static gboolean video_zoom_timeout(gpointer data);
 #endif
 static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *py);
+static void video_zoom_get_pointer_in(Viewer::ViewerImpl *p, GtkWidget *area, gdouble *px, gdouble *py);
 static void video_zoom_raise_media_windows(Viewer::ViewerImpl *p);
 static void video_zoom_sink_map_cb(GtkWidget *widget, gpointer user_data);
 static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer user_data);
+static void frame_video_preview_from_frames(QuiverImageView *imageview, GdkTexture **frames,
+	gsize n_frames, gint *delays_ms, gint width, gint height, gboolean reset_view_mode,
+	Viewer::ViewerImpl *impl);
+static void frame_video_preview_from_video(QuiverImageView *imageview, GdkTexture *texture,
+	gint width, gint height, gboolean reset_view_mode, Viewer::ViewerImpl *impl);
+static void viewer_image_adjustment_changed_cb(GtkAdjustment *adjustment, gpointer user_data);
 static GstPadProbeReturn video_sink_glitch_probe_cb(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 
 #define OVERLAY_AUTO_HIDE_TIMEOUT_MS   800 /* ms before HUD / filmstrip auto-hide */
@@ -288,6 +298,7 @@ static GstPadProbeReturn video_sink_glitch_probe_cb(GstPad *pad, GstPadProbeInfo
 #define ACTION_VIEWER_ZOOM_100         "Zoom100"
 #define ACTION_VIEWER_ZOOM_IN          "ZoomIn"
 #define ACTION_VIEWER_ZOOM_OUT         "ZoomOut"
+#define ACTION_VIEWER_ZOOM_KEEP        "ZoomKeep"
 #define ACTION_VIEWER_ROTATE_CW        "RotateCW"
 #define ACTION_VIEWER_ROTATE_CCW       "RotateCCW"
 #define ACTION_VIEWER_FLIP_H           "FlipH"
@@ -386,6 +397,10 @@ static const gchar* pszActionsVideo[] =
 struct ViewPixbufTarget {
 	QuiverImageView *pImageView;
 	GtkWidget *pErrorLabel;
+	/* the viewer this target writes into, for the zoom trace only: it is what
+	 * turns a delivery line into "which file" rather than "which picture", and
+	 * without it two stills in a row are indistinguishable in the log */
+	Viewer::ViewerImpl *pOwner;
 	int iRefs;
 };
 
@@ -397,12 +412,48 @@ static void view_pixbuf_target_destroyed(GtkWidget *widget, gpointer data)
 	t->pErrorLabel = NULL;
 }
 
-static ViewPixbufTarget* view_pixbuf_target_new(QuiverImageView *pImageView, GtkWidget *pErrorLabel)
+static ViewPixbufTarget* view_pixbuf_target_new(QuiverImageView *pImageView, GtkWidget *pErrorLabel,
+	Viewer::ViewerImpl *pOwner)
 {
-	ViewPixbufTarget *t = new ViewPixbufTarget{pImageView, pErrorLabel, 1};
+	ViewPixbufTarget *t = new ViewPixbufTarget{pImageView, pErrorLabel, pOwner, 1};
 	g_signal_connect(G_OBJECT(pImageView), "destroy", G_CALLBACK(view_pixbuf_target_destroyed), t);
 	return t;
 }
+
+/* The zoomed view modes both let the user pick the magnification; they only
+ * differ in whether it survives loading the next image. */
+static gboolean viewer_view_mode_is_zoomed(QuiverImageViewMode mode)
+{
+	return (QUIVER_IMAGE_VIEW_MODE_ZOOM == mode
+		|| QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP == mode);
+}
+
+/* "keep zoom and pan": the mode that carries the zoom and the pan over to the
+ * next item, whichever kind of item that is. */
+static gboolean viewer_view_mode_is_keep(QuiverImageViewMode mode)
+{
+	return (QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP == mode);
+}
+
+/* "Keep zoom and pan" has to survive every path that delivers a new image to
+ * the view (the decoded image, the quick preview and the full-size reload), so
+ * the reset is suppressed here rather than at each call site. */
+gboolean Viewer::ShouldResetViewForNewImage(GtkWidget *pImageView, bool bResetViewMode)
+{
+	/* Every route that hands a new image to the view goes through here, the
+	 * loader's as well as the cached thumbnail one: "keep zoom and pan" has
+	 * to survive the image changing, whichever way the new pixels arrive. */
+	if (NULL != pImageView && QUIVER_IS_IMAGE_VIEW(pImageView))
+	{
+		if (QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP == quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pImageView)))
+		{
+			return FALSE;
+		}
+	}
+
+	return bResetViewMode ? TRUE : FALSE;
+}
+
 
 static void view_pixbuf_target_ref(ViewPixbufTarget *t)
 {
@@ -487,9 +538,15 @@ static gboolean idle_set_texture_v(gpointer data) {
 	AsyncTextureData *p = (AsyncTextureData*)data;
 	if (p->pTarget->pImageView != NULL)
 	{
+		/* the delivery that is about to happen, on the GUI thread and with the
+		 * picture the loader finished: the file is named here because that is
+		 * the point at which the next image is really swapped in */
 		show_image_load_error(p->pTarget->pErrorLabel, p->texture == NULL);
 		if (p->bAtSize) {
-			quiver_image_view_set_texture_at_size_ex(p->pTarget->pImageView, p->texture, p->width, p->height, p->bReset);
+			/* a video's own preview arrives here, and the video's zoom and pan
+			 * are what it has to be shown at */
+			frame_video_preview_from_video(p->pTarget->pImageView, p->texture,
+				p->width, p->height, p->bReset, p->pTarget->pOwner);
 		} else {
 			quiver_image_view_set_texture(p->pTarget->pImageView, p->texture);
 		}
@@ -505,8 +562,10 @@ static gboolean idle_set_animation_frames_v(gpointer data) {
 	if (p->pTarget->pImageView != NULL)
 	{
 		show_image_load_error(p->pTarget->pErrorLabel, FALSE);
-		quiver_image_view_set_animation_frames(p->pTarget->pImageView,
-			p->frames, p->delays, p->count, p->width, p->height, p->bReset);
+		/* a video's preview arrives as frames, and is framed like any other
+		 * delivery: the flag, the picture, then the video's zoom and pan */
+		frame_video_preview_from_frames(p->pTarget->pImageView, p->frames, p->count,
+			p->delays, p->width, p->height, p->bReset, p->pTarget->pOwner);
 	}
 	quiver_animation_frames_free(p->frames, p->delays, p->count);
 	view_pixbuf_target_unref(p->pTarget);
@@ -517,8 +576,9 @@ static gboolean idle_set_animation_frames_v(gpointer data) {
 class ViewerImageViewPixbufLoaderObserver : public IPixbufLoaderObserver
 {
 public:
-	ViewerImageViewPixbufLoaderObserver(QuiverImageView *imageview, GtkWidget *pErrorLabel)
-		: m_pTarget(view_pixbuf_target_new(imageview, pErrorLabel)) {};
+	ViewerImageViewPixbufLoaderObserver(QuiverImageView *imageview, GtkWidget *pErrorLabel,
+		Viewer::ViewerImpl *pOwner)
+		: m_pTarget(view_pixbuf_target_new(imageview, pErrorLabel, pOwner)) {};
 	virtual ~ViewerImageViewPixbufLoaderObserver(){
 		if (m_pTarget && m_pTarget->pImageView && G_IS_OBJECT(m_pTarget->pImageView))
 		{
@@ -550,7 +610,7 @@ public:
 		}
 	};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
-		gboolean bReset = bResetViewMode ? TRUE : FALSE;
+		gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 		if (ThreadUtil::IsGUIThread()) {
 			show_image_load_error(m_pTarget->pErrorLabel, false);
 			quiver_image_view_set_pixbuf_at_size_ex(m_pTarget->pImageView,pixbuf,width,height,bReset);
@@ -574,10 +634,13 @@ public:
 		}
 	};
 	virtual void SetTextureAtSize(GdkTexture *texture, gint width, gint height, bool bResetViewMode = true ){
-		gboolean bReset = bResetViewMode ? TRUE : FALSE;
+		gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 		if (ThreadUtil::IsGUIThread()) {
 			show_image_load_error(m_pTarget->pErrorLabel, false);
-			quiver_image_view_set_texture_at_size_ex(m_pTarget->pImageView, texture, width, height, bReset);
+			/* a video's own preview arrives here, and the video's zoom and pan
+			 * are what it has to be shown at */
+			frame_video_preview_from_video(m_pTarget->pImageView, texture,
+				width, height, bReset, m_pTarget->pOwner);
 		} else {
 			if (texture) g_object_ref(texture);
 			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, width, height, bReset, true};
@@ -587,11 +650,13 @@ public:
 	};
 	virtual void SetAnimationFrames(GdkTexture **frames, gint *delays_ms, gsize n_frames,
 	                               gint width, gint height, bool bResetViewMode = true ){
-		gboolean bReset = bResetViewMode ? TRUE : FALSE;
+		gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 		if (ThreadUtil::IsGUIThread()) {
 			show_image_load_error(m_pTarget->pErrorLabel, false);
-			quiver_image_view_set_animation_frames(m_pTarget->pImageView,
-				frames, delays_ms, n_frames, width, height, bReset);
+			/* a video's preview arrives as frames, and is framed like any other
+			 * delivery: the flag, the picture, then the video's zoom and pan */
+			frame_video_preview_from_frames(m_pTarget->pImageView, frames, n_frames,
+				delays_ms, width, height, bReset, m_pTarget->pOwner);
 			quiver_animation_frames_free(frames, delays_ms, n_frames);
 		} else {
 			AsyncAnimationFramesData *data = new AsyncAnimationFramesData{
@@ -637,6 +702,7 @@ public:
 	void CacheImageAtSize(QuiverFile f, int w, int h);
 	void LoadImageAtSize(QuiverFile f, int w, int h);
 	void LoadImage(QuiverFile f);
+	void GrowDecodeSizeForZoom(QuiverFile f, gint &width, gint &height);
 
 	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
 	void AddFilmstrip();
@@ -741,7 +807,7 @@ public:
 	void SkipBack();
 	void SeekRelative(gint64 seconds);
 	void UpdateTimeline();
-	void StopVideo(bool reloadImage = true);
+	void StopVideo(bool reloadImage = true, bool keepPreviewFraming = false);
 	void SetPlaybackSpeed(double speed);
 	void Snapshot();
 	bool IsMuted() const { return m_bMuted; }
@@ -755,7 +821,68 @@ public:
 
 	// video zoom (in-pipeline crop, optionally HW-accelerated upscale)
 	void SetVideoZoom(gdouble zoom);
+	/* the visible part of the frame, as a fraction of it (0..1) */
+	void SetVideoPanPixels(gdouble px, gdouble py);
+	gdouble GetVideoPanOffsetX() const;
+	gdouble GetVideoPanOffsetY() const;
+	void CaptureVideoPanFromPreview();
+	/* Take the zoom and the pan from the quick preview that is on screen, and
+	 * report whether there was a framing to take (a preview showing the whole
+	 * frame has none, and leaves the video's own zoom alone) */
+	bool AdoptVideoPreviewFraming(bool bProvisional = false);
+	/* The picture the view is drawing, which is what a magnification is
+	 * measured against: not the texture decoded for it, which can be a small
+	 * grab scaled up to fill the frame, but the size the picture was declared at
+	 * - for a video's quick preview, the frame's own size. */
+	bool GetPreviewPictureSize(gint* width, gint* height) const;
+	/* Put the quick preview at the zoom and the pan the video itself is going
+	 * to play at, which is the only framing that can be right for a video: the
+	 * picture the image view is holding is a preview that was fitted into the
+	 * widget, not the framing the user chose, so nothing it kept from the
+	 * previous item is worth keeping here. */
+	/* Bring the quick preview to the video's zoom and pan.  bNewPicture says the
+	 * picture has just landed, which is the only time the view's own framing can
+	 * be the one to keep - a re-frame after a zoom change is the other way
+	 * round, the video is the authority and the view is told. */
+	void FrameVideoPreviewFromVideo(gboolean bNewPicture);
+	bool IsVideoPreviewFraming() const;
+	/* true while a picture is being handed to the view: the adjustments move
+	 * then, and what they say is the delivery's own doing rather than a place
+	 * the user put the video, so it is not read back as one */
+	bool m_bFramingVideoPreview = false;
+	/* the item whose quick preview is on screen, framed to that video's zoom and
+	 * pan.  Empty is "no picture is a pan source": the view is showing the
+	 * previous item, a half-laid-out delivery, or nothing at all, and where it
+	 * happens to be scrolled to then says nothing about where the video that is
+	 * loading is to play from.  Naming the item rather than holding a flag is
+	 * what makes this self-checking - the moment the list moves on, the name on
+	 * screen is the wrong one and the view stops being read. */
+	std::string m_sPreviewPanItem;
+	bool IsPreviewPanValid() const;
+	/* A preview picture landed while the view still had no viewport, so whether
+	 * the framing on screen is one worth keeping could not be told apart from
+	 * one that is merely fitted.  Nothing is imposed until the view has been
+	 * laid out, and the first layout decides: imposing the video's own zoom in
+	 * the meantime is what dropped a zoom the user had just made on a still.
+	 * The magnification it was decided at is kept with it, because the decision
+	 * is only about the zoom: if the framing on screen has moved on since - the
+	 * user zoomed or panned the preview - then it is theirs and re-deciding would
+	 * take it away. */
+	bool m_bPreviewFramingPending = false;
+	double m_dPreviewFramingMag = 0.;
+	void UpdateVideoPreviewViewAreaFromImageView();
+	bool IsVideoPreviewShowing() const;
+	void ResetVideoPan();
+	QuiverImageViewMode GetViewMode() const;
+	void SetVideoViewMode(QuiverImageViewMode mode);
 	void ApplyVideoZoom();
+	/* before the first frame the pipeline has no size to scale, so the zoom
+	 * is applied to the quick preview instead and handed to the video when
+	 * playback starts; borrowing/returning the image view keeps the image's
+	 * own view mode and zoom untouched */
+	void ApplyVideoPreviewZoom(gdouble zoom);
+	void BorrowImageViewForPreviewZoom();
+	void ReturnImageViewFromPreviewZoom();
 	void RotateVideo(bool clockwise);
 	int GetVideoUserRotation() const { return m_iVideoUserRotation; }
 
@@ -914,10 +1041,59 @@ public:
 	gdouble     m_dVideoZoom;       // current video zoom factor (1.0 = actual size, like the image view)
 	gdouble     m_dVideoZoomFinal;  // target video zoom factor for the smooth animation
 	gdouble     m_dVideoZoomMin;    // lowest zoom allowed: the fit level seen so far (1.0 when actual size)
+	/* The video's copy of the viewer's view mode, kept in step with the image
+	 * view's by GetViewMode()/SetVideoViewMode(): the video's own zoom and pan
+	 * live beside the image view's, but the mode itself is the viewer's, so
+	 * "keep zoom and pan" means the same thing for a photo and a video. */
+	QuiverImageViewMode m_eVideoViewMode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH;
+	/* TRUE while a zoom chosen on the not-yet-playing video is held for the
+	 * first ApplyVideoZoom, which then bounds it by the real fit level */
+	gboolean    m_bVideoZoomFromPreview = false;
+	/* TRUE while the visible region the quick preview was left at is held as
+	 * the pan for the first ApplyVideoZoom, so playback starts there */
+	gboolean    m_bVideoPanFromPreview = false;
+	/* the image view's magnification and center, taken before the preview zoom
+	 * borrowed it (the view mode is the viewer's own, so it is not part of
+	 * this: it is the live one that is put back, not a snapshot) */
+	gboolean    m_bPreviewZoomBorrowed = false;
+	gdouble     m_dPreviewZoomSavedMag = 1.0;
+	gdouble     m_dPreviewZoomSavedCenterX = 0.0;
+	gdouble     m_dPreviewZoomSavedCenterY = 0.0;
+	gboolean    m_bPreviewZoomSavedCenter = false;
 	guint       m_iVideoZoomTimeoutID; // timer driving the smooth video zoom animation
 	guint       m_iGstBusWatchID = 0;  // watch ID for GStreamer bus messages
-	gdouble     m_dVideoPanX;       // viewport (visible part of the frame) left edge, in source px
-	gdouble     m_dVideoPanY;       // viewport top edge, in source pixels
+	/* Where the *centre* of the visible part of the frame sits, as a fraction
+	 * (0..1) of the frame itself on each axis: 0.5 is the middle, and one
+	 * value per axis describes the same point whatever the frame's aspect
+	 * ratio is.
+	 *
+	 * The centre, and not the offset of the region's left edge, is what carries
+	 * over between items.  An offset as a fraction would have to be re-normalized
+	 * against the new frame's own scroll range, and since that range depends on
+	 * the frame's aspect ratio and on the zoom, the same stored value lands on
+	 * a different point of the picture: switching from a 16:9 to a 4:3 file
+	 * would slide the view off the point the user had centred.  The centre is
+	 * scale- and aspect-free, so it frames the same part of any frame.  The
+	 * pixel pan below is derived from it on every layout. */
+	gdouble     m_fVideoPanFX;
+	gdouble     m_fVideoPanFY;
+	/* the size of the visible part of the frame in display px, from the last
+	 * layout: it turns a pixel pan into the centre that is kept, and back */
+	gdouble     m_dVideoViewW;
+	gdouble     m_dVideoViewH;
+	/* the pixel range the visible part can be offset over, from the last
+	 * layout: the part of the frame that is scrolled off, i.e. frame minus the
+	 * visible part */
+	gdouble     m_dVideoPanRangeX;
+	gdouble     m_dVideoPanRangeY;
+	gdouble     m_dVideoPanX;       // viewport (visible part of the frame) left edge, in display px
+	gdouble     m_dVideoPanY;       // viewport top edge, in display px
+	/* the frame the last apply sized the picture for, and the zoom factor it
+	 * used: anchoring the zoom keeps the display point under the pointer where
+	 * it is, but a change of *frame* is not a zoom - it keeps the centre */
+	gdouble     m_dVideoLastFrameW;   // frame width the last applied zoom was for
+	gdouble     m_dVideoLastFrameH;   // frame height the last applied zoom was for
+	gdouble     m_dVideoLastFrameZoom; // zoom factor the last apply used
 	gdouble     m_dVideoLastWidgetW; // last applied video widget width (for zoom anchoring)
 	gdouble     m_dVideoLastWidgetH; // last applied video widget height
 	gdouble     m_dVideoLastZc;      // last applied pipeline crop factor
@@ -1123,7 +1299,16 @@ public:
 	GtkWidget* m_pVideoBlank2;
 	GtkWidget* m_pViewerZoomOutBtn;
 	GtkWidget* m_pViewerZoomFitBtn;
+	/* the arrow half of the split fit/zoom-fit button */
+	GtkWidget* m_pViewModeSplitBox;
+	GtkWidget* m_pViewModeSplitSep;
+	GtkWidget* m_pViewModeMenuBtn;
+	GtkWidget* m_pViewModeMenuPopover;
 	GtkWidget* m_pViewerZoomInBtn;
+	/* thin separators that group the HUD's button clusters */
+	GtkWidget* m_pSepNavigation;
+	GtkWidget* m_pSepRotate;
+	GtkWidget* m_pSepZoom;
 	GtkWidget* m_pViewerRotateCcwBtn;
 	GtkWidget* m_pViewerRotateCwBtn;
 	GtkWidget* m_pViewerFlipHBtn;
@@ -1360,7 +1545,8 @@ void Viewer::ViewerImpl::UpdateUI()
 			if (IsVideo())
 			{
 				bCanZoomIn = (m_dVideoZoomFinal < 16.0);
-				bCanZoomOut = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW
+				bCanZoomOut = (GetViewMode() != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW
+				               && GetViewMode() != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH
 				               && (m_dVideoZoomFinal > m_dVideoZoomMin + 0.005));
 			}
 			else
@@ -1375,8 +1561,8 @@ void Viewer::ViewerImpl::UpdateUI()
 		{
 			if (IsVideo())
 			{
-				bCanZoomFit = (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW
-				               && quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH)
+				bCanZoomFit = (GetViewMode() != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW
+				               && GetViewMode() != QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH)
 				              || m_dVideoZoomFinal > m_dVideoZoomMin + 0.005;
 			}
 			else
@@ -1392,11 +1578,15 @@ void Viewer::ViewerImpl::UpdateUI()
 		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_OUT);
 		if (NULL != action)
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomOut);
+		/* The view-mode popover reuses this action, so it must stay enabled
+		 * while an image is loaded: the whole point of opening the menu is to
+		 * pick a mode, and the mode it is in is very often the one the fit
+		 * button would pick.  bCanZoomFit only drives the button, which is
+		 * legitimately insensitive when the view already fits. */
+		gboolean bHasItems = (m_ImageListPtr && m_ImageListPtr->GetSize() > 0);
 		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_FIT);
 		if (NULL != action)
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bCanZoomFit);
-
-		gboolean bHasItems = (m_ImageListPtr && m_ImageListPtr->GetSize() > 0);
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bHasItems);
 		gboolean bCanPrev = FALSE;
 		gboolean bCanNext = FALSE;
 		if (bHasItems)
@@ -1422,6 +1612,11 @@ void Viewer::ViewerImpl::UpdateUI()
 			gtk_widget_set_visible(m_pImageBlank2, !bIsVid);
 		if (m_pImageSubmenuBtn)
 			gtk_widget_set_visible(m_pImageSubmenuBtn, !bIsVid);
+		if (m_pViewModeSplitBox)
+			/* the split fit/mode control is part of the HUD in both image and
+			 * video mode: it lives in its own slot, so hiding it in one mode
+			 * and showing it in the other would move every button after it */
+			gtk_widget_set_visible(m_pViewModeSplitBox, TRUE);
 
 		if (m_pPlayButton)
 			gtk_widget_set_visible(m_pPlayButton, bIsVid);
@@ -1448,6 +1643,11 @@ void Viewer::ViewerImpl::UpdateUI()
 			gtk_widget_set_sensitive(m_pViewerZoomOutBtn, bCanZoomOut);
 		if (m_pViewerZoomFitBtn)
 			gtk_widget_set_sensitive(m_pViewerZoomFitBtn, bCanZoomFit);
+		if (m_pViewModeMenuBtn)
+			/* always available while an image is loaded: picking a mode is
+			 * precisely what the user does when the current one is already
+			 * the default fit, so this must not follow bCanZoomFit */
+			gtk_widget_set_sensitive(m_pViewModeMenuBtn, bHasItems);
 		if (m_pViewerRotateCcwBtn)
 			gtk_widget_set_sensitive(m_pViewerRotateCcwBtn, bCanRotate);
 		if (m_pViewerRotateCwBtn)
@@ -1666,7 +1866,42 @@ void Viewer::ViewerImpl::LoadImage(QuiverFile f)
 
 	SetCurrentOrientation(f.GetOrientation(), false);
 
+	GrowDecodeSizeForZoom(f, width, height);
+
 	LoadImageAtSize(f, width, height);
+}
+
+/* Zoomed modes scale the image up on screen, so past 1:1 the widget-sized
+ * decode would be soft.  Ask for as many pixels as the magnified image needs;
+ * the loader never returns more than the file actually has, so this only ever
+ * sharpens the result. */
+void Viewer::ViewerImpl::GrowDecodeSizeForZoom(QuiverFile f, gint &width, gint &height)
+{
+	if (!viewer_view_mode_is_zoomed(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView))))
+		return;
+
+	if (f.GetWidth() <= 0 || f.GetHeight() <= 0)
+		return;
+
+	int in_width = f.GetWidth();
+	int in_height = f.GetHeight();
+
+	if (4 < GetMaximizedOrientation(f,true) )
+	{
+		swap(in_width,in_height);
+	}
+
+	gint zoom_width = 0, zoom_height = 0;
+	quiver_image_view_get_pixbuf_display_size_for_mode_alt(
+			QUIVER_IMAGE_VIEW(m_pImageView),
+			QUIVER_IMAGE_VIEW_MODE_ZOOM,
+			in_width, in_height,
+			&zoom_width, &zoom_height);
+
+	if (zoom_width > width)
+		width = zoom_width;
+	if (zoom_height > height)
+		height = zoom_height;
 }
 
 void Viewer::ViewerImpl::LoadImageAtSize(QuiverFile f, int w, int h)
@@ -1738,6 +1973,29 @@ void Viewer::ViewerImpl::CacheNext(bool bDirectionForward)
 	{
 		width = gtk_widget_get_width(m_pImageView);
 		height = gtk_widget_get_height(m_pImageView);
+	}
+
+	/* the cached image replaces the current one when the user navigates, so it
+	 * needs the same decode size the zoomed view will ask for */
+	if (m_ImageListPtr != NULL)
+	{
+		QuiverFile zoom_file;
+		bool bZoomFile = false;
+		if (bDirectionForward && m_ImageListPtr->HasNext())
+		{
+			zoom_file = m_ImageListPtr->GetNext();
+			bZoomFile = true;
+		}
+		else if (!bDirectionForward && m_ImageListPtr->HasPrevious())
+		{
+			zoom_file = m_ImageListPtr->GetPrevious();
+			bZoomFile = true;
+		}
+
+		if (bZoomFile)
+		{
+			GrowDecodeSizeForZoom(zoom_file, width, height);
+		}
 	}
 
 	if (bDirectionForward)
@@ -1822,7 +2080,11 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			{
 				swap(w, h);
 			}
-			quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(m_pImageView), cached_thumb, w, h, TRUE);
+			/* the cached thumbnail is delivered straight to the view, so it
+			 * has to go through the same guard as the loader's: a "keep zoom
+			 * and pan" image must not be reset by a cache hit */
+			quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(m_pImageView), cached_thumb, w, h,
+				Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pImageView), TRUE));
 			g_object_unref(cached_thumb);
 		}
 		
@@ -2740,6 +3002,13 @@ timeout_event_motion_notify (gpointer user_data)
 			bKeepVisible = TRUE;
 	}
 
+	// ...and while the view mode popover of the split button is open
+	if (!bKeepVisible && pViewerImpl->m_pViewModeMenuPopover != NULL)
+	{
+		if (gtk_widget_get_visible(GTK_WIDGET(pViewerImpl->m_pViewModeMenuPopover)))
+			bKeepVisible = TRUE;
+	}
+
 	// ...and while a GTK grab is active (e.g. dragging the timeline scale)
 	if (!bKeepVisible && FALSE)
 		bKeepVisible = TRUE;
@@ -2920,6 +3189,26 @@ static void controls_show_on_event_cb(GtkEventControllerMotion *controller, gdou
 	p->RefreshAutoHideTimer();
 }
 
+/* The zoom-fit split control is a single button to the eye: while the pointer is
+ * anywhere in it the whole box gets a highlight (including the separator, which
+ * has no hover of its own) and the half under the pointer adds a second, stronger
+ * one from the :hover rule on its child button. */
+static void viewer_split_button_enter_cb(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
+{
+	(void)controller; (void)x; (void)y;
+	GtkWidget *box = GTK_WIDGET(user_data);
+	if (GTK_IS_WIDGET(box))
+		gtk_widget_add_css_class(box, "view-mode-split-hovered");
+}
+
+static void viewer_split_button_leave_cb(GtkEventControllerMotion *controller, gpointer user_data)
+{
+	(void)controller;
+	GtkWidget *box = GTK_WIDGET(user_data);
+	if (GTK_IS_WIDGET(box))
+		gtk_widget_remove_css_class(box, "view-mode-split-hovered");
+}
+
 static void
 viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
 {
@@ -2937,8 +3226,9 @@ viewer_motion_notify(GtkEventControllerMotion *controller, gdouble x, gdouble y,
 			pViewerImpl->m_bVideoPanSlowdownInterrupted = false;
 		}
 		gdouble srcPerPx = (pViewerImpl->m_dVideoZoom > 0.) ? (1. / pViewerImpl->m_dVideoZoom) : 1.;
-		pViewerImpl->m_dVideoPanX = pViewerImpl->m_dVideoPanStartPX - (x - pViewerImpl->m_dVideoPanStartRootX) * srcPerPx;
-		pViewerImpl->m_dVideoPanY = pViewerImpl->m_dVideoPanStartPY - (y - pViewerImpl->m_dVideoPanStartRootY) * srcPerPx;
+		pViewerImpl->SetVideoPanPixels(
+			pViewerImpl->m_dVideoPanStartPX - (x - pViewerImpl->m_dVideoPanStartRootX) * srcPerPx,
+			pViewerImpl->m_dVideoPanStartPY - (y - pViewerImpl->m_dVideoPanStartRootY) * srcPerPx);
 
 		gint64 now = g_get_monotonic_time();
 		if (pViewerImpl->m_iVideoPanLastMotionTime > 0)
@@ -3039,7 +3329,8 @@ static void viewer_gesture_zoom_scale_changed_cb(GtkGestureZoom *gesture, gdoubl
 	}
 	else
 	{
-		if (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView)) != QUIVER_IMAGE_VIEW_MODE_ZOOM)
+		QuiverImageViewMode zoom_mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView));
+		if (!viewer_view_mode_is_zoomed(zoom_mode))
 		{
 			quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView), QUIVER_IMAGE_VIEW_MODE_ZOOM);
 		}
@@ -3088,8 +3379,9 @@ static void viewer_two_finger_pan_update_cb(GtkGestureDrag *gesture, gdouble off
 	if (p->IsVideo())
 	{
 		gdouble srcPerPx = (p->m_dVideoZoom > 0.) ? (1. / p->m_dVideoZoom) : 1.;
-		p->m_dVideoPanX = p->m_dTwoFingerPanStartVidX - offset_x * srcPerPx;
-		p->m_dVideoPanY = p->m_dTwoFingerPanStartVidY - offset_y * srcPerPx;
+		p->SetVideoPanPixels(
+			p->m_dTwoFingerPanStartVidX - offset_x * srcPerPx,
+			p->m_dTwoFingerPanStartVidY - offset_y * srcPerPx);
 		p->ApplyVideoZoom();
 
 		gint64 now = g_get_monotonic_time();
@@ -3124,7 +3416,7 @@ static void viewer_two_finger_pan_update_cb(GtkGestureDrag *gesture, gdouble off
 	}
 	else
 	{
-		if (quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView)) == QUIVER_IMAGE_VIEW_MODE_ZOOM)
+		if (viewer_view_mode_is_zoomed(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(p->m_pImageView))))
 		{
 			GtkAdjustment *hadj = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(p->m_pImageView));
 			GtkAdjustment *vadj = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(p->m_pImageView));
@@ -3217,7 +3509,7 @@ static void viewer_swipe_cb(GtkGestureSwipe *gesture, gdouble velocity_x, gdoubl
 	{
 		QuiverImageView *iv = QUIVER_IMAGE_VIEW(p->m_pImageView);
 		QuiverImageViewMode mode = quiver_image_view_get_view_mode(iv);
-		if (mode == QUIVER_IMAGE_VIEW_MODE_ZOOM || mode == QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE)
+		if (viewer_view_mode_is_zoomed(mode) || mode == QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE)
 		{
 			return;
 		}
@@ -3388,7 +3680,9 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 	if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_FIT)
 		|| 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_FIT_STRETCH)
 		|| 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_100)
-		|| 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_FILL_SCREEN))
+		|| 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_FILL_SCREEN)
+		|| 0 == strcmp(szAction, ACTION_VIEWER_ZOOM)
+		|| 0 == strcmp(szAction, ACTION_VIEWER_ZOOM_KEEP))
 	{
 		QuiverImageViewMode zoom_mode = (QuiverImageViewMode)QuiverUtils::GetRadioActionCurrent(szAction);
 		if (pViewerImpl->IsVideo())
@@ -3398,11 +3692,14 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 				g_source_remove(pViewerImpl->m_iVideoZoomTimeoutID);
 				pViewerImpl->m_iVideoZoomTimeoutID = 0;
 			}
-			/* update the image view first so ApplyVideoZoom reads the new mode */
-			quiver_image_view_set_view_mode(imageview, zoom_mode);
+			/* the mode is the viewer's, so the video is shown in the mode the
+			 * stills are: "keep zoom and pan" keeps the video's zoom and pan
+			 * too, exactly as it keeps an image's */
+			pViewerImpl->SetVideoViewMode(zoom_mode);
 			/* re-center the visible viewport when changing modes during
 			 * playback, just like the first ApplyVideoZoom after a reset */
 			pViewerImpl->m_dVideoLastWidgetW = 0.;
+			pViewerImpl->m_dVideoLastFrameZoom = 0.;
 			pViewerImpl->ApplyVideoZoom();
 			pViewerImpl->UpdateUI();
 			if (!pViewerImpl->IsPlaying())
@@ -3422,7 +3719,9 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		}
 		else
 		{
-			quiver_image_view_set_view_mode(imageview, zoom_mode);
+			/* the same setter for a still, so the mode picked over an image is
+			 * the mode the next video is shown in */
+			pViewerImpl->SetVideoViewMode(zoom_mode);
 		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ZOOM_IN)
@@ -3434,7 +3733,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			return;
 		}
 
-		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
+		if (!viewer_view_mode_is_zoomed(quiver_image_view_get_view_mode(imageview)))
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
 
 		quiver_image_view_set_magnification(imageview,
@@ -3452,7 +3751,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			return;
 		}
 
-		if (QUIVER_IMAGE_VIEW_MODE_ZOOM != quiver_image_view_get_view_mode(imageview))
+		if (!viewer_view_mode_is_zoomed(quiver_image_view_get_view_mode(imageview)))
 			quiver_image_view_set_view_mode(imageview,QUIVER_IMAGE_VIEW_MODE_ZOOM);
 
 		quiver_image_view_set_magnification(imageview,
@@ -3885,9 +4184,14 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
  		}
   		else
   		{
+			QuiverImageViewMode zoom_mode =
+				quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+			if (!viewer_view_mode_is_zoomed(zoom_mode))
+			{
   			quiver_image_view_set_view_mode(
   				QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView),
   				QUIVER_IMAGE_VIEW_MODE_ZOOM);
+			}
   			/* The scroll events for smooth/device scrolling carry no usable
   			 * position, so the image view derives the zoom anchor from the
   			 * pointer device itself (see set_magnification_full). */
@@ -3907,8 +4211,12 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
  	if (unit == GDK_SCROLL_UNIT_SURFACE)
  	{
  		/* Two-finger smooth pan on touchpad */
- 		if (!pViewerImpl->IsVideo() &&
- 			quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView)) == QUIVER_IMAGE_VIEW_MODE_ZOOM)
+		/* The quick preview is the image view too, so a touchpad pan pans it the
+		* same way it pans a still - until the first frame arrives, when the
+		* video's own pan takes over. */
+		gboolean bPanPreview = pViewerImpl->IsVideo() && !pViewerImpl->m_bVideoPreviewHasFrame;
+		if ((!pViewerImpl->IsVideo() || bPanPreview) &&
+			viewer_view_mode_is_zoomed(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView))))
  		{
  			GtkAdjustment *hadj = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
  			GtkAdjustment *vadj = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
@@ -3931,8 +4239,9 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
  		{
  			pViewerImpl->StopVideoPanSlowdown();
  			gdouble srcPerPx = (pViewerImpl->m_dVideoZoom > 0.) ? (1. / pViewerImpl->m_dVideoZoom) : 1.;
- 			pViewerImpl->m_dVideoPanX += dx * srcPerPx;
- 			pViewerImpl->m_dVideoPanY += dy * srcPerPx;
+			pViewerImpl->SetVideoPanPixels(
+				pViewerImpl->GetVideoPanOffsetX() + dx * srcPerPx,
+				pViewerImpl->GetVideoPanOffsetY() + dy * srcPerPx);
  			pViewerImpl->ApplyVideoZoom();
  			pViewerImpl->RefreshAutoHideTimer();
  			return TRUE;
@@ -4033,8 +4342,12 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
 			action_name = ACTION_VIEWER_ZOOM;
 			break;
+		case QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP:
+			action_name = ACTION_VIEWER_ZOOM_KEEP;
+			break;
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
 			action_name = ACTION_VIEWER_ZOOM_FILL_SCREEN;
+			break;
 		case QUIVER_IMAGE_VIEW_MODE_COUNT:
 		default:
 			break;
@@ -4310,6 +4623,112 @@ static void viewer_submenu_slideshow_cb(GtkWidget *widget, gpointer user_data)
 	{
 		viewer_overlay_slideshow_cb(p);
 	}
+}
+
+/* The list of view modes for the split button in the viewer HUD.  The items are
+ * the zoom radio actions themselves, so the check mark follows the current mode
+ * for free and picking an item goes through the normal action path. */
+/* The view-mode menu never changes, so it is built once together with the HUD
+ * instead of on every click. */
+static GtkWidget *viewer_view_mode_build_popover()
+{
+	GMenu *menu = g_menu_new();
+
+	struct { const char *label; const char *action; const char *accel; const char *icon; } items[] = {
+		{ "Fit to Window",           "quiver.ZoomFit",         "",  "zoom-fit-best-symbolic" },
+		{ "Fit to Window (Stretched)", "quiver.ZoomFitStretch", "",  "zoom-fit-best-symbolic" },
+		{ "Actual Size (100%)",      "quiver.Zoom100",         "",  "zoom-original-symbolic" },
+		{ "Fill Screen",             "quiver.ZoomFillScreen",  "",  "zoom-fill-best-symbolic" },
+		{ "Keep Zoom and Pan",       "quiver.ZoomKeep",        "",  "zoom-in-best-symbolic" },
+	};
+
+	for (gsize i = 0; i < G_N_ELEMENTS(items); i++)
+	{
+		GMenuItem *item = g_menu_item_new(items[i].label, items[i].action);
+		if (items[i].accel != NULL && items[i].accel[0] != '\0')
+			g_menu_item_set_attribute(item, "accel", "s", items[i].accel);
+		if (items[i].icon != NULL && items[i].icon[0] != '\0')
+			g_menu_item_set_attribute(item, "icon", "s", items[i].icon);
+		g_menu_append_item(menu, item);
+		g_object_unref(item);
+	}
+
+	GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+	g_object_unref(menu);
+	gtk_widget_insert_action_group(popover, "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
+	gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
+	return popover;
+}
+
+/* the menu is ready, this only aims it: the HUD sits at the bottom by default,
+ * so the list has to open upwards there */
+static void viewer_view_mode_split_size_sep(GtkWidget *pFitBtn, GtkWidget *pSep)
+{
+	/* The separator inside the split control is half as tall as the button
+	 * beside it: the full-height rules the HUD's button groups are divided
+	 * with are what made it read as another group divider.  It is sized from
+	 * the button rather than in CSS so the ratio holds at any font size. */
+	if (pSep == NULL || !GTK_IS_WIDGET(pSep))
+		return;
+	int min_h = 0, nat_h = 0, min_b = 0, nat_b = 0;
+	if (pFitBtn != NULL && GTK_IS_WIDGET(pFitBtn))
+		gtk_widget_measure(pFitBtn, GTK_ORIENTATION_VERTICAL, -1, &min_h, &nat_h, &min_b, &nat_b);
+	if (min_h <= 0)
+		min_h = nat_h;
+	gtk_widget_set_size_request(pSep, -1, min_h / 2);
+}
+
+static void viewer_view_mode_arrow_set_direction(GtkWidget *pArrow, bool bUp)
+{
+	if (pArrow == NULL || !GTK_IS_BUTTON(pArrow))
+		return;
+	GtkWidget *icon = gtk_button_get_child(GTK_BUTTON(pArrow));
+	if (icon != NULL && GTK_IS_IMAGE(icon))
+	{
+		/* the arrow points at the side the list opens on */
+		gtk_image_set_from_icon_name(GTK_IMAGE(icon), bUp ? "pan-up-symbolic" : "pan-down-symbolic");
+		gtk_image_set_pixel_size(GTK_IMAGE(icon), 12);
+	}
+}
+
+static void viewer_view_mode_arrow_cb(Viewer::ViewerImpl *p)
+{
+	if (p == NULL || p->m_pViewModeMenuPopover == NULL || !G_IS_OBJECT(p->m_pViewModeMenuPopover))
+		return;
+	GtkPopover *pop = GTK_POPOVER(p->m_pViewModeMenuPopover);
+	if (gtk_widget_get_visible(GTK_WIDGET(pop)))
+	{
+		gtk_popover_popdown(pop);
+	}
+	else
+	{
+		gtk_popover_popup(pop);
+	}
+}
+
+static void viewer_view_mode_create_popup_cb(GtkWidget *popover, gpointer user_data)
+{
+	(void)popover;
+	Viewer::ViewerImpl *pViewer = (Viewer::ViewerImpl *)user_data;
+	if (pViewer == NULL || NULL == pViewer->m_pViewModeMenuPopover)
+		return;
+
+	/* a video's view mode lives beside the image view, so tick what the video
+	 * is actually showing rather than what the last still left behind */
+	if (pViewer->IsVideo())
+	{
+		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, pViewer->GetViewMode());
+	}
+	else if (pViewer->m_pImageView != NULL && QUIVER_IS_IMAGE_VIEW(pViewer->m_pImageView))
+	{
+		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM,
+			quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewer->m_pImageView)));
+	}
+
+	PreferencesPtr prefs = Preferences::GetInstance();
+	int hudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
+	gtk_popover_set_position(GTK_POPOVER(pViewer->m_pViewModeMenuPopover),
+		(hudPos == HUD_POS_TOP) ? GTK_POS_BOTTOM : GTK_POS_TOP);
 }
 
 static void viewer_video_submenu_snapshot_cb(GtkWidget *widget, gpointer user_data)
@@ -5050,7 +5469,20 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 	}
 	else
 	{
-		StopVideo(false);
+		/* Playback starts where the quick preview was framed, so the stop that
+		 * goes with loading the URI has to keep that framing: otherwise
+		 * pressing play on a zoomed preview would reset the video to fit and
+		 * the picture would jump from the framing the user chose to a fitted,
+		 * centered frame.  The preview keeps being drawn (and stays borrowed)
+		 * until the first frame replaces it, so there is no flicker either. */
+		/* Whatever the quick preview is showing is where this video starts.
+		 * AdoptVideoPreviewFraming picks up a framing that did not come from a
+		 * zoom of the preview itself - a still that was zoomed to 500% carries
+		 * its magnification onto the next file, so the preview is framed while
+		 * the video's own remembered zoom is still the old one, and starting
+		 * there would drop the picture back to 100% the moment play is pressed. */
+		const bool bKeepPreviewFraming = m_bVideoZoomFromPreview || AdoptVideoPreviewFraming();
+		StopVideo(false, bKeepPreviewFraming);
 		/* Bring the video page up immediately (rather than waiting for
 		 * ASYNC_DONE) so the picture area is visible from the first play.
 		 * The picture is kept transparent until the first frame arrives. */
@@ -5123,7 +5555,7 @@ void Viewer::ViewerImpl::SkipBack()
 	SeekRelative(-10);
 }
 
-void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
+void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */, bool keepPreviewFraming /* = false */)
 {
 	StopVideoPanSlowdown();
 	m_bVideoPanSlowdownInterrupted = false;
@@ -5145,6 +5577,19 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	ResetVideoPreviewViewState();
 	//gtk_widget_set_double_buffered (m_pImageView, TRUE); // Double buffering handled by gtk4sink
 
+	/* a zoom applied to the quick preview borrowed the image view: hand it
+	 * back before the next image is delivered, so that image sees its own
+	 * mode, magnification and center again - unless this stop is the one that
+	 * starts the very video the preview was framing, in which case the borrow
+	 * (and with it the framing) has to survive until the first frame arrives
+	 * and takes the preview over */
+	if (!keepPreviewFraming)
+	{
+		ReturnImageViewFromPreviewZoom();
+		m_bVideoZoomFromPreview = false;
+		m_bVideoPanFromPreview = false;
+	}
+
 	if (reloadImage && 0 != m_ImageListPtr->GetSize())
 	{
 		/* Load the image BEFORE switching the stack to avoid a grey flash
@@ -5160,9 +5605,27 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 	/* reset the digital zoom so the next video starts at fit, and drop the
 	 * stale frame size so a different-sized video is scaled to its own
 	 * dimensions until the caps probe reports them */
+	/* "keep zoom and pan" is a mode of the viewer, so it keeps the video's
+	 * zoom and pan across videos exactly as the image view keeps an image's
+	 * across images; every other mode starts the next video afresh. */
+	if (keepPreviewFraming)
+	{
+		/* the zoom the preview was left at is the zoom this video starts at:
+		 * only the fit level is unknown until the caps probe reports the real
+		 * frame size, and the first ApplyVideoZoom() bounds it by that */
+		m_dVideoZoomMin = 1.0;
+	}
+	else if (viewer_view_mode_is_keep(GetViewMode()))
+	{
+		m_dVideoZoomMin = 1.0;
+	}
+	else
+	{
 	m_dVideoZoom = 1.0;
 	m_dVideoZoomFinal = 1.0;
 	m_dVideoZoomMin = 1.0;
+		m_eVideoViewMode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH;
+	}
 	m_DecoderGlitchTracker.Reset();
 	m_SinkGlitchTracker.Reset();
 	m_dPlaybackSpeed = 1.0;
@@ -5203,9 +5666,19 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */)
 		g_source_remove(m_iVideoZoomTimeoutID);
 		m_iVideoZoomTimeoutID = 0;
 	}
-	m_dVideoPanX = 0.;
-	m_dVideoPanY = 0.;
+	if (!keepPreviewFraming && !viewer_view_mode_is_keep(GetViewMode()))
+	{
+		/* a kept pan is a fraction of the frame, so it needs no reset at all:
+		 * the next video is framed the same way whatever its dimensions */
+		ResetVideoPan();
+	}
+	/* whatever the view is showing now belongs to the item that is leaving, so
+	 * its scroll position is not where this video is to play from */
+	m_sPreviewPanItem.clear();
 	m_dVideoLastWidgetW = 0.;
+	m_dVideoLastFrameW = 0.;
+	m_dVideoLastFrameH = 0.;
+	m_dVideoLastFrameZoom = 0.;
 	m_dVideoLastWidgetH = 0.;
 	m_dVideoLastZc = 1.0;
 	/* reset the zoom chain to its full-frame passthrough state while the
@@ -5314,6 +5787,160 @@ void Viewer::ViewerImpl::Snapshot()
 	}
 }
 
+/* Zooming a video before it is playing used to do nothing: the zoom lives with
+ * the decoded frame, and there is no frame yet.  The quick preview the user is
+ * looking at *is* a decoded still though - it is drawn by the image view while
+ * the video page is still deferred - so the zoom is applied there instead,
+ * scaled so the preview ends up the same size on screen the video will be.
+ * The image view's own mode, magnification and center are borrowed for the
+ * duration and handed back untouched, so the image that was shown before keeps
+ * its "keep zoom and pan" state. */
+void Viewer::ViewerImpl::BorrowImageViewForPreviewZoom()
+{
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
+	if (NULL == iv || !QUIVER_IS_IMAGE_VIEW(iv))
+		return;
+	if (m_bPreviewZoomBorrowed)
+		return;
+
+	m_bPreviewZoomBorrowed = true;
+	m_dPreviewZoomSavedMag = quiver_image_view_get_magnification(iv);
+	m_bPreviewZoomSavedCenter = quiver_image_view_get_view_center(iv,
+		&m_dPreviewZoomSavedCenterX, &m_dPreviewZoomSavedCenterY);
+}
+
+void Viewer::ViewerImpl::ReturnImageViewFromPreviewZoom()
+{
+	if (!m_bPreviewZoomBorrowed)
+		return;
+	m_bPreviewZoomBorrowed = false;
+
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
+	if (NULL == iv || !QUIVER_IS_IMAGE_VIEW(iv))
+		return;
+
+	/* The mode first, and it is the viewer's *current* mode rather than the one
+	 * that happened to be set when the preview was zoomed: the view mode is the
+	 * viewer's, and the user can change it while the preview is up - choosing
+	 * "keep zoom and pan" there is the point of it.  Handing the image view a
+	 * snapshot from before that choice silently undid it, so the next item came
+	 * up in that older mode ("keep zoom and pan" turned back into "fit
+	 * stretch", with the zoom and pan reset to go with it).  An unmagnified mode
+	 * recomputes the magnification from the window, so the saved magnification
+	 * has to be re-applied on top of it. */
+	const QuiverImageViewMode mode = m_eVideoViewMode;
+	quiver_image_view_set_view_mode(iv, mode);
+	/* "Keep zoom and pan" is the exception: what was borrowed is the framing
+	 * that mode keeps, so putting the snapshot back would undo the zoom the user
+	 * just made to the preview and hand the next still the framing from before
+	 * it - which is the one thing this mode exists to prevent.  The mode is
+	 * still set above, so the view stays in it and keeps the framing. */
+	if (viewer_view_mode_is_zoomed(mode) && !viewer_view_mode_is_keep(mode))
+	{
+		quiver_image_view_set_zoom_anchor_center(iv, TRUE);
+		quiver_image_view_set_magnification(iv, m_dPreviewZoomSavedMag);
+		quiver_image_view_set_zoom_anchor_center(iv, FALSE);
+		if (m_bPreviewZoomSavedCenter)
+		{
+			quiver_image_view_set_view_center(iv,
+				m_dPreviewZoomSavedCenterX, m_dPreviewZoomSavedCenterY);
+		}
+	}
+}
+
+void Viewer::ViewerImpl::ApplyVideoPreviewZoom(gdouble zoom)
+{
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
+	if (NULL == iv || !QUIVER_IS_IMAGE_VIEW(iv) || zoom <= 0.)
+		return;
+	/* the preview is only on screen while the video page is still deferred */
+	if (m_pStack != NULL && GTK_IS_STACK(m_pStack))
+	{
+		GtkWidget* page = gtk_stack_get_visible_child(GTK_STACK(m_pStack));
+		if (page != m_pImageView)
+			return;
+	}
+
+	GdkTexture* tex = quiver_image_view_get_texture(iv);
+	if (NULL == tex || m_ImageListPtr == NULL)
+		return;
+
+	QuiverFile vf = m_ImageListPtr->GetCurrent();
+	gint videoW = vf.GetWidth();
+	gint videoH = vf.GetHeight();
+	if (videoW <= 0 || videoH <= 0)
+		return;
+
+	/* The size to scale the zoom by is the size of the *picture*, not of the
+	 * texture holding it: a magnification is relative to the picture and a zoom
+	 * to the frame, so a 128x72 texture of a 1920x1080 frame would scale the zoom
+	 * by 15 and put the preview at fifteen times the size it was asked for - and
+	 * with it, the zoom to the pointer, whose anchor is computed from the same
+	 * two magnifications. */
+	gint pictureW = 0, pictureH = 0;
+	if (!GetPreviewPictureSize(&pictureW, &pictureH))
+		return;
+
+	/* show the preview at the size the video will occupy at this zoom, so the
+	 * framing the user chose is the framing playback starts with */
+	gdouble mag = zoom * ((gdouble)videoW / (gdouble)pictureW);
+	if (mag <= 0. || mag > 16.)
+		return;
+
+	BorrowImageViewForPreviewZoom();
+	{
+		/* Where it is looking stays where it was looking.  While the view is
+		 * showing this video's own preview, its centre is that pan already; when
+		 * it is not - the picture is still on its way, or a previous item is
+		 * still up - the video's pan is the position to zoom about, and it is
+		 * the centre of the frame until anything has put it elsewhere. */
+		gdouble center_x = m_fVideoPanFX, center_y = m_fVideoPanFY;
+		if (IsPreviewPanValid()
+			&& !quiver_image_view_get_view_center(iv, &center_x, &center_y))
+		{
+			center_x = m_fVideoPanFX;
+			center_y = m_fVideoPanFY;
+		}
+		/* Zoom toward the pointer, the way a picture does.  What a zoom to the
+		 * cursor keeps is the point of the picture under the pointer, so that
+		 * point is the anchor and the centre moves by however much of the
+		 * picture comes and goes around it: a magnification shows 1/mag of the
+		 * picture, and the pointer sits a fraction of a viewport off the middle,
+		 * so its point shifts by that fraction of (1/mag before - 1/mag after).
+		 *
+		 * Zooming to the pointer moves the picture, so the pan is read after it
+		 * rather than before: a pan taken at the old centre would have the video
+		 * start where the zoom was, and not where the zoom left the picture. */
+		gdouble px = -1., py = -1.;
+		video_zoom_get_pointer_in(this, GTK_WIDGET(iv), &px, &py);
+		const gdouble widget_w = gtk_widget_get_width(GTK_WIDGET(iv));
+		const gdouble widget_h = gtk_widget_get_height(GTK_WIDGET(iv));
+		const gdouble old_mag = quiver_image_view_get_magnification(iv);
+		if (px >= 0. && py >= 0. && widget_w > 0. && widget_h > 0.
+			&& old_mag > 0. && mag > 0.)
+		{
+			const gdouble shift_x = (px / widget_w - 0.5) * (1. / old_mag - 1. / mag);
+			const gdouble shift_y = (py / widget_h - 0.5) * (1. / old_mag - 1. / mag);
+			center_x = CLAMP(center_x + shift_x, 0., 1.);
+			center_y = CLAMP(center_y + shift_y, 0., 1.);
+		}
+		quiver_image_view_set_framing(iv, mag, center_x, center_y);
+	}
+
+	/* Keep the framing the preview ended up at as a fraction of the frame, the
+	 * same way the video's own pan is kept, and show it in the nav control: a
+	 * zoomed preview is exactly when the box has something to say. */
+	CaptureVideoPanFromPreview();
+	UpdateVideoPreviewViewAreaFromImageView();
+	UpdateNavControlVisibility();
+	/* the preview has just been framed to the zoom the video will play at, so
+	 * from here on where the user puts it is where the video goes */
+	if (IsVideoPreviewShowing() && m_ImageListPtr != NULL)
+		m_sPreviewPanItem = m_ImageListPtr->GetCurrent().GetFilePath();
+	else
+		m_sPreviewPanItem.clear();
+}
+
 void Viewer::ViewerImpl::RotateVideo(bool clockwise)
 {
 	m_iVideoUserRotation = (m_iVideoUserRotation + (clockwise ? 90 : 270)) % 360;
@@ -5322,6 +5949,9 @@ void Viewer::ViewerImpl::RotateVideo(bool clockwise)
 		quiver_rotated_paintable_set_rotation(m_pVideoRotatedPaintable, m_iVideoUserRotation);
 	}
 	m_dVideoLastWidgetW = 0.;
+	m_dVideoLastFrameW = 0.;
+	m_dVideoLastFrameH = 0.;
+	m_dVideoLastFrameZoom = 0.;
 	m_dVideoLastWidgetH = 0.;
 	m_iVideoSinkW = 0;
 	m_iVideoSinkH = 0;
@@ -5594,6 +6224,27 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 	}
 }
 
+/* The quick preview is drawn by the image view, so its zoom and pan are this
+ * widget's scroll position: the nav control's box follows them, which is what
+ * shows the viewport while a video is being framed before it plays. */
+static void viewer_image_adjustment_changed_cb(GtkAdjustment *adjustment, gpointer user_data)
+{
+	(void)adjustment;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (p == NULL || !p->m_spAlive || !*p->m_spAlive)
+		return;
+	if (!p->IsVideoPreviewShowing())
+		return;
+	/* Only the nav control's box follows the preview live here.  The video's own
+	 * pan is read from the preview when the framing matters - when the preview is
+	 * zoomed and when playback starts (AdoptVideoPreviewFraming) - because this
+	 * callback also fires while a *new* file's thumbnail is being laid out, and
+	 * the framing that arrives with a new item is not the user's; taking it
+	 * would drop the pan that "keep zoom and pan" is supposed to carry over. */
+	p->UpdateVideoPreviewViewAreaFromImageView();
+	p->UpdateNavControlVisibility();
+}
+
 static void viewer_menu_item(GMenu *menu, const char *label, const char *action_name,
 	const char *accel, const char *item_id, const char *icon_name = NULL)
 {
@@ -5757,6 +6408,98 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 
 
 
+/* Every HUD widget is owned by the widget tree, and the window may destroy
+ * that tree before the last shared_ptr to the viewer is dropped (the caller
+ * owns the window, not us).  The cached pointers would then be dangling, and
+ * the guarded teardown below would type-check freed memory.  Drop them as
+ * soon as the tree goes away so the destructor only ever sees NULL. */
+static void viewer_widget_tree_destroyed_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)widget;
+	Viewer::ViewerImpl *pViewer = (Viewer::ViewerImpl *)user_data;
+	if (NULL == pViewer)
+	{
+		return;
+	}
+
+	pViewer->m_pHBox = NULL;
+	pViewer->m_pVBox = NULL;
+	pViewer->m_pGrid = NULL;
+	pViewer->m_pOverlay = NULL;
+	pViewer->m_pStack = NULL;
+	pViewer->m_pControlsBox = NULL;
+	pViewer->m_pMediaControls = NULL;
+	pViewer->m_pTransportRow = NULL;
+	pViewer->m_pImageView = NULL;
+	pViewer->m_pIconView = NULL;
+	pViewer->m_pImageErrorLabel = NULL;
+	pViewer->m_pScrollbarH = NULL;
+	pViewer->m_pScrollbarV = NULL;
+	pViewer->m_pNavigationControl = NULL;
+	pViewer->m_pNavControlPill = NULL;
+	pViewer->m_pSlideShowPausedPill = NULL;
+
+	pViewer->m_pViewerOverlayBar = NULL;
+	pViewer->m_pViewerPrevBtn = NULL;
+	pViewer->m_pViewerNextBtn = NULL;
+	pViewer->m_pViewerSlideshowBtn = NULL;
+	pViewer->m_pViewerVideoSlideshowBtn = NULL;
+	pViewer->m_pPlayButton = NULL;
+	pViewer->m_pCenterPlayBtn = NULL;
+	pViewer->m_pPlayImage = NULL;
+	pViewer->m_pPlayAnimWidget = NULL;
+	pViewer->m_pPlayAnimImage = NULL;
+	pViewer->m_pViewerRotateCcwBtn = NULL;
+	pViewer->m_pViewerRotateCwBtn = NULL;
+	pViewer->m_pViewerFlipHBtn = NULL;
+	pViewer->m_pViewerFlipVBtn = NULL;
+	pViewer->m_pRewindBtn = NULL;
+	pViewer->m_pFfBtn = NULL;
+	pViewer->m_pViewerZoomOutBtn = NULL;
+	pViewer->m_pViewerZoomFitBtn = NULL;
+	pViewer->m_pViewModeSplitBox = NULL;
+	pViewer->m_pViewModeSplitSep = NULL;
+	pViewer->m_pViewModeMenuBtn = NULL;
+	pViewer->m_pViewModeMenuPopover = NULL;
+	pViewer->m_pViewerZoomInBtn = NULL;
+	pViewer->m_pSepNavigation = NULL;
+	pViewer->m_pSepRotate = NULL;
+	pViewer->m_pSepZoom = NULL;
+
+	pViewer->m_pImageBlank1 = NULL;
+	pViewer->m_pImageBlank2 = NULL;
+	pViewer->m_pVideoBlank1 = NULL;
+	pViewer->m_pVideoBlank2 = NULL;
+	pViewer->m_pVolumeButton = NULL;
+	pViewer->m_pVolumePopover = NULL;
+	pViewer->m_pVolumeScale = NULL;
+	pViewer->m_pVolumeMuteBtn = NULL;
+	pViewer->m_pSpeedButton = NULL;
+	pViewer->m_pSpeedLabel = NULL;
+	pViewer->m_pSnapBtn = NULL;
+	pViewer->m_pFullscreenBtn = NULL;
+	pViewer->m_pViewerFullscreenBtn = NULL;
+	pViewer->m_pImageSubmenuBtn = NULL;
+	pViewer->m_pImageSubmenuPopover = NULL;
+	pViewer->m_pVideoOptionsBtn = NULL;
+	pViewer->m_pVideoOptionsPopover = NULL;
+	pViewer->m_pVideoSinkWidget = NULL;
+	pViewer->m_pVideoFixed = NULL;
+	pViewer->m_pTimeline = NULL;
+	pViewer->m_pTimelineRow = NULL;
+	pViewer->m_pTimeElapsedLabel = NULL;
+	pViewer->m_pTimeDurationLabel = NULL;
+	pViewer->m_pPlayProgress = NULL;
+	pViewer->m_pFilmstripEdge = NULL;
+	pViewer->m_pFilmstripOverlayContainer = NULL;
+	pViewer->m_pContextMenuPopover = NULL;
+	pViewer->m_pContextMenuTrashBtn = NULL;
+	pViewer->m_pContextMenuRestoreBtn = NULL;
+	pViewer->m_pContextMenuInfoLabel = NULL;
+	pViewer->m_pDragSource = NULL;
+	pViewer->m_pDropTarget = NULL;
+}
+
 Viewer::ViewerImpl::~ViewerImpl()
 {
 	/* The action group is global and outlives this object: the actions
@@ -5916,6 +6659,12 @@ Viewer::ViewerImpl::~ViewerImpl()
 	}
 	m_pImageSubmenuPopover = NULL;
 
+	if (m_pViewModeMenuPopover && G_IS_OBJECT(m_pViewModeMenuPopover))
+	{
+		gtk_widget_unparent(GTK_WIDGET(m_pViewModeMenuPopover));
+	}
+	m_pViewModeMenuPopover = NULL;
+
 	if (m_pSpeedButton && GTK_IS_MENU_BUTTON(m_pSpeedButton))
 	{
 		gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pSpeedButton), NULL);
@@ -5930,6 +6679,12 @@ Viewer::ViewerImpl::~ViewerImpl()
 	/* Disconnect all GObject signal handlers that captured `this` so no
 	 * callback fires into the freed ViewerImpl during widget tree teardown */
 	ReleaseVideoPreview();
+	/* still our widget: stop it from writing the cached pointers after the
+	 * object is gone (a destroyed tree already NULLed them) */
+	if (m_pHBox && G_IS_OBJECT(m_pHBox))
+	{
+		g_signal_handlers_disconnect_by_data(m_pHBox, this);
+	}
 	if (m_pAdjustmentH && G_IS_OBJECT(m_pAdjustmentH))
 	{
 		g_signal_handlers_disconnect_by_data(m_pAdjustmentH, this);
@@ -5991,6 +6746,10 @@ Viewer::ViewerImpl::~ViewerImpl()
 	if (m_pImageSubmenuBtn && G_IS_OBJECT(m_pImageSubmenuBtn))
 	{
 		g_signal_handlers_disconnect_by_data(m_pImageSubmenuBtn, this);
+	}
+	if (m_pViewModeMenuBtn && G_IS_OBJECT(m_pViewModeMenuBtn))
+	{
+		g_signal_handlers_disconnect_by_data(m_pViewModeMenuBtn, this);
 	}
 	if (m_pViewerFlipHBtn && G_IS_OBJECT(m_pViewerFlipHBtn))
 	{
@@ -6966,6 +7725,26 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 			p->m_bVideoPagePending = FALSE;
 			gtk_stack_set_visible_child_name(GTK_STACK(p->m_pStack), "video");
 		}
+		/* The video owns the screen from here, so a zoom the quick preview had
+		 * borrowed the image view for is given back now - the stills around this
+		 * video see their own mode and magnification again.  It is deliberately
+		 * not done by the zoom apply that read the framing off the preview, which
+		 * runs while the preview is still the visible page: handing the image view
+		 * back at that point would drop the picture the user is looking at to the
+		 * thumbnail's own fit size until the first frame arrived. */
+		p->ReturnImageViewFromPreviewZoom();
+		/* The frame just shown is the first one the user sees, so it has to be
+		 * drawn at the zoom this video starts at.  The size request is normally
+		 * already in place - the caps event precedes this frame and applies the
+		 * zoom while the preview is still up - but if the two raced, re-queue the
+		 * apply at a priority that runs before the next frame is drawn, so this
+		 * frame is the only one that could be sized wrong. */
+		if (p->m_iVideoWidth > 0 && p->m_iVideoHeight > 0)
+		{
+			if (p->m_iVideoZoomIdle != 0)
+				g_source_remove(p->m_iVideoZoomIdle);
+			p->m_iVideoZoomIdle = g_idle_add_full(G_PRIORITY_HIGH, video_apply_zoom_idle, p, NULL);
+		}
 	}
 	if (!p->m_bVideoPreviewHasFrame && !p->m_bVideoNeedsFirstFrame)
 	{
@@ -7024,8 +7803,7 @@ static void nav_control_drag_delta_cb(QuiverNavigationControl *navcontrol, gdoub
 	gdouble x_rot_start = CLAMP(target_rot_cx - viewW_disp / 2., 0., MAX(0., dispW - viewW_disp));
 	gdouble y_rot_start = CLAMP(target_rot_cy - viewH_disp / 2., 0., MAX(0., dispH - viewH_disp));
 
-	p->m_dVideoPanX = x_rot_start;
-	p->m_dVideoPanY = y_rot_start;
+	p->SetVideoPanPixels(x_rot_start, y_rot_start);
 
 	/* ApplyVideoZoom re-derives the pan from the pointer over the *video* area
 	 * to keep the pixel under it fixed across a zoom change.  During a miniature
@@ -7228,25 +8006,490 @@ static GstPadProbeReturn video_zoom_reconfigure_probe(GstPad *pad, GstPadProbeIn
 #define VIDEO_ZOOM_SMOOTH_ANIMATION 1
 
 static gboolean video_zoom_timeout(gpointer data);
+
+/* The pan is kept as the centre of the visible region, as a fraction of the
+ * frame, and every caller works in the pixel offset of that region's left/top
+ * edge.  These two are the only place that converts between the two.
+ *
+ * The conversion is a plain shift by half the visible size, so the centre a
+ * pixel pan describes does not depend on the frame's size, aspect ratio or the
+ * zoom - which is the whole point: a centre that survives a switch to a file
+ * with a different aspect ratio, and a pixel offset normalized against that
+ * file's own scroll range, would not be the same point. */
+static inline gdouble PanOffsetToCenter(gdouble offset, gdouble disp, gdouble view)
+{
+	if (disp <= 0. || view <= 0.)
+		return 0.5;
+	/* the whole frame is on screen: there is nowhere to centre it but the middle */
+	if (view >= disp)
+		return 0.5;
+	const gdouble half = view / (2. * disp);
+	return CLAMP((offset + view / 2.) / disp, half, 1. - half);
+}
+
+static inline gdouble PanCenterToOffset(gdouble center, gdouble disp, gdouble view)
+{
+	if (disp <= 0. || view <= 0. || view >= disp)
+		return 0.;
+	return CLAMP(center * disp - view / 2., 0., disp - view);
+}
+
+void Viewer::ViewerImpl::SetVideoPanPixels(gdouble px, gdouble py)
+{
+	/* the callers all think in pixels (a drag delta, a pointer position, a
+	 * miniature position); the state is kept as the centre of the visible region
+	 * so it survives a change of frame size or aspect ratio */
+	m_fVideoPanFX = PanOffsetToCenter(px, m_dVideoPreviewDispW, m_dVideoViewW);
+	m_fVideoPanFY = PanOffsetToCenter(py, m_dVideoPreviewDispH, m_dVideoViewH);
+}
+
+gdouble Viewer::ViewerImpl::GetVideoPanOffsetX() const
+{
+	return PanCenterToOffset(m_fVideoPanFX, m_dVideoPreviewDispW, m_dVideoViewW);
+}
+
+gdouble Viewer::ViewerImpl::GetVideoPanOffsetY() const
+{
+	return PanCenterToOffset(m_fVideoPanFY, m_dVideoPreviewDispH, m_dVideoViewH);
+}
+
+QuiverImageViewMode Viewer::ViewerImpl::GetViewMode() const
+{
+	/* The image view holds the viewer's view mode: it is the one widget every
+	 * item is shown in, and the paths that change the mode for a still (the
+	 * mode menu, a zoom gesture, the reset on a new image) all go through it.
+	 * The video is drawn by the pipeline rather than by that widget, so it reads
+	 * the mode from here rather than keeping a second copy that could drift -
+	 * "keep zoom and pan" then means the same thing for a photo and a video,
+	 * and a still and a video are never in two different modes at once. */
+	if (m_pImageView != NULL && QUIVER_IS_IMAGE_VIEW(m_pImageView))
+		return quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
+	return m_eVideoViewMode;
+}
+
+void Viewer::ViewerImpl::SetVideoViewMode(QuiverImageViewMode mode)
+{
+	/* The view mode is the viewer's, not an item's: the image view keeps it so
+	 * the stills around the video are shown the way the video is, and the video
+	 * keeps its own copy because it is drawn by the pipeline rather than by
+	 * the image view.  Setting it on both is what makes "keep zoom and pan"
+	 * mean the same thing for an image and a video. */
+	m_eVideoViewMode = mode;
+	if (m_pImageView != NULL && QUIVER_IS_IMAGE_VIEW(m_pImageView)
+		&& quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView)) != mode)
+	{
+		quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), mode);
+	}
+	QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, mode);
+}
+
+bool Viewer::ViewerImpl::GetPreviewPictureSize(gint* width, gint* height) const
+{
+	if (width != NULL)
+		*width = 0;
+	if (height != NULL)
+		*height = 0;
+	if (m_pImageView == NULL || !QUIVER_IS_IMAGE_VIEW(m_pImageView))
+		return false;
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
+	quiver_image_view_get_picture_size(iv, width, height);
+	return width != NULL && height != NULL && *width > 0 && *height > 0;
+}
+
+bool Viewer::ViewerImpl::AdoptVideoPreviewFraming(bool bProvisional)
+{
+	/* The quick preview is drawn by the image view, so the framing that is on
+	 * screen is the image view's magnification and scroll position - however it
+	 * got there.  SetVideoZoom() covers the case where the user zoomed the
+	 * preview, but the same framing also arrives by switching to this video from
+	 * a still that was zoomed (the image view keeps its magnification on the new
+	 * file's thumbnail, so the preview is framed while the video's own zoom is
+	 * still whatever it was before).  Reading the screen instead of remembering a
+	 * zoom is what makes the video start where the picture on screen already is.
+	 *
+	 * The image view's magnification is relative to the picture it is drawing
+	 * and the video's zoom to the frame, so the two are related by the size of
+	 * that picture - the same relation ApplyVideoPreviewZoom() zooms the
+	 * preview by, and the same one a preview framed from the video is the other
+	 * way round. */
+	if (!IsVideoPreviewShowing() || m_ImageListPtr == NULL)
+		return false;
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
+	if (iv == NULL || !QUIVER_IS_IMAGE_VIEW(iv))
+		return false;
+	gint pictureW = 0, pictureH = 0;
+	if (!GetPreviewPictureSize(&pictureW, &pictureH))
+		return false;
+	QuiverFile vf = m_ImageListPtr->GetCurrent();
+	const gint videoW = vf.GetWidth();
+	const gint videoH = vf.GetHeight();
+	if (pictureW <= 0 || pictureH <= 0 || videoW <= 0 || videoH <= 0)
+		return false;
+	GtkAdjustment* hadj = quiver_image_view_get_hadjustment(iv);
+	GtkAdjustment* vadj = quiver_image_view_get_vadjustment(iv);
+	if (hadj == NULL || vadj == NULL)
+		return false;
+	const gdouble upper = gtk_adjustment_get_upper(hadj);
+	const gdouble page = gtk_adjustment_get_page_size(hadj);
+	/* the whole frame is on screen: there is no framing of it to keep, so the
+	 * video keeps the zoom it had (a fit preview must not turn into a zoom).
+	 * A provisional adoption is the one case where there is no telling yet - the
+	 * view has not been laid out, so "the whole frame is on screen" cannot be
+	 * read from the ranges - and it is left to the first layout to decide. */
+	if (!bProvisional && (upper <= 0. || page <= 0. || page >= upper))
+		return false;
+
+	/* A magnification is relative to the picture and a zoom to the frame, and
+	 * the two are the same size for a video's preview - which is what makes a
+	 * zoom of a still mean the same thing on this video as it did on that one.
+	 * Were the preview ever a smaller picture than the frame, the fraction of it
+	 * in view is the same at a proportionally smaller zoom. */
+	const gdouble zoom = quiver_image_view_get_magnification(iv) * ((gdouble)pictureW / (gdouble)videoW);
+	if (zoom <= 0. || zoom > 16.)
+		return false;
+
+	/* the fit level is unknown until the caps probe reports the frame size, and
+	 * the first ApplyVideoZoom() bounds the zoom by the real one */
+	m_dVideoZoom = zoom;
+	m_dVideoZoomFinal = zoom;
+	m_dVideoZoomMin = 1.0;
+	CaptureVideoPanFromPreview();
+	m_bVideoZoomFromPreview = true;
+	return true;
+}
+
+bool Viewer::ViewerImpl::IsVideoPreviewFraming() const
+{
+	/* The framing a video is given when it arrives: the current item is a
+	 * video, a zoomed mode is in force, and no frame has come out of the
+	 * pipeline yet, so what is on screen is the quick preview. */
+	return IsVideo() && !m_bVideoPreviewHasFrame
+		&& viewer_view_mode_is_zoomed(GetViewMode());
+}
+
+void Viewer::ViewerImpl::FrameVideoPreviewFromVideo(gboolean bNewPicture)
+{
+	/* The quick preview is drawn by the image view, and a video that arrives
+	 * while a zoomed mode is in force is going to play at m_dVideoZoom with the
+	 * pan in m_fVideoPanFX/Y.  The preview therefore has to be put there, or the
+	 * user is shown one framing and gets another the moment they press play -
+	 * and, worse, the preview the image view was carrying over from the previous
+	 * item is a *fitted* preview, whose middle of the viewport is not the middle
+	 * of the frame at all, so keeping it lands somewhere else again. */
+	if (!IsVideoPreviewFraming() || m_ImageListPtr == NULL)
+		return;
+	/* Moving the view moves the adjustments, and the adjustments are where the
+	 * pan of a preview on screen is read from - so what this does is not the
+	 * user framing the video, and must not be read back as one. */
+	const gboolean bWasFraming = m_bFramingVideoPreview;
+	m_bFramingVideoPreview = true;
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
+	if (iv == NULL || !QUIVER_IS_IMAGE_VIEW(iv))
+	{
+		m_bFramingVideoPreview = bWasFraming;
+		return;
+	}
+	if (quiver_image_view_get_texture(iv) == NULL)
+	{
+		m_bFramingVideoPreview = bWasFraming;
+		return;
+	}
+	/* the picture has landed, so it is this item's own: from here its scroll
+	 * position is a pan of this video, and is read as one */
+	if (m_ImageListPtr != NULL)
+		m_sPreviewPanItem = m_ImageListPtr->GetCurrent().GetFilePath();
+
+	/* "Keep zoom and pan" says the framing the user is looking at is the
+	 * framing the next item comes up at, and the view has already kept it -
+	 * the magnification and the centre it went into this delivery with are the
+	 * ones the user chose on the item before.  So here the *view* is the
+	 * authority and the video is brought in line with it: imposing the video's
+	 * own remembered zoom instead would be imposing a number the user never
+	 * chose (a video that has not been zoomed is at 1.0), and the zoom they did
+	 * choose would be gone the moment they arrived at the video. */
+	if (bNewPicture && viewer_view_mode_is_keep(GetViewMode()))
+	{
+		/* A picture often lands before the window has laid the view out, and
+		 * "is this framing one to keep" is a question about the viewport: a
+		 * picture that fills it is a fitted one whatever its magnification
+		 * says.  With no viewport there is nothing to tell yet, and imposing the
+		 * video's own zoom in the meantime is what put a 1.0 in front of a 2.0
+		 * the user had just chosen - so the framing on screen is taken as it
+		 * stands, and the first layout re-decides whether it really was a zoom.
+		 * Nothing is drawn from the video until that point, so a framing taken
+		 * early is only ever visible if it turns out to have been right. */
+		const gboolean bLaidOut =
+			gtk_widget_get_width(GTK_WIDGET(iv)) > 0
+			&& gtk_widget_get_height(GTK_WIDGET(iv)) > 0;
+		if (AdoptVideoPreviewFraming(!bLaidOut))
+		{
+			/* the pan came off the view as part of the adoption, and it is this
+			 * item's own preview, so it can be read as a pan of the video */
+			m_bPreviewFramingPending = !bLaidOut;
+			m_dPreviewFramingMag = bLaidOut ? 0. : quiver_image_view_get_magnification(iv);
+			m_bFramingVideoPreview = bWasFraming;
+			return;
+		}
+	}
+	m_bPreviewFramingPending = false;
+	m_dPreviewFramingMag = 0.;
+
+	/* The picture the view is drawing, which is the frame's own size: the
+	 * magnification is relative to the picture, not to the texture decoded for
+	 * it.  The size for the mode in force is the picture scaled by the current
+	 * magnification, so the picture is that divided by the magnification. */
+	gint picture_width = 0;
+	gint picture_height = 0;
+	const gdouble current_mag = quiver_image_view_get_magnification(iv);
+	quiver_image_view_get_pixbuf_display_size_for_mode(iv,
+		QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE, &picture_width, &picture_height);
+	if (current_mag > 0.)
+	{
+		picture_width = (gint)(picture_width / current_mag + 0.5);
+		picture_height = (gint)(picture_height / current_mag + 0.5);
+	}
+	QuiverFile vf = m_ImageListPtr->GetCurrent();
+	const gint videoW = vf.GetWidth();
+	const gint videoH = vf.GetHeight();
+	if (picture_width <= 0 || picture_height <= 0 || videoW <= 0 || videoH <= 0)
+	{
+		m_bFramingVideoPreview = bWasFraming;
+		return;
+	}
+
+	/* the same on-screen scale the video will have: picture * mag == frame * zoom */
+	gdouble mag = m_dVideoZoom * ((gdouble)videoW / (gdouble)picture_width);
+	if (mag <= 0. || mag > 16.)
+	{
+		m_bFramingVideoPreview = bWasFraming;
+		return;
+	}
+
+	/* The pan to go with it, which is the video's own: a kept pan is a fraction
+	 * of the frame, so it means the same thing before a frame has come out of
+	 * the pipeline as it will afterwards, and a reset one is the centre of the
+	 * frame whether or not anything has been seen yet.  A video with no frame
+	 * yet therefore does not come out with a pan of zero, which would put the
+	 * preview in the corner rather than where the user left the last one. */
+	gdouble center_x = m_fVideoPanFX;
+	gdouble center_y = m_fVideoPanFY;
+
+	BorrowImageViewForPreviewZoom();
+	/* the pan as a fraction of the picture, which is a fraction of the frame:
+	 * a preview of a video has the frame's aspect, so it is the same point.
+	 * Both at once and at once: a zoom that eases in passes through a
+	 * magnification the picture cannot be panned in, and comes back to the
+	 * middle of the picture instead of to the corner that was asked for. */
+	quiver_image_view_set_framing(iv, mag, center_x, center_y);
+
+	/* the pan came from the video, not from the preview: capturing it back
+	 * would round-trip the same numbers and hide which of the two is the
+	 * authority */
+	UpdateVideoPreviewViewAreaFromImageView();
+	UpdateNavControlVisibility();
+	/* the view is now showing this item's own preview at the framing the video
+	 * will play at, so a pan of it is a pan of the video */
+	if (m_ImageListPtr != NULL)
+		m_sPreviewPanItem = m_ImageListPtr->GetCurrent().GetFilePath();
+	m_bFramingVideoPreview = bWasFraming;
+}
+
+/* Set from the loader observer, which is defined before the viewer is: a
+ * video's preview is a picture delivered like any other, and the framing the
+ * video will play at has to be applied to it where it lands. */
+static void frame_video_preview_from_frames(QuiverImageView *imageview, GdkTexture **frames,
+	gsize n_frames, gint *delays_ms, gint width, gint height, gboolean reset_view_mode,
+	Viewer::ViewerImpl *impl)
+{
+	if (impl != NULL)
+	{
+		impl->m_bFramingVideoPreview = true;
+		impl->m_sPreviewPanItem.clear();
+	}
+	if (imageview != NULL && QUIVER_IS_IMAGE_VIEW(imageview))
+		quiver_image_view_set_animation_frames(imageview, frames, delays_ms, n_frames,
+			width, height, reset_view_mode);
+	if (impl != NULL)
+	{
+		impl->FrameVideoPreviewFromVideo(TRUE);
+		impl->m_bFramingVideoPreview = false;
+	}
+}
+
+static void frame_video_preview_from_video(QuiverImageView *imageview, GdkTexture *texture,
+	gint width, gint height, gboolean reset_view_mode, Viewer::ViewerImpl *impl)
+{
+	/* One place that hands a picture to the view for a video, so the flag, the
+	 * delivery and the framing that goes on top of it cannot come apart. */
+	if (impl != NULL)
+	{
+		impl->m_bFramingVideoPreview = true;
+		impl->m_sPreviewPanItem.clear();
+	}
+	if (imageview != NULL && QUIVER_IS_IMAGE_VIEW(imageview) && texture != NULL)
+		quiver_image_view_set_texture_at_size_ex(imageview, texture, width, height, reset_view_mode);
+	if (impl != NULL)
+	{
+		impl->FrameVideoPreviewFromVideo(TRUE);
+		impl->m_bFramingVideoPreview = false;
+	}
+}
+
+bool Viewer::ViewerImpl::IsPreviewPanValid() const
+{
+	if (m_sPreviewPanItem.empty() || m_ImageListPtr == NULL)
+		return false;
+	/* The preview stands in for the video only until a frame comes out of the
+	 * pipeline.  After that the video is on screen and its pan is the video's
+	 * own business, and the picture the view still holds behind it is a leftover
+	 * - there is a window between the first frame arriving and the video page
+	 * being swapped in, and reading the view's scroll in it would hand the
+	 * video a framing nobody asked for. */
+	if (m_bVideoPreviewHasFrame)
+		return false;
+	return m_sPreviewPanItem == m_ImageListPtr->GetCurrent().GetFilePath();
+}
+
+void Viewer::ViewerImpl::CaptureVideoPanFromPreview(){
+	/* A pan read off the view is the video's pan only while the view is showing
+	 * this video's own preview at a framing that was chosen for it.  In the
+	 * window a switch opens - the previous item still on screen, a delivery
+	 * being laid out, a resize recentring the view - the scroll position is the
+	 * view's own bookkeeping, and taking it wrote a framing the user never asked
+	 * for into the video that was just loaded. */
+	if (!IsPreviewPanValid())
+		return;
+	/* The quick preview is drawn by the image view, so where it shows is the
+	 * image view's scroll position: the fraction of the content already
+	 * scrolled past is the fraction of the frame that is off screen, for a
+	 * frame of any size.  That is the same fraction the video keeps, so
+	 * playback starts exactly where the preview was - whether the user got
+	 * there by zooming, by dragging, or by both. */
+	if (m_pImageView == NULL || !QUIVER_IS_IMAGE_VIEW(m_pImageView))
+		return;
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
+	GtkAdjustment* hadj = quiver_image_view_get_hadjustment(iv);
+	GtkAdjustment* vadj = quiver_image_view_get_vadjustment(iv);
+	if (hadj == NULL || vadj == NULL)
+		return;
+	gdouble upper = gtk_adjustment_get_upper(hadj);
+	gdouble vupper = gtk_adjustment_get_upper(vadj);
+	if (upper <= 0. || vupper <= 0.)
+		return;
+	/* The image view scrolls a *content* whose size is the frame scaled by the
+	 * preview's magnification, and its value/page/upper are all in those content
+	 * pixels, so the centre of what it shows is (value + page/2) / upper of the
+	 * frame - the same kind of value the video keeps.  Reading it as an offset
+	 * fraction instead (value / upper) is the same number as the centre only when
+	 * the whole frame is visible, and drifts by half the visible width as soon
+	 * as it is not, which is what made playback start beside the framing the
+	 * user had set rather than on it. */
+	m_fVideoPanFX = PanOffsetToCenter(gtk_adjustment_get_value(hadj), upper,
+		gtk_adjustment_get_page_size(hadj));
+	m_fVideoPanFY = PanOffsetToCenter(gtk_adjustment_get_value(vadj), vupper,
+		gtk_adjustment_get_page_size(vadj));
+	m_bVideoPanFromPreview = true;
+}
+
+bool Viewer::ViewerImpl::IsVideoPreviewShowing() const
+{
+	/* The quick preview: the video is the current item, the pipeline has not
+	 * handed out a frame yet, and the image view is on screen in its place
+	 * drawing the video's own thumbnail. */
+	if (!IsVideo() || m_bVideoPreviewHasFrame)
+		return false;
+	if (m_pImageView == NULL || !QUIVER_IS_IMAGE_VIEW(m_pImageView))
+		return false;
+	if (!gtk_widget_get_visible(m_pImageView))
+		return false;
+	return quiver_image_view_get_texture(QUIVER_IMAGE_VIEW(m_pImageView)) != NULL;
+}
+
+void Viewer::ViewerImpl::UpdateVideoPreviewViewAreaFromImageView()
+{
+	/* While the preview is on screen it is the image view that draws it, so the
+	 * nav control's box is the image view's visible region - the same fraction
+	 * of the frame, in the same normalized coordinates the stills use.  That is
+	 * what lets the control appear (and follow the zoom and the pan) before any
+	 * frame has come out of the pipeline. */
+	if (m_pNavigationControl == NULL || m_pImageView == NULL || !QUIVER_IS_IMAGE_VIEW(m_pImageView))
+		return;
+	GtkAdjustment* hadj = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
+	GtkAdjustment* vadj = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
+	if (hadj == NULL || vadj == NULL)
+		return;
+	gdouble upper = gtk_adjustment_get_upper(hadj);
+	gdouble vupper = gtk_adjustment_get_upper(vadj);
+	if (upper <= 0. || vupper <= 0.)
+		return;
+	m_dVideoPreviewViewX = CLAMP(gtk_adjustment_get_value(hadj) / upper, 0., 1.);
+	m_dVideoPreviewViewY = CLAMP(gtk_adjustment_get_value(vadj) / vupper, 0., 1.);
+	m_dVideoPreviewViewW = CLAMP(gtk_adjustment_get_page_size(hadj) / upper, 0., 1.);
+	m_dVideoPreviewViewH = CLAMP(gtk_adjustment_get_page_size(vadj) / vupper, 0., 1.);
+	UpdateVideoPreviewViewArea();
+}
+
+void Viewer::ViewerImpl::ResetVideoPan()
+{
+	m_fVideoPanFX = 0.5;
+	m_fVideoPanFY = 0.5;
+	m_dVideoPanX = 0.;
+	m_dVideoPanY = 0.;
+}
+
 void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 {
 	StopVideoPanSlowdown();
-	/* zooming with +/- or the wheel leaves the view modes and pins the
-	 * factor: the zoom is relative to the actual size (1.0 = 100%), clamped
-	 * from the fit level (the smallest scale the video has been seen at) up
-	 * to 8x of the actual size, so the same image-like zoom is available no
-	 * matter how small the window is */
+	/* Before the first frame the pipeline has no caps, so there is no frame
+	 * size to scale.  The quick preview is on screen instead: zoom that, and
+	 * keep the factor so playback snaps straight to it. */
+	if (m_iVideoWidth <= 0 || m_iVideoHeight <= 0)
+	{
+		if (zoom > m_dVideoZoomMin + 0.005 && !viewer_view_mode_is_zoomed(GetViewMode()))
+			SetVideoViewMode(QUIVER_IMAGE_VIEW_MODE_ZOOM);
+		if (m_iVideoZoomTimeoutID != 0)
+		{
+			g_source_remove(m_iVideoZoomTimeoutID);
+			m_iVideoZoomTimeoutID = 0;
+		}
+		m_dVideoZoom = zoom;
+		m_dVideoZoomFinal = zoom;
+		m_bVideoZoomFromPreview = true;
+		ApplyVideoPreviewZoom(zoom);
+		/* the pointer anchored that one zoom; the next is about the middle
+		 * until a pointer says otherwise, as it is for a picture */
+		m_bVideoZoomAnchorCenter = false;
+		UpdateUI();
+		return;
+	}
+	m_bVideoZoomFromPreview = false;
+	/* Zooming with +/- or the wheel pins the factor: the zoom is relative to the
+	 * actual size (1.0 = 100%), clamped from the fit level (the smallest scale
+	 * the video has been seen at) up to 16x, so the same image-like zoom is
+	 * available no matter how small the window is.
+	 *
+	 * It does not change the view mode.  The mode says what happens on the
+	 * *next* item, so it belongs to the user and to the menu item that is
+	 * showing it: switching it here made "keep zoom and pan" uncheck itself the
+	 * moment the user zoomed in, which is exactly when they are zooming, and
+	 * silently dropped the framing the next item was supposed to inherit.
+	 * Zooming a picture that is merely *fitted* does leave the fit modes, since
+	 * that is what zooming a fitted picture means. */
+	const gboolean bAlreadyZoomed = viewer_view_mode_is_zoomed(GetViewMode());
 	if (zoom <= m_dVideoZoomMin + 0.005)
 	{
 		zoom = m_dVideoZoomMin;
-		quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
-		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+		/* reaching the fit level is not a new mode in "keep zoom and pan":
+		 * that mode is the one that has to survive the next item, so it stays
+		 * put and the zoom is simply at its floor */
+		if (!bAlreadyZoomed)
+			SetVideoViewMode(QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
 	}
 	else
 	{
-		quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), QUIVER_IMAGE_VIEW_MODE_ZOOM);
 		if (zoom > 16.0) zoom = 16.0;
-		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, QUIVER_IMAGE_VIEW_MODE_ZOOM);
+		if (!bAlreadyZoomed)
+			SetVideoViewMode(QUIVER_IMAGE_VIEW_MODE_ZOOM);
 	}
 
 #if VIDEO_ZOOM_SMOOTH_ANIMATION
@@ -7290,13 +8533,19 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 
 static void video_zoom_get_pointer(Viewer::ViewerImpl *p, gdouble *px, gdouble *py)
 {
-	/* pointer position in viewer-area coords, or (-1,-1) when it is outside
-	 * the area / the area is not realized yet (callers zoom about the center) */
+	video_zoom_get_pointer_in(p, p->m_pVideoFixed, px, py);
+}
+
+static void video_zoom_get_pointer_in(Viewer::ViewerImpl *p, GtkWidget *area, gdouble *px, gdouble *py)
+{
+	/* pointer position in the given widget's coords, or (-1,-1) when it is
+	 * outside / the widget is not realized yet / the zoom was not a pointer zoom
+	 * at all (callers zoom about the center then, which is what an action, a
+	 * menu item or a HUD button does to a picture too) */
 	*px = -1.;
 	*py = -1.;
 	if (p->m_bVideoZoomAnchorCenter || p->IsPointerOverControls())
 		return;
-	GtkWidget *area = p->m_pVideoFixed;
 	if (area == NULL || !gtk_widget_get_realized(area))
 		return;
 	gint w = gtk_widget_get_width(area);
@@ -7393,7 +8642,25 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	gint areaH = gtk_widget_get_height(m_pVideoFixed);
 	if (areaW <= 0 || areaH <= 0)
 	{
+		/* The video page has no allocation yet, so it is not the stack's visible
+		 * child: the quick preview is still on screen instead.  Both are plain
+		 * stack children and get the whole stack, so the image view's allocation
+		 * is the area the video page is about to get.  Using it here is what puts
+		 * the framing chosen on the preview in place *before* the first frame is
+		 * shown.  Without it the caps event arrives, this returns, the first
+		 * frame is shown at whatever size the previous video left in the sink's
+		 * size request, and the apply that follows it is the visible jump - the
+		 * picture zooms out and back in on the way from the preview to playback. */
+		if (m_pStack != NULL && GTK_IS_STACK(m_pStack)
+			&& gtk_stack_get_visible_child(GTK_STACK(m_pStack)) == m_pImageView)
+		{
+			areaW = gtk_widget_get_width(m_pImageView);
+			areaH = gtk_widget_get_height(m_pImageView);
+		}
+		if (areaW <= 0 || areaH <= 0)
+		{
 		return;
+		}
 	}
 
 	gdouble srcW = m_iVideoWidth;
@@ -7441,10 +8708,41 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	gdouble fitZoom = MIN(fitScale, 1.0);
 
 	gdouble zoom;
-	QuiverImageViewMode videoViewMode =
-		quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
+	/* a zoom chosen on the quick preview arrives before any fit level was
+	 * known, so bound it by the real one now that the size is */
+	if (m_bVideoZoomFromPreview)
+	{
+		m_bVideoZoomFromPreview = false;
+		m_dVideoZoomMin = fitZoom;
+		m_dVideoZoomFinal = CLAMP(m_dVideoZoomFinal, m_dVideoZoomMin, 16.0);
+		/* The quick preview is still on screen and is the image view, so this
+		 * is the last moment the framing the user chose can be read off it: the
+		 * zoom and the pan it was left at are what this first frame - and so
+		 * playback - starts at, instead of the frame being recentred under the
+		 * user.  Read before the image view is handed back to its still.
+		 *
+		 * Handing it back is not done here but when the video page takes the
+		 * screen: until then the image view *is* what the user is looking at, so
+		 * returning it now would visibly drop the preview back to the thumbnail's
+		 * own fit magnification while the preview is still on screen. */
+		if (m_bPreviewZoomBorrowed)
+			CaptureVideoPanFromPreview();
+	}
+	/* the view mode belongs to the viewer, not to the item: whatever mode the
+	 * stills are shown in, the video follows it, so "keep zoom and pan" means
+	 * the same thing for a photo and a video */
+	QuiverImageViewMode videoViewMode = GetViewMode();
+	m_eVideoViewMode = videoViewMode;
 	switch (videoViewMode)
 	{
+		case QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP:
+			/* like ZOOM - the factor the user zoomed to and the fraction of
+			 * the frame in view are both kept - except that reaching the fit
+			 * level does not turn into a fit mode: this is the mode that
+			 * survives the next item, so it has to keep its zoom and pan */
+			m_dVideoZoomMin = fitZoom;
+			zoom = CLAMP(m_dVideoZoom, m_dVideoZoomMin, 16.0);
+			break;
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
 			zoom = fitZoom;
 			m_dVideoZoomMin = fitZoom;
@@ -7475,19 +8773,18 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			break;
 		default:
 			zoom = CLAMP(m_dVideoZoom, m_dVideoZoomMin, 16.0);
-			/* when zooming out lands back at the fit level, snap back to
-			 * FIT_WINDOW so a window resize will re-fit the video instead
-			 * of keeping it pinned at the old fit size */
+			/* Zooming out back to the fit level: switch the video to its fit
+			 * mode (stretched, which is how every freshly loaded video
+			 * starts) so a window resize re-fits it instead of keeping it
+			 * pinned at the old fit size.  Only the video's own mode
+			 * changes - the image view keeps whatever mode it had. */
 			if (zoom <= m_dVideoZoomMin + 0.005)
 			{
-				quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView),
-					QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
-				QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM,
-					QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
-				videoViewMode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
-				zoom = fitZoom;
-				m_dVideoZoomMin = fitZoom;
-				m_dVideoZoomFinal = fitZoom;
+				videoViewMode = QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH;
+				SetVideoViewMode(videoViewMode);
+				zoom = fitScale;
+				m_dVideoZoomMin = fitScale;
+				m_dVideoZoomFinal = fitScale;
 				if (m_iVideoZoomTimeoutID != 0)
 				{
 					g_source_remove(m_iVideoZoomTimeoutID);
@@ -7514,11 +8811,44 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	m_dVideoPreviewDispW = dispW;
 	m_dVideoPreviewDispH = dispH;
 
+	/* the centre of the visible part is kept as a fraction of the frame so the
+	 * same centre frames the same relative part of any frame, and so the nav
+	 * control's zoom box means the same thing for a 4k photo and a 1080p video;
+	 * the pixel pan below is what the window is positioned by */
+	/* the visible part of the frame is stored as its centre (a fraction of the
+	 * frame) so the same centre frames the same relative part of any frame, and
+	 * so the nav control's zoom box means the same thing for a 4k photo and a
+	 * 1080p video; the pixel pan below is what the window is positioned by */
+	m_dVideoPanRangeX = MAX(0., dispW - vw);
+	m_dVideoPanRangeY = MAX(0., dispH - vh);
+	/* the visible size is what turns a pixel pan into that centre and back, so
+	 * it has to be the new one before anything converts: the zoom anchoring
+	 * below works out pixel pans for the layout being applied right now */
+	m_dVideoViewW = vw;
+	m_dVideoViewH = vh;
+
 	/* keep the display coordinate under the pointer fixed while zoom changes,
 	 * so the video zooms in on the cursor; when the pointer is not over the
 	 * area (e.g. a toolbar zoom button) zoom about the center (skipped while
 	 * dragging or kinetic slowdown so user movement is not overridden) */
-	if (!m_bVideoPanning && !m_bVideoPanSlowdownActive && m_dVideoLastWidgetW > 0.)
+	gdouble zoomViewDeltaW = fabs(widgetW - m_dVideoLastWidgetW);
+	gdouble zoomViewDeltaH = fabs(widgetH - m_dVideoLastWidgetH);
+	/* Only when the zoom really changed the picture.  Re-anchoring on every apply
+	 * would move a framing that was set by something else - the pan captured from
+	 * the quick preview, the kept pan of another item - to whatever the last
+	 * pointer position was, on an apply that changed no size at all. */
+	/* Anchoring is for zooming.  It keeps the display point under the pointer
+	 * where it is, which is what a zoom should do - but the picture also changes
+	 * size when the *frame* changes (another file, another aspect ratio) at an
+	 * unchanged zoom factor, and anchoring there moves the framing off the centre
+	 * that is supposed to be kept: the pointer's point of the frame is kept
+	 * instead of the middle of what is on screen, so a file switch slides the
+	 * picture.  The centre is a fraction of the frame, so leaving it alone is
+	 * exactly what carries it over. */
+	const bool bZoomChanged = (m_dVideoLastWidgetW > 0.)
+		&& (fabs(effZoom - m_dVideoLastFrameZoom) > 0.0005);
+	if (!m_bVideoPanning && !m_bVideoPanSlowdownActive && m_dVideoLastWidgetW > 0.
+		&& bZoomChanged && (zoomViewDeltaW > 0.5 || zoomViewDeltaH > 0.5))
 	{
 		gdouble px = -1., py = -1.;
 		video_zoom_get_pointer(this, &px, &py);
@@ -7539,44 +8869,59 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 		else
 			dispY = (py - (areaH - m_dVideoLastWidgetH) / 2.) * dispH / m_dVideoLastWidgetH;
 
-		/* 2. Compute the new pan so that the same coordinate stays under the pointer in the NEW layout */
+		/* 2. Compute the new pan so that the same coordinate stays under the pointer
+		 * in the NEW layout.  One axis at a time: each is a pixel offset in the new
+		 * layout, which SetVideoPanPixels turns into the centre that is kept; the
+		 * axis that is not being anchored is passed as its own offset so that it
+		 * keeps the centre it already had. */
 		if (widgetW > areaW)
-			m_dVideoPanX = dispX - px * dispW / widgetW;
+			SetVideoPanPixels(dispX - px * dispW / widgetW, GetVideoPanOffsetY());
 		else
-			m_dVideoPanX = 0.;
+			SetVideoPanPixels(0., GetVideoPanOffsetY());
 
 		if (widgetH > areaH)
-			m_dVideoPanY = dispY - py * dispH / widgetH;
+			SetVideoPanPixels(GetVideoPanOffsetX(), dispY - py * dispH / widgetH);
 		else
-			m_dVideoPanY = 0.;
+			SetVideoPanPixels(GetVideoPanOffsetX(), 0.);
 	}
 	else if (!m_bVideoPanning && !m_bVideoPanSlowdownActive && m_dVideoLastWidgetW == 0.)
 	{
 		/* first ApplyVideoZoom after a reset (StopVideo / init / rotate): center the
-		 * visible viewport in the display area */
-		m_dVideoPanX = MAX(0., (dispW - vw) / 2.);
-		m_dVideoPanY = MAX(0., (dispH - vh) / 2.);
+		 * visible viewport in the display area - unless a zoom on the quick preview
+		 * already framed it (that is where playback has to start), or the mode is
+		 * "keep zoom and pan", which keeps the pan across items and a rotate
+		 * alike: it is a fraction of the frame, so it survives both */
+		if (!m_bVideoPanFromPreview && !viewer_view_mode_is_keep(videoViewMode))
+		{
+			m_fVideoPanFX = 0.5;
+			m_fVideoPanFY = 0.5;
+		}
+		m_bVideoPanFromPreview = false;
 	}
 
 	gdouble offX, offY;
 	if (widgetW > areaW)
 	{
-		m_dVideoPanX = CLAMP(m_dVideoPanX, 0., MAX(0., dispW - vw));
+		m_dVideoPanX = PanCenterToOffset(m_fVideoPanFX, dispW, vw);
 		offX = -m_dVideoPanX * effZoom;
 	}
 	else
 	{
+		/* the whole frame fits: there is nothing to pan, and the kept pan
+		 * becomes the centred one so a later zoom starts from the middle */
+		m_fVideoPanFX = 0.5;
 		m_dVideoPanX = 0.;
 		offX = (areaW - widgetW) / 2.;
 	}
 
 	if (widgetH > areaH)
 	{
-		m_dVideoPanY = CLAMP(m_dVideoPanY, 0., MAX(0., dispH - vh));
+		m_dVideoPanY = PanCenterToOffset(m_fVideoPanFY, dispH, vh);
 		offY = -m_dVideoPanY * effZoom;
 	}
 	else
 	{
+		m_fVideoPanFY = 0.5;
 		m_dVideoPanY = 0.;
 		offY = (areaH - widgetH) / 2.;
 	}
@@ -7643,12 +8988,24 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	/* report the zoom percentage in the statusbar, like the image view does
 	 * (only while the video is actually shown, so a resize idle while viewing
 	 * an image does not clobber the image's percentage) */
-	if (gtk_widget_get_visible(m_pVideoSinkWidget))
+	if (m_StatusbarPtr && gtk_widget_get_visible(m_pVideoSinkWidget))
 		m_StatusbarPtr->SetMagnification((int)(m_dVideoZoom * 100. + 0.5));
 
+	m_dVideoLastFrameW = dispW;
+	m_dVideoLastFrameH = dispH;
+	m_dVideoLastFrameZoom = effZoom;
 	m_dVideoLastWidgetW = widgetW;
 	m_dVideoLastWidgetH = widgetH;
 	m_dVideoLastZc = 1.0;
+
+	/* While the quick preview is the picture on screen it has to keep showing
+	 * what the video is now at, and the video's framing moves after a delivery
+	 * too - the fit level is only known once the caps probe has reported the
+	 * frame, and the first apply with a real frame re-derives the zoom from it.
+	 * A preview framed at the delivery's numbers would then be left behind, and
+	 * pressing play would jump. */
+	if (IsVideoPreviewFraming())
+		FrameVideoPreviewFromVideo(FALSE);
 }
 
 bool Viewer::ViewerImpl::CanVideoPan() const
@@ -8064,7 +9421,14 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pVideoBlank2(NULL),
 	m_pViewerZoomOutBtn(NULL),
 	m_pViewerZoomFitBtn(NULL),
+	m_pViewModeSplitBox(NULL),
+	m_pViewModeSplitSep(NULL),
+	m_pViewModeMenuBtn(NULL),
+	m_pViewModeMenuPopover(NULL),
 	m_pViewerZoomInBtn(NULL),
+	m_pSepNavigation(NULL),
+	m_pSepRotate(NULL),
+	m_pSepZoom(NULL),
 	m_pViewerRotateCcwBtn(NULL),
 	m_pViewerRotateCwBtn(NULL),
 	m_pViewerFlipHBtn(NULL),
@@ -8146,6 +9510,24 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		".timeline-overlay-bar { background: transparent; border: none; box-shadow: none; padding: 0 4px; }\n"
 		".submenu-pill-btn { border-radius: 6px; padding: 3px 8px; font-weight: 500; font-size: 11px; }\n"
 		".submenu-icon-btn { border-radius: 6px; min-width: 2.2em; min-height: 2.2em; padding: 4px; }\n"
+		".hud-sep { min-width: 1px; min-height: 0.75em; margin: 2px 1px; background-color: alpha(@theme_fg_color, 0.22); }\n"
+		/* the divider inside the split control is half the button's height and
+		 * centered, so it reads as a separator between the two halves rather
+		 * than as the full-height rule that divides the HUD's button groups */
+		".view-mode-split > .hud-sep { margin: 0 1px; }\n"
+		".view-mode-split { border-radius: 8px; }\n"
+		/* the two halves are transparent so the box's own background shows
+		 * through and the whole control highlights as a single button.  The
+		 * arrow is deliberately not a .media-btn: that class gives every HUD
+		 * button a square 2.4em box, which is far too wide for a bare arrow */
+		".view-mode-split > .view-mode-fit-btn, .view-mode-split > .view-mode-arrow { border-radius: 0; background-color: transparent; background-image: none; border: none; outline: none; }\n"
+		".view-mode-split > .view-mode-fit-btn { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }\n"
+		".view-mode-split > .view-mode-arrow { border-top-right-radius: 8px; border-bottom-right-radius: 8px; min-width: 0; min-height: 0; padding: 2px 3px; }\n"
+		/* hovering anywhere in the control lights the whole thing up, the
+		 * half under the pointer lights up further */
+		".view-mode-split.view-mode-split-hovered { background-color: alpha(@theme_bg_color, 0.35); }\n"
+		".view-mode-split.view-mode-split-hovered > .view-mode-fit-btn:hover, .view-mode-split.view-mode-split-hovered > .view-mode-arrow:hover { background-color: alpha(@theme_bg_color, 0.60); background-image: none; }\n"
+		".view-mode-split.view-mode-split-hovered .hud-sep { background-color: alpha(@theme_fg_color, 0.50); }\n"
 		".center-play-btn { border-radius: 9999px; background-color: rgba(20, 20, 20, 0.65); color: #ffffff; border: none; outline: none; padding: 0; min-width: 76px; min-height: 76px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.35); }\n"
 		".center-play-btn:hover { background-color: rgba(10, 10, 10, 0.85); border: none; }\n"
 		".center-play-btn:focus, .center-play-btn:focus-visible { outline: none; border: none; }\n"
@@ -8171,9 +9553,18 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_dVideoZoom = 1.0;
 	m_dVideoZoomFinal = 1.0;
 	m_dVideoZoomMin = 1.0;
+	m_fVideoPanFX = 0.5;
+	m_fVideoPanFY = 0.5;
+	m_dVideoViewW = 0.;
+	m_dVideoViewH = 0.;
+	m_dVideoPanRangeX = 0.;
+	m_dVideoPanRangeY = 0.;
 	m_dVideoPanX = 0.;
 	m_dVideoPanY = 0.;
 	m_dVideoLastWidgetW = 0.;
+	m_dVideoLastFrameW = 0.;
+	m_dVideoLastFrameH = 0.;
+	m_dVideoLastFrameZoom = 0.;
 	m_dVideoLastWidgetH = 0.;
 	m_dVideoLastZc = 1.0;
 	m_iVideoZoomTimeoutID = 0;
@@ -8205,6 +9596,14 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 
 	m_pAdjustmentH = quiver_image_view_get_hadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
 	m_pAdjustmentV = quiver_image_view_get_vadjustment(QUIVER_IMAGE_VIEW(m_pImageView));
+	/* "changed" rather than "value-changed": the control's box has to follow the
+	 * preview not only when it is scrolled but when the preview is *sized*, and
+	 * that is what arriving on a new file in "keep zoom and pan" does - the new
+	 * thumbnail is laid out at the magnification that was kept, with no value
+	 * change to announce it, so a control that only watched the value would stay
+	 * hidden exactly when the preview is zoomed in. */
+	g_signal_connect(G_OBJECT(m_pAdjustmentH), "changed", G_CALLBACK(viewer_image_adjustment_changed_cb), this);
+	g_signal_connect(G_OBJECT(m_pAdjustmentV), "changed", G_CALLBACK(viewer_image_adjustment_changed_cb), this);
 
 	m_pScrollbarV = gtk_scrollbar_new (GTK_ORIENTATION_VERTICAL, m_pAdjustmentV);
 	m_pScrollbarH = gtk_scrollbar_new (GTK_ORIENTATION_HORIZONTAL, m_pAdjustmentH);
@@ -8352,6 +9751,16 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		return btn;
 	};
 
+	auto make_hud_sep = [this]() -> GtkWidget* {
+		GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+		gtk_widget_add_css_class(sep, "hud-sep");
+		gtk_widget_set_valign(sep, GTK_ALIGN_FILL);
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(sep, motion);
+		return sep;
+	};
+
 	auto make_blank_slot = []() -> GtkWidget* {
 		GtkWidget *b = gtk_button_new();
 		gtk_button_set_has_frame(GTK_BUTTON(b), FALSE);
@@ -8370,6 +9779,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	// Slot 1: > (Next)
 	m_pViewerNextBtn = make_overlay_btn("go-next-symbolic", NULL, G_CALLBACK(viewer_overlay_next_cb));
 	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerNextBtn);
+
+	/* separates the navigation pair from the playback/transform cluster */
+	m_pSepNavigation = make_hud_sep();
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pSepNavigation);
 
 	// Slot 2: Blank 1 (image) / Play (video)
 	m_pImageBlank1 = make_blank_slot();
@@ -8403,17 +9816,77 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pFfBtn = make_overlay_btn("skip-forward-10", "Skip Forward 10s (Right / Shift+Right)", G_CALLBACK(viewer_video_ff_cb));
 	gtk_box_append(GTK_BOX(m_pControlsBox), m_pFfBtn);
 
+	/* in image mode this lands right after rotate clockwise, in video mode
+	 * after the skip-forward button - the two share the slot */
+	m_pSepRotate = make_hud_sep();
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pSepRotate);
+
 	// Slot 5: Zoom Out (-)
 	m_pViewerZoomOutBtn = make_overlay_btn("zoom-out-symbolic", "Zoom Out (-)", G_CALLBACK(viewer_overlay_zoom_out_cb));
 	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomOutBtn);
 
-	// Slot 6: Zoom Fit
+	/* Zoom Fit, as a split control: the icon half resets the view mode, the
+	 * arrow half opens the list of view modes (Nautilus style).  It is built
+	 * here but appended after Zoom In, so the two zoom buttons sit together and
+	 * this split control ends the zoom cluster. */
 	m_pViewerZoomFitBtn = make_overlay_btn("zoom-fit-best-symbolic", "Zoom to Fit Window (Stretched)", G_CALLBACK(viewer_overlay_zoom_fit_cb));
-	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomFitBtn);
 
-	// Slot 7: Zoom In (+)
+	/* The arrow is a plain icon button with the list parented to it rather
+	 * than a GtkMenuButton: a menu button draws its own arrow next to
+	 * whatever icon it is given and keeps a 36x34 minimum that no CSS can
+	 * override, which left the arrow as wide as a full HUD button. */
+	m_pViewModeMenuBtn = gtk_button_new_from_icon_name("pan-up-symbolic");
+	gtk_button_set_has_frame(GTK_BUTTON(m_pViewModeMenuBtn), FALSE);
+	gtk_widget_add_css_class(m_pViewModeMenuBtn, "view-mode-arrow");
+	{
+		GtkWidget *icon = gtk_button_get_child(GTK_BUTTON(m_pViewModeMenuBtn));
+		if (icon != NULL && GTK_IS_IMAGE(icon))
+			gtk_image_set_pixel_size(GTK_IMAGE(icon), 12);
+	}
+	gtk_widget_set_focus_on_click(m_pViewModeMenuBtn, FALSE);
+	gtk_widget_set_focusable(m_pViewModeMenuBtn, FALSE);
+	gtk_widget_set_tooltip_text(m_pViewModeMenuBtn, "View Mode");
+	g_signal_connect_swapped(m_pViewModeMenuBtn, "clicked", G_CALLBACK(viewer_view_mode_arrow_cb), this);
+	m_pViewModeMenuPopover = viewer_view_mode_build_popover();
+	g_object_add_weak_pointer(G_OBJECT(m_pViewModeMenuPopover), (gpointer*)&m_pViewModeMenuPopover);
+	gtk_widget_set_parent(GTK_WIDGET(m_pViewModeMenuPopover), m_pViewModeMenuBtn);
+	g_signal_connect(m_pViewModeMenuPopover, "show", G_CALLBACK(viewer_view_mode_create_popup_cb), this);
+	{
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
+		gtk_widget_add_controller(m_pViewModeMenuBtn, motion);
+	}
+
+	m_pViewModeSplitBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_widget_add_css_class(m_pViewModeSplitBox, "view-mode-split");
+	gtk_widget_add_css_class(m_pViewerZoomFitBtn, "view-mode-fit-btn");
+	gtk_box_append(GTK_BOX(m_pViewModeSplitBox), m_pViewerZoomFitBtn);
+	m_pViewModeSplitSep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+	gtk_widget_add_css_class(m_pViewModeSplitSep, "hud-sep");
+	/* centred, so it is half the button's height instead of the full-height
+	 * rule the HUD's button groups are divided with */
+	gtk_widget_set_valign(m_pViewModeSplitSep, GTK_ALIGN_CENTER);
+	gtk_box_append(GTK_BOX(m_pViewModeSplitBox), m_pViewModeSplitSep);
+	viewer_view_mode_split_size_sep(m_pViewerZoomFitBtn, m_pViewModeSplitSep);
+	gtk_box_append(GTK_BOX(m_pViewModeSplitBox), m_pViewModeMenuBtn);
+	{
+		/* one highlight for the whole split control: the box lights up while
+		 * the pointer is anywhere inside it (including the separator) and the
+		 * child under the pointer picks up its own stronger hover from CSS */
+		GtkEventController *motion = gtk_event_controller_motion_new();
+		g_signal_connect(motion, "enter", G_CALLBACK(viewer_split_button_enter_cb), m_pViewModeSplitBox);
+		g_signal_connect(motion, "leave", G_CALLBACK(viewer_split_button_leave_cb), m_pViewModeSplitBox);
+		gtk_widget_add_controller(m_pViewModeSplitBox, motion);
+	}
+	// Slot 7: Zoom In (+) - next to Zoom Out, before the split control
 	m_pViewerZoomInBtn = make_overlay_btn("zoom-in-symbolic", "Zoom In (+)", G_CALLBACK(viewer_overlay_zoom_in_cb));
 	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewerZoomInBtn);
+
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pViewModeSplitBox);
+
+	/* closes the zoom cluster, everything after it is playback/presenting */
+	m_pSepZoom = make_hud_sep();
+	gtk_box_append(GTK_BOX(m_pControlsBox), m_pSepZoom);
 
 	// Slot 8: Blank 2 (image) / Volume (video)
 	m_pImageBlank2 = make_blank_slot();
@@ -8595,6 +10068,11 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pHBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
 	m_pVBox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
 
+	/* the window may destroy this tree before the viewer object itself is
+	 * released: clear the cached widget pointers then, see
+	 * viewer_widget_tree_destroyed_cb() */
+	g_signal_connect(m_pHBox, "destroy", G_CALLBACK(viewer_widget_tree_destroyed_cb), this);
+
 	// let the image/viewer area expand to fill the top-level widget, so the
 	// quiver-image-view (m_pImageView) is not confined to its natural size.
 	gtk_widget_set_hexpand(m_pGrid, TRUE);
@@ -8644,6 +10122,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		(QuiverImageViewMode)prefsPtr->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
 
 	quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(m_pImageView), view_mode);
+	/* the mode is the viewer's, so a video is shown in the mode the stills are
+	 * and neither of the two starts out in a different one */
+	m_eVideoViewMode = view_mode;
 
 	/* GTK4 drag-and-drop source via GtkDragSource controller */
 	if (!m_pDragSource) {
@@ -8711,8 +10192,14 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
     g_signal_connect (G_OBJECT (m_pAdjustmentV), "changed",
     			G_CALLBACK (image_view_adjustment_changed), this);
 
+	g_signal_connect (G_OBJECT (m_pAdjustmentH), "value-changed",
+			G_CALLBACK (image_view_adjustment_value_changed), this);
+
+	g_signal_connect (G_OBJECT (m_pAdjustmentV), "value-changed",
+			G_CALLBACK (image_view_adjustment_value_changed), this);
+
 	//g_signal_connect(G_OBJECT(m_pIconView),"selection_changed",G_CALLBACK(iconview_selection_changed_cb),this);
-	IPixbufLoaderObserverPtr tmp( new ViewerImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView), m_pImageErrorLabel));
+	IPixbufLoaderObserverPtr tmp( new ViewerImageViewPixbufLoaderObserver(QUIVER_IMAGE_VIEW(m_pImageView), m_pImageErrorLabel, this));
 	m_PixbufLoaderObserverPtr = tmp;
 	m_ImageLoader.AddPixbufLoaderObserver(m_PixbufLoaderObserverPtr.get());
 	
@@ -8756,9 +10243,18 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_dVideoZoomFinal = 1.0;
 	m_dVideoZoomMin = 1.0;
 	m_iVideoZoomTimeoutID = 0;
+	m_fVideoPanFX = 0.5;
+	m_fVideoPanFY = 0.5;
+	m_dVideoViewW = 0.;
+	m_dVideoViewH = 0.;
+	m_dVideoPanRangeX = 0.;
+	m_dVideoPanRangeY = 0.;
 	m_dVideoPanX = 0.;
 	m_dVideoPanY = 0.;
 	m_dVideoLastWidgetW = 0.;
+	m_dVideoLastFrameW = 0.;
+	m_dVideoLastFrameH = 0.;
+	m_dVideoLastFrameZoom = 0.;
 	m_dVideoLastWidgetH = 0.;
 	m_dVideoLastZc = 1.0;
 	m_bVideoZoomCropActive = FALSE;
@@ -8894,12 +10390,48 @@ void Viewer::SetImageList(IImageListViewPtr imgList)
 
 bool Viewer::ResetViewMode()
 {
-	bool bReset = false;
-	QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
+	ViewerImplPtr pViewerImpl = m_ViewerImplPtr;
+	QuiverImageView* iv = QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView);
+	if (iv == NULL || !QUIVER_IS_IMAGE_VIEW(iv))
+		return false;
 
-	quiver_image_view_reset_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView), TRUE);
-	QuiverImageViewMode mode2 = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_ViewerImplPtr->m_pImageView));
-	bReset = (mode != mode2);
+	/* "Keep zoom and pan" is not a zoom to undo - the framing on screen is what
+	 * that mode is there to keep - so Escape has nothing to reset here and says
+	 * so, which lets the caller go on to the next thing Escape does (leaving the
+	 * viewer) instead of silently un-doing the mode the user chose. */
+	if (viewer_view_mode_is_keep(quiver_image_view_get_view_mode(iv)))
+		return false;
+
+	const gdouble mag_before = quiver_image_view_get_magnification(iv);
+	gdouble centre_x_before = 0., centre_y_before = 0.;
+	const gboolean had_centre = quiver_image_view_get_view_center(iv, &centre_x_before, &centre_y_before);
+
+	bool bReset = false;
+	if (pViewerImpl->IsVideo())
+	{
+		/* a video's zoom lives in the video state, not in the image view, so
+		 * the reset below would leave it where it is */
+		gdouble fit = pViewerImpl->m_dVideoZoomMin;
+		if (pViewerImpl->m_dVideoZoomFinal > fit + 0.005)
+		{
+			pViewerImpl->SetVideoZoom(fit);
+			bReset = true;
+		}
+	}
+
+	quiver_image_view_reset_view_mode(iv, TRUE);
+
+	/* The reset keeps the mode, so what says whether it did anything is whether
+	 * the framing moved: the magnification, or the centre of the part being
+	 * shown. */
+	gdouble centre_x_after = 0., centre_y_after = 0.;
+	if (fabs(quiver_image_view_get_magnification(iv) - mag_before) > 0.001)
+		bReset = true;
+	else if (had_centre && quiver_image_view_get_view_center(iv, &centre_x_after, &centre_y_after)
+		&& (fabs(centre_x_after - centre_x_before) > 0.001 || fabs(centre_y_after - centre_y_before) > 0.001))
+	{
+		bReset = true;
+	}
 
 	return bReset;
 }
@@ -9033,6 +10565,7 @@ void Viewer::RegisterActions()
 		ACTION_VIEWER_ZOOM_100,
 		ACTION_VIEWER_ZOOM_FILL_SCREEN,
 		ACTION_VIEWER_ZOOM,
+		ACTION_VIEWER_ZOOM_KEEP,
 	};
 	gint zoom_values[] = {
 		QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW,
@@ -9040,6 +10573,7 @@ void Viewer::RegisterActions()
 		QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE,
 		QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN,
 		QUIVER_IMAGE_VIEW_MODE_ZOOM,
+		QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP,
 	};
 	QuiverUtils::AddRadioActions(zoom_names, zoom_values, G_N_ELEMENTS(zoom_names),
 		mode, viewer_radio_action_handler_cb, m_ViewerImplPtr.get());
@@ -9091,6 +10625,7 @@ void Viewer::UnregisterActions()
 			ACTION_VIEWER_VIEW_FILM_STRIP, ACTION_VIEWER_ROTATE_FOR_BEST_FIT,
 			ACTION_VIEWER_ZOOM_FIT, ACTION_VIEWER_ZOOM_FIT_STRETCH,
 			ACTION_VIEWER_ZOOM_100, ACTION_VIEWER_ZOOM_FILL_SCREEN, ACTION_VIEWER_ZOOM,
+			ACTION_VIEWER_ZOOM_KEEP,
 			"VideoSpeed025", "VideoSpeed05", "VideoSpeed10", "VideoSpeed15",
 			"VideoSpeed20", "VideoSpeed40", "VideoSpeed80", "VideoSpeed160"
 		};
@@ -9553,6 +11088,11 @@ GtkWidget* Viewer::GetCenterPlayButton() const
 	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pCenterPlayBtn : NULL;
 }
 
+GtkWidget* Viewer::GetViewModeMenuPopover() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pViewModeMenuPopover : NULL;
+}
+
 GtkWidget* Viewer::GetImageView() const
 {
 	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pImageView : NULL;
@@ -9633,6 +11173,46 @@ double Viewer::GetVideoPanX() const
 double Viewer::GetVideoPanY() const
 {
 	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanY : 0.0;
+}
+
+QuiverImageViewMode Viewer::GetVideoViewMode() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->GetViewMode() : QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
+}
+
+double Viewer::GetVideoPanFractionX() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_fVideoPanFX : 0.5;
+}
+
+double Viewer::GetVideoPanFractionY() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_fVideoPanFY : 0.5;
+}
+
+void Viewer::SetVideoPanFraction(double x, double y)
+{
+	if (!m_ViewerImplPtr)
+		return;
+	/* a centre cannot sit closer to an edge than half the visible part, or the
+	 * visible part would hang off the frame; where it does not fit at all the
+	 * frame is whole on screen and the centre is the centre */
+	gdouble centre_x = CLAMP(x, 0.0, 1.0);
+	gdouble centre_y = CLAMP(y, 0.0, 1.0);
+	const gdouble view_x = m_ViewerImplPtr->m_dVideoViewW;
+	const gdouble view_y = m_ViewerImplPtr->m_dVideoViewH;
+	const gdouble disp_x = m_ViewerImplPtr->m_dVideoPreviewDispW;
+	const gdouble disp_y = m_ViewerImplPtr->m_dVideoPreviewDispH;
+	if (disp_x > 0. && view_x > 0. && view_x < disp_x)
+		centre_x = CLAMP(centre_x, view_x / (2. * disp_x), 1. - view_x / (2. * disp_x));
+	else if (disp_x > 0. && view_x >= disp_x)
+		centre_x = 0.5;
+	if (disp_y > 0. && view_y > 0. && view_y < disp_y)
+		centre_y = CLAMP(centre_y, view_y / (2. * disp_y), 1. - view_y / (2. * disp_y));
+	else if (disp_y > 0. && view_y >= disp_y)
+		centre_y = 0.5;
+	m_ViewerImplPtr->m_fVideoPanFX = centre_x;
+	m_ViewerImplPtr->m_fVideoPanFY = centre_y;
 }
 
 bool Viewer::CanVideoPan() const
@@ -10023,6 +11603,11 @@ void Viewer::ViewerImpl::UpdateHUDPosition()
 			gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_BOTTOM);
 		if (m_pImageSubmenuBtn)
 			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pImageSubmenuBtn), GTK_ARROW_DOWN);
+		if (m_pViewModeMenuBtn)
+			viewer_view_mode_arrow_set_direction(m_pViewModeMenuBtn, false);
+		viewer_view_mode_split_size_sep(m_pViewerZoomFitBtn, m_pViewModeSplitSep);
+		if (m_pViewModeMenuPopover)
+			gtk_popover_set_position(GTK_POPOVER(m_pViewModeMenuPopover), GTK_POS_BOTTOM);
 		if (m_pVideoOptionsBtn)
 			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_DOWN);
 		if (m_pVolumeButton)
@@ -10042,6 +11627,11 @@ void Viewer::ViewerImpl::UpdateHUDPosition()
 			gtk_popover_set_position(GTK_POPOVER(m_pVolumePopover), GTK_POS_TOP);
 		if (m_pImageSubmenuBtn)
 			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pImageSubmenuBtn), GTK_ARROW_UP);
+		if (m_pViewModeMenuBtn)
+			viewer_view_mode_arrow_set_direction(m_pViewModeMenuBtn, true);
+		viewer_view_mode_split_size_sep(m_pViewerZoomFitBtn, m_pViewModeSplitSep);
+		if (m_pViewModeMenuPopover)
+			gtk_popover_set_position(GTK_POPOVER(m_pViewModeMenuPopover), GTK_POS_TOP);
 		if (m_pVideoOptionsBtn)
 			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_UP);
 		if (m_pVolumeButton)
@@ -10088,9 +11678,21 @@ bool Viewer::ViewerImpl::UpdateNavigationControlTexture()
 	 * garbage. */
 	if (IsVideo())
 	{
-		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
-		if (m_pVideoRotatedPaintable == NULL || !m_bVideoPreviewHasFrame)
+		if (m_pVideoRotatedPaintable == NULL)
 			return false;
+		if (!m_bVideoPreviewHasFrame)
+		{
+			/* No frame out of the pipeline yet, but the quick preview is on
+			 * screen: it is the image view drawing the video's own thumbnail,
+			 * so the control draws that - the same image, so its box lines up
+			 * with what the user is looking at. */
+			GdkTexture* preview_tex = IsVideoPreviewShowing()
+				? quiver_image_view_get_texture(QUIVER_IMAGE_VIEW(m_pImageView))
+				: NULL;
+			quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), preview_tex);
+			return preview_tex != NULL;
+		}
+		quiver_navigation_control_set_texture(QUIVER_NAVIGATION_CONTROL(m_pNavigationControl), NULL);
 		return true;
 	}
 
@@ -10486,7 +12088,12 @@ bool Viewer::ViewerImpl::IsNavControlNeeded() const
 		 * rectangle ApplyVideoZoom() keeps up to date. */
 		if (!prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO, false))
 			return false;
-		if (m_pVideoRotatedPaintable == NULL || !m_bVideoPreviewHasFrame)
+		if (m_pVideoRotatedPaintable == NULL)
+			return false;
+		/* A quick preview that is being zoomed or panned needs the control just
+		 * as much as a playing video does: it is the same viewport, only drawn
+		 * by the image view until the first frame arrives. */
+		if (!m_bVideoPreviewHasFrame && !IsVideoPreviewShowing())
 			return false;
 		const double veps = 0.005;
 		return (m_dVideoPreviewViewW > veps && m_dVideoPreviewViewW < 1.0 - veps)
@@ -10615,6 +12222,7 @@ void Viewer::ViewerImpl::UpdateNavControlVisibility()
 		bNeeded = UpdateNavigationControlTexture();
 	}
 
+
 	if (bNeeded == m_bNavControlShown)
 		return;
 
@@ -10708,6 +12316,27 @@ static gboolean timeout_update_scrollbars(gpointer user_data)
 	return FALSE;
 }
 
+/* The preview is panned, which is "value-changed" and not "changed": the latter
+ * is about the range and the page, i.e. zoom, view mode and window size.  While
+ * a video's quick preview is on screen it is the picture the user is framing, so
+ * where it is scrolled to is where the video has to play from - otherwise play
+ * jumps away from the framing that was just set up in front of them.  Not while
+ * a picture is being delivered or a framing is being put on it: the adjustments
+ * move then too, and what they say there belongs to that, not to the user. */
+static void image_view_adjustment_value_changed (GtkAdjustment *adjustment, gpointer user_data)
+{
+	(void)adjustment;
+	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
+	if (pViewerImpl == NULL)
+		return;
+	if (pViewerImpl->IsPreviewPanValid() && !pViewerImpl->m_bFramingVideoPreview
+		&& pViewerImpl->IsVideoPreviewShowing())
+	{
+		pViewerImpl->CaptureVideoPanFromPreview();
+		pViewerImpl->UpdateVideoPreviewViewAreaFromImageView();
+	}
+}
+
 static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer user_data)
 { (void)adjustment; 
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
@@ -10716,6 +12345,43 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 	 * view mode, window resize): that is exactly when the nav control has to
 	 * fade in or out. */
 	pViewerImpl->UpdateNavControlVisibility();
+
+	/* While a video's quick preview is on screen it is the picture the user is
+	 * framing, so where it is scrolled to is where the video has to play from -
+	 * otherwise play jumps away from the framing that was just set up in front
+	 * of them.  Not while a picture is being delivered: the adjustments move
+	 * then too, and what they say there belongs to the delivery, not the user. */
+	/* A preview whose framing could not be decided when it landed - the view
+	 * had no viewport yet - is decided now: this fires when the view is laid out
+	 * and its scroll ranges exist, which is exactly the information the decision
+	 * was waiting for. */
+	if (pViewerImpl->m_bPreviewFramingPending && !pViewerImpl->m_bFramingVideoPreview
+		&& pViewerImpl->IsVideoPreviewShowing())
+	{
+		const gdouble shown =
+			quiver_image_view_get_magnification(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+		/* only while the framing is still the one the decision was made at: a
+		 * preview the user has since zoomed or panned is theirs, and re-deciding
+		 * would put a framing back over it */
+		if (fabs(shown - pViewerImpl->m_dPreviewFramingMag) < 0.001)
+		{
+			pViewerImpl->m_bPreviewFramingPending = false;
+			pViewerImpl->FrameVideoPreviewFromVideo(TRUE);
+		}
+		else
+		{
+			/* the user has since made a framing of their own, which is the most
+			 * recent thing said about the zoom: stop waiting for a layout */
+			pViewerImpl->m_bPreviewFramingPending = false;
+		}
+	}
+
+	if (pViewerImpl->IsPreviewPanValid() && !pViewerImpl->m_bFramingVideoPreview
+		&& pViewerImpl->IsVideoPreviewShowing())
+	{
+		pViewerImpl->CaptureVideoPanFromPreview();
+		pViewerImpl->UpdateVideoPreviewViewAreaFromImageView();
+	}
 
 	if (0 != pViewerImpl->m_iTimeoutScrollbars)
 	{

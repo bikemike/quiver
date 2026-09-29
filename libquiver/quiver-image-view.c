@@ -124,6 +124,16 @@ struct _QuiverImageViewPrivate
 	gboolean needs_recenter;
 	gboolean zoom_anchor_center;
 
+	/* The framing "keep zoom and pan" is keeping, held while there is no
+	 * picture to read it off: the viewer blanks the view while the next item
+	 * loads, and the scroll position it leaves behind is the top left corner. */
+	gboolean has_kept_center;
+	gdouble kept_center_x;
+	gdouble kept_center_y;
+	/* set by a delivery that had no viewport to apply the kept centre in, and
+	 * cleared by the first size change that has one */
+	gboolean needs_kept_center;
+
 };
 G_DEFINE_TYPE_WITH_CODE(QuiverImageView,quiver_image_view,GTK_TYPE_WIDGET, G_ADD_PRIVATE(QuiverImageView) G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, NULL));
 
@@ -239,6 +249,7 @@ static void     quiver_image_view_finalize(GObject *object);
 
 /* start utility function prototypes*/
 static void quiver_image_view_send_reload_event(QuiverImageView *imageview);
+static gboolean quiver_image_view_mode_is_zoomed(QuiverImageViewMode mode);
 static guint quiver_image_view_get_width(QuiverImageView *imageview);
 static guint quiver_image_view_get_height(QuiverImageView *imageview);
 static void
@@ -291,6 +302,7 @@ static void quiver_image_view_invalidate_image_area(QuiverImageView *imageview,G
 static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,QuiverImageViewMode mode,gboolean invalidate);
 
 static void quiver_image_view_update_size(QuiverImageView *imageview);
+static void quiver_image_view_remember_view_center(QuiverImageView *imageview);
 
 static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview, gint new_width, gint new_height);
 
@@ -315,6 +327,15 @@ static void pixbuf_loader_closed(GdkPixbufLoader *loader,gpointer userdata);
 
 
 /* start private functions */
+/* The zoomed modes let the user pick the magnification themselves; they only
+ * differ in what happens to it when another image is loaded. */
+static gboolean
+quiver_image_view_mode_is_zoomed(QuiverImageViewMode mode)
+{
+	return (QUIVER_IMAGE_VIEW_MODE_ZOOM == mode
+		|| QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP == mode);
+}
+
 static void 
 quiver_image_view_class_init (QuiverImageViewClass *klass)
 {
@@ -796,7 +817,19 @@ quiver_image_view_handle_size_change (QuiverImageView *imageview)
 
 	quiver_image_view_update_size(imageview);
 
-	if (imageview->priv->needs_recenter
+	if (imageview->priv->has_kept_center
+	    && imageview->priv->needs_kept_center
+	    && gtk_adjustment_get_page_size(imageview->priv->hadjustment) > 1.)
+	{
+		/* the position the mode is keeping, applied now that there is a viewport
+		 * to apply it in - a view that was handed a picture while it was off
+		 * screen could not hold it */
+		quiver_image_view_set_view_center(imageview,
+			imageview->priv->kept_center_x, imageview->priv->kept_center_y);
+		imageview->priv->needs_kept_center = FALSE;
+		imageview->priv->needs_recenter = FALSE;
+	}
+	else if (imageview->priv->needs_recenter
 	    && gtk_adjustment_get_page_size(imageview->priv->hadjustment) > 1.)
 	{
 		quiver_image_view_set_default_adjustment_values(imageview);
@@ -1494,7 +1527,14 @@ static void quiver_image_view_add_scroll_timeout(QuiverImageView *imageview)
 static void
 quiver_image_view_adjustment_value_changed (GtkAdjustment *adjustment,
            QuiverImageView *imageview)
-{ (void)adjustment; 
+{
+	(void)adjustment;
+	/* Panning is the user choosing what is framed, so this is where that
+	 * position is worth keeping: the view is off screen often enough (the
+	 * browser has it while the next item is chosen) that the position has to
+	 * outlive the viewport it was chosen in. */
+	quiver_image_view_remember_view_center(imageview);
+
 	if (imageview->priv->scroll_draw)
 	{
 		quiver_image_view_add_scroll_timeout(imageview);
@@ -1947,6 +1987,165 @@ static void quiver_image_view_set_default_adjustment_values(QuiverImageView *ima
 	gtk_adjustment_set_value(imageview->priv->vadjustment,vval);
 }
 
+/* The zoomed modes keep the magnification and the visible area when another
+ * image is loaded.  The scroll adjustments are in widget pixels of the scaled
+ * image, so the center is converted to and from a fraction of the picture: the
+ * middle of what is on screen, as 0..1 of the width and of the height.
+ *
+ * A fraction, not a position in pixels, because the number has to describe the
+ * same point of a *different* picture.  A pixel offset is only meaningful for
+ * the picture it was measured on: carried over to one of another size it lands
+ * somewhere else entirely, and where the two pictures differ in aspect ratio it
+ * usually lands off the edge, where the scroll range clamps it - so zooming to
+ * the bottom right of one picture and switching to a wider, shorter one came up
+ * centred horizontally.  A fraction frames the same relative part of any
+ * picture, whatever its size or aspect ratio.
+ *
+ * The fraction is of the *picture*, not of the texture it happens to be drawn
+ * from.  The magnification is relative to the picture too - the scroll range is
+ * built from it (see quiver_image_view_update_size) - while the texture is
+ * whatever resolution was decoded, which at a deep zoom is far smaller than the
+ * picture it stands for.  Converting through the texture's own size therefore
+ * described a smaller picture than the one on screen: the wanted offset came out
+ * off the scroll range, was clamped to the edge, and the clamped result became
+ * the "kept" center - so a zoom to the top right of one picture arrived at the
+ * middle of the next, and again on the sharper redelivery. */
+/* Where the user is looking, as a fraction of the picture, held for as long as
+ * there is a picture to hold it for.  The adjustments are where the view reads
+ * its position from while it is on screen; this is the same position when it is
+ * not, so that "keep zoom and pan" can keep it across a gap in which the view
+ * has no viewport at all. */
+static void
+quiver_image_view_remember_view_center(QuiverImageView *imageview)
+{
+	gdouble center_x = 0., center_y = 0.;
+	if (!quiver_image_view_mode_is_zoomed(imageview->priv->view_mode))
+		return;
+	if (!quiver_image_view_get_view_center(imageview, &center_x, &center_y))
+		return;
+	imageview->priv->has_kept_center = TRUE;
+	imageview->priv->kept_center_x = center_x;
+	imageview->priv->kept_center_y = center_y;
+}
+
+gboolean
+quiver_image_view_get_view_center(QuiverImageView *imageview, gdouble *center_x, gdouble *center_y)
+{
+	GdkTexture *texture = imageview->priv->texture;
+	gdouble magnification = quiver_image_view_get_magnification(imageview);
+	gint texture_width;
+	gint texture_height;
+
+	if (!quiver_image_view_mode_is_zoomed(imageview->priv->view_mode))
+		return FALSE;
+	if (NULL == texture || NULL == imageview->priv->hadjustment || NULL == imageview->priv->vadjustment)
+		return FALSE;
+	/* the picture, which is the unit the scroll range and the magnification are
+	 * in, rather than the texture that is drawn for it */
+	texture_width = imageview->priv->pixbuf_width;
+	texture_height = imageview->priv->pixbuf_height;
+	if (texture_width <= 0)
+		texture_width = gdk_texture_get_width(texture);
+	if (texture_height <= 0)
+		texture_height = gdk_texture_get_height(texture);
+	if (texture_width <= 0 || texture_height <= 0)
+		return FALSE;
+	if (magnification <= 0.)
+		return FALSE;
+	/* Without a viewport there is no centre to report: the scroll position is
+	 * then whatever the adjustments were last told, and dividing that by the
+	 * picture size answers 0,0 - the top left corner - for a view that is not
+	 * even on screen.  A caller holding that as the position to keep would
+	 * remember the corner, so this says "there is no position" instead. */
+	if (gtk_adjustment_get_page_size(imageview->priv->hadjustment) <= 1.
+		|| gtk_adjustment_get_page_size(imageview->priv->vadjustment) <= 1.)
+		return FALSE;
+
+	*center_x = (gtk_adjustment_get_value(imageview->priv->hadjustment)
+		+ gtk_adjustment_get_page_size(imageview->priv->hadjustment) / 2.) / magnification / texture_width;
+	*center_y = (gtk_adjustment_get_value(imageview->priv->vadjustment)
+		+ gtk_adjustment_get_page_size(imageview->priv->vadjustment) / 2.) / magnification / texture_height;
+
+	return TRUE;
+}
+
+void
+quiver_image_view_set_view_center(QuiverImageView *imageview, gdouble center_x, gdouble center_y)
+{
+	GdkTexture *texture = imageview->priv->texture;
+	GtkAdjustment *hadjustment = imageview->priv->hadjustment;
+	GtkAdjustment *vadjustment = imageview->priv->vadjustment;
+	gdouble magnification = quiver_image_view_get_magnification(imageview);
+	gdouble min_x, max_x, min_y, max_y;
+	gdouble x, y;
+	gint picture_width;
+	gint picture_height;
+
+	if (NULL == texture || NULL == hadjustment || NULL == vadjustment)
+		return;
+	if (magnification <= 0.)
+		return;
+	if (gdk_texture_get_width(texture) <= 0 || gdk_texture_get_height(texture) <= 0)
+		return;
+
+	/* center_x/center_y are fractions of this picture's width and height, the
+	 * same unit quiver_image_view_get_view_center() reports.  The picture is the
+	 * one the magnification and the scroll range are in, so it is what the
+	 * fraction is of: the texture may be a much smaller decode of it. */
+	picture_width = imageview->priv->pixbuf_width;
+	picture_height = imageview->priv->pixbuf_height;
+	if (picture_width <= 0)
+		picture_width = gdk_texture_get_width(texture);
+	if (picture_height <= 0)
+		picture_height = gdk_texture_get_height(texture);
+
+	/* The scroll range is the range of centres: the middle of the scroll is the
+	 * middle of the picture and the ends of it are the picture's edges.  A
+	 * picture smaller than the viewport has no range to scroll and so has no
+	 * centre to keep either - it is in the middle, which is where an empty
+	 * range puts it. */
+	min_x = gtk_adjustment_get_lower(hadjustment);
+	max_x = MAX (min_x, gtk_adjustment_get_upper(hadjustment) - gtk_adjustment_get_page_size(hadjustment));
+	min_y = gtk_adjustment_get_lower(vadjustment);
+	max_y = MAX (min_y, gtk_adjustment_get_upper(vadjustment) - gtk_adjustment_get_page_size(vadjustment));
+
+	x = CLAMP (center_x * picture_width * magnification
+		- gtk_adjustment_get_page_size(hadjustment) / 2., min_x, max_x);
+	y = CLAMP (center_y * picture_height * magnification
+		- gtk_adjustment_get_page_size(vadjustment) / 2., min_y, max_y);
+
+	/* A centre, a picture size or a magnification that is not a number puts an
+	 * infinity or a NaN into the scroll value, which GTK refuses outright and
+	 * which leaves the axis unable to scroll at all - and an axis that cannot
+	 * scroll cannot be centred.  Nothing here says where to be in that case, so
+	 * it goes to the middle, like a view with nothing to go on. */
+	if (!isfinite (x))
+		x = (min_x + max_x) / 2.;
+	if (!isfinite (y))
+		y = (min_y + max_y) / 2.;
+
+	gtk_adjustment_set_value(hadjustment, x);
+	gtk_adjustment_set_value(vadjustment, y);
+
+	quiver_image_view_remember_view_center(imageview);
+}
+
+void quiver_image_view_get_picture_size(QuiverImageView *imageview, gint *width, gint *height)
+{
+	if (imageview == NULL || !QUIVER_IS_IMAGE_VIEW(imageview))
+	{
+		if (width != NULL)
+			*width = 0;
+		if (height != NULL)
+			*height = 0;
+		return;
+	}
+	if (width != NULL)
+		*width = imageview->priv->pixbuf_width;
+	if (height != NULL)
+		*height = imageview->priv->pixbuf_height;
+}
+
 void quiver_image_view_get_pixbuf_display_size_for_mode(QuiverImageView *imageview, QuiverImageViewMode mode, gint *width, gint *height)
 { (void)mode; 
 	*width = imageview->priv->pixbuf_width;
@@ -1965,6 +2164,7 @@ void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *ima
 	switch (mode)
 	{
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
+		case QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP:
 			{
 				gdouble magnification = imageview->priv->magnification;
 				*out_width  = (gint)(*out_width * magnification);
@@ -2115,9 +2315,53 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 	GtkWidget* widget = GTK_WIDGET(imageview);
 	gdouble old_mag = quiver_image_view_get_magnification(imageview);
 
+	/* Where the user is looking, in source-image pixels.  This has to be read
+	 * while the OLD texture is still installed: once the new one replaces it
+	 * the same scroll offset maps to a different point of the image. */
+	gdouble center_x = 0.;
+	gdouble center_y = 0.;
+	gboolean keep_center = FALSE;
+
 	GdkTexture* old_texture = NULL;
 	gint old_w = imageview->priv->pixbuf_width;
 	gint old_h = imageview->priv->pixbuf_height;
+
+	/* "Keep zoom and pan" is not reset by anything that hands the view another
+	 * picture - a new item, a rotation, a reload - because the framing on screen
+	 * is what the mode is there to keep and it is the user's position in their
+	 * own picture, not a leftover.  So every delivery in that mode is a delivery
+	 * that keeps, whether or not the caller asked for a reset. */
+	if (reset_view_mode
+		&& QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP == imageview->priv->view_mode)
+		reset_view_mode = FALSE;
+
+	if (!reset_view_mode)
+	{
+		keep_center = quiver_image_view_get_view_center(imageview,&center_x,&center_y);
+		if (keep_center)
+		{
+			imageview->priv->has_kept_center = TRUE;
+			imageview->priv->kept_center_x = center_x;
+			imageview->priv->kept_center_y = center_y;
+		}
+		else if (imageview->priv->has_kept_center)
+		{
+			/* The view was blanked while it was off screen - the viewer empties it
+			 * before the next item is loaded - so there is no picture to read the
+			 * centre off, but the framing being kept is still the framing this item
+			 * should come up in.  Otherwise the scroll position the blank left
+			 * behind wins, and that is the top left corner. */
+			center_x = imageview->priv->kept_center_x;
+			center_y = imageview->priv->kept_center_y;
+			keep_center = TRUE;
+		}
+	}
+	else
+	{
+		/* a reset is not a framing being kept */
+		imageview->priv->has_kept_center = FALSE;
+		imageview->priv->needs_kept_center = FALSE;
+	}
 
 	if (imageview->priv->transitions_enabled && reset_view_mode && NULL != imageview->priv->texture)
 	{
@@ -2127,25 +2371,12 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 	quiver_image_view_transition_stop(imageview);
 	quiver_image_view_animation_frames_stop(imageview);
 
-	if (reset_view_mode)
-	{
-		quiver_image_view_prepare_for_new_pixbuf(imageview, width, height);
-	}
-	else
-	{
-		if (NULL != imageview->priv->texture)
-		{
-			g_object_unref(imageview->priv->texture);
-			imageview->priv->texture = NULL;
-		}
-#if HAVE_GDK_PIXBUF
-		if (NULL != imageview->priv->pixbuf)
-		{
-			g_object_unref(imageview->priv->pixbuf);
-			imageview->priv->pixbuf = NULL;
-		}
-#endif
-	}
+	/* Whatever happens to the framing, the old picture's pending work is the
+	 * old picture's: a magnification still animating towards its size, a
+	 * higher quality scale pass, an animated pixbuf, the transition.  They all
+	 * finish against the picture that has just replaced the one they were
+	 * started for, so they are torn down here for every delivery. */
+	quiver_image_view_prepare_for_new_pixbuf(imageview, width, height);
 
 	if (NULL != old_texture)
 	{
@@ -2175,13 +2406,34 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 		quiver_image_view_set_default_adjustment_values(imageview);
 
 		imageview->priv->scroll_draw = TRUE;
-		imageview->priv->magnification = 0;
 		imageview->priv->needs_recenter = TRUE;
+		/* the magnification is not zeroed here: the reset above has just put the
+		 * new picture at the size the mode shows it, and zeroing it would leave
+		 * a mode that keeps a magnification (1:1) with no magnification at all */
 		old_mag = 0;
 	}
 	else
 	{
 		quiver_image_view_update_size(imageview);
+
+		if (keep_center)
+		{
+			quiver_image_view_set_view_center(imageview,center_x,center_y);
+			/* A view with no viewport has no page to centre a position in, so the
+			 * position is applied as soon as it has one - otherwise it lands as
+			 * the empty view's scroll position, which is the top left corner. */
+			imageview->priv->needs_kept_center = TRUE;
+		}
+		else
+		{
+			/* Nothing to keep and nothing to go back to: the scroll position is
+			 * whatever the last picture - or a blank view - left behind, which
+			 * is the top left corner, so put the picture in the middle. */
+			quiver_image_view_set_default_adjustment_values(imageview);
+		}
+		/* the centre this picture was given is the centre, so a later size
+		 * change must not re-centre it and throw the pan away */
+		imageview->priv->needs_recenter = FALSE;
 	}
 
 	imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
@@ -2281,10 +2533,50 @@ void quiver_image_view_set_animation_frames(QuiverImageView *imageview,
 
 void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
 {
-	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
+	/* A reset is "put the picture back where the mode in force shows it whole",
+	 * not "pick some other mode": the mode is the viewer's, it is what the user
+	 * chose, and it is what decides how the *next* picture is shown, so changing
+	 * it here answers a question nobody asked - and it made 1:1 fall back to fit
+	 * and "keep zoom and pan" fall back to whatever it was zoomed from.
+	 *
+	 * "Keep zoom and pan" is not reset at all: the framing on screen is the one
+	 * thing that mode is for, and there is no un-zoomed position to go back to.
+	 */
+	const QuiverImageViewMode mode = imageview->priv->view_mode;
+	gdouble mag = 0.;
+	gint natural_w = 0;
+	gint natural_h = 0;
+
+	switch (mode)
 	{
-		quiver_image_view_set_view_mode_full(imageview,imageview->priv->view_mode_last,invalidate);
+		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
+			mag = 1.;
+			break;
+		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
+		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
+		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
+			if (imageview->priv->pixbuf_width <= 0 || imageview->priv->pixbuf_height <= 0)
+				return;
+			/* the size this mode shows the picture at, which is the picture
+			 * scaled to the window: the same computation the mode itself makes,
+			 * so the reset lands on the framing the mode would have shown */
+			natural_w = imageview->priv->pixbuf_width;
+			natural_h = imageview->priv->pixbuf_height;
+			quiver_image_view_get_pixbuf_display_size_for_mode_alt(imageview, mode,
+				natural_w, natural_h, &natural_w, &natural_h);
+			if (natural_w <= 0)
+				return;
+			mag = (gdouble)natural_w / (gdouble)imageview->priv->pixbuf_width;
+			break;
+		default:
+			/* actual size has no zoom to undo, and "keep zoom and pan" is not a
+			 * reset at all */
+			return;
 	}
+
+	quiver_image_view_set_framing(imageview, mag, 0.5, 0.5);
+	if (invalidate)
+		gtk_widget_queue_draw(GTK_WIDGET(imageview));
 }
 
 QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview)
@@ -2294,7 +2586,7 @@ QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview)
 
 QuiverImageViewMode quiver_image_view_get_view_mode_unmagnified(QuiverImageView *imageview)
 {
-	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
+	if (quiver_image_view_mode_is_zoomed(imageview->priv->view_mode))
 	{
 		return imageview->priv->view_mode_last;
 	}
@@ -2310,21 +2602,20 @@ void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewM
 
 static void quiver_image_view_set_view_mode_full(QuiverImageView *imageview,QuiverImageViewMode mode,gboolean invalidate)
 {
-	
 	GtkWidget *widget;
 	QuiverImageViewMode old_mode;
 	
 	gdouble old_mag = imageview->priv->magnification;
 	
-	if (QUIVER_IMAGE_VIEW_MODE_ZOOM != imageview->priv->view_mode 
-		&& QUIVER_IMAGE_VIEW_MODE_ZOOM == mode)
+	if (!quiver_image_view_mode_is_zoomed(imageview->priv->view_mode)
+		&& quiver_image_view_mode_is_zoomed(mode))
 	{
 		imageview->priv->magnification = quiver_image_view_get_magnification(imageview);
 		imageview->priv->view_mode_last = imageview->priv->view_mode;
 	}
 	
-	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode 
-		&& QUIVER_IMAGE_VIEW_MODE_ZOOM != mode)
+	if (quiver_image_view_mode_is_zoomed(imageview->priv->view_mode)
+		&& !quiver_image_view_mode_is_zoomed(mode))
 	{	
 		if (0 != imageview->priv->magnification_timeout_id)
 		{
@@ -2424,10 +2715,19 @@ gdouble quiver_image_view_get_magnification(QuiverImageView *imageview)
 			)
 			{
 				quiver_image_view_get_pixbuf_display_size(imageview,&display_width,&display_height);
-				magnification = display_width/(gdouble)imageview->priv->pixbuf_width;
+				/* A fit of a picture whose size is not known yet is no
+				 * magnification at all, and 0/0 is not one to report: the view
+				 * stays at actual size until there is a size to fit. */
+				/* A fit of a picture whose size is not known yet is no
+				 * magnification at all, and 0/0 is not one to report: the view
+				 * stays at actual size until there is a size to fit. */
+				magnification = imageview->priv->pixbuf_width > 0
+					? display_width / (gdouble)imageview->priv->pixbuf_width
+					: 1.;
 			}
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
+		case QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP:
 			if (0 != imageview->priv->magnification_timeout_id)
 			{
 				magnification = imageview->priv->magnification_final;
@@ -2538,6 +2838,16 @@ quiver_image_view_clamp_magnification(QuiverImageView *imageview, gdouble new_ma
 
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_mag)
 {
+	/* A magnification the widget cannot draw is not a zoom it can apply: a
+	 * non-finite one - a 0/0 with no picture size known yet - would put NaN into
+	 * the display size and from there into the scroll ranges, which GTK rejects
+	 * and which the view then cannot scroll at all. */
+	/* A magnification the widget cannot draw is not a zoom it can apply: a
+	 * non-finite one - a 0/0 with no picture size known yet - would put NaN into
+	 * the display size and from there into the scroll ranges, which GTK rejects
+	 * and which the view then cannot scroll at all. */
+	if (!isfinite(new_mag) || new_mag <= 0.)
+		return;
 	/* restrict the zoom amount */
 	new_mag = quiver_image_view_clamp_magnification(imageview, new_mag);
 	
@@ -2551,6 +2861,38 @@ void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble new_
 		quiver_image_view_set_magnification_full(imageview,new_mag);
 		imageview->priv->zoom_anchor_center = FALSE;
 	}
+}
+
+/* Put the view at a magnification and a centre (both as fractions of the
+ * picture, from quiver_image_view_get_view_center()) in one go, without the
+ * smooth zoom.
+ *
+ * A zoom that eases towards its target passes through magnifications the
+ * picture cannot be panned in yet - a magnification below the fit has no
+ * scroll range at all, so the centre falls back to the middle of the picture
+ * and stays there when the zoom gets big enough to pan again.  Whatever centre
+ * was asked for is therefore gone by the time the animation lands, which is
+ * how a framing that was set to a corner arrives in the middle.  Setting both at
+ * once, immediately, has no such intermediate state to lose it in. */
+void quiver_image_view_set_framing(QuiverImageView *imageview, gdouble magnification,
+	gdouble center_x, gdouble center_y)
+{
+	g_return_if_fail(QUIVER_IS_IMAGE_VIEW(imageview));
+
+	const QuiverImageViewMagnificationMode mode = imageview->priv->magnification_mode;
+	quiver_image_view_transition_stop(imageview);
+	/* an animation already on its way would land after this and undo it */
+	if (0 != imageview->priv->magnification_timeout_id)
+	{
+		g_source_remove(imageview->priv->magnification_timeout_id);
+		imageview->priv->magnification_timeout_id = 0;
+	}
+	imageview->priv->magnification_mode = QUIVER_IMAGE_VIEW_MAGNIFICATION_MODE_DEFAULT;
+	quiver_image_view_set_zoom_anchor_center(imageview, TRUE);
+	quiver_image_view_set_magnification(imageview, magnification);
+	quiver_image_view_set_view_center(imageview, center_x, center_y);
+	quiver_image_view_set_zoom_anchor_center(imageview, FALSE);
+	imageview->priv->magnification_mode = mode;
 }
 
 void quiver_image_view_set_zoom_anchor_center(QuiverImageView *imageview, gboolean anchor_center)
@@ -2591,6 +2933,16 @@ static void quiver_image_view_set_magnification_full(QuiverImageView *imageview,
 	quiver_image_view_get_pixbuf_display_size(imageview,&old_width,&old_height);
 
 	old_mag = imageview->priv->magnification;
+
+	/* The anchor is kept below by scaling the offset by the ratio of the old
+	 * magnification to the new one, and a magnification of zero has no ratio to
+	 * give: there is no previous zoom for the pointer's position to be a fraction
+	 * of, and dividing by it puts an infinity - and then a NaN - into the scroll
+	 * value, which GTK refuses and which the view then cannot scroll at all.
+	 * With nothing to scale the position by, the zoom is about the middle, which
+	 * is what a view with no zoom behind it can do. */
+	if (!isfinite(old_mag) || old_mag <= 0.)
+		old_mag = new_mag;
 
 	if (old_mag < new_mag)
 	{
@@ -2940,6 +3292,11 @@ static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview,
 	
 	if (0 != imageview->priv->magnification_timeout_id)
 	{
+		/* A magnification on its way somewhere is cancelled here, but the size it
+		 * was on its way to is what the user asked for and so is what the next
+		 * picture is shown at - not wherever the animation had got to when the
+		 * picture changed underneath it. */
+		imageview->priv->magnification = imageview->priv->magnification_final;
 		g_source_remove(imageview->priv->magnification_timeout_id);
 		imageview->priv->magnification_timeout_id = 0;		
 	}

@@ -31,6 +31,9 @@ typedef enum _QuiverImageViewMode {
 	QUIVER_IMAGE_VIEW_MODE_ACTUAL_SIZE,
 	QUIVER_IMAGE_VIEW_MODE_ZOOM,
 	QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN,
+	/* user zoom, like QUIVER_IMAGE_VIEW_MODE_ZOOM, but the magnification
+	 * and the visible area are carried over to the next image */
+	QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP,
 	QUIVER_IMAGE_VIEW_MODE_COUNT
 } QuiverImageViewMode;
 
@@ -106,7 +109,26 @@ void quiver_image_view_set_animation_frames(QuiverImageView *imageview,
 QuiverImageViewMode quiver_image_view_get_view_mode(QuiverImageView *imageview);
 QuiverImageViewMode quiver_image_view_get_view_mode_unmagnified(QuiverImageView *imageview);
 void quiver_image_view_set_view_mode(QuiverImageView *imageview,QuiverImageViewMode mode);
+/* Put the picture back where the mode in force shows it whole: 1:1 back to
+ * actual size, the fit modes back to the fit, the picture centred.  The view
+ * mode is *not* changed - it is the viewer's, and it is what decides how the
+ * next picture is shown - and "keep zoom and pan" is not reset at all, since the
+ * framing on screen is what that mode is for and it has no un-zoomed position to
+ * go back to. */
 void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate);
+
+/* The center of the visible area as a fraction of the *declared picture* - the
+ * width and height the picture was loaded at, not the size of the texture that
+ * happens to be drawn for it, and not the widget pixels of the scaled image.
+ * That is what makes it a position: a fraction of the picture is the same place
+ * whatever magnification, texture or window size it is being looked at through,
+ * so a center saved at one of those and restored at another shows the same part
+ * of the picture.  Only meaningful for a zoomed mode: get_view_center() returns
+ * FALSE otherwise, and what a zoomed view can show is bounded by its viewport,
+ * so a center nearer an edge than half the viewport comes back as the nearest
+ * one the viewport can reach. */
+gboolean quiver_image_view_get_view_center(QuiverImageView *imageview, gdouble *center_x, gdouble *center_y);
+void quiver_image_view_set_view_center(QuiverImageView *imageview, gdouble center_x, gdouble center_y);
 
 gboolean quiver_image_view_get_enable_transitions(QuiverImageView *imageview);
 void quiver_image_view_set_enable_transitions(QuiverImageView *imageview,gboolean enable);
@@ -114,12 +136,28 @@ gboolean quiver_image_view_is_in_transition(QuiverImageView *imageview);
 
 void quiver_image_view_set_magnification(QuiverImageView *imageview,gdouble amount);
 void quiver_image_view_set_zoom_anchor_center(QuiverImageView *imageview, gboolean anchor_center);
+/* Set the magnification and the center (a fraction of the picture, as
+ * quiver_image_view_get_view_center() reports it) together and immediately,
+ * rather than easing the zoom in: an animated zoom passes through
+ * magnifications the picture cannot be panned in yet and loses the center on
+ * the way.  The view mode is not changed. */
+void quiver_image_view_set_framing(QuiverImageView *imageview, gdouble magnification,
+	gdouble center_x, gdouble center_y);
 gboolean quiver_image_view_get_zoom_anchor_center(QuiverImageView *imageview);
 /* Apply a multiplicative zoom factor immediately (no smooth animation). */
 gdouble quiver_image_view_zoom_by(QuiverImageView *imageview,gdouble factor);
 void quiver_image_view_set_magnification_mode(QuiverImageView *imageview,QuiverImageViewMagnificationMode mode);
 gdouble quiver_image_view_get_magnification(QuiverImageView *imageview);
 gboolean  quiver_image_view_can_magnify(QuiverImageView *imageview, gboolean in);
+
+/* The size the picture was loaded at - the width and height it was delivered
+ * with, which is the size every magnification and centre in this widget is a
+ * fraction of, and the size the widget's rotation is applied on top of.  Unlike
+ * the texture holding it (a picture can be drawn from a much smaller one) and
+ * unlike the display size for the mode in force (that is the picture scaled by
+ * the magnification, so it moves with the zoom), this is a property of the
+ * picture alone and is what a zoom relative to the frame is scaled by. */
+void quiver_image_view_get_picture_size(QuiverImageView *imageview, gint *width, gint *height);
 
 void quiver_image_view_get_pixbuf_display_size_for_mode(QuiverImageView *imageview, QuiverImageViewMode mode, gint *width, gint *height);
 void quiver_image_view_get_pixbuf_display_size_for_mode_alt(QuiverImageView *imageview, QuiverImageViewMode mode, gint in_width, gint in_height, gint *out_width, gint *out_height);

@@ -1494,6 +1494,11 @@ std::string QuiverFile::QuiverFileImpl::GetFilePath() const
 {
 	std::string s;
 
+	/* a default QuiverFile has no URI yet - an empty list hands one out - and
+	 * g_file_new_for_uri(NULL) returns NULL, which then has no path to give */
+	if (NULL == m_szURI)
+		return s;
+
 	GFile* file = g_file_new_for_uri(m_szURI);
 	char* path = g_file_get_path(file);
 	if (NULL != path)
