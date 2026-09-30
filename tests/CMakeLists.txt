@@ -69,8 +69,13 @@ target_link_libraries(quiver_unit_tests PRIVATE
 )
 
 # Register with CTest
+# SKIP_RETURN_CODE 4 is what Catch2 returns when every matched test was
+# skipped (eg the display gives an image view no allocation, so a pointer
+# cannot be placed over it). Catch2 only sets this itself from 3.5.0, and a
+# test that skips has to stay out of the failed list on the older releases
+# the Debian/Ubuntu packages ship.
 catch_discover_tests(quiver_unit_tests
-    PROPERTIES LABELS "unit"
+    PROPERTIES LABELS "unit" SKIP_RETURN_CODE 4
 )
 
 # Custom test runners & display targets
