@@ -25,6 +25,9 @@ static std::string GstTimeFormat(gint64 time)
 
 TEST_CASE("GStreamer Library Pipeline and Media Verification", "[lib][gstreamer][video]")
 {
+    // the pipelines below are played through a real video sink
+    REQUIRE_DISPLAY();
+
     // gst_init_check was already run in main
     REQUIRE(gst_is_initialized() == TRUE);
 

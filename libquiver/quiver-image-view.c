@@ -94,6 +94,10 @@ struct _QuiverImageViewPrivate
 	gdouble last_hadjustment;
 	gdouble last_vadjustment;
 
+	/* set once dispose starts: no timeout may be armed from then on, because a
+	 * source left behind would fire into an object that is on its way out */
+	gboolean disposed;
+
 	/* has the area been updated as the image is being loaded?*/
 	gboolean area_updated;
 	guint animation_timeout_id;
@@ -610,8 +614,28 @@ quiver_image_view_dispose(GObject *object)
 {
 	QuiverImageView *imageview = QUIVER_IMAGE_VIEW(object);
 
+	imageview->priv->disposed = TRUE;
 	quiver_image_view_transition_stop(imageview);
 	quiver_image_view_animation_frames_stop(imageview);
+
+	/* The adjustments come off first: they are what arms the scroll timeout,
+	 * and taking them down moves them, which would put a source back that the
+	 * removals below have already cleaned out. */
+	if (imageview->priv->hadjustment)
+	{
+		g_signal_handlers_disconnect_by_func (imageview->priv->hadjustment,
+			quiver_image_view_adjustment_value_changed,
+			imageview);
+		g_clear_object (&imageview->priv->hadjustment);
+	}
+
+	if (imageview->priv->vadjustment)
+	{
+		g_signal_handlers_disconnect_by_func (imageview->priv->vadjustment,
+			quiver_image_view_adjustment_value_changed,
+			imageview);
+		g_clear_object (&imageview->priv->vadjustment);
+	}
 
 	if (0 != imageview->priv->magnification_timeout_id)
 	{
@@ -646,22 +670,6 @@ quiver_image_view_dispose(GObject *object)
 	quiver_image_view_animation_frames_stop(imageview);
 
 	quiver_image_view_stop_smooth_scroll_slowdown(imageview);
-
-	if (imageview->priv->hadjustment)
-	{
-		g_signal_handlers_disconnect_by_func (imageview->priv->hadjustment,
-			quiver_image_view_adjustment_value_changed,
-			imageview);
-		g_clear_object (&imageview->priv->hadjustment);
-	}
-
-	if (imageview->priv->vadjustment)
-	{
-		g_signal_handlers_disconnect_by_func (imageview->priv->vadjustment,
-			quiver_image_view_adjustment_value_changed,
-			imageview);
-		g_clear_object (&imageview->priv->vadjustment);
-	}
 
 #if HAVE_GDK_PIXBUF
 	if (imageview->priv->pixbuf_animation_iter)
@@ -1442,6 +1450,9 @@ void quiver_image_view_set_vadjustment (QuiverImageView *imageview,
 
 void quiver_image_view_add_scale_hq_timeout(QuiverImageView *imageview)
 {
+	if (imageview->priv->disposed)
+		return;
+
 	if (0 != imageview->priv->timeout_scale_hq_id)
 	{
 		g_source_remove(imageview->priv->timeout_scale_hq_id);
@@ -1460,13 +1471,16 @@ quiver_image_view_timeout_scale_hq(gpointer data)
 	widget = GTK_WIDGET(imageview);
 	retval = FALSE;
 
+	/* see the note in quiver_image_view_timeout_scroll: scaling queues a draw
+	 * that can re-arm this timeout, so the id has to go before the work */
+	imageview->priv->timeout_scale_hq_id = 0;
+
 	// run the hq scale function
 	quiver_image_view_create_scaled_pixbuf(imageview,GDK_INTERP_BILINEAR);
 	if (gtk_widget_get_mapped (widget))
 	{
 		gtk_widget_queue_draw(widget);
 	}
-	imageview->priv->timeout_scale_hq_id = 0;
 
 	return retval;
 }
@@ -1496,7 +1510,6 @@ quiver_image_view_scroll(QuiverImageView *imageview)
 		imageview->priv->last_vadjustment = vadj;
 		imageview->priv->last_hadjustment = hadj;
 	}
-	imageview->priv->scroll_timeout_id = 0;
 }
 
 static gboolean 
@@ -1506,15 +1519,21 @@ quiver_image_view_timeout_scroll(gpointer data)
 
 	imageview = (QuiverImageView*)data;
 
-	quiver_image_view_scroll(imageview);
-
+	/* released before the scroll, not after: queueing a draw can adjust the
+	 * view and arm the next timeout, and clearing afterwards would drop its id
+	 * and leave the source untracked */
 	imageview->priv->scroll_timeout_id = 0;
+
+	quiver_image_view_scroll(imageview);
 
 	return FALSE;
 }
 
 static void quiver_image_view_add_scroll_timeout(QuiverImageView *imageview)
 {
+	if (imageview->priv->disposed)
+		return;
+
 	if (0 == imageview->priv->scroll_timeout_id)
 	{
 		imageview->priv->scroll_timeout_id = g_timeout_add(2,quiver_image_view_timeout_scroll,imageview);
@@ -2533,15 +2552,28 @@ void quiver_image_view_set_animation_frames(QuiverImageView *imageview,
 
 void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean invalidate)
 {
-	/* A reset is "put the picture back where the mode in force shows it whole",
-	 * not "pick some other mode": the mode is the viewer's, it is what the user
-	 * chose, and it is what decides how the *next* picture is shown, so changing
-	 * it here answers a question nobody asked - and it made 1:1 fall back to fit
-	 * and "keep zoom and pan" fall back to whatever it was zoomed from.
+	/* Zooming drops the view into 1:1, and that is a framing the pointer asked
+	 * for rather than a mode anybody chose out of the menu, so it does not
+	 * outlive the picture it was made on: a new picture, or a new list, comes up
+	 * in the mode the view was in before the zoom.  That is the mode the HUD,
+	 * the preference and "keep zoom and pan" have been naming all along - they
+	 * all read the unmagnified mode - so restoring it here is what puts the
+	 * three back in step with what is on screen.
 	 *
-	 * "Keep zoom and pan" is not reset at all: the framing on screen is the one
-	 * thing that mode is for, and there is no un-zoomed position to go back to.
+	 * "Keep zoom and pan" is the exception, and the user opted into it: it is
+	 * there to carry the framing over, so it stays put and the framing is kept
+	 * rather than put back where the mode would have shown it whole.
 	 */
+	if (QUIVER_IMAGE_VIEW_MODE_ZOOM == imageview->priv->view_mode)
+	{
+		quiver_image_view_set_view_mode_full(imageview,
+			imageview->priv->view_mode_last, invalidate);
+		return;
+	}
+
+	/* Otherwise a reset is "put the picture back where the mode in force shows
+	 * it whole", not "pick some other mode": the mode is the viewer's, and it is
+	 * what decides how the *next* picture is shown. */
 	const QuiverImageViewMode mode = imageview->priv->view_mode;
 	gdouble mag = 0.;
 	gint natural_w = 0;
@@ -2549,9 +2581,6 @@ void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean inval
 
 	switch (mode)
 	{
-		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
-			mag = 1.;
-			break;
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH:
 		case QUIVER_IMAGE_VIEW_MODE_FILL_SCREEN:
@@ -2569,8 +2598,8 @@ void quiver_image_view_reset_view_mode(QuiverImageView *imageview,gboolean inval
 			mag = (gdouble)natural_w / (gdouble)imageview->priv->pixbuf_width;
 			break;
 		default:
-			/* actual size has no zoom to undo, and "keep zoom and pan" is not a
-			 * reset at all */
+			/* actual size has no zoom to undo, and "keep zoom and pan" keeps its
+			 * framing instead of having it reset */
 			return;
 	}
 

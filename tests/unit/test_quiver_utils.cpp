@@ -152,6 +152,45 @@ TEST_CASE("QuiverUtils Action Management", "[unit][actions][fast]")
         QuiverUtils::SetRadioActionCurrent("sort_name", 3);
         REQUIRE(QuiverUtils::GetRadioActionCurrent("sort_name") == 3);
     }
+
+    SECTION("The newest owner of a radio name is the one that answers for it")
+    {
+        /* Two owners of the same radio names is what the app does: the viewer
+         * and the browser each have their own "Zoom" radio, and a viewer built
+         * after a browser has to be the one a mode is read from and set on.
+         * A group outlives the actions it was made for - the actions go when
+         * their owner does, the group does not - so the list is full of the
+         * groups of owners that are long gone, and the lookup has to skip them:
+         * answering with one of those left the new owner's radio showing and
+         * reporting the mode its predecessor was left on. */
+        const char* const names[] = {"quiverTestZoomA", "quiverTestZoomB"};
+        const gint values[] = {1, 2};
+        int first_owner = 0;
+        int second_owner = 0;
+
+        QuiverUtils::AddRadioActions(names, values, 2, 1, nullptr, &first_owner);
+        REQUIRE(QuiverUtils::GetRadioActionCurrent("quiverTestZoomA") == 1);
+        REQUIRE(QuiverUtils::ToggleActionGetActive("quiverTestZoomA") == TRUE);
+
+        /* the first owner goes: its actions go with it, its group stays */
+        QuiverUtils::RemoveActionsFor(&first_owner);
+        REQUIRE(QuiverUtils::GetAction("quiverTestZoomA") == nullptr);
+
+        /* the second owner registers the same names on another value */
+        QuiverUtils::AddRadioActions(names, values, 2, 2, nullptr, &second_owner);
+        CHECK(QuiverUtils::GetRadioActionCurrent("quiverTestZoomA") == 2);
+        CHECK(QuiverUtils::ToggleActionGetActive("quiverTestZoomA") == FALSE);
+        CHECK(QuiverUtils::ToggleActionGetActive("quiverTestZoomB") == TRUE);
+
+        /* and setting one moves the second owner's radio, not the leftover */
+        QuiverUtils::SetRadioActionCurrent("quiverTestZoomA", 1);
+        CHECK(QuiverUtils::GetRadioActionCurrent("quiverTestZoomA") == 1);
+        CHECK(QuiverUtils::ToggleActionGetActive("quiverTestZoomA") == TRUE);
+        CHECK(QuiverUtils::ToggleActionGetActive("quiverTestZoomB") == FALSE);
+
+        QuiverUtils::RemoveActionsFor(&second_owner);
+        CHECK(QuiverUtils::GetAction("quiverTestZoomA") == nullptr);
+    }
 }
 
 TEST_CASE("QuiverUtils SetWidgetBgColor", "[unit][gui][color]")

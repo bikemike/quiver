@@ -508,6 +508,22 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 			AddAction(G_ACTION(action));
 			note_action_owner(names[i], user_data);
 		}
+		/* A new owner of one of these names makes the group that had it a
+		 * leftover: the actions it was made for are gone, and leaving it in the
+		 * list is what let a later lookup find one of those instead of this. */
+		for (gint i = (gint)g_radioGroups->len - 1; i >= 0; i--) {
+			RadioGroup *old = (RadioGroup*)g_ptr_array_index(g_radioGroups, i);
+			gboolean shares = FALSE;
+			for (guint j = 0; j < group->members->len; j++) {
+				RadioMember *member = (RadioMember*)g_ptr_array_index(group->members, j);
+				for (guint k = 0; k < old->members->len && !shares; k++) {
+					RadioMember *other = (RadioMember*)g_ptr_array_index(old->members, k);
+					if (0 == strcmp(member->name, other->name)) shares = TRUE;
+				}
+			}
+			if (shares)
+				g_ptr_array_remove_index(g_radioGroups, i);
+		}
 		g_ptr_array_add(g_radioGroups, group);
 	}
 
@@ -540,35 +556,39 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 		g_action_change_state(action, g_variant_new_boolean(active));
 	}
 
-	gint GetRadioActionCurrent(const char *action_name) {
-		if (NULL == g_radioGroups) return 0;
-		for (guint i = 0; i < g_radioGroups->len; i++) {
-			RadioGroup *group = (RadioGroup*)g_ptr_array_index(g_radioGroups, i);
+	/* The group that owns an action is the newest one that has an entry of that
+	 * name: a group outlives the actions it was made for, because the actions
+	 * are removed by name when their owner goes and the group is not, so the
+	 * list holds the groups of owners that are long gone.  Reading the oldest
+	 * match instead answers with whatever mode one of those had, which is how a
+	 * click on an entry ended up applying the mode a previous owner of that name
+	 * was left on. */
+	static RadioGroup* find_radio_group(const char *action_name) {
+		if (NULL == g_radioGroups || NULL == action_name) return NULL;
+		for (guint i = g_radioGroups->len; i > 0; i--) {
+			RadioGroup *group = (RadioGroup*)g_ptr_array_index(g_radioGroups, i - 1);
 			for (guint j = 0; j < group->members->len; j++) {
 				RadioMember *member = (RadioMember*)g_ptr_array_index(group->members, j);
-				if (0 == strcmp(member->name, action_name)) return group->current;
+				if (0 == strcmp(member->name, action_name)) return group;
 			}
 		}
-		return 0;
+		return NULL;
+	}
+
+	gint GetRadioActionCurrent(const char *action_name) {
+		RadioGroup *group = find_radio_group(action_name);
+		return (NULL != group) ? group->current : 0;
 	}
 
 	void SetRadioActionCurrent(const char *action_name, gint value) {
-		if (NULL == g_radioGroups) return;
-		for (guint i = 0; i < g_radioGroups->len; i++) {
-			RadioGroup *group = (RadioGroup*)g_ptr_array_index(g_radioGroups, i);
-			for (guint j = 0; j < group->members->len; j++) {
-				RadioMember *member = (RadioMember*)g_ptr_array_index(group->members, j);
-				if (0 == strcmp(member->name, action_name)) {
-					group->current = value;
-					for (guint k = 0; k < group->members->len; k++) {
-						RadioMember *other = (RadioMember*)g_ptr_array_index(group->members, k);
-						GAction *other_action = GetAction(other->name);
-						if (NULL != other_action) {
-							g_simple_action_set_state(G_SIMPLE_ACTION(other_action), g_variant_new_boolean(other->value == value));
-						}
-					}
-					return;
-				}
+		RadioGroup *group = find_radio_group(action_name);
+		if (NULL == group) return;
+		group->current = value;
+		for (guint k = 0; k < group->members->len; k++) {
+			RadioMember *other = (RadioMember*)g_ptr_array_index(group->members, k);
+			GAction *other_action = GetAction(other->name);
+			if (NULL != other_action) {
+				g_simple_action_set_state(G_SIMPLE_ACTION(other_action), g_variant_new_boolean(other->value == value));
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <gtk/gtk.h>
+#include <graphene.h>
 #include <glib/gstdio.h>
 #include "test_helpers.h"
 #include "Viewer.h"
@@ -58,6 +59,73 @@ static bool quiver_test_pointer_over(GtkWidget *widget, double fx, double fy, in
     *root_x = (int)(at.x + fx * w);
     *root_y = (int)(at.y + fy * h);
     return quiver_test_warp_pointer(*root_x, *root_y);
+}
+
+/* Preferences and action states are process-wide, so a test that borrows one has
+ * to hand it back whatever happens - passed, failed or skipped - or the next test
+ * starts from wherever this one left off, which is how a suite starts depending
+ * on the order it is run in. */
+class PrefGuard
+{
+public:
+    PrefGuard(const char *group, const char *key, bool fallback)
+        : m_Group(group), m_Key(key),
+          m_Original(Preferences::GetInstance()->GetBoolean(group, key, fallback)) {}
+    ~PrefGuard()
+    {
+        Preferences::GetInstance()->SetBoolean(m_Group.c_str(), m_Key.c_str(), m_Original);
+    }
+private:
+    std::string m_Group, m_Key;
+    bool m_Original;
+};
+
+class ToggleGuard
+{
+public:
+    explicit ToggleGuard(const char *name)
+        : m_Name(name), m_Original(QuiverUtils::ToggleActionGetActive(name)) {}
+    ~ToggleGuard() { QuiverUtils::ToggleActionSetActive(m_Name.c_str(), m_Original); }
+private:
+    std::string m_Name;
+    gboolean m_Original;
+};
+
+/* A zoom eases towards its target, the way a picture's magnification does, so a
+ * test that wants to know where it arrived has to let it arrive. */
+static void settle_for_zoom(const boost::shared_ptr<Viewer> &viewer, double target)
+{
+    for (int i = 0; i < 60 && std::abs(viewer->GetVideoZoom() - target) > 0.02 * target; ++i)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(10000);
+    }
+}
+
+/* Zoom towards a target, let it finish, and report whether the factor was ever
+ * caught between where it started and where it was going - the difference
+ * between a zoom that eases there and one that teleports, which is at the target
+ * before the first turn of the loop and so is never in between. */
+static bool zoom_travels_through(const boost::shared_ptr<Viewer> &viewer,
+                                 double target, double from)
+{
+    const double lo = std::min(from, target), hi = std::max(from, target);
+    const double margin = 0.02 * (hi - lo);
+    bool passed_through = false;
+    viewer->SetVideoZoom(target);
+    for (int i = 0; i < 120; ++i)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(10000);
+        const double z = viewer->GetVideoZoom();
+        if (z > lo + margin && z < hi - margin)
+            passed_through = true;
+        if (std::abs(z - target) <= 0.02 * std::abs(target))
+            break;
+    }
+    /* let the last step land, so the caller can ask where it ended up */
+    settle_for_zoom(viewer, target);
+    return passed_through;
 }
 
 TEST_CASE("Viewer Control Overlays Structure and Styling", "[unit][viewer][overlay]")
@@ -720,6 +788,75 @@ TEST_CASE("Viewer HUD Position and Filmstrip Collision Avoidance", "[unit][viewe
     QuiverUtils::ToggleActionSetActive("ViewFilmStrip", origShow);
 }
 
+TEST_CASE("The filmstrip can still be summoned while a video plays",
+          "[unit][viewer][filmstrip][video]")
+{
+    REQUIRE_DISPLAY();
+
+    {
+        PrefGuard overlay(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
+        PrefGuard show(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
+        PrefGuard mode(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, false);
+        ToggleGuard strip("ViewFilmStrip");
+
+        PreferencesPtr prefs = Preferences::GetInstance();
+        prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
+        prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
+        QuiverUtils::ToggleActionSetActive("ViewFilmStrip", TRUE);
+
+        boost::shared_ptr<Viewer> viewer(new Viewer());
+        viewer->RegisterActions();
+        GtkWidget *win = gtk_window_new();
+        gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+        gtk_window_present(GTK_WINDOW(win));
+        while (g_main_context_iteration(NULL, FALSE));
+
+        ImageListPtr list(new ImageList());
+        std::list<std::string> files;
+        files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+        files.push_back(QuiverTest_GetImagesDir() + "/sample_video.mp4");
+        list->Add(&files);
+        viewer->SetImageList(list);
+
+        int video_index = -1;
+        for (guint i = 0; i < list->GetSize(); ++i)
+            if (list->Get(i).IsVideo())
+                video_index = (int)i;
+        REQUIRE(video_index >= 0);
+        REQUIRE(list->SetCurrentIndex((unsigned int)video_index));
+
+        GtkWidget *fsWidget = viewer->GetFilmstripWidget();
+        REQUIRE(fsWidget != nullptr);
+
+        auto settle = [](int rounds = 100) {
+            for (int i = 0; i < rounds; ++i)
+            {
+                while (g_main_context_iteration(NULL, FALSE));
+                g_usleep(10000);
+            }
+        };
+        settle();
+
+        /* the strip starts out of sight, which is the state the hover edge has
+         * to be able to bring it back from */
+        REQUIRE(!gtk_widget_get_visible(fsWidget));
+
+        /* and now a video is playing: reaching for the next item is what the
+         * strip is for, and it is not a reason to refuse to put it on screen */
+        GtkWidget *playBtn = viewer->GetCenterPlayButton();
+        REQUIRE(playBtn != nullptr);
+        g_signal_emit_by_name(playBtn, "clicked");
+        settle(60);
+
+        viewer->ShowFilmstripOverlay();
+        settle(20);
+
+        CHECK(gtk_widget_get_visible(fsWidget));
+
+        viewer.reset();
+    }
+}
+
 TEST_CASE("Viewer HUD and Filmstrip Auto-Hide Timeout", "[unit][viewer][timeout]")
 {
     REQUIRE_DISPLAY();
@@ -1160,8 +1297,16 @@ TEST_CASE("Viewer Video Kinetic Scrolling and Pan Deceleration", "[unit][viewer]
     CHECK(initialVx < 1500.0);
     CHECK(viewer->GetVideoPanVelocityY() == 0.0);
 
-    // Record initial pan X
+    // Record initial pan position
     double panX0 = viewer->GetVideoPanX();
+    double panFX0 = viewer->GetVideoPanFractionX();
+
+    /* Whether a flick has anywhere to go is a separate question from whether one
+     * was thrown: the pan has a range only once the frame has a size and the
+     * picture is bigger than the viewport, and where the tests run decides
+     * whether a video ever produces a frame at all.  CanVideoPan() cannot answer
+     * it - a zoom is enough to make that true while the picture still fits. */
+    const bool bPanHasRoom = viewer->GetVideoPanRangeX() > 0.;
 
     // Iterate the main loop to drive the slowdown animation steps
     for (int i = 0; i < 10; ++i)
@@ -1170,14 +1315,31 @@ TEST_CASE("Viewer Video Kinetic Scrolling and Pan Deceleration", "[unit][viewer]
         while (g_main_context_iteration(NULL, FALSE));
     }
 
-    // Velocity should have decayed exponentially (k ≈ 1.1206 s^-1)
     double decayedVx = viewer->GetVideoPanVelocityX();
-    CHECK(decayedVx < initialVx);
-    CHECK(decayedVx > 0.0);
-
-    // Pan position should have shifted to follow the flick direction
     double panX1 = viewer->GetVideoPanX();
-    CHECK(panX1 != panX0);
+    double panFX1 = viewer->GetVideoPanFractionX();
+
+    if (bPanHasRoom)
+    {
+        // Velocity should have decayed exponentially (k ≈ 1.1206 s^-1)
+        CHECK(decayedVx < initialVx);
+        CHECK(decayedVx > 0.0);
+
+        /* And the frame should have followed the flick.  The centre of the
+         * visible part is what a pan is kept as, and what ApplyVideoZoom() works
+         * the offset back out from, so a step that moved only the offset would
+         * put the picture back where it started on the very next apply and end
+         * the scroll on its first frame - which is what the image view's
+         * scroll never does, because for it the scroll position is the state. */
+        CHECK(panX1 != panX0);
+        CHECK(panFX1 != panFX0);
+    }
+    else
+    {
+        WARN("the frame has no size here, so the pan has no room to move and the "
+             "flick is only checked as far as starting and decaying");
+        CHECK(decayedVx <= initialVx);
+    }
 
     // Test 2: Stopping slowdown directly
     viewer->StopVideoPanSlowdown();
@@ -1419,21 +1581,34 @@ TEST_CASE("Viewer keep zoom and pan preserves the image centre", "[unit][viewer]
     CHECK(centre(hadj, 2.0, 600.0) == Catch::Approx(centre_x).margin(0.01));
     CHECK(centre(vadj, 2.0, 800.0) == Catch::Approx(centre_y).margin(0.01));
 
-    /* A reset puts the picture back where the mode in force shows it and leaves
-     * that mode alone: 1:1 goes back to actual size, the fit modes back to the
-     * fit, both centred. */
+    /* A zoom is a framing the pointer asked for rather than a mode chosen out
+     * of the menu, so it does not outlive the picture it was made on: the new
+     * picture is shown in the mode the view was zoomed out of, and shown the way
+     * that mode shows pictures, centred. */
     quiver_image_view_set_texture_at_size_ex(view, first, 400, 400, TRUE);
+    quiver_image_view_set_view_mode(view, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
     quiver_image_view_set_view_mode(view, QUIVER_IMAGE_VIEW_MODE_ZOOM);
     quiver_image_view_set_magnification(view, 2.0);
     REQUIRE(quiver_image_view_get_magnification(view) == Catch::Approx(2.0));
+    CHECK(quiver_image_view_get_view_mode_unmagnified(view)
+        == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
     gtk_adjustment_set_value(hadj, 100.0);
     quiver_image_view_set_texture_at_size_ex(view, second, 600, 800, TRUE);
-    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_ZOOM);
-    CHECK(quiver_image_view_get_magnification(view) == Catch::Approx(1.0));
-    double reset_x = 0., reset_y = 0.;
-    REQUIRE(quiver_image_view_get_view_center(view, &reset_x, &reset_y));
-    CHECK(reset_x == Catch::Approx(0.5).margin(0.01));
-    CHECK(reset_y == Catch::Approx(0.5).margin(0.01));
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    /* the fit puts the picture where that mode puts it, so the pan the zoom was
+     * left at is gone with it: a fit still carrying a scroll offset would be a
+     * fit with the old framing on it */
+    CHECK(gtk_adjustment_get_value(hadj)
+        == Catch::Approx(gtk_adjustment_get_lower(hadj)).margin(1.0));
+    CHECK(gtk_adjustment_get_value(vadj)
+        == Catch::Approx(gtk_adjustment_get_lower(vadj)).margin(1.0));
+    /* and the picture is fitted, not left at 1:1: the mode that is back is the
+     * one that says how big the picture is */
+    gint stretched_width = 0, stretched_height = 0;
+    quiver_image_view_get_pixbuf_display_size_for_mode(view,
+        QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH, &stretched_width, &stretched_height);
+    CHECK(quiver_image_view_get_magnification(view)
+        == Catch::Approx((gdouble)stretched_width / 600.0).margin(0.001));
 
     /* A fit mode has no zoom to undo - it shows every picture the way it shows
      * them all - so a reset leaves it doing that, in the same mode. */
@@ -1448,6 +1623,7 @@ TEST_CASE("Viewer keep zoom and pan preserves the image centre", "[unit][viewer]
 
     /* and "keep zoom and pan" is not a zoom to undo: the zoom and the pan
      * survive, because they are the one thing that mode is for */
+    double reset_x = 0., reset_y = 0.;
     quiver_image_view_set_texture_at_size_ex(view, first, 400, 400, TRUE);
     quiver_image_view_set_view_mode(view, QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
     quiver_image_view_set_magnification(view, 2.0);
@@ -1534,15 +1710,32 @@ TEST_CASE("Viewer HUD view mode split button", "[unit][viewer][overlay][zoomkeep
     /* the action behind the popover is registered for this viewer */
     REQUIRE(QuiverUtils::GetAction("ZoomKeep") != nullptr);
 
-    /* the arrow owns a popover offering every view mode */
+    /* the split control owns a popover offering every view mode, and not the
+     * arrow: a plain button does not unparent a child it was never told about,
+     * so a popover left on one is finalized with its parent already gone */
     GtkWidget *popover = viewer->GetViewModeMenuPopover();
     REQUIRE(popover != nullptr);
     REQUIRE(GTK_IS_POPOVER_MENU(popover));
-    REQUIRE(gtk_widget_get_parent(popover) == arrow);
+    REQUIRE(gtk_widget_get_parent(popover) == split);
     GMenuModel *model = gtk_popover_menu_get_menu_model(GTK_POPOVER_MENU(popover));
     REQUIRE(model != nullptr);
     CHECK(g_menu_model_get_n_items(model) == 5);
     CHECK(gtk_widget_get_parent(popover) != nullptr);
+
+    /* opening it points it at the arrow, so the menu lands on the button that
+     * opened it rather than in the middle of the split control */
+    gtk_popover_popup(GTK_POPOVER(popover));
+    while (g_main_context_iteration(NULL, FALSE));
+    GdkRectangle pointing_to = { 0, 0, 0, 0 };
+    REQUIRE(gtk_popover_get_pointing_to(GTK_POPOVER(popover), &pointing_to));
+    graphene_rect_t arrow_bounds;
+    REQUIRE(gtk_widget_compute_bounds(arrow, split, &arrow_bounds));
+    CHECK((int)graphene_rect_get_x(&arrow_bounds) == pointing_to.x);
+    CHECK((int)graphene_rect_get_y(&arrow_bounds) == pointing_to.y);
+    CHECK((int)graphene_rect_get_width(&arrow_bounds) == pointing_to.width);
+    CHECK((int)graphene_rect_get_height(&arrow_bounds) == pointing_to.height);
+    gtk_popover_popdown(GTK_POPOVER(popover));
+    while (g_main_context_iteration(NULL, FALSE));
 
     /* the whole control is hovered as one button: a motion controller on the
      * box adds the class the CSS highlight hangs off, and the two halves hang
@@ -1657,8 +1850,6 @@ TEST_CASE("Viewer view modes stay available while zoomed", "[unit][viewer][zoomk
     CHECK(g_action_get_enabled(G_ACTION(QuiverUtils::GetAction("Zoom100"))));
     CHECK(g_action_get_enabled(G_ACTION(QuiverUtils::GetAction("ZoomFillScreen"))));
 
-    /* the fit button itself does go insensitive, it would change nothing */
-    GAction *zoom_fit_btn = QuiverUtils::GetAction("ZoomFit");
     GtkWidget *bar = viewer->GetViewerOverlayBar();
     REQUIRE(bar != nullptr);
     GAction *in = QuiverUtils::GetAction("ZoomIn");
@@ -1740,12 +1931,17 @@ TEST_CASE("Viewer HUD keeps its layout across image and video", "[unit][viewer][
     auto measure = [&](auto &self, GtkWidget *parent, int offset, std::vector<std::pair<std::string, int>> &out) -> void {
         for (GtkWidget *child = gtk_widget_get_first_child(parent); child != nullptr; child = gtk_widget_get_next_sibling(child))
         {
-            GtkAllocation alloc;
-            gtk_widget_get_allocation(child, &alloc);
+            /* where the child sits inside its parent, which is what the two
+             * layouts are compared on: gtk_widget_get_allocation() is deprecated
+             * and compute_bounds() is the same answer the way it is spelled now */
+            graphene_rect_t bounds;
+            graphene_rect_init(&bounds, 0, 0, 0, 0);
+            const gboolean placed = gtk_widget_compute_bounds(child, parent, &bounds);
+            const int x = placed ? (int)graphene_rect_get_x(&bounds) : 0;
             const char *tip = gtk_widget_get_tooltip_text(child);
-            if (tip != nullptr)
-                out.emplace_back(tip, offset + alloc.x);
-            self(self, child, offset + alloc.x, out);
+            if (tip != nullptr && placed)
+                out.emplace_back(tip, offset + x);
+            self(self, child, offset + x, out);
         }
     };
     measure(measure, bar, 0, image_layout);
@@ -1928,6 +2124,13 @@ TEST_CASE("Viewer shows the nav control for a zoomed video preview", "[unit][vie
             g_usleep(2000);
         }
     };
+    settle();
+
+    /* The mode is the viewer's and it is remembered across viewers in one
+     * process, so say which one this test is about rather than taking the one
+     * the test before it left behind. */
+    quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(viewer->GetImageView()),
+        QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
     settle();
 
     /* back to the state a video that has not been played is in: the pipeline
@@ -2327,13 +2530,18 @@ TEST_CASE("Viewer keeps \"keep zoom and pan\" selected while zooming a video",
     CHECK(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
     CHECK(QuiverUtils::GetRadioActionCurrent("Zoom") == QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
 
-    /* a zoom on a picture that is merely fitted does leave the fit modes,
-     * which is what zooming a fitted picture means */
+    /* A zoom on a picture that is merely fitted leaves the mode alone.  The
+     * picture is no longer at the size that mode shows it at, so the image view
+     * draws it from its 1:1 state - but the mode is the one the user chose, and
+     * is still what the list, the preference and the video name, so that the
+     * mode's own entry is there to be picked again to put the framing back. */
     quiver_image_view_set_view_mode(view, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
     settle();
     g_action_activate(zoom_in, NULL);
     settle(20);
-    CHECK(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+    CHECK(quiver_image_view_get_view_mode_unmagnified(view) == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
+    CHECK(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW);
 
     viewer.reset();
 }
@@ -2462,9 +2670,9 @@ TEST_CASE("Viewer zooms a video's quick preview toward the pointer",
      * move and every anchor is the middle */
     REQUIRE(quiver_image_view_get_texture(view) != nullptr);
     viewer->SetVideoZoom(1.25);
-    settle(20);
+    settle_for_zoom(viewer, 1.25);
     viewer->SetVideoZoom(2.0);
-    settle(20);
+    settle_for_zoom(viewer, 2.0);
     REQUIRE(quiver_image_view_get_magnification(view) > 1.5);
 
     /* a pointer a quarter of the way in from the left, which is a different
@@ -2506,6 +2714,162 @@ TEST_CASE("Viewer zooms a video's quick preview toward the pointer",
      * video does not follow is a jump the moment play is pressed */
     CHECK(viewer->GetVideoPanFractionX() == Catch::Approx(after_x).margin(0.02));
     CHECK(viewer->GetVideoPanFractionY() == Catch::Approx(after_y).margin(0.02));
+
+    viewer.reset();
+}
+
+TEST_CASE("A quick preview stops being the framing once the video page is up",
+          "[unit][viewer][video][pan]")
+{
+    REQUIRE_DISPLAY();
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_video.mp4");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 300);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 200) {
+        for (int i = 0; i < rounds; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(2000);
+        }
+    };
+    settle();
+
+    QuiverUtils::SetRadioActionCurrent("Zoom", QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
+    g_action_activate(QuiverUtils::GetAction("ZoomKeep"), NULL);
+    settle();
+
+    int video_index = -1;
+    for (guint i = 0; i < list->GetSize(); ++i)
+        if (list->Get(i).IsVideo())
+            video_index = (int)i;
+    REQUIRE(video_index >= 0);
+    REQUIRE(list->SetCurrentIndex((unsigned int)video_index));
+    settle(300);
+
+    QuiverImageView *qiv = QUIVER_IMAGE_VIEW(viewer->GetImageView());
+    REQUIRE(qiv != nullptr);
+    GtkAdjustment *hadj = quiver_image_view_get_hadjustment(qiv);
+    REQUIRE(hadj != nullptr);
+
+    if (!viewer->IsVideoPreviewPanSource())
+    {
+        WARN("the quick preview never reached the screen here, so there is nothing "
+             "for it to stop being");
+        return;
+    }
+
+    /* The pan is placed directly rather than by scrolling the preview: whether the
+     * image view has a viewport at all is a property of the display this runs on -
+     * a headless one gives it no allocation, so its scroll position cannot be moved
+     * - and what is being checked here is not whether a preview can be panned but
+     * whether the video stops reading that pan off the view once the view is no
+     * longer what is on screen. */
+    viewer->SetVideoPanFraction(0.8, 0.4);
+    settle();
+    CHECK(viewer->GetVideoPanFractionX() == Catch::Approx(0.8));
+
+    /* Now the video page takes the screen, which is what the first frame does, and
+     * the image view is handed back to the stills - which moves its scroll back to
+     * the start of its content.  That move belongs to the hand-back: read as a pan
+     * it is the top left corner of the frame, and that is where playback used to
+     * start however far the preview had been panned.  The image view's own visible
+     * flag cannot catch it, because it is shown again for the next still right
+     * after, so what has to be asked is whether it is the picture on screen. */
+    GtkWidget *stack = gtk_widget_get_parent(viewer->GetImageView());
+    REQUIRE(GTK_IS_STACK(stack));
+    REQUIRE(gtk_stack_get_visible_child(GTK_STACK(stack)) == viewer->GetImageView());
+
+    gtk_stack_set_visible_child_name(GTK_STACK(stack), "video");
+    CHECK_FALSE(viewer->IsVideoPreviewPanSource());
+
+    /* Whatever the view's scroll does now belongs to the image view, so the
+     * framing has to be exactly what it was - and asking again afterwards is what
+     * a late change off that view would look like. */
+    gtk_adjustment_set_value(hadj, gtk_adjustment_get_upper(hadj) * 0.5);
+    settle();
+    CHECK_FALSE(viewer->IsVideoPreviewPanSource());
+    CHECK(viewer->GetVideoPanFractionX() == Catch::Approx(0.8));
+
+    /* It is the stack's visible child, not a one-way latch: a still coming back
+     * makes the image view the picture again, and the preview is a pan source
+     * again with it. */
+    gtk_stack_set_visible_child_name(GTK_STACK(stack), "image");
+    CHECK(viewer->IsVideoPreviewPanSource());
+}
+
+TEST_CASE("A video's quick preview eases into its zoom instead of arriving at it",
+          "[unit][viewer][video][zoom]")
+{
+    REQUIRE_DISPLAY();
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_video.mp4");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 300);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 200) {
+        for (int i = 0; i < rounds; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(2000);
+        }
+    };
+    settle();
+
+    QuiverUtils::SetRadioActionCurrent("Zoom", QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
+    g_action_activate(QuiverUtils::GetAction("ZoomKeep"), NULL);
+    settle();
+
+    int video_index = -1;
+    for (guint i = 0; i < list->GetSize(); ++i)
+        if (list->Get(i).IsVideo())
+            video_index = (int)i;
+    REQUIRE(video_index >= 0);
+    REQUIRE(list->SetCurrentIndex((unsigned int)video_index));
+    settle(300);
+    REQUIRE(quiver_image_view_get_texture(QUIVER_IMAGE_VIEW(viewer->GetImageView())) != nullptr);
+    REQUIRE(viewer->GetVideoZoom() == Catch::Approx(1.0).margin(0.05));
+
+    /* A zoom over the preview is a move, not a teleport, and it is the picture
+     * under the pointer that is being moved into the frame - so the factor is on
+     * its way there when the call returns, the way it is for a picture and for a
+     * playing video, instead of already being there. */
+    /* Watch the whole way there rather than the instant of the call: the ease
+     * takes its first step on the next turn of the loop, and what is being
+     * claimed is not that the call is slow but that the factor is somewhere
+     * between where it was and where it is going *before* it gets there. */
+    const bool eased_in = zoom_travels_through(viewer, 2.0, 1.0);
+    CHECK(eased_in);
+    CHECK(viewer->GetVideoZoom() == Catch::Approx(2.0).margin(0.05));
+
+    /* and back out again, the other way round: the ease has to work in both
+     * directions, or a zoom out is a jump and a zoom in is a move */
+    const bool eased_out = zoom_travels_through(viewer, 1.0, 2.0);
+    CHECK(eased_out);
+    CHECK(viewer->GetVideoZoom() == Catch::Approx(1.0).margin(0.05));
 
     viewer.reset();
 }
@@ -2583,7 +2947,7 @@ TEST_CASE("Viewer keeps the zoom when switching between a still and a video",
     /* and the way round: zoom the video, and the still after it comes up at the
      * same zoom rather than at whatever the stills were left at */
     viewer->SetVideoZoom(3.0);
-    settle(20);
+    settle_for_zoom(viewer, 3.0);
     const double video_zoom = viewer->GetVideoZoom();
     REQUIRE(video_zoom == Catch::Approx(3.0).margin(0.05));
 
@@ -2866,6 +3230,15 @@ TEST_CASE("Viewer keeps a video's zoom and pan across items as a fraction of the
     };
     settle();
 
+    /* The mode is the viewer's and it is remembered across viewers in one
+     * process - it is the mode the test before this one left the user in - so
+     * this test starts by saying which mode it is about, rather than taking
+     * whatever that was.  It starts fitted and picks "keep zoom and pan" itself
+     * below, which is the sequence it is testing. */
+    quiver_image_view_set_view_mode(QUIVER_IMAGE_VIEW(viewer->GetImageView()),
+        QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    settle();
+
     int video_index = -1;
     int still_index = -1;
     for (guint i = 0; i < list->GetSize(); ++i)
@@ -2911,10 +3284,16 @@ TEST_CASE("Viewer keeps a video's zoom and pan across items as a fraction of the
     g_action_activate(zoom_keep, NULL);
     settle();
     REQUIRE(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
+    /* the video reads its mode from the view, so it is the view's mode that has
+     * to have survived the zoom */
+    REQUIRE(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(viewer->GetImageView()))
+        == QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
 
     REQUIRE(list->SetCurrentIndex((unsigned int)still_index));
     settle(40);
     REQUIRE(list->GetCurrent().IsVideo() == false);
+    REQUIRE(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(viewer->GetImageView()))
+        == QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
 
     /* and back to the video: in this mode the zoom and the pan are the ones it
      * was left at, the pan as a fraction of whatever frame is on screen */
@@ -3086,6 +3465,345 @@ TEST_CASE("Viewer keeps the zoom while switching between stills", "[unit][viewer
     viewer.reset();
 }
 
+TEST_CASE("Zooming a still leaves the next one in the mode it was in before the zoom",
+          "[unit][viewer][zoom]")
+{
+    REQUIRE_DISPLAY();
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_rotated.jpg");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 300);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 300) {
+        for (int i = 0; i < rounds; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(2000);
+        }
+    };
+    settle();
+
+    QuiverImageView *view = QUIVER_IMAGE_VIEW(viewer->GetImageView());
+    REQUIRE(view != nullptr);
+    quiver_image_view_set_view_mode(view, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    settle(50);
+    /* the size this mode shows the picture at, which is what the view has to go
+     * back to rather than merely out of 1:1 */
+    const double fit_mag = quiver_image_view_get_magnification(view);
+
+    /* Zooming puts the view into 1:1, which is the framing the pointer asked for
+     * rather than a mode chosen out of the menu. */
+    GAction *zoom_in = QuiverUtils::GetAction("ZoomIn");
+    REQUIRE(zoom_in != nullptr);
+    g_action_activate(zoom_in, NULL);
+    settle(50);
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+    CHECK(quiver_image_view_get_view_mode_unmagnified(view)
+        == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+
+    /* That 1:1 is the image view's own business, so nothing the user can see
+     * says the view mode changed: the mode the video is drawn with is still the
+     * one that was chosen, and so is the mode stored for the next session. */
+    CHECK(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    CHECK(Preferences::GetInstance()->GetInteger(QUIVER_PREFS_VIEWER,
+            QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, -1)
+        == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+
+    /* and the mode's entry is still ticked, because the user is still in that
+     * mode - a zoom is a framing of the picture, not a change of mode, and a
+     * list with nothing ticked would say the picture is in no mode at all */
+    GAction *fit_stretch = QuiverUtils::GetAction("ZoomFitStretch");
+    REQUIRE(fit_stretch != nullptr);
+    GVariant *ticked = g_action_get_state(fit_stretch);
+    REQUIRE(ticked != nullptr);
+    CHECK(g_variant_get_boolean(ticked) == true);
+    g_variant_unref(ticked);
+    /* "Zoom" is the state the view drops into for the zoom and is not an entry
+     * in the list, so nothing is ticked in its name */
+    GAction *zoom_entry = QuiverUtils::GetAction("Zoom");
+    REQUIRE(zoom_entry != nullptr);
+    GVariant *zoom_ticked = g_action_get_state(zoom_entry);
+    REQUIRE(zoom_ticked != nullptr);
+    CHECK(g_variant_get_boolean(zoom_ticked) == false);
+    g_variant_unref(zoom_ticked);
+
+    /* picking the mode again is what a click on its entry does, and it puts the
+     * picture back at the size that mode shows it at */
+    const double zoomed_mag = quiver_image_view_get_magnification(view);
+    REQUIRE(zoomed_mag > 1.0);
+    g_action_activate(fit_stretch, NULL);
+    settle(50);
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    /* the picture is drawn at the size the mode draws it at, which for a fitted
+     * picture is smaller than the zoomed-in one it was at */
+    CHECK(quiver_image_view_get_magnification(view) != Catch::Approx(zoomed_mag).margin(0.001));
+    CHECK(quiver_image_view_get_magnification(view) == Catch::Approx(fit_mag).margin(0.001));
+    ticked = g_action_get_state(fit_stretch);
+    REQUIRE(ticked != nullptr);
+    CHECK(g_variant_get_boolean(ticked) == true);
+    g_variant_unref(ticked);
+
+    /* the mode is the viewer's and the zoom is not a mode, so the next item is
+     * shown in the mode the view was in before the zoom, fitted like it was */
+    g_action_activate(zoom_in, NULL);
+    settle(50);
+    REQUIRE(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+    const unsigned int current = list->GetCurrentIndex();
+    const unsigned int other = (current == 0) ? 1 : 0;
+    REQUIRE(list->SetCurrentIndex(other));
+    settle();
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    /* the video draws with its own copy of the mode, and it follows the stills
+     * when the view falls back, so a video in this list is not left zoomed */
+    CHECK(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+
+    /* and it stays that way for the item after that one too */
+    REQUIRE(list->SetCurrentIndex(current));
+    settle();
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+
+    /* "keep zoom and pan" is a mode the user picked rather than a framing the
+     * pointer asked for, so unlike the 1:1 above it is what the user is in, and
+     * a video drawn in it keeps the framing */
+    GAction *keep = QuiverUtils::GetAction("ZoomKeep");
+    REQUIRE(keep != nullptr);
+    g_action_activate(keep, NULL);
+    settle(50);
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
+    CHECK(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP);
+    ticked = g_action_get_state(keep);
+    REQUIRE(ticked != nullptr);
+    CHECK(g_variant_get_boolean(ticked) == true);
+    g_variant_unref(ticked);
+
+    /* the window first: while it holds the viewer widget, the whole tree -
+     * freelayout, controls and all - outlives the viewer for the rest of the run */
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+
+TEST_CASE("The view mode stays ticked while a zoom is in force",
+          "[unit][viewer][zoom][hud]")
+{
+    REQUIRE_DISPLAY();
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_rotated.jpg");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 300);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 200) {
+        for (int i = 0; i < rounds; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(2000);
+        }
+    };
+
+    struct Restore {
+        GtkWidget *win;
+        boost::shared_ptr<Viewer> &viewer;
+        ~Restore() {
+            if (win != NULL)
+            {
+                gtk_window_destroy(GTK_WINDOW(win));
+                while (g_main_context_iteration(NULL, FALSE));
+            }
+            viewer.reset();
+        }
+    } restore{win, viewer};
+
+    /* the mode the user is in, said out loud rather than taken from the test
+     * before this one */
+    QuiverUtils::SetRadioActionCurrent("Zoom", QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    GAction *fit_stretch = QuiverUtils::GetAction("ZoomFitStretch");
+    REQUIRE(fit_stretch != nullptr);
+    g_action_activate(fit_stretch, NULL);
+    settle();
+    REQUIRE(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(viewer->GetImageView()))
+        == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+
+    auto entry_is_ticked = [](const char *action_name) {
+        GAction *action = QuiverUtils::GetAction(action_name);
+        REQUIRE(action != nullptr);
+        GVariant *state = g_action_get_state(action);
+        REQUIRE(state != nullptr);
+        const bool ticked = g_variant_get_boolean(state);
+        g_variant_unref(state);
+        return ticked;
+    };
+
+    CHECK(entry_is_ticked("ZoomFitStretch"));
+
+    /* the HUD's zoom button, which is the way a zoom is asked for */
+    GAction *zoom_in = QuiverUtils::GetAction("ZoomIn");
+    REQUIRE(zoom_in != nullptr);
+    g_action_activate(zoom_in, NULL);
+    settle(50);
+
+    /* the view is drawing and scrolling the zoom from its own 1:1, and the
+     * mode the user is in is the one the zoom was made from - the list has to
+     * keep saying so, and "Zoom" is not an entry in it */
+    CHECK(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(viewer->GetImageView()))
+        == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+    CHECK(quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(viewer->GetImageView()))
+        == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    CHECK(viewer->GetVideoViewMode() == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    CHECK(Preferences::GetInstance()->GetInteger(QUIVER_PREFS_VIEWER,
+        QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, -1) == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    CHECK(entry_is_ticked("ZoomFitStretch"));
+    CHECK(entry_is_ticked("Zoom") == false);
+
+    /* and opening the list to go back to it must not be what takes the tick
+     * away - the list is a list of modes, and the picture is plainly in one */
+    GtkWidget *popover = viewer->GetViewModeMenuPopover();
+    REQUIRE(popover != nullptr);
+    g_signal_emit_by_name(popover, "show");
+    settle(50);
+    CHECK(entry_is_ticked("ZoomFitStretch"));
+    CHECK(entry_is_ticked("Zoom") == false);
+
+    /* picking the mode again is how the framing goes back to that mode's own */
+    g_action_activate(fit_stretch, NULL);
+    settle(50);
+    CHECK(quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(viewer->GetImageView()))
+        == QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    CHECK(entry_is_ticked("ZoomFitStretch"));
+}
+
+TEST_CASE("The pointer is not taken away while it is over a visible filmstrip",
+          "[unit][viewer][overlay][filmstrip]")
+{
+    REQUIRE_DISPLAY();
+
+    PreferencesPtr prefs = Preferences::GetInstance();
+    const bool orig_overlay =
+        prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
+    const bool orig_show = prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, true);
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_rotated.jpg");
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_2.jpg");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 300);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 200) {
+        for (int i = 0; i < rounds; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(2000);
+        }
+    };
+    settle();
+
+    /* The pointer cannot be placed on every display this runs on, and a skipped
+     * test is the one most likely to be leaving a window and a borrowed
+     * preference behind, so both go back on the way out however this test ends.
+     * The window goes before the viewer: while it holds the viewer widget, the
+     * whole tree outlives the viewer for the rest of the run. */
+    struct Restore {
+        GtkWidget *win;
+        boost::shared_ptr<Viewer> &viewer;
+        PreferencesPtr prefs;
+        bool overlay;
+        bool show;
+        ~Restore() {
+            if (win != NULL)
+            {
+                gtk_window_destroy(GTK_WINDOW(win));
+                while (g_main_context_iteration(NULL, FALSE));
+            }
+            viewer.reset();
+            prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_OVERLAY, overlay);
+            prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, show);
+        }
+    } restore{win, viewer, prefs, orig_overlay, orig_show};
+
+    GtkWidget *strip = viewer->GetFilmstripWidget();
+    REQUIRE(strip != nullptr);
+    viewer->ShowFilmstripOverlay();
+    settle(50);
+    REQUIRE(gtk_widget_get_visible(strip));
+    REQUIRE(gtk_widget_get_opacity(strip) > 0.0);
+
+    int root_x = 0, root_y = 0;
+    if (!quiver_test_pointer_over(strip, 0.5, 0.5, &root_x, &root_y))
+    {
+        SKIP("the filmstrip has no allocation, so the pointer cannot be placed over it");
+    }
+
+    /* A running slideshow is what takes the pointer away once it goes quiet, and
+     * it is taken away on the window, so the window's cursor is what says whether
+     * it is hidden.  Over the picture it does get hidden - that is the behaviour
+     * being kept. */
+    viewer->SlideShowStart();
+    settle(50);
+    for (int i = 0; i < 40; ++i)
+    {
+        quiver_test_warp_pointer(root_x - 200 + (i % 2), root_y);
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(5000);
+    }
+    /* now still, with the pointer over the picture: the idle timer hides it */
+    g_usleep(1500 * 1000);
+    while (g_main_context_iteration(NULL, FALSE));
+    CHECK(gtk_widget_get_cursor(GTK_WIDGET(win)) != nullptr);
+
+    /* moving onto the strip brings it back, the way it comes back over the
+     * picture */
+    for (int i = 0; i < 40; ++i)
+    {
+        quiver_test_warp_pointer(root_x + (i % 2), root_y);
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(5000);
+    }
+    CHECK(gtk_widget_get_cursor(GTK_WIDGET(win)) == nullptr);
+
+    /* and it stays: the strip is worked with the pointer, so the pointer must
+     * not be taken away while it is still over the strip, however long the
+     * pointer sits still */
+    g_usleep(1500 * 1000);
+    while (g_main_context_iteration(NULL, FALSE));
+    CHECK(gtk_widget_get_cursor(GTK_WIDGET(win)) == nullptr);
+    CHECK(gtk_widget_get_visible(strip));
+
+    viewer->SlideShowStop();
+}
+
 TEST_CASE("A view that is blanked between items keeps the framing of the next one",
           "[unit][viewer][zoomkeep][imageview]")
 {
@@ -3184,4 +3902,68 @@ TEST_CASE("A view that is blanked between items keeps the framing of the next on
     gtk_window_set_child(GTK_WINDOW(win), NULL);
     gtk_window_destroy(GTK_WINDOW(win));
     while (g_main_context_iteration(NULL, FALSE));
+}
+
+TEST_CASE("Viewer hands the pointer back when it leaves for the browser", "[unit][viewer][cursor]")
+{
+    REQUIRE_DISPLAY();
+
+    /* The pointer is hidden on the window rather than on the viewer, because
+     * that is what a fullscreen show needs - and the browser is in that same
+     * window.  Going back to it has to hand the pointer back, or the browser is
+     * left with a pointer that cannot be seen. */
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    ImageListPtr list(new ImageList());
+    std::string imgDir = QuiverTest_GetImagesDir();
+    std::list<std::string> files;
+    files.push_back(imgDir + "/sample_4k.jpg");
+    files.push_back(imgDir + "/sample_4k.jpg");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer->Show();
+    while (g_main_context_iteration(NULL, FALSE));
+
+    GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(viewer->GetOverlay()));
+    REQUIRE(root != nullptr);
+    REQUIRE(GTK_IS_WINDOW(root));
+
+    /* the same empty cursor the pointer is hidden behind while a show runs and
+     * the pointer has been still long enough */
+    static const guint8 transparent_px[4] = { 0, 0, 0, 0 };
+    GBytes *bytes = g_bytes_new_static(transparent_px, sizeof(transparent_px));
+    GdkTexture *tex = gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4);
+    g_bytes_unref(bytes);
+    GdkCursor *blank = gdk_cursor_new_from_texture(tex, 0, 0, NULL);
+    g_object_unref(tex);
+    REQUIRE(blank != nullptr);
+
+    /* A running show keeps the pointer hidden on purpose - stopping playback
+     * leaves it alone so a show does not flash the pointer back on - so going
+     * back to the browser is the only thing that hands it back. */
+    viewer->SlideShowStart();
+    REQUIRE(viewer->IsSlideShowRunning());
+    REQUIRE_FALSE(viewer->IsSlideShowPaused());
+    gtk_widget_set_cursor(root, blank);
+    REQUIRE(gtk_widget_get_cursor(root) != nullptr);
+
+    viewer->Hide();
+    CHECK(gtk_widget_get_cursor(root) == nullptr);
+    /* and nothing left running takes it away again */
+    gint64 quiet = g_get_monotonic_time() + 2 * G_TIME_SPAN_SECOND;
+    while (g_get_monotonic_time() < quiet)
+        while (g_main_context_iteration(NULL, FALSE));
+    CHECK(gtk_widget_get_cursor(root) == nullptr);
+    REQUIRE_FALSE(gtk_widget_get_visible(viewer->GetWidget()));
+    g_object_unref(blank);
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
 }

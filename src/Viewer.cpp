@@ -753,7 +753,8 @@ public:
 			m_bVideoPlaybackStarted = true;
 			m_bTimelineVisible = true;
 			UpdateTimelineVisibility();
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
+			if (m_pPlayImage && GTK_IS_IMAGE(m_pPlayImage))
+				gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
 
 			/* hide center play button during playback */
 			if (m_pCenterPlayBtn)
@@ -768,7 +769,8 @@ public:
 		else
 		{
 			CancelControlsFade();
-			gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
+			if (m_pPlayImage && GTK_IS_IMAGE(m_pPlayImage))
+				gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-start-symbolic");
 			/* show center play button when paused/stopped on video */
 			UpdateCenterPlayButtonVisibility();
 			/* A pause (click or keyboard) must not leave the pointer hidden.
@@ -859,6 +861,8 @@ public:
 	 * screen is the wrong one and the view stops being read. */
 	std::string m_sPreviewPanItem;
 	bool IsPreviewPanValid() const;
+	bool IsVideoPreviewPanSource() const;
+	/* one line of everything that decides where the frame is drawn */
 	/* A preview picture landed while the view still had no viewport, so whether
 	 * the framing on screen is one worth keeping could not be told apart from
 	 * one that is merely fitted.  Nothing is imposed until the view has been
@@ -874,6 +878,7 @@ public:
 	bool IsVideoPreviewShowing() const;
 	void ResetVideoPan();
 	QuiverImageViewMode GetViewMode() const;
+	QuiverImageViewMode GetChosenViewMode() const;
 	void SetVideoViewMode(QuiverImageViewMode mode);
 	void ApplyVideoZoom();
 	/* before the first frame the pipeline has no size to scale, so the zoom
@@ -1143,6 +1148,7 @@ public:
 	gdouble     m_dVideoPreviewDispH;
 	gboolean    m_bVideoPreviewHasFrame; // the miniature sink has uploaded a real frame
 	gboolean    m_bVideoPreviewRedrawQueued; // a miniature redraw is already pending on the main thread
+	guint       m_iVideoPreviewRedrawIdle = 0; // the pending redraw above, so teardown can drop it
 	gint        m_iVideoSinkW;      // last set_size_request width  (skip if unchanged)
 	gint        m_iVideoSinkH;      // last set_size_request height
 	gint        m_iVideoSinkX;      // last layout_move x
@@ -1370,6 +1376,7 @@ public:
 	bool IsFilmstripOverlay() const { return m_bFilmstripOverlay; }
 	bool IsHideFilmstripFS() const { return m_bHideFilmstripFS; }
 	bool IsPointerOverFilmstrip() const;
+	bool IsFilmstripShowing() const;
 	bool IsPointerOverMediaControls() const;
 	bool IsPointerOverControls() const;
 	bool IsPointOverControlsOrFilmstrip(GtkWidget *event_widget, double x, double y) const;
@@ -1719,6 +1726,10 @@ void Viewer::ViewerImpl::UpdateUI()
 void Viewer::ViewerImpl::UpdateScrollbars()
 {
 	gint width, height;
+	/* borrowed: the image view goes with the widget tree, and the scrollbar
+	 * update is a timeout that can outlive it */
+	if (m_pImageView == NULL || !QUIVER_IS_IMAGE_VIEW(m_pImageView))
+		return;
 	QuiverImageViewMode view_mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
 	
 	quiver_image_view_get_pixbuf_display_size_for_mode(
@@ -2220,6 +2231,23 @@ on_filmstrip_overlay_enter(GtkEventControllerMotion *controller, gpointer user_d
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->CancelFilmstripHide();
 	p->ShowFilmstripOverlay();
+	/* Coming onto the strip is pointer activity: the view's own motion handler
+	 * only runs for the picture, so a pointer that was hidden over the picture
+	 * would stay hidden over the strip the pointer has just moved onto. */
+	viewer_set_idle_cursor(p, false);
+	p->RefreshAutoHideTimer();
+}
+
+/* Moving along the strip counts for as much as moving along the picture: the
+ * strip is worked with the pointer, so the pointer has to be there to be seen
+ * doing it. */
+static void
+on_filmstrip_overlay_motion(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data)
+{
+	(void)controller; (void)x; (void)y;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	viewer_set_idle_cursor(p, false);
+	p->RefreshAutoHideTimer();
 }
 
 static void
@@ -2381,7 +2409,13 @@ static GdkCursor* viewer_blank_cursor(Viewer::ViewerImpl* p)
  * gdk_window_set_cursor call was commented out under a FIXME). */
 static void viewer_set_idle_cursor(Viewer::ViewerImpl* p, bool hidden)
 {
-GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(p->m_pOverlay));
+	/* The cursor goes on the window, and the window is found through the
+	 * overlay.  A viewer built without an overlay - no HUD - has no window of
+	 * its own to put a cursor on, and the window it would find is the one the
+	 * browser is in. */
+	if (p == NULL || p->m_pOverlay == NULL || !GTK_IS_WIDGET(p->m_pOverlay))
+		return;
+	GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(p->m_pOverlay));
 	if (NULL == root)
 		return;
 	gtk_widget_set_cursor(root, hidden ? viewer_blank_cursor(p) : NULL);
@@ -2554,7 +2588,10 @@ void Viewer::ViewerImpl::ShowFilmstripOverlay()
 	if (!m_bFilmstripOverlay) return;
 	if (!QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP)) return;
 	if (m_bFilmstripHiddenByFS) return;
-	if (IsVideo() && IsPlaying()) return;
+	/* A playing video is no reason to refuse: reaching the next item without
+	 * stopping the one being watched is what the strip is for, and keeping it out
+	 * of the way of the video controls is what the pointer-over-controls test and
+	 * the hit test below are for - not a refusal to put it on screen. */
 	/* The icon view is created hidden and never shown again after a
 	 * fade-out completes; a fade-in only animates opacity.  Reveal the
 	 * widget itself or the strip can never be displayed. */
@@ -2587,21 +2624,40 @@ void Viewer::ViewerImpl::UpdateFilmstripForPlayback()
 
 	if (IsVideo() && IsPlaying())
 	{
-		/* hide edge and filmstrip so they don't interfere with video controls;
-		 * force-hide unconditionally even if the pointer is over the filmstrip
-		 * (e.g. user pressed play while hovering the filmstrip) */
+		/* Hide the strip itself so it does not sit over the video controls, and
+		 * hide it even if the pointer is over it: the user pressed play while
+		 * the strip was up, which means the video is what they are looking at
+		 * now.  The hover edge stays: the strip is what the pointer is for, and
+		 * the edge is how it is summoned. */
 		CancelFilmstripFade();
 		m_dFadeOpacity = gtk_widget_get_opacity(m_pIconView);
 		if (m_dFadeOpacity > 0.0)
 			StartFilmstripFade(false);
 		else
 			gtk_widget_set_visible(m_pIconView, FALSE);
-		gtk_widget_set_visible(m_pFilmstripEdge, FALSE);
 	}
 	else
 	{
-		/* restore the hover edge */
+		/* Restore the hover edge.  It is the one thing here that was ever lost
+		 * for good: a widget hidden once and never shown again takes the
+		 * filmstrip with it for the rest of the session, so playing a video
+		 * once left the strip unreachable by the pointer from then on, with
+		 * nothing but this branch to bring it back. */
+		gtk_widget_set_visible(m_pFilmstripEdge, TRUE);
 	}
+}
+
+bool Viewer::ViewerImpl::IsFilmstripShowing() const
+{
+	/* The strip is there when the icon view is both visible and not fully faded
+	 * out: HideFilmstripOverlay() leaves it visible while the fade runs, so the
+	 * visible flag alone would keep saying "on screen" for a strip nobody can
+	 * see, and that strip must not be a reason to hold the pointer back. */
+	if (m_pIconView == NULL || !GTK_IS_WIDGET(m_pIconView))
+		return false;
+	if (!gtk_widget_get_visible(m_pIconView))
+		return false;
+	return gtk_widget_get_opacity(m_pIconView) > 0.0;
 }
 
 bool Viewer::ViewerImpl::IsPointerOverFilmstrip() const
@@ -2868,11 +2924,13 @@ void Viewer::ViewerImpl::AddFilmstrip()
 		}
 
 		/* the filmstrip container tracks leave/enter so the strip stays
-		 * visible while the mouse is anywhere over the filmstrip */
+		 * visible while the mouse is anywhere over the filmstrip, and motion so
+		 * the pointer is not taken away underneath it */
 		{
 			GtkEventController *motion = gtk_event_controller_motion_new();
 			g_signal_connect(motion, "enter", G_CALLBACK(on_filmstrip_overlay_enter), this);
 			g_signal_connect(motion, "leave", G_CALLBACK(on_filmstrip_overlay_leave), this);
+			g_signal_connect(motion, "motion", G_CALLBACK(on_filmstrip_overlay_motion), this);
 			gtk_widget_add_controller(m_pFilmstripOverlayContainer, motion);
 		}
 
@@ -3014,7 +3072,17 @@ timeout_event_motion_notify (gpointer user_data)
 		bKeepVisible = TRUE;
 
 	// ...and while pointer is over the viewer overlay bar
-	if (!bKeepVisible && (pViewerImpl->m_bPointerOverOverlayBar || pViewerImpl->IsPointerOverControls()))
+	if (!bKeepVisible && (pViewerImpl->m_bPointerOverOverlayBar
+		|| pViewerImpl->IsPointerOverControls()))
+		bKeepVisible = TRUE;
+
+	// ...and while the pointer is over a filmstrip that is on screen.  The
+	// pointer is the only way to work the strip, so taking it away while it is
+	// under the pointer hides the very thing being pointed at - and unlike the
+	// controls above, which come back on the next move, the strip is what the
+	// move was over.
+	if (!bKeepVisible && pViewerImpl->IsFilmstripShowing()
+		&& pViewerImpl->IsPointerOverFilmstrip())
 		bKeepVisible = TRUE;
 
 	GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(pViewerImpl->m_pOverlay));
@@ -4326,9 +4394,27 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 	pViewerImpl = (Viewer::ViewerImpl*)data;
 	
 	QuiverImageViewMode mode = quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+	/* The image view drops into 1:1 internally whenever the magnification is
+	 * not the one the mode in force would show the picture at, because that is
+	 * the state it has to draw and scroll a zoomed picture from.  That state is
+	 * the view's business and not the user's: the mode they chose is the one
+	 * they are in, and everything that names it - the tick in the list, the
+	 * stored preference, the copy the video is drawn with - has to name that
+	 * one, or zooming looks like it changed the view mode.
+	 *
+	 * "Keep zoom and pan" is not that state: it is a mode the user picked, so it
+	 * passes through as itself, and a video in it keeps its framing. */
+	const gboolean bInternalZoomOnly = (mode == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+	QuiverImageViewMode unmagnified_mode = bInternalZoomOnly
+		? quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView))
+		: mode;
 
+	/* The tick is the user's, so it is named from the mode they are in: the
+	 * list is a list of modes they can pick, and the internal 1:1 is not one of
+	 * them, so ticking it would be ticking an entry that is not there and
+	 * untick every entry that is. */
 	const gchar *action_name = NULL;
-	switch (mode)
+	switch (unmagnified_mode)
 	{
 		case QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW:
 			action_name = ACTION_VIEWER_ZOOM_FIT;
@@ -4340,7 +4426,11 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 			action_name = ACTION_VIEWER_ZOOM_100;
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM:
-			action_name = ACTION_VIEWER_ZOOM;
+			/* not a mode in the list: it is the state a zoom puts the view in,
+			 * so there is no entry to tick for it and the mode the zoom was
+			 * made from stays ticked - which is also what leaves the user a way
+			 * back to that mode's own framing */
+			action_name = NULL;
 			break;
 		case QUIVER_IMAGE_VIEW_MODE_ZOOM_KEEP:
 			action_name = ACTION_VIEWER_ZOOM_KEEP;
@@ -4353,15 +4443,26 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 			break;
 	}
 
-	QuiverImageViewMode unmagnified_mode = 
-		quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(pViewerImpl->m_pImageView));
+	/* The video keeps a copy of the mode because it is drawn by the pipeline
+	 * rather than by the image view, and this is the one signal that every route
+	 * to a mode change goes through - the menu, a zoom, and the fall back to the
+	 * mode the view was zoomed out of - so it is where the copy is kept from
+	 * drifting away from the stills.  The copy is what the video is drawn and
+	 * panned from, so it is the state the view is really in, 1:1 included; what
+	 * the user is in is GetChosenViewMode(), and that is what the preference
+	 * below and the tick in the list are for. */
+	pViewerImpl->m_eVideoViewMode = mode;
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	prefsPtr->SetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_DEFAULT_VIEW_MODE, unmagnified_mode);
 
 	if (NULL != action_name)
 	{
-		QuiverUtils::SetRadioActionCurrent(action_name, mode);
+		/* A view at its mode's own framing ticks that mode, and an entry the
+		 * user picks puts the view back at that framing - which is what makes
+		 * the entry worth keeping ticked while a zoom is in force: it is the
+		 * way back to the mode. */
+		QuiverUtils::SetRadioActionCurrent(action_name, unmagnified_mode);
 	}
 }
 
@@ -4708,26 +4809,37 @@ static void viewer_view_mode_arrow_cb(Viewer::ViewerImpl *p)
 
 static void viewer_view_mode_create_popup_cb(GtkWidget *popover, gpointer user_data)
 {
-	(void)popover;
 	Viewer::ViewerImpl *pViewer = (Viewer::ViewerImpl *)user_data;
 	if (pViewer == NULL || NULL == pViewer->m_pViewModeMenuPopover)
 		return;
 
-	/* a video's view mode lives beside the image view, so tick what the video
-	 * is actually showing rather than what the last still left behind */
-	if (pViewer->IsVideo())
+	/* A video's view mode lives beside the image view, and either way it is the
+	 * mode the user is in that the list is ticked with: opening the list while a
+	 * zoom is in force is the moment the user goes to see which mode they are
+	 * in, and a list with nothing ticked answers "none of them" for a picture
+	 * that is plainly in one. */
+	const QuiverImageViewMode chosen = pViewer->GetChosenViewMode();
+	if (QUIVER_IMAGE_VIEW_MODE_ZOOM != chosen)
+		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, chosen);
+
+	GtkWidget *anchor = gtk_widget_get_parent(popover);
+	if (pViewer->m_pViewModeMenuBtn != NULL && anchor != NULL
+		&& GTK_IS_WIDGET(pViewer->m_pViewModeMenuBtn) && GTK_IS_WIDGET(anchor))
 	{
-		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM, pViewer->GetViewMode());
-	}
-	else if (pViewer->m_pImageView != NULL && QUIVER_IS_IMAGE_VIEW(pViewer->m_pImageView))
-	{
-		QuiverUtils::SetRadioActionCurrent(ACTION_VIEWER_ZOOM,
-			quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(pViewer->m_pImageView)));
+		graphene_rect_t bounds;
+		if (gtk_widget_compute_bounds(pViewer->m_pViewModeMenuBtn, anchor, &bounds))
+		{
+			GdkRectangle arrow = {
+				(int)graphene_rect_get_x(&bounds), (int)graphene_rect_get_y(&bounds),
+				(int)graphene_rect_get_width(&bounds), (int)graphene_rect_get_height(&bounds)
+			};
+			gtk_popover_set_pointing_to(GTK_POPOVER(popover), &arrow);
+		}
 	}
 
 	PreferencesPtr prefs = Preferences::GetInstance();
 	int hudPos = prefs->GetInteger(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_HUD_POSITION, HUD_POS_BOTTOM);
-	gtk_popover_set_position(GTK_POPOVER(pViewer->m_pViewModeMenuPopover),
+	gtk_popover_set_position(GTK_POPOVER(popover),
 		(hudPos == HUD_POS_TOP) ? GTK_POS_BOTTOM : GTK_POS_TOP);
 }
 
@@ -5481,6 +5593,14 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		 * its magnification onto the next file, so the preview is framed while
 		 * the video's own remembered zoom is still the old one, and starting
 		 * there would drop the picture back to 100% the moment play is pressed. */
+		/* Read the framing off the preview here, while the preview is still what
+		 * is on screen and its scroll position is the pan the user chose.  Every
+		 * step below - stopping the pipeline, handing the image view back,
+		 * bringing the video page up - takes the view off the screen or resets
+		 * it, and a pan read after that is the view's own bookkeeping rather
+		 * than the framing, which is how the frame used to start at the top left
+		 * of the picture instead of where the preview was left. */
+		CaptureVideoPanFromPreview();
 		const bool bKeepPreviewFraming = m_bVideoZoomFromPreview || AdoptVideoPreviewFraming();
 		StopVideo(false, bKeepPreviewFraming);
 		/* Bring the video page up immediately (rather than waiting for
@@ -5672,9 +5792,19 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */, bool keepPrevi
 		 * the next video is framed the same way whatever its dimensions */
 		ResetVideoPan();
 	}
-	/* whatever the view is showing now belongs to the item that is leaving, so
-	 * its scroll position is not where this video is to play from */
-	m_sPreviewPanItem.clear();
+	if (!keepPreviewFraming)
+	{
+		/* whatever the view is showing now belongs to the item that is leaving,
+		 * so its scroll position is not where this video is to play from.
+		 *
+		 * Unless the leaving item *is* the one whose preview is on screen and is
+		 * about to be played: that scroll position is precisely where the frame
+		 * is to start, and forgetting that it was still the right one stops
+		 * CaptureVideoPanFromPreview() from reading it, so the zoom came across
+		 * and the position did not - the frame started from wherever the pan fell
+		 * back to instead of from where the user had put it. */
+		m_sPreviewPanItem.clear();
+	}
 	m_dVideoLastWidgetW = 0.;
 	m_dVideoLastFrameW = 0.;
 	m_dVideoLastFrameH = 0.;
@@ -6431,6 +6561,9 @@ static void viewer_widget_tree_destroyed_cb(GtkWidget *widget, gpointer user_dat
 	pViewer->m_pMediaControls = NULL;
 	pViewer->m_pTransportRow = NULL;
 	pViewer->m_pImageView = NULL;
+	/* borrowed from the image view, not owned: they go with it */
+	pViewer->m_pAdjustmentH = NULL;
+	pViewer->m_pAdjustmentV = NULL;
 	pViewer->m_pIconView = NULL;
 	pViewer->m_pImageErrorLabel = NULL;
 	pViewer->m_pScrollbarH = NULL;
@@ -6623,6 +6756,16 @@ Viewer::ViewerImpl::~ViewerImpl()
 		g_source_remove(m_iTimeoutNavControlFade);
 		m_iTimeoutNavControlFade = 0;
 	}
+	/* The auto-hide timer hides the filmstrip by starting the fade, so it is the
+	 * one timer that reaches a widget itself: left running it fires after the
+	 * viewer is gone and fades a widget that has already been destroyed. */
+	CancelFilmstripHide();
+	if (0 != m_iVideoPreviewRedrawIdle)
+	{
+		g_source_remove(m_iVideoPreviewRedrawIdle);
+		m_iVideoPreviewRedrawIdle = 0;
+		m_bVideoPreviewRedrawQueued = FALSE;
+	}
 	if (0 != m_iVideoZoomTimeoutID)
 	{
 		g_source_remove(m_iVideoZoomTimeoutID);
@@ -6659,10 +6802,14 @@ Viewer::ViewerImpl::~ViewerImpl()
 	}
 	m_pImageSubmenuPopover = NULL;
 
-	if (m_pViewModeMenuPopover && G_IS_OBJECT(m_pViewModeMenuPopover))
-	{
+	/* The popover is a child of the split box, so it goes with the HUD.  This
+	 * runs first when the viewer is released while the window is still up, and
+	 * comes off the box here; when the window went first the box took the
+	 * popover with it and viewer_widget_tree_destroyed_cb() has already cleared
+	 * the pointer. */
+	if (m_pViewModeMenuPopover != NULL && GTK_IS_WIDGET(m_pViewModeMenuPopover)
+		&& gtk_widget_get_parent(GTK_WIDGET(m_pViewModeMenuPopover)) != NULL)
 		gtk_widget_unparent(GTK_WIDGET(m_pViewModeMenuPopover));
-	}
 	m_pViewModeMenuPopover = NULL;
 
 	if (m_pSpeedButton && GTK_IS_MENU_BUTTON(m_pSpeedButton))
@@ -6983,10 +7130,24 @@ quiver_freelayout_dispose(GObject *object)
 }
 
 static void
+quiver_freelayout_finalize(GObject *object)
+{
+	QuiverFreelayout *self = QUIVER_FREELAYOUT(object);
+	/* The bookkeeping of where each child sits belongs to the container and goes
+	 * when the container does.  Dispose empties it - that is about the children
+	 * and has to happen while they are still alive - but the array itself was
+	 * never freed, so every video viewer leaked one container's worth of it. */
+	g_clear_pointer(&self->children, g_array_unref);
+
+	G_OBJECT_CLASS(quiver_freelayout_parent_class)->finalize(object);
+}
+
+static void
 quiver_freelayout_class_init(QuiverFreelayoutClass *klass)
 {
 	GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
 	gobject_class->dispose = quiver_freelayout_dispose;
+	gobject_class->finalize = quiver_freelayout_finalize;
 
 	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 	widget_class->measure = quiver_freelayout_measure;
@@ -7690,6 +7851,7 @@ static gboolean video_preview_redraw_idle(gpointer user_data)
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	if (p == NULL)
 		return FALSE;
+	p->m_iVideoPreviewRedrawIdle = 0;
 	p->m_bVideoPreviewRedrawQueued = FALSE;
 	if (p->m_spAlive == NULL || !*p->m_spAlive)
 		return FALSE;
@@ -7716,6 +7878,13 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 		p->m_bVideoNeedsFirstFrame = FALSE;
 		if (p->m_pVideoSinkWidget != NULL && GTK_IS_WIDGET(p->m_pVideoSinkWidget))
 			gtk_widget_set_opacity(p->m_pVideoSinkWidget, 1.0);
+		/* The frame has been decoded, so the quick preview is over: from here the
+		 * video owns the screen, and the image view must stop being a source for
+		 * the framing.  Decided here rather than below, where the flag used to be
+		 * set, because the hand-back of the image view comes first and it moves
+		 * exactly the scroll position the framing is read from. */
+		p->m_bVideoPreviewHasFrame = TRUE;
+		p->UpdateNavControlVisibility();
 		/* The first frame is now decoded, so the video page no longer shows
 		 * the transparent sink over the background.  Complete the deferred
 		 * page switch requested by ShowVideoPage() to avoid the background
@@ -7732,7 +7901,13 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 		 * runs while the preview is still the visible page: handing the image view
 		 * back at that point would drop the picture the user is looking at to the
 		 * thumbnail's own fit size until the first frame arrived. */
+		/* the adjustments the hand-back moves are the video's, not a place the
+		 * user put the framing, which is what m_bFramingVideoPreview says: while
+		 * it is set, what the adjustments say belongs to the viewer rather than
+		 * to the user and is not read back as a pan */
+		p->m_bFramingVideoPreview = TRUE;
 		p->ReturnImageViewFromPreviewZoom();
+		p->m_bFramingVideoPreview = FALSE;
 		/* The frame just shown is the first one the user sees, so it has to be
 		 * drawn at the zoom this video starts at.  The size request is normally
 		 * already in place - the caps event precedes this frame and applies the
@@ -7756,7 +7931,8 @@ static void video_paintable_invalidated_cb(GdkPaintable *paintable, gpointer use
 		if (!p->m_bVideoPreviewRedrawQueued)
 		{
 			p->m_bVideoPreviewRedrawQueued = TRUE;
-			g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, video_preview_redraw_idle, p, NULL);
+			p->m_iVideoPreviewRedrawIdle =
+				g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, video_preview_redraw_idle, p, NULL);
 		}
 	}
 }
@@ -8041,6 +8217,14 @@ void Viewer::ViewerImpl::SetVideoPanPixels(gdouble px, gdouble py)
 	 * so it survives a change of frame size or aspect ratio */
 	m_fVideoPanFX = PanOffsetToCenter(px, m_dVideoPreviewDispW, m_dVideoViewW);
 	m_fVideoPanFY = PanOffsetToCenter(py, m_dVideoPreviewDispH, m_dVideoViewH);
+	/* The pixel offset is the same point in the frame and is kept in step with
+	 * the centre here, rather than only being worked out again by the next
+	 * apply.  An offset left describing the last frame is a pan that snaps back:
+	 * ApplyVideoZoom() derives the offset from the centre, so a caller that moves
+	 * the offset alone has its move undone by the very next thing it calls, which
+	 * is how a flick ended on its first step with the frame where it started. */
+	m_dVideoPanX = PanCenterToOffset(m_fVideoPanFX, m_dVideoPreviewDispW, m_dVideoViewW);
+	m_dVideoPanY = PanCenterToOffset(m_fVideoPanFY, m_dVideoPreviewDispH, m_dVideoViewH);
 }
 
 gdouble Viewer::ViewerImpl::GetVideoPanOffsetX() const
@@ -8064,6 +8248,25 @@ QuiverImageViewMode Viewer::ViewerImpl::GetViewMode() const
 	 * and a still and a video are never in two different modes at once. */
 	if (m_pImageView != NULL && QUIVER_IS_IMAGE_VIEW(m_pImageView))
 		return quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
+	return m_eVideoViewMode;
+}
+
+/* The mode the user is in, as opposed to the 1:1 the image view drops into
+ * while the picture is zoomed away from the size its mode shows it at.  The
+ * image view needs that state to draw and scroll such a picture, and the video
+ * reads it to know that a zoom is in force, but neither of those is the user
+ * having chosen a view mode: what the user chose is the mode the zoom was
+ * made from, and that is the one to answer with. */
+QuiverImageViewMode Viewer::ViewerImpl::GetChosenViewMode() const
+{
+	if (m_pImageView != NULL && QUIVER_IS_IMAGE_VIEW(m_pImageView))
+	{
+		const QuiverImageViewMode mode =
+			quiver_image_view_get_view_mode(QUIVER_IMAGE_VIEW(m_pImageView));
+		if (QUIVER_IMAGE_VIEW_MODE_ZOOM == mode)
+			return quiver_image_view_get_view_mode_unmagnified(QUIVER_IMAGE_VIEW(m_pImageView));
+		return mode;
+	}
 	return m_eVideoViewMode;
 }
 
@@ -8151,7 +8354,16 @@ bool Viewer::ViewerImpl::AdoptVideoPreviewFraming(bool bProvisional)
 	/* the fit level is unknown until the caps probe reports the frame size, and
 	 * the first ApplyVideoZoom() bounds the zoom by the real one */
 	m_dVideoZoom = zoom;
-	m_dVideoZoomFinal = zoom;
+	/* A zoom that is on its way somewhere is not to be told where it is going by
+	 * the picture it is being applied to: that picture is itself easing towards
+	 * the target and so still reports the zoom it came from, and taking that for
+	 * the target walks the zoom back where it started - the preview would set off
+	 * for the target and arrive back at the beginning.  Where the zoom *is* is
+	 * still taken from the view exactly as before, so a drag or a pan is followed
+	 * all the same; only the target is left alone, and only while a zoom is in
+	 * flight. */
+	if (m_iVideoZoomTimeoutID == 0)
+		m_dVideoZoomFinal = zoom;
 	m_dVideoZoomMin = 1.0;
 	CaptureVideoPanFromPreview();
 	m_bVideoZoomFromPreview = true;
@@ -8347,7 +8559,16 @@ bool Viewer::ViewerImpl::IsPreviewPanValid() const
 	 * video a framing nobody asked for. */
 	if (m_bVideoPreviewHasFrame)
 		return false;
-	return m_sPreviewPanItem == m_ImageListPtr->GetCurrent().GetFilePath();
+	if (m_sPreviewPanItem != m_ImageListPtr->GetCurrent().GetFilePath())
+		return false;
+	/* And only while the preview is actually the thing on screen.  Pressing play
+	 * takes the image view off the screen, and a view that is not on screen has
+	 * its scroll position clamped flat by GTK - to the very start of the
+	 * content.  Reading it then hands the video the top left of the frame, which
+	 * is what a pan captured after the play press would be worth.  The framing is
+	 * captured on the way in to playing instead, where the preview is still
+	 * showing; after that, the video's pan is the video's own business. */
+	return IsVideoPreviewShowing();
 }
 
 void Viewer::ViewerImpl::CaptureVideoPanFromPreview(){
@@ -8391,6 +8612,11 @@ void Viewer::ViewerImpl::CaptureVideoPanFromPreview(){
 	m_bVideoPanFromPreview = true;
 }
 
+bool Viewer::ViewerImpl::IsVideoPreviewPanSource() const
+{
+	return IsPreviewPanValid();
+}
+
 bool Viewer::ViewerImpl::IsVideoPreviewShowing() const
 {
 	/* The quick preview: the video is the current item, the pipeline has not
@@ -8401,6 +8627,18 @@ bool Viewer::ViewerImpl::IsVideoPreviewShowing() const
 	if (m_pImageView == NULL || !QUIVER_IS_IMAGE_VIEW(m_pImageView))
 		return false;
 	if (!gtk_widget_get_visible(m_pImageView))
+		return false;
+	/* And it has to be the child the stack is showing.  Switching the stack to the
+	 * video page does not clear the image view's own visible flag - it is made
+	 * visible again for the next still, which is why the check above cannot be the
+	 * whole answer - so between the two there is a stretch in which this says yes
+	 * while the preview is off screen and its scroll position is left over from
+	 * the moment before the switch.  Anything read off the view then is the view's
+	 * own bookkeeping, and that is what took the pan apart on the way to playback:
+	 * the hand-back below resets the scroll, the reset is read as the user's pan,
+	 * and the frame is drawn from it. */
+	if (m_pStack == NULL || !GTK_IS_STACK(m_pStack)
+		|| gtk_stack_get_visible_child(GTK_STACK(m_pStack)) != m_pImageView)
 		return false;
 	return quiver_image_view_get_texture(QUIVER_IMAGE_VIEW(m_pImageView)) != NULL;
 }
@@ -8447,18 +8685,25 @@ void Viewer::ViewerImpl::SetVideoZoom(gdouble zoom)
 	{
 		if (zoom > m_dVideoZoomMin + 0.005 && !viewer_view_mode_is_zoomed(GetViewMode()))
 			SetVideoViewMode(QUIVER_IMAGE_VIEW_MODE_ZOOM);
-		if (m_iVideoZoomTimeoutID != 0)
-		{
-			g_source_remove(m_iVideoZoomTimeoutID);
-			m_iVideoZoomTimeoutID = 0;
-		}
-		m_dVideoZoom = zoom;
-		m_dVideoZoomFinal = zoom;
 		m_bVideoZoomFromPreview = true;
-		ApplyVideoPreviewZoom(zoom);
-		/* the pointer anchored that one zoom; the next is about the middle
-		 * until a pointer says otherwise, as it is for a picture */
-		m_bVideoZoomAnchorCenter = false;
+		/* Eased towards, the way a picture's magnification is and the way a
+		 * playing video's zoom already is: the same halving the image view uses,
+		 * driven by the same timeout, so a wheel gesture over the preview moves
+		 * into the zoom instead of arriving at it.  The factor itself is kept
+		 * exactly as before, so the frame still plays from where the preview was
+		 * left; only the way there is animated now. */
+		if (zoom != m_dVideoZoomFinal)
+		{
+			m_dVideoZoomFinal = zoom;
+			if (0 == m_iVideoZoomTimeoutID)
+				m_iVideoZoomTimeoutID = g_timeout_add(30, video_zoom_timeout, this);
+		}
+		else
+		{
+			m_dVideoZoom = zoom;
+			m_bVideoZoomAnchorCenter = false;
+		}
+		ApplyVideoPreviewZoom(m_dVideoZoom);
 		UpdateUI();
 		return;
 	}
@@ -8593,6 +8838,18 @@ static void video_zoom_get_pointer_in(Viewer::ViewerImpl *p, GtkWidget *area, gd
 }
 
 #if VIDEO_ZOOM_SMOOTH_ANIMATION
+/* The zoom is the video's either way; what it is applied to is whichever picture
+ * is on screen, so the tween does not have to know which: before the first frame
+ * arrives the quick preview *is* the video as far as the user is concerned, and
+ * after it the pipeline is. */
+static void video_zoom_apply(Viewer::ViewerImpl *p)
+{
+	if (p->m_iVideoWidth <= 0 || p->m_iVideoHeight <= 0)
+		p->ApplyVideoPreviewZoom(p->m_dVideoZoom);
+	else
+		p->ApplyVideoZoom();
+}
+
 static gboolean video_zoom_timeout(gpointer data)
 {
 	/* ease the zoom toward its target the way the image view does: halve the
@@ -8611,13 +8868,13 @@ static gboolean video_zoom_timeout(gpointer data)
 	{
 		p->m_dVideoZoom = final;
 		p->m_iVideoZoomTimeoutID = 0;
-		p->ApplyVideoZoom();
+		video_zoom_apply(p);
 		p->m_bVideoZoomAnchorCenter = false;
 		return FALSE;
 	}
 
 	p->m_dVideoZoom = old_zoom + mag_diff / 2.;
-	p->ApplyVideoZoom();
+	video_zoom_apply(p);
 	return TRUE;
 }
 #endif
@@ -8628,7 +8885,9 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	m_uZoomApplyCount.fetch_add(1, std::memory_order_relaxed);
 
 	if (NULL == m_pVideoFixed || NULL == m_pVideoSinkWidget)
+	{
 		return;
+	}
 
 	/* wait for the first caps so we know the source frame size */
 	if (m_iVideoWidth <= 0 || m_iVideoHeight <= 0)
@@ -8657,9 +8916,12 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 			areaW = gtk_widget_get_width(m_pImageView);
 			areaH = gtk_widget_get_height(m_pImageView);
 		}
+		else
+		{
+		}
 		if (areaW <= 0 || areaH <= 0)
 		{
-		return;
+			return;
 		}
 	}
 
@@ -9005,7 +9267,9 @@ void Viewer::ViewerImpl::ApplyVideoZoom()
 	 * A preview framed at the delivery's numbers would then be left behind, and
 	 * pressing play would jump. */
 	if (IsVideoPreviewFraming())
+	{
 		FrameVideoPreviewFromVideo(FALSE);
+	}
 }
 
 bool Viewer::ViewerImpl::CanVideoPan() const
@@ -9157,18 +9421,26 @@ bool Viewer::ViewerImpl::VideoPanSlowdownStep(gint64 frame_time_us)
 		return false;
 	}
 
-	gdouble prevPanX = m_dVideoPanX;
-	gdouble prevPanY = m_dVideoPanY;
+	const gdouble prevPanFX = m_fVideoPanFX;
+	const gdouble prevPanFY = m_fVideoPanFY;
 
+	/* Moved through SetVideoPanPixels, which is what a drag uses, and not by
+	 * writing the pixel offset: the offset is worked out again from the centre
+	 * inside the apply below, so a step that wrote the offset on its own had
+	 * that move taken straight back and the picture never went anywhere.  The
+	 * velocity is screen velocity, so it is scaled by the zoom to become a
+	 * distance in the frame, as the drag's own deltas are. */
 	gdouble srcPerPx = (m_dVideoZoom > 0.) ? (1. / m_dVideoZoom) : 1.;
-	m_dVideoPanX -= hdistance * srcPerPx;
-	m_dVideoPanY -= vdistance * srcPerPx;
+	SetVideoPanPixels(m_dVideoPanX - hdistance * srcPerPx,
+		m_dVideoPanY - vdistance * srcPerPx);
 
 	ApplyVideoZoom();
 
-	if (std::abs(m_dVideoPanX - prevPanX) < 0.001)
+	/* a pan that has run into the edge of the frame stops there and takes that
+	 * axis's velocity with it, the way a scroll does when it runs out */
+	if (std::abs(m_fVideoPanFX - prevPanFX) < 0.0005)
 		m_dVideoPanVelX = 0.;
-	if (std::abs(m_dVideoPanY - prevPanY) < 0.001)
+	if (std::abs(m_fVideoPanFY - prevPanFY) < 0.0005)
 		m_dVideoPanVelY = 0.;
 
 	if (std::hypot(m_dVideoPanVelX, m_dVideoPanVelY) < 10.0)
@@ -9847,10 +10119,6 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_widget_set_focusable(m_pViewModeMenuBtn, FALSE);
 	gtk_widget_set_tooltip_text(m_pViewModeMenuBtn, "View Mode");
 	g_signal_connect_swapped(m_pViewModeMenuBtn, "clicked", G_CALLBACK(viewer_view_mode_arrow_cb), this);
-	m_pViewModeMenuPopover = viewer_view_mode_build_popover();
-	g_object_add_weak_pointer(G_OBJECT(m_pViewModeMenuPopover), (gpointer*)&m_pViewModeMenuPopover);
-	gtk_widget_set_parent(GTK_WIDGET(m_pViewModeMenuPopover), m_pViewModeMenuBtn);
-	g_signal_connect(m_pViewModeMenuPopover, "show", G_CALLBACK(viewer_view_mode_create_popup_cb), this);
 	{
 		GtkEventController *motion = gtk_event_controller_motion_new();
 		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
@@ -9869,6 +10137,14 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_box_append(GTK_BOX(m_pViewModeSplitBox), m_pViewModeSplitSep);
 	viewer_view_mode_split_size_sep(m_pViewerZoomFitBtn, m_pViewModeSplitSep);
 	gtk_box_append(GTK_BOX(m_pViewModeSplitBox), m_pViewModeMenuBtn);
+	m_pViewModeMenuPopover = viewer_view_mode_build_popover();
+	/* The popover hangs off the split box and not off the arrow button: a plain
+	 * button does not unparent the children it was never told about, so a
+	 * popover left on one is finalized with its parent already gone, while a box
+	 * unparents its children as it goes.  A popover aims at the widget it is a
+	 * child of, so the arrow's place is set by hand. */
+	gtk_widget_set_parent(GTK_WIDGET(m_pViewModeMenuPopover), m_pViewModeSplitBox);
+	g_signal_connect(m_pViewModeMenuPopover, "show", G_CALLBACK(viewer_view_mode_create_popup_cb), this);
 	{
 		/* one highlight for the whole split control: the box lights up while
 		 * the pointer is anywhere inside it (including the separator) and the
@@ -10488,6 +10764,11 @@ void Viewer::Hide()
 {
 	m_ViewerImplPtr->StopVideo(true);
 	m_ViewerImplPtr->SlideShowStop(true);
+	/* The pointer is hidden on the window, not on the viewer, because that is
+	 * what a fullscreen video needs - and the browser is in that same window.
+	 * Leaving the viewer therefore has to hand the pointer back, and cancel the
+	 * idle timer that would take it away again behind our back. */
+	ResetIdleCursor();
 	
 	gtk_widget_set_visible(m_ViewerImplPtr->m_pHBox, FALSE);
 
@@ -11175,9 +11456,28 @@ double Viewer::GetVideoPanY() const
 	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanY : 0.0;
 }
 
+bool Viewer::IsVideoPreviewPanSource() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->IsVideoPreviewPanSource() : false;
+}
+
+double Viewer::GetVideoPanRangeX() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanRangeX : 0.0;
+}
+
+double Viewer::GetVideoPanRangeY() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_dVideoPanRangeY : 0.0;
+}
+
 QuiverImageViewMode Viewer::GetVideoViewMode() const
 {
-	return m_ViewerImplPtr ? m_ViewerImplPtr->GetViewMode() : QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
+	/* What the viewer is showing, which is the mode the user picked: a picture
+	 * that is zoomed away from the size its mode shows it at is still that
+	 * mode, and saying otherwise is how a zoom came to look like a change of
+	 * view mode. */
+	return m_ViewerImplPtr ? m_ViewerImplPtr->GetChosenViewMode() : QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW;
 }
 
 double Viewer::GetVideoPanFractionX() const
@@ -12308,10 +12608,12 @@ void Viewer::ViewerImpl::UpdateNavigationControl()
 static gboolean timeout_update_scrollbars(gpointer user_data)
 {
 	Viewer::ViewerImpl* pViewerImpl = (Viewer::ViewerImpl*)user_data;
-	pViewerImpl->UpdateScrollbars();
-	/* one-shot: clear the slot or the next removal fires
-	 * "Source ID ... was not found when attempting to remove it" */
+	/* one-shot, and the slot goes before the work rather than after it: the
+	 * updates below can arm the next one, and clearing afterwards would drop
+	 * its id, leaving a source nothing tracks that fires into a torn-down
+	 * viewer later on */
 	pViewerImpl->m_iTimeoutScrollbars = 0;
+	pViewerImpl->UpdateScrollbars();
 
 	return FALSE;
 }
@@ -12386,6 +12688,7 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 	if (0 != pViewerImpl->m_iTimeoutScrollbars)
 	{
 		g_source_remove(pViewerImpl->m_iTimeoutScrollbars);
+		pViewerImpl->m_iTimeoutScrollbars = 0;
 	}
 	
 	pViewerImpl->m_iTimeoutScrollbars = g_timeout_add(20, timeout_update_scrollbars, pViewerImpl);

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "test_helpers.h"
 #include "Preferences.h"
 #include "QuiverPrefs.h"
 #include "Bookmarks.h"
@@ -159,6 +160,9 @@ TEST_CASE_METHOD(TestPreferencesFixture, "Reset flushes even with dangling refer
 
 TEST_CASE_METHOD(TestPreferencesFixture, "Kinetic Scrolling preference support", "[unit][prefs][kinetic]")
 {
+    // the last part of this builds a widget to read the scroll setting off it
+    REQUIRE_DISPLAY();
+
     PreferencesPtr prefs = Preferences::GetInstance();
     REQUIRE(prefs != nullptr);
 

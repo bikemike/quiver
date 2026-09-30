@@ -65,6 +65,20 @@ public:
 	double GetVideoPanVelocityY() const;
 	double GetVideoPanX() const;
 	double GetVideoPanY() const;
+	/* How far the visible part of the frame can be moved along each axis, in the
+	 * same pixels GetVideoPanX/Y report, and 0 when there is nothing to pan: the
+	 * frame has no size yet, or the picture fits the viewport.  CanVideoPan() says
+	 * the user may drag the picture, which a zoom alone is enough to answer; this
+	 * says whether dragging it would move anything. */
+	double GetVideoPanRangeX() const;
+	double GetVideoPanRangeY() const;
+	/* Whether the quick preview's scroll position is, right now, where this video
+	 * is framed from.  It is only while that preview is the picture on screen:
+	 * once the video page has taken the screen, while the image view is being
+	 * handed back to the stills, or after the first frame, whatever the scroll
+	 * position says belongs to the image view and not to this video.  Exposed so
+	 * that a live framing can be told from one that was left over. */
+	bool IsVideoPreviewPanSource() const;
 	/* The video's own view state: the mode the viewer is in, and the *centre* of
 	 * the visible part of the frame, as a fraction (0..1) of the frame on each
 	 * axis.  A fraction of the centre, rather than of the offset, is what means
