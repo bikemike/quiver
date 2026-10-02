@@ -228,6 +228,45 @@ namespace QuiverUtils
 		gboolean suppressed;
 	};
 
+	/* Several keys are claimed by both the browser and the viewer: Delete,
+	 * Shift+Delete, Ctrl+C and Ctrl+X.  An app-wide accel belongs to one
+	 * action, so whichever pane registered last wins it outright, and the
+	 * loser still acts on its own selection - which is stale while it is
+	 * hidden.  (F2 no longer appears here: quick rename is one global action
+	 * now, see ACTION_QUIVER_QUICK_RENAME.)  Each of these is bound to a pane
+	 * instead, and only the pane that is showing keeps the key.
+	 * ShortcutManager applies the same rule to the actions it owns; these are
+	 * the ones it does not, because they are not user-rebindable. */
+	enum Pane { PANE_BROWSER, PANE_VIEWER };
+	struct PaneAction {
+		const char *action_name;
+		Pane pane;
+	};
+	static const PaneAction g_paneActions[] = {
+		{ "BrowserCopy", PANE_BROWSER },   { "ViewerCopy", PANE_VIEWER },
+		{ "BrowserCut", PANE_BROWSER },    { "ViewerCut", PANE_VIEWER },
+		{ "BrowserTrash", PANE_BROWSER },  { "ViewerTrash", PANE_VIEWER },
+		{ "BrowserTrashForce", PANE_BROWSER },
+		{ "ViewerTrashForce", PANE_VIEWER },
+	};
+	static const guint g_nPaneActions = G_N_ELEMENTS(g_paneActions);
+
+	/* which pane is showing; the other one holds no pane-bound accel */
+	static Pane g_activePane = PANE_BROWSER;
+
+	/* the pane an action belongs to, or NULL when it is not pane-bound */
+	static const Pane* pane_of(const char *action_name)
+	{
+		if (NULL == action_name)
+			return NULL;
+		for (guint i = 0; i < g_nPaneActions; i++)
+		{
+			if (0 == strcmp(g_paneActions[i].action_name, action_name))
+				return &g_paneActions[i].pane;
+		}
+		return NULL;
+	}
+
 	struct RadioMember {
 		char *name;
 		gint value;
@@ -289,7 +328,37 @@ namespace QuiverUtils
 	}
 
 
-static void register_accelerator(const char *action_name, const gchar *accel) {
+	/* Install (or clear) one action's accel.  All the accel paths go through
+	 * here, so the pane rule and the suppression rules cannot disagree. */
+	static void apply_accel(const char *action_name, const gchar *accel_str) {
+		if (NULL == g_pApp || NULL == action_name || NULL == accel_str)
+			return;
+		gchar *detailed_name = g_strdup_printf("quiver.%s", action_name);
+		const gchar *accels[] = {accel_str, NULL};
+		gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
+		g_free(detailed_name);
+	}
+
+	static void clear_accel(const char *action_name) {
+		if (NULL == g_pApp || NULL == action_name)
+			return;
+		gchar *detailed_name = g_strdup_printf("quiver.%s", action_name);
+		const gchar *empty[] = {NULL};
+		gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
+		g_free(detailed_name);
+	}
+
+	/* An accel is live only if the pane it belongs to is the one on screen.
+	 * ShortcutManager applies its own rule to the actions it owns; those never
+	 * reach here, since register_accelerator() hands them straight to it. */
+	static gboolean accel_is_live(const char *action_name) {
+		const Pane *pane = pane_of(action_name);
+		if (pane != NULL && *pane != g_activePane)
+			return FALSE;
+		return TRUE;
+	}
+
+	static void register_accelerator(const char *action_name, const gchar *accel) {
 		guint keyval;
 		GdkModifierType mods;
 		gtk_accelerator_parse(accel, &keyval, &mods);
@@ -300,12 +369,8 @@ static void register_accelerator(const char *action_name, const gchar *accel) {
 			return;
 		}
 
-		if (g_pApp) {
-			gchar *detailed_name = g_strdup_printf("quiver.%s", action_name);
-			const gchar *accels[] = {accel, NULL};
-			gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
-			g_free(detailed_name);
-		}
+		if (accel_is_live(action_name))
+			apply_accel(action_name, accel);
 
 		AccelEntry *entry = g_new0(AccelEntry, 1);
 		entry->action_name = g_strdup(action_name);
@@ -316,6 +381,25 @@ static void register_accelerator(const char *action_name, const gchar *accel) {
 
 		g_ptr_array_add(g_accelEntries, entry);
 	}
+
+	/* Re-decide every accel we own after the showing pane changed. */
+	void SetActivePane(bool bViewer) {
+		g_activePane = bViewer ? PANE_VIEWER : PANE_BROWSER;
+		if (!g_pApp || !g_accelEntries) return;
+		for (guint i = 0; i < g_accelEntries->len; i++) {
+			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
+			if (ShortcutManager::GetInstance().GetAction(entry->action_name) != nullptr)
+				continue;
+			if (accel_is_live(entry->action_name)) {
+				gchar *accel_str = gtk_accelerator_name(entry->keyval, entry->mods);
+				apply_accel(entry->action_name, accel_str);
+				g_free(accel_str);
+			} else {
+				clear_accel(entry->action_name);
+			}
+		}
+	}
+
 
 	static void radio_activate_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
 		RadioCallbackData *data = (RadioCallbackData*)user_data;
@@ -597,7 +681,7 @@ void AddAccelGroup(GtkWindow* /*window*/) {
 		// Handled by GtkApplication
 	}
 
-void DisconnectUnmodifiedAccelerators() {
+	void DisconnectUnmodifiedAccelerators() {
 		ShortcutManager::GetInstance().SuppressUnmodifiedAccelerators(true);
 		if (!g_pApp || !g_accelEntries) return;
 		for (guint i = 0; i < g_accelEntries->len; i++) {
@@ -606,15 +690,12 @@ void DisconnectUnmodifiedAccelerators() {
 				continue;
 			guint mask = GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK;
 			if ((entry->mods & mask) == 0) {
-				gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
-				const gchar *empty[] = {NULL};
-				gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
-				g_free(detailed_name);
+				clear_accel(entry->action_name);
 			}
 		}
 	}
 
-void ConnectUnmodifiedAccelerators() {
+	void ConnectUnmodifiedAccelerators() {
 		ShortcutManager::GetInstance().SuppressUnmodifiedAccelerators(false);
 		if (!g_pApp || !g_accelEntries) return;
 		for (guint i = 0; i < g_accelEntries->len; i++) {
@@ -622,37 +703,33 @@ void ConnectUnmodifiedAccelerators() {
 			if (ShortcutManager::GetInstance().GetAction(entry->action_name) != nullptr)
 				continue;
 			guint mask = GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK;
-			if ((entry->mods & mask) == 0) {
-				gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
+			if ((entry->mods & mask) == 0 && accel_is_live(entry->action_name)) {
 				gchar *accel_str = gtk_accelerator_name(entry->keyval, entry->mods);
-				const gchar *accels[] = {accel_str, NULL};
-				gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
+				apply_accel(entry->action_name, accel_str);
 				g_free(accel_str);
-				g_free(detailed_name);
 			}
 		}
 	}
 
-void SuppressAllAccelerators(bool suppress) {
+	void SuppressAllAccelerators(bool suppress) {
 		ShortcutManager::GetInstance().SuppressAllAccelerators(suppress);
 		if (!g_pApp || !g_accelEntries) return;
 		for (guint i = 0; i < g_accelEntries->len; i++) {
 			AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
 			if (ShortcutManager::GetInstance().GetAction(entry->action_name) != nullptr)
 				continue;
-			gchar *detailed_name = g_strdup_printf("quiver.%s", entry->action_name);
-			if (suppress) {
-				const gchar *empty[] = {NULL};
-				gtk_application_set_accels_for_action(g_pApp, detailed_name, empty);
+			/* restoring still has to leave the hidden pane without its keys,
+			 * or leaving the location bar would hand F2 back to the browser */
+			if (suppress || !accel_is_live(entry->action_name)) {
+				clear_accel(entry->action_name);
 			} else {
 				gchar *accel_str = gtk_accelerator_name(entry->keyval, entry->mods);
-				const gchar *accels[] = {accel_str, NULL};
-				gtk_application_set_accels_for_action(g_pApp, detailed_name, accels);
+				apply_accel(entry->action_name, accel_str);
 				g_free(accel_str);
 			}
-			g_free(detailed_name);
 		}
 	}
+
 
 	void BindBuilderAccelerators(GtkBuilder *builder) {
 		GSList *objects = gtk_builder_get_objects(builder);
@@ -928,6 +1005,39 @@ void SuppressAllAccelerators(bool suppress) {
 		return std::string(uri_or_path);
 	}
 
+	std::string GetDisplayBasename(const char *uri)
+	{
+		if (NULL == uri || '\0' == uri[0])
+			return std::string();
+
+		if (strstr(uri, "://") != NULL)
+		{
+			GFile *f = g_file_new_for_uri(uri);
+			if (f != NULL)
+			{
+				char *base = g_file_get_basename(f);
+				g_object_unref(f);
+				if (base != NULL)
+				{
+					std::string res = base;
+					g_free(base);
+					return res;
+				}
+			}
+		}
+
+		/* Plain path: g_path_get_basename is already correct, but decode it so
+		 * a plain path that still holds escapes matches the URI case. */
+		char *base = g_path_get_basename(uri);
+		if (NULL == base)
+			return std::string();
+		char *decoded = g_uri_unescape_string(base, NULL);
+		std::string res = (decoded != NULL) ? decoded : base;
+		g_free(decoded);
+		g_free(base);
+		return res;
+	}
+
 	bool IsDirectoryURI(const char *uri)
 	{
 		if (NULL == uri)
@@ -986,6 +1096,100 @@ void SuppressAllAccelerators(bool suppress) {
 
 	/* Modal single-line text prompt (for renaming files/folders or creating folders).  Returns a
 	 * g_malloc'd string owned by the caller, or NULL when cancelled. */
+	/* True for an EXIF row whose value is a blob rather than information a
+	 * person can read, so the table should not show it.
+	 *
+	 * These are the standard-group keys that hold raw bytes.  Exiv2 renders an
+	 * unknown byte array as space-separated decimal numbers, which looks like
+	 * text - every character in it is printable - so a test for printability
+	 * passes them straight through.  Measured on a Sony DSC file:
+	 * Exif.Photo.MakerNote is 37,767 bytes of the camera's own settings,
+	 * printed as 102,189 characters beginning "83 79 78 89 32 68 83 67 32",
+	 * which is the ASCII "SONY DSC " header; Exif.Image.PrintImageMatching is a
+	 * 28-byte print/matching profile printed as "80 114 105 110 116 73 77 0",
+	 * which is "PrintIM".  Handing the first of those to a wrapping label is
+	 * what made the EXIF tab take seconds to appear.
+	 *
+	 * Neither is a loss: Exiv2 already decodes a MakerNote into the named
+	 * vendor tags (Sony1, Nikon3, ...) shown in the maker's own section, so
+	 * the undecoded blob is the same data a second time, unreadable. */
+	bool IsBinaryExifBlob(const std::string& key)
+	{
+		static const char* k_binary_blobs[] = {
+			"Exif.Photo.MakerNote",
+			"Exif.Image.PrintImageMatching",
+			"Exif.Image.OtherImage",
+			"Exif.Photo.SubIFDs",
+		};
+		for (size_t i = 0; i < G_N_ELEMENTS(k_binary_blobs); i++)
+			if (key == k_binary_blobs[i])
+				return true;
+		return false;
+	}
+
+	bool IsStandardExifGroup(const std::string& group_name)
+	{
+		static const char* const k_standard_groups[] = {
+			"Image", "Photo", "Iop", "Thumbnail", "GPSInfo", "BinaryData",
+			"SubImage1", "SubImage2", "SubImage3", "SubImage4", "SubImage5",
+			"SubImage6", "SubImage7", "SubImage8", "SubImage9",
+		};
+		for (size_t i = 0; i < G_N_ELEMENTS(k_standard_groups); i++)
+		{
+			if (group_name == k_standard_groups[i])
+				return true;
+		}
+		return false;
+	}
+
+	bool IsMakernoteArtifact(const std::string& group_name, const std::string& key)
+	{
+		if (IsStandardExifGroup(group_name))
+			return false;
+		/* Exiv2 renders a tag it has no name for as "0x…" */
+		return key.find("0x") != std::string::npos;
+	}
+
+	char* PromptAndRenameFile(const QuiverFile& file)
+	{
+		const char* uri = file.GetURI();
+		if (NULL == uri)
+			return NULL;
+
+		/* The name has to be the decoded one.  GetURI() percent-encodes, so
+		 * g_path_get_basename() on it would put "my%20photo.jpg" in the entry
+		 * and, accepted unchanged, rename the file to a name holding a literal
+		 * "%20".  GetFileName() goes through the GFile and decodes. */
+		std::string old_name = file.GetFileName();
+
+		char* new_name = PromptForString("Rename",
+			"Enter the new name for this item:", old_name.c_str());
+		if (NULL == new_name)
+			return NULL;
+
+		GFile* src = g_file_new_for_uri(uri);
+		GError* error = NULL;
+		GFile* dst = g_file_set_display_name(src, new_name, NULL, &error);
+		g_free(new_name);
+
+		if (NULL == dst)
+		{
+			ConfirmDialog("Rename failed",
+				error && error->message ? error->message
+					: "The item could not be renamed.",
+				"OK", "Close");
+			if (error)
+				g_error_free(error);
+			g_object_unref(src);
+			return NULL;
+		}
+
+		gchar* new_uri = g_file_get_uri(dst);
+		g_object_unref(dst);
+		g_object_unref(src);
+		return new_uri;
+	}
+
 	char* PromptForString(const char *title, const char *prompt, const char *initial, const char *accept_label)
 	{
 		GtkWidget* dialog = gtk_window_new();

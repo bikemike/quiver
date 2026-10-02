@@ -213,7 +213,7 @@ static GdkTexture* reorient_texture(GdkTexture *tex, int orientation)
 	return new_tex;
 }
 
-ImageLoader::ImageLoader() : m_ImageCache(4)
+ImageLoader::ImageLoader() : m_ImageCache(4, "loader image")
 {
 	//Timer t("ImageLoader::ImageLoader()");
 	pthread_cond_init(&m_Condition,NULL);
@@ -488,17 +488,25 @@ bool ImageLoader::LoadQuickPreview()
 		{
 			thumb_tex = m_pThumbnailCache->GetTexture(m_Command.quiverFile.GetURI());
 		}
-		if (NULL == thumb_tex && m_Command.quiverFile.HasThumbnail(256))
+		/* Ask for the size the quick preview is actually drawn at, largest
+		 * first, so a large pane still gets a sharp thumbnail.  Probing 256
+		 * unconditionally made the pane generate a 256 thumbnail that was
+		 * discarded whenever the browser's icon size was smaller - pure waste
+		 * on trash, where each generate is a gvfs read. */
+		int iPreviewSize = std::max(m_Command.params.max_width,
+			m_Command.params.max_height);
+		if (iPreviewSize < 128)
+			iPreviewSize = 128;
+
+		static const int sizes[] = {512, 256, 128};
+		for (unsigned int i = 0; i < G_N_ELEMENTS(sizes) && NULL == thumb_tex; i++)
 		{
-			thumb_tex = m_Command.quiverFile.GetThumbnailTexture(256);
-			if (NULL != thumb_tex && m_pThumbnailCache)
-			{
-				m_pThumbnailCache->AddTexture(m_Command.quiverFile.GetURI(), thumb_tex);
-			}
-		}
-		if (NULL == thumb_tex && m_Command.quiverFile.HasThumbnail(128))
-		{
-			thumb_tex = m_Command.quiverFile.GetThumbnailTexture(128);
+			int size = sizes[i];
+			if (size > iPreviewSize && i > 0)
+				continue;
+			if (!m_Command.quiverFile.HasThumbnail(size))
+				continue;
+			thumb_tex = m_Command.quiverFile.GetThumbnailTexture(size);
 			if (NULL != thumb_tex && m_pThumbnailCache)
 			{
 				m_pThumbnailCache->AddTexture(m_Command.quiverFile.GetURI(), thumb_tex);

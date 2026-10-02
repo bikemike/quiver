@@ -34,7 +34,11 @@ class ImageCache
 {
 public:
 	// constructor
-	ImageCache(unsigned int size);
+	/* @name labels this cache in the metrics log.  Several caches coexist
+	 * (thumbnails, file-type icons, overlay icons, the filmstrip) and they all
+	 * report under the same "imagecache" scope, so an unattributed hit count
+	 * cannot say which one is being hammered. */
+	ImageCache(unsigned int size, const char *name = NULL);
 	~ImageCache();
 
 #if HAVE_GDK_PIXBUF
@@ -79,6 +83,8 @@ private:
 	ImageCacheMap m_mapImageCache;
 	std::set<std::string> m_setLoadFailures;
 	unsigned int m_iCacheSize;
+	/* Label for the metrics log; see the constructor. */
+	std::string m_strName;
 
 	std::mutex m_MutexImageCache;
 };

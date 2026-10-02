@@ -27,6 +27,10 @@ public:
 	void SetImageList(IImageListViewPtr imgList);
 	int GetCurrentOrientation();
 
+	/* Rename the item the viewer is showing.  The single global rename action
+	 * calls this while the viewer is the visible pane. */
+	void Rename();
+
 	void StopVideo(bool reloadImage = true);
 
 	void SlideShowStart();

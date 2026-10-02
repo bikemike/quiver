@@ -55,7 +55,7 @@ inline double ParseDms(const std::string& str)
  * coordinate is missing or falls outside +/-dMaxAbs, so a mis-encoded
  * tag shows nothing rather than a bogus position.  refKey may be NULL
  * for tags that carry no hemisphere (e.g. altitude). */
-inline bool Degrees(const std::shared_ptr<Exiv2::ExifData>& pExifData,
+inline bool Degrees(const std::shared_ptr<const Exiv2::ExifData>& pExifData,
 	const char* coordKey, const char* refKey, double dMaxAbs,
 	double& outDegrees)
 {
@@ -90,7 +90,7 @@ inline bool Degrees(const std::shared_ptr<Exiv2::ExifData>& pExifData,
 // "lat, lon" in decimal degrees -- one line, signed, ready to paste into
 // a map.  Empty when either half is missing or out of range.
 inline std::string LocationString(
-	const std::shared_ptr<Exiv2::ExifData>& pExifData)
+	const std::shared_ptr<const Exiv2::ExifData>& pExifData)
 {
 	double lat = 0.;
 	double lon = 0.;
@@ -108,7 +108,7 @@ inline std::string LocationString(
 
 // A single coordinate in decimal degrees, empty when missing.
 inline std::string CoordinateString(
-	const std::shared_ptr<Exiv2::ExifData>& pExifData,
+	const std::shared_ptr<const Exiv2::ExifData>& pExifData,
 	const char* coordKey, const char* refKey)
 {
 	double degrees = 0.;

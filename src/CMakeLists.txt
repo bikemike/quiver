@@ -23,9 +23,12 @@ set(QUIVER_CORE_SOURCES
     Browser.cpp
     Viewer.cpp
     Statusbar.cpp
+    QuiverMetrics.cpp
     QuiverUtils.cpp
     ShortcutManager.cpp
     QuiverStockIcons.cpp
+    QuiverAvio.cpp
+    QuiverExifIo.cpp
     QuiverVideoOps.cpp
     QuiverRotatedPaintable.cpp
     AbstractEventSource.cpp

@@ -27,6 +27,9 @@ add_library(quiver_lib STATIC
 target_include_directories(quiver_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
+    # QuiverMetrics.h is C-callable and lets the widgets report timings into
+    # the same log as the C++ side.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
 
 target_link_libraries(quiver_lib PUBLIC

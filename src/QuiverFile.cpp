@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "QuiverFile.h"
+#include "QuiverAvio.h"
+#include "QuiverExifIo.h"
 #include "Timer.h"
 #include "QuiverUtils.h"
 #include "QuiverVideoOps.h"
@@ -115,14 +117,25 @@ typedef struct _ThumbnailSize
 {
 	int size;
 	const char* name;
+	int max_entries;
 } ThumbnailSize;
 
+/* max_entries is a ceiling on cached textures for this bucket, not a
+ * reservation: ImageCache stores entries in an unordered_map and grows as
+ * items are added, so an untouched bucket costs nothing.  These are sized per
+ * bucket rather than by a flat byte budget because entry count is what
+ * actually matters - a bucket that is too small evicts entries that are still
+ * on screen, which reads as icons re-decoding while scrolling.  The old flat
+ * 16 MB per bucket gave the 256 bucket only 64 entries, which cycled
+ * constantly: 517 evictions at a 219 s mean age over a 581-item folder.
+ * At 4 bytes/pixel the entries below are ~134 MB each if a bucket fills
+ * completely; in practice one or two buckets are in use at a time. */
 ThumbnailSize ThumbnailSizes[] =
 {
 	// these must be in order from smallest to largest
-		{128,"normal"},
-		{256,"large"},
-		{512,"x-large"},
+		{128,"normal",2048},
+		{256,"large",512},
+		{512,"x-large",128},
 };
 
 
@@ -133,11 +146,12 @@ public:
 	{
 		for (unsigned int i = 0; i < G_N_ELEMENTS(ThumbnailSizes); i++)
 		{
-			// 16 MB per bucket eliminates eviction churn while staying lightweight
-			int cache_size = 16 * 1024 * 1024;
-			
-			int n_images = cache_size / (ThumbnailSizes[i].size * ThumbnailSizes[i].size * 4);
-			m_mapThumbnailCache.insert(std::pair<int,ImageCache*>(ThumbnailSizes[i].size,new ImageCache(n_images)));
+			int n_images = ThumbnailSizes[i].max_entries;
+			/* Name the bucket by its edge size, so a per-size counter can be
+			 * traced back to the thumbnail size the icon view asked for. */
+			char label[32];
+			g_snprintf(label, sizeof(label), "thumbnail %d", ThumbnailSizes[i].size);
+			m_mapThumbnailCache.insert(std::pair<int,ImageCache*>(ThumbnailSizes[i].size,new ImageCache(n_images, label)));
 		}
 		
 	};
@@ -197,6 +211,8 @@ public:
 	bool ResolveMetadataTimeT();
 	
 	std::shared_ptr<Exiv2::ExifData> GetExifData();
+	std::shared_ptr<const Exiv2::XmpData> GetXmpData();
+	std::shared_ptr<const Exiv2::IptcData> GetIptcData();
 	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
 	GdkTexture* GetExifThumbnailTexture();
 	
@@ -217,6 +233,19 @@ public:
 	bool Modified() const;
 	bool IsVideo();
 	bool IsFolder() const;
+
+	/* Size from the info enumeration already handed us, or -1 when unknown.
+	 *
+	 * Reads m_pGFileInfo directly instead of going through GetFileInfo(),
+	 * which would re-run g_file_query_info() whenever the eager query in the
+	 * constructor came back empty.  That is exactly the trash:// case, and
+	 * running it here - on the thumbnail worker thread - crashed inside
+	 * libgvfs.  Same reasoning as IsFolder(): never query from a predicate the
+	 * worker or a sort comparator can reach. */
+	goffset KnownSize() const
+	{
+		return m_pGFileInfo ? g_file_info_get_size(m_pGFileInfo) : (goffset)-1;
+	}
 	
 // variables	
 	gchar* m_szURI;
@@ -225,6 +254,19 @@ public:
  	
  	std::shared_ptr<Exiv2::ExifData> m_ExifData;
  	std::shared_ptr<Exiv2::ExifData> m_ExifDataOriginal;
+	/* Decoded embedded EXIF thumbnail, cached because the property panel asks
+	 * for it on every selection and re-decoding it costs ~16ms each time.
+	 * m_bExifThumbTried separates "not decoded yet" from "no thumbnail
+	 * exists", so a file with none does not retry on every selection. */
+	GdkTexture* m_pExifThumbTexture;
+	bool m_bExifThumbTried;
+
+	/* XMP and IPTC come out of the same readMetadata() as the EXIF, and are
+	 * kept here so the property view does not parse the file again for each
+	 * of them.  A file with a MakerNote Exiv2 walks slowly, and that parse is
+	 * on the GUI thread, so repeating it is what makes the panel stall. */
+	std::shared_ptr<const Exiv2::XmpData> m_XmpData;
+	std::shared_ptr<const Exiv2::IptcData> m_IptcData;
 
  	mutable std::recursive_mutex m_MetadataMutex;
  	
@@ -313,7 +355,7 @@ public:
 
 boost::shared_ptr<GThreadPool> QuiverFile::QuiverFileImpl::c_ThreadPoolPtr;
 
-static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *width, gint *height);
+static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *width, gint *height, goffset known_size = -1);
 gchar* quiver_thumbnail_path_for_uri(const char* uri, const char* szSize);
 static gchar* quiver_thumbnail_path_for_uri_legacy(const char* uri, const char* szSize);
 static gchar* quiver_thumbnail_fail_path_for_uri(const char* uri);
@@ -337,6 +379,8 @@ QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GFileInfo *info)
 void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 {
 	m_bThumbloadFail = false;
+	m_pExifThumbTexture = NULL;
+	m_bExifThumbTried = false;
 
 	//m_szURI = (gchar*)malloc (sizeof(gchar) * strlen(uri) + 1 );
 	if (NULL != uri)
@@ -398,13 +442,9 @@ const char* QuiverFile::QuiverFileImpl::GetMimeType()
 
 std::string QuiverFile::QuiverFileImpl::GetFileName() const
 {
-	std::string s;
-	GFile* gfile = g_file_new_for_uri(m_szURI);
-	char* shortname = g_file_get_basename(gfile);
-	s = shortname;
-	g_free(shortname);
-	g_object_unref(gfile);
-	return s;
+	/* GetFileName() goes through the GFile so the name is percent-decoded;
+	 * see the note on QuiverUtils::GetDisplayBasename. */
+	return QuiverUtils::GetDisplayBasename(m_szURI);
 }
 
 GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
@@ -451,6 +491,12 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 
 QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 {
+	if (NULL != m_pExifThumbTexture)
+	{
+		g_object_unref(m_pExifThumbTexture);
+		m_pExifThumbTexture = NULL;
+	}
+
 	if (m_pGFileInfo != NULL)
 	{
 		g_object_unref(m_pGFileInfo);
@@ -476,6 +522,13 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetExifThumbnailTexture()
 	if (IsVideo())
 	{
 		return NULL;
+	}
+
+	/* Callers own the returned texture, so a cache hit hands out a new ref. */
+	if (m_bExifThumbTried)
+	{
+		return (NULL != m_pExifThumbTexture)
+			? (GdkTexture*)g_object_ref(m_pExifThumbTexture) : NULL;
 	}
 
 	LoadExifData();
@@ -506,6 +559,12 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetExifThumbnailTexture()
 		{
 			thumb_texture = NULL;
 		}
+	}
+
+	m_bExifThumbTried = true;
+	if (NULL != thumb_texture)
+	{
+		m_pExifThumbTexture = (GdkTexture*)g_object_ref(thumb_texture);
 	}
 
 	return thumb_texture;
@@ -845,7 +904,7 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 				int orig_w = -1, orig_h = -1;
 				if (-1 == m_iWidth || -1 == m_iHeight)
 				{
-					ImageDecoder::GetDimensions(gfile, GetMimeType(), &orig_w, &orig_h);
+					ImageDecoder::GetDimensions(gfile, GetMimeType(), &orig_w, &orig_h, KnownSize());
 					if (orig_w > 0 && orig_h > 0)
 					{
 						m_iWidth = orig_w;
@@ -858,7 +917,7 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 					orig_h = m_iHeight;
 				}
 
-				thumb_texture = ImageDecoder::DecodeFileTexture(gfile, GetMimeType(), NULL, &tmp_error);
+				thumb_texture = ImageDecoder::DecodeFileTexture(gfile, GetMimeType(), NULL, &tmp_error, KnownSize());
 				g_object_unref(gfile);
 				if (tmp_error)
 				{
@@ -993,6 +1052,16 @@ void QuiverFile::QuiverFileImpl::Reload()
 
 	m_ExifData.reset();
 	m_ExifDataOriginal.reset();
+	/* EXIF is about to be re-parsed, so the cached decoded thumbnail may
+	 * no longer describe this file. */
+	if (NULL != m_pExifThumbTexture)
+	{
+		g_object_unref(m_pExifThumbTexture);
+		m_pExifThumbTexture = NULL;
+	}
+	m_bExifThumbTried = false;
+	m_XmpData.reset();
+	m_IptcData.reset();
 	
 	unsigned int n_elements = G_N_ELEMENTS(ThumbnailSizes);
 	for (unsigned int i = 0 ; i < n_elements; i++)
@@ -1022,14 +1091,16 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 			return;
 		}
 
-		gchar* szPath = g_filename_from_uri(m_szURI, NULL, NULL);
-		if (NULL != szPath)
+		auto io = GioBasicIo::open(g_file_new_for_uri(m_szURI), m_szURI);
+		if (io)
 		{
 			try
 			{
 				static std::mutex s_exiv2GlobalMutex;
 				std::lock_guard<std::mutex> exivLock(s_exiv2GlobalMutex);
-				auto image = Exiv2::ImageFactory::open(szPath);
+				/* GioBasicIo: works for URIs with no local path (trash:///, ...),
+				 * so nothing gets copied to a staging directory */
+				auto image = Exiv2::ImageFactory::open(std::move(io));
 				image->readMetadata();
 
 				Exiv2::ExifData exifData = image->exifData();
@@ -1040,15 +1111,27 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 					m_fDataExists =
 						(QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_EXIF);
 
+					/* the "did the user edit anything" baseline; kept even
+					 * though it is a full copy, because dropping it would
+					 * turn every save into a blind rewrite */
 					m_ExifDataOriginal =
 						std::make_shared<Exiv2::ExifData>(*m_ExifData);
 				}
+
+				/* taken from the parse just done, not from another one */
+				auto xmp = image->xmpData();
+				if (!xmp.empty())
+					m_XmpData = std::make_shared<const Exiv2::XmpData>(std::move(xmp));
+
+				auto iptc = image->iptcData();
+				if (!iptc.empty())
+					m_IptcData = std::make_shared<const Exiv2::IptcData>(std::move(iptc));
+
 			}
 			catch (...)
 			{
 				// unreadable metadata counts as no-exif
 			}
-			g_free(szPath);
 		}
 
 		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_EXIF);
@@ -1061,6 +1144,22 @@ std::shared_ptr<Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifData()
 
 	LoadExifData();
 	return m_ExifData;
+}
+
+std::shared_ptr<const Exiv2::XmpData> QuiverFile::QuiverFileImpl::GetXmpData()
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
+	LoadExifData();
+	return m_XmpData;
+}
+
+std::shared_ptr<const Exiv2::IptcData> QuiverFile::QuiverFileImpl::GetIptcData()
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
+	LoadExifData();
+	return m_IptcData;
 }
 
 // Parses a container date string ("creation_time"/"date" metadata).
@@ -1221,13 +1320,15 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 		std::call_once(s_avformatInitFlag,
 			[](){ av_log_set_level(AV_LOG_ERROR); });
 
-		gchar* szPath = g_filename_from_uri(m_szURI, NULL, NULL);
-		if (NULL != szPath)
+		/* Header-only open, straight from the URI: the container has no local
+		 * path when it lives on trash:///, and QuiverAvio::Container reads it
+		 * through a GInputStream rather than copying it to a temp file first. */
+		QuiverAvio::Container container;
+		container.SetProbeStreams(false);
+		if (container.Open(m_szURI))
 		{
-			AVFormatContext* pFmt = NULL;
-			if (avformat_open_input(&pFmt, szPath, NULL, NULL) >= 0 &&
-				NULL != pFmt)
 			{
+				AVFormatContext* pFmt = container.fmt();
 				// Prefer tags that usually carry an explicit timezone
 				// (QuickTime/Android) before the unzoned container
 				// creation_time; first parseable value wins.
@@ -1307,9 +1408,7 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 					}
 					g_date_time_unref(pGDate);
 				}
-				avformat_close_input(&pFmt);
 			}
-			g_free(szPath);
 		}
 	}
 
@@ -1443,6 +1542,15 @@ bool QuiverFile::QuiverFileImpl::Modified() const
 
 bool QuiverFile::QuiverFileImpl::IsFolder() const
 {
+	/* Pure read of the info the constructor already obtained - deliberately no
+	 * query here.  GetThumbnailTexture() tests this before doing anything else,
+	 * so it is on the thumbnail worker path, and the sort comparators in
+	 * ImageList call it on both operands; fetching on demand turned it into a
+	 * blocking g_file_query_info() - a D-Bus round trip per call over gvfs - on
+	 * exactly the trash:// case where the constructor's own query had already
+	 * failed.  That stalled the queue until no video produced a thumbnail or a
+	 * quick preview at all.  Enumeration supplies GFileInfo (see
+	 * ImageList::EnumerateChildren), so the normal path is already warm. */
 	bool isDir = false;
 	if (NULL != m_pGFileInfo)
 	{
@@ -1523,7 +1631,7 @@ int QuiverFile::QuiverFileImpl::GetWidth()
 		if (IsVideo())
 			GetVideoDimensions(&m_iWidth, &m_iHeight);
 		else
-			GetImageDimensions(m_szURI, GetMimeType(), &m_iWidth, &m_iHeight);
+			GetImageDimensions(m_szURI, GetMimeType(), &m_iWidth, &m_iHeight, KnownSize());
 	}
 	return m_iWidth;
 }
@@ -1536,7 +1644,7 @@ int QuiverFile::QuiverFileImpl::GetHeight()
 		if (IsVideo())
 			GetVideoDimensions(&m_iWidth, &m_iHeight);
 		else
-			GetImageDimensions(m_szURI, GetMimeType(), &m_iWidth, &m_iHeight);
+			GetImageDimensions(m_szURI, GetMimeType(), &m_iWidth, &m_iHeight, KnownSize());
 	}
 	return m_iHeight;
 }
@@ -1764,12 +1872,16 @@ void QuiverFile::QuiverFileImpl::GetVideoDimensions(gint *width, gint *height)
 	}
 }
 
-static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *width, gint *height)
+/* Probes the header for the image's dimensions.  `known_size` is passed on so
+ * the decoder never has to query the file itself: this runs on the icon view's
+ * thumbnail worker thread, and a query there for a trash:// URI crashed inside
+ * libgvfs (see is_size_too_large() in ImageDecoder.cpp). */
+static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *width, gint *height, goffset known_size)
 {
 	GFile* gfile = g_file_new_for_uri(uri);
 	if (gfile)
 	{
-		ImageDecoder::GetDimensions(gfile, mimetype, width, height);
+		ImageDecoder::GetDimensions(gfile, mimetype, width, height, known_size);
 		g_object_unref(gfile);
 	}
 }
@@ -1999,6 +2111,23 @@ std::shared_ptr<Exiv2::ExifData> QuiverFile::GetExifData()
 		pExifDataCopy = std::make_shared<Exiv2::ExifData>(*pExifData);
 	}
 	return pExifDataCopy;
+}
+
+std::shared_ptr<const Exiv2::ExifData> QuiverFile::GetExifDataShared() const
+{
+	return m_QuiverFilePtr->GetExifData();
+}
+
+std::shared_ptr<const Exiv2::XmpData> QuiverFile::GetXmpData()
+{
+	/* handed out as a shared, read-only pointer on purpose: copying it the
+	 * way GetExifData() does would repeat that cost for every viewer of it */
+	return m_QuiverFilePtr->GetXmpData();
+}
+
+std::shared_ptr<const Exiv2::IptcData> QuiverFile::GetIptcData()
+{
+	return m_QuiverFilePtr->GetIptcData();
 }
 
 bool QuiverFile::SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData)

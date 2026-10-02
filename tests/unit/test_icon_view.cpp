@@ -552,3 +552,178 @@ TEST_CASE("QuiverIconView Cell Selected Check", "[iconview][selection]")
 }
 
 
+TEST_CASE("Page Up lands on the first row of the cursor's own column when there is not a full page above")
+{
+    // 5 columns, a page of 15 cells (3 rows).  The old code did
+    // cursor -= page in unsigned arithmetic, so anything within a page of the
+    // top wrapped to ~2^64, failed the range check and left the cursor put.
+    const guint cols = 5;
+    const guint page = 15;
+
+    // already on the top row of its column: nothing to do
+    CHECK(quiver_icon_view_page_up_target(2, cols, page) == 0);
+    CHECK(quiver_icon_view_page_up_target(4, cols, page) == 0);
+
+    // deeper, but less than a page above: top row of the SAME column
+    CHECK(quiver_icon_view_page_up_target(7, cols, page) == 2);   // col 2
+    CHECK(quiver_icon_view_page_up_target(12, cols, page) == 2);  // col 2
+    CHECK(quiver_icon_view_page_up_target(14, cols, page) == 4);  // col 4
+
+    // more than a page above: an ordinary page-sized step back
+    CHECK(quiver_icon_view_page_up_target(17, cols, page) == 2);
+    CHECK(quiver_icon_view_page_up_target(30, cols, page) == 15);
+
+    // degenerate geometry must not divide by zero or wrap
+    CHECK(quiver_icon_view_page_up_target(5, 0, page) == 0);
+    CHECK(quiver_icon_view_page_up_target(5, cols, 0) == 0);
+    CHECK(quiver_icon_view_page_up_target(0, cols, page) == 0);
+}
+
+TEST_CASE("Page Up steps back a whole page when one exists above the cursor")
+{
+    // 1 column, 10 per page: every cell has a full page of room above it
+    // once it is past the first page.
+    CHECK(quiver_icon_view_page_up_target(10, 1, 10) == 0);
+    CHECK(quiver_icon_view_page_up_target(25, 1, 10) == 15);
+
+    // far from the top, the target must always be behind the cursor rather
+    // than a wrapped-around huge value
+    for (gulong cursor = 64; cursor < 512; cursor++)
+    {
+        gulong target = quiver_icon_view_page_up_target(cursor, 3, 4);
+        CHECK(target < cursor);
+    }
+}
+
+TEST_CASE("Page Down keeps the column when fewer than a page is left below")
+{
+    // 10 items, 3 columns, a page of 6 cells (2 rows).  Rows are
+    // 0,1,2 / 3,4,5 / 6,7,8 / 9.  The old code clamped to n_cells - 1, the
+    // last cell in the grid, which is the last column of the last row - so
+    // paging down near the bottom jumped sideways and then stopped.
+    const guint cols = 3;
+    const guint page = 6;
+    const guint n = 10;
+
+    // a full page fits below: ordinary step, column preserved
+    CHECK(quiver_icon_view_page_down_target(0, cols, page, n) == 6);
+    CHECK(quiver_icon_view_page_down_target(1, cols, page, n) == 7);
+    CHECK(quiver_icon_view_page_down_target(3, cols, page, n) == 9);
+
+    // less than a page below: fall to the last cell of the SAME column
+    CHECK(quiver_icon_view_page_down_target(4, cols, page, n) == 7);   // col 1
+    CHECK(quiver_icon_view_page_down_target(6, cols, page, n) == 9);   // col 0
+
+    // the last row holds only column 0, so columns 1 and 2 have nothing
+    // below them and the cursor stays put
+    CHECK(quiver_icon_view_page_down_target(7, cols, page, n) == 7);
+    CHECK(quiver_icon_view_page_down_target(8, cols, page, n) == 8);
+    CHECK(quiver_icon_view_page_down_target(9, cols, page, n) == 9);
+}
+
+TEST_CASE("Page Down stops on the last row that has a cell in the cursor's column")
+{
+    // 13 items in 4 columns: rows of 4, 4, 4, 1.  A page of 8 (two rows)
+    // stops fitting below row 0, so rows 1 and 2 exercise the clamp.
+    const guint cols = 4;
+    const guint page = 8;
+    const guint n = 13;
+
+    CHECK(quiver_icon_view_page_down_target(0, cols, page, n) == 8);   // col 0, row 2
+    CHECK(quiver_icon_view_page_down_target(1, cols, page, n) == 9);   // col 1, row 2
+    CHECK(quiver_icon_view_page_down_target(2, cols, page, n) == 10);  // col 2, row 2
+    CHECK(quiver_icon_view_page_down_target(3, cols, page, n) == 11);  // col 3, row 2
+
+    // clamped from row 1: still the same column, not the last cell overall
+    CHECK(quiver_icon_view_page_down_target(5, cols, page, n) == 9);
+    CHECK(quiver_icon_view_page_down_target(7, cols, page, n) == 11);
+
+    // already at the bottom of the column: stays put
+    CHECK(quiver_icon_view_page_down_target(9, cols, page, n) == 9);
+    CHECK(quiver_icon_view_page_down_target(10, cols, page, n) == 10);
+    CHECK(quiver_icon_view_page_down_target(11, cols, page, n) == 11);
+    CHECK(quiver_icon_view_page_down_target(12, cols, page, n) == 12);  // lone last row
+
+    // exactly a page below the top: the step fits, so take it
+    CHECK(quiver_icon_view_page_down_target(0, 1, 5, 11) == 5);
+    CHECK(quiver_icon_view_page_down_target(3, 1, 4, 8) == 7);
+
+    // degenerate geometry must not divide by zero or wrap
+    CHECK(quiver_icon_view_page_down_target(5, 0, 4, 10) == 0);
+    CHECK(quiver_icon_view_page_down_target(5, 3, 0, 10) == 0);
+    CHECK(quiver_icon_view_page_down_target(5, 3, 4, 0) == 0);
+}
+
+TEST_CASE("Page Down never changes column and always lands in range")
+{
+    // the caller always builds a page as a whole number of rows, so the page
+    // sizes swept here are multiples of the column count
+    const guint cols = 3;
+    for (guint n = 1; n <= 40; n++)
+    {
+        for (gulong cursor = 0; cursor < n; cursor++)
+        {
+            for (guint rows = 1; rows <= 4; rows++)
+            {
+                gulong target = quiver_icon_view_page_down_target(
+                    cursor, cols, cols * rows, n);
+                CHECK(target < (gulong)n);
+                CHECK(target % cols == cursor % cols);   // column preserved
+                CHECK(target >= cursor);                 // never goes backwards
+            }
+        }
+    }
+
+    // repeated Page Down settles on the bottom of the column and then stops,
+    // rather than sliding sideways the way the old clamp did
+    const guint n = 10;
+    gulong cursor = 1;
+    for (int i = 0; i < 40; i++)
+        cursor = quiver_icon_view_page_down_target(cursor, 3, 6, n);
+    CHECK(cursor == 7);   // column 1, last row that holds one
+
+    cursor = 2;
+    for (int i = 0; i < 40; i++)
+        cursor = quiver_icon_view_page_down_target(cursor, 3, 6, n);
+    CHECK(cursor == 8);   // column 2, last row that holds one
+}
+
+TEST_CASE("Page Up and Page Down are mirror images")
+{
+    // paging down then up, away from the edges, returns to where it started
+    const guint cols = 3;
+    const guint page = 6;
+    const guint n = 40;
+    for (gulong cursor = page; cursor + page < n; cursor++)
+    {
+        gulong down = quiver_icon_view_page_down_target(cursor, cols, page, n);
+        CHECK(down % cols == cursor % cols);
+        CHECK(quiver_icon_view_page_up_target(down, cols, page) == cursor);
+    }
+}
+
+TEST_CASE("Ctrl-A select all marks every cell, and clearing empties it again")
+{
+    REQUIRE_DISPLAY();
+
+    GtkWidget *iconview = quiver_icon_view_new();
+    REQUIRE(iconview != nullptr);
+    quiver_icon_view_set_n_items_func(QUIVER_ICON_VIEW(iconview), test_n_items_cb, NULL, NULL);
+
+    // the browser's Ctrl+A accelerator routes here, so this is the path the
+    // action takes rather than the widget's own key handler
+    quiver_icon_view_set_select_all(QUIVER_ICON_VIEW(iconview), TRUE);
+    for (gulong i = 0; i < 4; i++)
+        CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), i) == TRUE);
+
+    GList *sel = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(iconview));
+    CHECK(g_list_length(sel) == 4);
+    g_list_free(sel);
+
+    quiver_icon_view_set_select_all(QUIVER_ICON_VIEW(iconview), FALSE);
+    for (gulong i = 0; i < 4; i++)
+        CHECK(quiver_icon_view_is_cell_selected(QUIVER_ICON_VIEW(iconview), i) == FALSE);
+
+    g_object_ref_sink(iconview);
+    g_object_unref(iconview);
+}

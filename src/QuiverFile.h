@@ -18,6 +18,8 @@
 
 namespace Exiv2 {
 class ExifData;
+class XmpData;
+class IptcData;
 }
 
 class QuiverFile {
@@ -69,6 +71,12 @@ public:
 	void RemoveCachedThumbnail(int iSize = 0);
 
 	std::shared_ptr<Exiv2::ExifData> GetExifData();
+	/* Shared, read-only view of the parsed EXIF.  GetExifData() deep-copies
+	 * every entry, which for a camera original is thousands of them - fine
+	 * for an edit path, far too expensive for redrawing a tab. */
+	std::shared_ptr<const Exiv2::ExifData> GetExifDataShared() const;
+	std::shared_ptr<const Exiv2::XmpData> GetXmpData();
+	std::shared_ptr<const Exiv2::IptcData> GetIptcData();
 	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
 	
 	const char* GetMimeType();

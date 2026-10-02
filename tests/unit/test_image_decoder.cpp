@@ -275,3 +275,371 @@ TEST_CASE("ImageDecoder Fast Header Dimensions", "[unit][decoder][fast]")
 
     g_rmdir(dir.c_str());
 }
+
+// -------------------------------------------------------------------------
+// Streaming JPEG header probe
+// -------------------------------------------------------------------------
+//
+// The JPEG marker walk skips segment payloads instead of buffering them, so a
+// frame header sitting past megabytes of metadata is still found.  These
+// build such a file on the fly: a SOI, then a configurable amount of APP1 XMP,
+// then a frame header.  A probe that reads a fixed prefix window cannot get
+// past the XMP; this one never reads the payload at all.
+
+namespace
+{
+    /* A JPEG with @xmp_bytes of XMP ahead of the frame header, reported as
+     * @w x @h.  @extra_appn splits the XMP across several APP1 segments, which
+     * is how phone exports accumulate it. */
+    static std::vector<uint8_t> make_jpeg_with_xmp(uint32_t xmp_bytes,
+                                                    int w, int h,
+                                                    uint32_t extra_appn = 0)
+    {
+        std::vector<uint8_t> out;
+        const uint8_t soi[2] = {0xFF, 0xD8};
+        out.insert(out.end(), soi, soi + 2);
+
+        /* A segment length is 16 bits, so a payload cannot exceed 65533 bytes.
+         * Real exporters hit that ceiling and start a new APP1, which is why
+         * the fixture file carries dozens of segments rather than one huge
+         * one.  Chunk the same way here. */
+        const uint32_t kMaxPayload = 65533;
+        uint32_t chunks = (xmp_bytes + kMaxPayload - 1) / kMaxPayload;
+        if (extra_appn > 0)
+            chunks += extra_appn;
+        uint32_t per_chunk = (0 == chunks) ? 0 : (xmp_bytes + chunks - 1) / chunks;
+        if (per_chunk > kMaxPayload)
+            per_chunk = kMaxPayload;
+        for (uint32_t c = 0; c < chunks; ++c)
+        {
+            uint32_t payload = per_chunk;
+            /* APPn payload: "http" + NUL + filler, length must fit in 16 bits */
+            uint16_t seglen = (uint16_t)(payload + 2);
+            out.push_back(0xFF);
+            out.push_back(0xE1);
+            out.push_back((uint8_t)(seglen >> 8));
+            out.push_back((uint8_t)(seglen & 0xFF));
+            const char *tag = "http";
+            for (int i = 0; i < 4; ++i) out.push_back((uint8_t)tag[i]);
+            for (uint32_t i = 4; i < payload; ++i) out.push_back((uint8_t)('a' + (i % 26)));
+        }
+
+        /* SOF0: len(2)=17, precision(1)=8, height(2), width(2), components */
+        out.push_back(0xFF); out.push_back(0xC0);
+        out.push_back(0x00); out.push_back(0x11);
+        out.push_back(8);
+        out.push_back((uint8_t)(h >> 8)); out.push_back((uint8_t)(h & 0xFF));
+        out.push_back((uint8_t)(w >> 8)); out.push_back((uint8_t)(w & 0xFF));
+        out.push_back(3);   /* components */
+        for (int i = 0; i < 9; ++i) out.push_back(0x11);  /* filler for 3 comps */
+
+        /* SOS then arbitrary entropy-coded bytes, so the file looks complete */
+        out.push_back(0xFF); out.push_back(0xDA);
+        out.push_back(0x00); out.push_back(0x0C);
+        for (int i = 0; i < 12; ++i) out.push_back(0x00);
+        for (int i = 0; i < 64; ++i) out.push_back((uint8_t)(i * 7));
+        out.push_back(0xFF); out.push_back(0xD9);
+        return out;
+    }
+
+    struct XmpCase { uint32_t xmp; uint32_t appn; int w; int h; const char *what; };
+}
+
+TEST_CASE("JPEG probe finds a frame header past megabytes of XMP", "[unit][decoder][jpeg]")
+{
+    std::string dir = QuiverTest_GetImagesDir() + "/probe_xmp";
+    g_mkdir_with_parents(dir.c_str(), 0755);
+
+    std::vector<XmpCase> cases = {
+        {0,        0,  64,  48, "no metadata"},
+        {100,      0,  64,  48, "tiny metadata"},
+        {200000,   0, 800, 600, "metadata under the old 256 KB prefix"},
+        {300000,   0, 640, 480, "metadata just over the old prefix"},
+        {1900000,  0, 4032, 3024, "1.9 MB in one segment (phone export shape)"},
+        {1900000, 33, 4032, 3024, "1.9 MB across 33 segments"},
+        {4000000, 40, 1024, 768, "4 MB across many segments"},
+    };
+
+    for (const auto &c : cases)
+    {
+        DYNAMIC_SECTION(c.what)
+        {
+            std::string path = dir + "/x.jpg";
+            std::vector<uint8_t> bytes = make_jpeg_with_xmp(c.xmp, c.w, c.h, c.appn);
+            write_bytes(path.c_str(), bytes);
+
+            GFile *file = g_file_new_for_path(path.c_str());
+            REQUIRE(file != nullptr);
+
+            int w = -1, h = -1;
+            REQUIRE(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == true);
+            CHECK(w == c.w);
+            CHECK(h == c.h);
+            g_object_unref(file);
+            g_unlink(path.c_str());
+        }
+    }
+    g_rmdir(dir.c_str());
+}
+
+TEST_CASE("GetDimensions agrees with the JPEG probe on XMP-heavy files", "[unit][decoder][jpeg]")
+{
+    std::string dir = QuiverTest_GetImagesDir() + "/probe_xmp2";
+    g_mkdir_with_parents(dir.c_str(), 0755);
+    std::string path = dir + "/x.jpg";
+
+    /* Past the old window, so this only passes if the streaming probe runs
+     * before the prefix read. */
+    std::vector<uint8_t> bytes = make_jpeg_with_xmp(1900000, 4032, 3024, 33);
+    write_bytes(path.c_str(), bytes);
+
+    GFile *file = g_file_new_for_path(path.c_str());
+    REQUIRE(file != nullptr);
+
+    int w = -1, h = -1;
+    REQUIRE(ImageDecoder::GetDimensions(file, "image/jpeg", &w, &h) == true);
+    CHECK(w == 4032);
+    CHECK(h == 3024);
+    g_object_unref(file);
+    g_unlink(path.c_str());
+    g_rmdir(dir.c_str());
+}
+
+TEST_CASE("JPEG probe rejects things that are not JPEGs or have no frame", "[unit][decoder][jpeg]")
+{
+    std::string dir = QuiverTest_GetImagesDir() + "/probe_bad";
+    g_mkdir_with_parents(dir.c_str(), 0755);
+
+    DYNAMIC_SECTION("empty file")
+    {
+        std::string path = dir + "/empty.jpg";
+        write_bytes(path.c_str(), std::vector<uint8_t>());
+        GFile *file = g_file_new_for_path(path.c_str());
+        REQUIRE(file != nullptr);
+        int w = -1, h = -1;
+        CHECK(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == false);
+        g_object_unref(file);
+    }
+
+    DYNAMIC_SECTION("not a JPEG")
+    {
+        std::string path = dir + "/notjpeg.jpg";
+        const uint8_t png_bytes[] = {'G', 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        write_bytes(path.c_str(), std::vector<uint8_t>(png_bytes, png_bytes + sizeof(png_bytes)));
+        GFile *file = g_file_new_for_path(path.c_str());
+        REQUIRE(file != nullptr);
+        int w = -1, h = -1;
+        CHECK(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == false);
+        g_object_unref(file);
+    }
+
+    DYNAMIC_SECTION("truncated before any frame header")
+    {
+        std::string path = dir + "/trunc.jpg";
+        /* XMP first so the frame header is well past the truncation point,
+         * then cut inside the metadata. */
+        std::vector<uint8_t> full = make_jpeg_with_xmp(200000, 64, 48, 0);
+        REQUIRE(full.size() > 12);
+        full.resize(12);
+        write_bytes(path.c_str(), full);
+        GFile *file = g_file_new_for_path(path.c_str());
+        REQUIRE(file != nullptr);
+        int w = -1, h = -1;
+        CHECK(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == false);
+        g_object_unref(file);
+    }
+
+    DYNAMIC_SECTION("segment length of zero must not loop forever")
+    {
+        std::string path = dir + "/zerolen.jpg";
+        /* SOI, then an APPn claiming a zero length: invalid, and a walker that
+         * trusted it would either stall or run off the end. */
+        std::vector<uint8_t> bad = {0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x00};
+        write_bytes(path.c_str(), bad);
+        GFile *file = g_file_new_for_path(path.c_str());
+        REQUIRE(file != nullptr);
+        int w = -1, h = -1;
+        CHECK(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == false);
+        g_object_unref(file);
+    }
+
+    DYNAMIC_SECTION("null arguments")
+    {
+        int w = -1, h = -1;
+        CHECK(ImageDecoder::ProbeJpegDimensions(NULL, &w, &h) == false);
+        GFile *file = g_file_new_for_path(dir.c_str());
+        REQUIRE(file != nullptr);
+        CHECK(ImageDecoder::ProbeJpegDimensions(file, NULL, &h) == false);
+        CHECK(ImageDecoder::ProbeJpegDimensions(file, &w, NULL) == false);
+        g_object_unref(file);
+    }
+
+    DYNAMIC_SECTION("missing file")
+    {
+        GFile *file = g_file_new_for_path((dir + "/nope.jpg").c_str());
+        REQUIRE(file != nullptr);
+        int w = -1, h = -1;
+        CHECK(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == false);
+        g_object_unref(file);
+    }
+
+    g_rmdir(dir.c_str());
+}
+
+TEST_CASE("JPEG probe handles progressive and restart-marker files", "[unit][decoder][jpeg]")
+{
+    std::string dir = QuiverTest_GetImagesDir() + "/probe_progressive";
+    g_mkdir_with_parents(dir.c_str(), 0755);
+    std::string path = dir + "/prog.jpg";
+
+    /* SOI, XMP, SOF2 (progressive) behind a restart interval, then SOS.
+     * SOF2 must be accepted and DRI/C4 must not be mistaken for a frame. */
+    std::vector<uint8_t> out;
+    const uint8_t hdr[] = {0xFF, 0xD8};
+    out.insert(out.end(), hdr, hdr + 2);
+    out.push_back(0xFF); out.push_back(0xE1);
+    out.push_back(0x00); out.push_back(0x10);
+    for (int i = 0; i < 14; ++i) out.push_back((uint8_t)'x');
+    /* DRI with a restart interval */
+    out.push_back(0xFF); out.push_back(0xDD);
+    out.push_back(0x00); out.push_back(0x04);
+    out.push_back(0x00); out.push_back(0x04);
+    /* SOF2 */
+    out.push_back(0xFF); out.push_back(0xC2);
+    out.push_back(0x00); out.push_back(0x11);
+    out.push_back(8);
+    out.push_back((uint8_t)(2048 >> 8)); out.push_back((uint8_t)(2048 & 0xFF));
+    out.push_back((uint8_t)(4096 >> 8)); out.push_back((uint8_t)(4096 & 0xFF));
+    for (int i = 0; i < 10; ++i) out.push_back(0x11);
+    /* SOS */
+    out.push_back(0xFF); out.push_back(0xDA);
+    out.push_back(0x00); out.push_back(0x0C);
+    for (int i = 0; i < 12; ++i) out.push_back(0x00);
+    out.push_back(0xFF); out.push_back(0xD9);
+
+    write_bytes(path.c_str(), out);
+    GFile *file = g_file_new_for_path(path.c_str());
+    REQUIRE(file != nullptr);
+    int w = -1, h = -1;
+    REQUIRE(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == true);
+    CHECK(w == 4096);
+    CHECK(h == 2048);
+    g_object_unref(file);
+    g_unlink(path.c_str());
+    g_rmdir(dir.c_str());
+}
+
+TEST_CASE("Real-world JPEG fixtures with large XMP headers probe correctly", "[unit][decoder][jpeg][fixture]")
+{
+    /* A phone export can put megabytes of XMP ahead of the frame header.  The
+     * fixed-prefix probe misses those and falls back to a full decode; the
+     * streaming walk finds the header regardless.  Fixtures are supplied by
+     * path, since the workspace ones are not part of the repo. */
+    const char *paths[] = {
+        "PXL_20241012_185450150.PORTRAIT.jpg",
+        "\\run\\media\\mike\\T7\\.Trash-1000\\files\\2023-02-22%2014.58.17-01.jpg",
+        "2014-01-16 10.23.21-01.JPG",
+    };
+
+    for (const char *rel : paths)
+    {
+        DYNAMIC_SECTION(rel)
+        {
+            std::string path = std::string(QUIVER_TEST_IMAGES_DIR_DEF) + "/../../" + rel;
+            if (!g_file_test(path.c_str(), G_FILE_TEST_EXISTS))
+            {
+                path = rel;   /* also try relative to the working directory */
+                if (!g_file_test(path.c_str(), G_FILE_TEST_EXISTS))
+                {
+                    WARN("fixture not present: " << rel);
+                    continue;
+                }
+            }
+
+            GFile *file = g_file_new_for_path(path.c_str());
+            REQUIRE(file != nullptr);
+
+            int w = -1, h = -1;
+            REQUIRE(ImageDecoder::ProbeJpegDimensions(file, &w, &h) == true);
+            REQUIRE(w > 0);
+            REQUIRE(h > 0);
+
+#if HAVE_GDK_PIXBUF
+            /* The probe must agree with what an actual decode produces. */
+            GError *err = NULL;
+            GdkPixbuf *pb = gdk_pixbuf_new_from_file(path.c_str(), &err);
+            if (pb)
+            {
+                CHECK(w == gdk_pixbuf_get_width(pb));
+                CHECK(h == gdk_pixbuf_get_height(pb));
+                g_object_unref(pb);
+            }
+            else
+            {
+                WARN("could not decode fixture for comparison");
+                if (err) g_error_free(err);
+            }
+#endif
+            g_object_unref(file);
+        }
+    }
+}
+
+/* Regression guard: the decode path used to call g_file_query_info() itself to
+ * find the file size.  GetWidth() runs on the icon view's thumbnail worker
+ * thread, and for a trash:// URI that query went into libgvfs, which crashed
+ * serialising the mount spec - strlen() on a garbage pointer in
+ * g_mount_spec_to_dbus_with_path(), reached from GetDimensions() on the worker
+ * that loads a thumbnail.  It is now handed the size the listing already had.
+ *
+ * These check the two halves of that change: an oversized file is still
+ * refused when the size is supplied, and an unknown size (-1, the default) no
+ * longer means "query it".
+ */
+TEST_CASE("Oversized input is refused from a caller-supplied size", "[unit][decoder]")
+{
+    std::string dir = QuiverTest_GetImagesDir() + "/probe_size";
+    g_mkdir_with_parents(dir.c_str(), 0755);
+    std::string path = dir + "/s.jpg";
+
+    std::vector<uint8_t> bytes = make_jpeg_with_xmp(2000, 640, 480, 0);
+    write_bytes(path.c_str(), bytes);
+
+    GFile *file = g_file_new_for_path(path.c_str());
+    REQUIRE(file != nullptr);
+
+    int w = -1, h = -1;
+    /* Over the 500 MB cap: refused without reading the file. */
+    CHECK(ImageDecoder::GetDimensions(file, "image/jpeg", &w, &h, 600LL * 1024 * 1024) == false);
+
+    /* Under it: probed normally. */
+    CHECK(ImageDecoder::GetDimensions(file, "image/jpeg", &w, &h, 1024) == true);
+    CHECK(w == 640);
+    CHECK(h == 480);
+
+    /* Unknown size means "no opinion", not "query the file" - this is the case
+     * that used to issue the g_file_query_info() and crash. */
+    CHECK(ImageDecoder::GetDimensions(file, "image/jpeg", &w, &h, -1) == true);
+    CHECK(w == 640);
+    CHECK(h == 480);
+
+    /* And the full decode entry points take the size the same way.  A real
+     * fixture, since the synthetic JPEG above is only parseable by the probe. */
+    std::string realPath = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    GFile *real = g_file_new_for_path(realPath.c_str());
+    REQUIRE(real != nullptr);
+
+    GError *err = NULL;
+    GdkTexture *big = ImageDecoder::DecodeFileTexture(real, "image/jpeg", NULL, &err, 600LL * 1024 * 1024);
+    CHECK(big == nullptr);
+    if (big) g_object_unref(big);
+
+    GdkTexture *ok = ImageDecoder::DecodeFileTexture(real, "image/jpeg", NULL, &err, -1);
+    REQUIRE(ok != nullptr);
+    g_object_unref(ok);
+
+    g_object_unref(real);
+    g_object_unref(file);
+    g_unlink(path.c_str());
+    g_rmdir(dir.c_str());
+}

@@ -67,18 +67,24 @@ static bool is_video_mimetype(const char* mimetype)
            strcmp(mimetype, "application/x-ms-wmv") == 0;
 }
 
-static bool is_file_too_large(GFile *file, GCancellable *cancellable = NULL)
+/* Cap on how big a file may be before we give up on header probing and let the
+ * caller fall back to a full decode.
+ *
+ * This deliberately takes a size the caller already has instead of querying
+ * for one.  It used to call g_file_query_info() on the caller's GFile, and the
+ * hot caller is QuiverFileImpl::GetWidth(), which runs on the icon view's
+ * thumbnail *worker* thread.  For a trash:// URI that query goes into libgvfs,
+ * which crashed serialising the mount spec - strlen() on a garbage pointer in
+ * g_mount_spec_to_dbus_with_path() - and even when it survived it cost a
+ * blocking D-Bus round trip per file, stalling the queue.
+ *
+ * QuiverFile has cached STANDARD_SIZE from the info enumeration handed it, so
+ * callers pass that down (see GetFileSize()).  An unknown size (negative) means
+ * "no opinion", not "assume huge": probing streams a bounded amount anyway, so
+ * the size cap is an optimisation rather than a safety limit. */
+static bool is_size_too_large(goffset size)
 {
-    if (!file) return true;
-    GFileInfo *info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_SIZE, G_FILE_QUERY_INFO_NONE, cancellable, NULL);
-    if (info)
-    {
-        goffset sz = g_file_info_get_size(info);
-        g_object_unref(info);
-        if (sz > 500LL * 1024 * 1024)
-            return true;
-    }
-    return false;
+    return size > 0 && size > (goffset)(500LL * 1024 * 1024);
 }
 
 // -------------------------------------------------------------------------
@@ -341,10 +347,102 @@ namespace
 } // namespace
 
 // -------------------------------------------------------------------------
-// Fast Dimension Probing
+// Streaming JPEG header probe
 // -------------------------------------------------------------------------
+namespace
+{
+    /* Sequential reader over a GInputStream with a small sliding window.
+     *
+     * The JPEG marker walk needs bytes at scattered offsets and gaps that can
+     * be arbitrarily large, so the window is positioned on demand rather than
+     * read once: a seekable stream is seeked, and a stream that cannot seek
+     * (which is what a trash:// mount hands out) is skipped forward.  Only the
+     * window itself is ever held in memory, so a file with megabytes of XMP
+     * ahead of the frame header costs a few kilobytes of reads, not megabytes.
+     */
+    class WindowedStream
+    {
+    public:
+        WindowedStream(GInputStream *in) : m_pIn(in), m_bufStart(0), m_bufLen(0), m_total(0) {}
 
-bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, int *height)
+        /* Bytes of window space to read ahead in.  Large enough to cover the
+         * longest single read below (9 bytes) plus slack for one probe. */
+        static const size_t kWindow = 4096;
+
+        /* Make @n bytes available at absolute offset @off, returning a pointer
+         * to them, or NULL at end of stream.  The pointer is valid until the
+         * next call. */
+        const uint8_t *peek(uint64_t off, size_t n)
+        {
+            if (n == 0 || n > kWindow)
+                return NULL;
+            if (!(m_bufLen >= n && m_bufStart <= off && off + n <= m_bufStart + m_bufLen))
+                if (!refill(off))
+                    return NULL;
+            return m_buf.data() + (off - m_bufStart);
+        }
+
+        /* Advance @n bytes past the current window, discarding as we go. */
+        bool skip(uint64_t n)
+        {
+            m_bufLen = 0;
+            m_bufStart += n;
+            m_total += n;
+            if (g_seekable_can_seek(G_SEEKABLE(m_pIn)))
+            {
+                return g_seekable_seek(G_SEEKABLE(m_pIn), (goffset)m_bufStart,
+                    G_SEEK_SET, NULL, NULL);
+            }
+
+            /* Not seekable: the only way forward is to read and throw away,
+             * which is exactly the cost this probe exists to avoid, so cap the
+             * damage rather than stream an unbounded amount of metadata. */
+            std::vector<uint8_t> sink(65536);
+            while (n > 0)
+            {
+                size_t want = (n < sink.size()) ? (size_t)n : sink.size();
+                gssize got = g_input_stream_read(m_pIn, sink.data(), want, NULL, NULL);
+                if (got <= 0)
+                    return false;
+                n -= (uint64_t)got;
+            }
+            return true;
+        }
+
+    private:
+        bool refill(uint64_t off)
+        {
+            m_bufLen = 0;
+            if (g_seekable_can_seek(G_SEEKABLE(m_pIn)))
+            {
+                if (!g_seekable_seek(G_SEEKABLE(m_pIn), (goffset)off,
+                        G_SEEK_SET, NULL, NULL))
+                    return false;
+            }
+            else if (off > m_total)
+            {
+                if (!skip(off - m_total))
+                    return false;
+            }
+
+            gssize got = g_input_stream_read(m_pIn, m_buf.data(), (gsize)kWindow, NULL, NULL);
+            if (got <= 0)
+                return false;
+            m_bufLen = (size_t)got;
+            m_bufStart = off;
+            m_total = off + (uint64_t)m_bufLen;
+            return true;
+        }
+
+        GInputStream            *m_pIn;
+        std::vector<uint8_t>     m_buf = std::vector<uint8_t>(kWindow);
+        uint64_t                 m_bufStart;
+        size_t                   m_bufLen;
+        uint64_t                 m_total;
+    };
+}
+
+bool ImageDecoder::ProbeJpegDimensions(GFile *file, int *width, int *height)
 {
     if (!file || !width || !height)
         return false;
@@ -352,8 +450,115 @@ bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, 
     *width = -1;
     *height = -1;
 
-    if (is_video_mimetype(mimetype) || is_file_too_large(file))
+    GFileInputStream *fin = g_file_read(file, NULL, NULL);
+    if (!fin)
         return false;
+
+    GInputStream *in = G_INPUT_STREAM(fin);
+    WindowedStream win(in);
+
+    bool ok = false;
+    const uint8_t *soi = win.peek(0, 2);
+    if (soi && soi[0] == 0xFF && soi[1] == 0xD8)
+    {
+        uint64_t off = 2;
+        /* Bounded so a file that never yields a frame header cannot spin here
+         * forever; 64K segments is far beyond any real JPEG. */
+        for (int segments = 0; segments < 65536; ++segments)
+        {
+            const uint8_t *m = win.peek(off, 2);
+            if (!m)
+                break;
+            if (m[0] != 0xFF)
+            {
+                /* Resync past junk the way the buffered probe does, one byte at
+                 * a time, but bounded: anything longer than a few bytes is a
+                 * malformed file rather than padding. */
+                if (++off > (1u << 20))
+                    break;
+                continue;
+            }
+
+            uint8_t marker = m[1];
+            if (marker == 0xFF)
+            {
+                ++off;
+                continue;
+            }
+            if (marker == 0xD8 || marker == 0x01)
+            {
+                off += 2;
+                continue;
+            }
+
+            /* SOF0..SOF15: [len(2)] [precision(1)] [height(2)] [width(2)]
+             * DHT (C4), JPG (C8) and DAC (CC) share the range but are not frame
+             * headers. */
+            if (marker >= 0xC0 && marker <= 0xCF &&
+                marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
+            {
+                const uint8_t *sof = win.peek(off, 9);
+                if (!sof)
+                    break;
+                *height = (int)rd16be(sof + 5);
+                *width = (int)rd16be(sof + 7);
+                ok = (*width > 0 && *height > 0);
+                break;
+            }
+
+            /* RSTn and the standalone markers carry no length payload. */
+            if (marker >= 0xD0 && marker <= 0xD9)
+            {
+                off += 2;
+                continue;
+            }
+
+            const uint8_t *len = win.peek(off + 2, 2);
+            if (!len)
+                break;
+            /* A length below 2 cannot describe any segment, including the
+             * two length bytes themselves, so this is a malformed file rather
+             * than something to walk past.  Treating it as a 2-byte skip would
+             * let a corrupt stream be reinterpretted as markers. */
+            uint16_t seglen = rd16be(len);
+            if (seglen < 2)
+                break;
+
+            /* The whole point: skip the payload without reading it. */
+            if (!win.skip(2u + seglen))
+                break;
+            off += 2u + seglen;
+        }
+    }
+
+    g_object_unref(in);
+    return ok;
+}
+
+// -------------------------------------------------------------------------
+// Fast Dimension Probing
+// -------------------------------------------------------------------------
+
+bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, int *height, goffset known_size)
+{
+    if (!file || !width || !height)
+        return false;
+
+    *width = -1;
+    *height = -1;
+
+    if (is_video_mimetype(mimetype) || is_size_too_large(known_size))
+        return false;
+
+    /* JPEG first, and with a streaming walk rather than the prefix read below.
+     * The prefix is a fixed window, and a JPEG may carry more metadata ahead of
+     * its frame header than the whole window holds (a phone export writes
+     * megabytes of XMP), in which case the window never reaches SOF and this
+     * function used to fall through to a full decode just for two integers.
+     * The marker walk skips those payloads, so metadata size stops mattering.
+     * It needs a stream, not random access, so it works on trash:// too. */
+    if (ProbeJpegDimensions(file, width, height))
+        return true;
 
     // decode-free header probing for the common raster formats
     std::vector<uint8_t> prefix;
@@ -395,11 +600,48 @@ bool ImageDecoder::GetDimensions(GFile *file, const char *mimetype, int *width, 
 }
 
 #if HAVE_GLYCIN
+/* Builds a glycin loader for @file.
+ *
+ * gly_loader_new() passes the file's *name* through glycin's own validation,
+ * and a trashed entry legitimately carries characters it rejects even though
+ * the bytes decode fine - a trash:/// URI keeps the name the file was trashed
+ * under, so one trashed from a Windows share arrives percent-encoded and
+ * backslashed ("trash:///%%5Crun%%5Cmedia%%5C...").
+ *
+ * We used to work around that by copying such files into a temp file with a
+ * plain name.  A stream has no filename to validate, so read those as a stream
+ * instead: no copy, no /tmp growth, and nothing to leak if the process dies.
+ *
+ * gly_loader_new_for_stream() takes its own reference on the stream, verified
+ * against glycin 2.1, so the local one is dropped here. */
+static GlyLoader *quiver_gly_loader_for_file(GFile *file)
+{
+    if (NULL == file)
+        return NULL;
+
+    /* Anything GIO can hand back as a real path is fine as-is; the problem only
+     * exists for URIs like trash:/// that have no path at all. */
+    if (NULL != g_file_peek_path(file))
+        return gly_loader_new(file);
+
+    GError *read_error = NULL;
+    GInputStream *stream = G_INPUT_STREAM(g_file_read(file, NULL, &read_error));
+    if (NULL == stream)
+    {
+        g_clear_error(&read_error);
+        return gly_loader_new(file);   /* let glycin report the real error */
+    }
+
+    GlyLoader *loader = gly_loader_new_for_stream(stream);
+    g_object_unref(stream);
+    return loader;
+}
+
 bool ImageDecoder::GlycinGetDimensions(GFile *file, int *width, int *height)
 {
     DecodeSlotGuard slot;
 
-    GlyLoader *loader = gly_loader_new(file);
+    GlyLoader *loader = quiver_gly_loader_for_file(file);
     if (!loader)
         return false;
 
@@ -566,12 +808,13 @@ static GdkPixbuf* frame_to_pixbuf(GlyFrame *frame)
 GdkPixbuf* ImageDecoder::DecodeFilePixbuf(GFile *file, const char *mimetype,
                                          int max_width, int max_height,
                                          GCancellable *cancellable,
-                                         GError **error)
+                                         GError **error,
+                                         goffset known_size)
 {
     if (!file)
         return NULL;
 
-    if (is_video_mimetype(mimetype) || is_file_too_large(file, cancellable))
+    if (is_video_mimetype(mimetype) || is_size_too_large(known_size))
         return NULL;
 
 #if HAVE_GLYCIN
@@ -594,12 +837,13 @@ GdkPixbuf* ImageDecoder::DecodeFilePixbuf(GFile *file, const char *mimetype,
 
 GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
                                            GCancellable *cancellable,
-                                           GError **error)
+                                           GError **error,
+                                           goffset known_size)
 {
     if (!file)
         return NULL;
 
-    if (is_video_mimetype(mimetype) || is_file_too_large(file, cancellable))
+    if (is_video_mimetype(mimetype) || is_size_too_large(known_size))
         return NULL;
 
 #if HAVE_GLYCIN
@@ -617,7 +861,7 @@ GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
 #endif
 
 #if HAVE_GDK_PIXBUF
-    GdkPixbuf *pb = DecodeFilePixbuf(file, mimetype, 0, 0, cancellable, error);
+    GdkPixbuf *pb = DecodeFilePixbuf(file, mimetype, 0, 0, cancellable, error, known_size);
     if (pb)
     {
         GdkTexture *tex = QuiverUtils::PixbufToTexture(pb);
@@ -645,7 +889,7 @@ GdkPixbuf* ImageDecoder::GlycinDecodeFilePixbuf(GFile *file, GCancellable *cance
 {
     DecodeSlotGuard slot;
 
-    GlyLoader *loader = gly_loader_new(file);
+    GlyLoader *loader = quiver_gly_loader_for_file(file);
     if (!loader)
         return NULL;
 
@@ -678,7 +922,7 @@ GdkTexture* ImageDecoder::GlycinDecodeFileTexture(GFile *file, GCancellable *can
 {
     DecodeSlotGuard slot;
 
-    GlyLoader *loader = gly_loader_new(file);
+    GlyLoader *loader = quiver_gly_loader_for_file(file);
     if (!loader)
         return NULL;
 
@@ -728,7 +972,7 @@ GdkTexture* ImageDecoder::DecodeFileAnimation(GFile *file, GdkTexture ***frames,
 
     DecodeSlotGuard slot;
 
-    GlyLoader *loader = gly_loader_new(file);
+    GlyLoader *loader = quiver_gly_loader_for_file(file);
     if (!loader)
         return NULL;
 

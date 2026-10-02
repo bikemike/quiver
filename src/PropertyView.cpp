@@ -23,6 +23,7 @@ extern "C" {
 #include <libavutil/pixdesc.h>
 }
 
+#include "QuiverAvio.h"
 #include "QuiverUtils.h"
 #include "QuiverGps.h"
 #include "QuiverSummary.h"
@@ -305,21 +306,31 @@ static std::string FormatFps(double fps)
 	return buf;
 }
 
-static VideoInfo ProbeVideoInfo(const gchar* szPath)
+static VideoInfo ProbeVideoInfo(const gchar* szUri)
 {
 	VideoInfo info;
-	if (NULL == szPath) return info;
+	if (NULL == szUri) return info;
 
 	std::lock_guard<std::mutex> lock(s_avformatMutex);
 	std::call_once(s_avformatInitFlag, [](){ av_log_set_level(AV_LOG_ERROR); });
 
-	auto cached = s_mapVideoInfoCache.find(szPath);
+	auto cached = s_mapVideoInfoCache.find(szUri);
 	if (s_mapVideoInfoCache.end() != cached) return cached->second;
 
-	AVFormatContext* pFmt = NULL;
-	if (avformat_open_input(&pFmt, szPath, NULL, NULL) >= 0 && NULL != pFmt)
+	/* Keyed by URI and read through QuiverAvio::Container, so a file on
+	 * trash:/// - which has no local path for any API to return - is inspected
+	 * through a GInputStream instead of being copied into a temp file first.
+	 *
+	 * Open() has already run avformat_find_stream_info() and the context holds
+	 * what that found.  It must not be run a second time here: probing frees
+	 * and reallocates the per-stream parse buffers, so a second pass walks
+	 * state that the first one already released and corrupts the heap. */
+	QuiverAvio::Container container;
+	if (container.Open(szUri))
 	{
-		if (avformat_find_stream_info(pFmt, NULL) >= 0)
+		AVFormatContext* pFmt = container.fmt();
+		{
+		if (pFmt->nb_streams > 0)
 		{
 			info.ok = true;
 			if (NULL != pFmt->iformat && NULL != pFmt->iformat->name)
@@ -374,8 +385,22 @@ static VideoInfo ProbeVideoInfo(const gchar* szPath)
 			if (pFmt->duration > 0) info.duration_seconds = pFmt->duration / (double)AV_TIME_BASE;
 			if (pFmt->bit_rate > 0) info.bit_rate = pFmt->bit_rate;
 
-			struct stat st;
-			if (0 == stat(szPath, &st)) info.file_size = st.st_size;
+			{
+				/* stat() only works on a real path; a URI query covers both
+				 * local files and gvfs locations. */
+				GFile* gfile = g_file_new_for_uri(szUri);
+				GError* size_error = nullptr;
+				GFileInfo* size_info = g_file_query_info(gfile,
+					G_FILE_ATTRIBUTE_STANDARD_SIZE, G_FILE_QUERY_INFO_NONE,
+					nullptr, &size_error);
+				if (NULL != size_info)
+				{
+					info.file_size = g_file_info_get_size(size_info);
+					g_object_unref(size_info);
+				}
+				g_clear_error(&size_error);
+				g_object_unref(gfile);
+			}
 
 			for (unsigned int i = 0; i < pFmt->nb_streams; i++)
 			{
@@ -446,9 +471,9 @@ static VideoInfo ProbeVideoInfo(const gchar* szPath)
 				}
 			}
 		}
-		avformat_close_input(&pFmt);
+		}
 	}
-	s_mapVideoInfoCache[szPath] = info;
+	s_mapVideoInfoCache[szUri] = info;
 	return info;
 }
 
@@ -461,6 +486,7 @@ static void property_value_cell_edited_callback(const char *key, const char *new
 	gpointer user_data);
 static void property_video_value_cell_edited_callback(const char *new_text, gpointer user_data);
 static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl);
+static char* exif_value_for_display(const std::string& value, bool is_editable);
 static gboolean property_view_idle_load(gpointer data);
 static gboolean property_date_format_is_valid(const char *date);
 static void set_exif_value(std::shared_ptr<Exiv2::ExifData> pExifData,
@@ -488,7 +514,7 @@ public:
 	void UpdateTabsForFile();
 
 	QuiverFile    m_QuiverFile;
-	std::shared_ptr<Exiv2::ExifData> m_ExifData;
+	std::shared_ptr<const Exiv2::ExifData> m_ExifData;
 
 	GtkWidget*    m_pNotebook;
 	GtkWidget*    m_pPageWidgets[5];
@@ -509,6 +535,13 @@ public:
 	bool          m_bHasExif;
 	bool          m_bHasXmp;
 	bool          m_bHasIptc;
+	/* Identity of the parsed EXIF currently shown in m_pExifColumnView.
+	 * Re-selecting a file hands back the same shared ExifData, so the model
+	 * can be left alone instead of paying GTK a synchronous relayout.  Held
+	 * weakly on purpose: a raw pointer would let a freed ExifData be matched
+	 * by a later allocation of a different file's data. */
+	std::weak_ptr<const Exiv2::ExifData> m_pExifDataShown;
+
 
 	class PreferencesEventHandler : public IPreferencesEventHandler
 	{
@@ -842,7 +875,9 @@ static void exif_name_bind(GtkListItemFactory *factory, GtkListItem *item, gpoin
 /* --- EXIF value column (text / orientation / pixbuf + optional editable) --- */
 
 static void exif_value_setup(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
-{ (void)factory; (void)user_data;
+{ (void)factory;
+	PropertyView::PropertyViewImpl *pImpl =
+		(PropertyView::PropertyViewImpl*)user_data;
 	GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
 	GtkWidget *label = gtk_label_new(NULL);
 	gtk_label_set_xalign(GTK_LABEL(label), 0.0);
@@ -857,11 +892,20 @@ static void exif_value_setup(GtkListItemFactory *factory, GtkListItem *item, gpo
 	gtk_box_append(GTK_BOX(box), picture);
 	gtk_box_append(GTK_BOX(box), entry);
 	gtk_list_item_set_child(item, box);
+
+	/* Connected here, once per recycled widget, rather than on every bind.
+	 * A GtkListItemFactory reuses the same widgets for successive rows, so a
+	 * connect in bind piles another handler on the entry each time it is
+	 * rebound - handlers that all fire on one activation, that keep the rows
+	 * they referred to alive, and that make every later rebind slower.  The
+	 * handler reads the current key from the entry object data, which bind
+	 * refreshes, so it never needed reconnecting. */
+	g_signal_connect(entry, "activate",
+		G_CALLBACK(exif_entry_activate_cb), pImpl);
 }
 
 static void exif_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data)
 { (void)factory; (void)user_data;
-	PropertyView::PropertyViewImpl *pImpl = (PropertyView::PropertyViewImpl*)user_data;
 	ExifItem *ei = EXIF_ITEM(gtk_list_item_get_item(item));
 	GtkWidget *box = gtk_list_item_get_child(item);
 	GtkWidget *label = gtk_widget_get_first_child(box);
@@ -900,8 +944,6 @@ static void exif_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpoi
 			gtk_widget_set_sensitive(entry, TRUE);
 			g_object_set_data(G_OBJECT(gtk_list_item_get_item(item)),
 				"pv-exif-key", ei->full_key);
-			g_signal_connect(entry, "activate",
-				G_CALLBACK(exif_entry_activate_cb), pImpl);
 		}
 		else
 		{
@@ -923,8 +965,6 @@ static void exif_value_bind(GtkListItemFactory *factory, GtkListItem *item, gpoi
 			gtk_widget_set_sensitive(entry, TRUE);
 			g_object_set_data(G_OBJECT(gtk_list_item_get_item(item)),
 				"pv-exif-key", ei->full_key);
-			g_signal_connect(entry, "activate",
-				G_CALLBACK(exif_entry_activate_cb), pImpl);
 		}
 		else
 		{
@@ -998,6 +1038,7 @@ PropertyView::PropertyViewImpl::PropertyViewImpl() :
 	m_bHasExif    = false;
 	m_bHasXmp     = false;
 	m_bHasIptc    = false;
+	m_pExifDataShown.reset();
 	m_pNotebook   = NULL;
 	m_pRowPopover     = NULL;
 	m_bAccelsSuppressed = FALSE;
@@ -1117,7 +1158,8 @@ PropertyView::PropertyView()
 				gtk_column_view_append_column(GTK_COLUMN_VIEW(colview_widget), cname);
 
 				GtkListItemFactory *fval = gtk_signal_list_item_factory_new();
-				g_signal_connect(fval, "setup", G_CALLBACK(exif_value_setup), NULL);
+				g_signal_connect(fval, "setup", G_CALLBACK(exif_value_setup),
+				m_PropertyViewImplPtr.get());
 				g_signal_connect(fval, "bind", G_CALLBACK(exif_value_bind),
 					m_PropertyViewImplPtr.get());
 				GtkColumnViewColumn *cval = gtk_column_view_column_new("Value", fval);
@@ -1321,9 +1363,7 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 
 	if (m_bIsVideo)
 	{
-		gchar* szPath = g_filename_from_uri(m_QuiverFile.GetURI(), NULL, NULL);
-		VideoInfo info = ProbeVideoInfo(szPath);
-		g_free(szPath);
+		VideoInfo info = ProbeVideoInfo(m_QuiverFile.GetURI());
 
 		if ('\0' != info.creation_time[0])
 			values["Date Taken"] = FormatTimeT(m_QuiverFile.GetTimeT(true));
@@ -1476,17 +1516,19 @@ static void property_populate_keyvalue_from_file(PropertyView::PropertyViewImpl*
 {
 	GListStore *store = g_list_store_new(property_item_get_type());
 
-	gchar* szPath = g_filename_from_uri(pImpl->m_QuiverFile.GetURI(), NULL, NULL);
-	if (NULL != szPath)
+	/* Both come from the parse QuiverFile already performed for the EXIF
+	 * panel.  Reading the file again here was a third and fourth full parse
+	 * of the same bytes per selection, on the GUI thread, and on a file whose
+	 * MakerNote Exiv2 walks slowly that dominated the panel's load time. */
+	if (bXmp)
 	{
-		try
+		std::shared_ptr<const Exiv2::XmpData> pData =
+			pImpl->m_QuiverFile.GetXmpData();
+		if (pData && !pData->empty())
 		{
-			auto image = Exiv2::ImageFactory::open(szPath);
-			image->readMetadata();
-
-			if (bXmp)
+			try
 			{
-				Exiv2::XmpData data = image->xmpData();
+				const Exiv2::XmpData& data = *pData;
 				for (auto it = data.begin(); data.end() != it; ++it)
 				{
 					std::string key = it->key();
@@ -1532,17 +1574,25 @@ static void property_populate_keyvalue_from_file(PropertyView::PropertyViewImpl*
 						xmp_insert_flat(store, "", expanded, 0, value);
 				}
 			}
-			else
+			catch (...) {}
+		}
+	}
+	else
+	{
+		std::shared_ptr<const Exiv2::IptcData> pData =
+			pImpl->m_QuiverFile.GetIptcData();
+		if (pData && !pData->empty())
+		{
+			try
 			{
-				Exiv2::IptcData data = image->iptcData();
+				const Exiv2::IptcData& data = *pData;
 				for (auto it = data.begin(); data.end() != it; ++it)
 					g_list_store_append(store, property_item_new(
 						it->key().c_str(), it->toString().c_str(),
 						FALSE, FALSE));
 			}
+			catch (...) {}
 		}
-		catch (...) {}
-		g_free(szPath);
 	}
 
 	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
@@ -1630,7 +1680,7 @@ static void property_video_value_cell_edited_callback(const char *new_text,
 
 	if (bOk)
 	{
-		s_mapVideoInfoCache.erase(szPath);
+		s_mapVideoInfoCache.erase(pImpl->m_QuiverFile.GetURI());
 		QuiverFile f = pImpl->m_QuiverFile;
 		VideoDateEditTaskPtr taskPtr(new VideoDateEditTask(f, new_epoch));
 		TaskManager::GetInstance()->AddTask(taskPtr);
@@ -1652,10 +1702,8 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
 {
 	GListStore *store = g_list_store_new(property_item_get_type());
 
-	gchar* szPath = g_filename_from_uri(m_QuiverFile.GetURI(), NULL, NULL);
-	if (NULL != szPath)
 	{
-		VideoInfo info = ProbeVideoInfo(szPath);
+		VideoInfo info = ProbeVideoInfo(m_QuiverFile.GetURI());
 
 		auto add = [&](const char* label, const char* value, gboolean editable)
 		{
@@ -1784,8 +1832,6 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
 			for (const auto& tag : info.extra_tags)
 				add(tag.first.c_str(), tag.second.c_str(), FALSE);
 		}
-
-		g_free(szPath);
 	}
 
 	GtkSingleSelection *sel = gtk_single_selection_new(G_LIST_MODEL(store));
@@ -1829,8 +1875,151 @@ static GdkTexture* ScaleExifThumbnailForDisplay(GdkTexture* pTexture)
 	return scaled;
 }
 
+
+/* Append every EXIF row of one family - the standard groups, or the maker's
+ * own - to `store`, under a group header per Exiv2 group.  ExifData is not
+ * const-iterable, so the rows are read through the shared pointer. */
+/* Exiv2's types that hold raw bytes rather than a value with a meaning: the
+ * whole array is data, not a number or a string. */
+static bool exif_type_is_raw_bytes(const Exiv2::Exifdatum& item)
+{
+	try
+	{
+		Exiv2::TypeId t = item.typeId();
+		return Exiv2::unsignedByte == t || Exiv2::signedByte == t
+			|| Exiv2::undefined == t;
+	}
+	catch (...) { return false; }
+}
+
+
+static void exif_append_pass(GListStore *store, const Exiv2::ExifData *data,
+	bool wantStandard)
+{
+	std::string currentGroup;
+	bool haveGroup = false;
+
+	for (auto it = data->begin(); data->end() != it; ++it)
+	{
+		if (QuiverUtils::IsStandardExifGroup(it->groupName()) != wantStandard)
+			continue;
+		if (QuiverUtils::IsMakernoteArtifact(it->groupName(), it->key()))
+		{
+			continue;
+		}
+		/* Raw byte data has no reading for a person.  Exiv2 prints it as
+		 * space-separated decimal numbers, so it passes any test for
+		 * printability while being meaningless - and a MakerNote is 37,767
+		 * bytes of it, which as a wrapping label costs seconds to lay out. */
+		if (QuiverUtils::IsBinaryExifBlob(it->key())
+			|| exif_type_is_raw_bytes(*it))
+		{
+			continue;
+		}
+
+		const std::string& group = it->groupName();
+		if (group != currentGroup || !haveGroup)
+		{
+			currentGroup = group;
+			haveGroup = true;
+			ExifItem *gh = exif_item_new();
+			gh->name = g_strdup(group.c_str());
+			gh->is_group = TRUE;
+			gh->show_text = TRUE;
+			g_list_store_append(store, gh);
+		}
+
+		ExifItem *child = exif_item_new();
+		child->full_key = g_strdup(it->key().c_str());
+		child->name = g_strdup(it->tagName().c_str());
+		child->is_editable = (NULL != FindEditableTag(it->key()));
+
+		if ("Exif.Image.Orientation" == it->key())
+		{
+			long val = 1;
+#if EXIV2_TEST_VERSION(0,28,0)
+			try { val = it->toInt64(); } catch (...) {}
+#else
+			try { val = it->toLong(); } catch (...) {}
+#endif
+			child->value_orientation = (int)val;
+			child->show_orientation = TRUE;
+		}
+		else
+		{
+			std::string value;
+			try { value = it->toString(); } catch (...) {}
+			child->value_text = exif_value_for_display(value,
+				child->is_editable);
+			child->show_text = TRUE;
+		}
+		g_list_store_append(store, child);
+	}
+}
+
+/* One EXIF value can be a MakerNote binary dump.  Measured on a real camera
+ * file: 9 of its 8296 entries exceed 1000 characters and the longest is
+ * 102,189.  The value column's label wraps at word boundaries inside a narrow
+ * sidebar, so GTK lays that out as tens of thousands of lines - which is where
+ * the several seconds the EXIF tab takes to appear actually go, and it happens
+ * during paint rather than while the data is loaded, so it does not show up in
+ * any load timer.
+ *
+ * The table therefore shows a bounded prefix and says how much it left out,
+ * rather than silently truncating.  Editable tags are user-written strings that
+ * have to survive a round trip through the entry widget, so they are never
+ * shortened.
+ */
+static const size_t EXIF_VALUE_DISPLAY_MAX_CHARS = 200;
+
+static char* exif_value_for_display(const std::string& value, bool is_editable)
+{
+	if (is_editable || value.size() <= EXIF_VALUE_DISPLAY_MAX_CHARS)
+		return g_strdup(value.c_str());
+
+	return g_strdup_printf("%.*s\u2026 (%zu chars)",
+		(int)EXIF_VALUE_DISPLAY_MAX_CHARS, value.c_str(), value.size());
+}
+
+/* True when the file carries at least one vendor row worth showing, which is
+ * what decides whether the Maker Notes section exists at all. */
+static bool exif_has_vendor_rows(const Exiv2::ExifData *data)
+{
+	for (auto it = data->begin(); data->end() != it; ++it)
+	{
+		if (QuiverUtils::IsStandardExifGroup(it->groupName()))
+			continue;
+		if (QuiverUtils::IsMakernoteArtifact(it->groupName(), it->key()))
+			continue;
+		return true;
+	}
+	return false;
+}
+
+static ExifItem* exif_make_group_header(const char *name)
+{
+	ExifItem *gh = exif_item_new();
+	gh->name = g_strdup(name);
+	gh->is_group = TRUE;
+	gh->show_text = TRUE;
+	return gh;
+}
+
 static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
 {
+	/* Re-selecting the same file re-parses nothing, so the rows we would
+	 * build are byte-for-byte the rows already in the view.  Rebuilding the
+	 * model anyway forces GTK to synchronously re-lay-out every visible row
+	 * on the main thread, which is the single most expensive part of loading
+	 * the tab.  The shared ExifData pointer changes whenever the metadata is
+	 * re-parsed (Reload, or a write), so identity is a sufficient key. */
+	if (NULL != pImpl->m_ExifData.get()
+		&& pImpl->m_pExifDataShown.lock().get() == pImpl->m_ExifData.get())
+	{
+		return;
+	}
+	pImpl->m_pExifDataShown = pImpl->m_ExifData;
+
 	GListStore *store = g_list_store_new(exif_item_get_type());
 
 	if (NULL != pImpl->m_ExifData.get())
@@ -1866,50 +2055,17 @@ static void property_populate_exif(PropertyView::PropertyViewImpl *pImpl)
 			g_list_store_append(store, thumb_item);
 		}
 
-		/* group entries by exiv2 group name */
-		std::string currentGroup;
-		bool haveGroup = false;
-
-		for (auto it = pImpl->m_ExifData->begin();
-			pImpl->m_ExifData->end() != it; ++it)
+		/* Standard EXIF first, then the camera maker's own data in a section
+		 * of its own below it.  Exiv2 returns the groups interleaved in IFD
+		 * order, so a single pass in that order would scatter a vendor's tags
+		 * through the standard ones; two passes over the same range keep the
+		 * two families apart and preserve the order within each. */
+		exif_append_pass(store, pImpl->m_ExifData.get(), true);
+		if (exif_has_vendor_rows(pImpl->m_ExifData.get()))
 		{
-			const std::string& group = it->groupName();
-			if (group != currentGroup || !haveGroup)
-			{
-				currentGroup = group;
-				haveGroup = true;
-				ExifItem *gh = exif_item_new();
-				gh->name = g_strdup(group.c_str());
-				gh->is_group = TRUE;
-				gh->show_text = TRUE;
-				g_list_store_append(store, gh);
-			}
-
-			gboolean editable = (NULL != FindEditableTag(it->key()));
-			ExifItem *child = exif_item_new();
-			child->full_key = g_strdup(it->key().c_str());
-			child->name = g_strdup(it->tagName().c_str());
-			child->is_editable = editable;
-
-			if ("Exif.Image.Orientation" == it->key())
-			{
-				long val = 1;
-#if EXIV2_TEST_VERSION(0,28,0)
-				try { val = it->toInt64(); } catch (...) {}
-#else
-				try { val = it->toLong(); } catch (...) {}
-#endif
-				child->value_orientation = (int)val;
-				child->show_orientation = TRUE;
-			}
-			else
-			{
-				std::string value;
-				try { value = it->toString(); } catch (...) {}
-				child->value_text = g_strdup(value.c_str());
-				child->show_text = TRUE;
-			}
-			g_list_store_append(store, child);
+			g_list_store_append(store,
+				exif_make_group_header("Maker Notes"));
+			exif_append_pass(store, pImpl->m_ExifData.get(), false);
 		}
 	}
 
@@ -1973,6 +2129,7 @@ void PropertyView::PropertyViewImpl::UpdateTabsForFile()
 
 void PropertyView::PropertyViewImpl::LoadProperties()
 {
+
 	m_bIsVideo = false;
 	m_ExifData.reset();
 	m_bHasExif = false;
@@ -1984,43 +2141,37 @@ void PropertyView::PropertyViewImpl::LoadProperties()
 		m_bIsVideo = m_QuiverFile.IsVideo();
 		if (!m_bIsVideo)
 		{
-			m_ExifData = m_QuiverFile.GetExifData();
+			m_ExifData = m_QuiverFile.GetExifDataShared();
 			m_bHasExif = (NULL != m_ExifData.get()) && !m_ExifData->empty();
 
-			gchar* szPath = g_filename_from_uri(m_QuiverFile.GetURI(), NULL, NULL);
-			if (NULL != szPath)
-			{
-				try
-				{
-					auto image = Exiv2::ImageFactory::open(szPath);
-					image->readMetadata();
-					m_bHasXmp  = !image->xmpData().empty();
-					m_bHasIptc = !image->iptcData().empty();
-				}
-				catch (...) {}
-				g_free(szPath);
-			}
+			/* both come out of the parse that GetExifData() already forced,
+			 * so asking for them here costs no further reading of the file */
+			std::shared_ptr<const Exiv2::XmpData> pXmp =
+				m_QuiverFile.GetXmpData();
+			std::shared_ptr<const Exiv2::IptcData> pIptc =
+				m_QuiverFile.GetIptcData();
+			m_bHasXmp  = (NULL != pXmp.get()) && !pXmp->empty();
+			m_bHasIptc = (NULL != pIptc.get()) && !pIptc->empty();
 		}
 	}
 
 	UpdateTabsForFile();
+
 	PopulateSummary();
 
 	if (!m_bIsVideo && NULL != m_QuiverFile.GetURI())
 	{
 		property_populate_exif(this);
+
 		PopulateXmp();
+
 		PopulateIptc();
 	}
 
+
 	if (m_bIsVideo)
 	{
-		gchar* szPath = g_filename_from_uri(m_QuiverFile.GetURI(), NULL, NULL);
-		if (NULL != szPath)
-		{
-			s_mapVideoInfoCache.erase(szPath);
-			g_free(szPath);
-		}
+		s_mapVideoInfoCache.erase(m_QuiverFile.GetURI());
 		PopulateVideo();
 	}
 
@@ -2076,8 +2227,11 @@ static void property_value_cell_edited_callback(const char *key, const char *new
 
 	QuiverUtils::ConnectUnmodifiedAccelerators();
 
-	std::shared_ptr<Exiv2::ExifData> pExifData = pImpl->m_ExifData;
-	if (NULL == key || NULL == pExifData.get()) return;
+	/* m_ExifData is a shared, read-only view of the impl's cache, so an edit
+	 * works on a private copy and hands that to SetExifData() instead. */
+	if (NULL == key || NULL == pImpl->m_ExifData.get()) return;
+	std::shared_ptr<Exiv2::ExifData> pExifData =
+		std::make_shared<Exiv2::ExifData>(*pImpl->m_ExifData);
 
 	const EditableTag* tag = FindEditableTag(key);
 	if (NULL == tag) return;
@@ -2136,6 +2290,8 @@ static void property_value_cell_edited_callback(const char *key, const char *new
 	if (updated)
 	{
 		pImpl->m_QuiverFile.SetExifData(pExifData);
+		/* re-read so the panel shows, and keys on, the edited metadata */
+		pImpl->m_ExifData = pImpl->m_QuiverFile.GetExifDataShared();
 		if (0 == strcmp(tag->key, "Exif.Image.Orientation"))
 			property_populate_exif(pImpl);
 		else

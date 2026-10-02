@@ -28,6 +28,7 @@
 #include "ImageLoader.h"
 #include "IPixbufLoaderObserver.h"
 #include "QuiverUtils.h"
+#include "QuiverMetrics.h"
 #include "QuiverPrefs.h"
 #include "QuiverFileOps.h"
 #include "BrowserHistory.h"
@@ -140,6 +141,13 @@ struct AsyncTextureData {
 	bool bAtSize;
 };
 
+/* "137px" - the thumbnail size currently being requested.  The decoded texture
+ * is rounded up to a bucket (see ThumbnailSizes in src/QuiverFile.cpp). */
+static gchar *thumb_scale_size_text(gdouble value)
+{
+	return g_strdup_printf("%.0fpx", value);
+}
+
 static gboolean idle_set_texture_b(gpointer data) {
 	AsyncTextureData *p = (AsyncTextureData*)data;
 	if (p->pTarget->pImageView != NULL)
@@ -238,6 +246,7 @@ public:
 
 	void RegisterActions();
 	void SetToolbar(GtkWidget *toolbar);
+	void Rename();
 	void UpdateUI(); // enable/disable toolbar/menu items
 	void Show();
 	void Hide();
@@ -288,7 +297,24 @@ public:
 	GtkWidget *hscale;
 
 	GtkWidget *m_pToolItemThumbSizer;
-	
+	/* Drag-time readout for the thumbnail slider.  An overlay child of the
+	 * sizer, so it annotates the slider without taking bar space. */
+	GtkWidget *m_pThumbSizerLabel;
+	/* = 0, not merely zeroed in the destructor: arm_hide() tests this to
+	 * decide whether a timeout is pending, and a stale nonzero value would
+	 * have it g_source_remove() some unrelated source id. */
+	guint m_ThumbSizerHideTimeout = 0;
+	/* TRUE only between the slider's press and the end of its drag; gates
+	 * whether value_changed is allowed to show the readout, so a
+	 * programmatic set_value() (restoring a saved size, clamping) cannot
+	 * leave a readout stuck on screen. */
+	gboolean m_ThumbSizerDragging = FALSE;
+	/* The pointer device the drag started on, so the poll can ask it whether
+	 * the button is still down.  Ref'd; NULL when no drag is active. */
+	GdkDevice *m_ThumbSizerDevice = NULL;
+	/* Milliseconds since the readout last changed, used only as a fallback
+	 * when no device could be captured. */
+	guint64 m_ThumbSizerLastChangeMs = 0;
 	GtkWidget *m_pToolbar;
 
 	GtkWidget *m_pContextMenuPopover;
@@ -495,7 +521,6 @@ static void browser_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data);
 #define ACTION_BROWSER_PASTE                              "BrowserPaste"
 #define ACTION_BROWSER_NEW_FOLDER                         "BrowserNewFolder"
 #define ACTION_BROWSER_ADD_BOOKMARK                       "BrowserAddBookmark"
-#define ACTION_BROWSER_RENAME                             "BrowserRename"
 #define ACTION_BROWSER_SELECT_ALL                         "BrowserSelectAll"
 #define ACTION_BROWSER_TRASH                              "BrowserTrash"
 #define ACTION_BROWSER_TRASH_FORCE                        "BrowserTrashForce"
@@ -655,6 +680,120 @@ void Browser::UpdateFullscreenSidebar()
 }
 
 
+void Browser::Rename()
+{
+	m_BrowserImplPtr->Rename();
+}
+
+void Browser::BrowserImpl::Rename()
+{
+	Browser::BrowserImpl* pBrowserImpl = this;
+	GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+	if (NULL == selection)
+		return;
+
+	const guint nSelected = g_list_length(selection);
+	if (0 == nSelected)
+	{
+		g_list_free(selection);
+		return;
+	}
+
+	/* Multi-select: hand the batch over to the rename task dialog
+	 * (template + numbering), not the single-item prompt. */
+	if (nSelected > 1)
+	{
+		std::vector<QuiverFile> files;
+		for (const GList *it = selection; NULL != it; it = it->next)
+		{
+			guint idx = (guint)(uintptr_t)it->data;
+			if (idx < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+				files.push_back((*pBrowserImpl->m_ImageListPtr)[idx]);
+		}
+		g_list_free(selection);
+		if (files.empty())
+			return;
+
+		/* Rename exactly the selected items; each keeps its own folder.
+		 * A parent-folder default is preset so the dialog's Folder mode
+		 * works, and a folder-first selection falls back to renaming
+		 * the whole folder containing the first item. */
+		RenameDlg dlg;
+		if (!files.empty())
+		{
+			const gchar* uri0 = files.front().GetURI();
+			if (NULL != uri0)
+			{
+				GFile* file = g_file_new_for_uri(uri0);
+				GFile* parent = g_file_get_parent(file);
+				g_object_unref(file);
+				if (NULL != parent)
+				{
+					gchar* parent_uri = g_file_get_uri(parent);
+					if (NULL != parent_uri)
+					{
+						dlg.SetInputFolder(parent_uri);
+						g_free(parent_uri);
+					}
+					g_object_unref(parent);
+				}
+			}
+		}
+		dlg.SetFiles(files);
+
+		if (dlg.Run())
+		{
+			RenameTaskPtr renameTaskPtr(new RenameTask());
+			renameTaskPtr->SetTemplate(dlg.GetTemplate());
+			if (dlg.GetFilesMode())
+			{
+				renameTaskPtr->AddFiles(dlg.GetFiles());
+			}
+			else
+			{
+				renameTaskPtr->SetInputFolder(dlg.GetInputFolder());
+			}
+			TaskManager::GetInstance()->AddTask(renameTaskPtr);
+		}
+		return;
+	}
+
+	guint item = (guint)(uintptr_t)selection->data;
+	g_list_free(selection);
+	if (item >= (guint)pBrowserImpl->m_ImageListPtr->GetSize())
+		return;
+
+	QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
+	/* The prompt and the rename itself live in QuiverUtils so the browser
+	 * and the viewer cannot drift apart. */
+	char* new_uri = QuiverUtils::PromptAndRenameFile(f);
+	if (NULL == new_uri)
+		return;
+
+	pBrowserImpl->m_ImageListPtr->Reload();
+	pBrowserImpl->m_ThumbnailCache.Clear();
+	pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
+
+	/* Position the list on the renamed item.  SetCurrentFile
+	 * refreshes the view downstream when the rename shifted the
+	 * item's index, but a rename that keeps the list order fires
+	 * nothing, so re-seat the cursor cell and the selection
+	 * explicitly under the item's new name. */
+	pBrowserImpl->m_ImageListPtr->SetCurrentFile(new_uri);
+
+	guint idx = pBrowserImpl->m_ImageListPtr->GetCurrentIndex();
+	quiver_icon_view_set_cursor_cell(
+		QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), idx);
+	GList *single = g_list_append(NULL, (gpointer)(uintptr_t)idx);
+	quiver_icon_view_set_selection(
+		QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), single);
+	g_list_free(single);
+
+	pBrowserImpl->m_BrowserHistory.SetCurrentSelected(new_uri);
+	g_free(new_uri);
+}
+
+
 //=============================================================================
 //=============================================================================
 // private browser implementation:
@@ -680,6 +819,12 @@ static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong c
 static gchar* text_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
+static void browser_thumb_sizer_pressed_cb(GtkGestureClick *gesture,
+	int n_press, double x, double y, gpointer user_data);
+static void browser_thumb_sizer_released_cb(GtkGestureClick *gesture,
+	int n_press, double x, double y, gpointer user_data);
+static gboolean browser_thumb_sizer_hide_cb(gpointer user_data);
+static void browser_thumb_sizer_arm_hide(Browser::BrowserImpl* b);
 
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
@@ -805,10 +950,10 @@ void notebook_page_removed  (GtkNotebook *notebook,
 Browser::BrowserImpl::BrowserImpl(Browser *parent) : 
 	m_FolderTreePtr(new FolderTree()),
 	m_ImageListPtr(new ImageList()),
-	m_ThumbnailCache(100),
-	m_IconCache(100),
-	m_IconOverlayCache(100),
-	m_FilmstripCache(8),
+	m_ThumbnailCache(100, "browser thumbnail"),
+	m_IconCache(100, "browser icon"),
+	m_IconOverlayCache(100, "browser overlay"),
+	m_FilmstripCache(8, "browser filmstrip"),
 	m_ImageListEventHandlerPtr( new ImageListEventHandler(this) ),
 	m_PreferencesEventHandlerPtr(new PreferencesEventHandler(this) ),
 	m_FolderTreeEventHandlerPtr( new FolderTreeEventHandler(this) ),
@@ -860,24 +1005,88 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	GtkWidget *scrolled_window;
 	GtkWidget *hbox,*vbox;
 
-	hscale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,20,256,1);
+	/* Upper bound matches the largest ThumbnailSizes bucket (512/"x-large",
+	 * src/QuiverFile.cpp).  It used to stop at 256, which made x-large
+	 * unreachable: no browser request could ever exceed the 256 bucket. */
+	hscale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,20,512,1);
 	gtk_range_set_value(GTK_RANGE(hscale),128);
 	gtk_scale_set_value_pos (GTK_SCALE(hscale),GTK_POS_LEFT);
+	/* The slider sets a *requested* size, and GetThumbnailTexture() rounds it up
+	 * to the next bucket, so the number the user picks is what matters to them
+	 * even though the decoded texture jumps at the bucket edges.  The number is
+	 * shown next to the slider while dragging (see m_pThumbSizerLabel) rather
+	 * than permanently: an always-on readout competes with the ticks the user
+	 * actually steers by. */
 	gtk_scale_set_draw_value(GTK_SCALE(hscale),FALSE);
+	/* Two ticks marking where the decoded bucket changes, unlabelled so they
+	 * stay out of the way of the readout.  No tick at 512: it coincides with
+	 * the end of the range and only restates the maximum.
+	 *
+	 * Keep in sync with ThumbnailSizes in src/QuiverFile.cpp - these are the
+	 * sizes that must exist for the rounding to land where the UI implies. */
+	static const int thumb_bucket_marks[] = { 128, 256 };
+	for (unsigned int i = 0; i < G_N_ELEMENTS(thumb_bucket_marks); i++)
+	{
+		gtk_scale_add_mark(GTK_SCALE(hscale), thumb_bucket_marks[i],
+			GTK_POS_BOTTOM, NULL);
+	}
 	gtk_widget_set_tooltip_text(hscale, "Thumbnail Size");
 	gtk_widget_set_focus_on_click(hscale, FALSE);
 	gtk_widget_set_focusable(hscale, FALSE);
 
-	gtk_widget_set_size_request(hscale,100,-1);
-	m_pToolItemThumbSizer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_widget_set_hexpand(m_pToolItemThumbSizer, TRUE);
+	gtk_widget_set_size_request(hscale,200,-1);
 
 	gtk_widget_set_halign(hscale, GTK_ALIGN_END);
 	gtk_widget_set_valign(hscale, GTK_ALIGN_CENTER);
 	gtk_widget_set_margin_start(hscale, 4);
 	gtk_widget_set_margin_end(hscale, 4);
 	
-	gtk_box_append(GTK_BOX(m_pToolItemThumbSizer), hscale);
+	/* Drag-time readout, under the slider.
+	 *
+	 * Deliberately NOT a GtkPopover: GTK4 pops a popover straight back down
+	 * when it is shown while a button press is still in flight, and the slider
+	 * holds the button for the entire drag, so the popover cannot stay up
+	 * (verified with synthesised X input - it dies on the first motion event).
+	 * A tooltip does survive, but only after the ~500ms hover timeout, which is
+	 * far too slow for drag feedback.
+	 *
+	 * Stacked under the slider rather than packed beside it, so it costs the
+	 * bar no horizontal space: reserving a width for it squeezed the window
+	 * title on every drag.  A plain vertical box is what actually gets the text
+	 * below the trough - a GtkOverlay cannot, because it sizes to its tallest
+	 * child, and the readout is shorter than the slider, so pinned to the
+	 * bottom it lands on the tick marks rather than clear of them.
+	 *
+	 * The readout holds a fixed height whether or not it has text, so the bar
+	 * never changes height mid-drag; when empty it drops its pill styling (see
+	 * browser_thumb_sizer_set_text) and paints nothing at all. */
+	m_pThumbSizerLabel = gtk_label_new("");
+	gtk_label_set_xalign(GTK_LABEL(m_pThumbSizerLabel), 0.5f);
+	gtk_widget_set_halign(m_pThumbSizerLabel, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pThumbSizerLabel, GTK_ALIGN_CENTER);
+	gtk_widget_set_size_request(m_pThumbSizerLabel, -1, 20);
+	gtk_widget_set_margin_top(m_pThumbSizerLabel, 1);
+	gtk_widget_add_css_class(m_pThumbSizerLabel, "numeric");
+
+	GtkWidget *sizerStack = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_widget_set_valign(sizerStack, GTK_ALIGN_CENTER);
+	gtk_box_append(GTK_BOX(sizerStack), hscale);
+	gtk_box_append(GTK_BOX(sizerStack), m_pThumbSizerLabel);
+	/* Decoration only - the slider must keep receiving every drag event. */
+	gtk_widget_set_can_target(m_pThumbSizerLabel, FALSE);
+
+	m_pToolItemThumbSizer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_widget_set_hexpand(m_pToolItemThumbSizer, TRUE);
+	gtk_box_append(GTK_BOX(m_pToolItemThumbSizer), sizerStack);
+
+	GtkGesture *thumbPress = gtk_gesture_click_new();
+	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(thumbPress),
+		GDK_BUTTON_PRIMARY);
+	g_signal_connect(thumbPress, "pressed",
+		G_CALLBACK(browser_thumb_sizer_pressed_cb), this);
+	g_signal_connect(thumbPress, "released",
+		G_CALLBACK(browser_thumb_sizer_released_cb), this);
+	gtk_widget_add_controller(hscale, GTK_EVENT_CONTROLLER(thumbPress));
 
 	g_object_ref(m_pToolItemThumbSizer);
 	
@@ -1195,7 +1404,10 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 
 	gdouble thumb_size = (gdouble)prefsPtr->GetInteger(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMB_SIZE);	
 
-	if (thumb_size < 20. || 256. < thumb_size)
+	/* Range guard against a corrupted/hand-edited prefs file.  The bounds must
+	 * track the slider (20-512); they used to clamp 256, which would silently
+	 * discard a saved 512 and reset the icon view to 128 on every launch. */
+	if (thumb_size < 20. || 512. < thumb_size)
 	{
 		thumb_size = 128.;
 	}
@@ -1367,6 +1579,18 @@ Browser::BrowserImpl::~BrowserImpl()
 
 	/* 3. the thumb-sizer floats between the app toolbar and the browser; it is
 	 *    NOT part of m_pBrowserWidget, release it while both still exist */
+	if (m_ThumbSizerHideTimeout)
+	{
+		g_source_remove(m_ThumbSizerHideTimeout);
+		m_ThumbSizerHideTimeout = 0;
+	}
+	if (m_ThumbSizerDevice)
+	{
+		g_object_unref(m_ThumbSizerDevice);
+		m_ThumbSizerDevice = NULL;
+	}
+	/* The label is a child of m_pToolItemThumbSizer, released just below. */
+	m_pThumbSizerLabel = NULL;
 	if (m_pToolItemThumbSizer)
 	{
 		if (gtk_widget_get_parent(m_pToolItemThumbSizer))
@@ -1416,7 +1640,6 @@ void Browser::BrowserImpl::RegisterActions()
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_PASTE, "<Control>V", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_NEW_FOLDER, "<Control><Shift>N", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_ADD_BOOKMARK, NULL, browser_action_handler_cb, this);
-	QuiverUtils::AddSimpleAction(ACTION_BROWSER_RENAME, "F2", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_SELECT_ALL, "<Control>A", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH, "Delete", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_TRASH_FORCE, "<Shift>Delete", browser_action_handler_cb, this);
@@ -1672,12 +1895,186 @@ ImageListPtr Browser::BrowserImpl::GetImageList()
 // BrowswerImpl Callbacks
 //=============================================================================
 
+/* Set (or clear) the readout, styling it only when it has something to say.
+ *
+ * The pill background is applied per-call rather than once at construction: an
+ * empty label still paints its rounded background, so a readout parked at ""
+ * rendered as a small blank circle sitting under the slider.  Driving the style
+ * from the text means idle paints nothing at all. */
+static void browser_thumb_sizer_set_text(Browser::BrowserImpl* b, const char *text)
+{
+	if (!b->m_pThumbSizerLabel)
+		return;
+
+	gtk_label_set_text(GTK_LABEL(b->m_pThumbSizerLabel), text ? text : "");
+
+	if (text != NULL && *text != '\0')
+		gtk_widget_add_css_class(b->m_pThumbSizerLabel, "thumb-sizer-readout");
+	else
+		gtk_widget_remove_css_class(b->m_pThumbSizerLabel, "thumb-sizer-readout");
+}
+
+/* Hide the readout but keep the drag session alive, so the next value change
+ * brings it straight back. */
+static void browser_thumb_sizer_hide_only(Browser::BrowserImpl* b)
+{
+	browser_thumb_sizer_set_text(b, "");
+}
+
+/* End the drag session for good: clear the readout and stop polling. */
+static void browser_thumb_sizer_finish(Browser::BrowserImpl* b)
+{
+	b->m_ThumbSizerDragging = FALSE;
+
+	if (b->m_ThumbSizerHideTimeout)
+	{
+		g_source_remove(b->m_ThumbSizerHideTimeout);
+		b->m_ThumbSizerHideTimeout = 0;
+	}
+
+	if (b->m_ThumbSizerDevice)
+	{
+		g_object_unref(b->m_ThumbSizerDevice);
+		b->m_ThumbSizerDevice = NULL;
+	}
+
+	browser_thumb_sizer_set_text(b, "");
+}
+
+/* Tick while a drag session is open.
+ *
+ * There is no usable end-of-drag signal, and that is worth spelling out because
+ * it was the cause of a bug here.  GtkScale grabs the pointer for the whole
+ * drag with its own internal gesture, which CANCELS every GtkGestureClick on
+ * the scale - and on the window too, since the implicit grab retargets the
+ * whole sequence - so "released" never arrives.  Verified with synthesised X
+ * input (press, drag, release): the bubble gesture sees "pressed" and then
+ * "end" with no "released", both in the bubble and the capture phase, and an
+ * ancestor gesture is cancelled identically.  gdk_display_device_is_grabbed()
+ * is no help either: it stays FALSE for the whole drag because GTK4 implicit
+ * grabs are not reported there.
+ *
+ * So the readout is held for as long as the drag plausibly lasts, and a pause
+ * with the button still down only hides it - the session stays open, so any
+ * further movement repaints it at once.  The long cap only exists so a lost
+ * release can never leave it stuck on screen forever; it is deliberately far
+ * beyond any real pause. */
+#define QUIVER_THUMB_SIZER_POLL_MS   60
+/* How long the value may sit unchanged before the drag is treated as over.  A
+ * pause with the button still held is indistinguishable from a release, so this
+ * has to be long enough that a real pause does not read as "finished" - the
+ * readout is far more annoying when it vanishes mid-drag than when it lingers
+ * for a moment after release. */
+#define QUIVER_THUMB_SIZER_HIDE_MS 10000
+
+static gboolean browser_thumb_sizer_poll_cb(gpointer user_data)
+{
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+
+	if (!b->m_ThumbSizerDragging)
+	{
+		browser_thumb_sizer_finish(b);
+		return G_SOURCE_REMOVE;
+	}
+
+	guint64 idle = g_get_monotonic_time() / 1000 - b->m_ThumbSizerLastChangeMs;
+
+	/* Nothing has moved for a long time, so this really is over.  End the
+	 * session: this is the backstop for a release we could not observe. */
+	if (idle >= QUIVER_THUMB_SIZER_HIDE_MS)
+	{
+		browser_thumb_sizer_finish(b);
+		return G_SOURCE_REMOVE;
+	}
+
+	/* Otherwise leave the readout exactly as it is.  Hiding it on every tick
+	 * would make it strobe during a drag, and hiding it the instant the value
+	 * paused is the bug this replaces.  Any further movement calls
+	 * update_label() again and repaints it at once. */
+	return G_SOURCE_CONTINUE;
+}
+
+/* (Re)start the poll and mark the value as just changed. */
+static void browser_thumb_sizer_arm_poll(Browser::BrowserImpl* b)
+{
+	b->m_ThumbSizerLastChangeMs = g_get_monotonic_time() / 1000;
+
+	if (b->m_ThumbSizerHideTimeout)
+		return;
+
+	b->m_ThumbSizerHideTimeout = g_timeout_add(QUIVER_THUMB_SIZER_POLL_MS,
+		browser_thumb_sizer_poll_cb, b);
+}
+
+/* Refill the drag readout from the scale's current value.
+ *
+ * Gated on m_ThumbSizerDragging: value_changed also fires for a
+ * programmatic set_value() (restoring the saved size at startup, clamping a
+ * stored value back into range).  Those set text with no press to arm a hide
+ * timer, so the readout stayed on screen with nothing left to clear it. */
+static void browser_thumb_sizer_update_label(Browser::BrowserImpl* b,
+	GtkWidget *scale)
+{
+	if (!b->m_pThumbSizerLabel)
+		return;
+
+	if (!b->m_ThumbSizerDragging)
+		return;
+
+	gchar *text = thumb_scale_size_text(gtk_range_get_value(GTK_RANGE(scale)));
+	browser_thumb_sizer_set_text(b, text);
+	g_free(text);
+
+	browser_thumb_sizer_arm_poll(b);
+}
+
+static void browser_thumb_sizer_pressed_cb(GtkGestureClick *gesture,
+	int n_press, double x, double y, gpointer user_data)
+{
+	(void)n_press;
+	(void)x;
+	(void)y;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	GtkWidget *scale = gtk_event_controller_get_widget(
+		GTK_EVENT_CONTROLLER(gesture));
+
+	/* Remember which pointer started the drag, so the poll can test that same
+	 * device for a held button rather than assuming motion implies activity. */
+	GdkEvent *last = gtk_gesture_get_last_event(GTK_GESTURE(gesture), NULL);
+	GdkDevice *dev = last ? gdk_event_get_device(last) : NULL;
+	if (b->m_ThumbSizerDevice)
+		g_object_unref(b->m_ThumbSizerDevice);
+	b->m_ThumbSizerDevice = dev ? g_object_ref(dev) : NULL;
+
+	/* Flag before filling: a click on the trough has already moved the value
+	 * before our handler runs, so no later value_changed is coming to start the
+	 * poll, and the readout would never be cleared. */
+	b->m_ThumbSizerDragging = TRUE;
+	browser_thumb_sizer_update_label(b, scale);
+}
+
+/* Only reached when the press turns into a click without movement (a plain
+ * jump to the clicked value); a real drag ends via the inactivity timeout. */
+static void browser_thumb_sizer_released_cb(GtkGestureClick *gesture,
+	int n_press, double x, double y, gpointer user_data)
+{
+	(void)gesture;
+	(void)n_press;
+	(void)x;
+	(void)y;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	browser_thumb_sizer_finish(b);
+}
+
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data)
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 	gdouble value = gtk_range_get_value (range);
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), (gint)value,(gint)value);
 	b->m_ThumbnailLoader.SetIconDimensions((guint)value, (guint)value);
+	/* Covers dragging and keyboard stepping; the press gesture decides whether
+	 * anything is shown at all. */
+	browser_thumb_sizer_update_label(b, GTK_WIDGET(range));
 }
 
 static void browser_icon_view_map_cb(GtkWidget *widget, gpointer user_data)
@@ -1775,19 +2172,12 @@ static gchar* text_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointe
 	if (!f.IsFolder())
 		return NULL;
 
-	const gchar* uri = f.GetURI();
-	gchar* path = g_filename_from_uri(uri,NULL,NULL);
-	gchar* name;
-	if (path)
-	{
-		name = g_filename_display_basename(path);
-		g_free(path);
-	}
-	else
-	{
-		name = g_strdup("");
-	}
-	return name;
+	/* GetDisplayBasename() rather than g_filename_from_uri(): a trash:///
+	 * folder has no local path at all, so that returned NULL and the label
+	 * came out empty - folders in the trash showed no name at all.  It also
+	 * percent-decodes, so a name holding a space is not shown as %20. */
+	std::string display = QuiverUtils::GetDisplayBasename(f.GetURI());
+	return g_strdup(display.c_str());
 }
 
 static gboolean thumbnail_loader_update_list (gpointer data)
@@ -2629,8 +3019,14 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 			}
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), canBookmark);
 		}
-		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_RENAME)))
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && !bTrash);
+		/* F2 is one action for the window now.  Only the pane on screen may
+		 * decide whether it is usable, otherwise the hidden browser's stale
+		 * selection would disable it while the viewer is up. */
+		if (gtk_widget_get_visible(pBrowserImpl->m_pBrowserWidget))
+		{
+			if (NULL != (a = QuiverUtils::GetAction(ACTION_QUIVER_QUICK_RENAME)))
+				g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && !bTrash);
+		}
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_TRASH)))
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection);
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_RESTORE)))
@@ -2710,7 +3106,7 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 		if (QuiverFileOps::ClipboardHasItems())
 			browser_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
 				"<Control>v", NULL, "edit-paste-symbolic");
-		browser_menu_item(menu, "Rename", "quiver." ACTION_BROWSER_RENAME,
+		browser_menu_item(menu, "Rename", "quiver." ACTION_QUIVER_QUICK_RENAME,
 			"F2", NULL, "document-edit-symbolic");
 		if (bHasFolder)
 		{
@@ -3516,147 +3912,14 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			QuiverUtils::PromptAddBookmark(uris);
 		}
 	}
-	else if (0 == strcmp(szAction,ACTION_BROWSER_RENAME))
+	else if (0 == strcmp(szAction,ACTION_BROWSER_SELECT_ALL))
 	{
-		GList *selection = quiver_icon_view_get_selection(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
-		if (NULL == selection)
-			return;
-
-		const guint nSelected = g_list_length(selection);
-		if (0 == nSelected)
-		{
-			g_list_free(selection);
-			return;
-		}
-
-		/* Multi-select: hand the batch over to the rename task dialog
-		 * (template + numbering), not the single-item prompt. */
-		if (nSelected > 1)
-		{
-			std::vector<QuiverFile> files;
-			for (const GList *it = selection; NULL != it; it = it->next)
-			{
-				guint idx = (guint)(uintptr_t)it->data;
-				if (idx < (guint)pBrowserImpl->m_ImageListPtr->GetSize())
-					files.push_back((*pBrowserImpl->m_ImageListPtr)[idx]);
-			}
-			g_list_free(selection);
-			if (files.empty())
-				return;
-
-			/* Rename exactly the selected items; each keeps its own folder.
-			 * A parent-folder default is preset so the dialog's Folder mode
-			 * works, and a folder-first selection falls back to renaming
-			 * the whole folder containing the first item. */
-			RenameDlg dlg;
-			if (!files.empty())
-			{
-				const gchar* uri0 = files.front().GetURI();
-				if (NULL != uri0)
-				{
-					GFile* file = g_file_new_for_uri(uri0);
-					GFile* parent = g_file_get_parent(file);
-					g_object_unref(file);
-					if (NULL != parent)
-					{
-						gchar* parent_uri = g_file_get_uri(parent);
-						if (NULL != parent_uri)
-						{
-							dlg.SetInputFolder(parent_uri);
-							g_free(parent_uri);
-						}
-						g_object_unref(parent);
-					}
-				}
-			}
-			dlg.SetFiles(files);
-
-			if (dlg.Run())
-			{
-				RenameTaskPtr renameTaskPtr(new RenameTask());
-				renameTaskPtr->SetTemplate(dlg.GetTemplate());
-				if (dlg.GetFilesMode())
-				{
-					renameTaskPtr->AddFiles(dlg.GetFiles());
-				}
-				else
-				{
-					renameTaskPtr->SetInputFolder(dlg.GetInputFolder());
-				}
-				TaskManager::GetInstance()->AddTask(renameTaskPtr);
-			}
-			return;
-		}
-
-		guint item = (guint)(uintptr_t)selection->data;
-		g_list_free(selection);
-		if (item >= (guint)pBrowserImpl->m_ImageListPtr->GetSize())
-			return;
-
-		QuiverFile f = (*pBrowserImpl->m_ImageListPtr)[item];
-		char *old_name = g_path_get_basename(f.GetURI());
-		char *new_name = QuiverUtils::PromptForString(
-			"Rename", "Enter the new name for this item:", old_name);
-
-		if (NULL == new_name)
-		{
-			g_free(old_name);
-			return;
-		}
-
-		gboolean renamed = FALSE;
-		char *new_uri = NULL;
-		GFile *src = g_file_new_for_uri(f.GetURI());
-		GError *error = NULL;
-		GFile *dst = g_file_set_display_name(src, new_name, NULL, &error);
-		if (NULL == dst)
-		{
-			QuiverUtils::ConfirmDialog("Rename failed",
-				error && error->message ? error->message
-					: "The item could not be renamed.",
-				"OK", "Close");
-			if (error)
-				g_error_free(error);
-		}
-		else
-		{
-			renamed = TRUE;
-			new_uri = g_file_get_uri(dst);
-			g_object_unref(dst);
-		}
-		g_object_unref(src);
-		g_free(new_name);
-		g_free(old_name);
-
-		if (renamed)
-		{
-			pBrowserImpl->m_ImageListPtr->Reload();
-			pBrowserImpl->m_ThumbnailCache.Clear();
-			pBrowserImpl->m_ThumbnailLoader.UpdateList(true);
-
-			if (NULL != new_uri)
-			{
-				/* Position the list on the renamed item.  SetCurrentFile
-				 * refreshes the view downstream when the rename shifted the
-				 * item's index, but a rename that keeps the list order fires
-				 * nothing, so re-seat the cursor cell and the selection
-				 * explicitly under the item's new name. */
-				pBrowserImpl->m_ImageListPtr->SetCurrentFile(new_uri);
-
-				guint idx = pBrowserImpl->m_ImageListPtr->GetCurrentIndex();
-				quiver_icon_view_set_cursor_cell(
-					QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), idx);
-				GList *single = g_list_append(NULL, (gpointer)(uintptr_t)idx);
-				quiver_icon_view_set_selection(
-					QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), single);
-				g_list_free(single);
-
-				pBrowserImpl->m_BrowserHistory.SetCurrentSelected(new_uri);
-				g_free(new_uri);
-			}
-		}
+		/* The action's <Control>A accelerator is claimed by the window, so
+		 * the icon view's own key handler never gets to see the key. */
+		if (NULL != pBrowserImpl->m_pIconView)
+			quiver_icon_view_set_select_all(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView), TRUE);
 	}
-	else if (0 == strcmp(szAction, ACTION_BROWSER_TRASH)
+	else if (0 == strcmp(szAction,ACTION_BROWSER_TRASH)
 			|| 0 == strcmp(szAction, ACTION_BROWSER_TRASH_FORCE))
 	{
 		bool bForce = (0 == strcmp(szAction, ACTION_BROWSER_TRASH_FORCE));
@@ -4192,11 +4455,18 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 				usleep(2000);
 			}
 			guint iMaxSide = std::max(uiLoadW,uiLoadH);
+			/* This is the expensive half: a cache miss falls through to a gvfs
+			 * read plus a decode on this worker thread.  The iconcell fetch
+			 * timing covers only the main-thread lookup, so without this the
+			 * log shows near-zero fetch cost while the loader looks stalled. */
+			QuiverMetricTimer t_generate("iconcell", "thumbnail generate");
 			texture = f.GetThumbnailTexture(iMaxSide);
 		}
 
 		if (NULL != texture)
 		{
+			quiver_metric_emit("iconcell", "requested size",
+				(double)std::max(uiLoadW,uiLoadH), "px");
 			guint thumb_width, thumb_height;
 			thumb_width = gdk_texture_get_width(texture);
 			thumb_height = gdk_texture_get_height(texture);

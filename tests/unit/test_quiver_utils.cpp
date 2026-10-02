@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "QuiverUtils.h"
+#include "QuiverFileOps.h"
 #include "test_helpers.h"
 #if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -494,6 +495,36 @@ TEST_CASE("QuiverUtils Rename Basename Selection and Extension Preservation", "[
         CHECK(std::string(result) == "New Folder");
         g_free(result);
     }
+
+    SECTION("a name from a URI reaches the entry decoded")
+    {
+        /* The rename prompt is seeded from QuiverFile::GetFileName() because
+         * GetURI() percent-encodes: "my photo (1).jpg" is
+         * ".../my%20photo%20%281%29.jpg". Splitting the URI as a path put the
+         * escapes in the entry, and accepting it unchanged renamed the file to
+         * a name holding a literal "%20". */
+        const char *uri = "file:///tmp/my%20photo%20%281%29.jpg";
+
+        gchar *split = g_path_get_basename(uri);
+        CHECK(std::string(split) == "my%20photo%20%281%29.jpg");
+        g_free(split);
+
+        GFile *file = g_file_new_for_uri(uri);
+        gchar *decoded = g_file_get_basename(file);
+        CHECK(std::string(decoded) == "my photo (1).jpg");
+        g_free(decoded);
+        g_object_unref(file);
+
+        /* And the decoded name is what has to be handed back to GIO to
+         * rename it, which escapes again on the way out. */
+        QuiverFile qf(uri);
+        CHECK(qf.GetFileName() == "my photo (1).jpg");
+
+        /* PromptForString is passed that decoded name verbatim, so the
+         * extension-preserving resolve keeps a real extension. */
+        CHECK(QuiverUtils::GetBasenameCharLength("my photo (1).jpg") == 12);
+        CHECK(QuiverUtils::ResolveRenameString("my photo (1).jpg", "my photo (1)") == "my photo (1).jpg");
+    }
 }
 
 TEST_CASE("QuiverUtils IsDirectoryURI and GetUniqueFolderName", "[unit][fileops][fast]")
@@ -814,4 +845,96 @@ TEST_CASE("QuiverUtils drops one owner without disturbing the next", "[unit][act
     REQUIRE(QuiverUtils::GetAction("quiverTestSecondOwnerAction") != nullptr);
     QuiverUtils::RemoveActionsFor(&second_owner);
     CHECK(QuiverUtils::GetAction("quiverTestSecondOwnerAction") == nullptr);
+}
+
+/* A Sony DSC-TX30 photo has a legitimate 60-odd EXIF entries, but its
+ * MakerNote is encrypted, and Exiv2 0.28.8 walks the decrypted block as an
+ * extra IFD.  That one mis-parse turns into 8296 rows, 8141 of them invented
+ * "0x…" tags under the Sony2010e group.  They are noise, not information. */
+TEST_CASE("QuiverUtils IsMakernoteArtifact filters decode noise only",
+          "[unit][exif][fast]")
+{
+    // a Sony MakerNote row that Exiv2 could not name is an artifact
+    CHECK(QuiverUtils::IsMakernoteArtifact("Sony2010e", "Exif.Sony2010e.0x12eb"));
+    CHECK(QuiverUtils::IsMakernoteArtifact("Sony2010e", "Exif.Sony2010e.0x012ec"));
+    CHECK(QuiverUtils::IsMakernoteArtifact("SonyMisc1",
+                                          "Exif.SonyMisc1.0x0003"));
+
+    // a vendor tag Exiv2 does have a name for is real information
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact(
+        "Sony2010e", "Exif.Sony2010e.SequenceImageNumber"));
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact(
+        "Sony2010e", "Exif.Sony2010e.ReleaseMode2"));
+
+    // standard groups are never filtered, named or not
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact("Image", "Exif.Image.Orientation"));
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact("Photo", "Exif.Photo.PixelXDimension"));
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact("Iop", "Exif.Iop.RelatedImageWidth"));
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact("Thumbnail",
+                                                 "Exif.Thumbnail.0x0201"));
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact("GPSInfo", "Exif.GPSInfo.GPSLatitude"));
+
+    // the MakerNote container rows themselves survive
+    CHECK_FALSE(QuiverUtils::IsMakernoteArtifact("MakerNote",
+                                                 "Exif.MakerNote.Offset"));
+}
+
+TEST_CASE("QuiverUtils IsStandardExifGroup separates vendor groups",
+          "[unit][exif][fast]")
+{
+    // the groups the standard defines
+    CHECK(QuiverUtils::IsStandardExifGroup("Image"));
+    CHECK(QuiverUtils::IsStandardExifGroup("Photo"));
+    CHECK(QuiverUtils::IsStandardExifGroup("Iop"));
+    CHECK(QuiverUtils::IsStandardExifGroup("Thumbnail"));
+    CHECK(QuiverUtils::IsStandardExifGroup("GPSInfo"));
+    CHECK(QuiverUtils::IsStandardExifGroup("SubImage1"));
+
+    // a maker's own groups, which the EXIF view shows in their own section
+    CHECK_FALSE(QuiverUtils::IsStandardExifGroup("Sony1"));
+    CHECK_FALSE(QuiverUtils::IsStandardExifGroup("Sony2010e"));
+    CHECK_FALSE(QuiverUtils::IsStandardExifGroup("SonyMisc1"));
+    CHECK_FALSE(QuiverUtils::IsStandardExifGroup("MakerNote"));
+
+    // the split is total: every group answers one way or the other, so the
+    // two passes over the EXIF list cannot drop or double-count a row
+    CHECK(QuiverUtils::IsStandardExifGroup("Image"));
+    CHECK_FALSE(QuiverUtils::IsStandardExifGroup("Sony2010e"));
+}
+
+TEST_CASE("Raw byte blobs are kept out of the EXIF table")
+{
+	/* Exiv2 renders these as space-separated decimal numbers, so every
+	 * character is printable and a printability test waves them through. */
+	CHECK(QuiverUtils::IsBinaryExifBlob("Exif.Photo.MakerNote"));
+	CHECK(QuiverUtils::IsBinaryExifBlob("Exif.Image.PrintImageMatching"));
+	CHECK(QuiverUtils::IsBinaryExifBlob("Exif.Image.OtherImage"));
+	CHECK(QuiverUtils::IsBinaryExifBlob("Exif.Photo.SubIFDs"));
+
+	/* the readable tags stay, including the ones a maker does name */
+	CHECK_FALSE(QuiverUtils::IsBinaryExifBlob("Exif.Image.Model"));
+	CHECK_FALSE(QuiverUtils::IsBinaryExifBlob("Exif.Image.DateTime"));
+	CHECK_FALSE(QuiverUtils::IsBinaryExifBlob("Exif.Photo.UserComment"));
+	CHECK_FALSE(QuiverUtils::IsBinaryExifBlob("Exif.Photo.ExifVersion"));
+	CHECK_FALSE(QuiverUtils::IsBinaryExifBlob("Exif.Sony1.ZoneMatching"));
+
+	/* a key that merely mentions a blob must not match */
+	CHECK_FALSE(QuiverUtils::IsBinaryExifBlob("Exif.Image.MakerNoteComment"));
+	CHECK_FALSE(QuiverUtils::IsBinaryExifBlob("Exif.Photo.MakerNote.Artist"));
+}
+
+TEST_CASE("Display basenames work for URIs that have no local path")
+{
+	/* Folders in the trash are labelled from this.  g_filename_from_uri()
+	 * returns NULL for trash:/// (it has no local path at all), which used to
+	 * leave the label empty and so showed no name under a trashed folder. */
+	CHECK(QuiverUtils::GetDisplayBasename("trash:///") != "");
+	CHECK(QuiverUtils::GetDisplayBasename("trash:///My%20Folder") == "My Folder");
+	CHECK(QuiverUtils::GetDisplayBasename("trash:///holiday%2F2023") == "holiday/2023");
+
+	/* the ordinary cases keep working */
+	CHECK(QuiverUtils::GetDisplayBasename("file:///tmp/somefile.jpg") == "somefile.jpg");
+	CHECK(QuiverUtils::GetDisplayBasename("/tmp/plain.jpg") == "plain.jpg");
+	CHECK(QuiverUtils::GetDisplayBasename("") == "");
+	CHECK(QuiverUtils::GetDisplayBasename(NULL) == "");
 }

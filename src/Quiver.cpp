@@ -2,6 +2,7 @@
 
 #include <gst/gst.h>
 
+#include "QuiverMetrics.h"
 #include "Quiver.h"
 
 GtkApplication *g_pApp = NULL;
@@ -148,7 +149,15 @@ public:
 	 * and pruned when an item is deleted.  Clicking an entry re-opens the item
 	 * inside the image list it was originally viewed in. */
 	void RecordRecentView(const QuiverFile& f);
+	/* Cheap: rebuilds the GMenu model from strings alone, no filesystem
+	 * access.  The popover's thumbnails are populated separately and only
+	 * when the popover is actually shown. */
 	void RebuildRecentMenu();
+	void RebuildRecentMenuDeferred();
+	void PopulateRecentPopover();
+	void PopulateRecentPopoverIfVisible();
+	static gboolean recent_menu_idle_cb(gpointer user_data);
+	static void recent_popover_show_cb(GtkPopover *popover, gpointer user_data);
 	void OnOpenRecent(const std::string& uri);
 	/* Parent the toast into whichever overlay is active for the current mode
 	 * (browser icon view vs. viewer image view). */
@@ -341,6 +350,9 @@ public:
 	GtkWidget *m_pRecentPopover;
 	GtkWidget *m_pToolbarRecentBtn;
 	RecentItems m_RecentItems;
+	/* Pending idle handler coalescing recent-menu rebuilds.  See
+	 * RebuildRecentMenuDeferred(). */
+	guint m_recentMenuIdleId;
 };
 
 
@@ -397,6 +409,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pExternalToolsMenu = NULL;
 	m_pRecentMenu = g_menu_new();
 	m_pRecentPopover = NULL;
+	m_recentMenuIdleId = 0;
 	m_pToolbarRecentBtn = NULL;
 
 	// add ignored extensions
@@ -980,7 +993,7 @@ static void quiver_trash_undo_changed_cb(
 				}
 				if (0 < deletedURIs.size() && 0 < pQuiverImpl->m_RecentItems.RemoveAllByURIs(deletedURIs))
 				{
-					pQuiverImpl->RebuildRecentMenu();
+					pQuiverImpl->RebuildRecentMenuDeferred();
 				}
 			}
 		}
@@ -1337,7 +1350,15 @@ void QuiverImpl::RecordRecentView(const QuiverFile& f)
 	}
 
 	m_RecentItems.Record(f.GetURI(), attrs);
-	RebuildRecentMenu();
+	/* Deferred, not immediate.  Every selection change - which includes every
+	 * scroll step - used to rebuild the whole recent menu synchronously here,
+	 * and building the popover meant a QuiverFile (and so a synchronous
+	 * g_file_query_info) plus a thumbnail decode for each of ~15 entries.  On
+	 * trash:// that is 15 blocking GVFS round-trips per scroll tick on the main
+	 * thread, which starved the frame clock until a deep GVFS call ran into
+	 * the stack guard.  The menu model is now rebuilt once the main loop goes
+	 * idle, so a burst of scroll events collapses into one rebuild. */
+	RebuildRecentMenuDeferred();
 }
 
 void QuiverImpl::RebuildRecentMenu()
@@ -1365,12 +1386,14 @@ void QuiverImpl::RebuildRecentMenu()
 					entries.end() != itr; ++itr)
 			{
 				const RecentItems::Entry& entry = *itr;
-				gchar *name = g_path_get_basename(entry.uri.c_str());
+				/* Decoded: GetURI() percent-encodes, so g_path_get_basename()
+				 * would label the row "my%20photo.jpg".  Static helper - building
+				 * a QuiverFile just for its name would cost a g_file_query_info. */
+				std::string name = QuiverUtils::GetDisplayBasename(entry.uri.c_str());
 				/* The action takes a string parameter, so the item must carry the
 				 * matching "target" attribute ("action-target" is not a GMenuModel
 				 * attribute); without it GTK renders the row insensitive. */
-				GMenuItem *item = g_menu_item_new(name, NULL);
-				g_free(name);
+				GMenuItem *item = g_menu_item_new(name.c_str(), NULL);
 				g_menu_item_set_action_and_target_value(item,
 					"quiver." ACTION_QUIVER_OPEN_RECENT,
 					g_variant_new_string(entry.uri.c_str()));
@@ -1382,125 +1405,178 @@ void QuiverImpl::RebuildRecentMenu()
 		}
 	}
 
-	if (NULL != m_pRecentPopover)
+	/* The popover thumbnail grid costs a QuiverFile (a synchronous
+	 * g_file_query_info) plus a decode per entry, so it is not rebuilt here.
+	 * RebuildRecentMenuDeferred() coalesces bursts of selection changes into
+	 * a single idle-time rebuild, and the grid is filled in on demand by
+	 * PopulateRecentPopoverIfVisible(). */
+	PopulateRecentPopoverIfVisible();
+}
+
+gboolean QuiverImpl::recent_menu_idle_cb(gpointer user_data)
+{
+	QuiverImpl *pQuiverImpl = static_cast<QuiverImpl*>(user_data);
+	if (NULL == pQuiverImpl)
 	{
-		GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-		gtk_widget_set_margin_start(content_box, 10);
-		gtk_widget_set_margin_end(content_box, 10);
-		gtk_widget_set_margin_top(content_box, 10);
-		gtk_widget_set_margin_bottom(content_box, 10);
+		return G_SOURCE_REMOVE;
+	}
+	pQuiverImpl->m_recentMenuIdleId = 0;
+	pQuiverImpl->RebuildRecentMenu();
+	return G_SOURCE_REMOVE;
+}
 
-		GtkWidget *header_lbl = gtk_label_new(NULL);
-		gtk_label_set_markup(GTK_LABEL(header_lbl), "<b>Recently Viewed</b>");
-		gtk_widget_set_halign(header_lbl, GTK_ALIGN_START);
-		gtk_box_append(GTK_BOX(content_box), header_lbl);
+void QuiverImpl::RebuildRecentMenuDeferred()
+{
+	if (NULL == m_pRecentMenu)
+	{
+		return;
+	}
+	if (0 != m_recentMenuIdleId)
+	{
+		/* Already scheduled: leave the single pending idle handler in place so
+		 * a burst of selection/scroll events results in one rebuild. */
+		return;
+	}
+	m_recentMenuIdleId = g_idle_add(recent_menu_idle_cb, this);
+}
 
-		if (0 == m_RecentItems.GetSize())
+void QuiverImpl::PopulateRecentPopoverIfVisible()
+{
+	/* Only pay for thumbnails when the popover is actually on screen. */
+	if (NULL == m_pRecentPopover)
+	{
+		return;
+	}
+	if (!gtk_widget_get_visible(GTK_WIDGET(m_pRecentPopover)))
+	{
+		return;
+	}
+	PopulateRecentPopover();
+}
+
+void QuiverImpl::PopulateRecentPopover()
+{
+	if (NULL == m_pRecentPopover)
+	{
+		return;
+	}
 		{
-			GtkWidget *empty_lbl = gtk_label_new("No recently viewed items");
-			gtk_widget_add_css_class(empty_lbl, "dim-label");
-			gtk_widget_set_margin_top(empty_lbl, 16);
-			gtk_widget_set_margin_bottom(empty_lbl, 16);
-			gtk_widget_set_margin_start(empty_lbl, 24);
-			gtk_widget_set_margin_end(empty_lbl, 24);
-			gtk_box_append(GTK_BOX(content_box), empty_lbl);
-		}
-		else
-		{
-			GtkWidget *sw = gtk_scrolled_window_new();
-			gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
-				GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-			gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(sw), TRUE);
-			gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(sw), 420);
+			GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+			gtk_widget_set_margin_start(content_box, 10);
+			gtk_widget_set_margin_end(content_box, 10);
+			gtk_widget_set_margin_top(content_box, 10);
+			gtk_widget_set_margin_bottom(content_box, 10);
 
-			GtkWidget *flowbox = gtk_flow_box_new();
-			gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(flowbox), GTK_SELECTION_NONE);
-			gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(flowbox), 4);
-			gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(flowbox), 3);
-			gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(flowbox), 6);
-			gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(flowbox), 6);
+			GtkWidget *header_lbl = gtk_label_new(NULL);
+			gtk_label_set_markup(GTK_LABEL(header_lbl), "<b>Recently Viewed</b>");
+			gtk_widget_set_halign(header_lbl, GTK_ALIGN_START);
+			gtk_box_append(GTK_BOX(content_box), header_lbl);
 
-			const std::deque<RecentItems::Entry>& entries = m_RecentItems.GetEntries();
-			for (std::deque<RecentItems::Entry>::const_iterator itr = entries.begin();
-					entries.end() != itr; ++itr)
+			if (0 == m_RecentItems.GetSize())
 			{
-				const RecentItems::Entry& entry = *itr;
-				GtkWidget *item_btn = gtk_button_new();
-				gtk_widget_add_css_class(item_btn, "flat");
-				gtk_widget_set_can_focus(item_btn, TRUE);
+				GtkWidget *empty_lbl = gtk_label_new("No recently viewed items");
+				gtk_widget_add_css_class(empty_lbl, "dim-label");
+				gtk_widget_set_margin_top(empty_lbl, 16);
+				gtk_widget_set_margin_bottom(empty_lbl, 16);
+				gtk_widget_set_margin_start(empty_lbl, 24);
+				gtk_widget_set_margin_end(empty_lbl, 24);
+				gtk_box_append(GTK_BOX(content_box), empty_lbl);
+			}
+			else
+			{
+				GtkWidget *sw = gtk_scrolled_window_new();
+				gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
+					GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+				gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(sw), TRUE);
+				gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(sw), 420);
 
-				GtkWidget *item_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-				gtk_widget_set_size_request(item_box, 88, 108);
+				GtkWidget *flowbox = gtk_flow_box_new();
+				gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(flowbox), GTK_SELECTION_NONE);
+				gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(flowbox), 4);
+				gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(flowbox), 3);
+				gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(flowbox), 6);
+				gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(flowbox), 6);
 
-				QuiverFile qf(entry.uri.c_str());
-				GdkTexture *tex = qf.GetThumbnailTexture(128);
-				GtkWidget *thumb_w = NULL;
-				if (tex)
+				const std::deque<RecentItems::Entry>& entries = m_RecentItems.GetEntries();
+				for (std::deque<RecentItems::Entry>::const_iterator itr = entries.begin();
+						entries.end() != itr; ++itr)
 				{
-					thumb_w = gtk_picture_new_for_paintable(GDK_PAINTABLE(tex));
-					gtk_picture_set_can_shrink(GTK_PICTURE(thumb_w), TRUE);
-#if GTK_CHECK_VERSION(4, 8, 0)
-					gtk_picture_set_content_fit(GTK_PICTURE(thumb_w), GTK_CONTENT_FIT_CONTAIN);
-#else
-					gtk_picture_set_keep_aspect_ratio(GTK_PICTURE(thumb_w), TRUE);
-#endif
-					g_object_unref(tex);
-				}
-				else
-				{
-					thumb_w = gtk_image_new_from_icon_name(qf.IsVideo() ? "video-x-generic" : "image-x-generic");
-					gtk_image_set_pixel_size(GTK_IMAGE(thumb_w), 64);
-				}
-				gtk_widget_set_size_request(thumb_w, 80, 80);
-				gtk_widget_set_halign(thumb_w, GTK_ALIGN_CENTER);
-				gtk_widget_set_valign(thumb_w, GTK_ALIGN_CENTER);
-				gtk_box_append(GTK_BOX(item_box), thumb_w);
+					const RecentItems::Entry& entry = *itr;
+					GtkWidget *item_btn = gtk_button_new();
+					gtk_widget_add_css_class(item_btn, "flat");
+					gtk_widget_set_can_focus(item_btn, TRUE);
 
-				gchar *name = g_path_get_basename(entry.uri.c_str());
-				GtkWidget *name_lbl = gtk_label_new(name);
-				gtk_label_set_ellipsize(GTK_LABEL(name_lbl), PANGO_ELLIPSIZE_MIDDLE);
-				gtk_label_set_max_width_chars(GTK_LABEL(name_lbl), 11);
-				gtk_label_set_lines(GTK_LABEL(name_lbl), 1);
-				gtk_widget_set_size_request(name_lbl, 80, -1);
-				gtk_widget_set_halign(name_lbl, GTK_ALIGN_CENTER);
-				gtk_box_append(GTK_BOX(item_box), name_lbl);
+					GtkWidget *item_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+					gtk_widget_set_size_request(item_box, 88, 108);
 
-				gtk_button_set_child(GTK_BUTTON(item_btn), item_box);
-				gtk_widget_set_tooltip_text(item_btn, name);
-				g_free(name);
+					QuiverFile qf(entry.uri.c_str());
+					GdkTexture *tex = qf.GetThumbnailTexture(128);
+					GtkWidget *thumb_w = NULL;
+					if (tex)
+					{
+						thumb_w = gtk_picture_new_for_paintable(GDK_PAINTABLE(tex));
+						gtk_picture_set_can_shrink(GTK_PICTURE(thumb_w), TRUE);
+	#if GTK_CHECK_VERSION(4, 8, 0)
+						gtk_picture_set_content_fit(GTK_PICTURE(thumb_w), GTK_CONTENT_FIT_CONTAIN);
+	#else
+						gtk_picture_set_keep_aspect_ratio(GTK_PICTURE(thumb_w), TRUE);
+	#endif
+						g_object_unref(tex);
+					}
+					else
+					{
+						thumb_w = gtk_image_new_from_icon_name(qf.IsVideo() ? "video-x-generic" : "image-x-generic");
+						gtk_image_set_pixel_size(GTK_IMAGE(thumb_w), 64);
+					}
+					gtk_widget_set_size_request(thumb_w, 80, 80);
+					gtk_widget_set_halign(thumb_w, GTK_ALIGN_CENTER);
+					gtk_widget_set_valign(thumb_w, GTK_ALIGN_CENTER);
+					gtk_box_append(GTK_BOX(item_box), thumb_w);
 
-				struct RecentClickData {
-					QuiverImpl* pQuiver;
-					std::string uri;
-				};
-				RecentClickData* clickData = new RecentClickData{this, entry.uri};
-				g_signal_connect_data(item_btn, "clicked",
-					G_CALLBACK(+[](GtkButton*, gpointer ud) {
-						RecentClickData* d = static_cast<RecentClickData*>(ud);
-						if (d && d->pQuiver)
-						{
-							d->pQuiver->OnOpenRecent(d->uri);
-							if (d->pQuiver->m_pRecentPopover)
+					std::string name = QuiverUtils::GetDisplayBasename(entry.uri.c_str());
+					GtkWidget *name_lbl = gtk_label_new(name.c_str());
+					gtk_label_set_ellipsize(GTK_LABEL(name_lbl), PANGO_ELLIPSIZE_MIDDLE);
+					gtk_label_set_max_width_chars(GTK_LABEL(name_lbl), 11);
+					gtk_label_set_lines(GTK_LABEL(name_lbl), 1);
+					gtk_widget_set_size_request(name_lbl, 80, -1);
+					gtk_widget_set_halign(name_lbl, GTK_ALIGN_CENTER);
+					gtk_box_append(GTK_BOX(item_box), name_lbl);
+
+					gtk_button_set_child(GTK_BUTTON(item_btn), item_box);
+					gtk_widget_set_tooltip_text(item_btn, name.c_str());
+
+					struct RecentClickData {
+						QuiverImpl* pQuiver;
+						std::string uri;
+					};
+					RecentClickData* clickData = new RecentClickData{this, entry.uri};
+					g_signal_connect_data(item_btn, "clicked",
+						G_CALLBACK(+[](GtkButton*, gpointer ud) {
+							RecentClickData* d = static_cast<RecentClickData*>(ud);
+							if (d && d->pQuiver)
 							{
-								gtk_popover_popdown(GTK_POPOVER(d->pQuiver->m_pRecentPopover));
+								d->pQuiver->OnOpenRecent(d->uri);
+								if (d->pQuiver->m_pRecentPopover)
+								{
+									gtk_popover_popdown(GTK_POPOVER(d->pQuiver->m_pRecentPopover));
+								}
 							}
-						}
-					}),
-					clickData,
-					+[](gpointer ud, GClosure*) {
-						delete static_cast<RecentClickData*>(ud);
-					},
-					(GConnectFlags)0);
+						}),
+						clickData,
+						+[](gpointer ud, GClosure*) {
+							delete static_cast<RecentClickData*>(ud);
+						},
+						(GConnectFlags)0);
 
-				gtk_flow_box_append(GTK_FLOW_BOX(flowbox), item_btn);
+					gtk_flow_box_append(GTK_FLOW_BOX(flowbox), item_btn);
+				}
+
+				gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), flowbox);
+				gtk_box_append(GTK_BOX(content_box), sw);
 			}
 
-			gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), flowbox);
-			gtk_box_append(GTK_BOX(content_box), sw);
+			gtk_popover_set_child(GTK_POPOVER(m_pRecentPopover), content_box);
 		}
-
-		gtk_popover_set_child(GTK_POPOVER(m_pRecentPopover), content_box);
-	}
 }
 
 void QuiverImpl::OnOpenRecent(const std::string& uri)
@@ -1514,7 +1590,7 @@ void QuiverImpl::OnOpenRecent(const std::string& uri)
 	if (NULL == entry || !entry->pAttributes)
 	{
 		m_RecentItems.RemoveByURI(uri);
-		RebuildRecentMenu();
+		RebuildRecentMenuDeferred();
 		return;
 	}
 
@@ -2010,32 +2086,49 @@ void Quiver::ImageChanged()
 	if ( m_QuiverImplPtr->m_ImageListPtr->GetSize() )
 	{
 		QuiverFile f = m_QuiverImplPtr->m_ImageListPtr->GetCurrent();
-		
-		/* Save the outgoing file: per-preference, either silently or with a
-		 * confirmation prompt.  Dialog is a message box because the File menu
-		 * was removed. */
-		m_QuiverImplPtr->MaybeSaveModified();
+
+		{
+			/* Save the outgoing file: per-preference, either silently or with a
+			 * confirmation prompt.  Dialog is a message box because the File menu
+			 * was removed. */
+			m_QuiverImplPtr->MaybeSaveModified();
+		}
 		
 		m_QuiverImplPtr->m_CurrentQuiverFile = f;
 		
-		/* Track the item as "recently viewed" (before the slideshow gate
-		 * silently drops machine-advance passes). */
-		m_QuiverImplPtr->RecordRecentView(f);
-		
-		/* Rebuild the hamburger menu when the still <-> video context flips
-		 * so its Image / Video submenus match the current file. */
-		bool bIsVideo = f.IsVideo();
-		if (bIsVideo != m_QuiverImplPtr->m_bCurrentIsVideo)
 		{
-			m_QuiverImplPtr->m_bCurrentIsVideo = bIsVideo;
-			m_QuiverImplPtr->RebuildMenubar();
+			/* Track the item as "recently viewed" (before the slideshow gate
+			 * silently drops machine-advance passes). */
+			m_QuiverImplPtr->RecordRecentView(f);
 		}
 		
-		SetWindowTitle( f.GetFilePath() );
+		{
+			/* Rebuild the hamburger menu when the still <-> video context flips
+			 * so its Image / Video submenus match the current file. */
+			bool bIsVideo = f.IsVideo();
+			if (bIsVideo != m_QuiverImplPtr->m_bCurrentIsVideo)
+			{
+				m_QuiverImplPtr->m_bCurrentIsVideo = bIsVideo;
+				m_QuiverImplPtr->RebuildMenubar();
+			}
+		}
 		
-		m_QuiverImplPtr->m_StatusbarPtr->SetPosition(m_QuiverImplPtr->m_ImageListPtr->GetCurrentIndex()+1,m_QuiverImplPtr->m_ImageListPtr->GetSize());
-		m_QuiverImplPtr->m_PropertyView.SetQuiverFile(f);
-		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
+		{
+			/* For a trash:/// item this resolves a local path, which can mean
+			 * streaming the whole file out of the trash. */
+			std::string titlePath = f.GetFilePath();
+			SetWindowTitle( titlePath );
+		}
+		
+		{
+			m_QuiverImplPtr->m_StatusbarPtr->SetPosition(m_QuiverImplPtr->m_ImageListPtr->GetCurrentIndex()+1,m_QuiverImplPtr->m_ImageListPtr->GetSize());
+			m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
+		}
+		{
+			/* Only schedules the tab load; the work happens later on the main
+			 * loop. */
+			m_QuiverImplPtr->m_PropertyView.SetQuiverFile(f);
+		}
 		
 	}
 	else
@@ -2222,6 +2315,7 @@ void Quiver::CloseReal()
 	TaskManager::Reset();
 	Preferences::Reset();
 	QuiverFile::ClearThumbnailCache();
+	quiver_metrics_flush();
 	
 	g_application_quit(G_APPLICATION(g_pApp));
 	delete this;	
@@ -2355,6 +2449,7 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ADJUST_DATE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ORGANIZE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_RENAME, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_QUICK_RENAME, "F2", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_EXTERNAL_TOOLS, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_TASK_MANAGER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ABOUT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
@@ -2596,6 +2691,15 @@ void Quiver::Init()
 				".browser-loading-hud progressbar progress {"
 				"  min-height: 6px;"
 				"  border-radius: 3px;"
+				"}"
+				/* the slider's drag readout.  Under the slider now, not on
+				 * it, but it still needs a backing plate to stay legible
+				 * against whatever the bar paints behind it. */
+				".thumb-sizer-readout {"
+				"  background-color: rgba(25, 25, 25, 0.9);"
+				"  color: #ffffff;"
+				"  border-radius: 10px;"
+				"  padding: 1px 10px;"
 				"}");
 			gtk_style_context_add_provider_for_display(
 				gdk_display_get_default(), GTK_STYLE_PROVIDER(sCssProvider),
@@ -2819,6 +2923,8 @@ Quiver::~Quiver()
 		g_source_remove(m_iCloseIdleID);
 		m_iCloseIdleID = 0;
 	}
+
+	/* drop the temp copies staged for non-local URIs (trash:///) */
 }
 
 bool Quiver::LoadSettings()
@@ -3357,6 +3463,13 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 		 * rest of the toolbar/headerbar widgets). */
 		gtk_widget_set_focus_on_click(pQuiverImpl->m_pToolbarRecentBtn, FALSE);
 		gtk_widget_set_focusable(pQuiverImpl->m_pToolbarRecentBtn, FALSE);
+		/* Fill the thumbnail grid when the popover is opened rather than on
+		 * every recent-menu rebuild: the grid costs a QuiverFile plus a decode
+		 * per entry, which is wasteful (and, on trash://, slow) while hidden. */
+		g_signal_connect(pQuiverImpl->m_pRecentPopover, "show",
+			G_CALLBACK(+[](GtkPopover*, gpointer ud) {
+				static_cast<QuiverImpl*>(ud)->PopulateRecentPopover();
+			}), pQuiverImpl);
 		pQuiverImpl->RebuildRecentMenu();
 	}
 
@@ -3417,6 +3530,16 @@ void Quiver::ShowViewer()
 	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), false);
 	m_QuiverImplPtr->RebuildMenubar();
 
+	// the browser is hidden now, so it must stop answering for the keys the
+	// two panes share (Delete, Shift+Delete, Ctrl+C, Ctrl+X)
+	QuiverUtils::SetActivePane(true);
+
+	// F2 is one action for the window; while the viewer is up it is the
+	// viewer's, and the browser's stale selection must not disable it
+	if (GAction* a = QuiverUtils::GetAction(ACTION_QUIVER_QUICK_RENAME))
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(a), TRUE);
+
+
 	// keep a visible undo toast floating over the image view
 	if (gtk_widget_get_visible(m_QuiverImplPtr->m_pUndoToast))
 	{
@@ -3445,6 +3568,16 @@ void Quiver::ShowBrowser()
 	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), false);
 	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), true);
 	m_QuiverImplPtr->RebuildMenubar();
+
+	// the viewer is hidden now, so it hands the shared keys back to the browser
+	QuiverUtils::SetActivePane(false);
+
+	// and F2 goes back to the browser, which decides from its own selection
+	if (GAction* a = QuiverUtils::GetAction(ACTION_QUIVER_QUICK_RENAME))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(a),
+			m_QuiverImplPtr->m_BrowserPtr->GetSelection().empty() ? FALSE : TRUE);
+	}
 
 	// keep a visible undo toast floating over the icon view
 	if (gtk_widget_get_visible(m_QuiverImplPtr->m_pUndoToast))
@@ -4272,6 +4405,15 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 			if (!newFolder.empty())
 				pQuiverImpl->m_ImageListPtr->SetImageList(newFolder);
 		}
+	}
+	else if(0 == strcmp(szAction,ACTION_QUIVER_QUICK_RENAME))
+	{
+		/* F2 renames what the user can actually see: the viewer's current
+		 * item when the viewer is up, the browser's selection otherwise. */
+		if (pQuiverImpl->m_bViewerMode)
+			pQuiverImpl->m_ViewerPtr->Rename();
+		else
+			pQuiverImpl->m_BrowserPtr->Rename();
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_RENAME))
 	{

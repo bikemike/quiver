@@ -1,5 +1,6 @@
 #include <config.h>
 #include "ImageCache.h"
+#include "QuiverMetrics.h"
 #include "IPixbufLoaderObserver.h"
 #include "QuiverUtils.h"
 
@@ -10,6 +11,72 @@
 using namespace std;
 
 static unsigned long CurrentTimeInMilliseconds();
+
+/* Several call sites pass an explicit timestamp, and some of them pass a
+ * literal 0 to mean "I have no opinion on the age".  Taken literally, 0 is
+ * the oldest possible timestamp, so the entry became the first eviction
+ * candidate the next time the cache filled - which for the 4-entry loader
+ * image cache meant evicting the entry that was just added.  Treat 0 as
+ * "stamp it now" so an unspecified age can never outrank a real one. */
+static unsigned long NormalizeCacheTime(unsigned long time)
+{
+	return (0 == time) ? CurrentTimeInMilliseconds() : time;
+}
+
+/* ── cache tracing ───────────────────────────────────────────────────────
+ *
+ * The icon view asks for a thumbnail for every visible cell on every repaint,
+ * so whether those fetches are served from this cache or re-decoded is the
+ * difference between smooth scrolling and icons blinking back in.  Each
+ * eviction is logged with the victim's age and the size pressure at the time,
+ * which is enough to tell a too-small cache from a stale working set.
+ * Off unless QUIVER_METRICS is set.
+ *
+ * Several caches coexist - thumbnails, file-type icons, overlay icons and the
+ * filmstrip - and all report under the "imagecache" scope.  Their counters are
+ * therefore qualified by the cache's own name ("thumbnail hits" rather than
+ * "hits"); without that a large hit count cannot be attributed, and the icon
+ * view looks guilty by association.
+ */
+
+/* Metric names are assembled per call, so bound them rather than trusting a
+ * caller's label to be short. */
+#define CACHE_METRIC_NAME_MAX 96
+
+static void cache_metric_count(const char *cache, const char *what, gint64 delta)
+{
+	char name[CACHE_METRIC_NAME_MAX];
+	g_snprintf(name, sizeof(name), "%s %s",
+		(NULL != cache && *cache) ? cache : "unnamed", what);
+	quiver_metric_count("imagecache", name, delta);
+}
+
+static void cache_metric_emit(const char *cache, const char *what, double value,
+	const char *unit)
+{
+	char name[CACHE_METRIC_NAME_MAX];
+	g_snprintf(name, sizeof(name), "%s %s",
+		(NULL != cache && *cache) ? cache : "unnamed", what);
+	quiver_metric_emit("imagecache", name, value, unit);
+}
+
+/* @victim is the full cache key; only its basename reaches the log, because a
+ * thrashing cache evicts in the thousands and a full path would drown the rest
+ * * of the record. */
+static void cache_trace_evicted(const char *cache, const std::string &victim,
+	unsigned long age_ms)
+{
+	cache_metric_count(cache, "evictions", 1);
+	cache_metric_emit(cache, "evicted age", (gdouble)age_ms, "ms");
+
+	/* The age explains an eviction, but not its subject; this names it. */
+	gchar *base = g_path_get_basename(victim.c_str());
+	if (NULL != base)
+	{
+		quiver_metric_mark("imagecache", base);
+		g_free(base);
+	}
+}
 
 void ImageCache::FreeCacheItem(CacheItem &item)
 {
@@ -34,8 +101,9 @@ void ImageCache::FreeCacheItem(CacheItem &item)
 	}
 }
 
-ImageCache::ImageCache(unsigned int size)
+ImageCache::ImageCache(unsigned int size, const char *name)
 	: m_iCacheSize(size)
+	, m_strName((NULL != name) ? name : "unnamed")
 {
 }
 
@@ -106,7 +174,7 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, GdkTexture **
 				itr->second.animation_delays[i] = delays ? delays[i] : 0;
 			}
 		}
-		itr->second.time = time;
+		itr->second.time = NormalizeCacheTime(time);
 		return;
 	}
 
@@ -123,6 +191,9 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, GdkTexture **
 
 		if (m_mapImageCache.end() != oldest)
 		{
+			/* reported before the free so the entry is still readable */
+			cache_trace_evicted(m_strName.c_str(), oldest->first,
+				CurrentTimeInMilliseconds() - oldest->second.time);
 			FreeCacheItem(oldest->second);
 			m_mapImageCache.erase(oldest);
 		}
@@ -144,8 +215,9 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, GdkTexture **
 			c.animation_delays[i] = delays ? delays[i] : 0;
 		}
 	}
-	c.time = time;
+	c.time = NormalizeCacheTime(time);
 	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
+	cache_metric_count(m_strName.c_str(), "adds", 1);
 }
 
 gsize ImageCache::GetAnimationFrames(string filename, GdkTexture *** frames, gint ** delays)
@@ -200,6 +272,8 @@ void ImageCache::SetSize(unsigned int size)
 		}
 		if (oldest != m_mapImageCache.end())
 		{
+			cache_trace_evicted(m_strName.c_str(), oldest->first,
+				CurrentTimeInMilliseconds() - oldest->second.time);
 			FreeCacheItem(oldest->second);
 			m_mapImageCache.erase(oldest);
 		}
@@ -217,7 +291,7 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long
 	{
 		FreeCacheItem(itr->second);
 		itr->second.pTexture = texture ? (GdkTexture*)g_object_ref(texture) : NULL;
-		itr->second.time = time;
+		itr->second.time = NormalizeCacheTime(time);
 		return;
 	}
 
@@ -234,6 +308,9 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long
 
 		if (m_mapImageCache.end() != oldest)
 		{
+			/* reported before the free so the entry is still readable */
+			cache_trace_evicted(m_strName.c_str(), oldest->first,
+				CurrentTimeInMilliseconds() - oldest->second.time);
 			FreeCacheItem(oldest->second);
 			m_mapImageCache.erase(oldest);
 		}
@@ -244,8 +321,9 @@ void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long
 #if HAVE_GDK_PIXBUF
 	c.pPixbuf = NULL;
 #endif
-	c.time = time;
+	c.time = NormalizeCacheTime(time);
 	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
+	cache_metric_count(m_strName.c_str(), "adds", 1);
 }
 
 #if HAVE_GDK_PIXBUF
@@ -259,7 +337,7 @@ void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb, unsigned long time)
 		FreeCacheItem(itr->second);
 		itr->second.pPixbuf = pb ? (GdkPixbuf*)g_object_ref(pb) : NULL;
 		itr->second.pTexture = pb ? QuiverUtils::PixbufToTexture(pb) : NULL;
-		itr->second.time = time;
+		itr->second.time = NormalizeCacheTime(time);
 		return;
 	}
 
@@ -276,6 +354,9 @@ void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb, unsigned long time)
 
 		if (m_mapImageCache.end() != oldest)
 		{
+			/* reported before the free so the entry is still readable */
+			cache_trace_evicted(m_strName.c_str(), oldest->first,
+				CurrentTimeInMilliseconds() - oldest->second.time);
 			FreeCacheItem(oldest->second);
 			m_mapImageCache.erase(oldest);
 		}
@@ -284,8 +365,9 @@ void ImageCache::AddPixbuf(string filename, GdkPixbuf * pb, unsigned long time)
 	CacheItem c = {};
 	c.pPixbuf = pb ? (GdkPixbuf*)g_object_ref(pb) : NULL;
 	c.pTexture = pb ? QuiverUtils::PixbufToTexture(pb) : NULL;
-	c.time = time;
+	c.time = NormalizeCacheTime(time);
 	m_mapImageCache.insert(pair<string, CacheItem>(filename, c));
+	cache_metric_count(m_strName.c_str(), "adds", 1);
 }
 #endif
 
@@ -312,9 +394,11 @@ GdkTexture* ImageCache::GetTexture(string filename)
 #endif
 		if (itr->second.pTexture != NULL)
 		{
+			cache_metric_count(m_strName.c_str(), "hits", 1);
 			return (GdkTexture*)g_object_ref(itr->second.pTexture);
 		}
 	}
+	cache_metric_count(m_strName.c_str(), "misses", 1);
 	return NULL;
 }
 
@@ -390,5 +474,4 @@ static unsigned long CurrentTimeInMilliseconds()
 	gettimeofday(&tv_time, NULL);
 	return (unsigned long)tv_time.tv_sec * 1000 + (unsigned long)tv_time.tv_usec / 1000;
 }
-
 

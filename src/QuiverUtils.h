@@ -10,6 +10,14 @@
 
 namespace QuiverUtils
 {
+	/* Quick-rename of one file, shared by the browser and the viewer.  The
+	 * browser and the viewer each used to register their own "F2" action, and
+	 * an app-wide accel belongs to a single action, so whichever registered
+	 * last won it - F2 in the viewer could run the browser's rename, which
+	 * acted on the browser's selection and offered the wrong file.  There is
+	 * one action now, aimed at whichever pane is showing. */
+#define ACTION_QUIVER_QUICK_RENAME "QuickRename"
+
 	/* Prompt user to add a bookmark for the given list of URIs.
 	 * Displays BookmarkAddEditDlg prefilled with folder names.
 	 * Returns true if the bookmark was created and added. */
@@ -75,6 +83,12 @@ namespace QuiverUtils
 	void ConnectUnmodifiedAccelerators();            // overload
 	void SuppressAllAccelerators(bool suppress);
 
+	/* Some keys (F2, Delete, Shift+Delete, Ctrl+C, Ctrl+X) are claimed by both
+	 * the browser and the viewer.  An app-wide accel belongs to one action, so
+	 * the pane that is showing keeps those keys and the hidden one gives them
+	 * up.  Call this whenever the visible pane changes. */
+	void SetActivePane(bool bViewer);
+
 	/* Modal "OK / Cancel style" confirmation dialog.  Shows `message` (wrapped)
 	 * with `accept_label` on the accept button.  Returns TRUE when accepted.
 	 * GTK4 has no gtk_dialog_run(), so this runs its own nested GMainLoop.
@@ -85,6 +99,34 @@ namespace QuiverUtils
 	/* Modal single-line text prompt (for renaming files/folders or creating folders).  Returns a
 	 * g_malloc'd string owned by the caller, or NULL when cancelled. */
 	char* PromptForString(const char *title, const char *prompt, const char *initial, const char *accept_label = NULL);
+
+	/* Prompt for a new name for `file` and rename it in place.  Shared by the
+	 * browser and the viewer so the two cannot drift apart.  Returns the new
+	 * URI (caller frees), or NULL if the user cancelled or the rename failed
+	 * (the failure is reported to the user). */
+	char* PromptAndRenameFile(const QuiverFile& file);
+
+	/* True for an EXIF row that is a MakerNote decode artifact rather than
+	 * information.  MakerNotes are undocumented vendor blobs; Exiv2 walks them
+	 * as extra IFDs, and when a camera encrypts its MakerNote (Sony "2010e"
+	 * does) the walk runs off the end of the real data and invents thousands
+	 * of unnamed tags.  A row Exiv2 could not even name (its key looks like
+	 * "0x…") in a vendor group rather than a standard one is such an artifact.
+	 * Everything Exiv2 could name still shows, as does all of
+	 * Image/Photo/Iop/Thumbnail/GPSInfo. */
+	bool IsMakernoteArtifact(const std::string& group_name, const std::string& key);
+
+	/* True for an EXIF row whose value is a raw byte blob rather than
+	 * something readable - MakerNote, PrintImageMatching and friends, which
+	 * Exiv2 prints as space-separated decimal numbers.  Their content is
+	 * already shown as decoded vendor tags, so the table skips them. */
+	bool IsBinaryExifBlob(const std::string& key);
+
+	/* True for the EXIF groups the standard defines, false for a camera
+	 * maker's own groups (Sony1, Nikon3, CanonCs, ...).  The EXIF view uses
+	 * this to keep the standard tags together and put the vendor blob data
+	 * below them in their own section. */
+	bool IsStandardExifGroup(const std::string& group_name);
 
 	/* Determine the character length of the base name (excluding extension).
 	 * Returns -1 if the full string is the base name. */
@@ -105,6 +147,17 @@ namespace QuiverUtils
 	 * Local file:// URI is converted to the filesystem path; other schemes
 	 * and plain local paths are returned unchanged. */
 	std::string GetDisplayPath(const char *uri_or_path);
+
+	/* Return the decoded basename of a URI, for display only.
+	 *
+	 * GetURI() percent-encodes, so g_path_get_basename() on a URI yields
+	 * "my%20photo.jpg" rather than "my photo.jpg".  This goes through the
+	 * GFile and decodes.  QuiverFile::GetFileName() is the same thing as an
+	 * instance method; use this variant where no QuiverFile exists (or where
+	 * building one would be a costly g_file_query_info, as in menu builders).
+	 * Never use the result to name a file on disk - that needs the unescaped
+	 * path from GFile, not a UI label. */
+	std::string GetDisplayBasename(const char *uri);
 
 	/* Check if a URI or path points to an existing directory */
 	bool IsDirectoryURI(const char *uri);

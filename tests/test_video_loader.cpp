@@ -86,6 +86,11 @@ int main(int argc, char** argv)
     std::cout << "Testing video thumbnail generation and caching...\n";
     GdkTexture* thumb_tex = qf.GetThumbnailTexture(256);
     assert(thumb_tex != NULL);
+    /* A zero-sized texture is still a non-NULL GdkTexture, so a bare
+     * "!= NULL" check happily passes when decoding quietly produced nothing.
+     * That is exactly what a broken ffmpeg IO path looks like, so insist on
+     * real pixels here. */
+    assert(gdk_texture_get_width(thumb_tex) > 0 && gdk_texture_get_height(thumb_tex) > 0);
     std::cout << "  [Thumbnail] " << gdk_texture_get_width(thumb_tex) << "x"
               << gdk_texture_get_height(thumb_tex) << " -> PASS\n";
     g_object_unref(thumb_tex);

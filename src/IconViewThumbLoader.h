@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <atomic>
 #include <list>
+#include <vector>
 #include <gtk/gtk.h>
 #include <string>
 
@@ -30,6 +31,36 @@ public:
 
 	virtual void UpdateList(bool bForce = false);
 	void SetNumCachePages(guint uiNumCachePages);
+
+	/* The order in which thumbnail loads should be queued for a viewport
+	 * showing [range_start, range_end] of a list of @n_items, capped at
+	 * @max_items loads and ordered for travel in @scroll_dir.
+	 *
+	 * Exposed (and free of any thread or widget state) so the ordering can be
+	 * unit tested without driving a scroll.
+	 *
+	 * @scroll_dir is -1 when the view moved towards index 0, +1 towards the
+	 * end, and 0 when the direction is unknown or the range did not move.
+	 */
+	static std::vector<gulong> BuildLoadOrder(gulong range_start,
+		gulong range_end, guint n_items, guint max_items, int scroll_dir);
+
+	/* How many thumbnails to keep, given the list size and the size of one
+	 * decoded thumbnail.  The old figure was visible_cells * 13, which is a
+	 * multiple of a page count rather than anything to do with memory: it held
+	 * 520 of a 595-item folder, so the top of the list was evicted while still
+	 * on screen and re-decoded on every repaint.  Sizing from the item count
+	 * instead means a folder that fits in the budget is decoded once and stays
+	 * decoded, and a folder that does not fit is capped rather than growing
+	 * without limit.
+	 *
+	 * @n_items is the list size, @bytes_per_item the memory one decoded
+	 * thumbnail needs, and @budget_bytes the ceiling to fit them under.
+	 * @prefetch_items is the floor, so a single screen of cells always has room
+	 * to prefetch into.
+	 */
+	static guint ComputeCacheSize(guint n_items, guint bytes_per_item,
+		guint budget_bytes, guint prefetch_items);
 
 
 	typedef struct _ThreadData
@@ -67,6 +98,8 @@ private:
 	gulong              m_ulRangeStart, 
                         m_ulRangeEnd;
 	guint               m_bLargeThumbs;
+	/* -1 travelling towards index 0, +1 towards the end. */
+	int                 m_iScrollDir;
 
 	guint               m_uiNumCachePages;
 };

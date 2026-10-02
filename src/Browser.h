@@ -29,6 +29,10 @@ public:
 	void RegisterActions();
 	void SetToolbar(GtkWidget* pToolbar);
 	void SetStatusbar(StatusbarPtr statusbar);
+
+	/* Rename what the browser has selected.  The single global rename action
+	 * calls this while the browser is the visible pane. */
+	void Rename();
 	
 	void GrabFocus();
 	

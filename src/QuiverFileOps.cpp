@@ -1,9 +1,13 @@
 #include "QuiverFileOps.h"
+#include "QuiverMetrics.h"
 
 #include <string.h>
 
 #include <algorithm>
 #include <deque>
+#include <map>
+#include <mutex>
+#include <vector>
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -1014,5 +1018,6 @@ namespace QuiverFileOps
 		g_object_unref(gfile);
 		return empty;
 	}
+
 
 }

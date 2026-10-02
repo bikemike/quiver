@@ -283,7 +283,6 @@ static GstPadProbeReturn video_sink_glitch_probe_cb(GstPad *pad, GstPadProbeInfo
 #define ACTION_VIEWER_SLIDESHOW        "SlideShow"
 #define ACTION_VIEWER_CUT              "ViewerCut"
 #define ACTION_VIEWER_COPY             "ViewerCopy"
-#define ACTION_VIEWER_RENAME           "ViewerRename"
 #define ACTION_VIEWER_TRASH            "ViewerTrash"
 #define ACTION_VIEWER_TRASH_FORCE      "ViewerTrashForce"
 #define ACTION_VIEWER_RESTORE          "ViewerRestore"
@@ -691,6 +690,7 @@ public:
 
 // methods
 	void SetImageList(IImageListViewPtr imgList);
+	void Rename();
 	void UpdateUI();
 	
 	void CacheNext(bool bDirectionForward);
@@ -1466,6 +1466,39 @@ public:
 	ViewerThumbLoader            m_ThumbnailLoader;
 
 };
+
+void Viewer::Rename()
+{
+	m_ViewerImplPtr->Rename();
+}
+
+void Viewer::ViewerImpl::Rename()
+{
+	if (0 == m_ImageListPtr->GetSize())
+		return;
+
+	/* The prompt and the rename itself live in QuiverUtils so the browser
+	 * and the viewer cannot drift apart. */
+	char* new_uri = QuiverUtils::PromptAndRenameFile(m_ImageListPtr->GetCurrent());
+	if (NULL == new_uri)
+		return;
+
+	/* Point the list at the new file without leaving the current position. */
+	ImageList* real = dynamic_cast<ImageList*>(m_ImageListPtr.get());
+	if (NULL != real)
+	{
+		real->Reload();
+		real->SetCurrentFile(new_uri);
+		/* Re-seat the view on the renamed item: SetCurrentFile only fires a
+		 * change event when the rename also shifted the item's index, so
+		 * drive the filmstrip/icon view directly to stay on the item under
+		 * its new name. */
+		guint idx = real->GetCurrentIndex();
+		SetImageIndex(idx, true);
+		quiver_icon_view_set_cursor_cell(QUIVER_ICON_VIEW(m_pIconView), idx);
+	}
+	g_free(new_uri);
+}
 
 void Viewer::ViewerImpl::SetImageList(IImageListViewPtr imgList)
 {
@@ -4096,63 +4129,6 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		QuiverFileOps::ClipboardSet(uris, true);
 		QuiverClipboard::SetClipboard(uris, true);
 	}
-	else if (0 == strcmp(szAction, ACTION_VIEWER_RENAME))
-	{
-		if (0 == pViewerImpl->m_ImageListPtr->GetSize())
-			return;
-
-		QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
-		char *old_name = g_path_get_basename(f.GetURI());
-		char *new_name = QuiverUtils::PromptForString(
-			"Rename", "Enter the new name for this item:", old_name);
-
-		if (NULL == new_name)
-		{
-			g_free(old_name);
-			return;
-		}
-
-		GFile *src = g_file_new_for_uri(f.GetURI());
-		GFile *parent = g_file_get_parent(src);
-		GFile *dst = g_file_get_child(parent, new_name);
-		GError *error = NULL;
-		gboolean ok = g_file_move(src, dst, G_FILE_COPY_NONE, NULL, NULL, NULL, &error);
-		if (!ok)
-		{
-			QuiverUtils::ConfirmDialog("Rename failed",
-				error && error->message ? error->message
-					: "The item could not be renamed.",
-				"OK", "Close");
-			if (error)
-				g_error_free(error);
-		}
-		else
-		{
-			/* Point the list at the new file without leaving the current
-			 * position. */
-			char *new_uri = g_file_get_uri(dst);
-			ImageList* real = dynamic_cast<ImageList*>(pViewerImpl->m_ImageListPtr.get());
-			if (NULL != real)
-			{
-				real->Reload();
-				real->SetCurrentFile(new_uri);
-				/* Re-seat the view on the renamed item: SetCurrentFile only
-				 * fires a change event when the rename also shifted the
-				 * item's index, so drive the filmstrip/icon view directly
-				 * to stay on the item under its new name. */
-				guint idx = real->GetCurrentIndex();
-				pViewerImpl->SetImageIndex(idx, true);
-				quiver_icon_view_set_cursor_cell(
-					QUIVER_ICON_VIEW(pViewerImpl->m_pIconView), idx);
-			}
-			g_free(new_uri);
-		}
-		g_object_unref(dst);
-		g_object_unref(parent);
-		g_object_unref(src);
-		g_free(new_name);
-		g_free(old_name);
-	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ROTATE_FOR_BEST_FIT))
 	{
 		if (pViewerImpl->m_ImageListPtr->GetSize())
@@ -6508,7 +6484,7 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 	{
 		viewer_menu_item(menu, "Copy", "quiver." ACTION_VIEWER_COPY,
 			"<Control>c", title_id, "edit-copy-symbolic");
-		viewer_menu_item(menu, "Rename", "quiver." ACTION_VIEWER_RENAME,
+		viewer_menu_item(menu, "Rename", "quiver." ACTION_QUIVER_QUICK_RENAME,
 			"F2", NULL, "document-edit-symbolic");
 		GMenu *rotate_section = g_menu_new();
 		viewer_menu_item(rotate_section, "Rotate Counterclockwise",
@@ -9651,8 +9627,8 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_pPlayAnimImage(NULL),
 	m_iPlayAnimTickId(0),
 	m_iPlayAnimStartTime(0),
-	m_ThumbnailCache(100),
-	m_FilmstripCache(8),
+	m_ThumbnailCache(100, "viewer thumbnail"),
+	m_FilmstripCache(8, "viewer filmstrip"),
 	m_dPlaybackSpeed(1.0),
 	m_pSpeedButton(NULL),
 	m_pSpeedLabel(NULL),
@@ -10800,7 +10776,6 @@ void Viewer::RegisterActions()
 	/* Viewer simple actions */
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_CUT, "<Control>X", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_COPY, "<Control>C", viewer_action_handler_cb, m_ViewerImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_VIEWER_RENAME, "F2", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_TRASH, "Delete", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_TRASH_FORCE, "<Shift>Delete", viewer_action_handler_cb, m_ViewerImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_VIEWER_RESTORE, NULL, viewer_action_handler_cb, m_ViewerImplPtr.get());
@@ -10888,7 +10863,7 @@ void Viewer::UnregisterActions()
 		s_pLastRegisteredViewerImpl = NULL;
 		QuiverFileOps::SetRotateUndoCallback(NULL, NULL);
 		const char* const actions[] = {
-			ACTION_VIEWER_CUT, ACTION_VIEWER_COPY, ACTION_VIEWER_RENAME,
+			ACTION_VIEWER_CUT, ACTION_VIEWER_COPY,
 			ACTION_VIEWER_TRASH, ACTION_VIEWER_TRASH_FORCE, ACTION_VIEWER_RESTORE,
 			ACTION_VIEWER_PREVIOUS, ACTION_VIEWER_PREVIOUS_2,
 			ACTION_VIEWER_NEXT, ACTION_VIEWER_NEXT_2,

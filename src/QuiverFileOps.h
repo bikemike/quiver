@@ -186,6 +186,7 @@ namespace QuiverFileOps
 	bool RestoreTrashItem(QuiverFile quiverFile);          // restore a trash:/// item to its origin
 	bool PermanentlyDeleteTrashItem(QuiverFile quiverFile); // drop a trash:/// item for good
 	bool QuiverFolderIsEmpty(const QuiverFile& folder);     // no children at all
+
 }
 
 #endif

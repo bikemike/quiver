@@ -1,6 +1,7 @@
 #include <config.h>
 
 #include "QuiverVideoOps.h"
+#include "QuiverAvio.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -90,18 +91,42 @@ static int frame_rotation_deg(AVFrame* frame, AVDictionary* metadata, AVStream* 
 
 	return 0;
 }
-/* avformat_open_input() expects a native filesystem path, not a URI: it will
- * not percent-decode "file:///...". QuiverFile::GetURI() returns a file:// URI
- * (with percent-encoding for spaces etc.), so translate it to a local path. */
-static gboolean uri_to_path(const gchar* uri, std::string& path)
+/* avformat_open_input() wants a native filesystem path, not a URI: it will not
+ * percent-decode "file:///...".  QuiverFile::GetURI() hands back a URI (with
+ * percent-encoding for spaces etc.), so resolve a local path first.
+ *
+ * Note g_file_get_path() is no help for the non-local case - for "trash:///"
+ * it returns NULL exactly like g_filename_from_uri(), because gvfs' trash
+ * backend is a virtual namespace with no path behind it for any API to hand
+ * back.  A FUSE-backed directory is a different story: it is an ordinary local
+ * path, so GIO resolves it natively and we take the fast route below with no
+ * extra work.
+ *
+ * Only when there is genuinely no path do we fall back to reading the bytes as
+ * a GInputStream and feeding libavformat through a custom AVIOContext (see
+ * VideoSource).  We used to stage those into a temp copy here instead, which
+ * meant duplicating every trashed video into /tmp, leaking that copy whenever
+ * the process died before shutdown cleanup, and - because g_file_copy()
+ * drives gvfs' D-Bus copy machinery - faulting inside libgvfs on the
+ * thumbnail worker thread. */
+static gboolean uri_to_native_path(const gchar* uri, std::string& path)
 {
-	char* local = g_filename_from_uri(uri, NULL, NULL);
-	if (local == NULL)
+	GFile* file = g_file_new_for_uri(uri);
+	const gchar* native = g_file_peek_path(file);   /* NULL for any non-local URI */
+	if (native == NULL)
+	{
+		g_object_unref(file);
 		return FALSE;
-	path.assign(local);
-	g_free(local);
+	}
+	path.assign(native);
+	g_object_unref(file);   /* path was copied, so the file can go now */
 	return TRUE;
 }
+
+/* --- AVIOContext glue: hand libavformat a GInputStream ------------------- */
+
+
+
 
 struct VideoInterruptContext {
 	gint64 deadline_us = 0;
@@ -123,6 +148,7 @@ static int video_interrupt_cb(void* opaque)
 /* Open the file, find its first video stream and open a decoder for it.
  * On failure all members are reset and ok is FALSE. */
 struct VideoSession {
+	/* Borrowed alias of the container's format context - never free it here. */
 	AVFormatContext* fmt = NULL;
 	int video_stream = -1;
 	AVStream* st = NULL;
@@ -139,96 +165,8 @@ static void init_av_logging()
 	});
 }
 
-static VideoSession open_session(const gchar* uri, VideoAbortFn abort_fn = NULL, gpointer abort_data = NULL)
-{
-	init_av_logging();
-	VideoSession s;
-	std::string path;
-	if (!uri_to_path(uri, path))
-		return s;
 
-	s.cb_ctx = std::make_shared<VideoInterruptContext>();
-	s.cb_ctx->deadline_us = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
-	s.cb_ctx->abort_fn = abort_fn;
-	s.cb_ctx->abort_data = abort_data;
 
-	s.fmt = avformat_alloc_context();
-	if (s.fmt == NULL)
-		return s;
-
-	s.fmt->interrupt_callback.callback = video_interrupt_cb;
-	s.fmt->interrupt_callback.opaque = s.cb_ctx.get();
-
-	AVDictionary* opts = NULL;
-	av_dict_set(&opts, "probesize", "1000000", 0); // 1 MB
-	av_dict_set(&opts, "analyzeduration", "500000", 0); // 500 ms
-
-	if (avformat_open_input(&s.fmt, path.c_str(), NULL, &opts) != 0)
-	{
-		av_dict_free(&opts);
-		s.fmt = NULL;
-		return s;
-	}
-	av_dict_free(&opts);
-
-	s.fmt->fps_probe_size = 0;
-	avformat_find_stream_info(s.fmt, NULL);
-
-	for (unsigned i = 0; i < s.fmt->nb_streams; ++i)
-	{
-		if (s.fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-		{
-			s.video_stream = (int)i;
-			break;
-		}
-	}
-	if (s.video_stream < 0)
-	{
-		avformat_close_input(&s.fmt);
-		s.fmt = NULL;
-		return s;
-	}
-
-	s.st = s.fmt->streams[s.video_stream];
-	const AVCodec* dec = avcodec_find_decoder(s.st->codecpar->codec_id);
-	if (dec == NULL)
-	{
-		avformat_close_input(&s.fmt);
-		s.fmt = NULL;
-		return s;
-	}
-
-	s.ctx = avcodec_alloc_context3(dec);
-	if (s.ctx == NULL ||
-	    avcodec_parameters_to_context(s.ctx, s.st->codecpar) < 0)
-	{
-		if (s.ctx != NULL) avcodec_free_context(&s.ctx);
-		s.ctx = NULL;
-		avformat_close_input(&s.fmt);
-		s.fmt = NULL;
-		return s;
-	}
-
-	s.ctx->thread_count = 2;
-	if (avcodec_open2(s.ctx, dec, NULL) < 0)
-	{
-		avcodec_free_context(&s.ctx);
-		s.ctx = NULL;
-		avformat_close_input(&s.fmt);
-		s.fmt = NULL;
-		return s;
-	}
-
-	s.ok = true;
-	return s;
-}
-
-static void close_session(VideoSession& s)
-{
-	if (s.ctx != NULL) avcodec_free_context(&s.ctx);
-	if (s.fmt != NULL) avformat_close_input(&s.fmt);
-	s = VideoSession();
-}
 
 static int probe_rotation(VideoSession& s)
 {
@@ -422,6 +360,139 @@ static void compute_natural_dimensions(int frame_w, int frame_h, int rotation,
 	if (natural_height) *natural_height = nat_h;
 }
 
+static void close_session(VideoSession& s)
+{
+	if (s.ctx != NULL) avcodec_free_context(&s.ctx);
+	/* s.fmt only aliases the container's AVFormatContext - the Container owns
+	 * it and closes it.  Closing it here as well would be a double free. */
+	s.fmt = NULL;
+	s = VideoSession();
+}
+
+/* The caller-supplied VideoAbortFn carries its own abort_data, but
+ * QuiverAvio::Container::SetAbort wants a plain gpointer plus a gboolean
+ * callback - so hold the pair somewhere the trampoline can reach. */
+struct VideoAbortBridge
+{
+	VideoAbortFn fn;
+	gpointer data;
+};
+
+/* Pairs the shared container handle with the decode session built on top of it.
+ * VideoSession owns the ffmpeg decoder objects; the Container owns the
+ * AVIOContext/stream and must outlive it.
+ *
+ * abort_bridge is declared first so it is destroyed *after* the container: the
+ * container keeps a raw pointer to it and its interrupt callback can fire at
+ * any point during decoding, including long after open_source() returned. */
+struct VideoSource
+{
+	std::shared_ptr<VideoAbortBridge> abort_bridge;
+	std::shared_ptr<QuiverAvio::Container> container;
+	VideoSession session;
+};
+
+static gboolean video_abort_trampoline(gpointer opaque)
+{
+	auto* bridge = static_cast<VideoAbortBridge*>(opaque);
+	if (bridge == nullptr || bridge->fn == nullptr) return FALSE;
+	return bridge->fn(bridge->data) ? TRUE : FALSE;
+}
+
+static void close_source(VideoSource& vs);
+
+static VideoSource open_source(const gchar* uri, VideoAbortFn abort_fn, gpointer abort_data)
+{
+	init_av_logging();
+
+	VideoSource vs;
+	vs.container = std::make_shared<QuiverAvio::Container>();
+	vs.container->SetDeadlineUs(g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND);
+
+	/* Cancellation rides along on the container's interrupt callback, so a
+	 * scroll or folder change can interrupt a decode stuck on a slow mount. */
+	if (abort_fn != nullptr)
+	{
+		vs.abort_bridge = std::make_shared<VideoAbortBridge>(VideoAbortBridge{ abort_fn, abort_data });
+		vs.container->SetAbort(video_abort_trampoline, vs.abort_bridge.get());
+	}
+
+	/* QUIVER_FORCE_STREAM_IO makes every URI take the stream route, even ones
+	 * with a local path.  There is no gvfs trash to test against on an ordinary
+	 * machine, and this is the only way to cover the AVIOContext path - the one
+	 * trashed media actually takes - in CI. */
+	const char* force_stream = g_getenv("QUIVER_FORCE_STREAM_IO");
+	if (force_stream != nullptr && *force_stream != '\0' &&
+	    g_ascii_strtoll(force_stream, nullptr, 10) != 0)
+		vs.container->ForceStreaming(true);
+
+	if (!vs.container->Open(uri))
+	{
+		vs.container.reset();
+		return vs;
+	}
+
+	VideoSession& s = vs.session;
+	s.fmt = vs.container->fmt();
+
+	for (unsigned i = 0; i < s.fmt->nb_streams; ++i)
+	{
+		if (s.fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+		{
+			s.video_stream = (int)i;
+			break;
+		}
+	}
+	if (s.video_stream < 0)
+	{
+		close_source(vs);
+		return vs;
+	}
+
+	s.st = s.fmt->streams[s.video_stream];
+	const AVCodec* dec = avcodec_find_decoder(s.st->codecpar->codec_id);
+	if (dec == nullptr)
+	{
+		close_source(vs);
+		return vs;
+	}
+
+	s.ctx = avcodec_alloc_context3(dec);
+	if (s.ctx == nullptr ||
+	    avcodec_parameters_to_context(s.ctx, s.st->codecpar) < 0)
+	{
+		if (s.ctx != nullptr) avcodec_free_context(&s.ctx);
+		s.ctx = nullptr;
+		close_source(vs);
+		return vs;
+	}
+
+	/* Two threads: decoding happens on the thumbnail worker alongside
+	 * main-thread UI work, so leave headroom. */
+	s.ctx->thread_count = 2;
+	if (avcodec_open2(s.ctx, dec, nullptr) < 0)
+	{
+		avcodec_free_context(&s.ctx);
+		s.ctx = nullptr;
+		close_source(vs);
+		return vs;
+	}
+
+	s.ok = true;
+	return vs;
+}
+
+static void close_source(VideoSource& vs)
+{
+	close_session(vs.session);
+	/* close_session() ran avformat_close_input(), so the container's custom
+	 * AVIOContext is already released; letting go of it frees the stream.
+	 * abort_bridge is dropped after the container, which is the only thing
+	 * still holding a pointer to it. */
+	vs.container.reset();
+	vs.abort_bridge.reset();
+}
+
 static GdkTexture* grab_frame_texture(const gchar* uri,
 	gint64 position_ns, gint target_width, gint target_height,
 	gint* aspect_n, gint* aspect_d,
@@ -430,12 +501,13 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 {
 	GdkTexture* result = NULL;
 
-	VideoSession s = open_session(uri, abort_fn, abort_data);
+	VideoSource vs = open_source(uri, abort_fn, abort_data);
+	VideoSession& s = vs.session;   /* alias, so the body reads unchanged */
 	if (!s.ok)
 		return NULL;
 	if (abort_fn != NULL && abort_fn(abort_data))
 	{
-		close_session(s);
+		close_source(vs);
 		return NULL;
 	}
 	AVStream* st = s.st;
@@ -469,7 +541,7 @@ static GdkTexture* grab_frame_texture(const gchar* uri,
 		av_frame_free(&frame);
 		if (last_frame != NULL)
 			av_frame_free(&last_frame);
-		close_session(s);
+		close_source(vs);
 		return NULL;
 	}
 
@@ -546,7 +618,7 @@ done:
 	av_frame_free(&frame);
 	if (last_frame != NULL)
 		av_frame_free(&last_frame);
-	close_session(s);
+	close_source(vs);
 	return result;
 }
 
@@ -629,12 +701,13 @@ static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 {
 	GdkPixbuf* result = NULL;
 
-	VideoSession s = open_session(uri, abort_fn, abort_data);
+	VideoSource vs = open_source(uri, abort_fn, abort_data);
+	VideoSession& s = vs.session;   /* alias, so the body reads unchanged */
 	if (!s.ok)
 		return NULL;
 	if (abort_fn != NULL && abort_fn(abort_data))
 	{
-		close_session(s);
+		close_source(vs);
 		return NULL;
 	}
 	AVStream* st = s.st;
@@ -668,7 +741,7 @@ static GdkPixbuf* grab_frame_pixbuf(const gchar* uri,
 		av_frame_free(&frame);
 		if (last_frame != NULL)
 			av_frame_free(&last_frame);
-		close_session(s);
+		close_source(vs);
 		return NULL;
 	}
 
@@ -742,7 +815,7 @@ done_pixbuf:
 	av_frame_free(&frame);
 	if (last_frame != NULL)
 		av_frame_free(&last_frame);
-	close_session(s);
+	close_source(vs);
 	return result;
 }
 
@@ -788,7 +861,8 @@ gboolean Probe(const gchar *uri,
 	VideoAbortFn abort_fn,
 	gpointer abort_data)
 {
-	VideoSession s = open_session(uri, abort_fn, abort_data);
+	VideoSource vs = open_source(uri, abort_fn, abort_data);
+	VideoSession& s = vs.session;   /* alias, so the body reads unchanged */
 	if (!s.ok)
 		return FALSE;
 
@@ -819,7 +893,7 @@ gboolean Probe(const gchar *uri,
 		*pixel_aspect_ratio_denominator = par.den;
 	}
 
-	close_session(s);
+	close_source(vs);
 	return TRUE;
 }
 

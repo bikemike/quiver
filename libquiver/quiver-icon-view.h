@@ -179,6 +179,14 @@ void quiver_icon_view_scroll_to_cell_with_callback(
 	QuiverIconViewScrollCallback callback,
 	gpointer user_data);
 
+void quiver_icon_view_set_select_all(QuiverIconView *iconview, gboolean selected);
+/* Where Page Up lands from @cursor_cell; exposed for unit tests. */
+gulong quiver_icon_view_page_up_target(gulong cursor_cell, guint cols, guint n_cells_per_page);
+/* Where Page Down lands from @cursor_cell out of @n_cells items; exposed for
+ * unit tests.  Keeps the column, unlike a plain clamp to the last cell.
+ * @n_cells_per_page is a whole number of rows, i.e. a multiple of @cols, as
+ * the caller computes it. */
+gulong quiver_icon_view_page_down_target(gulong cursor_cell, guint cols, guint n_cells_per_page, guint n_cells);
 void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *selection);
 GList* quiver_icon_view_get_selection(QuiverIconView *iconview);
 gboolean quiver_icon_view_is_cell_selected(QuiverIconView *iconview, gulong cell);

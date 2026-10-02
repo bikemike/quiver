@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <gtk/gtk.h>
 #include <glib/gstdio.h>
+#include <cstring>
+#include <unistd.h>
 #include "FolderTree.h"
 #include "QuiverUtils.h"
 #include "QuiverFile.h"
@@ -8,6 +10,48 @@
 #include "Preferences.h"
 #include "IFolderTreeEventHandler.h"
 #include "test_helpers.h"
+
+/* The bookmark tests below persist to the config file, and the default test
+ * config (/tmp/quiver_test_config.ini, test_main.cpp) is shared by every test
+ * invocation.  Two things went wrong because of that:
+ *
+ *  - a bookmark left in the file by one run is loaded by the next, so "bookmark
+ *    checkbox checks the whole bookmark" saw 4 rows where it added 2 and
+ *    expected 2, and failed on every subsequent run;
+ *  - the "Selection and Keyboard Navigation" test unlinks the config file when
+ *    it did not exist beforehand, which would destroy state other tests share.
+ *
+ * Redirect to a private file for the duration of the test, the same way
+ * test_bookmarks.cpp does, so neither can happen. */
+struct FolderTreeTestConfigFixture {
+    char m_tmpPath[256];
+    char m_prevConfig[256];
+
+    FolderTreeTestConfigFixture() {
+        strncpy(m_prevConfig, g_szConfigFilePath, sizeof(m_prevConfig) - 1);
+        m_prevConfig[sizeof(m_prevConfig) - 1] = '\0';
+        strncpy(m_tmpPath, "/tmp/quiver_ftree_cfg_XXXXXX.ini", sizeof(m_tmpPath) - 1);
+        m_tmpPath[sizeof(m_tmpPath) - 1] = '\0';
+        int fd = g_mkstemp(m_tmpPath);
+        if (fd >= 0) {
+            close(fd);
+        }
+        /* g_szConfigFilePath is declared "extern gchar[]", so its size is not
+         * available here; the buffers match the definition in test_main.cpp. */
+        strncpy(g_szConfigFilePath, m_tmpPath, sizeof(m_tmpPath) - 1);
+        g_szConfigFilePath[sizeof(m_tmpPath) - 1] = '\0';
+        Bookmarks::Reset();
+        Preferences::Reset();
+    }
+
+    ~FolderTreeTestConfigFixture() {
+        Bookmarks::Reset();
+        Preferences::Reset();
+        strncpy(g_szConfigFilePath, m_prevConfig, sizeof(m_prevConfig) - 1);
+        g_szConfigFilePath[sizeof(m_prevConfig) - 1] = '\0';
+        g_unlink(m_tmpPath);
+    }
+};
 
 static std::string folder_tree_test_make_temp_dir()
 {
@@ -61,6 +105,9 @@ public:
 TEST_CASE("FolderTree Selection and Keyboard Navigation", "[unit][foldertree][gui]")
 {
     REQUIRE_DISPLAY();
+
+    /* One of this test's sections writes and deletes the config file. */
+    FolderTreeTestConfigFixture configFixture;
 
     SECTION("Enter key on focused row checks it and unchecks others")
     {
@@ -820,6 +867,9 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
           "[unit][foldertree][gui]")
 {
     REQUIRE_DISPLAY();
+
+    /* Adding bookmarks persists them to the config file. */
+    FolderTreeTestConfigFixture configFixture;
 
     // Two sibling temp folders under a temporary parent; both are reachable
     // through the Filesystem root and must both get checked.

@@ -2,6 +2,7 @@
 #include <gtk/gtk.h>
 #include <gdk/gdkkeysyms.h>
 #include "quiver-icon-view.h"
+#include "QuiverMetrics.h"
 #include "quiver-marshallers.h"
 #include <math.h>
 #include <stdlib.h>
@@ -112,6 +113,13 @@ struct _QuiverIconViewPrivate
 	guint n_rows;
 	
 	/* callback functions and data */
+	/* One flag per cell: has this cell ever produced a thumbnail?  A cell that
+	 * goes from "had one" back to "none" is exactly the icon visibly
+	 * disappearing and reloading that the user reported, and it is invisible
+	 * in the raw miss count.  Allocated lazily by the tracing path only. */
+	guint8 *thumb_seen;
+	gulong thumb_seen_len;
+
 	QuiverIconViewGetNItemsFunc callback_get_n_items;
 	gpointer callback_get_n_items_data;
 	GDestroyNotify callback_get_n_items_data_destroy;
@@ -258,7 +266,7 @@ static void quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulon
 
 static void quiver_icon_view_scroll_to_cell_force_top(QuiverIconView *iconview,gulong cell,gboolean force_top);
 static void quiver_icon_view_scroll_to_cell(QuiverIconView *iconview,gulong cell);
-static void quiver_icon_view_set_select_all(QuiverIconView *iconview, gboolean selected);
+void quiver_icon_view_set_select_all(QuiverIconView *iconview, gboolean selected);
 static void quiver_icon_view_shift_select_cells(QuiverIconView *iconview,gulong new_cursor_cell);
 static void quiver_icon_view_update_rubber_band(QuiverIconView *iconview, gint x, gint y);
 static void quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview);
@@ -495,6 +503,8 @@ quiver_icon_view_init(QuiverIconView *iconview)
 	iconview->priv->callback_get_n_items = NULL;
 	iconview->priv->callback_get_n_items_data = NULL;
 	iconview->priv->callback_get_n_items_data_destroy = NULL;
+	g_clear_pointer(&iconview->priv->thumb_seen, g_free);
+	iconview->priv->thumb_seen_len = 0;
 
 	iconview->priv->callback_get_thumbnail_texture = NULL;
 	iconview->priv->callback_get_thumbnail_texture_data = NULL;
@@ -1715,6 +1725,11 @@ gboolean quiver_icon_view_scroll_event_cb ( GtkEventControllerScroll *controller
 	gint hadjust = (gint)gtk_adjustment_get_value(iconview->priv->hadjustment);
 	gint vadjust = (gint)gtk_adjustment_get_value(iconview->priv->vadjustment);
 
+	/* A new scroll gesture moves the viewport; mark an epoch so the batches
+	 * of thumbnail fetches that follow can be associated with that scroll
+	 * pass in the metrics log. */
+	quiver_metric_epoch("iconview");
+
 	if ((0 != iconview->priv->timeout_id_smooth_scroll || 0 != iconview->priv->tick_id_smooth_scroll) &&
 		iconview->priv->smooth_scroll_cell == G_MAXULONG)
 	{
@@ -2661,7 +2676,7 @@ quiver_icon_view_scroll_to_cell(QuiverIconView *iconview,gulong cell)
 {
 	quiver_icon_view_scroll_to_cell_force_top(iconview,cell,FALSE);
 }
-static void
+void
 quiver_icon_view_set_select_all(QuiverIconView *iconview, gboolean selected)
 {
 	gulong i;
@@ -2917,8 +2932,62 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 static GdkTexture* quiver_icon_view_get_thumbnail_texture(QuiverIconView* iconview, gulong cell, gint* actual_width, gint *actual_height)
 {
 	GdkTexture *texture = NULL;
+
+	/* Every visible cell asks for its thumbnail on every repaint, so this is
+	 * the place to see whether the icon view is being fed from cache or is
+	 * re-loading.  The fetch brackets the callback so a stall can be attributed
+	 * to a cell, and the ready/missing marks that follow carry the cell number
+	 * so the order cells first appear in is visible in the log.  Off unless
+	 * QUIVER_METRICS is set. */
+	gint64 fetch_start = 0;
+	if (quiver_metrics_enabled())
+	{
+		quiver_metric_emit("iconcell", "thumbnail fetch start",
+			(gdouble)cell, "cell");
+		fetch_start = quiver_metrics_now_us();
+	}
+
 	if (iconview->priv->callback_get_thumbnail_texture)
 		texture = (*iconview->priv->callback_get_thumbnail_texture)(iconview, cell, actual_width, actual_height, iconview->priv->callback_get_thumbnail_texture_data);
+
+	if (quiver_metrics_enabled())
+	{
+		gint64 elapsed = quiver_metrics_now_us() - fetch_start;
+		quiver_metric_emit("iconcell", "thumbnail fetch",
+			(gdouble)elapsed / 1000.0, "ms");
+
+		if (iconview->priv->thumb_seen_len <= cell)
+		{
+			gulong len = cell + 1;
+			gpointer grown = g_realloc(iconview->priv->thumb_seen, len);
+			if (NULL != grown)
+			{
+				memset((guint8*)grown + iconview->priv->thumb_seen_len, 0,
+					len - iconview->priv->thumb_seen_len);
+				iconview->priv->thumb_seen = (guint8*)grown;
+				iconview->priv->thumb_seen_len = len;
+			}
+		}
+
+		if (NULL != texture)
+		{
+			quiver_metric_emit("iconcell", "ready cell", (gdouble)cell, "cell");
+			if (NULL != iconview->priv->thumb_seen)
+				iconview->priv->thumb_seen[cell] = 1;
+		}
+		else
+		{
+			quiver_metric_emit("iconcell", "missing cell", (gdouble)cell, "cell");
+
+			/* had one before, now nothing: the reported blink */
+			if (NULL != iconview->priv->thumb_seen &&
+				iconview->priv->thumb_seen[cell])
+			{
+				quiver_metric_emit("iconcell", "regressed cell",
+					(gdouble)cell, "cell");
+			}
+		}
+	}
 	return texture;
 }
 
@@ -3391,6 +3460,67 @@ quiver_icon_view_scroll_controller_cb (GtkEventControllerScroll *controller,
 	return quiver_icon_view_scroll_event_cb(NULL, dx, dy, iconview);
 }
 
+/* Where Page Up should land.
+ *
+ * The obvious implementation - subtract a page and clamp at zero - silently
+ * does nothing when fewer than a page of cells sit above the cursor: the
+ * subtraction is unsigned, so it wraps to a huge value, fails the later
+ * "is the new cell still in range" test, and the cursor is left where it was.
+ * When there is not a full page above, the cursor belongs on the top row of
+ * the column it is already in; on the top row already, it stays put.
+ *
+ * Non-static so the arithmetic can be unit tested without synthesising key
+ * events.
+ */
+gulong quiver_icon_view_page_up_target(gulong cursor_cell, guint cols,
+	guint n_cells_per_page)
+{
+	if (0 == cols || 0 == n_cells_per_page)
+		return 0;
+
+	if (cursor_cell > n_cells_per_page)
+		return cursor_cell - n_cells_per_page;
+
+	/* less than a page above: first row of the current column, if we are not
+	 * on it already */
+	gulong top_of_column = cursor_cell % cols;
+	return (top_of_column < cursor_cell) ? top_of_column : 0;
+}
+
+/* Where Page Down should land.
+ *
+ * When fewer than a page of cells sit below the cursor, the old answer was
+ * "the last cell in the grid" - n_cells - 1 - which is the last column of the
+ * last row.  Paging down then changed the column as well as the row, so the
+ * cursor jumped sideways and a second Page Down had nowhere to go.  Keep the
+ * column, as Page Up does, and stop on the last row that holds one.
+ *
+ * @n_cells is the item count, which Page Up does not need: without it there is
+ * no way to know how much is left below.  @n_cells_per_page is a multiple of
+ * @cols - the caller builds it as cols * rows_per_page - so a full-page step
+ * lands in the same column by construction.
+ *
+ * Non-static so the arithmetic can be unit tested without synthesising key
+ * events.
+ */
+gulong quiver_icon_view_page_down_target(gulong cursor_cell, guint cols,
+	guint n_cells_per_page, guint n_cells)
+{
+	if (0 == cols || 0 == n_cells_per_page || 0 == n_cells)
+		return 0;
+
+	/* A whole page still fits below, so move by it and keep the column. */
+	if (cursor_cell + n_cells_per_page < n_cells)
+		return cursor_cell + n_cells_per_page;
+
+	/* Less than a page below: the last cell sharing the cursor's column.  The
+	 * cursor is itself a valid cell, so its column exists on the last row or
+	 * on an earlier one - the division below cannot underflow. */
+	gulong last = n_cells - 1;
+	gulong column = cursor_cell % cols;
+	return column + ((last - column) / cols) * cols;
+}
+
 static gboolean
 quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 				    guint keyval,
@@ -3472,22 +3602,13 @@ quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 			break;
 
 		case GDK_KEY_Page_Up:
-			{
-				new_cursor_cell -= n_cells_per_page;
-			}
-			if (new_cursor_cell <= 0)
-			{
-				new_cursor_cell = 0;
-			}
+			new_cursor_cell = quiver_icon_view_page_up_target(
+				iconview->priv->cursor_cell, cols, n_cells_per_page);
 			break;
 		case GDK_KEY_Page_Down:
-			{
-				new_cursor_cell += n_cells_per_page;
-			}
-			if (n_cells <= new_cursor_cell)
-			{
-				new_cursor_cell = n_cells -1;
-			}
+			new_cursor_cell = quiver_icon_view_page_down_target(
+				iconview->priv->cursor_cell, cols,
+				n_cells_per_page, n_cells);
 			break;
 
 		default:
