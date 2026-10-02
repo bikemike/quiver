@@ -91,3 +91,4 @@ tests/images/*
 !tests/images/sample_4k.jpg
 !tests/images/sample_video.mp4
 !tests/images/sample_rotated.jpg
+!tests/images/sample_rotated_slong_ori.jpg

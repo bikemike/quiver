@@ -61,18 +61,53 @@ public:
                                        goffset known_size = -1);
 #endif
 
-    // Decode full image from file to GdkTexture
+    /* Decode full image from file to GdkTexture.
+     *
+     * The result is NOT necessarily in EXIF orientation: gdk-pixbuf and glycin
+     * apply it when they can, but each silently drops an Orientation tag they
+     * cannot parse, so the same call returns oriented or unrotated pixels
+     * depending on the file.  Callers that display the texture should pass it
+     * through EnsureExifOrientation() to get a defined state. */
     static GdkTexture* DecodeFileTexture(GFile *file, const char *mimetype,
                                          GCancellable *cancellable = NULL,
                                          GError **error = NULL,
                                          goffset known_size = -1);
 
+    /* Make sure @texture is in @orientation, taking ownership of it.
+     *
+     * Both gdk-pixbuf and glycin parse EXIF orientation with their own reader,
+     * and both silently drop the tag when it is not the SHORT the spec asks
+     * for - the decode then comes back unrotated while still looking like a
+     * success.  Exiv2, which the rest of the app uses for geometry, accepts any
+     * integer type, so such a file ends up with an Exif-derived portrait frame
+     * wrapped around landscape pixels.
+     *
+     * Rather than believe a loader's "I transformed this" flag, which is set
+     * whenever a texture was produced, compare the texture against the
+     * dimensions @orientation implies for @stored_width x @stored_height and
+     * rotate when they disagree.  Self-checking, so a texture the loader did
+     * orient is left alone and cannot be rotated twice, and it behaves the
+     * same for every backend.
+     *
+     * @stored_width / @stored_height are the unrotated pixel dimensions; pass
+     * 0 if unknown, in which case the texture is returned untouched.
+     *
+     * Dimensions cannot distinguish a mirror (orientations 2 and 4), which
+     * leaves the frame unchanged; a dropped mirror is therefore not corrected
+     * here.  The transpose family (5-8), the one that actually breaks the
+     * layout, is. */
+    static GdkTexture* EnsureExifOrientation(GdkTexture *texture, int orientation,
+                                             int stored_width, int stored_height);
+
 #if HAVE_GLYCIN
-    // Decode an animated image through glycin into backend-neutral frame
-    // textures.  Returns the first-frame texture (transfer full) on success
-    // and hands back *frames / *delays_ms (each texture owns one reference);
-    // the caller must release them with quiver_animation_frames_free().
-    // *n_frames = 1 for a still image; returns NULL on failure.
+    /* Decode an animated image through glycin into backend-neutral frame
+     * textures.  Returns the first-frame texture (transfer full) on success
+     * and hands back *frames / *delays_ms (each texture owns one reference);
+     * the caller must release them with quiver_animation_frames_free().
+     * *n_frames = 1 for a still image; returns NULL on failure.
+     *
+     * As with DecodeFileTexture, the frames are not guaranteed to be in EXIF
+     * orientation. */
     static GdkTexture* DecodeFileAnimation(GFile *file, GdkTexture ***frames,
                                            gint **delays_ms, gsize *n_frames,
                                            GError **error);

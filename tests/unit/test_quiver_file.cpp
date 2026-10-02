@@ -154,6 +154,77 @@ TEST_CASE("QuiverFile URI and Media Detection", "[unit][file]")
         g_free(rotUri);
     }
 
+    SECTION("Orientation stored as SLONG is honoured even when the loader drops it")
+    {
+        /* The EXIF spec requires Orientation to be SHORT, and both gdk-pixbuf
+         * and glycin silently ignore the tag when it arrives as another integer
+         * type.  Exiv2 accepts it, so the file below used to arrive as a
+         * portrait frame wrapped around unrotated pixels: the geometry came
+         * from Exiv2 while the bits came from the loader.  These are the same
+         * expectations as the SHORT fixture above, because to the user the only
+         * difference that matters is that the picture comes out upright. */
+        std::string slongOri = imagesDir + "/sample_rotated_slong_ori.jpg";
+        REQUIRE(g_file_test(slongOri.c_str(), G_FILE_TEST_EXISTS));
+
+        gchar *slongUri = g_filename_to_uri(slongOri.c_str(), NULL, NULL);
+        REQUIRE(slongUri != NULL);
+
+        std::vector<ImageDecoder::Backend> backends;
+        backends.push_back(ImageDecoder::Backend::AUTO);
+        if (ImageDecoder::IsBackendSupported(ImageDecoder::Backend::GLYCIN))
+            backends.push_back(ImageDecoder::Backend::GLYCIN);
+        if (ImageDecoder::IsBackendSupported(ImageDecoder::Backend::PIXBUF))
+            backends.push_back(ImageDecoder::Backend::PIXBUF);
+
+        ImageDecoder::Backend originalBackend = ImageDecoder::GetBackend();
+
+        for (auto backend : backends)
+        {
+            std::string bname = "AUTO";
+            if (backend == ImageDecoder::Backend::GLYCIN) bname = "GLYCIN";
+            else if (backend == ImageDecoder::Backend::PIXBUF) bname = "PIXBUF";
+
+            DYNAMIC_SECTION("Backend: " << bname)
+            {
+                ImageDecoder::SetBackend(backend);
+
+                QuiverFile::ClearThumbnailCache();
+                QuiverFile qf(slongUri);
+                qf.RemoveCachedThumbnail();
+
+                REQUIRE(qf.GetOrientation() == 8);
+                REQUIRE(qf.GetWidth() == 320);
+                REQUIRE(qf.GetHeight() == 180);
+
+                GdkTexture *t128 = qf.GetThumbnailTexture(128);
+                REQUIRE(t128 != NULL);
+                CHECK(gdk_texture_get_width(t128) == 72);
+                CHECK(gdk_texture_get_height(t128) == 128);
+                g_object_unref(t128);
+
+                GdkTexture *t256 = qf.GetThumbnailTexture(256);
+                REQUIRE(t256 != NULL);
+                CHECK(gdk_texture_get_width(t256) == 144);
+                CHECK(gdk_texture_get_height(t256) == 256);
+                g_object_unref(t256);
+
+                /* And the cached copy has to survive a fresh object, or the
+                 * next session rediscovers the same broken thumbnail. */
+                QuiverFile qf2(slongUri);
+                GdkTexture *t256_cached = qf2.GetThumbnailTexture(256);
+                REQUIRE(t256_cached != NULL);
+                CHECK(gdk_texture_get_width(t256_cached) == 144);
+                CHECK(gdk_texture_get_height(t256_cached) == 256);
+                g_object_unref(t256_cached);
+
+                qf2.RemoveCachedThumbnail();
+            }
+        }
+
+        ImageDecoder::SetBackend(originalBackend);
+        g_free(slongUri);
+    }
+
     g_free(videoUri);
     g_free(imageUri);
 }

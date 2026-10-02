@@ -688,7 +688,7 @@ void ImageLoader::Load()
 				bool bLoadWasFailed = m_ImageCache.HasFailed(m_Command.quiverFile.GetURI());
 				bool bLoadedQuickPreview = LoadQuickPreview();
 				bool bAborted = false;
-				bool bGlycinTransformed = false;
+				bool bReoriented = false;
 				GdkTexture **anim_frames = NULL;
 				gint *anim_delays = NULL;
 				gsize anim_count = 0;
@@ -758,7 +758,22 @@ void ImageLoader::Load()
 									pDecodeError = NULL;
 								}
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
-								bGlycinTransformed = (g_object_get_data(G_OBJECT(texture), "glycin-transformed") != NULL);
+								/* glycin tags every texture it produces as "transformed" without
+								 * checking that it actually applied EXIF orientation, and gdk-pixbuf
+								 * drops the tag outright when it is not the SHORT the spec asks for -
+								 * so a file can come back unrotated and still look like a success.
+								 * Put the texture into Exif orientation here instead of believing that
+								 * flag; afterwards the source orientation is known to be 1, and
+								 * reorientation_matrix[1] is the identity, so the glycin case and the
+								 * plain case collapse into a single re-rotation below. */
+								int decoded_width = gdk_texture_get_width(texture);
+								int decoded_height = gdk_texture_get_height(texture);
+								texture = ImageDecoder::EnsureExifOrientation(texture,
+									m_Command.quiverFile.GetOrientation(),
+									m_Command.quiverFile.GetWidth(),
+									m_Command.quiverFile.GetHeight());
+								bReoriented = (decoded_width != gdk_texture_get_width(texture)) ||
+								              (decoded_height != gdk_texture_get_height(texture));
 							}
 							g_object_unref(gfile);
 							if (NULL == texture && NULL != pDecodeError)
@@ -844,21 +859,12 @@ void ImageLoader::Load()
 				if (NULL != texture)
 				{
 					int orientation = m_iLoadOrientation;
-					if (bGlycinTransformed)
-					{
-						int file_ori = m_Command.quiverFile.GetOrientation();
-						int needed_ori = reorientation_matrix[file_ori][orientation];
-						if (needed_ori > 1)
-						{
-							texture = reorient_texture(texture, needed_ori);
-						}
-					}
-					else if (orientation > 1)
+					if (orientation > 1)
 					{
 						texture = reorient_texture(texture, orientation);
 					}
 
-if (NULL != anim_frames && orientation > 1)
+					if (NULL != anim_frames && (orientation > 1 || bReoriented))
 					{
 						/* The animation frames cannot be cleanly re-orientated
 						 * with the still texture, so fall back to the rotated
@@ -993,7 +999,7 @@ if (NULL != anim_frames && anim_count >= 2)
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
 				bool bAborted = false;
-				bool bGlycinTransformed = false;
+				bool bReoriented = false;
 				GdkTexture *cache_texture = NULL;
 				GdkTexture **anim_frames = NULL;
 				gint *anim_delays = NULL;
@@ -1061,7 +1067,22 @@ if (NULL != anim_frames && anim_count >= 2)
 									pDecodeError = NULL;
 								}
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
-								bGlycinTransformed = (g_object_get_data(G_OBJECT(cache_texture), "glycin-transformed") != NULL);
+								/* glycin tags every texture it produces as "transformed" without
+								 * checking that it actually applied EXIF orientation, and gdk-pixbuf
+								 * drops the tag outright when it is not the SHORT the spec asks for -
+								 * so a file can come back unrotated and still look like a success.
+								 * Put the texture into Exif orientation here instead of believing that
+								 * flag; afterwards the source orientation is known to be 1, and
+								 * reorientation_matrix[1] is the identity, so the glycin case and the
+								 * plain case collapse into a single re-rotation below. */
+								int cached_width = gdk_texture_get_width(cache_texture);
+								int cached_height = gdk_texture_get_height(cache_texture);
+								cache_texture = ImageDecoder::EnsureExifOrientation(cache_texture,
+									m_Command.quiverFile.GetOrientation(),
+									m_Command.quiverFile.GetWidth(),
+									m_Command.quiverFile.GetHeight());
+								bReoriented = (cached_width != gdk_texture_get_width(cache_texture)) ||
+								              (cached_height != gdk_texture_get_height(cache_texture));
 							}
 							if (NULL == cache_texture && NULL != pDecodeError)
 							{
@@ -1136,21 +1157,12 @@ if (NULL != anim_frames && anim_count >= 2)
 					if (NULL != cache_texture)
 					{
 						int orientation = m_Command.params.orientation;
-						if (bGlycinTransformed)
-						{
-							int file_ori = m_Command.quiverFile.GetOrientation();
-							int needed_ori = reorientation_matrix[file_ori][orientation];
-							if (needed_ori > 1)
-							{
-								cache_texture = reorient_texture(cache_texture, needed_ori);
-							}
-						}
-						else if (orientation > 1)
+						if (orientation > 1)
 						{
 							cache_texture = reorient_texture(cache_texture, orientation);
 						}
 
-if (NULL != anim_frames && orientation > 1)
+						if (NULL != anim_frames && (orientation > 1 || bReoriented))
 						{
 							/* Animated frames cannot be re-orientated cleanly;
 							 * cache only the rotated first frame. */

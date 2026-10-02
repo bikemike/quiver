@@ -835,6 +835,34 @@ GdkPixbuf* ImageDecoder::DecodeFilePixbuf(GFile *file, const char *mimetype,
 }
 #endif
 
+GdkTexture* ImageDecoder::EnsureExifOrientation(GdkTexture *texture, int orientation,
+                                                 int stored_width, int stored_height)
+{
+    if (texture == NULL || orientation <= 1)
+        return texture;
+
+    /* Nothing to check against means nothing to verify, and rotating on a
+     * guess is worse than leaving a texture alone. */
+    if (stored_width <= 0 || stored_height <= 0)
+        return texture;
+
+    int expected_width = stored_width;
+    int expected_height = stored_height;
+    if (4 < orientation)
+        std::swap(expected_width, expected_height);
+
+    if ((int)gdk_texture_get_width(texture) == expected_width &&
+        (int)gdk_texture_get_height(texture) == expected_height)
+        return texture;   /* the loader oriented it for us */
+
+    GdkTexture *rotated = QuiverUtils::TextureExifReorientate(texture, orientation);
+    if (rotated == NULL)
+        return texture;   /* leave the original in place rather than lose it */
+
+    g_object_unref(texture);
+    return rotated;
+}
+
 GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
                                            GCancellable *cancellable,
                                            GError **error,
@@ -946,10 +974,6 @@ GdkTexture* ImageDecoder::GlycinDecodeFileTexture(GFile *file, GCancellable *can
 
     g_object_unref(image);
     g_object_unref(loader);
-    if (tex)
-    {
-        g_object_set_data(G_OBJECT(tex), "glycin-transformed", GINT_TO_POINTER(1));
-    }
     return tex;
 }
 
@@ -1041,7 +1065,6 @@ GdkTexture* ImageDecoder::DecodeFileAnimation(GFile *file, GdkTexture ***frames,
         if (vec_frames.empty())
         {
             first_texture = tex;
-            g_object_set_data(G_OBJECT(tex), "glycin-transformed", GINT_TO_POINTER(1));
         }
 
         gint delay_ms = (delay_us <= 0) ? 0 : (gint)((delay_us + 500) / 1000);

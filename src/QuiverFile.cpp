@@ -1002,6 +1002,13 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 
 				if (NULL != thumb_texture)
 				{
+					/* A loader that dropped the EXIF orientation would hand back
+					 * landscape pixels that are then cached and validated against
+					 * the rotated dimensions, which is how an unrotated thumbnail
+					 * ends up in a portrait frame. */
+					thumb_texture = ImageDecoder::EnsureExifOrientation(thumb_texture,
+						GetOrientation(), orig_w, orig_h);
+
 					guint tex_w = gdk_texture_get_width(thumb_texture);
 					guint tex_h = gdk_texture_get_height(thumb_texture);
 					if (tex_w > (guint)size || tex_h > (guint)size)
