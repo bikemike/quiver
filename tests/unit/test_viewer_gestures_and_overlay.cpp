@@ -1502,17 +1502,36 @@ TEST_CASE("Viewer actions do not outlive the viewer", "[unit][viewer][actions]")
     second.reset();
 }
 
-/* Opaque solid-colour texture, so each test image can have its own size. */
+/* Opaque solid-colour texture, so each test image can have its own size.
+ *
+ * Written straight into a GBytes and uploaded as a memory texture rather than
+ * going through GdkPixbuf: gdk_texture_new_for_pixbuf() is deprecated with the
+ * gdk-pixbuf API, and an opaque colour has no reason to need a pixbuf anyway. */
 static GdkTexture *make_flat_texture(int w, int h, guchar r, guchar g, guchar b)
 {
-    GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, w, h);
-    if (pb == nullptr)
+    const guint stride = (guint)w * 4;
+    const gsize size = (gsize)stride * (gsize)h;
+    guchar *pixels = static_cast<guchar *>(g_try_malloc(size));
+    if (pixels == nullptr)
     {
         return nullptr;
     }
-    gdk_pixbuf_fill(pb, ((guint)r << 24) | ((guint)g << 16) | ((guint)b << 8));
-    GdkTexture *tex = gdk_texture_new_for_pixbuf(pb);
-    g_object_unref(pb);
+
+    for (int y = 0; y < h; ++y)
+    {
+        guchar *row = pixels + (gsize)y * stride;
+        for (int x = 0; x < w; ++x)
+        {
+            row[x * 4 + 0] = r;
+            row[x * 4 + 1] = g;
+            row[x * 4 + 2] = b;
+            row[x * 4 + 3] = 0xff;   /* opaque, matching the old alpha-free pixbuf */
+        }
+    }
+
+    GBytes *bytes = g_bytes_new_take(pixels, size);
+    GdkTexture *tex = gdk_memory_texture_new(w, h, GDK_MEMORY_R8G8B8A8, bytes, stride);
+    g_bytes_unref(bytes);
     return tex;
 }
 

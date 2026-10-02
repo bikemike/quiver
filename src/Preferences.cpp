@@ -60,7 +60,7 @@ gboolean Preferences::PreferencesSaveTimeout(gpointer user_data)
 {
 	Preferences *prefs = static_cast<Preferences*>(user_data);
 	prefs->m_iSaveTimerID = 0;
-	prefs->SaveFile(false);
+	prefs->SaveFile();
 	return FALSE;
 }
 
@@ -74,11 +74,11 @@ void Preferences::ScheduleSaveFile()
 	}
 }
 
-void Preferences::SaveFile(bool bOnExit)
+void Preferences::SaveFile()
 {
-	/* A fired timeout is already consumed; an exit-triggered call must have
-	 * the pending timer (if any) removed first so its source can't fire on a
-	 * dead instance. */
+	/* A fired timeout is already consumed, so this is normally a no-op; it
+	 * matters for a direct call, which must drop the pending timer so its
+	 * source cannot fire on a dead instance. */
 	if (0 != m_iSaveTimerID)
 	{
 		g_source_remove(m_iSaveTimerID);
@@ -97,7 +97,7 @@ void Preferences::SaveFile(bool bOnExit)
 
 Preferences::~Preferences()
 {
-	SaveFile(true);
+	SaveFile();
 	g_key_file_free(m_KeyFile);
 }
 

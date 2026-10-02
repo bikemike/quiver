@@ -22,7 +22,7 @@ public:
 	static void Reset() {
 		if (c_pPreferencesPtr)
 		{
-			c_pPreferencesPtr->SaveFile(true);
+			c_pPreferencesPtr->SaveFile();
 			c_pPreferencesPtr.reset();
 		}
 	}
@@ -59,7 +59,11 @@ private:
 
 	static gboolean PreferencesSaveTimeout(gpointer user_data);
 	void ScheduleSaveFile();
-	void SaveFile(bool bOnExit);
+	/* Writes the key file if anything changed.  Any pending debounce timer is
+	 * cancelled first, so a call that destroys the instance cannot leave a
+	 * timeout behind to fire on freed memory - which is the only reason a
+	 * caller would ever have wanted to say "this is an exit". */
+	void SaveFile();
 
 	static PreferencesPtr c_pPreferencesPtr;
 	bool m_bModified;

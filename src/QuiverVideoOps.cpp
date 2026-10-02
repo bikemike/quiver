@@ -91,59 +91,7 @@ static int frame_rotation_deg(AVFrame* frame, AVDictionary* metadata, AVStream* 
 
 	return 0;
 }
-/* avformat_open_input() wants a native filesystem path, not a URI: it will not
- * percent-decode "file:///...".  QuiverFile::GetURI() hands back a URI (with
- * percent-encoding for spaces etc.), so resolve a local path first.
- *
- * Note g_file_get_path() is no help for the non-local case - for "trash:///"
- * it returns NULL exactly like g_filename_from_uri(), because gvfs' trash
- * backend is a virtual namespace with no path behind it for any API to hand
- * back.  A FUSE-backed directory is a different story: it is an ordinary local
- * path, so GIO resolves it natively and we take the fast route below with no
- * extra work.
- *
- * Only when there is genuinely no path do we fall back to reading the bytes as
- * a GInputStream and feeding libavformat through a custom AVIOContext (see
- * VideoSource).  We used to stage those into a temp copy here instead, which
- * meant duplicating every trashed video into /tmp, leaking that copy whenever
- * the process died before shutdown cleanup, and - because g_file_copy()
- * drives gvfs' D-Bus copy machinery - faulting inside libgvfs on the
- * thumbnail worker thread. */
-static gboolean uri_to_native_path(const gchar* uri, std::string& path)
-{
-	GFile* file = g_file_new_for_uri(uri);
-	const gchar* native = g_file_peek_path(file);   /* NULL for any non-local URI */
-	if (native == NULL)
-	{
-		g_object_unref(file);
-		return FALSE;
-	}
-	path.assign(native);
-	g_object_unref(file);   /* path was copied, so the file can go now */
-	return TRUE;
-}
 
-/* --- AVIOContext glue: hand libavformat a GInputStream ------------------- */
-
-
-
-
-struct VideoInterruptContext {
-	gint64 deadline_us = 0;
-	VideoAbortFn abort_fn = NULL;
-	gpointer abort_data = NULL;
-};
-
-static int video_interrupt_cb(void* opaque)
-{
-	if (opaque == NULL) return 0;
-	VideoInterruptContext* ctx = static_cast<VideoInterruptContext*>(opaque);
-	if (ctx->abort_fn != NULL && ctx->abort_fn(ctx->abort_data))
-		return 1;
-	if (ctx->deadline_us > 0 && g_get_monotonic_time() > ctx->deadline_us)
-		return 1;
-	return 0;
-}
 
 /* Open the file, find its first video stream and open a decoder for it.
  * On failure all members are reset and ok is FALSE. */
@@ -154,7 +102,6 @@ struct VideoSession {
 	AVStream* st = NULL;
 	AVCodecContext* ctx = NULL;
 	bool ok = false;
-	std::shared_ptr<VideoInterruptContext> cb_ctx;
 };
 
 static std::once_flag s_avInitOnce;

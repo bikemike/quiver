@@ -5,7 +5,7 @@
 #include "Timer.h"
 #include <iostream>
 #include <iomanip>
-#include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <glib.h>
 #include <gtk/gtk.h>
@@ -16,6 +16,19 @@
 
 // QuiverUtils references g_pApp
 GtkApplication *g_pApp = NULL;
+
+/* CHECK() is a no-op in the Release build these targets use (-DNDEBUG), so
+ * every check in this harness used to vanish and the run still printed PASS.
+ * CHECK is always compiled in, and it reports the file, line and condition
+ * before exiting, which is what a failed manual run needs. */
+#define CHECK(cond) \
+    do { \
+        if (!(cond)) { \
+            std::cerr << "  FAILED " << __FILE__ << ":" << __LINE__ \
+                      << ": " << #cond << std::endl; \
+            std::exit(1); \
+        } \
+    } while (0)
 
 int main(int argc, char** argv)
 {
@@ -30,7 +43,7 @@ int main(int argc, char** argv)
     }
 
     gchar* uri = g_filename_to_uri(video_path, NULL, NULL);
-    assert(uri != NULL);
+    CHECK(uri != NULL);
 
     std::cout << "============================================================\n";
     std::cout << "Testing Video Preview Load Timing\n";
@@ -42,19 +55,21 @@ int main(int argc, char** argv)
 
     // 1. Verify file type identification
     std::cout << "Checking if QuiverFile recognizes video...\n";
-    assert(qf.IsVideo());
+    CHECK(qf.IsVideo());
+    CHECK(qf.IsVideo());
     std::cout << "  [IsVideo] -> PASS\n";
 
     // 2. Verify initial load time is uninitialized (< 0.0) so status bar is empty
     double initial_load_time = qf.GetLoadTimeInSeconds();
     std::cout << "Initial Load Time: " << initial_load_time << " s (expected < 0.0)\n";
-    assert(initial_load_time < 0.0);
+    CHECK(initial_load_time < 0.0);
+    CHECK(initial_load_time < 0.0);
     std::cout << "  [Initial Load Time < 0] -> PASS\n";
 
     // 3. Measure extraction + decode time via ImageDecoder backend abstraction
     Timer loadTimer;
     GdkTexture* video_tex = ImageDecoder::DecodeVideoTexture(uri);
-    assert(video_tex != NULL);
+    CHECK(video_tex != NULL);
 
     guint tex_width = gdk_texture_get_width(video_tex);
     guint tex_height = gdk_texture_get_height(video_tex);
@@ -69,35 +84,37 @@ int main(int argc, char** argv)
               << " in " << std::fixed << std::setprecision(4)
               << elapsed_seconds << " s\n";
 
-    assert(elapsed_seconds > 0.0);
-    assert(qf.GetLoadTimeInSeconds() == elapsed_seconds);
+    CHECK(elapsed_seconds > 0.0);
+    CHECK(qf.GetLoadTimeInSeconds() == elapsed_seconds);
+    CHECK(elapsed_seconds > 0.0);
+    CHECK(qf.GetLoadTimeInSeconds() == elapsed_seconds);
     std::cout << "  [Set/Get Load Time] -> PASS\n";
 
     // 4. Verify status bar formatting logic
     char statusbar_text[32];
     double seconds = qf.GetLoadTimeInSeconds();
-    assert(seconds >= 0.0);
+    CHECK(seconds >= 0.0);
     g_snprintf(statusbar_text, sizeof(statusbar_text), "%0.3fs", seconds);
     std::cout << "  [Status Bar Label Text] \"" << statusbar_text << "\"\n";
-    assert(strcmp(statusbar_text, "0.000s") != 0);
+    CHECK(strcmp(statusbar_text, "0.000s") != 0);
     std::cout << "  [Non-Zero Status Bar Output] -> PASS\n";
 
     // 5. Test thumbnail generation
     std::cout << "Testing video thumbnail generation and caching...\n";
     GdkTexture* thumb_tex = qf.GetThumbnailTexture(256);
-    assert(thumb_tex != NULL);
+    CHECK(thumb_tex != NULL);
     /* A zero-sized texture is still a non-NULL GdkTexture, so a bare
      * "!= NULL" check happily passes when decoding quietly produced nothing.
      * That is exactly what a broken ffmpeg IO path looks like, so insist on
      * real pixels here. */
-    assert(gdk_texture_get_width(thumb_tex) > 0 && gdk_texture_get_height(thumb_tex) > 0);
+    CHECK(gdk_texture_get_width(thumb_tex) > 0 && gdk_texture_get_height(thumb_tex) > 0);
     std::cout << "  [Thumbnail] " << gdk_texture_get_width(thumb_tex) << "x"
               << gdk_texture_get_height(thumb_tex) << " -> PASS\n";
     g_object_unref(thumb_tex);
 
 #if HAVE_GDK_PIXBUF
     GdkPixbuf* thumb = qf.GetThumbnail(256);
-    assert(thumb != NULL);
+    CHECK(thumb != NULL);
     g_object_unref(thumb);
 #endif
 
@@ -109,16 +126,16 @@ int main(int argc, char** argv)
     }
 
     GstElement *pipeline = gst_element_factory_make("playbin", "test_player");
-    assert(pipeline != NULL);
+    CHECK(pipeline != NULL);
 
     GstElement *vsink = gst_element_factory_make("fakesink", "vsink");
     GstElement *asink = gst_element_factory_make("fakesink", "asink");
     g_object_set(G_OBJECT(pipeline), "video-sink", vsink, "audio-sink", asink, "uri", uri, NULL);
 
     GstStateChangeReturn sret = gst_element_set_state(pipeline, GST_STATE_PAUSED);
-    assert(sret != GST_STATE_CHANGE_FAILURE);
+    CHECK(sret != GST_STATE_CHANGE_FAILURE);
     sret = gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
-    assert(sret == GST_STATE_CHANGE_SUCCESS);
+    CHECK(sret == GST_STATE_CHANGE_SUCCESS);
 
     auto query_playback_rate = [](GstElement* pipe) -> gdouble {
         GstQuery *q = gst_query_new_segment(GST_FORMAT_TIME);
@@ -132,7 +149,7 @@ int main(int argc, char** argv)
 
     gdouble current_rate = query_playback_rate(pipeline);
     std::cout << "  [Initial Playback Rate] " << current_rate << " -> PASS\n";
-    assert(current_rate == 1.0);
+    CHECK(current_rate == 1.0);
 
     // Set playback speed to 2.0x
     gdouble target_speed = 2.0;
@@ -141,36 +158,36 @@ int main(int argc, char** argv)
     gboolean seek_res = gst_element_seek(pipeline, target_speed, GST_FORMAT_TIME,
         static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
         GST_SEEK_TYPE_SET, current_pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-    assert(seek_res);
+    CHECK(seek_res);
     gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
 
     current_rate = query_playback_rate(pipeline);
     std::cout << "  [Rate After Setting 2.0x] " << current_rate << " -> PASS\n";
-    assert(current_rate == target_speed);
+    CHECK(current_rate == target_speed);
 
     // Simulate SkipForward with target_speed
     gint64 forward_pos = current_pos + GST_SECOND * 5;
     seek_res = gst_element_seek(pipeline, target_speed, GST_FORMAT_TIME,
         static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
         GST_SEEK_TYPE_SET, forward_pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-    assert(seek_res);
+    CHECK(seek_res);
     gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
 
     current_rate = query_playback_rate(pipeline);
     std::cout << "  [Rate After SkipForward] " << current_rate << " (expected 2.0) -> PASS\n";
-    assert(current_rate == target_speed);
+    CHECK(current_rate == target_speed);
 
     // Simulate SkipBack with target_speed
     gint64 back_pos = std::max((gint64)0, forward_pos - GST_SECOND * 2);
     seek_res = gst_element_seek(pipeline, target_speed, GST_FORMAT_TIME,
         static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
         GST_SEEK_TYPE_SET, back_pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-    assert(seek_res);
+    CHECK(seek_res);
     gst_element_get_state(pipeline, NULL, NULL, 5 * GST_SECOND);
 
     current_rate = query_playback_rate(pipeline);
     std::cout << "  [Rate After SkipBack] " << current_rate << " (expected 2.0) -> PASS\n";
-    assert(current_rate == target_speed);
+    CHECK(current_rate == target_speed);
 
     gst_element_set_state(pipeline, GST_STATE_NULL);
     gst_object_unref(pipeline);

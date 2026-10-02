@@ -826,9 +826,6 @@ static void browser_thumb_sizer_pressed_cb(GtkGestureClick *gesture,
 	int n_press, double x, double y, gpointer user_data);
 static void browser_thumb_sizer_released_cb(GtkGestureClick *gesture,
 	int n_press, double x, double y, gpointer user_data);
-static gboolean browser_thumb_sizer_hide_cb(gpointer user_data);
-static void browser_thumb_sizer_arm_hide(Browser::BrowserImpl* b);
-
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
@@ -1915,13 +1912,6 @@ static void browser_thumb_sizer_set_text(Browser::BrowserImpl* b, const char *te
 		gtk_widget_add_css_class(b->m_pThumbSizerLabel, "thumb-sizer-readout");
 	else
 		gtk_widget_remove_css_class(b->m_pThumbSizerLabel, "thumb-sizer-readout");
-}
-
-/* Hide the readout but keep the drag session alive, so the next value change
- * brings it straight back. */
-static void browser_thumb_sizer_hide_only(Browser::BrowserImpl* b)
-{
-	browser_thumb_sizer_set_text(b, "");
 }
 
 /* End the drag session for good: clear the readout and stop polling. */
