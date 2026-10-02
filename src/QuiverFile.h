@@ -54,6 +54,18 @@ public:
 	bool IsFolder() const;
 	bool IsVideo();
 
+	/* The largest already-cached thumbnail whose bucket is no larger than the
+	 * one @iSize would resolve to, or NULL when there is none.  @iSize is a
+	 * requested size and is rounded up to a standard size the same way
+	 * GetThumbnailTexture() does, so a request below the smallest bucket still
+	 * considers that bucket.
+	 *
+	 * Never generates: a view uses this to show something while the size it
+	 * actually wants is being decoded, so generating a placeholder would cost
+	 * what the caller is trying to avoid.  Only buckets already decoded or
+	 * already on disk are considered. */
+	GdkTexture* GetCachedThumbnailAtMost(int iSize = 0);
+
 	GdkTexture *GetThumbnailTexture(int iSize = 0,
 		QuiverVideoOps::VideoAbortFn abort_fn = NULL,
 		gpointer abort_data = NULL);

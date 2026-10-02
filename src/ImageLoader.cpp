@@ -483,11 +483,7 @@ bool ImageLoader::LoadQuickPreview()
 	if (m_bQuickPreview && !m_Command.params.no_thumb_preview)
 	{
 		GdkTexture *thumb_tex = NULL;
-		
-		if (m_pThumbnailCache)
-		{
-			thumb_tex = m_pThumbnailCache->GetTexture(m_Command.quiverFile.GetURI());
-		}
+
 		/* Ask for the size the quick preview is actually drawn at, largest
 		 * first, so a large pane still gets a sharp thumbnail.  Probing 256
 		 * unconditionally made the pane generate a 256 thumbnail that was
@@ -497,6 +493,28 @@ bool ImageLoader::LoadQuickPreview()
 			m_Command.params.max_height);
 		if (iPreviewSize < 128)
 			iPreviewSize = 128;
+
+		if (m_pThumbnailCache)
+		{
+			GdkTexture *cached = m_pThumbnailCache->GetTexture(m_Command.quiverFile.GetURI());
+			/* The filmstrip parks a smaller thumbnail in this cache as a
+			 * placeholder while the size the cell really wants is decoded.
+			 * Taking that unconditionally would hand the preview a 128 when a
+			 * 512 is sitting on disk, so only accept what is big enough. */
+			if (NULL != cached)
+			{
+				guint cached_side = std::max(gdk_texture_get_width(cached),
+					gdk_texture_get_height(cached));
+				if ((int)cached_side >= iPreviewSize)
+				{
+					thumb_tex = cached;
+				}
+				else
+				{
+					g_object_unref(cached);
+				}
+			}
+		}
 
 		static const int sizes[] = {512, 256, 128};
 		for (unsigned int i = 0; i < G_N_ELEMENTS(sizes) && NULL == thumb_tex; i++)

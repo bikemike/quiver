@@ -464,3 +464,226 @@ TEST_CASE("A thumbnail is retried once the file's mtime changes", "[unit][cache]
 	g_remove(path.c_str());
 	g_rmdir(dir.c_str());
 }
+
+/* ---- GetCachedThumbnailAtMost ----------------------------------------- */
+
+/* The real thumbnail cache, which unlike the failure markers is not version
+ * stamped:  $XDG_CACHE_HOME/thumbnails/<size>/<md5>.png */
+static gchar* TestThumbnailPath(const gchar* uri, const gchar* size_name)
+{
+	gchar* hash = TestThumbnailHash(uri);
+	gchar* path = g_build_filename(g_get_user_cache_dir(), "thumbnails",
+		size_name, hash, NULL);
+	g_free(hash);
+	return path;
+}
+
+/* A unique decodable image, so no other test can leave state behind for it. */
+static gchar* TestMakeTempJpeg(const gchar* name)
+{
+	gchar* dir = g_build_filename("/tmp", "quiver-thumb-bucket", NULL);
+	g_mkdir_with_parents(dir, 0755);
+	gchar* path = g_build_filename(dir, name, NULL);
+	g_free(dir);
+
+	gchar* good = g_build_filename(QuiverTest_GetImagesDir().c_str(),
+		"sample_rotated.jpg", NULL);
+	gchar* bytes = NULL;
+	gsize len = 0;
+	REQUIRE(g_file_get_contents(good, &bytes, &len, NULL));
+	REQUIRE(g_file_set_contents(path, bytes, len, NULL));
+	g_free(bytes);
+	g_free(good);
+
+	gchar* uri = g_filename_to_uri(path, NULL, NULL);
+	REQUIRE(uri != NULL);
+	g_free(path);
+	return uri;
+}
+
+/* SaveThumbnail() hands the write to a thread pool, so a thumbnail that was
+ * just generated is not on disk yet.  Tests that assert against the disk path
+ * have to wait for it rather than assume it landed. */
+static bool TestWaitForFile(const gchar* path, int timeout_ms)
+{
+	for (int waited = 0; waited < timeout_ms; waited += 20)
+	{
+		if (g_file_test(path, G_FILE_TEST_EXISTS))
+			return true;
+		g_usleep(20000);
+	}
+	return g_file_test(path, G_FILE_TEST_EXISTS);
+}
+
+/* Generates a thumbnail of the given bucket and waits for it to reach the disk,
+ * returning the size name it was cached under. */
+static void TestGenerateAndPersist(QuiverFile& f, const gchar* uri, int size,
+	const gchar* size_name)
+{
+	GdkTexture* tex = f.GetThumbnailTexture(size);
+	REQUIRE(tex != NULL);
+	g_object_unref(tex);
+
+	gchar* path = TestThumbnailPath(uri, size_name);
+	INFO("thumbnail was not written for the " << size_name << " bucket");
+	REQUIRE(TestWaitForFile(path, 5000));
+	g_free(path);
+}
+
+/* Drops every cached copy of uri and its on-disk thumbnails, so each test starts
+ * from nothing regardless of what ran before it. */
+static void TestPurgeAllThumbnails(const gchar* uri)
+{
+	QuiverFile f(uri);
+	for (int size : {128, 256, 512})
+		f.RemoveCachedThumbnail(size);
+	/* The per-size caches are global, so a stale entry for this uri would
+	 * otherwise satisfy the lookup without ever touching the disk path. */
+	QuiverFile::ClearThumbnailCache();
+}
+
+/* The whole point of the method is that it must not decode, since the caller is
+ * covering for a decode that is already in flight. */
+TEST_CASE("The placeholder lookup never generates a thumbnail", "[unit][cache][thumbnail]")
+{
+	gchar* uri = TestMakeTempJpeg("never-generated.jpg");
+	TestPurgeAllThumbnails(uri);
+
+	QuiverFile f(uri);
+	CHECK(f.GetCachedThumbnailAtMost(512) == NULL);
+
+	/* Nothing was asked for, so nothing should have been written. */
+	for (const char* sz : {"normal", "large", "x-large"})
+	{
+		gchar* path = TestThumbnailPath(uri, sz);
+		INFO("a thumbnail was written for size " << sz
+			<< ": the lookup generated instead of only reading");
+		CHECK_FALSE(g_file_test(path, G_FILE_TEST_EXISTS));
+		g_free(path);
+	}
+
+	TestPurgeAllThumbnails(uri);
+	g_free(uri);
+}
+
+/* A cell smaller than the smallest bucket still gets a 128 thumbnail, so that is
+ * the one to fall back on.  Comparing buckets against the raw request matches
+ * nothing here and would disable the feature for every small icon size. */
+TEST_CASE("A cell smaller than the smallest bucket falls back to 128", "[unit][cache][thumbnail]")
+{
+	gchar* uri = TestMakeTempJpeg("small-cell.jpg");
+	TestPurgeAllThumbnails(uri);
+
+	QuiverFile f(uri);
+	/* Produce a 128 the ordinary way, so it lands in the cache on disk. */
+	TestGenerateAndPersist(f, uri, 128, "normal");
+
+	/* Now forget the decoded copy, so the only way to find it is the disk. */
+	QuiverFile::ClearThumbnailCache();
+
+	GdkTexture* fallback = f.GetCachedThumbnailAtMost(40);
+	CHECK(fallback != NULL);
+	if (fallback != NULL)
+		g_object_unref(fallback);
+
+	TestPurgeAllThumbnails(uri);
+	g_free(uri);
+}
+
+/* One failure or eviction at a size must not leave a cell with nothing at all:
+ * the smaller bucket is still better than the generic icon. */
+TEST_CASE("The placeholder lookup falls back to a smaller cached size", "[unit][cache][thumbnail]")
+{
+	gchar* uri = TestMakeTempJpeg("smaller-only.jpg");
+	TestPurgeAllThumbnails(uri);
+
+	QuiverFile f(uri);
+	TestGenerateAndPersist(f, uri, 128, "normal");
+	QuiverFile::ClearThumbnailCache();
+
+	/* Asking for something that resolves to 512, with only a 128 available. */
+	GdkTexture* fallback = f.GetCachedThumbnailAtMost(512);
+	CHECK(fallback != NULL);
+	if (fallback != NULL)
+	{
+		guint side = std::max(gdk_texture_get_width(fallback),
+			gdk_texture_get_height(fallback));
+		CHECK(side <= 128);
+		g_object_unref(fallback);
+	}
+
+	TestPurgeAllThumbnails(uri);
+	g_free(uri);
+}
+
+/* Never hand back something larger than the bucket the request resolves to. */
+TEST_CASE("The placeholder lookup never returns a larger size than asked", "[unit][cache][thumbnail]")
+{
+	gchar* uri = TestMakeTempJpeg("too-large.jpg");
+	TestPurgeAllThumbnails(uri);
+
+	QuiverFile f(uri);
+	TestGenerateAndPersist(f, uri, 256, "large");
+	QuiverFile::ClearThumbnailCache();
+
+	/* 128 is cached, 128 is asked for, so nothing smaller qualifies and the
+	 * 256 must not be handed back as a stand-in. */
+	CHECK(f.GetCachedThumbnailAtMost(128) == NULL);
+
+	TestPurgeAllThumbnails(uri);
+	g_free(uri);
+}
+
+/* With several sizes cached the largest qualifying one wins. */
+TEST_CASE("The placeholder lookup prefers the largest cached size", "[unit][cache][thumbnail]")
+{
+	gchar* uri = TestMakeTempJpeg("several-sizes.jpg");
+	TestPurgeAllThumbnails(uri);
+
+	QuiverFile f(uri);
+	TestGenerateAndPersist(f, uri, 128, "normal");
+	TestGenerateAndPersist(f, uri, 256, "large");
+	QuiverFile::ClearThumbnailCache();
+
+	GdkTexture* fallback = f.GetCachedThumbnailAtMost(512);
+	REQUIRE(fallback != NULL);
+	if (fallback != NULL)
+	{
+		guint side = std::max(gdk_texture_get_width(fallback),
+			gdk_texture_get_height(fallback));
+		/* The 256, not the 128: taking the first bucket that exists instead of
+		 * the largest would hand back a smaller thumbnail than is available. */
+		INFO("handed back " << side << "px, expected the 256 bucket");
+		CHECK(side > 128);
+		CHECK(side <= 256);
+		g_object_unref(fallback);
+	}
+
+	TestPurgeAllThumbnails(uri);
+	g_free(uri);
+}
+
+/* HasThumbnail() also answers true from m_mapThumbnailExists, which is not
+ * cleared when the decoded copy is evicted or the file is removed.  Believing it
+ * would send the lookup down the decode path in exactly the situation it exists
+ * to avoid, so this covers the stale-exists case specifically. */
+TEST_CASE("The placeholder lookup ignores a stale exists flag", "[unit][cache][thumbnail]")
+{
+	gchar* uri = TestMakeTempJpeg("stale-exists.jpg");
+
+	QuiverFile f(uri);
+	TestGenerateAndPersist(f, uri, 128, "normal");
+
+	/* Drop the decoded copy and the file, leaving m_mapThumbnailExists set -
+	 * the state where HasThumbnail() is true but there is nothing to read. */
+	QuiverFile::ClearThumbnailCache();
+	gchar* path = TestThumbnailPath(uri, "normal");
+	REQUIRE(g_remove(path) == 0);
+	g_free(path);
+
+	CHECK(f.HasThumbnail(128));
+	CHECK(f.GetCachedThumbnailAtMost(512) == NULL);
+
+	TestPurgeAllThumbnails(uri);
+	g_free(uri);
+}

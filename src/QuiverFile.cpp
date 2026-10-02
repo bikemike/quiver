@@ -217,6 +217,9 @@ public:
 	GdkTexture* GetExifThumbnailTexture();
 	
 	bool HasThumbnail(int iSize) ;
+	/* Largest cached thumbnail in a bucket at or below the one @iSize resolves
+	 * to; NULL if none.  Never generates - see the note on the public method. */
+	GdkTexture* GetCachedThumbnailAtMost(int iSize = 0);
 	GdkTexture* GetThumbnailTexture(int iSize = 0,
 		QuiverVideoOps::VideoAbortFn abort_fn = NULL,
 		gpointer abort_data = NULL);
@@ -637,6 +640,61 @@ bool QuiverFile::QuiverFileImpl::HasThumbnail(int iSize)
 	m_mapThumbnailExists[thumbSize->size] = bExists;
 		
 	return bExists;
+}
+
+GdkTexture * QuiverFile::QuiverFileImpl::GetCachedThumbnailAtMost(int iSize)
+{
+	if (IsFolder())
+		return NULL;
+
+	/* Round up to the bucket GetThumbnailTexture() would pick, then consider that
+	 * bucket and everything smaller.  Testing buckets against iSize directly gets
+	 * this backwards for the common case of a cell below the smallest bucket: a
+	 * 40px cell still gets a 128 thumbnail, so 128 is the one to look for, but
+	 * "bucket <= 40" matches nothing and the cell never gets a fallback. */
+	const ThumbnailSize *target = NULL;
+	const unsigned int n_elements = G_N_ELEMENTS(ThumbnailSizes);
+	for (unsigned int i = 0; i < n_elements; i++)
+	{
+		if (iSize <= (int)ThumbnailSizes[i].size || i == n_elements - 1)
+		{
+			target = &ThumbnailSizes[i];
+			break;
+		}
+	}
+
+	GdkTexture *best = NULL;
+	for (unsigned int i = 0; i < n_elements; i++)
+	{
+		if (ThumbnailSizes[i].size > target->size)
+			break;
+
+		GdkTexture *tex = c_ThumbnailCache.m_mapThumbnailCache[ThumbnailSizes[i].size]->GetTexture(m_szURI);
+		if (NULL == tex)
+		{
+			/* Trust the disk only when the file is actually there.  HasThumbnail()
+			 * also answers true from m_mapThumbnailExists, which outlives an
+			 * evicted cache entry, and asking GetThumbnailTexture() in that state
+			 * finds nothing and decodes - the one thing this must not do. */
+			gchar *path = quiver_thumbnail_path_for_uri(m_szURI, ThumbnailSizes[i].name);
+			struct stat s = {};
+			gboolean exists = (0 == g_stat(path, &s));
+			g_free(path);
+			if (!exists)
+				continue;
+
+			tex = GetThumbnailTexture(ThumbnailSizes[i].size);
+		}
+		if (NULL == tex)
+			continue;
+
+		/* Ascending order, so a later (larger) bucket replaces what we held. */
+		if (NULL != best)
+			g_object_unref(best);
+		best = tex;
+	}
+
+	return best;
 }
 
 GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */,
@@ -1941,6 +1999,16 @@ bool QuiverFile::IsWriteable()
 		g_object_unref(gFileInfo);
 	}
 	return rval;
+}
+
+/* The largest already-cached thumbnail whose bucket is no larger than the one
+ * @iSize resolves to, or NULL when there is none.  Never asks for a decode: a
+ * view calls this to put something on screen while the size it really wants is
+ * still being generated, and generating a placeholder would cost exactly what
+ * the caller is trying to avoid. */
+GdkTexture * QuiverFile::GetCachedThumbnailAtMost(int iSize /* = 0 */)
+{
+	return m_QuiverFilePtr->GetCachedThumbnailAtMost(iSize);
 }
 
 GdkTexture * QuiverFile::GetThumbnailTexture(int iSize /* = 0 */,

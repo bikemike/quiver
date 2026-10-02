@@ -487,6 +487,9 @@ public:
 		virtual QuiverFile GetQuiverFile(gulong index);
 		virtual void SetIsRunning(bool bIsRunning);
 		virtual void SetCacheSize(guint uiCacheSize);
+
+		/* Ask the icon view to repaint one cell on the main thread. */
+		void InvalidateCell(gulong index);
 	
 		
 	private:
@@ -4406,15 +4409,14 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 		if (NULL == f.GetURI())
 			return;
 
-		bool bSquare = Preferences::GetInstance()->GetBoolean(QUIVER_PREFS_BROWSER,QUIVER_PREFS_BROWSER_THUMBS_SQUARE, false);
-
-		/* In square mode the icon view center-crops thumbnails at draw time, so
-		 * fetch and cache an extra 2x source to keep that crop sharp for images
-		 * whose aspect ratio is far from the square cell.  Thumbnails always
-		 * stay proportional (aspect-ratio preserving), both here and in the
-		 * freedesktop.org thumbnail cache. */
-		guint uiLoadW = bSquare ? uiWidth * 2 : uiWidth;
-		guint uiLoadH = bSquare ? uiHeight * 2 : uiHeight;
+		/* Square mode center-crops at draw time, but fetch the cell size
+		 * regardless: an earlier version asked for 2x so the crop would
+		 * downscale rather than upscale, which for an ordinary photo bought
+		 * nothing - a 4:3 image in a 128px cell is already 128x96, and
+		 * cropping to 96x96 and scaling back up to 128x128 costs a whole
+		 * larger bucket of decode and cache for a barely visible difference.
+		 * The crop takes the larger dimension of the cell from the thumbnail
+		 * it has and scales up the shortfall. */
 
 		GdkTexture *texture = NULL;
 		texture = m_pBrowserImpl->m_ThumbnailCache.GetTexture(f.GetURI());				
@@ -4434,7 +4436,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			thumb_width = gdk_texture_get_width(texture);
 			thumb_height = gdk_texture_get_height(texture);
 			
-			quiver_rect_get_bound_size(uiLoadW,uiLoadH, &bound_width,&bound_height,FALSE);
+			quiver_rect_get_bound_size(uiWidth,uiHeight, &bound_width,&bound_height,FALSE);
 			if (bound_width > 0 && bound_height > 0 && thumb_width == bound_width && thumb_height == bound_height)
 			{
 				// Cache hit! Thumbnail is already present in cache at the target size.
@@ -4448,25 +4450,44 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 			texture = NULL;
 		}
 
+		/* The long edge of the cell, which is only a request:
+		 * GetThumbnailTexture() rounds it up to the nearest standard size
+		 * (a 40px cell still gets a 128 thumbnail), so it must not be read
+		 * as the size that will come back. */
+		const guint uiRequestedSize = std::max(uiWidth, uiHeight);
+
 		if (NULL == texture)
 		{
+			/* Show whatever smaller thumbnail is already cached rather than the
+			 * generic icon for the whole decode.  The cell scales whatever it is
+			 * handed and keeps need_new_thumb set, so this displays immediately
+			 * and is replaced by the real size without a second request.  Only
+			 * buckets already decoded or on disk are considered, so this cannot
+			 * cost the very decode it is meant to cover for. */
+			GdkTexture *smaller = f.GetCachedThumbnailAtMost(uiRequestedSize);
+			if (NULL != smaller)
+			{
+				m_pBrowserImpl->m_ThumbnailCache.AddTexture(f.GetURI(), smaller);
+				g_object_unref(smaller);
+				InvalidateCell(item.m_ulIndex);
+			}
+
 			if (m_pBrowserImpl->m_ImageLoader.IsWorking())
 			{
 				usleep(2000);
 			}
-			guint iMaxSide = std::max(uiLoadW,uiLoadH);
 			/* This is the expensive half: a cache miss falls through to a gvfs
 			 * read plus a decode on this worker thread.  The iconcell fetch
 			 * timing covers only the main-thread lookup, so without this the
 			 * log shows near-zero fetch cost while the loader looks stalled. */
 			QuiverMetricTimer t_generate("iconcell", "thumbnail generate");
-			texture = f.GetThumbnailTexture(iMaxSide);
+			texture = f.GetThumbnailTexture(uiRequestedSize);
 		}
 
 		if (NULL != texture)
 		{
 			quiver_metric_emit("iconcell", "requested size",
-				(double)std::max(uiLoadW,uiLoadH), "px");
+				(double)uiRequestedSize, "px");
 			guint thumb_width, thumb_height;
 			thumb_width = gdk_texture_get_width(texture);
 			thumb_height = gdk_texture_get_height(texture);
@@ -4479,7 +4500,7 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 				swap(bound_width,bound_height);
 			}
 
-			quiver_rect_get_bound_size(uiLoadW,uiLoadH, &bound_width,&bound_height,FALSE);
+			quiver_rect_get_bound_size(uiWidth,uiHeight, &bound_width,&bound_height,FALSE);
 
 			if (bound_width > 0 && bound_height > 0 && (thumb_width != bound_width || thumb_height != bound_height))
 			{
@@ -4494,13 +4515,18 @@ void Browser::BrowserImpl::BrowserThumbLoader::LoadThumbnail(const ThumbLoaderIt
 				g_object_unref(texture);
 			}
 
-			BrowserThumbLoaderSyncData* pInvData = new BrowserThumbLoaderSyncData();
-			pInvData->iconview = m_pBrowserImpl->m_pIconView;
-			pInvData->index = item.m_ulIndex;
-			pInvData->aliveToken = m_spAlive;
-			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_invalidate_cell, pInvData, NULL); } else { idle_invalidate_cell(pInvData); }
+			InvalidateCell(item.m_ulIndex);
 		}
 	}
+}
+
+void Browser::BrowserImpl::BrowserThumbLoader::InvalidateCell(gulong index)
+{
+	BrowserThumbLoaderSyncData* pInvData = new BrowserThumbLoaderSyncData();
+	pInvData->iconview = m_pBrowserImpl->m_pIconView;
+	pInvData->index = index;
+	pInvData->aliveToken = m_spAlive;
+	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_invalidate_cell, pInvData, NULL); } else { idle_invalidate_cell(pInvData); }
 }
 
 void Browser::BrowserImpl::BrowserThumbLoader::GetVisibleRange(gulong* pulStart, gulong* pulEnd)

@@ -1450,6 +1450,9 @@ public:
 		virtual gulong GetNumItems();
 		virtual void SetIsRunning(bool bIsRunning);
 		virtual void SetCacheSize(guint uiCacheSize);
+
+		/* Ask the icon view to repaint one cell on the main thread. */
+		void InvalidateCell(gulong index);
 	
 		
 	private:
@@ -12923,13 +12926,8 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 		if (NULL == f.GetURI())
 			return;
 
-		bool bSquare = Preferences::GetInstance()->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SQUARE, false);
-
-		/* In square mode the icon view center-crops thumbnails at draw time, so
-		 * fetch and cache an extra 2x source to keep that crop sharp for images
-		 * whose aspect ratio is far from the square cell.  Thumbnails always
-		 * stay proportional (aspect-ratio preserving), both here and in the
-		 * freedesktop.org thumbnail cache. */
+		/* Square mode center-crops at draw time, but the cell size is what gets
+		 * fetched; see the matching note in BrowserThumbLoader::LoadThumbnail. */
 
 		GdkTexture *texture = NULL;
 		texture = m_pViewerImpl->m_ThumbnailCache.GetTexture(f.GetURI());				
@@ -12963,16 +12961,28 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 			texture = NULL;
 		}
 
+		/* A request, not a size: GetThumbnailTexture() rounds this up to the
+		 * nearest standard thumbnail size. */
+		const guint uiRequestedSize = std::max(uiWidth, uiHeight);
+
 		if (NULL == texture)
 		{
+			/* Show whatever smaller thumbnail is already cached rather than the
+			 * generic icon for the whole decode.  See the matching note in
+			 * BrowserThumbLoader::LoadThumbnail. */
+			GdkTexture *smaller = f.GetCachedThumbnailAtMost(uiRequestedSize);
+			if (NULL != smaller)
+			{
+				m_pViewerImpl->m_ThumbnailCache.AddTexture(f.GetURI(), smaller);
+				g_object_unref(smaller);
+				InvalidateCell(item.m_ulIndex);
+			}
+
 			if (m_pViewerImpl->m_ImageLoader.IsWorking())
 			{
 				usleep(2000);
 			}
-			/* In square mode fetch a 2x source so the center-crop keeps its
-			 * resolution when the image aspect differs a lot from the cell. */
-			guint iMaxSide = std::max(uiWidth,uiHeight);
-			texture = f.GetThumbnailTexture(bSquare ? iMaxSide * 2 : iMaxSide);
+			texture = f.GetThumbnailTexture(uiRequestedSize);
 		}
 
 		if (NULL != texture)
@@ -13003,13 +13013,18 @@ void Viewer::ViewerImpl::ViewerThumbLoader::LoadThumbnail(const ThumbLoaderItem 
 				g_object_unref(texture);
 			}
 
-			ViewerThumbLoaderSyncData* pInvData = new ViewerThumbLoaderSyncData();
-			pInvData->iconview = m_pViewerImpl->m_pIconView;
-			pInvData->index = item.m_ulIndex;
-			pInvData->aliveToken = m_spAlive;
-			if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_invalidate_cell_v, pInvData, NULL); } else { idle_invalidate_cell_v(pInvData); }
+			InvalidateCell(item.m_ulIndex);
 		}
 	}
+}
+
+void Viewer::ViewerImpl::ViewerThumbLoader::InvalidateCell(gulong index)
+{
+	ViewerThumbLoaderSyncData* pInvData = new ViewerThumbLoaderSyncData();
+	pInvData->iconview = m_pViewerImpl->m_pIconView;
+	pInvData->index = index;
+	pInvData->aliveToken = m_spAlive;
+	if (!ThreadUtil::IsGUIThread()) { g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, idle_invalidate_cell_v, pInvData, NULL); } else { idle_invalidate_cell_v(pInvData); }
 }
 
 void Viewer::ViewerImpl::ViewerThumbLoader::GetVisibleRange(gulong* pulStart, gulong* pulEnd)
