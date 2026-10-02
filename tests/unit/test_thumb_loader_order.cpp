@@ -3,6 +3,16 @@
 #include "QuiverFile.h"
 #include "test_helpers.h"
 
+#include <glib.h>
+#include <glib/gstdio.h>
+#include <dirent.h>
+
+#include <cstring>
+#include <ctime>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+
 #include <set>
 #include <vector>
 
@@ -256,4 +266,201 @@ TEST_CASE("Folder detection reads listing info instead of querying again", "[uni
 	g_object_unref(info);
 	g_object_unref(dir);
 	g_free(dirUri);
+}
+
+/* ---- failure-marker helpers -------------------------------------------- */
+
+/* Thumbnails are cached per size, but the failure marker used to be keyed by
+ * URI alone, so these helpers reason about the on-disk layout directly:
+ *
+ *     $XDG_CACHE_HOME/thumbnails/fail/quiver-<version>/<size>/<md5>.png
+ *
+ * The version segment is a build-time define the tests do not see, so it is
+ * located by probing for our own size subdirectory.
+ */
+
+/* Raw MD5 hex of the URI with the .png suffix, matching
+ * quiver_thumbnail_hash_filename().  g_compute_checksum_for_string() would not
+ * line up, so build it the same way. */
+static gchar* TestThumbnailHash(const gchar* uri)
+{
+	GChecksum* sum = g_checksum_new(G_CHECKSUM_MD5);
+	g_checksum_update(sum, (const guchar*)uri, strlen(uri));
+	gchar* hash = g_strconcat(g_checksum_get_string(sum), ".png", NULL);
+	g_checksum_free(sum);
+	return hash;
+}
+
+/* The <size> directory holding the marker for this uri, or NULL if the file has
+ * no marker recorded for that size. */
+static gchar* TestFailureMarkerDir(const gchar* uri, const gchar* size_name)
+{
+	gchar* hash = TestThumbnailHash(uri);
+	gchar* failRoot = g_build_filename(g_get_user_cache_dir(), "thumbnails",
+		"fail", NULL);
+	gchar* found = NULL;
+
+	if (DIR* d = opendir(failRoot))
+	{
+		while (struct dirent* ent = readdir(d))
+		{
+			if ('.' == ent->d_name[0])
+				continue;
+			gchar* cand = g_build_filename(failRoot, ent->d_name,
+				size_name, hash, NULL);
+			if (g_file_test(cand, G_FILE_TEST_EXISTS))
+			{
+				found = g_path_get_dirname(cand);
+				g_free(cand);
+				break;
+			}
+			g_free(cand);
+		}
+		closedir(d);
+	}
+
+	g_free(failRoot);
+	g_free(hash);
+	return found;
+}
+
+/* ---- tests ------------------------------------------------------------- */
+
+/* A thumbnail that fails to generate used to block retries by writing a single
+ * failure marker keyed only by the URI.  The skip check runs before the size is
+ * considered, so one failure - a transient gvfs read, or a file still being
+ * copied in - suppressed every larger size for the rest of the file's life,
+ * even though those sizes had never been attempted.
+ *
+ * Both sizes fail here because the file really is undecodable, so the return
+ * value cannot distinguish "attempted and failed" from "skipped without trying".
+ * The marker is the observable: each size writes its own, and only when it is
+ * actually tried.
+ */
+TEST_CASE("A thumbnail failure at one size does not block other sizes", "[unit][cache][thumbnail]")
+{
+	const std::string dir = "/tmp/quiver-thumb-size";
+	g_mkdir_with_parents(dir.c_str(), 0755);
+	const std::string path = dir + "/sized.jpg";
+
+	const uint8_t junk[] = { 'n', 'o', 't', ' ', 'a', ' ', 'j', 'p', 'g' };
+	FILE* f = fopen(path.c_str(), "wb");
+	REQUIRE(f != nullptr);
+	fwrite(junk, 1, sizeof(junk), f);
+	fclose(f);
+
+	gchar* uri = g_filename_to_uri(path.c_str(), NULL, NULL);
+	REQUIRE(uri != nullptr);
+	QuiverFile qf(uri);
+	qf.RemoveCachedThumbnail(128);
+	qf.RemoveCachedThumbnail(512);
+
+	GdkTexture* small = qf.GetThumbnailTexture(128);
+	CHECK(small == nullptr);              /* fails, and records the failure */
+	if (small != nullptr)
+		g_object_unref(small);
+
+	GdkTexture* large = qf.GetThumbnailTexture(512);
+	CHECK(large == nullptr);              /* also genuinely undecodable */
+
+	/* The real assertion: both sizes recorded their own failure, which only
+	 * happens if both were attempted.  A size-agnostic marker suppresses the
+	 * 512 request outright and leaves no trace here. */
+	gchar* normal = TestFailureMarkerDir(uri, "normal");
+	gchar* xlarge = TestFailureMarkerDir(uri, "x-large");
+	INFO("no marker for 128px: it was never tried");
+	CHECK(normal != nullptr);
+	INFO("no marker for 512px: it was skipped by the 128px failure");
+	CHECK(xlarge != nullptr);
+	g_free(normal);
+	g_free(xlarge);
+
+	if (large != nullptr)
+		g_object_unref(large);
+	qf.RemoveCachedThumbnail(128);
+	qf.RemoveCachedThumbnail(512);
+	g_free(uri);
+	g_remove(path.c_str());
+	g_rmdir(dir.c_str());
+}
+
+/* The marker records the failure against the file's mtime, so a file replaced
+ * on disk is retried without the object changing.
+ *
+ * Written in three phases because the retry is only observable against a
+ * control: with the mtime held still the marker stays valid and generation is
+ * correctly *not* attempted, and only advancing the mtime lets it through.  A
+ * test that skipped the middle phase would also pass with the marker mechanism
+ * removed entirely, which is why it is asserted that a marker exists at all.
+ */
+TEST_CASE("A thumbnail is retried once the file's mtime changes", "[unit][cache][thumbnail]")
+{
+	const std::string dir = "/tmp/quiver-thumb-retry";
+	g_mkdir_with_parents(dir.c_str(), 0755);
+	const std::string path = dir + "/retried.jpg";
+
+	const uint8_t junk[] = { 'n', 'o', 't', ' ', 'a', ' ', 'j', 'p', 'g' };
+	FILE* f = fopen(path.c_str(), "wb");
+	REQUIRE(f != nullptr);
+	fwrite(junk, 1, sizeof(junk), f);
+	fclose(f);
+
+	/* A fixed, unmistakably old mtime keeps both phases independent of how
+	 * fast the filesystem stamps writes. */
+	const time_t base = 1700000000;
+	g_autoptr(GFile) gf = g_file_new_for_path(path.c_str());
+	g_autoptr(GFileInfo) info = g_file_query_info(gf,
+		G_FILE_ATTRIBUTE_TIME_MODIFIED, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+	REQUIRE(info != NULL);
+	g_file_set_attribute_uint64(gf, G_FILE_ATTRIBUTE_TIME_MODIFIED,
+		(guint64)base, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+
+	gchar* uri = g_filename_to_uri(path.c_str(), NULL, NULL);
+	REQUIRE(uri != nullptr);
+	QuiverFile qf(uri);
+	/* A thumbnail left in the on-disk cache by an earlier run would be returned
+	 * before the marker is ever consulted, which would make every phase below
+	 * pass for the wrong reason.  Start from nothing. */
+	qf.RemoveCachedThumbnail(128);
+
+	CHECK(qf.GetThumbnailTexture(128) == nullptr);   /* phase 1: records a failure */
+
+	/* The marker must exist, or nothing below proves anything. */
+	gchar* marker = TestFailureMarkerDir(uri, "normal");
+	REQUIRE(marker != NULL);
+	g_free(marker);
+
+	/* Swap in a real, decodable JPEG but leave the mtime alone: the marker is
+	 * still valid, so this must stay suppressed.  This is the control that
+	 * gives the final phase its meaning. */
+	const std::string good = QuiverTest_GetImagesDir() + "/sample_rotated.jpg";
+	gchar* goodBytes = NULL;
+	gsize goodLen = 0;
+	REQUIRE(g_file_get_contents(good.c_str(), &goodBytes, &goodLen, NULL));
+	f = fopen(path.c_str(), "wb");
+	REQUIRE(f != nullptr);
+	fwrite(goodBytes, 1, goodLen, f);
+	fclose(f);
+	g_free(goodBytes);
+	g_file_set_attribute_uint64(gf, G_FILE_ATTRIBUTE_TIME_MODIFIED,
+		(guint64)base, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+
+	qf.Reload();
+	CHECK(qf.GetThumbnailTexture(128) == nullptr);   /* phase 2: still suppressed */
+
+	/* Now let the mtime move on, as an external edit would, and the stale
+	 * marker no longer applies. */
+	g_file_set_attribute_uint64(gf, G_FILE_ATTRIBUTE_TIME_MODIFIED,
+		(guint64)(base + 60), G_FILE_QUERY_INFO_NONE, NULL, NULL);
+	qf.Reload();
+
+	GdkTexture* second = qf.GetThumbnailTexture(128);
+	CHECK(second != nullptr);                        /* phase 3: retried, succeeded */
+	if (second != nullptr)
+		g_object_unref(second);
+
+	qf.RemoveCachedThumbnail(128);
+	g_free(uri);
+	g_remove(path.c_str());
+	g_rmdir(dir.c_str());
 }

@@ -358,9 +358,10 @@ boost::shared_ptr<GThreadPool> QuiverFile::QuiverFileImpl::c_ThreadPoolPtr;
 static void GetImageDimensions(const gchar *uri, const gchar* mimetype, gint *width, gint *height, goffset known_size = -1);
 gchar* quiver_thumbnail_path_for_uri(const char* uri, const char* szSize);
 static gchar* quiver_thumbnail_path_for_uri_legacy(const char* uri, const char* szSize);
-static gchar* quiver_thumbnail_fail_path_for_uri(const char* uri);
-static void quiver_thumbnail_write_fail_marker(const char* uri, time_t mtime);
-static gboolean quiver_thumbnail_fail_marker_valid(const char* uri, time_t mtime);
+static gchar* quiver_thumbnail_fail_path_for_uri(const char* uri, const char* size_name);
+static gchar* quiver_thumbnail_hash_filename(const char* uri);
+static void quiver_thumbnail_write_fail_marker(const char* uri, const char* size_name, time_t mtime);
+static gboolean quiver_thumbnail_fail_marker_valid(const char* uri, const char* size_name, time_t mtime);
 
 
 ThumbnailCache QuiverFile::QuiverFileImpl::c_ThumbnailCache;
@@ -642,7 +643,16 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 	QuiverVideoOps::VideoAbortFn abort_fn /* = NULL */,
 	gpointer abort_data /* = NULL */)
 {
-	if (IsFolder() || m_bThumbloadFail)
+	/* Only folders are unconditionally un-thumbnailable.  An earlier version
+	 * also bailed on m_bThumbloadFail, which latched for the lifetime of this
+	 * object: once a thumbnail failed, a file replaced on disk was never
+	 * retried in that session even though its mtime had changed.  The failure
+	 * marker below already encodes "this exact file failed", keyed by mtime, so
+	 * the marker governs retries whenever there is an mtime to key it on.  With
+	 * no mtime there is nothing to write, so the flag is the only thing standing
+	 * between a failure and a retry on every repaint.
+	 */
+	if (IsFolder())
 		return NULL;
 
 	GFileInfo* gFileInfo = GetFileInfo();
@@ -813,7 +823,14 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 		}
 	}
 
-	gboolean bSkipGeneration = (NULL == thumb_texture && 0 < tv_sec && quiver_thumbnail_fail_marker_valid(m_szURI, tv_sec));
+	/* The marker is the authority when the file has an mtime, because it goes
+	 * stale by itself once the file changes.  Without one, fall back to the
+	 * in-memory flag so an undecodable file is not retried on every repaint. */
+	const gboolean bAlreadyFailed = (0 < tv_sec)
+		? quiver_thumbnail_fail_marker_valid(m_szURI, thumbSize->name, tv_sec)
+		: m_bThumbloadFail;
+
+	gboolean bSkipGeneration = (NULL == thumb_texture && bAlreadyFailed);
 
 	if (!bSkipGeneration)
 	{
@@ -976,10 +993,20 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 	}
 	else
 	{
-		m_bThumbloadFail = true;
 		if (0 < tv_sec)
 		{
-			quiver_thumbnail_write_fail_marker(m_szURI, tv_sec);
+			/* The marker records the failure against this file's mtime, so the
+			 * skip above suppresses retries until the file actually changes.
+			 * That is the retry policy; latching the flag as well would make
+			 * the marker pointless. */
+			quiver_thumbnail_write_fail_marker(m_szURI, thumbSize->name, tv_sec);
+		}
+		else
+		{
+			/* No mtime to key a marker on, so nothing else would stop this from
+			 * being retried on every repaint for the whole session.  This is the
+			 * only case the flag is still needed for. */
+			m_bThumbloadFail = true;
 		}
 	}
 
@@ -2182,9 +2209,22 @@ void QuiverFile::RemoveCachedThumbnail(int iSize /* = 0*/)
 		g_free (legacy_thumb_path);
 	}
 
-	gchar* fail_path = quiver_thumbnail_fail_path_for_uri(m_QuiverFilePtr->m_szURI);
-	g_remove(fail_path);
-	g_free(fail_path);
+	for (unsigned int i = 0; i < G_N_ELEMENTS(ThumbnailSizes); i++)
+	{
+		gchar* fail_path = quiver_thumbnail_fail_path_for_uri(m_QuiverFilePtr->m_szURI,
+			ThumbnailSizes[i].name);
+		g_remove(fail_path);
+		g_free(fail_path);
+	}
+
+	/* Markers written before the size became part of the key are no longer read,
+	 * but drop them here so they do not linger in the cache forever. */
+	gchar* legacy_hash = quiver_thumbnail_hash_filename(m_QuiverFilePtr->m_szURI);
+	gchar* legacy_fail_path = g_build_filename(g_get_user_cache_dir(), "thumbnails",
+		"fail", "quiver-" PACKAGE_VERSION, legacy_hash, NULL);
+	g_remove(legacy_fail_path);
+	g_free(legacy_fail_path);
+	g_free(legacy_hash);
 }
 
 time_t QuiverFile::GetTimeT(bool fromExif /* = true */) const
@@ -2247,18 +2287,21 @@ static gchar* quiver_thumbnail_path_for_uri_legacy(const char* uri, const char* 
 	return path;
 }
 
-static gchar* quiver_thumbnail_fail_path_for_uri(const char* uri)
+/* Keyed by size as well as URI: a thumbnail that fails to generate at 128 says
+ * nothing about whether 512 can be generated, and treating it as if it did meant
+ * one failure suppressed every larger size for the rest of the file's life. */
+static gchar* quiver_thumbnail_fail_path_for_uri(const char* uri, const char* size_name)
 {
 	gchar* hash = quiver_thumbnail_hash_filename(uri);
 	gchar* path = g_build_filename(g_get_user_cache_dir(), "thumbnails", "fail",
-		"quiver-" PACKAGE_VERSION, hash, NULL);
+		"quiver-" PACKAGE_VERSION, size_name, hash, NULL);
 	g_free(hash);
 	return path;
 }
 
-static void quiver_thumbnail_write_fail_marker(const char* uri, time_t mtime)
+static void quiver_thumbnail_write_fail_marker(const char* uri, const char* size_name, time_t mtime)
 {
-	gchar* fail_path = quiver_thumbnail_fail_path_for_uri(uri);
+	gchar* fail_path = quiver_thumbnail_fail_path_for_uri(uri, size_name);
 	gchar* fail_dir = g_path_get_dirname(fail_path);
 	g_mkdir_with_parents(fail_dir, S_IRUSR | S_IWUSR | S_IXUSR);
 	g_free(fail_dir);
@@ -2283,9 +2326,9 @@ static void quiver_thumbnail_write_fail_marker(const char* uri, time_t mtime)
 	g_free(fail_path);
 }
 
-static gboolean quiver_thumbnail_fail_marker_valid(const char* uri, time_t mtime)
+static gboolean quiver_thumbnail_fail_marker_valid(const char* uri, const char* size_name, time_t mtime)
 {
-	gchar* fail_path = quiver_thumbnail_fail_path_for_uri(uri);
+	gchar* fail_path = quiver_thumbnail_fail_path_for_uri(uri, size_name);
 	if (!g_file_test(fail_path, G_FILE_TEST_EXISTS))
 	{
 		g_free(fail_path);
