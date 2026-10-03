@@ -87,6 +87,10 @@ public:
 	 * every entry, which for a camera original is thousands of them - fine
 	 * for an edit path, far too expensive for redrawing a tab. */
 	std::shared_ptr<const Exiv2::ExifData> GetExifDataShared() const;
+	/* The EXIF exactly as it was parsed from disk, i.e. the "nothing edited
+	 * yet" baseline.  A saver diffs the live GetExifData() against this so
+	 * only the tags the user actually touched get rewritten. */
+	std::shared_ptr<const Exiv2::ExifData> GetExifDataOriginal() const;
 	std::shared_ptr<const Exiv2::XmpData> GetXmpData();
 	std::shared_ptr<const Exiv2::IptcData> GetIptcData();
 	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
@@ -110,6 +114,13 @@ public:
 
 	
 	int GetOrientation() ;
+	/* Records @iOrientation as the Orientation tag, dropping any cached
+	 * thumbnails that were rendered at the old one.  Rejects anything outside
+	 * 1..8 (Exif 2.3 4.6.4).  The value is written as a SHORT on purpose:
+	 * handing Exifdatum an int picks its int32 operator and stores SLongValue,
+	 * TIFF type 9, which is not a legal datatype for this tag and which
+	 * conformant readers silently drop. */
+	bool SetOrientation(int iOrientation);
 	
 	time_t GetTimeT(bool fromExif = true) const;
 	bool HasCachedTimeT() const;

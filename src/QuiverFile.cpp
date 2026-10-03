@@ -205,12 +205,14 @@ public:
 
 	void LoadExifData();
 	int GetOrientation();
+	bool SetOrientation(int iOrientation);
 	time_t GetTimeT(bool fromExif = true);
 	bool HasCachedTimeT() const;
 	bool HasDateMetadata() const;
 	bool ResolveMetadataTimeT();
 	
 	std::shared_ptr<Exiv2::ExifData> GetExifData();
+	std::shared_ptr<const Exiv2::ExifData> GetExifDataOriginal();
 	std::shared_ptr<const Exiv2::XmpData> GetXmpData();
 	std::shared_ptr<const Exiv2::IptcData> GetIptcData();
 	bool SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData);
@@ -1238,6 +1240,14 @@ std::shared_ptr<Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifData()
 	return m_ExifData;
 }
 
+std::shared_ptr<const Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifDataOriginal()
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
+	LoadExifData();
+	return m_ExifDataOriginal;
+}
+
 std::shared_ptr<const Exiv2::XmpData> QuiverFile::QuiverFileImpl::GetXmpData()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
@@ -1799,6 +1809,41 @@ int QuiverFile::QuiverFileImpl::GetOrientation()
 	return m_iOrientation;
 }
 
+bool QuiverFile::QuiverFileImpl::SetOrientation(int iOrientation)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
+	/* the tag only has these eight values, and a 0 or a 9 would be as wrong as
+	 * the wrong datatype was */
+	if (iOrientation < 1 || iOrientation > 8)
+	{
+		return false;
+	}
+
+	LoadExifData();
+	if (NULL == m_ExifData.get())
+	{
+		return false;
+	}
+
+	/* SetExifData() diffs what it is given against the load-time snapshot and
+	 * resets the cache, so edit a private copy rather than the live one */
+	std::shared_ptr<Exiv2::ExifData> pExifData =
+		std::make_shared<Exiv2::ExifData>(*m_ExifData);
+
+#if EXIV2_TEST_VERSION(0,28,0)
+	Exiv2::Value::UniquePtr value = Exiv2::Value::create(Exiv2::unsignedShort);
+#else
+	Exiv2::Value::AutoPtr value = Exiv2::Value::create(Exiv2::unsignedShort);
+#endif
+	value->read(std::to_string(iOrientation));
+
+	// operator[] creates the entry if it doesn't exist
+	(*pExifData)["Exif.Image.Orientation"].setValue(value.get());
+
+	return SetExifData(pExifData);
+}
+
 // =================================================================================================
 // QuiverFile Wrapper Class
 // =================================================================================================
@@ -2220,6 +2265,11 @@ std::shared_ptr<const Exiv2::ExifData> QuiverFile::GetExifDataShared() const
 	return m_QuiverFilePtr->GetExifData();
 }
 
+std::shared_ptr<const Exiv2::ExifData> QuiverFile::GetExifDataOriginal() const
+{
+	return m_QuiverFilePtr->GetExifDataOriginal();
+}
+
 std::shared_ptr<const Exiv2::XmpData> QuiverFile::GetXmpData()
 {
 	/* handed out as a shared, read-only pointer on purpose: copying it the
@@ -2241,6 +2291,11 @@ bool QuiverFile::SetExifData(std::shared_ptr<Exiv2::ExifData> pExifData)
 int QuiverFile::GetOrientation()
 {
 	return m_QuiverFilePtr->GetOrientation();
+}
+
+bool QuiverFile::SetOrientation(int iOrientation)
+{
+	return m_QuiverFilePtr->SetOrientation(iOrientation);
 }
 
 

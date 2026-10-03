@@ -19,6 +19,18 @@
 #include <stddef.h>
 #include <stdio.h>
 
+/* jcopy_markers_setup()/jcopy_markers_execute() are the only reason this file
+ * is compiled at all rather than taken from the system libjpeg, so marker
+ * saving has to be switched on.  Without it setup() is an empty stub, execute()
+ * finds an empty marker_list and every APPn/COM marker in the source - JFIF,
+ * ICC, XMP, comments, Adobe, and the Exif block itself - is silently dropped on
+ * save.  jpeglib.h exposes jpeg_save_markers() and jpeg_decompress_struct's
+ * marker_list, so the facility this guards is available.
+ */
+#ifndef SAVE_MARKERS_SUPPORTED
+#define SAVE_MARKERS_SUPPORTED 1
+#endif
+
 #include <jpeglib.h>
 #include <jerror.h>
 #include "jpegint.h"

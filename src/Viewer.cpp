@@ -2235,19 +2235,10 @@ void Viewer::ViewerImpl::SetCurrentOrientation(int iOrientation, bool bUpdateExi
 {
 	m_iCurrentOrientation = iOrientation;
 	
-	if (bUpdateExif)
+if (bUpdateExif)
 	{
 		QuiverFile f = m_ImageListPtr->GetCurrent();
-		std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
-
-		if (NULL != pExifData.get())
-		{
-			// operator[] creates the entry if it doesn't exist
-			(*pExifData)["Exif.Image.Orientation"] = m_iCurrentOrientation;
-
-			f.SetExifData(pExifData);
-		}
-
+		f.SetOrientation(m_iCurrentOrientation);
 	}
 	m_ImageLoader.SetLoadOrientation(GetCurrentOrientation(true));
 }

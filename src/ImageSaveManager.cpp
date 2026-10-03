@@ -52,13 +52,19 @@ std::string ImageSaverJPEG::GetMimeType()
 	return "image/jpeg";
 }
 
+static int jpeg_apply_exif_metadata(const char* pPath,
+		const std::shared_ptr<Exiv2::ExifData>& pExifData,
+		const std::shared_ptr<const Exiv2::ExifData>& pExifDataOriginal);
+
 static int save_jpeg_file(std::string filename, GdkTexture* texture,
 		std::shared_ptr<Exiv2::ExifData> exifData,
+		std::shared_ptr<const Exiv2::ExifData> exifDataOriginal,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data);
 
 #if HAVE_GDK_PIXBUF
 static int save_jpeg_file_pixbuf(std::string filename, GdkPixbuf* pixbuf,
 		std::shared_ptr<Exiv2::ExifData> exifData,
+		std::shared_ptr<const Exiv2::ExifData> exifDataOriginal,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data);
 #endif
 
@@ -68,7 +74,8 @@ bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
 			void* user_data /*= NULL*/)
 {
 	std::shared_ptr<Exiv2::ExifData> exifData = quiverFile.GetExifData();
-	int rval = save_jpeg_file(quiverFile.GetURI(), texture, exifData, cb, user_data);
+	std::shared_ptr<const Exiv2::ExifData> exifDataOriginal = quiverFile.GetExifDataOriginal();
+	int rval = save_jpeg_file(quiverFile.GetURI(), texture, exifData, exifDataOriginal, cb, user_data);
 	quiverFile.Reload();
 	return (0 == rval);
 }
@@ -88,7 +95,8 @@ bool ImageSaverJPEG::SaveImage(QuiverFile quiverFile,
 			void* user_data /*= NULL*/)
 {
 	std::shared_ptr<Exiv2::ExifData> exifData = quiverFile.GetExifData();
-	int rval = save_jpeg_file_pixbuf(quiverFile.GetURI(), pixbuf, exifData, cb, user_data);
+	std::shared_ptr<const Exiv2::ExifData> exifDataOriginal = quiverFile.GetExifDataOriginal();
+	int rval = save_jpeg_file_pixbuf(quiverFile.GetURI(), pixbuf, exifData, exifDataOriginal, cb, user_data);
 	quiverFile.Reload();
 	return (0 == rval);
 }
@@ -254,8 +262,87 @@ EXTERN(void) jpeg_gio_dest JPP((j_compress_ptr cinfo, GOutputStream * outfile));
 EXTERN(void) jpeg_gio_src JPP((j_decompress_ptr cinfo, GInputStream * infile));
 }
 
+/* Fold the datums the user actually edited into the JPEG at @pPath.
+
+   The original EXIF block is copied through libjpeg verbatim, so reading the
+   file back here recovers its own byte order ("II" or "MM") together with every
+   tag's original datatype and any MakerNote.  Only datums whose value differs
+   from the load-time snapshot are written, and each keeps the datatype already
+   in the destination, so no untouched tag can change type or endianness just
+   because the file was saved.  Orientation is pinned to SHORT regardless, which
+   also repairs files an older save left as SLONG. */
+static int jpeg_apply_exif_metadata(const char* pPath,
+		const std::shared_ptr<Exiv2::ExifData>& pExifData,
+		const std::shared_ptr<const Exiv2::ExifData>& pExifDataOriginal)
+{
+	if (NULL == pExifData.get() || pExifData->empty())
+	{
+		return 0;
+	}
+
+	int rc = 0;
+	try
+	{
+		auto image = Exiv2::ImageFactory::open(pPath);
+		image->readMetadata();
+
+		Exiv2::ExifData& dst = image->exifData();
+		for (Exiv2::ExifData::const_iterator src = pExifData->begin();
+				src != pExifData->end(); ++src)
+		{
+			/* Orientation is always rewritten.  Besides carrying the edit that
+			 * pins its datatype to SHORT, so saving a file an older save left
+			 * as SLONG repairs it whether or not this save was asked to move
+			 * the value at all. */
+			const bool bOrientation = ("Exif.Image.Orientation" == src->key());
+
+			if (!bOrientation && NULL != pExifDataOriginal.get())
+			{
+				Exiv2::ExifData::const_iterator orig =
+					pExifDataOriginal->findKey(Exiv2::ExifKey(src->key()));
+				if (orig != pExifDataOriginal->end() &&
+						orig->value().toString() == src->value().toString())
+				{
+					continue;
+				}
+			}
+
+			/* An entry the destination already had keeps its own datatype; one
+			 * being added takes the type it was written with.  operator[]
+			 * cannot be asked - it hands back an "undefined" placeholder that
+			 * reads nothing. */
+			const Exiv2::ExifKey key(src->key());
+			const bool bPresent = (dst.end() != dst.findKey(key));
+
+			// operator[] creates the entry if it doesn't exist
+			Exiv2::Exifdatum& datum = dst[src->key()];
+
+			Exiv2::TypeId typeId = bPresent ? datum.typeId() : src->typeId();
+			if (bOrientation)
+			{
+				typeId = Exiv2::unsignedShort;
+			}
+
+			Exiv2::Value::UniquePtr value = Exiv2::Value::create(typeId);
+			if (0 != value->read(src->value().toString()))
+			{
+				continue;
+			}
+			datum.setValue(value.get());
+		}
+
+		image->writeMetadata();
+	}
+	catch (...)
+	{
+		rc = -1;
+	}
+	return rc;
+}
+
 static int save_jpeg_file(std::string filename, GdkTexture* texture,
 		std::shared_ptr<Exiv2::ExifData> exifData,
+		std::shared_ptr<const Exiv2::ExifData> exifDataOriginal,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data)
 {
 	int rc = 0;
@@ -348,7 +435,10 @@ static int save_jpeg_file(std::string filename, GdkTexture* texture,
 
 	jvirt_barray_ptr* src_coef_arrays;
 
-	jcopy_markers_setup(&src, JCOPYOPT_ALL_BUT_EXIF);
+/* The source EXIF block rides through untouched; jpeg_apply_exif_metadata()
+	 * edits it in place afterwards.  Rebuilding it here is what used to force
+	 * big-endian onto every file and reshape tags nobody had touched. */
+	jcopy_markers_setup(&src, JCOPYOPT_ALL);
 	if (JPEG_HEADER_OK != jpeg_read_header(&src, TRUE))
 		return -1;
 
@@ -361,28 +451,8 @@ static int save_jpeg_file(std::string filename, GdkTexture* texture,
 		src.image_height,
 		MCU_width,
 		MCU_height,JXFORM_ROT_90);
-	 
+		
 	(void)perfect;
-
-	/* do exif updating */
-	// build the APP1 "Exif\0\0" + TIFF payload from the exiv2 container
-	std::vector<JOCTET> exif_app1_payload;
-	if (NULL != exifData.get() && !exifData->empty())
-	{
-		try
-		{
-			Exiv2::Blob blob;
-			Exiv2::ExifParser::encode(blob, Exiv2::bigEndian, *exifData);
-			exif_app1_payload.reserve(6 + blob.size());
-			const JOCTET header[] = { 'E', 'x', 'i', 'f', '\0', '\0' };
-			exif_app1_payload.insert(exif_app1_payload.end(), header, header + 6);
-			exif_app1_payload.insert(exif_app1_payload.end(), blob.begin(), blob.end());
-		}
-		catch (...)
-		{
-			exif_app1_payload.clear();
-		}
-	}
 
 	src_coef_arrays = jpeg_read_coefficients(&src);
 
@@ -392,9 +462,7 @@ static int save_jpeg_file(std::string filename, GdkTexture* texture,
 		jpeg_write_coefficients(&dst, src_coef_arrays);
 
 		/* Copy to the output file any extra markers that we want to preserve */
-		if (!exif_app1_payload.empty())
-			jpeg_write_marker(&dst, JPEG_APP0+1, exif_app1_payload.data(), exif_app1_payload.size());
-		jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL_BUT_EXIF);
+		jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL);
 	}
 	else
 	{
@@ -409,9 +477,7 @@ static int save_jpeg_file(std::string filename, GdkTexture* texture,
 
 		jpeg_start_compress(&dst, TRUE);
 
-		if (!exif_app1_payload.empty())
-			jpeg_write_marker(&dst, JPEG_APP0+1, exif_app1_payload.data(), exif_app1_payload.size());
-		jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL_BUT_EXIF);
+		jcopy_markers_execute(&src, &dst, JCOPYOPT_ALL);
 
 		std::vector<guchar> rgba(width * height * 4);
 		GdkTextureDownloader *dl = gdk_texture_downloader_new(texture);
@@ -454,10 +520,33 @@ static int save_jpeg_file(std::string filename, GdkTexture* texture,
 	g_object_unref(in);
 	g_object_unref(out);
 
+	/* Edit the EXIF in the finished file rather than the marker stream, so the
+	 * block's own byte order and untouched tags survive verbatim. */
+	if (0 != jpeg_apply_exif_metadata(strTmpFile.c_str(), exifData, exifDataOriginal))
+	{
+		rc = -1;
+	}
+
+	/* g_file_replace() created the temp with G_FILE_CREATE_PRIVATE (0600) and
+	 * the move below applies the source file's permissions to the target, so an
+	 * overwrite would quietly strip the original's mode.  Give the temp the
+	 * original's mode first. */
+	GFileInfo* info = g_file_query_info(ginfile,
+			G_FILE_ATTRIBUTE_UNIX_MODE,
+			G_FILE_QUERY_INFO_NONE,
+			NULL,
+			NULL);
+	if (NULL != info)
+	{
+		if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_UNIX_MODE))
+		{
+			g_chmod(strTmpFile.c_str(),
+					g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_UNIX_MODE) & 07777);
+		}
+		g_object_unref(info);
+	}
+
 	// move tmp file to original file name
-	//rc = g_rename(outfile,infile);
-	//printf("got here %d\n", rc);
-	//FIXME need to preserve file attributes of the original
 	g_file_move(
 			goutfile,
 			ginfile,
@@ -477,6 +566,7 @@ static int save_jpeg_file(std::string filename, GdkTexture* texture,
 #if HAVE_GDK_PIXBUF
 static int save_jpeg_file_pixbuf(std::string filename, GdkPixbuf* pixbuf,
 		std::shared_ptr<Exiv2::ExifData> exifData,
+		std::shared_ptr<const Exiv2::ExifData> exifDataOriginal,
 		IImageSaver::ImageSaveProgressCallback callback, void* user_data)
 {
 	if (NULL != pixbuf)
@@ -492,11 +582,11 @@ static int save_jpeg_file_pixbuf(std::string filename, GdkPixbuf* pixbuf,
 			gdk_pixbuf_get_rowstride(pixbuf));
 		g_bytes_unref(bytes);
 
-		int rval = save_jpeg_file(filename, tex, exifData, callback, user_data);
+		int rval = save_jpeg_file(filename, tex, exifData, exifDataOriginal, callback, user_data);
 		g_object_unref(tex);
 		return rval;
 	}
-	return save_jpeg_file(filename, static_cast<GdkTexture*>(NULL), exifData, callback, user_data);
+	return save_jpeg_file(filename, static_cast<GdkTexture*>(NULL), exifData, exifDataOriginal, callback, user_data);
 }
 #endif
 
