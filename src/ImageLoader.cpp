@@ -172,22 +172,6 @@ static void LoadAnimatedFramesFromPixbuf(GdkPixbufAnimation *anim,
 
 // this matrix calculates the orientation needed
 // to get from [source] orientation to a [dest]
-// orientation. for instance, to get from a 6 to
-// an 8, a 180 is needed (which is a 3)
-static int reorientation_matrix[9][9] =
-{
-	{1,1,2,3,4,5,6,7,8},
-	{1,1,2,3,4,5,6,7,8},
-	{2,2,1,4,3,8,7,6,5},
-	{3,3,4,1,2,7,8,5,6},
-	{4,4,3,2,1,6,5,8,7},
-	{5,5,6,7,8,1,2,3,4},
-	{8,8,7,6,5,2,1,4,3},
-	{7,7,8,5,6,3,4,1,2},
-	{6,6,5,8,7,4,3,2,1},
-	
-};
-
 static int combine_matrix[9][9] =
 {
 	{1,1,2,3,4,5,6,7,8,},
@@ -364,9 +348,34 @@ bool ImageLoader::CommandsPending()
 	// must do this outside of the mutext lock because it locks the gui thread
 	if (bLoadPreview)
 	{
-		m_Command.params.loaded_quick_preview = LoadQuickPreview();
+		/* A quick preview is for covering the wait while a decode runs.  When the
+		 * full image is already in the cache there is no decode to wait for - the
+		 * cached texture is published straight away - so putting a thumbnail up
+		 * first only flashes a smaller picture over the one that was about to
+		 * arrive, which reads as a glitch when the two differ in size or
+		 * orientation. */
+		if (!m_ImageCache.InCache(m_Command.quiverFile.GetURI()))
+		{
+			m_Command.params.loaded_quick_preview = LoadQuickPreview();
+		}
 	}
 	
+	return rval;
+}
+
+bool ImageLoader::NewerLoadPending()
+{
+	bool rval = false;
+	pthread_mutex_lock(&m_CommandMutex);
+	for (list<Command>::iterator itr = m_Commands.begin(); itr != m_Commands.end(); ++itr)
+	{
+		if (LOAD == itr->params.state || CACHE_LOAD == itr->params.state)
+		{
+			rval = true;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&m_CommandMutex);
 	return rval;
 }
 
@@ -475,12 +484,27 @@ void ImageLoader::RemovePixbufLoaderObserver(IPixbufLoaderObserver * loader_obse
 	g_mutex_unlock(&m_csObservers);
 }
 
-
+void ImageLoader::DeclaredSize(int stored_width, int stored_height, int pixels_at,
+                               int *width, int *height)
+{
+	*width = stored_width;
+	*height = stored_height;
+	/* Orientations 5-8 are the transposed half of the EXIF table: each is a
+	 * quarter turn away from one of 1-4, so pixels sitting at one are rotated
+	 * relative to the stored width/height. */
+	if (4 < pixels_at)
+	{
+		swap(*width, *height);
+	}
+}
 
 bool ImageLoader::LoadQuickPreview()
 {
 	bool rval = false;
-	if (m_bQuickPreview && !m_Command.params.no_thumb_preview)
+	/* Traced unconditionally, not just when a rotation is involved: a preview
+	 * that quietly appears is the whole of the symptom, and it used to leave
+	 * no trace at all whenever the file was not rotated. */
+		if (m_bQuickPreview && !m_Command.params.no_thumb_preview)
 	{
 		GdkTexture *thumb_tex = NULL;
 
@@ -563,18 +587,26 @@ bool ImageLoader::LoadQuickPreview()
 				}
 			}
 			
-			if (4 < m_iLoadOrientation)
-			{
-				swap(width,height);
-			}
+/* This command's own orientation.  It used to read the shared
+		 * current-orientation field, which Load() had just overwritten with the
+		 * command's orientation - so the two agreed by accident.  With that line
+		 * gone they can differ, and the preview would have been turned to one
+		 * orientation while announcing the size of another.  Keyed on the
+		 * command, as the rest of the load is. */
+		const int iRequested = m_Command.params.orientation;
 
-			if (m_iLoadOrientation != m_Command.quiverFile.GetOrientation())
+		if (4 < iRequested)
+		{
+			swap(width,height);
+		}
+
+		if (iRequested != m_Command.quiverFile.GetOrientation())
 			{
 				// thumbnail has already been rotated by the exif orientation
 				// so we must revert that and calculate the new rotation 
 				int orientation = inverse_matrix[m_Command.quiverFile.GetOrientation()];
-				int new_orientation = combine_matrix[m_iLoadOrientation][orientation];
-
+				int new_orientation = combine_matrix[iRequested][orientation];
+				
 				GdkTexture* tex_rotated = QuiverUtils::TextureExifReorientate(thumb_tex, new_orientation);
 				if (NULL != tex_rotated)
 				{
@@ -600,25 +632,59 @@ bool ImageLoader::LoadQuickPreview()
 				}
 			}
 			
-			list<IPixbufLoaderObserver*>::iterator itr;
-			g_mutex_lock(&m_csObservers);
-			for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+			/* A preview is only worth putting on screen if this command is
+			 * still the one the view is waiting for.  Otherwise it lands
+			 * after the user has already moved on and the picture they are
+			 * looking at turns into a thumbnail of a file they have left. */
+			if (!NewerLoadPending())
 			{
-				(*itr)->SetTextureAtSize(thumb_tex,width,height);
-			}
-			g_mutex_unlock(&m_csObservers);
+				list<IPixbufLoaderObserver*>::iterator itr;
+				g_mutex_lock(&m_csObservers);
+				for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
+				{
+					(*itr)->SetTextureAtSize(thumb_tex,width,height);
+				}
+				g_mutex_unlock(&m_csObservers);
+							}
 			g_object_unref(thumb_tex);
 			
 			rval = true;
 		}
 	}
+	/* Say so when nothing was shown at all: a suppressed preview and a missing
+	 * one leave an identical trace otherwise, and telling them apart is the whole
+	 * reason this function is instrumented. */
 	return rval;
 }
 
 void ImageLoader::Load()
 {
-	m_iLoadOrientation = m_Command.params.orientation;
+	/* Everything below works from this command's own orientation, snapshotted
+	 * once.  The alternative was to consult the shared m_iLoadOrientation field
+	 * throughout, but the GUI thread rewrites that on every navigation, so a
+	 * rotation made while this decode was running leaked in halfway: a load
+	 * asked for 6 turned and stamped 8, because the next file's navigation had
+	 * already written 8 by the time the texture was rotated.  The result was
+	 * cached under this file's URI stamped at an orientation its pixels were
+	 * never brought to, and the stamp was the only record of where they were.
+	 * GetNextCommand() has already folded the current orientation into the
+	 * command by this point, and rotating again mid-load enqueues another
+	 * command that handles it. */
+	const int iLoadOrientation = m_Command.params.orientation;
+
+
 	
+	/* Give up before touching anything if a newer load is already queued.  This
+	 * used to be discovered at delivery time instead, by which point the work was
+	 * long done: the cache-hit rotation below had resampled a full-size texture
+	 * and restamped the cached entry to the orientation nobody was going to see,
+	 * which the next command then had to rotate straight back.  Dropping out here
+	 * costs nothing - the queued command is the one that will display. */
+	if (NewerLoadPending())
+	{
+		return;
+	}
+
 	if (m_Command.params.reload)
 	{
 		m_ImageCache.RemoveTexture(m_Command.quiverFile.GetURI());
@@ -640,33 +706,40 @@ void ImageLoader::Load()
 		const gint* pOrientation = (const gint*)g_object_get_data(G_OBJECT (texture), "quiver-orientation");
 		if (NULL != pOrientation)
 		{
-			if(m_iLoadOrientation != *pOrientation)
+			if(iLoadOrientation != *pOrientation)
 			{
-				if ( (4 < m_iLoadOrientation && 4 >= *pOrientation)
-					|| (4 >= m_iLoadOrientation && 4 < *pOrientation) )
+				if ( (4 < iLoadOrientation && 4 >= *pOrientation)
+					|| (4 >= iLoadOrientation && 4 < *pOrientation) )
 				{
 					// swap because the cached image orientation has a different 
 					// ratio for width/height than the requested orientation
 					swap(width,height);
 				}
-				
+			
 			}
 		}
 
-		if (4 < m_iLoadOrientation)
+		if (4 < iLoadOrientation)
 		{
 			// swap because the actual image has a different 
 			// ratio for width/height than the requested orientation
 			swap(real_width,real_height);
 		}
 
-		if ((0 == m_Command.params.max_width && 0 == m_Command.params.max_height &&
-			 (width < real_width || height < real_height)) ||
-			( width < m_Command.params.max_width &&
+		/* Never on a video.  The comparison is against the container size the
+		 * file advertises, but a video frame can only ever be decoded at the
+		 * size the decoder hands back, so the cached entry is judged undersized
+		 * on every single visit: evicted, decoded to the identical size, evicted
+		 * again.  That kept the video permanently out of the cache, so returning
+		 * to it always missed and fell back to a quick preview. */
+		if (!m_Command.quiverFile.IsVideo() &&
+			((0 == m_Command.params.max_width && 0 == m_Command.params.max_height &&
+			  (width < real_width || height < real_height)) ||
+			 ( width < m_Command.params.max_width &&
 			 height < m_Command.params.max_height &&
-			 width < real_width && height < real_height))
+			 width < real_width && height < real_height)))
 		{
-			m_ImageCache.RemoveTexture(m_Command.quiverFile.GetURI());
+						m_ImageCache.RemoveTexture(m_Command.quiverFile.GetURI());
 		}
 				
 		g_object_unref(texture);
@@ -689,6 +762,11 @@ void ImageLoader::Load()
 				bool bLoadedQuickPreview = LoadQuickPreview();
 				bool bAborted = false;
 				bool bReoriented = false;
+				/* The pixels come out of the decoder as stored, so this flag says
+				 * they have since been put into the file's EXIF orientation and the
+				 * turn below is measured from there.  A cache hit skips all of that
+				 * and carries the orientation it was stored at instead. */
+				bool bDecoded = false;
 				GdkTexture **anim_frames = NULL;
 				gint *anim_delays = NULL;
 				gsize anim_count = 0;
@@ -758,22 +836,18 @@ void ImageLoader::Load()
 									pDecodeError = NULL;
 								}
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
-								/* glycin tags every texture it produces as "transformed" without
-								 * checking that it actually applied EXIF orientation, and gdk-pixbuf
-								 * drops the tag outright when it is not the SHORT the spec asks for -
-								 * so a file can come back unrotated and still look like a success.
-								 * Put the texture into Exif orientation here instead of believing that
-								 * flag; afterwards the source orientation is known to be 1, and
-								 * reorientation_matrix[1] is the identity, so the glycin case and the
-								 * plain case collapse into a single re-rotation below. */
+								/* The decoders hand back the pixels as stored, so the
+								 * orientation is applied here, once, whatever the backend was.
+								 * Afterwards the texture is known to sit at the file's own
+								 * EXIF orientation, which is what the delta below is measured
+								 * from. */
 								int decoded_width = gdk_texture_get_width(texture);
 								int decoded_height = gdk_texture_get_height(texture);
-								texture = ImageDecoder::EnsureExifOrientation(texture,
-									m_Command.quiverFile.GetOrientation(),
-									m_Command.quiverFile.GetWidth(),
-									m_Command.quiverFile.GetHeight());
-								bReoriented = (decoded_width != gdk_texture_get_width(texture)) ||
-								              (decoded_height != gdk_texture_get_height(texture));
+																								texture = ImageDecoder::EnsureExifOrientation(texture,
+											m_Command.quiverFile.GetOrientation());
+																bReoriented = (decoded_width != gdk_texture_get_width(texture)) ||
+									              (decoded_height != gdk_texture_get_height(texture));
+								bDecoded = true;
 							}
 							g_object_unref(gfile);
 							if (NULL == texture && NULL != pDecodeError)
@@ -854,16 +928,31 @@ void ImageLoader::Load()
 						g_object_unref(loader);
 					}
 #endif
-				}
-					
+}
+				
 				if (NULL != texture)
 				{
-					int orientation = m_iLoadOrientation;
-					if (orientation > 1)
-					{
-						texture = reorient_texture(texture, orientation);
-					}
-
+					/* A texture decoded here has just been put into the file's own EXIF
+					 * orientation, so iPixelsAt is where the pixels actually are and the
+					 * turn below is only the delta from there to what was asked for.  A
+					 * cache hit leaves both alone: the branch further down already turns
+					 * those by the orientation they were cached at, and turning again
+					 * here is what put the picture upside down.
+					 *
+					 * bDecoded false means the direct pixbuf fallback built this texture
+					 * without going through ImageDecoder, so it never saw
+					 * EnsureExifOrientation and its pixels are still raw - the file's own
+					 * orientation below is then not a fact about them, hence the wanted
+					 * in place of iPixelsAt. */
+					int iPixelsAt = bDecoded ? m_Command.quiverFile.GetOrientation() : 1;
+					const int wanted = iLoadOrientation;
+					int orientation = 1;
+										iPixelsAt = QuiverUtils::ExifOrientationApplied(bDecoded ? iPixelsAt : wanted,
+					                                                wanted, &orientation);
+						if (orientation > 1)
+						{
+							texture = reorient_texture(texture, orientation);
+						}
 					if (NULL != anim_frames && (orientation > 1 || bReoriented))
 					{
 						/* The animation frames cannot be cleanly re-orientated
@@ -876,15 +965,28 @@ void ImageLoader::Load()
 					}
 					
 					gint width,height;
-					width = m_Command.quiverFile.GetWidth();
-					height = m_Command.quiverFile.GetHeight();
-					if (4 < orientation)
-					{
-						swap(width,height);
-					}
+					/* Keyed on where the pixels ended up, not on the turn applied
+					 * to get them there.  EnsureExifOrientation has already
+					 * transposed them when the file's own orientation is 5-8, so
+					 * they are rotated relative to the stored width/height even
+					 * when this load needed no turn at all - and `orientation` is
+					 * 1 precisely in that case.  Measuring the turn instead made
+					 * the declared size the transpose of the texture, so the view
+					 * was told a landscape image had arrived while holding a
+					 * portrait one. */
+					DeclaredSize(m_Command.quiverFile.GetWidth(),
+					             m_Command.quiverFile.GetHeight(), iPixelsAt,
+					             &width, &height);
 
-					gint *pOrientation = g_new(int,1);
-					*pOrientation = orientation;
+					/* Record where the pixels really are, not what was asked for.
+					 * Opening a file directly asks for orientation 1 while the
+					 * pixels sit at the file's own orientation, and stamping the
+					 * texture with the request instead would make the next load
+					 * turn it by that value on top of the turn it already has -
+					 * which is why an image could open correctly and then be
+					 * upside down the moment it was reached any other way. */
+										gint *pOrientation = g_new(int,1);
+					*pOrientation = iPixelsAt;
 					g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pOrientation,g_free);
 
 if (NULL != anim_frames && anim_count >= 2)
@@ -912,7 +1014,15 @@ if (NULL != anim_frames && anim_count >= 2)
 					}
 
 					bool bResetViewMode = m_Command.params.reload ? false : !bLoadedQuickPreview;
-					NotifyObservers(texture, width, height, bResetViewMode);
+					/* The decode finished after the view had already moved on.
+					 * The texture belongs to a file that is no longer on screen,
+					 * and handing it over is what paints the previous picture
+					 * over the one being loaded.  It went into the cache above
+					 * either way, so coming back to it later still gets it. */
+					if (!NewerLoadPending())
+					{
+						NotifyObservers(texture, width, height, bResetViewMode);
+					}
 					g_object_unref(texture);
 				}
 				else
@@ -951,8 +1061,9 @@ if (NULL != anim_frames && anim_count >= 2)
 
 			if (NULL != pOrientation && m_Command.params.orientation != *pOrientation)
 			{
-				int new_orientation = reorientation_matrix[*pOrientation][m_Command.params.orientation];
-
+								int new_orientation = QuiverUtils::ExifOrientationTurn(*pOrientation,
+				                                                   m_Command.params.orientation);
+				
 				GdkTexture* texture_rotated = reorient_texture(texture, new_orientation);
 				if (NULL != texture_rotated)
 				{
@@ -960,7 +1071,7 @@ if (NULL != anim_frames && anim_count >= 2)
 
 					gint *pNewOrientation = g_new(int,1);
 					*pNewOrientation = m_Command.params.orientation;
-					g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pNewOrientation, g_free);
+										g_object_set_data_full (G_OBJECT (texture), "quiver-orientation", pNewOrientation, g_free);
 
 					GdkTexture **cached_frames = NULL;
 					gint *cached_delays = NULL;
@@ -981,14 +1092,16 @@ if (NULL != anim_frames && anim_count >= 2)
 			}
 
 			gint width,height;
-			width = m_Command.quiverFile.GetWidth();
-			height = m_Command.quiverFile.GetHeight();
-			if (4 < m_Command.params.orientation)
-			{
-				swap(width,height);
-			}
+			/* A cache hit has already been turned to the requested orientation,
+			 * so the request is where the pixels rest. */
+			DeclaredSize(m_Command.quiverFile.GetWidth(),
+			             m_Command.quiverFile.GetHeight(),
+			             m_Command.params.orientation, &width, &height);
 			bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-			NotifyObservers(texture, width, height, bResetViewMode);
+			if (!NewerLoadPending())
+			{
+				NotifyObservers(texture, width, height, bResetViewMode);
+			}
 			g_object_unref(texture);
 		}
 	}	
@@ -1000,6 +1113,7 @@ if (NULL != anim_frames && anim_count >= 2)
 			{
 				bool bAborted = false;
 				bool bReoriented = false;
+				bool bDecoded = false;
 				GdkTexture *cache_texture = NULL;
 				GdkTexture **anim_frames = NULL;
 				gint *anim_delays = NULL;
@@ -1067,22 +1181,18 @@ if (NULL != anim_frames && anim_count >= 2)
 									pDecodeError = NULL;
 								}
 								m_Command.quiverFile.SetLoadTimeInSeconds(loadTimer.GetRunningTimeInSeconds());
-								/* glycin tags every texture it produces as "transformed" without
-								 * checking that it actually applied EXIF orientation, and gdk-pixbuf
-								 * drops the tag outright when it is not the SHORT the spec asks for -
-								 * so a file can come back unrotated and still look like a success.
-								 * Put the texture into Exif orientation here instead of believing that
-								 * flag; afterwards the source orientation is known to be 1, and
-								 * reorientation_matrix[1] is the identity, so the glycin case and the
-								 * plain case collapse into a single re-rotation below. */
+								/* The decoders hand back the pixels as stored, so the
+								 * orientation is applied here, once, whatever the backend
+								 * was.  Afterwards the texture is known to sit at the file's
+								 * own EXIF orientation, which is what the delta below is
+								 * measured from. */
 								int cached_width = gdk_texture_get_width(cache_texture);
 								int cached_height = gdk_texture_get_height(cache_texture);
-								cache_texture = ImageDecoder::EnsureExifOrientation(cache_texture,
-									m_Command.quiverFile.GetOrientation(),
-									m_Command.quiverFile.GetWidth(),
-									m_Command.quiverFile.GetHeight());
-								bReoriented = (cached_width != gdk_texture_get_width(cache_texture)) ||
-								              (cached_height != gdk_texture_get_height(cache_texture));
+																								cache_texture = ImageDecoder::EnsureExifOrientation(cache_texture,
+											m_Command.quiverFile.GetOrientation());
+																bReoriented = (cached_width != gdk_texture_get_width(cache_texture)) ||
+									              (cached_height != gdk_texture_get_height(cache_texture));
+								bDecoded = true;
 							}
 							if (NULL == cache_texture && NULL != pDecodeError)
 							{
@@ -1154,14 +1264,26 @@ if (NULL != anim_frames && anim_count >= 2)
 					}
 #endif
 
-					if (NULL != cache_texture)
-					{
-						int orientation = m_Command.params.orientation;
-						if (orientation > 1)
-						{
-							cache_texture = reorient_texture(cache_texture, orientation);
-						}
-
+if (NULL != cache_texture)
+				{
+					/* Same as the LOAD path: the pixels are at the file's own EXIF
+					 * orientation, and only the delta to what was asked for is
+					 * left to do.
+					 *
+					 * bDecoded false means the direct pixbuf fallback built this
+					 * texture without going through ImageDecoder, so it never saw
+					 * EnsureExifOrientation and its pixels are still raw - the
+					 * file's own orientation below is then not a fact about them,
+					 * hence the wanted in place of iPixelsAt. */
+					int iPixelsAt = bDecoded ? m_Command.quiverFile.GetOrientation() : 1;
+					const int wanted = m_Command.params.orientation;
+						int orientation = 1;
+												iPixelsAt = QuiverUtils::ExifOrientationApplied(bDecoded ? iPixelsAt : wanted,
+						                                                wanted, &orientation);
+							if (orientation > 1)
+							{
+								cache_texture = reorient_texture(cache_texture, orientation);
+							}
 						if (NULL != anim_frames && (orientation > 1 || bReoriented))
 						{
 							/* Animated frames cannot be re-orientated cleanly;
@@ -1172,8 +1294,12 @@ if (NULL != anim_frames && anim_count >= 2)
 							anim_count = 0;
 						}
 						
-						gint *pOrientation = g_new(int,1);
-						*pOrientation = m_Command.params.orientation;
+						/* A background preload asks for orientation 0, which is not a
+						 * turn at all but would be recorded as though it described the
+						 * pixels; the next load would then turn them by it on top of
+						 * the turn they already have.  Record where they really are. */
+												gint *pOrientation = g_new(int,1);
+						*pOrientation = iPixelsAt;
 						g_object_set_data_full (G_OBJECT (cache_texture), "quiver-orientation", pOrientation, g_free);
 					}
 				}
@@ -1214,17 +1340,30 @@ if (NULL != anim_frames && anim_count >= 2)
 						}
 					}
 
-					if (CACHE_LOAD == m_Command.params.state)
-					{
-						gint width,height;
-						width = m_Command.quiverFile.GetWidth();
-						height = m_Command.quiverFile.GetHeight();
-						if (4 < m_Command.params.orientation)
-						{
-							swap(width,height);
-						}
+if (CACHE_LOAD == m_Command.params.state)
+				{
+					gint width,height;
+					/* Same rule as the other two delivery sites: key on where
+					 * the pixels rest, not on the orientation requested, because
+					 * a request needing no turn can still be sitting transposed
+					 * at the file's own orientation.  The value is read back off
+					 * the texture rather than carried here - iPixelsAt belongs to
+					 * the decode block above, out of scope here - and the stamp
+					 * is exactly what it was written from. */
+					const gint *pRestedAt =
+						(const gint *)g_object_get_data(G_OBJECT(cache_texture),
+						                                   "quiver-orientation");
+					const int iRestedAt = NULL != pRestedAt
+						? *pRestedAt
+						: m_Command.quiverFile.GetOrientation();
+					DeclaredSize(m_Command.quiverFile.GetWidth(),
+					             m_Command.quiverFile.GetHeight(),
+					             iRestedAt, &width, &height);
 						bool bResetViewMode = !m_Command.params.loaded_quick_preview;
-						NotifyObservers(cache_texture, width, height, bResetViewMode);
+						if (!NewerLoadPending())
+						{
+							NotifyObservers(cache_texture, width, height, bResetViewMode);
+						}
 					}
 					g_object_unref(cache_texture);
 				}
@@ -1401,11 +1540,11 @@ void ImageLoader::SignalSizePrepared(GdkPixbufLoader *loader,gint width, gint he
 	m_Command.quiverFile.SetHeight(height);
 	
 	int max_width, max_height;
-	int orientation = m_iLoadOrientation;
-	if (LOAD != m_Command.params.state)
-	{
-		orientation = m_Command.params.orientation;
-	}
+	/* This file's own orientation, for every state.  It used to fall back to the
+	 * shared current-orientation field for LOAD, which meant the size negotiated
+	 * with the loader could be swapped for a reason that had nothing to do with
+	 * the command being decoded. */
+	const int orientation = m_Command.params.orientation;
 	
 	max_width = m_Command.params.max_width;
 	max_height = m_Command.params.max_height;

@@ -1009,7 +1009,7 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 					 * the rotated dimensions, which is how an unrotated thumbnail
 					 * ends up in a portrait frame. */
 					thumb_texture = ImageDecoder::EnsureExifOrientation(thumb_texture,
-						GetOrientation(), orig_w, orig_h);
+						GetOrientation());
 
 					guint tex_w = gdk_texture_get_width(thumb_texture);
 					guint tex_h = gdk_texture_get_height(thumb_texture);

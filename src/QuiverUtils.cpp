@@ -11,6 +11,9 @@ extern "C" {
 #include <vector>
 #include <cstdint>
 #include <cstring>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
 
 extern GtkApplication *g_pApp;
 
@@ -18,6 +21,43 @@ extern GtkApplication *g_pApp;
 
 namespace QuiverUtils
 {
+	/* What turn gets from one orientation to another, indexed
+	 * [current][wanted].  Row 1 is the identity, which is why a request to
+	 * leave the pixels alone costs nothing. */
+	static const int reorientation_matrix[9][9] =
+	{
+		{1,1,2,3,4,5,6,7,8},
+		{1,1,2,3,4,5,6,7,8},
+		{2,2,1,4,3,8,7,6,5},
+		{3,3,4,1,2,7,8,5,6},
+		{4,4,3,2,1,6,5,8,7},
+		{5,5,6,7,8,1,2,3,4},
+		{8,8,7,6,5,2,1,4,3},
+		{7,7,8,5,6,3,4,1,2},
+		{6,6,5,8,7,4,3,2,1},
+	};
+
+	int ExifOrientationTurn(int current, int wanted)
+	{
+		if (current < 1 || 8 < current) current = 1;
+		if (wanted < 1 || 8 < wanted)    wanted = 1;
+		return reorientation_matrix[current][wanted];
+	}
+
+	int ExifOrientationApplied(int pixels_at, int wanted, int *turn)
+	{
+		if (wanted < 1 || 8 < wanted) wanted = 1;
+		/* Asking for 1 is not asking for a turn: it means the pixels are
+		 * wanted as they are. */
+		const int t = wanted > 1 ? ExifOrientationTurn(pixels_at, wanted) : 1;
+		if (turn) *turn = t;
+		/* Only a turn that actually moves something changes where the pixels
+		 * are. A no-op turn leaves them at pixels_at, so stamping wanted there
+		 * would record an orientation the texture is not in - which is the
+		 * other half of why a file opened upright turned on the next load. */
+		return t > 1 ? wanted : pixels_at;
+	}
+
 	GdkTexture * TextureExifReorientate(GdkTexture * texture, int orientation)
 	{
 		if (!texture || orientation <= 1)

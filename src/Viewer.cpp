@@ -2111,9 +2111,29 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		UpdateCenterPlayButtonVisibility();
 
 		QuiverFile f = m_ImageListPtr->GetCurrent();
+
+		/* Adopt the new item's orientation now, not later inside LoadImage().
+		 * Installing a thumbnail below runs synchronously on this thread, and the
+		 * image view answers that by asking whether it is still undersized - which
+		 * it is, a thumbnail always is - and emitting "reload".  That handler reads
+		 * GetCurrentOrientation(), so until this assignment the request carries the
+		 * *previous* image's orientation.  The loader then sees a stamp mismatch
+		 * against an image that never left the cache and resamples the whole texture
+		 * on the CPU, only for the correctly-oriented request to arrive milliseconds
+		 * later and turn it straight back.  LoadImage() sets this too, so doing it
+		 * here first is not a second source of truth, just the earlier one. */
+		SetCurrentOrientation(f.GetOrientation(), false);
+
 		UpdateNavigationControl();
 
-		GdkTexture *cached_thumb = m_ThumbnailCache.GetTexture(f.GetURI());
+		/* Only put a thumbnail on screen when the full image is not already in
+		 * memory.  A thumbnail is a placeholder for something still being fetched;
+		 * showing one over an image the cache already holds is a downgrade, and it
+		 * is a second, entirely separate preview path from the loader's - this one
+		 * never appears in the loader's trace at all. */
+		GdkTexture *cached_thumb = m_ImageLoader.InCache(f.GetURI())
+			? NULL
+			: m_ThumbnailCache.GetTexture(f.GetURI());
 		if (NULL != cached_thumb)
 		{
 			int w = f.GetWidth();
@@ -4334,7 +4354,15 @@ static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
 	ImageLoader::LoadParams params = {};
 
 	params.orientation = pViewerImpl->GetCurrentOrientation(true);
-	params.reload = true;
+	/* Not a forced reload.  The imageview re-arms this signal on every delivery,
+	 * and the maximized best-fit orientation it asks for here is derived from
+	 * the widget size the previous delivery just changed, so a forced reload
+	 * oscillates instead of converging.  Each pass used to drop the cached full
+	 * image, which guaranteed the next visit missed the cache and fell back to a
+	 * quick preview.  Asking normally is enough: quick previews come from the
+	 * thumbnail cache, never the image cache, so a full-size request still misses
+	 * and decodes, while an already-cached full image is simply reused. */
+	params.reload = false;
 	params.fullsize = true;
 	params.no_thumb_preview = true;
 	params.state = ImageLoader::LOAD;

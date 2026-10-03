@@ -6,6 +6,8 @@
 #include <glib/gstdio.h>
 #if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <cstring>
+#include "QuiverUtils.h"
 #endif
 #include <string>
 #include <vector>
@@ -642,4 +644,257 @@ TEST_CASE("Oversized input is refused from a caller-supplied size", "[unit][deco
     g_object_unref(file);
     g_unlink(path.c_str());
     g_rmdir(dir.c_str());
+}
+
+#if HAVE_GDK_PIXBUF
+/* An asymmetric texture, so a rotation is visible in the pixels rather than
+ * only in the dimensions - which is the whole point: orientations 1-4 keep the
+ * frame size, so a dimension check cannot tell a turned texture from an
+ * unturned one. */
+static GdkTexture* QuiverTest_AsymmetricTexture(int w, int h)
+{
+    GBytes *bytes = g_bytes_new_take(g_malloc0((gsize)w * h * 4), (gsize)w * h * 4);
+    guint32 *px = (guint32 *)g_bytes_get_data(bytes, NULL);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            px[y * w + x] = 0xff000000u | ((guint32)(x * 8) << 16) |
+                            ((guint32)(y * 8) << 8) | (guint32)(x + y);
+    GdkTexture *tex = gdk_memory_texture_new(w, h, GDK_MEMORY_R8G8B8A8, bytes,
+                                             (gsize)w * 4);
+    g_bytes_unref(bytes);
+    return tex;
+}
+
+static bool QuiverTest_PixelsMatch(GdkTexture *a, GdkTexture *b)
+{
+    if (a == nullptr || b == nullptr) return false;
+    if (gdk_texture_get_width(a) != gdk_texture_get_width(b) ||
+        gdk_texture_get_height(a) != gdk_texture_get_height(b))
+        return false;
+    GBytes *ba = gdk_texture_save_to_png_bytes(a);
+    GBytes *bb = gdk_texture_save_to_png_bytes(b);
+    gsize sa = 0, sb = 0;
+    const guchar *da = (const guchar *)g_bytes_get_data(ba, &sa);
+    const guchar *db = (const guchar *)g_bytes_get_data(bb, &sb);
+    bool same = (sa == sb) && (memcmp(da, db, sa) == 0);
+    g_bytes_unref(ba);
+    g_bytes_unref(bb);
+    return same;
+}
+
+TEST_CASE("EnsureExifOrientation turns the pixels whatever the frame size says",
+          "[unit][decoder][orientation]")
+{
+    const int w = 16, h = 8;
+
+    /* The decoders hand back the pixels as stored, so this is the one place the
+     * orientation is applied.  There is no dimension check here on purpose: a
+     * 180 degree turn, and the two mirrors, leave the frame size untouched, so
+     * a size comparison cannot tell a texture somebody has already turned from
+     * one nobody has - which is how a plain upside-down photo slips through. */
+    for (int orientation = 2; orientation <= 8; orientation++)
+    {
+        GdkTexture *raw = QuiverTest_AsymmetricTexture(w, h);
+        GdkTexture *expected = QuiverUtils::TextureExifReorientate(raw, orientation);
+        REQUIRE(expected != nullptr);
+
+        GdkTexture *got = ImageDecoder::EnsureExifOrientation(raw, orientation);
+        CHECK(QuiverTest_PixelsMatch(got, expected));
+    }
+
+    /* Orientation 1 is what unrotated already means, so it is left alone and
+     * the caller keeps its texture rather than getting a copy. */
+    SECTION("orientation 1 is returned untouched")
+    {
+        GdkTexture *raw = QuiverTest_AsymmetricTexture(w, h);
+        GdkTexture *got = ImageDecoder::EnsureExifOrientation(raw, 1);
+        CHECK(got == raw);
+    }
+
+    SECTION("a missing texture is not invented")
+    {
+        CHECK(ImageDecoder::EnsureExifOrientation(NULL, 6) == NULL);
+    }
+}
+#endif
+
+TEST_CASE("Decoders hand back un-oriented pixels so the loader owns orientation",
+          "[unit][decoder][orientation]")
+{
+    /* The loader applies the EXIF orientation itself, which only works if the
+     * decoders hand the pixels back exactly as they were stored.  A backend
+     * that quietly turned them makes the loader turn them a second time, and
+     * that is invisible for orientation 1 while it is a plainly wrong picture
+     * for everything else - so it is pinned here rather than left to
+     * inspection.  Both fixtures are rotated in the file; sample_rotated has a
+     * spec-legal SHORT tag and sample_rotated_slong_ori an SLONG one that the
+     * backends ignore anyway. */
+    std::string imagesDir = QuiverTest_GetImagesDir();
+    const char *names[] = {"/sample_rotated.jpg", "/sample_rotated_slong_ori.jpg"};
+
+    std::vector<ImageDecoder::Backend> backends;
+    backends.push_back(ImageDecoder::Backend::AUTO);
+    if (ImageDecoder::IsBackendSupported(ImageDecoder::Backend::GLYCIN))
+        backends.push_back(ImageDecoder::Backend::GLYCIN);
+    if (ImageDecoder::IsBackendSupported(ImageDecoder::Backend::PIXBUF))
+        backends.push_back(ImageDecoder::Backend::PIXBUF);
+
+    ImageDecoder::Backend originalBackend = ImageDecoder::GetBackend();
+
+    for (const char *name : names)
+    {
+        std::string path = imagesDir + name;
+        GFile *file = g_file_new_for_path(path.c_str());
+        REQUIRE(file != nullptr);
+
+        /* The size on disk: what the pixels must still look like here. */
+        int stored_width = 0, stored_height = 0;
+        REQUIRE(ImageDecoder::GetDimensions(file, "image/jpeg", &stored_width,
+                                            &stored_height));
+        REQUIRE(stored_width > 0);
+
+        for (auto backend : backends)
+        {
+            ImageDecoder::SetBackend(backend);
+            GError *err = NULL;
+            GdkTexture *tex = ImageDecoder::DecodeFileTexture(file, "image/jpeg",
+                                                              NULL, &err, -1);
+            CAPTURE(std::string(name) + " backend " + std::to_string((int)backend));
+            CHECK(tex != nullptr);
+            if (tex)
+            {
+                CHECK(gdk_texture_get_width(tex) == stored_width);
+                CHECK(gdk_texture_get_height(tex) == stored_height);
+                g_object_unref(tex);
+            }
+            if (err) g_error_free(err);
+        }
+
+        g_object_unref(file);
+    }
+
+    ImageDecoder::SetBackend(originalBackend);
+}
+
+TEST_CASE("A cached texture records where its pixels are, not what was asked for",
+          "[unit][decoder][orientation][cache]")
+{
+    /* Reproduces the sequence the loader runs for a background cache preload
+     * and for a direct open, both of which ask for orientation 1 while the
+     * pixels sit at the file's own orientation.  Recording the request instead
+     * is what made a file open correctly and then appear upside down or 90
+     * degrees out the moment it was reached any other way: the next load read
+     * the stamp, believed the pixels were unrotated, and turned them again. */
+    const int w = 16, h = 8;
+    const int file_orientation = 6;
+
+    GdkTexture *raw = QuiverTest_AsymmetricTexture(w, h);
+    GdkTexture *at_file = ImageDecoder::EnsureExifOrientation(raw, file_orientation);
+    REQUIRE(at_file != nullptr);
+
+    SECTION("a preload that asks for nothing records the file's own orientation")
+    {
+        const int requested = 1;          /* what a background preload asks for */
+        int pixels_at = file_orientation; /* where the pixels actually are */
+
+        int turn = 1;
+        pixels_at = QuiverUtils::ExifOrientationApplied(pixels_at, requested, &turn);
+
+        /* Nothing was asked to move, so the pixels are still where the decode
+         * left them and the stamp has to say so. */
+        CHECK(turn == 1);
+        CHECK(pixels_at == file_orientation);
+        /* And the stamp therefore matches the pixels, so the next load is a
+         * no-op instead of a second turn. */
+        CHECK(QuiverUtils::ExifOrientationTurn(pixels_at, file_orientation) == 1);
+    }
+
+    SECTION("asking for the orientation already shown is not a turn")
+    {
+        /* The file that started this: stored 180 degrees out (orientation 3).
+         * Opened at its own orientation it needs no turn at all, and the stamp
+         * has to come back as 3.  Stamping the turn - which is 1, because
+         * nothing had to move - made the next cache hit believe the pixels
+         * were upright and rotate them by 3, putting the picture back the way
+         * it was stored. */
+        int turn = 99;
+        int pixels_at = QuiverUtils::ExifOrientationApplied(3, 3, &turn);
+        CHECK(turn == 1);
+        CHECK(pixels_at == 3);
+        /* Reaching it again from the cache at the same orientation is a no-op. */
+        int hit_turn = 99;
+        int hit_at = QuiverUtils::ExifOrientationApplied(pixels_at, 3, &hit_turn);
+        CHECK(hit_turn == 1);
+        CHECK(hit_at == 3);
+    }
+
+    SECTION("the stamp is where the pixels land, for every orientation")
+    {
+        /* Whatever the file holds and whatever is asked for, applying the turn
+         * leaves the pixels at what was asked for, so a later read of the stamp
+         * followed by the same request never moves them. */
+        for (int file_ori = 1; file_ori <= 8; file_ori++)
+        {
+            for (int requested = 1; requested <= 8; requested++)
+            {
+                int turn = 99;
+                const int landed = QuiverUtils::ExifOrientationApplied(file_ori, requested, &turn);
+                /* A turn moves the pixels to what was asked for; no turn leaves
+                 * them where the decode put them. */
+                CHECK(landed == (turn > 1 ? requested : file_ori));
+
+                /* Reading the stamp back and asking for the same orientation
+				 * again must not move them a second time. */
+                int again_turn = 99;
+                const int again = QuiverUtils::ExifOrientationApplied(landed, requested, &again_turn);
+                CHECK(again_turn == 1);
+                CHECK(again == landed);
+            }
+        }
+    }
+
+    SECTION("a cache hit for the orientation already shown turns nothing")
+    {
+        for (int orientation = 1; orientation <= 8; orientation++)
+        {
+            CHECK(QuiverUtils::ExifOrientationTurn(orientation, orientation) == 1);
+        }
+    }
+
+    SECTION("turning from where the pixels are lands on what was asked for")
+    {
+        /* Whatever the cache was stamped with, one turn has to reach the
+         * requested orientation and no more. */
+        for (int cached = 1; cached <= 8; cached++)
+        {
+            GdkTexture *start = QuiverUtils::TextureExifReorientate(
+                QuiverTest_AsymmetricTexture(w, h), cached);
+            REQUIRE(start != nullptr);
+            for (int wanted = 1; wanted <= 8; wanted++)
+            {
+                GdkTexture *expect = QuiverUtils::TextureExifReorientate(
+                    QuiverTest_AsymmetricTexture(w, h), wanted);
+                REQUIRE(expect != nullptr);
+
+                int turn = QuiverUtils::ExifOrientationTurn(cached, wanted);
+                /* Hand it its own reference: it takes ownership, and the loop
+                 * goes round @cached again afterwards. */
+                GdkTexture *got = ImageDecoder::EnsureExifOrientation(g_object_ref(start),
+                                                                      turn);
+                CHECK(QuiverTest_PixelsMatch(got, expect));
+                g_object_unref(got);
+                g_object_unref(expect);
+            }
+            g_object_unref(start);
+        }
+    }
+
+    SECTION("a nonsense stamp cannot index off the end of the table")
+    {
+        CHECK(QuiverUtils::ExifOrientationTurn(0, 6) ==
+              QuiverUtils::ExifOrientationTurn(1, 6));
+        CHECK(QuiverUtils::ExifOrientationTurn(6, 99) ==
+              QuiverUtils::ExifOrientationTurn(6, 1));
+        CHECK(QuiverUtils::ExifOrientationTurn(-3, -3) == 1);
+    }
 }

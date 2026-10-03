@@ -835,25 +835,11 @@ GdkPixbuf* ImageDecoder::DecodeFilePixbuf(GFile *file, const char *mimetype,
 }
 #endif
 
-GdkTexture* ImageDecoder::EnsureExifOrientation(GdkTexture *texture, int orientation,
-                                                 int stored_width, int stored_height)
+GdkTexture* ImageDecoder::EnsureExifOrientation(GdkTexture *texture, int orientation)
 {
+    /* Orientation 1 is what "unrotated" already means. */
     if (texture == NULL || orientation <= 1)
         return texture;
-
-    /* Nothing to check against means nothing to verify, and rotating on a
-     * guess is worse than leaving a texture alone. */
-    if (stored_width <= 0 || stored_height <= 0)
-        return texture;
-
-    int expected_width = stored_width;
-    int expected_height = stored_height;
-    if (4 < orientation)
-        std::swap(expected_width, expected_height);
-
-    if ((int)gdk_texture_get_width(texture) == expected_width &&
-        (int)gdk_texture_get_height(texture) == expected_height)
-        return texture;   /* the loader oriented it for us */
 
     GdkTexture *rotated = QuiverUtils::TextureExifReorientate(texture, orientation);
     if (rotated == NULL)
@@ -921,7 +907,7 @@ GdkPixbuf* ImageDecoder::GlycinDecodeFilePixbuf(GFile *file, GCancellable *cance
     if (!loader)
         return NULL;
 
-    gly_loader_set_apply_transformations(loader, TRUE);
+    gly_loader_set_apply_transformations(loader, FALSE);
 
     GlyImage *image = gly_loader_load(loader, error);
     if (!image)
@@ -954,7 +940,7 @@ GdkTexture* ImageDecoder::GlycinDecodeFileTexture(GFile *file, GCancellable *can
     if (!loader)
         return NULL;
 
-    gly_loader_set_apply_transformations(loader, TRUE);
+    gly_loader_set_apply_transformations(loader, FALSE);
 
     GlyImage *image = gly_loader_load(loader, error);
     if (!image)
@@ -1000,7 +986,7 @@ GdkTexture* ImageDecoder::DecodeFileAnimation(GFile *file, GdkTexture ***frames,
     if (!loader)
         return NULL;
 
-    gly_loader_set_apply_transformations(loader, TRUE);
+    gly_loader_set_apply_transformations(loader, FALSE);
 
     GlyImage *image = gly_loader_load(loader, error);
     if (!image)
@@ -1177,15 +1163,19 @@ GdkPixbuf* ImageDecoder::PixbufDecodeFilePixbuf(GFile *file, const char *mimetyp
 
     gdk_pixbuf_loader_close(loader, error);
     GdkPixbuf *pb = gdk_pixbuf_loader_get_pixbuf(loader);
-    GdkPixbuf *oriented = NULL;
     if (pb)
-    {
-        oriented = gdk_pixbuf_apply_embedded_orientation(pb);
-    }
+        g_object_ref(pb);   /* the loader owns it and goes away just below */
 
     g_object_unref(loader);
     g_object_unref(inStream);
-    return oriented;
+    /* Returned exactly as stored.  GdkPixbufLoader does not touch the EXIF
+     * orientation by itself - it is gdk_pixbuf_apply_embedded_orientation()
+     * that turns the pixels - so not calling it here is what keeps this decoder
+     * handing out raw pixels.  The loader that drives the image applies the
+     * orientation itself, once, for every backend alike; see
+     * gly_loader_set_apply_transformations() in the glycin paths above for the
+     * same reason. */
+    return pb;
 }
 #endif
 
@@ -1307,7 +1297,7 @@ GdkTexture* ImageDecoder::GlycinDecodeBytesTexture(GBytes *bytes, GCancellable *
     if (!loader)
         return NULL;
 
-    gly_loader_set_apply_transformations(loader, TRUE);
+    gly_loader_set_apply_transformations(loader, FALSE);
 
     GlyImage *image = gly_loader_load(loader, error);
     if (!image)

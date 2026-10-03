@@ -23,6 +23,35 @@ namespace QuiverUtils
 	 * Returns true if the bookmark was created and added. */
 	bool PromptAddBookmark(const std::list<std::string>& uris);
 	GdkTexture * TextureExifReorientate(GdkTexture * texture, int orientation);
+	/* The turn that gets a texture already at orientation @current round to
+	 * orientation @wanted, or 1 when the two already agree - so getting from a
+	 * 6 to an 8 is a 3.  Turning a texture by this is what keeps a photo from
+	 * being turned twice, which is easy to do when the request is an
+	 * orientation rather than a delta from what is already on screen.
+	 *
+	 * Values outside 1-8 are folded to 1 rather than used as an index, so a
+	 * nonsensical stored or requested orientation cannot read off the end of
+	 * the table. */
+	int ExifOrientationTurn(int current, int wanted);
+
+	/* Where the pixels end up, and what has to be done to get them there.
+	 *
+	 * This is the pairing that the cache stamp depends on. Asking for an
+	 * orientation is not a request for a turn: a texture whose pixels already
+	 * sit at orientation 6 and a request for orientation 6 need no turn at
+	 * all, and one that needs a turn of 6 lands on the requested orientation
+	 * rather than on 6.  Stamping the turn, or the orientation the pixels
+	 * happened to start at, makes the next load turn an already-correct image
+	 * a second time, which is how a file opens upright and then appears
+	 * rotated the moment it is reached any other way.
+	 *
+	 * pixels_at is where the texture is now (use the file's own orientation
+	 * after decoding); wanted is what was asked for.  *turn comes back as the
+	 * transform to apply - 1 when the texture is already correct - and the
+	 * return value is where the pixels sit once it has been, which is always
+	 * wanted. */
+	int ExifOrientationApplied(int pixels_at, int wanted, int *turn);
+
 	GdkTexture * ScaleTexture(GdkTexture * texture, int dest_w, int dest_h);
 #if HAVE_GDK_PIXBUF
 	GdkTexture * PixbufToTexture(GdkPixbuf * pixbuf);

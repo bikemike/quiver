@@ -8,7 +8,8 @@ set(UNIT_TEST_SOURCES
     unit/test_md5.cpp
     unit/test_strnatcmp.cpp
     unit/test_timer.cpp
-    unit/test_image_cache.cpp
+unit/test_image_cache.cpp
+    unit/test_image_loader.cpp
     unit/test_thumb_loader_order.cpp
     unit/test_browser_history.cpp
     unit/test_recent_items.cpp

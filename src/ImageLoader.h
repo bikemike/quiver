@@ -44,6 +44,13 @@ public:
 	~ImageLoader();
 
 	void LoadImage(QuiverFile);	
+
+	/* True when the full-resolution texture for uri is already decoded and in
+	 * memory.  The viewer needs this to know whether putting a cached thumbnail
+	 * on screen is a genuine preview or a step backwards from an image it
+	 * already holds - which is a different question from whether one can be
+	 * produced, and cannot be answered from the thumbnail cache. */
+	bool InCache(std::string uri) { return m_ImageCache.InCache(uri); }
 	void LoadImageAtSize(QuiverFile, int width, int height);
 	void LoadImage(QuiverFile,LoadParams load_params);	
 	void ReloadImage(QuiverFile);
@@ -73,6 +80,23 @@ public:
 	void SetLoadOrientation(int iLoadOrientation){m_iLoadOrientation=iLoadOrientation;};
 	void SetThumbnailCache(ImageCache* pCache) { m_pThumbnailCache = pCache; }
 
+	/* The size to declare alongside a texture, given the stored width/height of
+	 * the file and the orientation its pixels are actually sitting at.
+	 *
+	 * Exposed because it is the one rule that was quietly wrong: the swap used to
+	 * be keyed on the turn applied rather than on where the pixels ended up, so
+	 * an image whose file orientation is 5-8 - already transposed by
+	 * EnsureExifOrientation, needing no further turn - was announced at the
+	 * untransposed stored size.  The view then believed it had been handed the
+	 * opposite aspect ratio to the texture it was holding.
+	 *
+	 * `pixels_at` is the orientation the pixels rest at, not the one requested:
+	 * on a cache hit the texture has been turned *to* the request, so there the
+	 * two coincide, but on a fresh decode the request may need no turn at all
+	 * while the pixels still sit transposed at the file's own orientation. */
+	static void DeclaredSize(int stored_width, int stored_height, int pixels_at,
+	                         int *width, int *height);
+
 	/* Stop the worker thread and wait for it to exit. Idempotent; ensures
 	 * thread is joined before any caller-owned bridged caches are destroyed. */
 	void StopThread();
@@ -84,6 +108,14 @@ private:
 #endif
 	void NotifyObservers(GdkTexture *texture, gint width, gint height, bool bResetViewMode);
 	bool CommandsPending();
+
+	/* True when a newer user-visible load is already queued, which means the
+	 * view has moved on and anything this command is about to hand it is stale.
+	 *
+	 * Unlike CommandsPending() this only looks; it does not prune the queue or
+	 * promote a pending CACHE to CACHE_LOAD, so it is safe to call at the
+	 * moment a texture is about to be delivered. */
+	bool NewerLoadPending();
 	static gboolean abort_video_load(gpointer data);
 	
 	bool LoadQuickPreview();
@@ -113,7 +145,14 @@ private:
 	bool m_bStopThread;
 	std::atomic<bool> m_bWorking;
 	std::atomic<bool> m_bThreadJoined;
-	int m_iLoadOrientation;
+	/* The orientation the user has currently asked for.  Written on the GUI
+	 * thread by SetLoadOrientation() and read on the loader thread by
+	 * GetNextCommand() and SignalSizePrepared(), so it is atomic.  A load in
+	 * progress must not consult it: it snapshots m_Command.params.orientation
+	 * into a local instead, because a rotation made while a decode is running
+	 * would otherwise be applied halfway through and the texture would be
+	 * stamped with an orientation it was never turned to. */
+	std::atomic<int> m_iLoadOrientation;
 	bool m_bQuickPreview;
 };
 

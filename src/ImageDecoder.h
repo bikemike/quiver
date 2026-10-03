@@ -73,31 +73,27 @@ public:
                                          GError **error = NULL,
                                          goffset known_size = -1);
 
-    /* Make sure @texture is in @orientation, taking ownership of it.
+    /* Turn @texture into @orientation, taking ownership of it.
      *
-     * Both gdk-pixbuf and glycin parse EXIF orientation with their own reader,
-     * and both silently drop the tag when it is not the SHORT the spec asks
-     * for - the decode then comes back unrotated while still looking like a
-     * success.  Exiv2, which the rest of the app uses for geometry, accepts any
-     * integer type, so such a file ends up with an Exif-derived portrait frame
-     * wrapped around landscape pixels.
+     * The decoders above all hand back the pixels exactly as they are stored -
+     * glycin is told not to apply transformations, and the pixbuf path does not
+     * call gdk_pixbuf_apply_embedded_orientation() - so applying the tag is
+     * this application's job and happens here, once, for every backend alike.
+     * That is what keeps the orientation from being applied twice: when the
+     * decoders differ on whether they already turned the pixels, the caller has
+     * to ask which happened, and guessing goes wrong for the images whose
+     * rotation leaves the frame size untouched.
      *
-     * Rather than believe a loader's "I transformed this" flag, which is set
-     * whenever a texture was produced, compare the texture against the
-     * dimensions @orientation implies for @stored_width x @stored_height and
-     * rotate when they disagree.  Self-checking, so a texture the loader did
-     * orient is left alone and cannot be rotated twice, and it behaves the
-     * same for every backend.
+     * A tag that is not the unsignedShort the spec asks for is no longer a
+     * special case.  Backends used to drop such a tag silently, and the decode
+     * would come back unrotated while still looking like a success; reading the
+     * tag through Exiv2, which accepts any integer type, means the orientation
+     * is known and is applied regardless of how it was stored.
      *
-     * @stored_width / @stored_height are the unrotated pixel dimensions; pass
-     * 0 if unknown, in which case the texture is returned untouched.
-     *
-     * Dimensions cannot distinguish a mirror (orientations 2 and 4), which
-     * leaves the frame unchanged; a dropped mirror is therefore not corrected
-     * here.  The transpose family (5-8), the one that actually breaks the
-     * layout, is. */
-    static GdkTexture* EnsureExifOrientation(GdkTexture *texture, int orientation,
-                                             int stored_width, int stored_height);
+     * Orientations 1, 2 and 4 leave the frame size untouched, so a caller that
+     * needs to turn the image further must do so by the delta from @orientation
+     * rather than by @orientation outright. */
+    static GdkTexture* EnsureExifOrientation(GdkTexture *texture, int orientation);
 
 #if HAVE_GLYCIN
     /* Decode an animated image through glycin into backend-neutral frame
