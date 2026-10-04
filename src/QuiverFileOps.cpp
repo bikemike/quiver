@@ -378,7 +378,43 @@ namespace QuiverFileOps
 			}
 
 			/* destination name keeps the (URI-escaped) source basename. */
-			gchar *base = g_path_get_basename(it->c_str());
+			gchar *base = NULL;
+			if (IsTrashURI(it->c_str()))
+			{
+				char *orig = GetTrashItemOrigPath(it->c_str());
+				if (orig != NULL)
+				{
+					gchar *orig_base = g_path_get_basename(orig);
+					if (orig_base != NULL)
+					{
+						base = g_uri_escape_string(orig_base, NULL, FALSE);
+						g_free(orig_base);
+					}
+					g_free(orig);
+				}
+				if (base == NULL)
+				{
+					gchar *unescaped = g_uri_unescape_string(it->c_str(), NULL);
+					if (unescaped != NULL)
+					{
+						for (char *p = unescaped; *p != '\0'; ++p)
+						{
+							if (*p == '\\') *p = '/';
+						}
+						gchar *leaf = g_path_get_basename(unescaped);
+						if (leaf != NULL)
+						{
+							base = g_uri_escape_string(leaf, NULL, FALSE);
+							g_free(leaf);
+						}
+						g_free(unescaped);
+					}
+				}
+			}
+			if (base == NULL)
+			{
+				base = g_path_get_basename(it->c_str());
+			}
 			if (NULL == base || '\0' == base[0])
 			{
 				g_free(base);
@@ -872,6 +908,11 @@ namespace QuiverFileOps
 			return desired;
 		}
 		return chosen;
+	}
+
+	GFile* FreeSiblingName(GFile* desired)
+	{
+		return free_sibling_name(desired);
 	}
 
 	char* GetTrashItemOrigPath(const char* uri)

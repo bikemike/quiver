@@ -598,10 +598,16 @@ TEST_CASE("HeaderBar and Toolbar Integration", "[gui][headerbar]")
 
         // Browser with headerbar
         Browser browser;
+        browser.RegisterActions();
         browser.SetToolbar(headerBar);
 
         // On browser show, thumbnail sizer is packed into the header bar
         browser.Show();
+
+        // BrowserPaste action is registered and enabled
+        GAction *pasteAct = QuiverUtils::GetAction("BrowserPaste");
+        REQUIRE(pasteAct != nullptr);
+        REQUIRE(g_action_get_enabled(pasteAct) == TRUE);
 
         // On browser hide, thumbnail sizer is removed cleanly
         browser.Hide();
@@ -609,6 +615,127 @@ TEST_CASE("HeaderBar and Toolbar Integration", "[gui][headerbar]")
         // Can show again without issue
         browser.Show();
         browser.Hide();
+    }
+
+    SECTION("Thumbnail sizer HUD popover tracks mouse drag/press/release")
+    {
+        GtkWidget *win = gtk_window_new();
+        gtk_window_set_titlebar(GTK_WINDOW(win), headerBar);
+        gtk_window_present(GTK_WINDOW(win));
+
+        Browser browser;
+        browser.RegisterActions();
+        browser.SetToolbar(headerBar);
+        browser.Show();
+
+        // Pump main loop so widgets are realized and mapped
+        for (int i = 0; i < 5; ++i)
+            g_main_context_iteration(NULL, FALSE);
+
+        // Find scale widget in header bar
+        GtkWidget *scale = nullptr;
+        std::function<void(GtkWidget*)> findScale = [&](GtkWidget *w) {
+            if (GTK_IS_SCALE(w)) { scale = w; return; }
+            for (GtkWidget *c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
+                findScale(c);
+        };
+        findScale(headerBar);
+        REQUIRE(scale != nullptr);
+
+        // Find popover child of scale
+        GtkWidget *popover = nullptr;
+        for (GtkWidget *c = gtk_widget_get_first_child(scale); c; c = gtk_widget_get_next_sibling(c))
+        {
+            if (GTK_IS_POPOVER(c)) popover = c;
+        }
+        REQUIRE(popover != nullptr);
+        REQUIRE(gtk_popover_get_autohide(GTK_POPOVER(popover)) == FALSE);
+        CHECK(gtk_widget_get_can_target(popover) == FALSE);
+        CHECK(gtk_widget_get_focusable(popover) == FALSE);
+
+        // Find label inside popover
+        GtkWidget *label = gtk_popover_get_child(GTK_POPOVER(popover));
+        REQUIRE(label != nullptr);
+        REQUIRE(GTK_IS_LABEL(label));
+        CHECK(gtk_widget_get_can_target(label) == FALSE);
+
+        // Find the drag gesture controller
+        GtkGestureDrag *dragGesture = nullptr;
+        GListModel *controllers = gtk_widget_observe_controllers(scale);
+        guint n_ctrl = g_list_model_get_n_items(controllers);
+        for (guint i = 0; i < n_ctrl; ++i)
+        {
+            gpointer item = g_list_model_get_item(controllers, i);
+            if (GTK_IS_GESTURE_DRAG(item))
+            {
+                dragGesture = GTK_GESTURE_DRAG(item);
+            }
+            g_object_unref(item);
+        }
+        g_object_unref(controllers);
+        REQUIRE(dragGesture != nullptr);
+
+        // Initially popover is not visible
+        CHECK(gtk_widget_get_visible(popover) == FALSE);
+
+        // Emit drag-begin (simulates mouse press)
+        g_signal_emit_by_name(dragGesture, "drag-begin", 50.0, 10.0);
+        for (int i = 0; i < 5; ++i)
+            g_main_context_iteration(NULL, FALSE);
+        CHECK(gtk_widget_get_visible(popover) == TRUE);
+        const char *txt = gtk_label_get_text(GTK_LABEL(label));
+        REQUIRE(txt != nullptr);
+        CHECK(strlen(txt) > 0);
+
+        // Emit drag-update (simulates mouse drag)
+        g_signal_emit_by_name(dragGesture, "drag-update", 20.0, 0.0);
+        for (int i = 0; i < 5; ++i)
+            g_main_context_iteration(NULL, FALSE);
+        CHECK(gtk_widget_get_visible(popover) == TRUE);
+
+        // Emit drag-end (simulates mouse release)
+        g_signal_emit_by_name(dragGesture, "drag-end", 20.0, 0.0);
+        for (int i = 0; i < 5; ++i)
+            g_main_context_iteration(NULL, FALSE);
+        // Normal drag-end without cancel dismisses popover
+        CHECK(gtk_widget_get_visible(popover) == FALSE);
+
+        // Test capture controller on parent box wrapper:
+        GtkWidget *parentBox = gtk_widget_get_parent(scale);
+        REQUIRE(parentBox != nullptr);
+
+        // Find the capture controller on parentBox
+        GtkEventController *captureCtrl = nullptr;
+        GListModel *boxControllers = gtk_widget_observe_controllers(parentBox);
+        guint n_box_ctrl = g_list_model_get_n_items(boxControllers);
+        for (guint i = 0; i < n_box_ctrl; ++i)
+        {
+            gpointer item = g_list_model_get_item(boxControllers, i);
+            if (gtk_event_controller_get_propagation_phase(GTK_EVENT_CONTROLLER(item)) == GTK_PHASE_CAPTURE)
+            {
+                captureCtrl = GTK_EVENT_CONTROLLER(item);
+            }
+            g_object_unref(item);
+        }
+        g_object_unref(boxControllers);
+        REQUIRE(captureCtrl != nullptr);
+
+        // Cancel signal on drag gesture (pointer leaving scale trough)
+        // must NOT dismiss popover while mouse button is held
+        g_signal_emit_by_name(dragGesture, "drag-begin", 50.0, 10.0);
+        for (int i = 0; i < 5; ++i)
+            g_main_context_iteration(NULL, FALSE);
+        CHECK(gtk_widget_get_visible(popover) == TRUE);
+
+        // Emit cancel on drag gesture (e.g. pointer leaving scale bounds)
+        g_signal_emit_by_name(dragGesture, "cancel", nullptr);
+        for (int i = 0; i < 5; ++i)
+            g_main_context_iteration(NULL, FALSE);
+        // Popover must remain visible because the mouse button has not been released!
+        CHECK(gtk_widget_get_visible(popover) == TRUE);
+
+        browser.Hide();
+        gtk_window_destroy(GTK_WINDOW(win));
     }
 }
 

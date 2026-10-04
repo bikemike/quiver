@@ -43,6 +43,8 @@ public:
 
 	GtkWidget *GetViewerOverlayBar() const;
 	GtkWidget *GetTimelineRow() const;
+	GtkWidget *GetPlayProgress() const;
+	GtkWidget *GetPlayProgressPopover() const;
 	GtkWidget *GetCenterPlayButton() const;
 	GtkWidget *GetViewModeMenuPopover() const;
 	GtkWidget *GetImageView() const;

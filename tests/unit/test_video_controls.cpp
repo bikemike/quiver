@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <gtk/gtk.h>
+#include <boost/shared_ptr.hpp>
+#include "Viewer.h"
 #include "test_helpers.h"
 #include <string>
 
@@ -214,5 +216,32 @@ TEST_CASE("Video Controls Configuration and Formatting", "[unit][video][controls
         REQUIRE(gtk_picture_get_can_shrink(GTK_PICTURE(pic)) == TRUE);
         g_object_ref_sink(pic);
         g_object_unref(pic);
+    }
+
+    SECTION("Video seek progress HUD popover configuration and input transparency")
+    {
+        boost::shared_ptr<Viewer> viewer(new Viewer());
+        GtkWidget* playProgress = viewer->GetPlayProgress();
+        REQUIRE(playProgress != nullptr);
+        REQUIRE(GTK_IS_SCALE(playProgress));
+
+        GtkWidget* popover = viewer->GetPlayProgressPopover();
+        REQUIRE(popover != nullptr);
+        REQUIRE(GTK_IS_POPOVER(popover));
+        REQUIRE(gtk_widget_has_css_class(popover, "play-progress-popover"));
+
+        // Popover must not auto-hide while active
+        REQUIRE(gtk_popover_get_autohide(GTK_POPOVER(popover)) == FALSE);
+
+        // Input transparency: must not be targetable or focusable
+        REQUIRE(gtk_widget_get_can_target(popover) == FALSE);
+        REQUIRE(gtk_widget_get_focusable(popover) == FALSE);
+
+        // Child readout label must also be non-targetable
+        GtkWidget* label = gtk_popover_get_child(GTK_POPOVER(popover));
+        REQUIRE(label != nullptr);
+        REQUIRE(GTK_IS_LABEL(label));
+        REQUIRE(gtk_widget_get_can_target(label) == FALSE);
+        REQUIRE(gtk_widget_has_css_class(label, "play-progress-readout"));
     }
 }

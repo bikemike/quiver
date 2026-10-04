@@ -260,6 +260,21 @@ static void viewer_set_controls_opacity(Viewer::ViewerImpl *p, double opacity);
 static void viewer_set_idle_cursor(Viewer::ViewerImpl *p, bool hidden);
 
 static gchar* gst_time_format(gint64 time);
+static gchar* viewer_get_play_progress_time_text(Viewer::ViewerImpl *p, double progress);
+static void viewer_play_progress_update_popover(Viewer::ViewerImpl *p, double x);
+static void viewer_play_progress_make_surface_input_transparent(GdkSurface *surface);
+static void viewer_play_progress_popover_layout_cb(GdkSurface *surface, int width, int height, gpointer user_data);
+static void viewer_play_progress_popover_realize_cb(GtkWidget *widget, gpointer user_data);
+static gboolean viewer_seek_capture_event_cb(GtkEventController *controller,
+	GdkEvent *event, gpointer user_data);
+static void viewer_seek_drag_begin_cb(GtkGestureDrag *gesture,
+	double start_x, double start_y, gpointer user_data);
+static void viewer_seek_drag_update_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data);
+static void viewer_seek_drag_end_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data);
+static void viewer_seek_drag_cancel_cb(GtkGesture *gesture,
+	GdkEventSequence *sequence, gpointer user_data);
 
 #if VIDEO_ZOOM_SMOOTH_ANIMATION
 static gboolean video_zoom_timeout(gpointer data);
@@ -937,6 +952,8 @@ public:
 	GtkWidget* m_pTimeDurationLabel;
 	GtkWidget* m_pPlayProgress;      /* GtkScale (seek slider) */
 	gulong     m_iPlayProgressChangeHandler; /* signal handler ID for change-value */
+	GtkWidget* m_pPlayProgressPopover = NULL;
+	GtkWidget* m_pPlayProgressLabel = NULL;
 	GtkWidget* m_pControlsBox;
 	GtkWidget* m_pRewindBtn;
 	GtkWidget* m_pFfBtn;
@@ -1261,6 +1278,9 @@ public:
 	bool        m_bNavControlShown       = false; // last applied show state (transition edge)
 
 	gboolean    m_bSeekDragging;
+	gboolean    m_bSeekDragCancelled = FALSE;
+	double      m_dSeekStartX = 0.0;
+	gint64      m_iLastVideoDuration = 0;
 
 	/* last pointer position in surface coords (to ignore synthetic motion
 	 * events caused by the controls re-laying-out under a parked pointer) */
@@ -2408,6 +2428,8 @@ static void viewer_set_controls_visible(Viewer::ViewerImpl* p, bool visible)
 		set_control_visible(p->m_pViewerOverlayBar, visible);
 	if (p->m_pTimelineRow)
 		set_control_visible(p->m_pTimelineRow, visible && p->IsVideo() && p->m_bVideoPlaybackStarted);
+	if (!visible && p->m_pPlayProgressPopover)
+		gtk_popover_popdown(GTK_POPOVER(p->m_pPlayProgressPopover));
 }
 
 /* True when the controls should be (re-)shown: they are gone entirely, or a
@@ -3165,6 +3187,137 @@ timeout_event_motion_notify (gpointer user_data)
 }
 
 
+/* Ensure the seek progress HUD overlay bubble surface is completely invisible
+ * to mouse events, allowing all pointer events to pass cleanly through to widgets beneath it. */
+static void viewer_play_progress_make_surface_input_transparent(GdkSurface *surface)
+{
+	if (!surface)
+		return;
+	cairo_region_t *empty = cairo_region_create();
+	gdk_surface_set_input_region(surface, empty);
+	cairo_region_destroy(empty);
+}
+
+static void viewer_play_progress_popover_layout_cb(GdkSurface *surface, int width, int height, gpointer user_data)
+{
+	(void)width;
+	(void)height;
+	(void)user_data;
+	viewer_play_progress_make_surface_input_transparent(surface);
+}
+
+static void viewer_play_progress_popover_realize_cb(GtkWidget *widget, gpointer user_data)
+{
+	(void)user_data;
+	GtkNative *native = GTK_NATIVE(widget);
+	GdkSurface *surface = native ? gtk_native_get_surface(native) : NULL;
+	if (surface)
+	{
+		viewer_play_progress_make_surface_input_transparent(surface);
+		g_signal_connect_object(surface, "layout",
+			G_CALLBACK(viewer_play_progress_popover_layout_cb), widget, G_CONNECT_AFTER);
+	}
+}
+
+static gchar* viewer_get_play_progress_time_text(Viewer::ViewerImpl *p, double progress)
+{
+	gint64 clip_duration = 0;
+	if (p && p->m_pPipeline)
+	{
+		GstFormat format = GST_FORMAT_TIME;
+		if (gst_element_query_duration(GST_ELEMENT(p->m_pPipeline), format, &clip_duration) && clip_duration > 0)
+		{
+			p->m_iLastVideoDuration = clip_duration;
+		}
+		else
+		{
+			clip_duration = p->m_iLastVideoDuration;
+		}
+	}
+	else if (p)
+	{
+		clip_duration = p->m_iLastVideoDuration;
+	}
+
+	if (clip_duration <= 0)
+	{
+		return gst_time_format(0);
+	}
+
+	gint64 target = (gint64)(clip_duration * std::clamp(progress, 0.0, 1.0));
+	return gst_time_format(target);
+}
+
+/* Update HUD overlay bubble text and position pointing to seek dragger. */
+static void viewer_play_progress_update_popover(Viewer::ViewerImpl *p, double x)
+{
+	if (!p->m_pPlayProgressPopover || !p->m_pPlayProgress || !gtk_widget_get_root(p->m_pPlayProgress))
+		return;
+
+	gdouble val = gtk_range_get_value(GTK_RANGE(p->m_pPlayProgress));
+	gchar *text = viewer_get_play_progress_time_text(p, val);
+	if (p->m_pPlayProgressLabel)
+	{
+		if (text)
+		{
+			gchar *markup = g_strdup_printf("<b>%s</b>", text);
+			gtk_label_set_markup(GTK_LABEL(p->m_pPlayProgressLabel), markup);
+			g_free(markup);
+		}
+		else
+		{
+			gtk_label_set_text(GTK_LABEL(p->m_pPlayProgressLabel), "");
+		}
+	}
+	g_free(text);
+
+	int w = gtk_widget_get_width(p->m_pPlayProgress);
+	int h = gtk_widget_get_height(p->m_pPlayProgress);
+	if (x < 0)
+	{
+		GtkAdjustment *adj = gtk_range_get_adjustment(GTK_RANGE(p->m_pPlayProgress));
+		double lower = gtk_adjustment_get_lower(adj);
+		double upper = gtk_adjustment_get_upper(adj);
+		double frac = (upper > lower) ? (val - lower) / (upper - lower) : 0.0;
+		x = frac * w;
+	}
+
+	if (p->m_pTimelineRow)
+	{
+		GtkAlign align = gtk_widget_get_valign(p->m_pTimelineRow);
+		gtk_popover_set_position(GTK_POPOVER(p->m_pPlayProgressPopover),
+			(align == GTK_ALIGN_START) ? GTK_POS_BOTTOM : GTK_POS_TOP);
+	}
+
+	GdkRectangle rect;
+	GtkWidget *popParent = gtk_widget_get_parent(p->m_pPlayProgressPopover);
+	graphene_point_t p_in = { (float)std::clamp((int)x, 0, std::max(1, w)), 0.0f };
+	graphene_point_t p_out = p_in;
+	if (popParent && popParent != p->m_pPlayProgress)
+	{
+		if (!gtk_widget_compute_point(p->m_pPlayProgress, popParent, &p_in, &p_out))
+		{
+			p_out = p_in;
+		}
+	}
+	int parentW = popParent ? gtk_widget_get_width(popParent) : w;
+	rect.x = std::clamp((int)p_out.x, 0, std::max(1, parentW));
+	rect.y = (int)p_out.y;
+	rect.width = 1;
+	rect.height = std::max(1, h);
+	gtk_popover_set_pointing_to(GTK_POPOVER(p->m_pPlayProgressPopover), &rect);
+	gtk_popover_popup(GTK_POPOVER(p->m_pPlayProgressPopover));
+	if (gtk_widget_get_realized(p->m_pPlayProgressPopover))
+	{
+		GtkNative *native = GTK_NATIVE(p->m_pPlayProgressPopover);
+		GdkSurface *surface = native ? gtk_native_get_surface(native) : NULL;
+		if (surface)
+		{
+			viewer_play_progress_make_surface_input_transparent(surface);
+		}
+	}
+}
+
 /* Show/populate the seek-time popover positioned above the slider handle.
  * value is in [0,1] (fraction of the clip).  bKeyboard is true for arrow-key
  * seeks, which auto-hide after a short delay. */
@@ -3182,9 +3335,17 @@ viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble valu
 	GstFormat format = GST_FORMAT_TIME;
 	gint64 clip_duration = 0;
 	if (!gst_element_query_duration(GST_ELEMENT(p->m_pPipeline), format, &clip_duration) || clip_duration <= 0)
+	{
+		clip_duration = p->m_iLastVideoDuration;
+	}
+	else
+	{
+		p->m_iLastVideoDuration = clip_duration;
+	}
+	if (clip_duration <= 0)
 		return FALSE;
 
-	gint64 target = (gint64)(clip_duration * CLAMP(value, 0.0, 1.0));
+	gint64 target = (gint64)(clip_duration * std::clamp(value, 0.0, 1.0));
 
 	gchar* str_pos = gst_time_format(target);
 	gchar* str_len = gst_time_format(clip_duration);
@@ -3206,28 +3367,145 @@ viewer_scale_change_value_cb(GtkRange *range, GtkScrollType scroll, gdouble valu
 		GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
 		GST_SEEK_TYPE_SET, target,
 		GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+
+	if (p->m_bSeekDragging)
+	{
+		viewer_play_progress_update_popover(p, -1);
+	}
+
 	return FALSE;
 }
 
-static void
-viewer_scale_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
+static gboolean viewer_seek_capture_event_cb(GtkEventController *controller,
+	GdkEvent *event, gpointer user_data)
 {
-	(void)gesture; (void)n_press; (void)x; (void)y;
+	(void)controller;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	GdkEventType t = gdk_event_get_event_type(event);
+	if (t == GDK_BUTTON_PRESS)
+	{
+		if (gdk_button_event_get_button(event) == GDK_BUTTON_PRIMARY)
+		{
+			p->m_bSeekDragging = TRUE;
+			p->m_bSeekDragCancelled = FALSE;
+			p->CancelControlsFade();
+			viewer_set_controls_visible(p, true);
+			viewer_set_controls_opacity(p, 1.0);
+			viewer_play_progress_update_popover(p, -1);
+		}
+	}
+	else if (t == GDK_BUTTON_RELEASE)
+	{
+		if (gdk_button_event_get_button(event) == GDK_BUTTON_PRIMARY && p->m_bSeekDragging)
+		{
+			p->m_bSeekDragging = FALSE;
+			p->m_bSeekDragCancelled = FALSE;
+			if (p->m_pPlayProgressPopover)
+			{
+				gtk_popover_popdown(GTK_POPOVER(p->m_pPlayProgressPopover));
+			}
+			p->RefreshAutoHideTimer();
+		}
+	}
+	else if (t == GDK_MOTION_NOTIFY && p->m_bSeekDragging && p->m_bSeekDragCancelled)
+	{
+		/* If the internal gesture cancelled because the pointer drifted outside the
+		 * scale trough, continue tracking horizontal mouse motion across the widget. */
+		double ev_x, ev_y;
+		if (gdk_event_get_position(event, &ev_x, &ev_y))
+		{
+			graphene_point_t p_in, p_scale;
+			p_in.x = (float)ev_x;
+			p_in.y = (float)ev_y;
+			GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(p->m_pPlayProgress));
+			if (root && p->m_pPlayProgress && gtk_widget_compute_point(root, p->m_pPlayProgress, &p_in, &p_scale))
+			{
+				int w = gtk_widget_get_width(p->m_pPlayProgress);
+				if (w > 0)
+				{
+					GtkAdjustment *adj = gtk_range_get_adjustment(GTK_RANGE(p->m_pPlayProgress));
+					double lower = gtk_adjustment_get_lower(adj);
+					double upper = gtk_adjustment_get_upper(adj);
+					double frac = std::clamp((double)p_scale.x / (double)w, 0.0, 1.0);
+					double new_val = lower + frac * (upper - lower);
+					gtk_range_set_value(GTK_RANGE(p->m_pPlayProgress), new_val);
+					viewer_scale_change_value_cb(GTK_RANGE(p->m_pPlayProgress), GTK_SCROLL_JUMP, new_val, p);
+					viewer_play_progress_update_popover(p, p_scale.x);
+				}
+			}
+		}
+	}
+	else if (t == GDK_KEY_PRESS)
+	{
+		if (gdk_key_event_get_keyval(event) == GDK_KEY_Escape && p->m_bSeekDragging)
+		{
+			p->m_bSeekDragging = FALSE;
+			p->m_bSeekDragCancelled = FALSE;
+			if (p->m_pPlayProgressPopover)
+			{
+				gtk_popover_popdown(GTK_POPOVER(p->m_pPlayProgressPopover));
+			}
+			p->RefreshAutoHideTimer();
+		}
+	}
+	return GDK_EVENT_PROPAGATE;
+}
+
+static void viewer_seek_drag_begin_cb(GtkGestureDrag *gesture,
+	double start_x, double start_y, gpointer user_data)
+{
+	(void)gesture;
+	(void)start_y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
 	p->m_bSeekDragging = TRUE;
+	p->m_bSeekDragCancelled = FALSE;
+	p->m_dSeekStartX = start_x;
 	p->CancelControlsFade();
 	viewer_set_controls_visible(p, true);
 	viewer_set_controls_opacity(p, 1.0);
+	viewer_play_progress_update_popover(p, start_x);
 }
 
-static void
-viewer_scale_button_release_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data)
+static void viewer_seek_drag_update_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data)
 {
-	(void)gesture; (void)n_press; (void)x; (void)y;
+	(void)gesture;
+	(void)offset_y;
 	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
-	p->m_bSeekDragging = FALSE;
-	p->RefreshAutoHideTimer();
+	if (p->m_bSeekDragging)
+	{
+		viewer_play_progress_update_popover(p, p->m_dSeekStartX + offset_x);
+	}
 }
+
+static void viewer_seek_drag_cancel_cb(GtkGesture *gesture,
+	GdkEventSequence *sequence, gpointer user_data)
+{
+	(void)gesture;
+	(void)sequence;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	p->m_bSeekDragCancelled = TRUE;
+}
+
+static void viewer_seek_drag_end_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data)
+{
+	(void)gesture;
+	(void)offset_x;
+	(void)offset_y;
+	Viewer::ViewerImpl *p = (Viewer::ViewerImpl *)user_data;
+	if (!p->m_bSeekDragCancelled)
+	{
+		p->m_bSeekDragging = FALSE;
+		if (p->m_pPlayProgressPopover)
+		{
+			gtk_popover_popdown(GTK_POPOVER(p->m_pPlayProgressPopover));
+		}
+		p->RefreshAutoHideTimer();
+	}
+}
+
+
 
 /* Only treat a motion event as real "activity" when the pointer has actually
  * moved in surface coordinates.  GTK synthesizes motion events when a widget
@@ -5435,6 +5713,12 @@ void Viewer::ViewerImpl::UpdateTimeline()
 	if (!success || len < 0 || pos < 0)
 		return;
 
+	if (len > 0)
+		m_iLastVideoDuration = len;
+
+	if (m_bSeekDragging)
+		return;
+
 	gchar* str_pos = gst_time_format(pos);
 	gchar* str_len = gst_time_format(len);
 	gchar* markup;
@@ -5760,6 +6044,13 @@ void Viewer::ViewerImpl::StopVideo(bool reloadImage /* = true */, bool keepPrevi
 		gtk_range_set_value(GTK_RANGE(m_pPlayProgress), 0.0);
 		g_signal_handler_unblock(m_pPlayProgress, m_iPlayProgressChangeHandler);
 	}
+	if (m_pPlayProgressPopover)
+	{
+		gtk_popover_popdown(GTK_POPOVER(m_pPlayProgressPopover));
+	}
+	m_bSeekDragging = FALSE;
+	m_bSeekDragCancelled = FALSE;
+	m_iLastVideoDuration = 0;
 	if (m_pTimeElapsedLabel && GTK_IS_LABEL(m_pTimeElapsedLabel))
 		gtk_label_set_markup(GTK_LABEL(m_pTimeElapsedLabel), "<b>0:00</b>");
 	if (m_pTimeDurationLabel && GTK_IS_LABEL(m_pTimeDurationLabel))
@@ -6621,6 +6912,16 @@ static void viewer_widget_tree_destroyed_cb(GtkWidget *widget, gpointer user_dat
 	pViewer->m_pTimeElapsedLabel = NULL;
 	pViewer->m_pTimeDurationLabel = NULL;
 	pViewer->m_pPlayProgress = NULL;
+	if (pViewer->m_pPlayProgressPopover != NULL)
+	{
+		if (GTK_IS_WIDGET(pViewer->m_pPlayProgressPopover) &&
+		    gtk_widget_get_parent(pViewer->m_pPlayProgressPopover) != NULL)
+		{
+			gtk_widget_unparent(pViewer->m_pPlayProgressPopover);
+		}
+		pViewer->m_pPlayProgressPopover = NULL;
+		pViewer->m_pPlayProgressLabel = NULL;
+	}
 	pViewer->m_pFilmstripEdge = NULL;
 	pViewer->m_pFilmstripOverlayContainer = NULL;
 	pViewer->m_pContextMenuPopover = NULL;
@@ -6819,6 +7120,16 @@ Viewer::ViewerImpl::~ViewerImpl()
 		if (gtk_widget_get_parent(m_pContextMenuPopover))
 			gtk_widget_unparent(m_pContextMenuPopover);
 		m_pContextMenuPopover = NULL;
+	}
+	if (m_pPlayProgressPopover != NULL)
+	{
+		if (GTK_IS_WIDGET(m_pPlayProgressPopover) &&
+		    gtk_widget_get_parent(m_pPlayProgressPopover) != NULL)
+		{
+			gtk_widget_unparent(m_pPlayProgressPopover);
+		}
+		m_pPlayProgressPopover = NULL;
+		m_pPlayProgressLabel = NULL;
 	}
 
 	/* Disconnect all GObject signal handlers that captured `this` so no
@@ -9669,6 +9980,9 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_bControlsFadingIn(false),
 	m_dControlsFadeOpacity(0.0),
 	m_bSeekDragging(FALSE),
+	m_bSeekDragCancelled(FALSE),
+	m_dSeekStartX(0.0),
+	m_iLastVideoDuration(0),
 	m_dPointerRootX(0.0),
 	m_dPointerRootY(0.0),
 	m_bPointerPosValid(false),
@@ -9964,15 +10278,65 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 		g_signal_connect(motion, "motion", G_CALLBACK(controls_show_on_event_cb), this);
 		gtk_widget_add_controller(scale, motion);
 	}
-	{
-		GtkGesture *click = gtk_gesture_click_new();
-		g_signal_connect(click, "pressed", G_CALLBACK(viewer_scale_button_press_cb), this);
-		g_signal_connect(click, "released", G_CALLBACK(viewer_scale_button_release_cb), this);
-		gtk_widget_add_controller(scale, GTK_EVENT_CONTROLLER(click));
-	}
 	m_iPlayProgressChangeHandler = g_signal_connect(G_OBJECT(m_pPlayProgress), "change-value",
 		G_CALLBACK(viewer_scale_change_value_cb), this);
-	gtk_box_append(GTK_BOX(m_pTimelineRow), scale);
+
+	GtkWidget *scaleBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	gtk_widget_set_hexpand(scaleBox, TRUE);
+	gtk_box_append(GTK_BOX(scaleBox), scale);
+
+	/* HUD overlay bubble for video seek slider dragger. Anchored to scaleBox as a popover
+	 * with autohide disabled so it hovers cleanly without enlarging the timeline row.
+	 * Configured as completely input-transparent so dragging over/near it never
+	 * intercepts mouse events or distorts scale dragger coordinates. */
+	m_pPlayProgressLabel = gtk_label_new("");
+	gtk_widget_add_css_class(m_pPlayProgressLabel, "numeric");
+	gtk_widget_add_css_class(m_pPlayProgressLabel, "play-progress-readout");
+	gtk_widget_set_can_target(m_pPlayProgressLabel, FALSE);
+
+	m_pPlayProgressPopover = gtk_popover_new();
+	gtk_widget_add_css_class(m_pPlayProgressPopover, "play-progress-popover");
+	gtk_popover_set_autohide(GTK_POPOVER(m_pPlayProgressPopover), FALSE);
+	gtk_popover_set_position(GTK_POPOVER(m_pPlayProgressPopover), GTK_POS_TOP);
+	gtk_widget_set_can_target(m_pPlayProgressPopover, FALSE);
+	gtk_widget_set_focusable(m_pPlayProgressPopover, FALSE);
+	gtk_widget_set_focus_on_click(m_pPlayProgressPopover, FALSE);
+	gtk_popover_set_child(GTK_POPOVER(m_pPlayProgressPopover), m_pPlayProgressLabel);
+	gtk_widget_set_parent(m_pPlayProgressPopover, scaleBox);
+	g_signal_connect(m_pPlayProgressPopover, "realize",
+		G_CALLBACK(viewer_play_progress_popover_realize_cb), this);
+
+	/* Capture controller on the parent box wrapper: reliably tracks press and
+	 * release even if the mouse leaves the scale bounds during a drag. */
+	GtkEventController *capture_ctrl = gtk_event_controller_legacy_new();
+	gtk_event_controller_set_propagation_phase(capture_ctrl, GTK_PHASE_CAPTURE);
+	g_signal_connect(capture_ctrl, "event",
+		G_CALLBACK(viewer_seek_capture_event_cb), this);
+	gtk_widget_add_controller(scaleBox, capture_ctrl);
+
+	/* Connect to the scale's internal drag gesture so the HUD bubble tracks
+	 * press, drag, and release without creating a competing gesture that GTK denies. */
+	GListModel *controllers = gtk_widget_observe_controllers(scale);
+	guint n_controllers = g_list_model_get_n_items(controllers);
+	for (guint i = 0; i < n_controllers; ++i)
+	{
+		gpointer item = g_list_model_get_item(controllers, i);
+		if (GTK_IS_GESTURE_DRAG(item))
+		{
+			g_signal_connect(item, "drag-begin",
+				G_CALLBACK(viewer_seek_drag_begin_cb), this);
+			g_signal_connect(item, "drag-update",
+				G_CALLBACK(viewer_seek_drag_update_cb), this);
+			g_signal_connect(item, "drag-end",
+				G_CALLBACK(viewer_seek_drag_end_cb), this);
+			g_signal_connect(item, "cancel",
+				G_CALLBACK(viewer_seek_drag_cancel_cb), this);
+		}
+		g_object_unref(item);
+	}
+	g_object_unref(controllers);
+
+	gtk_box_append(GTK_BOX(m_pTimelineRow), scaleBox);
 
 	m_pTimeDurationLabel = gtk_label_new(NULL);
 	gtk_label_set_markup(GTK_LABEL(m_pTimeDurationLabel), "<b>0:00</b>");
@@ -11359,6 +11723,16 @@ GtkWidget* Viewer::GetViewerOverlayBar() const
 GtkWidget* Viewer::GetTimelineRow() const
 {
 	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pTimelineRow : NULL;
+}
+
+GtkWidget* Viewer::GetPlayProgress() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pPlayProgress : NULL;
+}
+
+GtkWidget* Viewer::GetPlayProgressPopover() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_pPlayProgressPopover : NULL;
 }
 
 GtkWidget* Viewer::GetCenterPlayButton() const

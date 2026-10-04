@@ -85,6 +85,9 @@ namespace QuiverClipboard
 	 * so it must be called from the GUI thread. */
 	bool GetClipboardUris(std::list<std::string>& urisOut, bool& cutOut,
 	                      GdkClipboard *clipboard = NULL);
+
+	/* Fast synchronous check whether the clipboard offers file URIs or text formats. */
+	bool HasFiles(GdkClipboard *clipboard = NULL);
 }
 
 #endif

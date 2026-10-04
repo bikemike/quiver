@@ -183,6 +183,7 @@ namespace QuiverFileOps
 	/* Trash-browsing helpers */
 	bool IsTrashURI(const char* uri);
 	char* GetTrashItemOrigPath(const char* uri);            // g_strdup'd trash::orig-path, or NULL
+	GFile* FreeSiblingName(GFile* desired);                // duplicate filename e.g. "file (1).jpg"
 	bool RestoreTrashItem(QuiverFile quiverFile);          // restore a trash:/// item to its origin
 	bool PermanentlyDeleteTrashItem(QuiverFile quiverFile); // drop a trash:/// item for good
 	bool QuiverFolderIsEmpty(const QuiverFile& folder);     // no children at all

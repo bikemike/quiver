@@ -2692,14 +2692,35 @@ void Quiver::Init()
 				"  min-height: 6px;"
 				"  border-radius: 3px;"
 				"}"
-				/* the slider's drag readout.  Under the slider now, not on
-				 * it, but it still needs a backing plate to stay legible
-				 * against whatever the bar paints behind it. */
-				".thumb-sizer-readout {"
-				"  background-color: rgba(25, 25, 25, 0.9);"
+				/* Thumbnail slider HUD overlay bubble */
+				".thumb-sizer-popover contents {"
+				"  background-color: rgba(25, 25, 25, 0.95);"
 				"  color: #ffffff;"
 				"  border-radius: 10px;"
-				"  padding: 1px 10px;"
+				"  padding: 3px 10px;"
+				"  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);"
+				"}"
+				".thumb-sizer-popover arrow {"
+				"  background: rgba(25, 25, 25, 0.95);"
+				"}"
+				".thumb-sizer-readout {"
+				"  color: #ffffff;"
+				"  font-weight: 500;"
+				"}"
+				/* Video seek progress HUD overlay bubble */
+				".play-progress-popover contents {"
+				"  background-color: rgba(25, 25, 25, 0.95);"
+				"  color: #ffffff;"
+				"  border-radius: 10px;"
+				"  padding: 3px 10px;"
+				"  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);"
+				"}"
+				".play-progress-popover arrow {"
+				"  background: rgba(25, 25, 25, 0.95);"
+				"}"
+				".play-progress-readout {"
+				"  color: #ffffff;"
+				"  font-weight: 500;"
 				"}");
 			gtk_style_context_add_provider_for_display(
 				gdk_display_get_default(), GTK_STYLE_PROVIDER(sCssProvider),

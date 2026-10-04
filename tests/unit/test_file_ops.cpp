@@ -406,5 +406,41 @@ TEST_CASE("QuiverFileOps transfer", "[unit][fileops][temp]")
         REQUIRE(exists(other + "/f.jpg"));
     }
 
+    SECTION("FreeSiblingName creates numbered sibling files")
+    {
+        write_file(src);
+        GFile *desired = g_file_new_for_path(src.c_str());
+        GFile *sibling = QuiverFileOps::FreeSiblingName(desired);
+        g_object_unref(desired);
+        REQUIRE(sibling != nullptr);
+        char *sibling_path = g_file_get_path(sibling);
+        REQUIRE(sibling_path != nullptr);
+        REQUIRE(std::string(sibling_path) == b + "/f (1).jpg");
+        g_free(sibling_path);
+        g_object_unref(sibling);
+    }
+
     remove_tree(base);
 }
+
+TEST_CASE("QuiverClipboard parses trash and file URIs and checks files", "[unit][clipboard]")
+{
+    std::list<std::string> uris;
+    bool cut = false;
+    std::string clipText = "copy\ntrash:///home%2Fuser%2Fphotos%2Ftrash_pic.jpg\nfile:///home/user/pic.jpg\n";
+    REQUIRE(QuiverClipboard::ParseClipboardText(clipText, uris, cut));
+    REQUIRE(uris.size() == 2);
+    REQUIRE(uris.front() == "trash:///home%2Fuser%2Fphotos%2Ftrash_pic.jpg");
+    REQUIRE(uris.back() == "file:///home/user/pic.jpg");
+    REQUIRE(cut == false);
+
+    clipText = "cut\ntrash:///home%2Fuser%2Fphotos%2Ftrash_pic.jpg\n";
+    uris.clear();
+    REQUIRE(QuiverClipboard::ParseClipboardText(clipText, uris, cut));
+    REQUIRE(uris.size() == 1);
+    REQUIRE(cut == true);
+
+    // HasFiles executes cleanly without crashing
+    QuiverClipboard::HasFiles(nullptr);
+}
+

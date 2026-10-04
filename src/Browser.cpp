@@ -297,24 +297,12 @@ public:
 	GtkWidget *hscale;
 
 	GtkWidget *m_pToolItemThumbSizer;
-	/* Drag-time readout for the thumbnail slider.  An overlay child of the
-	 * sizer, so it annotates the slider without taking bar space. */
-	GtkWidget *m_pThumbSizerLabel;
-	/* = 0, not merely zeroed in the destructor: arm_hide() tests this to
-	 * decide whether a timeout is pending, and a stale nonzero value would
-	 * have it g_source_remove() some unrelated source id. */
-	guint m_ThumbSizerHideTimeout = 0;
-	/* TRUE only between the slider's press and the end of its drag; gates
-	 * whether value_changed is allowed to show the readout, so a
-	 * programmatic set_value() (restoring a saved size, clamping) cannot
-	 * leave a readout stuck on screen. */
+	/* HUD overlay bubble for thumbnail slider dragger. */
+	GtkWidget *m_pThumbSizerPopover = NULL;
+	GtkWidget *m_pThumbSizerLabel = NULL;
 	gboolean m_ThumbSizerDragging = FALSE;
-	/* The pointer device the drag started on, so the poll can ask it whether
-	 * the button is still down.  Ref'd; NULL when no drag is active. */
-	GdkDevice *m_ThumbSizerDevice = NULL;
-	/* Milliseconds since the readout last changed, used only as a fallback
-	 * when no device could be captured. */
-	guint64 m_ThumbSizerLastChangeMs = 0;
+	gboolean m_ThumbSizerDragCancelled = FALSE;
+	double m_ThumbSizerStartX = 0.0;
 	GtkWidget *m_pToolbar;
 
 	GtkWidget *m_pContextMenuPopover;
@@ -822,10 +810,17 @@ static GdkTexture* filmstrip_texture_callback(QuiverIconView* iconview, gulong c
 static gchar* text_pixbuf_callback(QuiverIconView *iconview, gulong cell,gpointer user_data);
 static gulong n_cells_callback(QuiverIconView *iconview, gpointer user_data);
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data);
-static void browser_thumb_sizer_pressed_cb(GtkGestureClick *gesture,
-	int n_press, double x, double y, gpointer user_data);
-static void browser_thumb_sizer_released_cb(GtkGestureClick *gesture,
-	int n_press, double x, double y, gpointer user_data);
+static gboolean browser_thumb_sizer_capture_event_cb(GtkEventController *controller,
+	GdkEvent *event, gpointer user_data);
+static void browser_thumb_sizer_drag_begin_cb(GtkGestureDrag *gesture,
+	double start_x, double start_y, gpointer user_data);
+static void browser_thumb_sizer_drag_update_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data);
+static void browser_thumb_sizer_drag_end_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data);
+static void browser_thumb_sizer_drag_cancel_cb(GtkGesture *gesture,
+	GdkEventSequence *sequence, gpointer user_data);
+static void browser_thumb_sizer_popover_realize_cb(GtkWidget *widget, gpointer user_data);
 static void iconview_cell_activated_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_cursor_changed_cb(QuiverIconView *iconview, guint cell, gpointer user_data);
 static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer user_data);
@@ -1041,52 +1036,60 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_widget_set_margin_start(hscale, 4);
 	gtk_widget_set_margin_end(hscale, 4);
 	
-	/* Drag-time readout, under the slider.
-	 *
-	 * Deliberately NOT a GtkPopover: GTK4 pops a popover straight back down
-	 * when it is shown while a button press is still in flight, and the slider
-	 * holds the button for the entire drag, so the popover cannot stay up
-	 * (verified with synthesised X input - it dies on the first motion event).
-	 * A tooltip does survive, but only after the ~500ms hover timeout, which is
-	 * far too slow for drag feedback.
-	 *
-	 * Stacked under the slider rather than packed beside it, so it costs the
-	 * bar no horizontal space: reserving a width for it squeezed the window
-	 * title on every drag.  A plain vertical box is what actually gets the text
-	 * below the trough - a GtkOverlay cannot, because it sizes to its tallest
-	 * child, and the readout is shorter than the slider, so pinned to the
-	 * bottom it lands on the tick marks rather than clear of them.
-	 *
-	 * The readout holds a fixed height whether or not it has text, so the bar
-	 * never changes height mid-drag; when empty it drops its pill styling (see
-	 * browser_thumb_sizer_set_text) and paints nothing at all. */
+	/* HUD overlay bubble for slider dragger.  Anchored to hscale as a popover
+	 * with autohide disabled so it hovers cleanly without enlarging the header bar.
+	 * Configured as completely input-transparent so dragging over/near it never
+	 * intercepts mouse events or distorts scale dragger coordinates. */
 	m_pThumbSizerLabel = gtk_label_new("");
-	gtk_label_set_xalign(GTK_LABEL(m_pThumbSizerLabel), 0.5f);
-	gtk_widget_set_halign(m_pThumbSizerLabel, GTK_ALIGN_CENTER);
-	gtk_widget_set_valign(m_pThumbSizerLabel, GTK_ALIGN_CENTER);
-	gtk_widget_set_size_request(m_pThumbSizerLabel, -1, 20);
-	gtk_widget_set_margin_top(m_pThumbSizerLabel, 1);
 	gtk_widget_add_css_class(m_pThumbSizerLabel, "numeric");
-
-	GtkWidget *sizerStack = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	gtk_widget_set_valign(sizerStack, GTK_ALIGN_CENTER);
-	gtk_box_append(GTK_BOX(sizerStack), hscale);
-	gtk_box_append(GTK_BOX(sizerStack), m_pThumbSizerLabel);
-	/* Decoration only - the slider must keep receiving every drag event. */
+	gtk_widget_add_css_class(m_pThumbSizerLabel, "thumb-sizer-readout");
 	gtk_widget_set_can_target(m_pThumbSizerLabel, FALSE);
+
+	m_pThumbSizerPopover = gtk_popover_new();
+	gtk_widget_add_css_class(m_pThumbSizerPopover, "thumb-sizer-popover");
+	gtk_popover_set_autohide(GTK_POPOVER(m_pThumbSizerPopover), FALSE);
+	gtk_popover_set_position(GTK_POPOVER(m_pThumbSizerPopover), GTK_POS_BOTTOM);
+	gtk_widget_set_can_target(m_pThumbSizerPopover, FALSE);
+	gtk_widget_set_focusable(m_pThumbSizerPopover, FALSE);
+	gtk_widget_set_focus_on_click(m_pThumbSizerPopover, FALSE);
+	gtk_popover_set_child(GTK_POPOVER(m_pThumbSizerPopover), m_pThumbSizerLabel);
+	gtk_widget_set_parent(m_pThumbSizerPopover, hscale);
+	g_signal_connect(m_pThumbSizerPopover, "realize",
+		G_CALLBACK(browser_thumb_sizer_popover_realize_cb), this);
 
 	m_pToolItemThumbSizer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
 	gtk_widget_set_hexpand(m_pToolItemThumbSizer, TRUE);
-	gtk_box_append(GTK_BOX(m_pToolItemThumbSizer), sizerStack);
+	gtk_box_append(GTK_BOX(m_pToolItemThumbSizer), hscale);
 
-	GtkGesture *thumbPress = gtk_gesture_click_new();
-	gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(thumbPress),
-		GDK_BUTTON_PRIMARY);
-	g_signal_connect(thumbPress, "pressed",
-		G_CALLBACK(browser_thumb_sizer_pressed_cb), this);
-	g_signal_connect(thumbPress, "released",
-		G_CALLBACK(browser_thumb_sizer_released_cb), this);
-	gtk_widget_add_controller(hscale, GTK_EVENT_CONTROLLER(thumbPress));
+	/* Capture controller on the parent box wrapper: reliably tracks press and
+	 * release even if the mouse leaves the scale bounds during a drag. */
+	GtkEventController *capture_ctrl = gtk_event_controller_legacy_new();
+	gtk_event_controller_set_propagation_phase(capture_ctrl, GTK_PHASE_CAPTURE);
+	g_signal_connect(capture_ctrl, "event",
+		G_CALLBACK(browser_thumb_sizer_capture_event_cb), this);
+	gtk_widget_add_controller(m_pToolItemThumbSizer, capture_ctrl);
+
+	/* Connect to the scale's internal drag gesture so the HUD bubble tracks
+	 * press, drag, and release without creating a competing gesture that GTK denies. */
+	GListModel *controllers = gtk_widget_observe_controllers(hscale);
+	guint n_controllers = g_list_model_get_n_items(controllers);
+	for (guint i = 0; i < n_controllers; ++i)
+	{
+		gpointer item = g_list_model_get_item(controllers, i);
+		if (GTK_IS_GESTURE_DRAG(item))
+		{
+			g_signal_connect(item, "drag-begin",
+				G_CALLBACK(browser_thumb_sizer_drag_begin_cb), this);
+			g_signal_connect(item, "drag-update",
+				G_CALLBACK(browser_thumb_sizer_drag_update_cb), this);
+			g_signal_connect(item, "drag-end",
+				G_CALLBACK(browser_thumb_sizer_drag_end_cb), this);
+			g_signal_connect(item, "cancel",
+				G_CALLBACK(browser_thumb_sizer_drag_cancel_cb), this);
+		}
+		g_object_unref(item);
+	}
+	g_object_unref(controllers);
 
 	g_object_ref(m_pToolItemThumbSizer);
 	
@@ -1579,18 +1582,15 @@ Browser::BrowserImpl::~BrowserImpl()
 
 	/* 3. the thumb-sizer floats between the app toolbar and the browser; it is
 	 *    NOT part of m_pBrowserWidget, release it while both still exist */
-	if (m_ThumbSizerHideTimeout)
+	if (m_pThumbSizerPopover)
 	{
-		g_source_remove(m_ThumbSizerHideTimeout);
-		m_ThumbSizerHideTimeout = 0;
+		if (gtk_widget_get_parent(m_pThumbSizerPopover))
+		{
+			gtk_widget_unparent(m_pThumbSizerPopover);
+		}
+		m_pThumbSizerPopover = NULL;
+		m_pThumbSizerLabel = NULL;
 	}
-	if (m_ThumbSizerDevice)
-	{
-		g_object_unref(m_ThumbSizerDevice);
-		m_ThumbSizerDevice = NULL;
-	}
-	/* The label is a child of m_pToolItemThumbSizer, released just below. */
-	m_pThumbSizerLabel = NULL;
 	if (m_pToolItemThumbSizer)
 	{
 		if (gtk_widget_get_parent(m_pToolItemThumbSizer))
@@ -1637,7 +1637,7 @@ void Browser::BrowserImpl::RegisterActions()
 
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_CUT, "<Control>X", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_COPY, "<Control>C", browser_action_handler_cb, this);
-	QuiverUtils::AddSimpleAction(ACTION_BROWSER_PASTE, "<Control>V", browser_action_handler_cb, this);
+	QuiverUtils::AddSimpleAction(ACTION_BROWSER_PASTE, "<Control>v", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_NEW_FOLDER, "<Control><Shift>N", browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_ADD_BOOKMARK, NULL, browser_action_handler_cb, this);
 	QuiverUtils::AddSimpleAction(ACTION_BROWSER_SELECT_ALL, "<Control>A", browser_action_handler_cb, this);
@@ -1895,168 +1895,199 @@ ImageListPtr Browser::BrowserImpl::GetImageList()
 // BrowswerImpl Callbacks
 //=============================================================================
 
-/* Set (or clear) the readout, styling it only when it has something to say.
- *
- * The pill background is applied per-call rather than once at construction: an
- * empty label still paints its rounded background, so a readout parked at ""
- * rendered as a small blank circle sitting under the slider.  Driving the style
- * from the text means idle paints nothing at all. */
-static void browser_thumb_sizer_set_text(Browser::BrowserImpl* b, const char *text)
+/* Ensure the HUD overlay bubble surface is completely invisible to mouse events,
+ * allowing all pointer events to pass cleanly through to widgets beneath it. */
+static void browser_thumb_sizer_make_surface_input_transparent(GdkSurface *surface)
 {
-	if (!b->m_pThumbSizerLabel)
+	if (!surface)
 		return;
-
-	gtk_label_set_text(GTK_LABEL(b->m_pThumbSizerLabel), text ? text : "");
-
-	if (text != NULL && *text != '\0')
-		gtk_widget_add_css_class(b->m_pThumbSizerLabel, "thumb-sizer-readout");
-	else
-		gtk_widget_remove_css_class(b->m_pThumbSizerLabel, "thumb-sizer-readout");
+	cairo_region_t *empty = cairo_region_create();
+	gdk_surface_set_input_region(surface, empty);
+	cairo_region_destroy(empty);
 }
 
-/* End the drag session for good: clear the readout and stop polling. */
-static void browser_thumb_sizer_finish(Browser::BrowserImpl* b)
+static void browser_popover_surface_layout_cb(GdkSurface *surface, int width, int height, gpointer user_data)
 {
-	b->m_ThumbSizerDragging = FALSE;
-
-	if (b->m_ThumbSizerHideTimeout)
-	{
-		g_source_remove(b->m_ThumbSizerHideTimeout);
-		b->m_ThumbSizerHideTimeout = 0;
-	}
-
-	if (b->m_ThumbSizerDevice)
-	{
-		g_object_unref(b->m_ThumbSizerDevice);
-		b->m_ThumbSizerDevice = NULL;
-	}
-
-	browser_thumb_sizer_set_text(b, "");
+	(void)width;
+	(void)height;
+	(void)user_data;
+	browser_thumb_sizer_make_surface_input_transparent(surface);
 }
 
-/* Tick while a drag session is open.
- *
- * There is no usable end-of-drag signal, and that is worth spelling out because
- * it was the cause of a bug here.  GtkScale grabs the pointer for the whole
- * drag with its own internal gesture, which CANCELS every GtkGestureClick on
- * the scale - and on the window too, since the implicit grab retargets the
- * whole sequence - so "released" never arrives.  Verified with synthesised X
- * input (press, drag, release): the bubble gesture sees "pressed" and then
- * "end" with no "released", both in the bubble and the capture phase, and an
- * ancestor gesture is cancelled identically.  gdk_display_device_is_grabbed()
- * is no help either: it stays FALSE for the whole drag because GTK4 implicit
- * grabs are not reported there.
- *
- * So the readout is held for as long as the drag plausibly lasts, and a pause
- * with the button still down only hides it - the session stays open, so any
- * further movement repaints it at once.  The long cap only exists so a lost
- * release can never leave it stuck on screen forever; it is deliberately far
- * beyond any real pause. */
-#define QUIVER_THUMB_SIZER_POLL_MS   60
-/* How long the value may sit unchanged before the drag is treated as over.  A
- * pause with the button still held is indistinguishable from a release, so this
- * has to be long enough that a real pause does not read as "finished" - the
- * readout is far more annoying when it vanishes mid-drag than when it lingers
- * for a moment after release. */
-#define QUIVER_THUMB_SIZER_HIDE_MS 10000
-
-static gboolean browser_thumb_sizer_poll_cb(gpointer user_data)
+static void browser_thumb_sizer_popover_realize_cb(GtkWidget *widget, gpointer user_data)
 {
-	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
-
-	if (!b->m_ThumbSizerDragging)
+	(void)user_data;
+	GtkNative *native = GTK_NATIVE(widget);
+	GdkSurface *surface = native ? gtk_native_get_surface(native) : NULL;
+	if (surface)
 	{
-		browser_thumb_sizer_finish(b);
-		return G_SOURCE_REMOVE;
+		browser_thumb_sizer_make_surface_input_transparent(surface);
+		g_signal_connect_object(surface, "layout",
+			G_CALLBACK(browser_popover_surface_layout_cb), widget, G_CONNECT_AFTER);
 	}
-
-	guint64 idle = g_get_monotonic_time() / 1000 - b->m_ThumbSizerLastChangeMs;
-
-	/* Nothing has moved for a long time, so this really is over.  End the
-	 * session: this is the backstop for a release we could not observe. */
-	if (idle >= QUIVER_THUMB_SIZER_HIDE_MS)
-	{
-		browser_thumb_sizer_finish(b);
-		return G_SOURCE_REMOVE;
-	}
-
-	/* Otherwise leave the readout exactly as it is.  Hiding it on every tick
-	 * would make it strobe during a drag, and hiding it the instant the value
-	 * paused is the bug this replaces.  Any further movement calls
-	 * update_label() again and repaints it at once. */
-	return G_SOURCE_CONTINUE;
 }
 
-/* (Re)start the poll and mark the value as just changed. */
-static void browser_thumb_sizer_arm_poll(Browser::BrowserImpl* b)
+/* Update HUD overlay bubble text and position pointing to dragger. */
+static void browser_thumb_sizer_update_popover(Browser::BrowserImpl* b, double x)
 {
-	b->m_ThumbSizerLastChangeMs = g_get_monotonic_time() / 1000;
-
-	if (b->m_ThumbSizerHideTimeout)
+	if (!b->m_pThumbSizerPopover || !b->hscale || !gtk_widget_get_root(b->hscale))
 		return;
 
-	b->m_ThumbSizerHideTimeout = g_timeout_add(QUIVER_THUMB_SIZER_POLL_MS,
-		browser_thumb_sizer_poll_cb, b);
-}
-
-/* Refill the drag readout from the scale's current value.
- *
- * Gated on m_ThumbSizerDragging: value_changed also fires for a
- * programmatic set_value() (restoring the saved size at startup, clamping a
- * stored value back into range).  Those set text with no press to arm a hide
- * timer, so the readout stayed on screen with nothing left to clear it. */
-static void browser_thumb_sizer_update_label(Browser::BrowserImpl* b,
-	GtkWidget *scale)
-{
-	if (!b->m_pThumbSizerLabel)
-		return;
-
-	if (!b->m_ThumbSizerDragging)
-		return;
-
-	gchar *text = thumb_scale_size_text(gtk_range_get_value(GTK_RANGE(scale)));
-	browser_thumb_sizer_set_text(b, text);
+	gdouble val = gtk_range_get_value(GTK_RANGE(b->hscale));
+	gchar *text = thumb_scale_size_text(val);
+	if (b->m_pThumbSizerLabel)
+		gtk_label_set_text(GTK_LABEL(b->m_pThumbSizerLabel), text ? text : "");
 	g_free(text);
 
-	browser_thumb_sizer_arm_poll(b);
+	int w = gtk_widget_get_width(b->hscale);
+	int h = gtk_widget_get_height(b->hscale);
+	if (x < 0)
+	{
+		GtkAdjustment *adj = gtk_range_get_adjustment(GTK_RANGE(b->hscale));
+		double lower = gtk_adjustment_get_lower(adj);
+		double upper = gtk_adjustment_get_upper(adj);
+		double frac = (upper > lower) ? (val - lower) / (upper - lower) : 0.0;
+		x = frac * w;
+	}
+
+	GdkRectangle rect;
+	rect.x = std::clamp((int)x, 0, std::max(1, w));
+	rect.y = 0;
+	rect.width = 1;
+	rect.height = std::max(1, h);
+	gtk_popover_set_pointing_to(GTK_POPOVER(b->m_pThumbSizerPopover), &rect);
+	gtk_popover_popup(GTK_POPOVER(b->m_pThumbSizerPopover));
+	if (gtk_widget_get_realized(b->m_pThumbSizerPopover))
+	{
+		GtkNative *native = GTK_NATIVE(b->m_pThumbSizerPopover);
+		GdkSurface *surface = native ? gtk_native_get_surface(native) : NULL;
+		if (surface)
+		{
+			browser_thumb_sizer_make_surface_input_transparent(surface);
+		}
+	}
 }
 
-static void browser_thumb_sizer_pressed_cb(GtkGestureClick *gesture,
-	int n_press, double x, double y, gpointer user_data)
+static gboolean browser_thumb_sizer_capture_event_cb(GtkEventController *controller,
+	GdkEvent *event, gpointer user_data)
 {
-	(void)n_press;
-	(void)x;
-	(void)y;
+	(void)controller;
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
-	GtkWidget *scale = gtk_event_controller_get_widget(
-		GTK_EVENT_CONTROLLER(gesture));
-
-	/* Remember which pointer started the drag, so the poll can test that same
-	 * device for a held button rather than assuming motion implies activity. */
-	GdkEvent *last = gtk_gesture_get_last_event(GTK_GESTURE(gesture), NULL);
-	GdkDevice *dev = last ? gdk_event_get_device(last) : NULL;
-	if (b->m_ThumbSizerDevice)
-		g_object_unref(b->m_ThumbSizerDevice);
-	b->m_ThumbSizerDevice = dev ? g_object_ref(dev) : NULL;
-
-	/* Flag before filling: a click on the trough has already moved the value
-	 * before our handler runs, so no later value_changed is coming to start the
-	 * poll, and the readout would never be cleared. */
-	b->m_ThumbSizerDragging = TRUE;
-	browser_thumb_sizer_update_label(b, scale);
+	GdkEventType t = gdk_event_get_event_type(event);
+	if (t == GDK_BUTTON_PRESS)
+	{
+		if (gdk_button_event_get_button(event) == GDK_BUTTON_PRIMARY)
+		{
+			b->m_ThumbSizerDragging = TRUE;
+			b->m_ThumbSizerDragCancelled = FALSE;
+			browser_thumb_sizer_update_popover(b, -1);
+		}
+	}
+	else if (t == GDK_BUTTON_RELEASE)
+	{
+		if (gdk_button_event_get_button(event) == GDK_BUTTON_PRIMARY && b->m_ThumbSizerDragging)
+		{
+			b->m_ThumbSizerDragging = FALSE;
+			b->m_ThumbSizerDragCancelled = FALSE;
+			if (b->m_pThumbSizerPopover)
+			{
+				gtk_popover_popdown(GTK_POPOVER(b->m_pThumbSizerPopover));
+			}
+		}
+	}
+	else if (t == GDK_MOTION_NOTIFY && b->m_ThumbSizerDragging && b->m_ThumbSizerDragCancelled)
+	{
+		/* If the internal gesture cancelled because the pointer drifted outside the
+		 * scale trough, continue tracking horizontal mouse motion across the widget. */
+		double ev_x, ev_y;
+		if (gdk_event_get_position(event, &ev_x, &ev_y))
+		{
+			graphene_point_t p_in, p_scale;
+			p_in.x = (float)ev_x;
+			p_in.y = (float)ev_y;
+			GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(b->hscale));
+			if (root && b->hscale && gtk_widget_compute_point(root, b->hscale, &p_in, &p_scale))
+			{
+				int w = gtk_widget_get_width(b->hscale);
+				if (w > 0)
+				{
+					GtkAdjustment *adj = gtk_range_get_adjustment(GTK_RANGE(b->hscale));
+					double lower = gtk_adjustment_get_lower(adj);
+					double upper = gtk_adjustment_get_upper(adj);
+					double frac = std::clamp((double)p_scale.x / (double)w, 0.0, 1.0);
+					double new_val = lower + frac * (upper - lower);
+					gtk_range_set_value(GTK_RANGE(b->hscale), new_val);
+					browser_thumb_sizer_update_popover(b, p_scale.x);
+				}
+			}
+		}
+	}
+	else if (t == GDK_KEY_PRESS)
+	{
+		if (gdk_key_event_get_keyval(event) == GDK_KEY_Escape && b->m_ThumbSizerDragging)
+		{
+			b->m_ThumbSizerDragging = FALSE;
+			b->m_ThumbSizerDragCancelled = FALSE;
+			if (b->m_pThumbSizerPopover)
+			{
+				gtk_popover_popdown(GTK_POPOVER(b->m_pThumbSizerPopover));
+			}
+		}
+	}
+	return GDK_EVENT_PROPAGATE;
 }
 
-/* Only reached when the press turns into a click without movement (a plain
- * jump to the clicked value); a real drag ends via the inactivity timeout. */
-static void browser_thumb_sizer_released_cb(GtkGestureClick *gesture,
-	int n_press, double x, double y, gpointer user_data)
+static void browser_thumb_sizer_drag_begin_cb(GtkGestureDrag *gesture,
+	double start_x, double start_y, gpointer user_data)
 {
 	(void)gesture;
-	(void)n_press;
-	(void)x;
-	(void)y;
+	(void)start_y;
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
-	browser_thumb_sizer_finish(b);
+	b->m_ThumbSizerDragging = TRUE;
+	b->m_ThumbSizerDragCancelled = FALSE;
+	b->m_ThumbSizerStartX = start_x;
+	browser_thumb_sizer_update_popover(b, start_x);
+}
+
+static void browser_thumb_sizer_drag_update_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data)
+{
+	(void)gesture;
+	(void)offset_y;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	if (b->m_ThumbSizerDragging)
+	{
+		browser_thumb_sizer_update_popover(b, b->m_ThumbSizerStartX + offset_x);
+	}
+}
+
+static void browser_thumb_sizer_drag_cancel_cb(GtkGesture *gesture,
+	GdkEventSequence *sequence, gpointer user_data)
+{
+	(void)gesture;
+	(void)sequence;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	b->m_ThumbSizerDragCancelled = TRUE;
+	/* Mouse left the scale trough so GTK cancelled the internal drag gesture,
+	 * but the user has NOT released the mouse button.  Do NOT pop down here!
+	 * The capture controller will pop down when GDK_BUTTON_RELEASE occurs. */
+}
+
+static void browser_thumb_sizer_drag_end_cb(GtkGestureDrag *gesture,
+	double offset_x, double offset_y, gpointer user_data)
+{
+	(void)gesture;
+	(void)offset_x;
+	(void)offset_y;
+	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	if (!b->m_ThumbSizerDragCancelled)
+	{
+		b->m_ThumbSizerDragging = FALSE;
+		if (b->m_pThumbSizerPopover)
+		{
+			gtk_popover_popdown(GTK_POPOVER(b->m_pThumbSizerPopover));
+		}
+	}
 }
 
 static void icon_size_value_changed (GtkRange *range,gpointer  user_data)
@@ -2065,9 +2096,10 @@ static void icon_size_value_changed (GtkRange *range,gpointer  user_data)
 	gdouble value = gtk_range_get_value (range);
 	quiver_icon_view_set_icon_size(QUIVER_ICON_VIEW(b->m_pIconView), (gint)value,(gint)value);
 	b->m_ThumbnailLoader.SetIconDimensions((guint)value, (guint)value);
-	/* Covers dragging and keyboard stepping; the press gesture decides whether
-	 * anything is shown at all. */
-	browser_thumb_sizer_update_label(b, GTK_WIDGET(range));
+	if (b->m_ThumbSizerDragging)
+	{
+		browser_thumb_sizer_update_popover(b, -1);
+	}
 }
 
 static void browser_icon_view_map_cb(GtkWidget *widget, gpointer user_data)
@@ -2870,6 +2902,17 @@ static gboolean iconview_key_press_cb(GtkEventControllerKey *controller, guint k
 	if (!pBrowserImpl || !pBrowserImpl->m_pIconView)
 		return FALSE;
 
+	GdkModifierType mods = (GdkModifierType)(state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_ALT_MASK));
+	if (mods == GDK_CONTROL_MASK && (keyval == GDK_KEY_v || keyval == GDK_KEY_V))
+	{
+		GAction *a = QuiverUtils::GetAction(ACTION_BROWSER_PASTE);
+		if (a && g_action_get_enabled(a))
+		{
+			g_action_activate(a, NULL);
+			return TRUE;
+		}
+	}
+
 	if (GDK_KEY_Menu == keyval || ((state & GDK_SHIFT_MASK) && (GDK_KEY_F10 == keyval)))
 	{
 		gulong cell = quiver_icon_view_get_cursor_cell(QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
@@ -2944,6 +2987,17 @@ static void browser_menu_item(GMenu *menu, const char *label, const char *action
 	g_object_unref(item);
 }
 
+static void browser_context_menu_closed_cb(GtkPopover *popover, gpointer user_data)
+{
+	(void)popover;
+	(void)user_data;
+	GAction *a = QuiverUtils::GetAction(ACTION_BROWSER_PASTE);
+	if (a != NULL && G_IS_SIMPLE_ACTION(a))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(a), TRUE);
+	}
+}
+
 static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, gpointer userdata)
 {
 	Browser::BrowserImpl *pBrowserImpl = (Browser::BrowserImpl*)userdata;
@@ -2969,7 +3023,7 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 	GList *selection = quiver_icon_view_get_selection(
 		QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
 	const gboolean bHasSelection = (NULL != selection);
-	const gboolean bHasClipboard = QuiverFileOps::ClipboardHasItems() ? TRUE : FALSE;
+	const gboolean bHasClipboard = (QuiverFileOps::ClipboardHasItems() || QuiverClipboard::HasFiles()) ? TRUE : FALSE;
 	bool bHasFolder = false;
 	for (const GList *it = selection; it != NULL; it = it->next)
 	{
@@ -2991,7 +3045,11 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_CUT)))
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection ? (bTrash ? FALSE : TRUE) : FALSE);
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_PASTE)))
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasClipboard);
+		{
+			std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
+			bool canPaste = !bTrash && (dirs.size() == 1) && bHasClipboard;
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), canPaste);
+		}
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_NEW_FOLDER)))
 		{
 			std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
@@ -3096,7 +3154,7 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 			"<Control>c", NULL, "edit-copy-symbolic");
 		browser_menu_item(menu, "Cut", "quiver." ACTION_BROWSER_CUT,
 			"<Control>x", NULL, "edit-cut-symbolic");
-		if (QuiverFileOps::ClipboardHasItems())
+		if (bHasClipboard)
 			browser_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
 				"<Control>v", NULL, "edit-paste-symbolic");
 		browser_menu_item(menu, "Rename", "quiver." ACTION_QUIVER_QUICK_RENAME,
@@ -3124,6 +3182,8 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 	gtk_widget_insert_action_group(pBrowserImpl->m_pContextMenuPopover, "quiver",
 		G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
 	gtk_widget_set_parent(pBrowserImpl->m_pContextMenuPopover, widget);
+	g_signal_connect(pBrowserImpl->m_pContextMenuPopover, "closed",
+		G_CALLBACK(browser_context_menu_closed_cb), pBrowserImpl);
 
 	QuiverUtils::ShowContextMenuAt(
 		GTK_POPOVER(pBrowserImpl->m_pContextMenuPopover), widget, x, y);
@@ -3772,28 +3832,112 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 	else if (0 == strcmp(szAction,ACTION_BROWSER_PASTE))
 	{
 		std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
-		if (1 != dirs.size())
+		if (1 != dirs.size() || pBrowserImpl->IsTrashMode())
 			return; /* single-folder view only */
 
 		/* The internal clipboard is authoritative for in-app cut/copy.  When
-		 * it is empty, best-effort read of the system clipboard so files
-		 * copied in an external file manager can be pasted here too. */
+		 * it is empty or external clipboard has newer items, best-effort read
+		 * of the system clipboard so files copied elsewhere can be pasted here. */
 		std::list<std::string> uris = *QuiverFileOps::ClipboardGetUris();
 		bool bCut = QuiverFileOps::ClipboardIsCut();
-		if (uris.empty())
+		GdkDisplay *disp = gdk_display_get_default();
+		GdkClipboard *cb = disp ? gdk_display_get_clipboard(disp) : NULL;
+		if (uris.empty() || (cb && !gdk_clipboard_is_local(cb)))
 		{
-			if (!QuiverClipboard::GetClipboardUris(uris, bCut))
-				return;
-			bCut = false; /* cut state is only trustworthy on the internal clipboard */
+			std::list<std::string> ext_uris;
+			bool ext_cut = false;
+			if (QuiverClipboard::GetClipboardUris(ext_uris, ext_cut, cb))
+			{
+				uris.swap(ext_uris);
+				bCut = ext_cut;
+			}
 		}
 
-		BrowserPasteConflictUI ui;
-		std::list<std::string> moved;
-		int transferred = QuiverFileOps::TransferFiles(uris, bCut,
-			dirs.front().c_str(), browser_paste_conflict_cb, &ui, &moved);
-		if (bCut)
-			QuiverFileOps::ClipboardRemoveURIs(moved);
-		if (transferred <= 0)
+		if (uris.empty())
+			return;
+
+		std::string dest_dir = dirs.front();
+		if (!dest_dir.empty() && dest_dir.back() != '/')
+			dest_dir += '/';
+
+		std::list<std::string> to_transfer;
+		std::vector<std::string> duplicated_dsts;
+
+		for (std::list<std::string>::const_iterator it = uris.begin(); it != uris.end(); ++it)
+		{
+			gchar *base = NULL;
+			if (QuiverFileOps::IsTrashURI(it->c_str()))
+			{
+				char *orig = QuiverFileOps::GetTrashItemOrigPath(it->c_str());
+				if (orig != NULL)
+				{
+					gchar *orig_base = g_path_get_basename(orig);
+					if (orig_base != NULL)
+					{
+						base = g_uri_escape_string(orig_base, NULL, FALSE);
+						g_free(orig_base);
+					}
+					g_free(orig);
+				}
+			}
+			if (base == NULL)
+			{
+				base = g_path_get_basename(it->c_str());
+			}
+			if (NULL == base || '\0' == base[0])
+			{
+				if (base) g_free(base);
+				continue;
+			}
+
+			std::string candidate_dst = dest_dir + base;
+			g_free(base);
+
+			if (!bCut && candidate_dst == *it)
+			{
+				GFile *desired = g_file_new_for_uri(candidate_dst.c_str());
+				GFile *free_file = QuiverFileOps::FreeSiblingName(desired);
+				g_object_unref(desired);
+				if (free_file != NULL)
+				{
+					char *dup_uri = g_file_get_uri(free_file);
+					if (dup_uri != NULL)
+					{
+						QuiverFile srcFile(it->c_str());
+						QuiverFile dstFile(dup_uri);
+						if (QuiverFileOps::CopyFile(srcFile, dstFile))
+						{
+							duplicated_dsts.push_back(dup_uri);
+						}
+						g_free(dup_uri);
+					}
+					g_object_unref(free_file);
+				}
+			}
+			else
+			{
+				to_transfer.push_back(*it);
+			}
+		}
+
+		int transferred = 0;
+		if (!to_transfer.empty())
+		{
+			BrowserPasteConflictUI ui;
+			std::list<std::string> moved;
+			transferred = QuiverFileOps::TransferFiles(to_transfer, bCut,
+				dest_dir.c_str(), browser_paste_conflict_cb, &ui, &moved);
+			if (bCut)
+				QuiverFileOps::ClipboardRemoveURIs(moved);
+		}
+
+		if (!duplicated_dsts.empty())
+		{
+			QuiverFileOps::UndoStackRecordCopy(duplicated_dsts);
+		}
+
+		int total = transferred + (int)duplicated_dsts.size();
+		if (total <= 0)
 			return;
 
 		pBrowserImpl->m_ImageListPtr->Reload();
@@ -3803,7 +3947,7 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 		{
 			gchar msg[64];
 			g_snprintf(msg, sizeof(msg), "%s %d file(s)",
-				bCut ? "Moved" : "Copied", transferred);
+				bCut ? "Moved" : "Copied", total);
 			pBrowserImpl->m_StatusbarPtr->PushText(msg);
 		}
 	}

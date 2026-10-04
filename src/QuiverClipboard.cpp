@@ -212,12 +212,12 @@ namespace QuiverClipboard
 				line += c;
 		}
 
-		/* Convert local absolute paths to file:// URIs and keep valid file:// URIs */
+		/* Convert local absolute paths to file:// URIs and keep valid file:// and trash:/// URIs */
 		std::list<std::string> filtered;
 		for (std::list<std::string>::const_iterator it = urisOut.begin();
 			it != urisOut.end(); ++it)
 		{
-			if (g_str_has_prefix(it->c_str(), "file://"))
+			if (g_str_has_prefix(it->c_str(), "file://") || g_str_has_prefix(it->c_str(), "trash://"))
 				filtered.push_back(*it);
 			else if (g_path_is_absolute(it->c_str()))
 			{
@@ -357,5 +357,26 @@ namespace QuiverClipboard
 		return false;
 	}
 
+	bool HasFiles(GdkClipboard *clipboard)
+	{
+		Init();
+		if (clipboard == NULL)
+		{
+			GdkDisplay *display = gdk_display_get_default();
+			if (display != NULL)
+				clipboard = gdk_display_get_clipboard(display);
+		}
+		if (clipboard == NULL)
+			return false;
+		GdkContentFormats *formats = gdk_clipboard_get_formats(clipboard);
+		if (formats == NULL)
+			return false;
+		return gdk_content_formats_contain_mime_type(formats, "application/x-gnome-copied-files")
+			|| gdk_content_formats_contain_mime_type(formats, "text/uri-list")
+			|| gdk_content_formats_contain_mime_type(formats, "text/plain")
+			|| gdk_content_formats_contain_mime_type(formats, "text/plain;charset=utf-8");
+	}
+
 }
+
 

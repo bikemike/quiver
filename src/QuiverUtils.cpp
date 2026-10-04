@@ -285,6 +285,7 @@ namespace QuiverUtils
 	static const PaneAction g_paneActions[] = {
 		{ "BrowserCopy", PANE_BROWSER },   { "ViewerCopy", PANE_VIEWER },
 		{ "BrowserCut", PANE_BROWSER },    { "ViewerCut", PANE_VIEWER },
+		{ "BrowserPaste", PANE_BROWSER },
 		{ "BrowserTrash", PANE_BROWSER },  { "ViewerTrash", PANE_VIEWER },
 		{ "BrowserTrashForce", PANE_BROWSER },
 		{ "ViewerTrashForce", PANE_VIEWER },
