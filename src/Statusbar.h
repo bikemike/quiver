@@ -49,7 +49,11 @@ public:
 
 	virtual void SignalBytesRead(long bytes_read,long total);
 	virtual void SetPixbufAtSize(GdkPixbuf * pixbuf,gint width, gint height, bool bResetViewMode = true);
-	
+
+	virtual void SetTexture(GdkTexture * texture) override;
+	virtual void SetTextureAtSize(GdkTexture * texture, gint width, gint height, bool bResetViewMode = true) override;
+
+	std::string GetLoadTimeText() const;
 
 	class StatusbarImpl;
 	typedef boost::shared_ptr<StatusbarImpl> StatusbarImplPtr;

@@ -2,6 +2,7 @@
 #include "QuiverVideoOps.h"
 #include "QuiverFile.h"
 #include "ImageCache.h"
+#include "Statusbar.h"
 #include "test_helpers.h"
 #include <glib.h>
 #include <gtk/gtk.h>
@@ -203,4 +204,73 @@ TEST_CASE("Optimization Benchmark: ThumbLoader Cache-Hit Early Return vs Re-add"
     std::cout << "========================================================\n" << std::endl;
 
     CHECK(fastUs < 10.0);
+}
+
+TEST_CASE("Statusbar: Load time displays correctly for preloaded and non-preloaded images", "[unit][statusbar][loadtime]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string imagesDir = QuiverTest_GetImagesDir();
+    std::string imagePath = imagesDir + "/sample_4k.jpg";
+    std::string videoPath = imagesDir + "/sample_video.mp4";
+
+    gchar* imageUri = g_filename_to_uri(imagePath.c_str(), NULL, NULL);
+    gchar* videoUri = g_filename_to_uri(videoPath.c_str(), NULL, NULL);
+    REQUIRE(imageUri != NULL);
+    REQUIRE(videoUri != NULL);
+
+    Statusbar statusbar;
+    GdkTexture* tex = CreateMockTexture(100, 100);
+
+    SECTION("Non-preloaded image shows load time only after decode completion")
+    {
+        QuiverFile qf(imageUri);
+        // Initially not loaded -> load time is -1.0
+        REQUIRE(qf.GetLoadTimeInSeconds() < 0);
+
+        statusbar.SetQuiverFile(qf);
+        // Load time must be empty when not yet loaded
+        CHECK(statusbar.GetLoadTimeText().empty());
+
+        // Quick-preview thumbnail delivery while full image is still decoding:
+        // load time is still < 0, so load time text must remain empty
+        statusbar.SetTextureAtSize(tex, 50, 50);
+        while (g_main_context_iteration(NULL, FALSE));
+        CHECK(statusbar.GetLoadTimeText().empty());
+
+        // Full decode completes: SetLoadTimeInSeconds is called on quiverFile
+        qf.SetLoadTimeInSeconds(0.042);
+        statusbar.SetTextureAtSize(tex, 100, 100);
+        while (g_main_context_iteration(NULL, FALSE));
+
+        // Statusbar must now show the load time!
+        CHECK(statusbar.GetLoadTimeText() == "0.042s");
+    }
+
+    SECTION("Preloaded image displays load time immediately on navigation")
+    {
+        QuiverFile qf(imageUri);
+        qf.SetLoadTimeInSeconds(0.075);
+
+        statusbar.SetQuiverFile(qf);
+        // Preloaded image already has load time, shows up immediately
+        CHECK(statusbar.GetLoadTimeText() == "0.075s");
+    }
+
+    SECTION("Switching to video clears load time")
+    {
+        QuiverFile qf(imageUri);
+        qf.SetLoadTimeInSeconds(0.042);
+        statusbar.SetQuiverFile(qf);
+        CHECK(statusbar.GetLoadTimeText() == "0.042s");
+
+        QuiverFile qfVideo(videoUri);
+        statusbar.SetQuiverFile(qfVideo);
+        while (g_main_context_iteration(NULL, FALSE));
+        CHECK(statusbar.GetLoadTimeText().empty());
+    }
+
+    g_object_unref(tex);
+    g_free(imageUri);
+    g_free(videoUri);
 }
