@@ -31,6 +31,12 @@
  * The write/mmap side of the BasicIo interface is stubbed out; it is only
  * reachable through write APIs Exiv2 does not call for a read-only image.
  */
+#if EXIV2_TEST_VERSION(0, 28, 0)
+using ExivBasicIoPtr = Exiv2::BasicIo::UniquePtr;
+#else
+using ExivBasicIoPtr = Exiv2::BasicIo::AutoPtr;
+#endif
+
 class GioBasicIo : public Exiv2::BasicIo
 {
 public:
@@ -42,18 +48,19 @@ public:
 
 	/* Opens @file for reading and returns a seek-capable BasicIo, or NULL if the
 	 * content could not be read at all. */
-	static Exiv2::BasicIo::UniquePtr open(GFile *file, const std::string &uri_for_path);
+	static ExivBasicIoPtr open(GFile *file, const std::string &uri_for_path);
 
 	/* Adopts @stream, reading further from @file as needed.  @file is still
 	 * required because a stream that cannot seek has to be reopened to go
 	 * backwards; @stream is the first one, @file is what reopens come from.
 	 * Exists so the non-seekable fallback can be exercised - a gvfs
 	 * GFileInputStream is not always GSeekable. */
-	static Exiv2::BasicIo::UniquePtr open_stream(GFile *file, GInputStream *stream,
-	                                             const std::string &uri_for_path);
+	static ExivBasicIoPtr open_stream(GFile *file, GInputStream *stream,
+	                                  const std::string &uri_for_path);
 
 	int open() override;
 	int close() override;
+#if EXIV2_TEST_VERSION(0, 28, 0)
 	size_t write(const Exiv2::byte *data, size_t wcount) override;
 	size_t write(Exiv2::BasicIo &src) override;
 	int putb(Exiv2::byte data) override;
@@ -71,6 +78,25 @@ public:
 	[[nodiscard]] bool eof() const override;
 	[[nodiscard]] const std::string &path() const noexcept override;
 	void populateFakeData() override;
+#else
+	long write(const Exiv2::byte *data, long wcount) override;
+	long write(Exiv2::BasicIo &src) override;
+	int putb(Exiv2::byte data) override;
+	Exiv2::DataBuf read(long rcount) override;
+	long read(Exiv2::byte *buf, long rcount) override;
+	int getb() override;
+	void transfer(Exiv2::BasicIo &src) override;
+	int seek(long offset, Exiv2::BasicIo::Position pos) override;
+	Exiv2::byte *mmap(bool isWriteable = false) override;
+	int munmap() override;
+	[[nodiscard]] long tell() const override;
+	[[nodiscard]] size_t size() const override;
+	[[nodiscard]] bool isopen() const override;
+	[[nodiscard]] int error() const override;
+	[[nodiscard]] bool eof() const override;
+	[[nodiscard]] std::string path() const override;
+	void populateFakeData() override;
+#endif
 
 	/* Peak allocation held by the sliding window.  This is the number that has
 	 * to stay flat as the file grows, so it reports the buffer's capacity

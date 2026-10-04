@@ -1185,8 +1185,13 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 			return;
 		}
 
-		auto io = GioBasicIo::open(g_file_new_for_uri(m_szURI), m_szURI);
-		if (io)
+		GFile *gfile = g_file_new_for_uri(m_szURI);
+		auto io = GioBasicIo::open(gfile, m_szURI);
+		if (nullptr != gfile)
+		{
+			g_object_unref(gfile);
+		}
+		if (nullptr != io.get())
 		{
 			try
 			{
@@ -1194,7 +1199,11 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 				std::lock_guard<std::mutex> exivLock(s_exiv2GlobalMutex);
 				/* GioBasicIo: works for URIs with no local path (trash:///, ...),
 				 * so nothing gets copied to a staging directory */
+#if EXIV2_TEST_VERSION(0, 28, 0)
 				auto image = Exiv2::ImageFactory::open(std::move(io));
+#else
+				auto image = Exiv2::ImageFactory::open(io);
+#endif
 				image->readMetadata();
 
 				Exiv2::ExifData exifData = image->exifData();

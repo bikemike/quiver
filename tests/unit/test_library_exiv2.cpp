@@ -9,6 +9,14 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
+inline size_t databuf_size(const Exiv2::DataBuf& b) { return b.size(); }
+inline const uint8_t* databuf_data(const Exiv2::DataBuf& b) { return b.c_data(); }
+#else
+inline size_t databuf_size(const Exiv2::DataBuf& b) { return static_cast<size_t>(b.size_); }
+inline const uint8_t* databuf_data(const Exiv2::DataBuf& b) { return b.pData_; }
+#endif
+
 TEST_CASE("Exiv2 Library Integration and EXIF Operations", "[lib][exiv2]")
 {
     std::string imagesDir = QuiverTest_GetImagesDir();
@@ -139,8 +147,13 @@ TEST_CASE("GioBasicIo reads EXIF without a local path", "[lib][exiv2]")
     {
         GFile* file = g_file_new_for_path(stagedPath);
         auto io = GioBasicIo::open(file, stagedPath);
-        REQUIRE(io != nullptr);
+        g_object_unref(file);
+        REQUIRE(io.get() != nullptr);
+#if EXIV2_TEST_VERSION(0, 28, 0)
         auto streamImage = Exiv2::ImageFactory::open(std::move(io));
+#else
+        auto streamImage = Exiv2::ImageFactory::open(io);
+#endif
         REQUIRE(streamImage.get() != nullptr);
         streamImage->readMetadata();
 
@@ -155,8 +168,9 @@ TEST_CASE("GioBasicIo reads EXIF without a local path", "[lib][exiv2]")
     {
         GFile* file = g_file_new_for_path(stagedPath);
         auto io = GioBasicIo::open(file, stagedPath);
-        REQUIRE(io != nullptr);
+        REQUIRE(io.get() != nullptr);
         GFileInfo* info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_SIZE, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+        g_object_unref(file);
         REQUIRE(info != nullptr);
         const goffset onDisk = g_file_info_get_size(info);
         g_object_unref(info);
@@ -168,19 +182,21 @@ TEST_CASE("GioBasicIo reads EXIF without a local path", "[lib][exiv2]")
         CHECK(io->tell() == 0);
         /* Exiv2's parsers seek backwards constantly, so read then rewind */
         Exiv2::DataBuf head = io->read(16);
-        CHECK(head.size() == 16);
+        CHECK(databuf_size(head) == 16);
         CHECK(io->tell() == 16);
         CHECK(io->seek(0, Exiv2::BasicIo::beg) == 0);
         Exiv2::DataBuf again = io->read(16);
-        CHECK(std::string(reinterpret_cast<const char*>(head.c_data()), head.size()) ==
-              std::string(reinterpret_cast<const char*>(again.c_data()), again.size()));
+        CHECK(std::string(reinterpret_cast<const char*>(databuf_data(head)), databuf_size(head)) ==
+              std::string(reinterpret_cast<const char*>(databuf_data(again)), databuf_size(again)));
     }
 
     SECTION("reports a missing file instead of staging one")
     {
         const std::string missing = imagesDir + "/definitely-not-here.jpg";
-        auto io = GioBasicIo::open(g_file_new_for_path(missing.c_str()), missing);
-        CHECK(io == nullptr);
+        GFile* missingFile = g_file_new_for_path(missing.c_str());
+        auto io = GioBasicIo::open(missingFile, missing);
+        g_object_unref(missingFile);
+        CHECK(io.get() == nullptr);
     }
 
     g_remove(stagedPath);
@@ -204,9 +220,13 @@ TEST_CASE("GioBasicIo emulates seeks without buffering the file", "[lib][exiv2]"
 
     GFile* bigFile = g_file_new_for_path(bigPath);
     auto owned = GioBasicIo::open(bigFile, bigPath);
-    REQUIRE(owned != nullptr);
+    REQUIRE(owned.get() != nullptr);
     /* Exiv2 sees it as a plain BasicIo; the window size is ours to inspect. */
+#if EXIV2_TEST_VERSION(0, 28, 0)
     Exiv2::BasicIo::UniquePtr ioBase = std::move(owned);
+#else
+    Exiv2::BasicIo::AutoPtr ioBase = owned;
+#endif
     GioBasicIo* io = static_cast<GioBasicIo*>(ioBase.get());
 
     SECTION("reports the full size without holding it")
@@ -253,7 +273,7 @@ TEST_CASE("GioBasicIo emulates seeks without buffering the file", "[lib][exiv2]"
         {
             REQUIRE(io->seek(off, Exiv2::BasicIo::beg) == 0);
             Exiv2::DataBuf chunk = io->read(4096);
-            CHECK(chunk.size() == 4096);
+            CHECK(databuf_size(chunk) == 4096);
             /* jumps back to the start, exactly like re-reading a header */
             REQUIRE(io->seek(0, Exiv2::BasicIo::beg) == 0);
         }
@@ -265,7 +285,7 @@ TEST_CASE("GioBasicIo emulates seeks without buffering the file", "[lib][exiv2]"
         REQUIRE(io->seek(0, Exiv2::BasicIo::beg) == 0);
         /* 4 MB read through a 256 KB window: the excess must not be buffered */
         Exiv2::DataBuf big = io->read(4 * 1024 * 1024);
-        CHECK(big.size() == 4 * 1024 * 1024);
+        CHECK(databuf_size(big) == 4 * 1024 * 1024);
         CHECK(io->buffered_bytes() <= 256 * 1024);
     }
 
@@ -274,7 +294,7 @@ TEST_CASE("GioBasicIo emulates seeks without buffering the file", "[lib][exiv2]"
         REQUIRE(io->seek(-1, Exiv2::BasicIo::end) == 0);
         CHECK(io->getb() == static_cast<int>(marker));
         Exiv2::DataBuf past = io->read(1024);
-        CHECK(past.size() == 0);
+        CHECK(databuf_size(past) == 0);
     }
 
     SECTION("mmap declines rather than exposing a partial buffer")
@@ -388,7 +408,8 @@ TEST_CASE("GioBasicIo seeks on a stream that cannot seek", "[lib][exiv2]")
 
     GFile* file = g_file_new_for_path(sampleJpg.c_str());
     auto owned = GioBasicIo::open_stream(file, raw, sampleJpg);
-    REQUIRE(owned != nullptr);
+    g_object_unref(file);
+    REQUIRE(owned.get() != nullptr);
     GioBasicIo* io = static_cast<GioBasicIo*>(owned.get());
 
     SECTION("reads the same EXIF as a seekable file would")
@@ -397,7 +418,11 @@ TEST_CASE("GioBasicIo seeks on a stream that cannot seek", "[lib][exiv2]")
         REQUIRE(pathImage.get() != nullptr);
         pathImage->readMetadata();
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
         auto image = Exiv2::ImageFactory::open(std::move(owned));
+#else
+        auto image = Exiv2::ImageFactory::open(owned);
+#endif
         REQUIRE(image.get() != nullptr);
         image->readMetadata();
         CHECK(image->exifData().count() == pathImage->exifData().count());
@@ -414,13 +439,13 @@ TEST_CASE("GioBasicIo seeks on a stream that cannot seek", "[lib][exiv2]")
         REQUIRE(io->seek(static_cast<int64_t>(total / 2), Exiv2::BasicIo::beg) == 0);
         CHECK(io->tell() == total / 2);
         Exiv2::DataBuf mid = io->read(16);
-        CHECK(mid.size() == 16);
+        CHECK(databuf_size(mid) == 16);
 
         /* backward: only reopen-and-skip can get here */
         REQUIRE(io->seek(0, Exiv2::BasicIo::beg) == 0);
         CHECK(io->tell() == 0);
         Exiv2::DataBuf start = io->read(16);
-        CHECK(start.size() == 16);
+        CHECK(databuf_size(start) == 16);
 
         /* and back forward again, still without a seek */
         REQUIRE(io->seek(-1, Exiv2::BasicIo::end) == 0);
@@ -459,10 +484,10 @@ TEST_CASE("GioBasicIo survives the open/close/probe cycle Exiv2 uses", "[lib][ex
     io.open();
     CHECK_FALSE(io.eof());
     Exiv2::DataBuf first = io.read(2);
-    REQUIRE(first.size() == 2);
+    REQUIRE(databuf_size(first) == 2);
     CHECK_FALSE(io.eof());
-    CHECK(0xff == first.data()[0]);
-    CHECK(0xd8 == first.data()[1]);
+    CHECK(0xff == databuf_data(first)[0]);
+    CHECK(0xd8 == databuf_data(first)[1]);
 
     /* getType() is what decides the format, so ask it directly. */
     io.open();
@@ -474,7 +499,7 @@ TEST_CASE("GioBasicIo survives the open/close/probe cycle Exiv2 uses", "[lib][ex
     REQUIRE(io.close() == 0);
     REQUIRE(io.open() == 0);
     Exiv2::DataBuf again = io.read(16);
-    CHECK(again.size() == 16);
+    CHECK(databuf_size(again) == 16);
     REQUIRE(io.seek(-2, Exiv2::BasicIo::end) == 0);
     CHECK(io.size() > 2);
     CHECK(Exiv2::ImageType::jpeg == Exiv2::ImageFactory::getType(io));
@@ -482,9 +507,14 @@ TEST_CASE("GioBasicIo survives the open/close/probe cycle Exiv2 uses", "[lib][ex
     /* And end to end, which is what actually regressed: no image at all. */
     GFile* file2 = g_file_new_for_path(image.c_str());
     auto io2 = GioBasicIo::open(file2, image);
-    REQUIRE(io2);
+    g_object_unref(file2);
+    REQUIRE(io2.get() != nullptr);
+#if EXIV2_TEST_VERSION(0, 28, 0)
     auto exif = Exiv2::ImageFactory::open(std::move(io2));
-    REQUIRE(exif != nullptr);            /* was null: no crash, just no metadata */
+#else
+    auto exif = Exiv2::ImageFactory::open(io2);
+#endif
+    REQUIRE(exif.get() != nullptr);            /* was null: no crash, just no metadata */
     exif->readMetadata();
     CHECK(0 < exif->exifData().count());
 }

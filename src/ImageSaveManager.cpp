@@ -323,7 +323,11 @@ static int jpeg_apply_exif_metadata(const char* pPath,
 				typeId = Exiv2::unsignedShort;
 			}
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
 			Exiv2::Value::UniquePtr value = Exiv2::Value::create(typeId);
+#else
+			Exiv2::Value::AutoPtr value = Exiv2::Value::create(typeId);
+#endif
 			if (0 != value->read(src->value().toString()))
 			{
 				continue;

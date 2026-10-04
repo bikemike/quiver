@@ -155,7 +155,11 @@ void inject_blob_tag(const gchar* pPath, const char* pKey, size_t nBytes)
     /* operator[] hands back an "undefined" placeholder, so the type has to be
      * asked for explicitly rather than read back off the new entry */
     Exiv2::Exifdatum& datum = image->exifData()[pKey];
+#if EXIV2_TEST_VERSION(0, 28, 0)
     Exiv2::Value::UniquePtr value = Exiv2::Value::create(Exiv2::undefined);
+#else
+    Exiv2::Value::AutoPtr value = Exiv2::Value::create(Exiv2::undefined);
+#endif
     value->read(&bytes[0], nBytes, Exiv2::invalidByteOrder);
     datum.setValue(value.get());
 

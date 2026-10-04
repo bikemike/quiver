@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <memory>
 
 GioBasicIo::GioBasicIo(GFile *file, std::string uri_for_path)
 	: m_file(file), m_path(std::move(uri_for_path))
@@ -33,16 +34,24 @@ GioBasicIo::~GioBasicIo()
 	}
 }
 
-Exiv2::BasicIo::UniquePtr GioBasicIo::open(GFile *file, const std::string &uri_for_path)
+ExivBasicIoPtr GioBasicIo::open(GFile *file, const std::string &uri_for_path)
 {
 	if (nullptr == file)
+#if EXIV2_TEST_VERSION(0, 28, 0)
 		return nullptr;
+#else
+		return ExivBasicIoPtr();
+#endif
 
 	/* The constructor opens the stream; opening it again here would leak the
 	 * first one. */
-	auto io = std::make_unique<GioBasicIo>(g_object_ref(file), uri_for_path);
+	std::unique_ptr<GioBasicIo> io(new GioBasicIo(g_object_ref(file), uri_for_path));
 	if (nullptr == io->m_stream)
+#if EXIV2_TEST_VERSION(0, 28, 0)
 		return nullptr;
+#else
+		return ExivBasicIoPtr();
+#endif
 
 	io->m_open = true;
 
@@ -52,19 +61,31 @@ Exiv2::BasicIo::UniquePtr GioBasicIo::open(GFile *file, const std::string &uri_f
 	 * same thing that faulted inside libgvfs on a worker thread before.  Reading
 	 * to the end is O(file) in time but O(1) in memory, and it is only paid when
 	 * size() is actually asked for. */
+#if EXIV2_TEST_VERSION(0, 28, 0)
 	return io;
+#else
+	return ExivBasicIoPtr(io.release());
+#endif
 }
 
-Exiv2::BasicIo::UniquePtr GioBasicIo::open_stream(GFile *file, GInputStream *stream,
-                                                 const std::string &uri_for_path)
+ExivBasicIoPtr GioBasicIo::open_stream(GFile *file, GInputStream *stream,
+                                      const std::string &uri_for_path)
 {
 	if (nullptr == file || nullptr == stream)
+#if EXIV2_TEST_VERSION(0, 28, 0)
 		return nullptr;
+#else
+		return ExivBasicIoPtr();
+#endif
 
-	auto io = std::make_unique<GioBasicIo>(g_object_ref(file), uri_for_path);
+	std::unique_ptr<GioBasicIo> io(new GioBasicIo(g_object_ref(file), uri_for_path));
 	io->m_stream = G_INPUT_STREAM(g_object_ref(stream));
 	io->m_open = true;
+#if EXIV2_TEST_VERSION(0, 28, 0)
 	return io;
+#else
+	return ExivBasicIoPtr(io.release());
+#endif
 }
 
 void GioBasicIo::release_stream()
@@ -317,6 +338,7 @@ int GioBasicIo::close()
 	return 0;
 }
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
 size_t GioBasicIo::write(const Exiv2::byte *, size_t)
 {
 	/* Read-only: this exists to let Exiv2 parse a file it cannot open by path,
@@ -331,6 +353,22 @@ size_t GioBasicIo::write(Exiv2::BasicIo &)
 	m_error = 1;
 	return 0;
 }
+#else
+long GioBasicIo::write(const Exiv2::byte *, long)
+{
+	/* Read-only: this exists to let Exiv2 parse a file it cannot open by path,
+	 * never to modify one.  Writing would mean saving metadata back to a URI
+	 * Exiv2 could not have opened anyway. */
+	m_error = 1;
+	return 0;
+}
+
+long GioBasicIo::write(Exiv2::BasicIo &)
+{
+	m_error = 1;
+	return 0;
+}
+#endif
 
 int GioBasicIo::putb(Exiv2::byte)
 {
@@ -338,6 +376,7 @@ int GioBasicIo::putb(Exiv2::byte)
 	return 0;
 }
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
 Exiv2::DataBuf GioBasicIo::read(size_t rcount)
 {
 	Exiv2::DataBuf buf(rcount);
@@ -351,6 +390,21 @@ size_t GioBasicIo::read(Exiv2::byte *buf, size_t rcount)
 {
 	return read_windowed(buf, rcount);
 }
+#else
+Exiv2::DataBuf GioBasicIo::read(long rcount)
+{
+	Exiv2::DataBuf buf(rcount);
+	const size_t n = read_windowed(buf.pData_, static_cast<size_t>(rcount));
+	if (static_cast<long>(n) < rcount)
+		return Exiv2::DataBuf(buf.pData_, static_cast<long>(n));
+	return buf;
+}
+
+long GioBasicIo::read(Exiv2::byte *buf, long rcount)
+{
+	return static_cast<long>(read_windowed(buf, static_cast<size_t>(rcount)));
+}
+#endif
 
 int GioBasicIo::getb()
 {
@@ -374,7 +428,11 @@ void GioBasicIo::transfer(Exiv2::BasicIo &)
 	                   "GioBasicIo is read-only");
 }
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
 int GioBasicIo::seek(int64_t offset, Exiv2::BasicIo::Position pos)
+#else
+int GioBasicIo::seek(long offset, Exiv2::BasicIo::Position pos)
+#endif
 {
 	goffset base = 0;
 	switch (pos)
@@ -416,10 +474,17 @@ int GioBasicIo::munmap()
 	return 0;
 }
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
 size_t GioBasicIo::tell() const
 {
 	return static_cast<size_t>(m_pos);
 }
+#else
+long GioBasicIo::tell() const
+{
+	return static_cast<long>(m_pos);
+}
+#endif
 
 size_t GioBasicIo::size() const
 {
@@ -483,10 +548,17 @@ bool GioBasicIo::eof() const
 	return m_eof && !window_covers(m_pos, 1);
 }
 
+#if EXIV2_TEST_VERSION(0, 28, 0)
 const std::string &GioBasicIo::path() const noexcept
 {
 	return m_path;
 }
+#else
+std::string GioBasicIo::path() const
+{
+	return m_path;
+}
+#endif
 
 void GioBasicIo::populateFakeData()
 {
