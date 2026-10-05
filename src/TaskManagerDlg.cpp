@@ -6,6 +6,7 @@
 #include "TaskManager.h"
 
 #include "ThreadUtil.h"
+#include <boost/enable_shared_from_this.hpp>
 
 using namespace std;
 
@@ -41,9 +42,12 @@ public:
 		GtkWidget*    m_expanderDetails;
 		GtkWidget*    m_textviewDetails;
 		GtkTextBuffer* m_textbufferDetails;
+		guint         m_nProgressIdleId;
+		guint         m_nFinishedIdleId;
 
 		static gboolean idle_task_finished(gpointer data) {
 			TaskProgressGUI* pParent = (TaskProgressGUI*)data;
+			pParent->m_nFinishedIdleId = 0;
 			gtk_widget_set_sensitive(pParent->m_btnCancel, TRUE);
 			gtk_button_set_icon_name(GTK_BUTTON(pParent->m_btnCancel), "edit-clear");
 			gtk_widget_set_tooltip_text(pParent->m_btnCancel, "Clear finished task");
@@ -57,11 +61,13 @@ public:
 			{
 				gtk_expander_set_expanded(GTK_EXPANDER(pParent->m_expanderDetails), TRUE);
 			}
+			pParent->m_pParent->UpdateClearFinishedSensitivity();
 			return G_SOURCE_REMOVE;
 		}
 
 		static gboolean idle_task_progress(gpointer data) {
 			TaskProgressGUI* pParent = (TaskProgressGUI*)data;
+			pParent->m_nProgressIdleId = 0;
 			pParent->UpdateTaskGUI();
 			return G_SOURCE_REMOVE;
 		}
@@ -99,17 +105,26 @@ class TaskHandler :
 
 			void HandleTaskFinished(TaskEventPtr event) 
 			{ (void)event; 
-				g_idle_add(idle_task_finished, m_pParent);
+				if (m_pParent->m_nFinishedIdleId == 0)
+				{
+					m_pParent->m_nFinishedIdleId = g_idle_add(idle_task_finished, m_pParent);
+				}
 			}
 
 			void HandleTaskCancelled(TaskEventPtr event) 
 			{ (void)event; 
-				g_idle_add(idle_task_finished, m_pParent);
+				if (m_pParent->m_nFinishedIdleId == 0)
+				{
+					m_pParent->m_nFinishedIdleId = g_idle_add(idle_task_finished, m_pParent);
+				}
 			}
 
 			void HandleTaskProgressUpdated(TaskEventPtr event) 
 			{ (void)event; 
-				g_idle_add(idle_task_progress, m_pParent);
+				if (m_pParent->m_nProgressIdleId == 0)
+				{
+					m_pParent->m_nProgressIdleId = g_idle_add(idle_task_progress, m_pParent);
+				}
 			}
 
 		};
@@ -136,6 +151,8 @@ class TaskHandler :
 			m_expanderDetails(NULL),
 			m_textviewDetails(NULL),
 			m_textbufferDetails(NULL),
+			m_nProgressIdleId(0),
+			m_nFinishedIdleId(0),
 			m_TaskHandlerPtr(new TaskHandler(this))
 		{
 			// vbox to hold everything
@@ -376,6 +393,16 @@ class TaskHandler :
 
 		~TaskProgressGUI()
 		{
+			if (m_nProgressIdleId != 0)
+			{
+				g_source_remove(m_nProgressIdleId);
+				m_nProgressIdleId = 0;
+			}
+			if (m_nFinishedIdleId != 0)
+			{
+				g_source_remove(m_nFinishedIdleId);
+				m_nFinishedIdleId = 0;
+			}
 			m_TaskPtr->RemoveEventHandler(m_TaskHandlerPtr);
 		}
 
@@ -387,11 +414,100 @@ class TaskHandler :
 
 	typedef boost::shared_ptr<TaskProgressGUI> TaskProgressGUIPtr ;
 
+	class HiddenTaskWatcher :
+		public ITaskEventHandler,
+		public boost::enable_shared_from_this<HiddenTaskWatcher>
+	{
+	public:
+		TaskManagerDlgPriv* m_pParent;
+		AbstractTaskPtr m_TaskPtr;
+		guint m_nIdleId;
+
+		HiddenTaskWatcher(TaskManagerDlgPriv* parent, AbstractTaskPtr taskPtr)
+			: m_pParent(parent), m_TaskPtr(taskPtr), m_nIdleId(0)
+		{
+		}
+
+		~HiddenTaskWatcher()
+		{
+			if (m_nIdleId != 0)
+			{
+				g_source_remove(m_nIdleId);
+				m_nIdleId = 0;
+			}
+		}
+
+		void HandleTaskStarted(TaskEventPtr) override {}
+		void HandleTaskResumed(TaskEventPtr) override {}
+		void HandleTaskMessage(TaskEventPtr) override {}
+		void HandleTaskPaused(TaskEventPtr) override {}
+		void HandleTaskUnpaused(TaskEventPtr) override {}
+
+		void ScheduleCheck()
+		{
+			if (m_nIdleId == 0)
+			{
+				boost::weak_ptr<HiddenTaskWatcher> weakSelf = shared_from_this();
+				auto* pWeak = new boost::weak_ptr<HiddenTaskWatcher>(weakSelf);
+				m_nIdleId = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+					+[](gpointer data) -> gboolean {
+						auto* pWeak = static_cast<boost::weak_ptr<HiddenTaskWatcher>*>(data);
+						boost::shared_ptr<HiddenTaskWatcher> self = pWeak->lock();
+						if (self)
+						{
+							self->m_nIdleId = 0;
+							self->CheckUnhide();
+						}
+						return G_SOURCE_REMOVE;
+					},
+					pWeak,
+					+[](gpointer data) {
+						delete static_cast<boost::weak_ptr<HiddenTaskWatcher>*>(data);
+					}
+				);
+			}
+		}
+
+		void CheckUnhide()
+		{
+			AbstractTaskPtr taskPtr = m_TaskPtr;
+			TaskManagerDlgPriv* parent = m_pParent;
+
+			if (!taskPtr->IsHidden())
+			{
+				parent->OnHiddenTaskUnhide(taskPtr);
+			}
+			else if (taskPtr->IsFinished())
+			{
+				parent->OnHiddenTaskFinishedCleanly(taskPtr);
+			}
+		}
+
+		void HandleTaskFinished(TaskEventPtr) override
+		{
+			ScheduleCheck();
+		}
+
+		void HandleTaskCancelled(TaskEventPtr) override
+		{
+			ScheduleCheck();
+		}
+
+		void HandleTaskProgressUpdated(TaskEventPtr) override
+		{
+			ScheduleCheck();
+		}
+	};
+
+	typedef boost::shared_ptr<HiddenTaskWatcher> HiddenTaskWatcherPtr;
+	std::map<AbstractTaskPtr, HiddenTaskWatcherPtr> m_mapHiddenWatchers;
+
 	map<AbstractTaskPtr, TaskProgressGUIPtr> m_mapTaskGUI;
+	GtkWidget* m_btnClearFinished;
 
 public:
 	TaskManagerDlgPriv(TaskManagerDlg* parent, GtkWindow* parent_window) :
-		m_pParent(parent), m_TaskMgrPtr(TaskManager::GetInstance())
+		m_pParent(parent), m_TaskMgrPtr(TaskManager::GetInstance()), m_btnClearFinished(NULL)
 	{
 		m_pWidget = gtk_window_new();
 		gtk_window_set_title(GTK_WINDOW(m_pWidget), "Task Manager");
@@ -405,6 +521,17 @@ public:
 		GtkWidget* title_label = gtk_label_new("Task Manager");
 		gtk_widget_add_css_class(title_label, "title");
 		gtk_header_bar_set_title_widget(GTK_HEADER_BAR(header_bar), title_label);
+
+		m_btnClearFinished = gtk_button_new_with_label("Clear Finished");
+		gtk_widget_set_tooltip_text(m_btnClearFinished, "Clear all finished tasks");
+		gtk_widget_set_sensitive(m_btnClearFinished, FALSE);
+		g_signal_connect(m_btnClearFinished, "clicked",
+			G_CALLBACK(+[](GtkButton* btn, gpointer user_data) {
+				(void)btn;
+				static_cast<TaskManagerDlgPriv*>(user_data)->ClearFinishedTasks();
+			}), this);
+		gtk_header_bar_pack_start(GTK_HEADER_BAR(header_bar), m_btnClearFinished);
+
 		gtk_window_set_titlebar(GTK_WINDOW(m_pWidget), header_bar);
 
 		m_boxContent = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -440,6 +567,12 @@ public:
 
 	~TaskManagerDlgPriv()
 	{
+		for (auto& pair : m_mapHiddenWatchers)
+		{
+			pair.first->RemoveEventHandler(pair.second);
+		}
+		m_mapHiddenWatchers.clear();
+
 		if (NULL != m_pWidget)
 		{
 			gtk_window_destroy(GTK_WINDOW(m_pWidget));
@@ -450,6 +583,60 @@ public:
 	{ (void)data;
 		gtk_widget_set_visible(GTK_WIDGET(widget), FALSE);
 		return TRUE; // do not propagate
+	}
+
+	void OnHiddenTaskUnhide(AbstractTaskPtr taskPtr)
+	{
+		auto itr = m_mapHiddenWatchers.find(taskPtr);
+		if (itr != m_mapHiddenWatchers.end())
+		{
+			HiddenTaskWatcherPtr watcher = itr->second;
+			m_mapHiddenWatchers.erase(itr);
+			taskPtr->RemoveEventHandler(watcher);
+		}
+		AddTaskGUI(taskPtr);
+	}
+
+	void OnHiddenTaskFinishedCleanly(AbstractTaskPtr taskPtr)
+	{
+		auto itr = m_mapHiddenWatchers.find(taskPtr);
+		if (itr != m_mapHiddenWatchers.end())
+		{
+			HiddenTaskWatcherPtr watcher = itr->second;
+			m_mapHiddenWatchers.erase(itr);
+			taskPtr->RemoveEventHandler(watcher);
+		}
+	}
+
+	void ClearFinishedTasks()
+	{
+		std::vector<AbstractTaskPtr> toRemove;
+		for (auto& pair : m_mapTaskGUI)
+		{
+			if (pair.first->IsFinished())
+			{
+				toRemove.push_back(pair.first);
+			}
+		}
+		for (auto& taskPtr : toRemove)
+		{
+			RemoveTaskGUI(taskPtr);
+		}
+	}
+
+	void UpdateClearFinishedSensitivity()
+	{
+		if (!m_btnClearFinished) return;
+		bool hasFinished = false;
+		for (auto& pair : m_mapTaskGUI)
+		{
+			if (pair.first->IsFinished())
+			{
+				hasFinished = true;
+				break;
+			}
+		}
+		gtk_widget_set_sensitive(m_btnClearFinished, hasFinished ? TRUE : FALSE);
 	}
 
 	void AddTaskGUI(AbstractTaskPtr taskPtr)
@@ -468,6 +655,19 @@ public:
 			m_mapTaskGUI.insert(pair<AbstractTaskPtr, TaskProgressGUIPtr>(taskPtr, taskGUIPtr));
 
 			m_pParent->Show();
+			UpdateClearFinishedSensitivity();
+		}
+		else
+		{
+			if (taskPtr->IsFinished())
+			{
+				return;
+			}
+
+			HiddenTaskWatcherPtr watcher(new HiddenTaskWatcher(this, taskPtr));
+			m_mapHiddenWatchers[taskPtr] = watcher;
+			taskPtr->AddEventHandler(watcher);
+			watcher->ScheduleCheck();
 		}
 	}
 
@@ -489,7 +689,7 @@ public:
 			}
 			m_pParent->Hide();
 		}
-
+		UpdateClearFinishedSensitivity();
 	}
 
 	static gboolean idle_add_task(gpointer data)

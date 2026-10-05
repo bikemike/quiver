@@ -342,6 +342,64 @@
                 <property name="use_underline">1</property>
               </object>
             </child>
+            <child>
+              <object class="GtkCheckButton" id="external_tools_edit_show_only_on_error">
+                <property name="valign">center</property>
+                <property name="label" translatable="1">Only show in Task Manager on _error</property>
+                <property name="focusable">1</property>
+                <property name="use_underline">1</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="vbox_shortcut">
+                <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="GtkLabel" id="label_shortcut_title">
+                    <property name="valign">center</property>
+                    <property name="xalign">0</property>
+                    <property name="label" translatable="1">&lt;b&gt;Keyboard Shortcut&lt;/b&gt;</property>
+                    <property name="use_markup">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="hbox_shortcut">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <child>
+                      <object class="GtkLabel" id="external_tools_edit_shortcut_label">
+                        <property name="valign">center</property>
+                        <property name="xalign">0</property>
+                        <property name="hexpand">1</property>
+                        <property name="label">None</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="external_tools_edit_shortcut_set">
+                        <property name="label" translatable="1">_Set Shortcut...</property>
+                        <property name="use_underline">1</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="external_tools_edit_shortcut_clear">
+                        <property name="label" translatable="1">_Clear</property>
+                        <property name="use_underline">1</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="external_tools_edit_hint">
+                <property name="valign">center</property>
+                <property name="xalign">0</property>
+                <property name="wrap">1</property>
+                <property name="label" translatable="1">&lt;small&gt;&lt;i&gt;Tip: Output numbers 0-100 or "PROGRESS: 0-100" and "# msg" or "STATUS: msg" for live progress.&lt;/i&gt;&lt;/small&gt;</property>
+                <property name="use_markup">1</property>
+              </object>
+            </child>
           </object>
         </child>
       </object>

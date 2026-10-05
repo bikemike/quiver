@@ -1,4 +1,5 @@
 #include "ShortcutManager.h"
+#include "ExternalTools.h"
 #include "Preferences.h"
 #include <algorithm>
 #include <cstring>
@@ -284,6 +285,35 @@ ShortcutActionDef* ShortcutManager::GetActionMutable(const std::string &action_n
     return nullptr;
 }
 
+void ShortcutManager::UpdateExternalToolActions(const std::vector<ExternalTool>& tools)
+{
+    m_actions.erase(
+        std::remove_if(m_actions.begin(), m_actions.end(),
+            [](const ShortcutActionDef &def) { return def.category == "External Tools"; }),
+        m_actions.end());
+
+    for (const auto &tool : tools) {
+        std::vector<std::string> accels;
+        if (!tool.GetShortcut().empty()) {
+            std::string n = normalize_accel(tool.GetShortcut());
+            if (!n.empty()) {
+                accels.push_back(n);
+            }
+        }
+        std::string act_name = "ExternalTool_" + std::to_string(tool.GetID());
+        m_actions.push_back({
+            act_name,
+            "External Tools",
+            tool.GetName(),
+            "External Tool: " + tool.GetName(),
+            accels,
+            accels,
+            false,
+            false
+        });
+    }
+}
+
 bool ShortcutManager::SetAccelerators(const std::string &action_name, const std::vector<std::string> &accels)
 {
     ShortcutActionDef *def = GetActionMutable(action_name);
@@ -499,6 +529,7 @@ void ShortcutManager::LoadFromPreferences()
     if (!prefs) return;
 
     for (auto &def : m_actions) {
+        if (def.category == "External Tools") continue;
         if (prefs->HasKey("shortcuts", def.action_name)) {
             std::list<std::string> saved_list = prefs->GetStringList("shortcuts", def.action_name);
             std::vector<std::string> loaded;
@@ -529,6 +560,7 @@ void ShortcutManager::SaveToPreferences()
     if (!prefs) return;
 
     for (const auto &def : m_actions) {
+        if (def.category == "External Tools") continue;
         // If current accels equal default accels, remove key to keep config clean
         if (def.current_accels == def.default_accels) {
             if (prefs->HasKey("shortcuts", def.action_name)) {

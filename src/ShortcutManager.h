@@ -17,6 +17,8 @@ struct ShortcutActionDef {
     bool is_browser_only = false;              // If true, suppressed in Viewer mode
 };
 
+class ExternalTool;
+
 class ShortcutManager {
 public:
     static ShortcutManager& GetInstance();
@@ -26,6 +28,8 @@ public:
     const std::vector<ShortcutActionDef>& GetActions() const { return m_actions; }
     const ShortcutActionDef* GetAction(const std::string &action_name) const;
     ShortcutActionDef* GetActionMutable(const std::string &action_name);
+
+    void UpdateExternalToolActions(const std::vector<ExternalTool>& tools);
 
     bool SetAccelerators(const std::string &action_name, const std::vector<std::string> &accels);
     bool AddAccelerator(const std::string &action_name, const std::string &accel);

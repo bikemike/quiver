@@ -85,4 +85,24 @@ TEST_CASE_METHOD(TestExternalToolsFixture, "ExternalTools CRUD and Ordering", "[
         REQUIRE(tools->GetExternalTools().empty());
         REQUIRE(tools->GetExternalTool(id) == nullptr);
     }
+
+    SECTION("Shortcut and ShowOnlyOnError serialization")
+    {
+        ExternalTool tool("Nautilus", "Open folder", "system-file-manager", "nautilus %d", true, false, false, true, "<Control><Alt>f");
+        REQUIRE(tools->AddExternalTool(tool));
+
+        std::vector<ExternalTool> list = tools->GetExternalTools();
+        REQUIRE(list.size() == 1);
+        REQUIRE(list[0].GetShowOnlyOnError() == true);
+        REQUIRE(list[0].GetShortcut() == "<Control><Alt>f");
+
+        // Reload from preferences
+        ExternalTools::Reset();
+        ExternalToolsPtr reloaded = ExternalTools::GetInstance();
+        std::vector<ExternalTool> reloadedList = reloaded->GetExternalTools();
+        REQUIRE(reloadedList.size() == 1);
+        REQUIRE(reloadedList[0].GetName() == "Nautilus");
+        REQUIRE(reloadedList[0].GetShowOnlyOnError() == true);
+        REQUIRE(reloadedList[0].GetShortcut() == "<Control><Alt>f");
+    }
 }

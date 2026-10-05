@@ -520,6 +520,7 @@ static void toggle_activate_cb(GSimpleAction *action, GVariant *parameter, gpoin
 
 	void RemoveAction(const char *action_name) {
 		if (NULL == g_pActionGroup) return;
+		clear_accel(action_name);
 		if (NULL != g_accelEntries) {
 			for (guint i = 0; i < g_accelEntries->len; i++) {
 				AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);

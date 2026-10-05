@@ -16,6 +16,8 @@
 #define EXTERNAL_TOOL_KEY_SUPPORT_MULTIPLE   "supports_multiple_files"
 #define EXTERNAL_TOOL_KEY_SHOW_OUTPUT        "show_output"
 #define EXTERNAL_TOOL_KEY_SHOW_ERRORS        "show_errors"
+#define EXTERNAL_TOOL_KEY_SHOW_ONLY_ON_ERROR "show_only_on_error"
+#define EXTERNAL_TOOL_KEY_SHORTCUT           "shortcut"
 
 using namespace std;
 
@@ -134,8 +136,8 @@ void ExternalTools::LoadFromPreferences()
 			if (prefs->HasSection(section))
 			{
 				string name, tooltip, icon, cmd;
-				list<string> uris;
-				bool multi, output, errors;
+				bool multi, output, errors, only_on_error;
+				string shortcut;
 
 				name    = prefs->GetString(section,EXTERNAL_TOOL_KEY_NAME);
 				tooltip = prefs->GetString(section,EXTERNAL_TOOL_KEY_TOOLTIP);
@@ -144,13 +146,15 @@ void ExternalTools::LoadFromPreferences()
 				multi = prefs->GetBoolean(section,EXTERNAL_TOOL_KEY_SUPPORT_MULTIPLE);
 				output = prefs->GetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_OUTPUT);
 				errors = prefs->GetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ERRORS);
+				only_on_error = prefs->GetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ONLY_ON_ERROR, false);
+				shortcut = prefs->GetString(section,EXTERNAL_TOOL_KEY_SHORTCUT, "");
 				
 				if (icon.empty())
 				{
 					icon = QUIVER_STOCK_EXECUTE;
 				}
 				
-				ExternalTool b(name, tooltip, icon, cmd , multi, output, errors);
+				ExternalTool b(name, tooltip, icon, cmd, multi, output, errors, only_on_error, shortcut);
 				b.SetCategory(*itr);
 				b.SetID(*itr2);
 				m_mapExternalTools[*itr2] = b;
@@ -187,6 +191,8 @@ void ExternalTools::SaveToPreferences()
 		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SUPPORT_MULTIPLE, itr->second.GetSupportsMultiple());
 		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_OUTPUT, itr->second.GetShowOutput());
 		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ERRORS, itr->second.GetShowErrors());
+		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ONLY_ON_ERROR, itr->second.GetShowOnlyOnError());
+		prefs->SetString(section,EXTERNAL_TOOL_KEY_SHORTCUT, itr->second.GetShortcut());
 
 		categories[itr->second.GetCategory()].push_back(itr->first);
 

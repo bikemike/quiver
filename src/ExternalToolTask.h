@@ -14,7 +14,7 @@ typedef boost::shared_ptr<ExternalToolTask> ExternalToolTaskPtr;
 class ExternalToolTask : public AbstractTask
 {
 public:
-	ExternalToolTask(const std::string& strToolName, const std::vector<std::string>& vectCommands);
+	ExternalToolTask(const std::string& strToolName, const std::vector<std::string>& vectCommands, bool bShowOnlyOnError = false);
 	virtual ~ExternalToolTask();
 
 	virtual std::string GetDescription() const override;
@@ -30,6 +30,11 @@ public:
 
 	virtual bool HasDetails() const override;
 	virtual std::string GetDetails() const override;
+
+	virtual bool IsHidden() const override;
+	void SetHidden(bool bHidden);
+
+	void ParseOutputLine(const std::string& line, bool isStderr);
 
 protected:
 	virtual void Run() override;
@@ -50,6 +55,9 @@ private:
 	std::vector<std::string> m_vectCommands;
 	std::vector<CommandResult> m_vectResults;
 	size_t m_iCurrentCommand;
+	bool m_bShowOnlyOnError;
+	bool m_bHidden;
+	double m_dCurrentCmdProgress;
 
 	mutable std::mutex m_Mutex;
 	GSubprocess* m_pCurrentProc;

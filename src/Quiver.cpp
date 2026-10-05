@@ -593,6 +593,7 @@ void QuiverImpl::LoadExternalTools()
 	g_object_unref(staticSection);
 
 	vector<ExternalTool> externaltools = m_ExternalToolsPtr->GetExternalTools();
+	ShortcutManager::GetInstance().UpdateExternalToolActions(externaltools);
 	if (!externaltools.empty())
 	{
 		GMenu *dynSection = g_menu_new();
@@ -603,7 +604,7 @@ void QuiverImpl::LoadExternalTools()
 			string name = ss.str();
 
 			QuiverUtils::RemoveAction(name.c_str());
-			QuiverUtils::AddSimpleAction(name.c_str(), "", quiver_new_action_handler_cb, this);
+			QuiverUtils::AddSimpleAction(name.c_str(), externaltools[i].GetShortcut().c_str(), quiver_new_action_handler_cb, this);
 
 			string full_name = "quiver." + name;
 			GMenuItem *item = g_menu_item_new(externaltools[i].GetName().c_str(), full_name.c_str());
@@ -4756,7 +4757,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 			if (!commands.empty())
 			{
 				std::vector<std::string> vectCommands(commands.begin(), commands.end());
-				ExternalToolTaskPtr toolTaskPtr(new ExternalToolTask(extTool->GetName(), vectCommands));
+				ExternalToolTaskPtr toolTaskPtr(new ExternalToolTask(extTool->GetName(), vectCommands, extTool->GetShowOnlyOnError()));
 				TaskManager::GetInstance()->AddTask(toolTaskPtr);
 			}
 		}

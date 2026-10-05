@@ -20,6 +20,7 @@ unit/test_image_cache.cpp
     unit/test_preferences.cpp
     unit/test_bookmarks.cpp
     unit/test_external_tools.cpp
+    unit/test_external_tool_task.cpp
     unit/test_image_list_filter.cpp
     unit/test_image_list_async.cpp
     unit/test_image_list_remove.cpp

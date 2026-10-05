@@ -15,11 +15,12 @@ typedef boost::shared_ptr<ExternalTools> ExternalToolsPtr;
 class ExternalTool
 {
 public:
-	ExternalTool() : m_bSupportsMultiple(false), m_bShowOutput(false), m_bShowErrors(false), m_iID(-1) {};
+	ExternalTool() : m_bSupportsMultiple(false), m_bShowOutput(false), m_bShowErrors(false), m_bShowOnlyOnError(false), m_iID(-1) {};
 	ExternalTool(std::string name, std::string tooltip, std::string icon,
-		std::string cmd, bool bSupportsMult, bool bShowOutput, bool bShowErrors) :
+		std::string cmd, bool bSupportsMult, bool bShowOutput, bool bShowErrors, bool bShowOnlyOnError = false, std::string shortcut = "") :
 		m_strName(name), m_strTooltip(tooltip), m_strCmd(cmd), m_strIcon(icon),
 		m_bSupportsMultiple(bSupportsMult), m_bShowOutput(bShowOutput), m_bShowErrors(bShowErrors),
+		m_bShowOnlyOnError(bShowOnlyOnError), m_strShortcut(shortcut),
 		m_iID(-1)
 		{};
 
@@ -49,6 +50,12 @@ public:
 	bool        GetShowErrors() const{return m_bShowErrors;}
 	void        SetShowErrors(bool bShowErrors){m_bShowErrors = bShowErrors;}
 
+	bool        GetShowOnlyOnError() const{return m_bShowOnlyOnError;}
+	void        SetShowOnlyOnError(bool bShowOnlyOnError){m_bShowOnlyOnError = bShowOnlyOnError;}
+
+	std::string GetShortcut() const{return m_strShortcut;}
+	void        SetShortcut(const std::string& shortcut){m_strShortcut = shortcut;}
+
 	int         GetID() const{return m_iID;}
 private:
 	void        SetID(int id){m_iID = id;};
@@ -60,6 +67,8 @@ private:
 	bool m_bSupportsMultiple;
 	bool m_bShowOutput;
 	bool m_bShowErrors;
+	bool m_bShowOnlyOnError;
+	std::string m_strShortcut;
 	int m_iID;
 	// friend for SetID function
 	friend class ExternalTools;

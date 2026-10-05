@@ -2,6 +2,7 @@
 #define FILE_ABSTRACT_EVENT_SOURCE_H
 
 #include <map>
+#include <mutex>
 #include <boost/signals2/signal.hpp>
 #include <boost/signals2/shared_connection_block.hpp>
 #include "IEventSource.h"
@@ -27,9 +28,12 @@ public:
 	virtual void UnblockHandler(IEventHandlerPtr handler);
 	virtual void RemoveEventHandler(IEventHandlerPtr handler);
 protected:
+	mutable std::recursive_mutex m_eventSourceMutex;
+
 	//virtual void Emit();
 	void MapConnection(IEventHandlerPtr h,boost::signals2::connection c)
 	{
+		std::lock_guard<std::recursive_mutex> lock(m_eventSourceMutex);
 		m_mapConnectionsPtr->insert(HandlerConnectionPair(h,c));
 		SharedConnectionBlockPtr blockerPtr(new boost::signals2::shared_connection_block(c));
 		blockerPtr->unblock();

@@ -4,6 +4,7 @@ using namespace boost::placeholders;
 
 void TaskEventSource::AddEventHandler(IEventHandlerPtr handler)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_eventSourceMutex);
 	ITaskEventHandlerPtr h = boost::dynamic_pointer_cast<ITaskEventHandler>(handler);
 
 	assert (NULL != h.get());
