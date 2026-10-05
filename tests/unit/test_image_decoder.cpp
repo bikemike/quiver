@@ -4,10 +4,10 @@
 #include "test_helpers.h"
 #include <glib.h>
 #include <glib/gstdio.h>
-#if HAVE_GDK_PIXBUF
-#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <cstring>
 #include "QuiverUtils.h"
+#if HAVE_GDK_PIXBUF
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #endif
 #include <string>
 #include <vector>
@@ -645,8 +645,6 @@ TEST_CASE("Oversized input is refused from a caller-supplied size", "[unit][deco
     g_unlink(path.c_str());
     g_rmdir(dir.c_str());
 }
-
-#if HAVE_GDK_PIXBUF
 /* An asymmetric texture, so a rotation is visible in the pixels rather than
  * only in the dimensions - which is the whole point: orientations 1-4 keep the
  * frame size, so a dimension check cannot tell a turned texture from an
@@ -716,7 +714,6 @@ TEST_CASE("EnsureExifOrientation turns the pixels whatever the frame size says",
         CHECK(ImageDecoder::EnsureExifOrientation(NULL, 6) == NULL);
     }
 }
-#endif
 
 TEST_CASE("Decoders hand back un-oriented pixels so the loader owns orientation",
           "[unit][decoder][orientation]")
