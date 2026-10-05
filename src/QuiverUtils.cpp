@@ -441,6 +441,98 @@ namespace QuiverUtils
 		}
 	}
 
+	std::string FindLegacyConflictingAction(const std::string &accel, const std::string &exclude_action,
+	                                       bool is_viewer_only, bool is_browser_only) {
+		guint keyval = 0;
+		GdkModifierType mods = (GdkModifierType)0;
+		gtk_accelerator_parse(accel.c_str(), &keyval, &mods);
+		if (keyval == 0) return "";
+		guint mask = GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SHIFT_MASK | GDK_SUPER_MASK | GDK_META_MASK;
+		if ((mods & mask) != 0) {
+			keyval = gdk_keyval_to_lower(keyval);
+		}
+		gchar *target_name = gtk_accelerator_name(keyval, (GdkModifierType)(mods & mask));
+		if (!target_name) return "";
+		std::string target = target_name;
+		g_free(target_name);
+
+		struct LegacyDef {
+			const char *action_name;
+			const char *label;
+			const char *accel;
+			bool is_viewer_only;
+			bool is_browser_only;
+		};
+		static const LegacyDef legacy_defs[] = {
+			{ "BrowserCut", "Cut", "<Control>x", false, true },
+			{ "ViewerCut", "Cut", "<Control>x", true, false },
+			{ "BrowserCopy", "Copy", "<Control>c", false, true },
+			{ "ViewerCopy", "Copy", "<Control>c", true, false },
+			{ "BrowserPaste", "Paste", "<Control>v", false, true },
+			{ "BrowserTrashForce", "Delete Permanently", "<Shift>Delete", false, true },
+			{ "ViewerTrashForce", "Delete Permanently", "<Shift>Delete", true, false },
+		};
+
+		if (!exclude_action.empty() && !is_viewer_only && !is_browser_only) {
+			for (const auto &def : legacy_defs) {
+				if (def.action_name == exclude_action) {
+					is_viewer_only = def.is_viewer_only;
+					is_browser_only = def.is_browser_only;
+					break;
+				}
+			}
+		}
+
+		for (const auto &def : legacy_defs) {
+			if (def.action_name == exclude_action) continue;
+			if (is_viewer_only && def.is_browser_only) continue;
+			if (is_browser_only && def.is_viewer_only) continue;
+
+			guint d_keyval = 0;
+			GdkModifierType d_mods = (GdkModifierType)0;
+			gtk_accelerator_parse(def.accel, &d_keyval, &d_mods);
+			if (d_keyval == 0) continue;
+			if ((d_mods & mask) != 0) {
+				d_keyval = gdk_keyval_to_lower(d_keyval);
+			}
+			gchar *d_name = gtk_accelerator_name(d_keyval, (GdkModifierType)(d_mods & mask));
+			if (d_name) {
+				bool match = (target == d_name);
+				g_free(d_name);
+				if (match) return def.label;
+			}
+		}
+
+		if (g_accelEntries) {
+			for (guint i = 0; i < g_accelEntries->len; i++) {
+				AccelEntry *entry = (AccelEntry*)g_ptr_array_index(g_accelEntries, i);
+				if (!entry || !entry->action_name) continue;
+				if (entry->action_name == exclude_action) continue;
+				if (ShortcutManager::GetInstance().GetAction(entry->action_name) != nullptr)
+					continue;
+				const Pane *pane = pane_of(entry->action_name);
+				if (pane) {
+					if (is_viewer_only && *pane == PANE_BROWSER) continue;
+					if (is_browser_only && *pane == PANE_VIEWER) continue;
+				}
+				guint e_keyval = entry->keyval;
+				if ((entry->mods & mask) != 0) {
+					e_keyval = gdk_keyval_to_lower(e_keyval);
+				}
+				gchar *e_name = gtk_accelerator_name(e_keyval, (GdkModifierType)(entry->mods & mask));
+				if (e_name) {
+					bool match = (target == e_name);
+					g_free(e_name);
+					if (match) {
+						return entry->action_name;
+					}
+				}
+			}
+		}
+
+		return "";
+	}
+
 
 	static void radio_activate_cb(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
 		RadioCallbackData *data = (RadioCallbackData*)user_data;

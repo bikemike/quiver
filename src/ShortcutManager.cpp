@@ -1,6 +1,7 @@
 #include "ShortcutManager.h"
 #include "ExternalTools.h"
 #include "Preferences.h"
+#include "QuiverUtils.h"
 #include <algorithm>
 #include <cstring>
 
@@ -14,6 +15,9 @@ static std::string normalize_accel(const std::string &accel)
     GdkModifierType mods = (GdkModifierType)0;
     gtk_accelerator_parse(accel.c_str(), &keyval, &mods);
     if (keyval == 0) return "";
+    if ((mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK | GDK_SHIFT_MASK)) != 0) {
+        keyval = gdk_keyval_to_lower(keyval);
+    }
     gchar *name = gtk_accelerator_name(keyval, (GdkModifierType)(mods & MODIFIER_MASK));
     std::string result = name ? name : "";
     g_free(name);
@@ -189,6 +193,21 @@ void ShortcutManager::RegisterDefaultActions()
         "Toggle file properties and metadata pane",
         {"<Alt>Return", "<Alt>KP_Enter"}, {"<Alt>Return", "<Alt>KP_Enter"}, false
     });
+    m_actions.push_back({
+        "ViewMenubar", "Viewer Display", "Toggle Menu Bar",
+        "Show or hide the application menu bar",
+        {"<Control><Shift>m"}, {"<Control><Shift>m"}, false
+    });
+    m_actions.push_back({
+        "ViewToolbarMain", "Viewer Display", "Toggle Toolbar",
+        "Show or hide the main toolbar",
+        {"<Control><Shift>t"}, {"<Control><Shift>t"}, false
+    });
+    m_actions.push_back({
+        "ViewStatusbar", "Viewer Display", "Toggle Status Bar",
+        "Show or hide the status bar",
+        {"<Control><Shift>s"}, {"<Control><Shift>s"}, false
+    });
 
     // File & Window
     m_actions.push_back({
@@ -226,6 +245,21 @@ void ShortcutManager::RegisterDefaultActions()
         "Restore the most recently deleted item(s) from trash",
         {"<Control>z"}, {"<Control>z"}, false
     });
+    m_actions.push_back({
+        "QuickRename", "File & Window", "Rename (In-place)",
+        "Inline rename selected item",
+        {"F2"}, {"F2"}, false
+    });
+    m_actions.push_back({
+        "BookmarksAdd", "File & Window", "Add Bookmark",
+        "Add current folder or selected item to bookmarks",
+        {"<Control>d"}, {"<Control>d"}, false
+    });
+    m_actions.push_back({
+        "QuiverEscape", "File & Window", "Cancel / Exit Full Screen",
+        "Cancel operation or exit full screen mode",
+        {"Escape"}, {"Escape"}, false
+    });
 
     // Browser
     m_actions.push_back({
@@ -249,6 +283,16 @@ void ShortcutManager::RegisterDefaultActions()
         {"<Alt>Up", "BackSpace"}, {"<Alt>Up", "BackSpace"}, false, true
     });
     m_actions.push_back({
+        "GoFolderNext", "Browser", "Next Folder",
+        "Navigate to next folder in history",
+        {"<Shift><Alt>Right"}, {"<Shift><Alt>Right"}, false, true
+    });
+    m_actions.push_back({
+        "GoFolderPrev", "Browser", "Previous Folder",
+        "Navigate to previous folder in history",
+        {"<Shift><Alt>Left"}, {"<Shift><Alt>Left"}, false, true
+    });
+    m_actions.push_back({
         "BrowserSelectAll", "Browser", "Select All",
         "Select all items in browser",
         {"<Control>a"}, {"<Control>a"}, false, true
@@ -262,6 +306,21 @@ void ShortcutManager::RegisterDefaultActions()
         "BrowserReload", "Browser", "Reload",
         "Refresh folder contents",
         {"<Control>r"}, {"<Control>r"}, false, true
+    });
+    m_actions.push_back({
+        "BrowserViewSidebar", "Browser", "Toggle Sidebar / Folder Tree",
+        "Show or hide the browser sidebar and folder tree",
+        {"<Control><Shift>f", "<Control><Alt>f"}, {"<Control><Shift>f", "<Control><Alt>f"}, false, true
+    });
+    m_actions.push_back({
+        "BrowserViewPreview", "Browser", "Toggle Preview Pane",
+        "Show or hide the image preview pane in browser",
+        {"<Control><Shift>p"}, {"<Control><Shift>p"}, false, true
+    });
+    m_actions.push_back({
+        "BrowserNewFolder", "Browser", "New Folder",
+        "Create a new subfolder in the current directory",
+        {"<Control><Shift>n"}, {"<Control><Shift>n"}, false, true
     });
 }
 
@@ -393,8 +452,19 @@ std::string ShortcutManager::FindConflictingAction(const std::string &accel, con
     std::string target = normalize_accel(accel);
     if (target.empty()) return "";
 
+    const ShortcutActionDef *exclude_def = GetAction(exclude_action);
+    bool exclude_viewer_only = exclude_def ? exclude_def->is_viewer_only : false;
+    bool exclude_browser_only = exclude_def ? exclude_def->is_browser_only : false;
+
     for (const auto &def : m_actions) {
         if (def.action_name == exclude_action) continue;
+
+        // Context separation: browser-only actions don't conflict with viewer-only actions
+        if (exclude_def) {
+            if (exclude_def->is_viewer_only && def.is_browser_only) continue;
+            if (exclude_def->is_browser_only && def.is_viewer_only) continue;
+        }
+
         for (const auto &a : def.current_accels) {
             std::string na = normalize_accel(a);
             if (na == target) {
@@ -410,6 +480,13 @@ std::string ShortcutManager::FindConflictingAction(const std::string &accel, con
             }
         }
     }
+
+    // Fallback: check legacy/system actions managed by QuiverUtils (Cut, Copy, Paste, etc.)
+    std::string legacy_conflict = QuiverUtils::FindLegacyConflictingAction(accel, exclude_action, exclude_viewer_only, exclude_browser_only);
+    if (!legacy_conflict.empty()) {
+        return legacy_conflict;
+    }
+
     return "";
 }
 
@@ -576,6 +653,9 @@ void ShortcutManager::SaveToPreferences()
 std::string ShortcutManager::KeyvalAndModsToAccelString(guint keyval, GdkModifierType mods)
 {
     if (keyval == 0) return "";
+    if ((mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK | GDK_META_MASK | GDK_SHIFT_MASK)) != 0) {
+        keyval = gdk_keyval_to_lower(keyval);
+    }
     gchar *name = gtk_accelerator_name(keyval, (GdkModifierType)(mods & MODIFIER_MASK));
     std::string result = name ? name : "";
     g_free(name);

@@ -118,6 +118,11 @@ namespace QuiverUtils
 	 * up.  Call this whenever the visible pane changes. */
 	void SetActivePane(bool bViewer);
 
+	/* Check for shortcut conflicts against built-in legacy or pane-bound actions
+	 * (such as clipboard Cut/Copy/Paste or permanently delete) not managed directly by ShortcutManager. */
+	std::string FindLegacyConflictingAction(const std::string &accel, const std::string &exclude_action = "",
+	                                       bool is_viewer_only = false, bool is_browser_only = false);
+
 	/* Modal "OK / Cancel style" confirmation dialog.  Shows `message` (wrapped)
 	 * with `accept_label` on the accept button.  Returns TRUE when accepted.
 	 * GTK4 has no gtk_dialog_run(), so this runs its own nested GMainLoop.

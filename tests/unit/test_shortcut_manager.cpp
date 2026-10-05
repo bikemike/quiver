@@ -203,6 +203,42 @@ TEST_CASE("ShortcutManager Conflict Detection", "[unit][shortcuts][fast]")
     conflict = sm.FindConflictingAction("greater", "Save");
     REQUIRE(conflict == "Frame Step Forward");
 
+    // Standard Browser & Window actions conflict detection
+    // Folder tree / Sidebar toggles: both Ctrl+Shift+F and Ctrl+Alt+F (case insensitive)
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>F") == "Toggle Sidebar / Folder Tree");
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>f") == "Toggle Sidebar / Folder Tree");
+    REQUIRE(sm.FindConflictingAction("<Control><Alt>f") == "Toggle Sidebar / Folder Tree");
+    REQUIRE(sm.FindConflictingAction("<Control><Alt>F") == "Toggle Sidebar / Folder Tree");
+
+    // Browser Preview and New Folder
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>P") == "Toggle Preview Pane");
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>p") == "Toggle Preview Pane");
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>N") == "New Folder");
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>n") == "New Folder");
+
+    // Browser folder navigation
+    REQUIRE(sm.FindConflictingAction("<Shift><Alt>Right") == "Next Folder");
+    REQUIRE(sm.FindConflictingAction("<Shift><Alt>Left") == "Previous Folder");
+
+    // In-place rename and bookmarks
+    REQUIRE(sm.FindConflictingAction("F2") == "Rename (In-place)");
+    REQUIRE(sm.FindConflictingAction("<Control>d") == "Add Bookmark");
+
+    // Display toggles
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>m") == "Toggle Menu Bar");
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>t") == "Toggle Toolbar");
+    REQUIRE(sm.FindConflictingAction("<Control><Shift>s") == "Toggle Status Bar");
+    REQUIRE(sm.FindConflictingAction("Escape") == "Cancel / Exit Full Screen");
+
+    // Legacy / pane-bound actions fallback conflict detection (Cut, Copy, Paste, Delete Permanently)
+    REQUIRE(sm.FindConflictingAction("<Control>c") == "Copy");
+    REQUIRE(sm.FindConflictingAction("<Control>x") == "Cut");
+    REQUIRE(sm.FindConflictingAction("<Control>v") == "Paste");
+    REQUIRE(sm.FindConflictingAction("<Shift>Delete") == "Delete Permanently");
+
+    // Exclude action itself works for legacy actions too
+    REQUIRE(sm.FindConflictingAction("<Control>c", "BrowserCopy").empty());
+
     // Unassigned key combination returns empty
     conflict = sm.FindConflictingAction("<Control><Shift><Alt>z");
     REQUIRE(conflict.empty());
