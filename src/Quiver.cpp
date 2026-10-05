@@ -4544,6 +4544,22 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	else if(0 == strcmp(szAction,ACTION_QUIVER_ADJUST_DATE))
 	{
 		AdjustDateDlg dlg;
+		std::list<unsigned int> selItems = pQuiverImpl->m_BrowserPtr->GetSelection();
+		if (!selItems.empty())
+		{
+			QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[selItems.front()];
+			time_t t = f.GetTimeT(true);
+			if (t > 0)
+			{
+				struct tm tmDate = {};
+				localtime_r(&t, &tmDate);
+				char szBuf[64];
+				g_snprintf(szBuf, sizeof(szBuf), "%04d:%02d:%02d %02d:%02d:%02d",
+					tmDate.tm_year + 1900, tmDate.tm_mon + 1, tmDate.tm_mday,
+					tmDate.tm_hour, tmDate.tm_min, tmDate.tm_sec);
+				dlg.SetDateString(szBuf);
+			}
+		}
 		if (dlg.Run())
 		{
 			if (dlg.IsAdjustDate())

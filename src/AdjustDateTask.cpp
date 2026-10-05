@@ -1,6 +1,7 @@
 #include "AdjustDateTask.h"
 
 #include "ImageSaveManager.h"
+#include "VideoDateEditTask.h"
 
 #include <exiv2/exiv2.hpp>
 
@@ -129,127 +130,212 @@ void AdjustDateTask::Run()
 {
 	if (m_bAdjustDate)
 	{
-		// adjust exif date
-		while ((size_t)m_iCurrentFile < m_vectQuiverFiles.size() )
+		// adjust exif / video date
+		while ((size_t)m_iCurrentFile < m_vectQuiverFiles.size())
 		{
-
 			QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
 
 			GFileInfo* pInfo = f.GetFileInfo();
 			GDateTime* pModTime = NULL;
 			if (NULL != pInfo)
 			{
-				// adjust the modification time of the file
 				pModTime = g_file_info_get_modification_date_time(pInfo);
-				
-				// the adjustment is done after the exif data is modified
-				// see below
 			}
 
-			
-			if ((DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields) ||
-				(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
-				(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
+			if (f.IsVideo())
 			{
-				std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
+				bool bModifyMeta = (0 != (m_flagsDateFields & (DATE_FIELD_EXIF_DATE_TIME |
+				                                               DATE_FIELD_EXIF_DATE_TIME_ORIG |
+				                                               DATE_FIELD_EXIF_DATE_TIME_DIGITIZED)));
+				bool bModifyMTime = (0 != (m_flagsDateFields & DATE_FIELD_MODIFICATION_TIME));
 
-				if (NULL != pExifData.get())
+				time_t newMTime = 0;
+				GDateTime* pMTimeNew = NULL;
+				if (bModifyMTime && NULL != pModTime)
 				{
-					// use date_time_original
-					auto it = pExifData->findKey(
-						Exiv2::ExifKey("Exif.Photo.DateTimeOriginal"));
-					if (pExifData->end() == it)
+					pMTimeNew = g_date_time_add_full(pModTime,
+					                                 m_iAdjYears,
+					                                 0,
+					                                 m_iAdjDays,
+					                                 m_iAdjHours,
+					                                 m_iAdjMins,
+					                                 m_iAdjSecs);
+					if (NULL != pMTimeNew)
 					{
-						// try date_time
-						it = pExifData->findKey(
-							Exiv2::ExifKey("Exif.Image.DateTime"));
-					}
-
-					if (pExifData->end() != it)
-					{
-						char szDate[20];
-						g_strlcpy(szDate, it->toString().c_str(), sizeof(szDate));
-
-						tm tm_exif_time;
-						int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
-							&tm_exif_time.tm_year,
-							&tm_exif_time.tm_mon,
-							&tm_exif_time.tm_mday,
-							&tm_exif_time.tm_hour,
-							&tm_exif_time.tm_min,
-							&tm_exif_time.tm_sec);
-						tm_exif_time.tm_year -= 1900;
-						tm_exif_time.tm_mon -= 1;
-						tm_exif_time.tm_isdst = -1;
-						if (6 == num_substs)
-						{
-							tm_exif_time.tm_year += m_iAdjYears;
-							tm_exif_time.tm_mday += m_iAdjDays;
-							tm_exif_time.tm_hour += m_iAdjHours;
-							tm_exif_time.tm_min +=  m_iAdjMins;
-							tm_exif_time.tm_sec +=  m_iAdjSecs;
-							// successfully parsed date
-							time_t date = mktime(&tm_exif_time);
- (void)date;
-
-							g_snprintf(szDate, 20, "%04d:%02d:%02d %02d:%02d:%02d",
-								tm_exif_time.tm_year+1900,tm_exif_time.tm_mon+1,tm_exif_time.tm_mday,
-								tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
-
-							if ( exif_date_format_is_valid(szDate) )
-							{
-								// operator[] creates the entry if missing
-								if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
-								{
-									(*pExifData)["Exif.Image.DateTime"] = szDate;
-								}
-								if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
-								{
-									(*pExifData)["Exif.Photo.DateTimeOriginal"] = szDate;
-								}
-								if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
-								{
-									(*pExifData)["Exif.Photo.DateTimeDigitized"] = szDate;
-								}
-
-								f.SetExifData(pExifData);
-
-								if (f.Modified())
-								{
-									//now save the file:
-									ImageSaveManager::GetInstance()->SaveImage(f);
-								}
-							}
-						}
-
+						newMTime = g_date_time_to_unix(pMTimeNew);
 					}
 				}
-			}
-			
-			if (NULL != pInfo)
-			{
-				// adjust the modification time of the file
-				if ((DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields) && (NULL != pModTime))
+
+				if (bModifyMeta)
 				{
-					GDateTime* pDateTimeNew = g_date_time_add_full(pModTime,
-					                                               m_iAdjYears,
-																   0,
-					                                               m_iAdjDays,
-					                                               m_iAdjHours,
-					                                               m_iAdjMins,
-					                                               m_iAdjSecs);
+					time_t baseDate = f.HasDateMetadata() ? f.GetTimeT(true) : f.GetTimeT(false);
+					if (0 != baseDate)
+					{
+						time_t newEpoch = baseDate;
+						GDateTime* pDt = g_date_time_new_from_unix_local(baseDate);
+						if (NULL != pDt)
+						{
+							GDateTime* pDtNew = g_date_time_add_full(pDt,
+							                                         m_iAdjYears,
+							                                         0,
+							                                         m_iAdjDays,
+							                                         m_iAdjHours,
+							                                         m_iAdjMins,
+							                                         m_iAdjSecs);
+							if (NULL != pDtNew)
+							{
+								newEpoch = g_date_time_to_unix(pDtNew);
+								g_date_time_unref(pDtNew);
+							}
+							g_date_time_unref(pDt);
+						}
 
-					g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
+						auto progress_cb = [this](double p) {
+							m_dFileSavePercent = p / (double)(m_vectQuiverFiles.empty() ? 1 : m_vectQuiverFiles.size());
+							EmitTaskProgressUpdatedEvent();
+						};
+						auto cancel_cb = [this]() {
+							return ShouldCancel() || ShouldPause();
+						};
 
+						std::string errMsg;
+						VideoDateEditTask::SetVideoDate(f.GetFilePath(), newEpoch,
+						                               bModifyMTime, newMTime,
+						                               progress_cb, cancel_cb, &errMsg);
+						m_dFileSavePercent = 0.0;
+					}
+				}
+				else if (bModifyMTime && NULL != pMTimeNew && NULL != pInfo)
+				{
+					g_file_info_set_modification_date_time(pInfo, pMTimeNew);
 					GFile* file = g_file_new_for_uri(f.GetURI());
 					g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
 					g_object_unref(file);
-					
-					g_date_time_unref(pDateTimeNew);
-					g_date_time_unref(pModTime);
 				}
 
-				g_object_unref(pInfo);
+				if (NULL != pMTimeNew)
+				{
+					g_date_time_unref(pMTimeNew);
+				}
+				if (NULL != pModTime)
+				{
+					g_date_time_unref(pModTime);
+				}
+				if (NULL != pInfo)
+				{
+					g_object_unref(pInfo);
+				}
+			}
+			else
+			{
+				if ((DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields) ||
+					(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
+					(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
+				{
+					std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
+
+					if (NULL != pExifData.get())
+					{
+						// use date_time_original
+						auto it = pExifData->findKey(
+							Exiv2::ExifKey("Exif.Photo.DateTimeOriginal"));
+						if (pExifData->end() == it)
+						{
+							// try date_time
+							it = pExifData->findKey(
+								Exiv2::ExifKey("Exif.Image.DateTime"));
+						}
+
+						if (pExifData->end() != it)
+						{
+							char szDate[20];
+							g_strlcpy(szDate, it->toString().c_str(), sizeof(szDate));
+
+							tm tm_exif_time;
+							int num_substs = sscanf(szDate,"%04d:%02d:%02d %02d:%02d:%02d",
+								&tm_exif_time.tm_year,
+								&tm_exif_time.tm_mon,
+								&tm_exif_time.tm_mday,
+								&tm_exif_time.tm_hour,
+								&tm_exif_time.tm_min,
+								&tm_exif_time.tm_sec);
+							tm_exif_time.tm_year -= 1900;
+							tm_exif_time.tm_mon -= 1;
+							tm_exif_time.tm_isdst = -1;
+							if (6 == num_substs)
+							{
+								tm_exif_time.tm_year += m_iAdjYears;
+								tm_exif_time.tm_mday += m_iAdjDays;
+								tm_exif_time.tm_hour += m_iAdjHours;
+								tm_exif_time.tm_min +=  m_iAdjMins;
+								tm_exif_time.tm_sec +=  m_iAdjSecs;
+								// successfully parsed date
+								time_t date = mktime(&tm_exif_time);
+								(void)date;
+
+								g_snprintf(szDate, 20, "%04d:%02d:%02d %02d:%02d:%02d",
+									tm_exif_time.tm_year+1900,tm_exif_time.tm_mon+1,tm_exif_time.tm_mday,
+									tm_exif_time.tm_hour, tm_exif_time.tm_min, tm_exif_time.tm_sec);
+
+								if ( exif_date_format_is_valid(szDate) )
+								{
+									// operator[] creates the entry if missing
+									if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
+									{
+										(*pExifData)["Exif.Image.DateTime"] = szDate;
+									}
+									if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
+									{
+										(*pExifData)["Exif.Photo.DateTimeOriginal"] = szDate;
+									}
+									if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
+									{
+										(*pExifData)["Exif.Photo.DateTimeDigitized"] = szDate;
+									}
+
+									f.SetExifData(pExifData);
+
+									if (f.Modified())
+									{
+										//now save the file:
+										ImageSaveManager::GetInstance()->SaveImage(f);
+									}
+								}
+							}
+
+						}
+					}
+				}
+
+				if (NULL != pInfo)
+				{
+					// adjust the modification time of the file
+					if ((DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields) && (NULL != pModTime))
+					{
+						GDateTime* pDateTimeNew = g_date_time_add_full(pModTime,
+						                                               m_iAdjYears,
+						                                               0,
+						                                               m_iAdjDays,
+						                                               m_iAdjHours,
+						                                               m_iAdjMins,
+						                                               m_iAdjSecs);
+
+						g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
+
+						GFile* file = g_file_new_for_uri(f.GetURI());
+						g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+						g_object_unref(file);
+
+						g_date_time_unref(pDateTimeNew);
+					}
+
+					g_object_unref(pInfo);
+				}
+
+				if (NULL != pModTime)
+				{
+					g_date_time_unref(pModTime);
+				}
 			}
 
 			++m_iCurrentFile;
@@ -265,7 +351,7 @@ void AdjustDateTask::Run()
 			{
 				break;
 			}
-		}				
+		}
 	}
 	else // set date
 	{
@@ -280,64 +366,116 @@ void AdjustDateTask::Run()
 
 		if (exif_date_format_is_valid(szDate))
 		{
+			time_t newEpoch = mktime(&m_tmNewDate);
+
 			while ((size_t)m_iCurrentFile < m_vectQuiverFiles.size())
 			{
 				QuiverFile f = m_vectQuiverFiles[m_iCurrentFile];
 
-				GFileInfo* pInfo = f.GetFileInfo();
-
-				if ((DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields) ||
-					(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
-					(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
+				if (f.IsVideo())
 				{
-					std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
-					if (NULL == pExifData.get())
-					{
-						pExifData.reset(new Exiv2::ExifData());
-					}
+					bool bModifyMeta = (0 != (m_flagsDateFields & (DATE_FIELD_EXIF_DATE_TIME |
+					                                               DATE_FIELD_EXIF_DATE_TIME_ORIG |
+					                                               DATE_FIELD_EXIF_DATE_TIME_DIGITIZED)));
+					bool bModifyMTime = (0 != (m_flagsDateFields & DATE_FIELD_MODIFICATION_TIME));
 
-					if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
+					if (bModifyMeta)
 					{
-						(*pExifData)["Exif.Image.DateTime"] = szDate;
-					}
-					if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
-					{
-						(*pExifData)["Exif.Photo.DateTimeOriginal"] = szDate;
-					}
-					if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
-					{
-						(*pExifData)["Exif.Photo.DateTimeDigitized"] = szDate;
-					}
+						auto progress_cb = [this](double p) {
+							m_dFileSavePercent = p / (double)(m_vectQuiverFiles.empty() ? 1 : m_vectQuiverFiles.size());
+							EmitTaskProgressUpdatedEvent();
+						};
+						auto cancel_cb = [this]() {
+							return ShouldCancel() || ShouldPause();
+						};
 
-					f.SetExifData(pExifData);
-
-					if (f.Modified())
-					{
-						ImageSaveManager::GetInstance()->SaveImage(f);
+						std::string errMsg;
+						VideoDateEditTask::SetVideoDate(f.GetFilePath(), newEpoch,
+						                               bModifyMTime, newEpoch,
+						                               progress_cb, cancel_cb, &errMsg);
+						m_dFileSavePercent = 0.0;
 					}
-				}
-
-				if (NULL != pInfo)
-				{
-					if (DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields)
+					else if (bModifyMTime)
 					{
-						GDateTime* pDateTimeNew = g_date_time_new_local(
-							m_tmNewDate.tm_year + 1900,
-							m_tmNewDate.tm_mon + 1,
-							m_tmNewDate.tm_mday,
-							m_tmNewDate.tm_hour,
-							m_tmNewDate.tm_min,
-							m_tmNewDate.tm_sec);
-						if (NULL != pDateTimeNew)
+						GFileInfo* pInfo = f.GetFileInfo();
+						if (NULL != pInfo)
 						{
-							g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
-							GFile* file = g_file_new_for_uri(f.GetURI());
-							g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
-							g_object_unref(file);
-							g_date_time_unref(pDateTimeNew);
+							GDateTime* pDateTimeNew = g_date_time_new_local(
+								m_tmNewDate.tm_year + 1900,
+								m_tmNewDate.tm_mon + 1,
+								m_tmNewDate.tm_mday,
+								m_tmNewDate.tm_hour,
+								m_tmNewDate.tm_min,
+								m_tmNewDate.tm_sec);
+							if (NULL != pDateTimeNew)
+							{
+								g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
+								GFile* file = g_file_new_for_uri(f.GetURI());
+								g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+								g_object_unref(file);
+								g_date_time_unref(pDateTimeNew);
+							}
+							g_object_unref(pInfo);
 						}
 					}
-					g_object_unref(pInfo);
+				}
+				else
+				{
+					GFileInfo* pInfo = f.GetFileInfo();
+
+					if ((DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields) ||
+						(DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields) ||
+						(DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields))
+					{
+						std::shared_ptr<Exiv2::ExifData> pExifData = f.GetExifData();
+						if (NULL == pExifData.get())
+						{
+							pExifData.reset(new Exiv2::ExifData());
+						}
+
+						if (DATE_FIELD_EXIF_DATE_TIME & m_flagsDateFields)
+						{
+							(*pExifData)["Exif.Image.DateTime"] = szDate;
+						}
+						if (DATE_FIELD_EXIF_DATE_TIME_ORIG & m_flagsDateFields)
+						{
+							(*pExifData)["Exif.Photo.DateTimeOriginal"] = szDate;
+						}
+						if (DATE_FIELD_EXIF_DATE_TIME_DIGITIZED & m_flagsDateFields)
+						{
+							(*pExifData)["Exif.Photo.DateTimeDigitized"] = szDate;
+						}
+
+						f.SetExifData(pExifData);
+
+						if (f.Modified())
+						{
+							ImageSaveManager::GetInstance()->SaveImage(f);
+						}
+					}
+
+					if (NULL != pInfo)
+					{
+						if (DATE_FIELD_MODIFICATION_TIME & m_flagsDateFields)
+						{
+							GDateTime* pDateTimeNew = g_date_time_new_local(
+								m_tmNewDate.tm_year + 1900,
+								m_tmNewDate.tm_mon + 1,
+								m_tmNewDate.tm_mday,
+								m_tmNewDate.tm_hour,
+								m_tmNewDate.tm_min,
+								m_tmNewDate.tm_sec);
+							if (NULL != pDateTimeNew)
+							{
+								g_file_info_set_modification_date_time(pInfo, pDateTimeNew);
+								GFile* file = g_file_new_for_uri(f.GetURI());
+								g_file_set_attributes_from_info(file, pInfo, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+								g_object_unref(file);
+								g_date_time_unref(pDateTimeNew);
+							}
+						}
+						g_object_unref(pInfo);
+					}
 				}
 
 				++m_iCurrentFile;
@@ -356,7 +494,6 @@ void AdjustDateTask::Run()
 			}
 		}
 	}
-
 }
 
 

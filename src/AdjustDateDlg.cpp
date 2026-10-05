@@ -160,6 +160,15 @@ std::string AdjustDateDlg::GetDateString() const
 	return m_PrivPtr->m_strDate;
 }
 
+void AdjustDateDlg::SetDateString(const std::string& strDate)
+{
+	m_PrivPtr->m_strDate = strDate;
+	if (NULL != m_PrivPtr->m_pEntryDate)
+	{
+		gtk_editable_set_text(GTK_EDITABLE(m_PrivPtr->m_pEntryDate), strDate.c_str());
+	}
+}
+
 int AdjustDateDlg::GetAdjustmentYears() const
 {
 	return m_PrivPtr->m_iYears;
@@ -300,7 +309,7 @@ bool AdjustDateDlg::AdjustDateDlgPriv::ValidateInput()
 		if (!bIsValid)
 		{
 			show_error_dialog(GTK_WINDOW(m_pDialogAdjustDate),
-				"To adjust the date of the picture(s), you must enter at least one value in the years, days, hours, minutes, or seconds field.");
+				"To adjust the date of the file(s), you must enter at least one value in the years, days, hours, minutes, or seconds field.");
 		}
 	}
 	else if ( gtk_check_button_get_active(m_pToggleSetDate) )
@@ -313,7 +322,7 @@ bool AdjustDateDlg::AdjustDateDlgPriv::ValidateInput()
 		if (!bIsValid)
 		{
 			show_error_dialog(GTK_WINDOW(m_pDialogAdjustDate),
-				"To set the date of the picture(s) you must enter the date in the following format: YYYY:MM:DD HH:MM:SS.");
+				"To set the date of the file(s) you must enter the date in the following format: YYYY:MM:DD HH:MM:SS.");
 		}
 
 	}

@@ -25,6 +25,7 @@ public:
 	bool ModifyExifDateDig() const;
 
 	std::string GetDateString() const;
+	void SetDateString(const std::string& strDate);
 	int GetAdjustmentYears() const;
 	int GetAdjustmentDays() const;
 	int GetAdjustmentHours() const;
