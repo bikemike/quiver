@@ -2667,21 +2667,38 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 {
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
 
-	GAction *action = QuiverUtils::GetAction(ACTION_BROWSER_TRASH);
-	if (NULL != action && G_IS_SIMPLE_ACTION(action))
+	GList *selection = quiver_icon_view_get_selection(iconview);
+	const gboolean bHasSelection = (NULL != selection);
+
+	GAction *actionTrash = QuiverUtils::GetAction(ACTION_BROWSER_TRASH);
+	if (NULL != actionTrash && G_IS_SIMPLE_ACTION(actionTrash))
 	{
-		GList *selection;
-		selection = quiver_icon_view_get_selection(iconview);
-		if (NULL == selection)
-		{
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(action),FALSE);
-		}
-		else
-		{
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(action),TRUE);
-			g_list_free(selection);
-		}
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionTrash), bHasSelection);
 	}
+
+	GAction *actionRename = QuiverUtils::GetAction(ACTION_QUIVER_QUICK_RENAME);
+	if (NULL != actionRename && G_IS_SIMPLE_ACTION(actionRename))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionRename), bHasSelection && !b->IsTrashMode());
+	}
+
+	GAction *actionCopy = QuiverUtils::GetAction(ACTION_BROWSER_COPY);
+	if (NULL != actionCopy && G_IS_SIMPLE_ACTION(actionCopy))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionCopy), bHasSelection);
+	}
+
+	GAction *actionCut = QuiverUtils::GetAction(ACTION_BROWSER_CUT);
+	if (NULL != actionCut && G_IS_SIMPLE_ACTION(actionCut))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionCut), bHasSelection && !b->IsTrashMode());
+	}
+
+	if (NULL != selection)
+	{
+		g_list_free(selection);
+	}
+
 	b->m_BrowserParent->EmitSelectionChangedEvent();
 }
 

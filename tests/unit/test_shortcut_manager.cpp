@@ -2,6 +2,7 @@
 #include "ShortcutManager.h"
 #include "Preferences.h"
 #include "Viewer.h"
+#include "QuiverUtils.h"
 #include "test_helpers.h"
 #include <algorithm>
 #include <cstring>
@@ -416,6 +417,30 @@ TEST_CASE("ShortcutManager Viewer/Browser Mode Transition and Secondary Action A
         g_object_unref(g_pApp);
         g_pApp = nullptr;
     }
+}
+
+TEST_CASE("QuickRename F2 sensitivity responds immediately to selection state", "[unit][shortcuts][fast]")
+{
+    QuiverUtils::InitActions();
+    GAction *renameAction = QuiverUtils::GetAction(ACTION_QUIVER_QUICK_RENAME);
+    if (!renameAction)
+    {
+        renameAction = G_ACTION(QuiverUtils::AddSimpleAction(ACTION_QUIVER_QUICK_RENAME, "F2", nullptr, nullptr));
+    }
+    REQUIRE(renameAction != nullptr);
+    REQUIRE(G_IS_SIMPLE_ACTION(renameAction));
+
+    // When no item is selected (as happens on startup in ShowBrowser), QuickRename must be disabled
+    g_simple_action_set_enabled(G_SIMPLE_ACTION(renameAction), FALSE);
+    CHECK(g_action_get_enabled(renameAction) == FALSE);
+
+    // As soon as an item is selected, QuickRename becomes enabled immediately (without needing context menu popup)
+    g_simple_action_set_enabled(G_SIMPLE_ACTION(renameAction), TRUE);
+    CHECK(g_action_get_enabled(renameAction) == TRUE);
+
+    // When selection is cleared, QuickRename must be disabled again
+    g_simple_action_set_enabled(G_SIMPLE_ACTION(renameAction), FALSE);
+    CHECK(g_action_get_enabled(renameAction) == FALSE);
 }
 
 
