@@ -4112,4 +4112,121 @@ TEST_CASE("Viewer filmstrip stays enabled in preferences and restores when exiti
     viewer.reset();
 }
 
+TEST_CASE("QuiverImageView crossfade transition activates and preserves across preview to full decode",
+          "[unit][imageview][transition]")
+{
+    REQUIRE_DISPLAY();
+
+    GtkWidget *win = gtk_window_new();
+    GtkWidget *imageview = quiver_image_view_new();
+    gtk_window_set_child(GTK_WINDOW(win), imageview);
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 300);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 20) {
+        for (int i = 0; i < rounds; ++i) {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(15000);
+        }
+    };
+    settle(10);
+
+    quiver_image_view_set_enable_transitions(QUIVER_IMAGE_VIEW(imageview), TRUE);
+    REQUIRE(quiver_image_view_get_enable_transitions(QUIVER_IMAGE_VIEW(imageview)) == TRUE);
+
+    GdkTexture *t1 = make_flat_texture(200, 200, 255, 0, 0);
+    GdkTexture *t2_thumb = make_flat_texture(50, 50, 0, 255, 0);
+    GdkTexture *t2_full = make_flat_texture(200, 200, 0, 255, 0);
+
+    /* Initial image: no previous texture, so no transition */
+    quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(imageview), t1, 200, 200, TRUE);
+    settle(5);
+    CHECK(quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(imageview)) == FALSE);
+
+    /* Second image thumbnail arrives with reset_view_mode = TRUE: starts transition */
+    quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(imageview), t2_thumb, 50, 50, TRUE);
+    CHECK(quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(imageview)) == TRUE);
+
+    /* Allow 2 frames to tick */
+    settle(2);
+    CHECK(quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(imageview)) == TRUE);
+
+    /* Full-res decode of second image arrives with reset_view_mode = FALSE: transition MUST NOT be aborted */
+    quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(imageview), t2_full, 200, 200, FALSE);
+    CHECK(quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(imageview)) == TRUE);
+
+    /* Settle enough to complete the 0.5s transition */
+    settle(45);
+    CHECK(quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(imageview)) == FALSE);
+
+    g_object_unref(t1);
+    g_object_unref(t2_thumb);
+    g_object_unref(t2_full);
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+}
+
+TEST_CASE("Viewer slideshow activates crossfade transition on advance",
+          "[unit][viewer][slideshow][transition]")
+{
+    REQUIRE_DISPLAY();
+
+    PreferencesPtr prefs = Preferences::GetInstance();
+    prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, true);
+    prefs->SetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION, 1000);
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_rotated.jpg");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 20) {
+        for (int i = 0; i < rounds; ++i) {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(15000);
+        }
+    };
+    settle(30);
+
+    GtkWidget *iv = viewer->GetImageView();
+    REQUIRE(iv != nullptr);
+    CHECK(quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(iv)) == FALSE);
+
+    viewer->SlideShowStart();
+    CHECK(quiver_image_view_get_enable_transitions(QUIVER_IMAGE_VIEW(iv)) == TRUE);
+
+    /* Wait for slideshow advance timer (~1s) and check that a transition occurs */
+    bool saw_transition = false;
+    for (int i = 0; i < 150; ++i) {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(15000);
+        if (quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(iv))) {
+            saw_transition = true;
+            break;
+        }
+    }
+    CHECK(saw_transition == true);
+
+    viewer->SlideShowStop();
+    CHECK(quiver_image_view_get_enable_transitions(QUIVER_IMAGE_VIEW(iv)) == FALSE);
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+
+
 

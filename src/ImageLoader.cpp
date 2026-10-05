@@ -427,12 +427,14 @@ void ImageLoader::LoadImage(QuiverFile f)
 	LoadImage(f,p);
 }
 
-void ImageLoader::LoadImageAtSize(QuiverFile f, int width, int height)
+void ImageLoader::LoadImageAtSize(QuiverFile f, int width, int height, bool bPreviewLoaded /* = false */)
 {
 	LoadParams p = {};
 	p.state = LOAD;
 	p.max_width = width;
 	p.max_height = height;
+	p.no_thumb_preview = bPreviewLoaded;
+	p.loaded_quick_preview = bPreviewLoaded;
 	LoadImage(f,p);
 }
 

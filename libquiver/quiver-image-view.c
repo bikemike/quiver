@@ -2387,7 +2387,10 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 		old_texture = g_object_ref(imageview->priv->texture);
 	}
 
-	quiver_image_view_transition_stop(imageview);
+	if (reset_view_mode || !imageview->priv->in_transition)
+	{
+		quiver_image_view_transition_stop(imageview);
+	}
 	quiver_image_view_animation_frames_stop(imageview);
 
 	/* Whatever happens to the framing, the old picture's pending work is the
@@ -2396,13 +2399,6 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 	 * finish against the picture that has just replaced the one they were
 	 * started for, so they are torn down here for every delivery. */
 	quiver_image_view_prepare_for_new_pixbuf(imageview, width, height);
-
-	if (NULL != old_texture)
-	{
-		imageview->priv->transition_texture_old = old_texture;
-		imageview->priv->transition_old_w = old_w;
-		imageview->priv->transition_old_h = old_h;
-	}
 
 	if (NULL != texture)
 	{
@@ -2462,14 +2458,29 @@ void quiver_image_view_set_texture_at_size_ex(QuiverImageView *imageview, GdkTex
 	}
 
 	if (1 == gtk_widget_get_width(widget) || 1 == gtk_widget_get_height(widget))
-		return;
-
-	if (imageview->priv->transitions_enabled && reset_view_mode && NULL != imageview->priv->transition_texture_old)
 	{
+		if (NULL != old_texture)
+		{
+			g_object_unref(old_texture);
+			old_texture = NULL;
+		}
+		return;
+	}
+
+	if (imageview->priv->transitions_enabled && reset_view_mode && NULL != old_texture && NULL != imageview->priv->texture)
+	{
+		imageview->priv->transition_texture_old = old_texture;
+		imageview->priv->transition_old_w = old_w;
+		imageview->priv->transition_old_h = old_h;
 		quiver_image_view_transition_start(imageview);
 	}
 	else
 	{
+		if (NULL != old_texture)
+		{
+			g_object_unref(old_texture);
+			old_texture = NULL;
+		}
 		gtk_widget_queue_draw(widget);
 	}
 }
@@ -3317,7 +3328,10 @@ void quiver_image_view_activate(QuiverImageView *imageview)
 /* end public functions */
 static void quiver_image_view_prepare_for_new_pixbuf(QuiverImageView *imageview, gint new_width, gint new_height)
 {
-	quiver_image_view_transition_stop(imageview);
+	if (!imageview->priv->in_transition)
+	{
+		quiver_image_view_transition_stop(imageview);
+	}
 	
 	if (0 != imageview->priv->magnification_timeout_id)
 	{

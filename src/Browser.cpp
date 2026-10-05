@@ -1822,7 +1822,10 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 		
 		if (gtk_widget_get_mapped(m_pImageView))
 		{
-			GdkTexture *cached_thumb = m_ThumbnailCache.GetTexture(f.GetURI());
+			GdkTexture *cached_thumb = m_ImageLoader.InCache(f.GetURI())
+				? NULL
+				: m_ThumbnailCache.GetTexture(f.GetURI());
+			bool bPreviewShown = false;
 			if (NULL != cached_thumb)
 			{
 				int w = f.GetWidth();
@@ -1838,9 +1841,10 @@ void Browser::BrowserImpl::SetImageIndex(int index, bool bDirectionForward, bool
 				}
 				quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(m_pImageView), cached_thumb, w, h, TRUE);
 				g_object_unref(cached_thumb);
+				bPreviewShown = true;
 			}
 			
-			m_ImageLoader.LoadImageAtSize(f,width,height);
+			m_ImageLoader.LoadImageAtSize(f, width, height, bPreviewShown);
 			
 			if (bDirectionForward)
 			{

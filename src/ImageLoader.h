@@ -51,7 +51,7 @@ public:
 	 * already holds - which is a different question from whether one can be
 	 * produced, and cannot be answered from the thumbnail cache. */
 	bool InCache(std::string uri) { return m_ImageCache.InCache(uri); }
-	void LoadImageAtSize(QuiverFile, int width, int height);
+	void LoadImageAtSize(QuiverFile, int width, int height, bool bPreviewLoaded = false);
 	void LoadImage(QuiverFile,LoadParams load_params);	
 	void ReloadImage(QuiverFile);
 
