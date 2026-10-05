@@ -88,7 +88,6 @@ target_link_libraries(quiver_core PUBLIC
     PkgConfig::GTK4
     PkgConfig::GIO
     PkgConfig::EXIV2
-    PkgConfig::LIBSQLITE
     PkgConfig::GSTREAMER
     PkgConfig::FFMPEG
     JPEG::JPEG
