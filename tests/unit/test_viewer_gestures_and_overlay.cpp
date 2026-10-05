@@ -3986,3 +3986,62 @@ TEST_CASE("Viewer hands the pointer back when it leaves for the browser", "[unit
     while (g_main_context_iteration(NULL, FALSE));
     viewer.reset();
 }
+
+TEST_CASE("Viewer preserves user zoom when full image loads after quick preview",
+          "[unit][viewer][zoom]")
+{
+    REQUIRE_DISPLAY();
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 40) {
+        for (int i = 0; i < rounds; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(15000);
+        }
+    };
+    settle();
+
+    QuiverImageView *view = QUIVER_IMAGE_VIEW(viewer->GetImageView());
+    REQUIRE(view != nullptr);
+
+    /* Start in FIT_WINDOW_STRETCH mode */
+    quiver_image_view_set_view_mode(view, QUIVER_IMAGE_VIEW_MODE_FIT_WINDOW_STRETCH);
+    settle(20);
+
+    /* Zoom in while viewing */
+    GAction *zoom_in = QuiverUtils::GetAction("ZoomIn");
+    REQUIRE(zoom_in != nullptr);
+    g_action_activate(zoom_in, NULL);
+    g_action_activate(zoom_in, NULL);
+    settle(10);
+    REQUIRE(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+    const double zoomed_mag = quiver_image_view_get_magnification(view);
+    REQUIRE(zoomed_mag > 1.0);
+
+    /* Settle thoroughly to ensure full-size decode completes and delivers */
+    settle(60);
+
+    /* The zoom must be preserved and NOT reset back to fit window */
+    CHECK(quiver_image_view_get_view_mode(view) == QUIVER_IMAGE_VIEW_MODE_ZOOM);
+    CHECK(quiver_image_view_get_magnification(view) == Catch::Approx(zoomed_mag).margin(0.01));
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+

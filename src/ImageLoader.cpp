@@ -759,7 +759,7 @@ void ImageLoader::Load()
 			if (0 != strcmp(m_Command.quiverFile.GetURI(),""))
 			{
 				bool bLoadWasFailed = m_ImageCache.HasFailed(m_Command.quiverFile.GetURI());
-				bool bLoadedQuickPreview = LoadQuickPreview();
+				bool bLoadedQuickPreview = m_Command.params.loaded_quick_preview || LoadQuickPreview();
 				bool bAborted = false;
 				bool bReoriented = false;
 				/* The pixels come out of the decoder as stored, so this flag says
@@ -878,7 +878,7 @@ void ImageLoader::Load()
 						g_mutex_lock(&m_csObservers);
 						for (itr = m_observers.begin();itr != m_observers.end() ; ++itr)
 						{
-							if (m_Command.params.reload && m_Command.params.fullsize)
+							if (m_Command.params.fullsize)
 							{
 							}
 							else if (!bAnimatedMime)
@@ -1013,7 +1013,7 @@ if (NULL != anim_frames && anim_count >= 2)
 						m_ImageCache.RemoveFailure(m_Command.quiverFile.GetURI());
 					}
 
-					bool bResetViewMode = m_Command.params.reload ? false : !bLoadedQuickPreview;
+					bool bResetViewMode = (m_Command.params.reload || m_Command.params.fullsize || m_Command.params.loaded_quick_preview) ? false : !bLoadedQuickPreview;
 					/* The decode finished after the view had already moved on.
 					 * The texture belongs to a file that is no longer on screen,
 					 * and handing it over is what paints the previous picture
@@ -1097,7 +1097,7 @@ if (NULL != anim_frames && anim_count >= 2)
 			DeclaredSize(m_Command.quiverFile.GetWidth(),
 			             m_Command.quiverFile.GetHeight(),
 			             m_Command.params.orientation, &width, &height);
-			bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+			bool bResetViewMode = (m_Command.params.reload || m_Command.params.fullsize || m_Command.params.loaded_quick_preview) ? false : !m_Command.params.loaded_quick_preview;
 			if (!NewerLoadPending())
 			{
 				NotifyObservers(texture, width, height, bResetViewMode);
@@ -1359,7 +1359,7 @@ if (CACHE_LOAD == m_Command.params.state)
 					DeclaredSize(m_Command.quiverFile.GetWidth(),
 					             m_Command.quiverFile.GetHeight(),
 					             iRestedAt, &width, &height);
-						bool bResetViewMode = !m_Command.params.loaded_quick_preview;
+						bool bResetViewMode = (m_Command.params.reload || m_Command.params.fullsize || m_Command.params.loaded_quick_preview) ? false : !m_Command.params.loaded_quick_preview;
 						if (!NewerLoadPending())
 						{
 							NotifyObservers(cache_texture, width, height, bResetViewMode);

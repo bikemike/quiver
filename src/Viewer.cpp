@@ -536,7 +536,8 @@ static gboolean idle_set_pixbuf_v(gpointer data) {
 		 * path sends NULL */
 		show_image_load_error(p->pTarget->pErrorLabel, p->pixbuf == NULL);
 		if (p->bAtSize) {
-			quiver_image_view_set_pixbuf_at_size_ex(p->pTarget->pImageView, p->pixbuf, p->width, p->height, p->bReset);
+			gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(p->pTarget->pImageView), p->bReset);
+			quiver_image_view_set_pixbuf_at_size_ex(p->pTarget->pImageView, p->pixbuf, p->width, p->height, bReset);
 		} else {
 			quiver_image_view_set_pixbuf(p->pTarget->pImageView, p->pixbuf);
 		}
@@ -559,8 +560,9 @@ static gboolean idle_set_texture_v(gpointer data) {
 		if (p->bAtSize) {
 			/* a video's own preview arrives here, and the video's zoom and pan
 			 * are what it has to be shown at */
+			gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(p->pTarget->pImageView), p->bReset);
 			frame_video_preview_from_video(p->pTarget->pImageView, p->texture,
-				p->width, p->height, p->bReset, p->pTarget->pOwner);
+				p->width, p->height, bReset, p->pTarget->pOwner);
 		} else {
 			quiver_image_view_set_texture(p->pTarget->pImageView, p->texture);
 		}
@@ -578,8 +580,9 @@ static gboolean idle_set_animation_frames_v(gpointer data) {
 		show_image_load_error(p->pTarget->pErrorLabel, FALSE);
 		/* a video's preview arrives as frames, and is framed like any other
 		 * delivery: the flag, the picture, then the video's zoom and pan */
+		gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(p->pTarget->pImageView), p->bReset);
 		frame_video_preview_from_frames(p->pTarget->pImageView, p->frames, p->count,
-			p->delays, p->width, p->height, p->bReset, p->pTarget->pOwner);
+			p->delays, p->width, p->height, bReset, p->pTarget->pOwner);
 	}
 	quiver_animation_frames_free(p->frames, p->delays, p->count);
 	view_pixbuf_target_unref(p->pTarget);
@@ -624,13 +627,13 @@ public:
 		}
 	};
 	virtual void SetPixbufAtSize(GdkPixbuf *pixbuf, gint width, gint height, bool bResetViewMode = true ){
-		gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 		if (ThreadUtil::IsGUIThread()) {
+			gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 			show_image_load_error(m_pTarget->pErrorLabel, false);
 			quiver_image_view_set_pixbuf_at_size_ex(m_pTarget->pImageView,pixbuf,width,height,bReset);
 		} else {
 			if (pixbuf) g_object_ref(pixbuf);
-			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, width, height, bReset, true};
+			AsyncPixbufData *data = new AsyncPixbufData{m_pTarget, pixbuf, width, height, bResetViewMode ? TRUE : FALSE, true};
 			view_pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_pixbuf_v, data, NULL);
 		}
@@ -648,8 +651,8 @@ public:
 		}
 	};
 	virtual void SetTextureAtSize(GdkTexture *texture, gint width, gint height, bool bResetViewMode = true ){
-		gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 		if (ThreadUtil::IsGUIThread()) {
+			gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 			show_image_load_error(m_pTarget->pErrorLabel, false);
 			/* a video's own preview arrives here, and the video's zoom and pan
 			 * are what it has to be shown at */
@@ -657,15 +660,15 @@ public:
 				width, height, bReset, m_pTarget->pOwner);
 		} else {
 			if (texture) g_object_ref(texture);
-			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, width, height, bReset, true};
+			AsyncTextureData *data = new AsyncTextureData{m_pTarget, texture, width, height, bResetViewMode ? TRUE : FALSE, true};
 			view_pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_texture_v, data, NULL);
 		}
 	};
 	virtual void SetAnimationFrames(GdkTexture **frames, gint *delays_ms, gsize n_frames,
 	                               gint width, gint height, bool bResetViewMode = true ){
-		gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 		if (ThreadUtil::IsGUIThread()) {
+			gboolean bReset = Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pTarget->pImageView), bResetViewMode);
 			show_image_load_error(m_pTarget->pErrorLabel, false);
 			/* a video's preview arrives as frames, and is framed like any other
 			 * delivery: the flag, the picture, then the video's zoom and pan */
@@ -674,7 +677,7 @@ public:
 			quiver_animation_frames_free(frames, delays_ms, n_frames);
 		} else {
 			AsyncAnimationFramesData *data = new AsyncAnimationFramesData{
-				m_pTarget, frames, delays_ms, n_frames, width, height, bReset};
+				m_pTarget, frames, delays_ms, n_frames, width, height, bResetViewMode ? TRUE : FALSE};
 			view_pixbuf_target_ref(m_pTarget);
 			g_idle_add_full(G_PRIORITY_HIGH, idle_set_animation_frames_v, data, NULL);
 		}
@@ -715,8 +718,8 @@ public:
 	int  GetMaximizedOrientation(QuiverFile f, bool bCombinedWithFileOrientation = false);
 
 	void CacheImageAtSize(QuiverFile f, int w, int h);
-	void LoadImageAtSize(QuiverFile f, int w, int h);
-	void LoadImage(QuiverFile f);
+	void LoadImageAtSize(QuiverFile f, int w, int h, bool bPreviewLoaded = false);
+	void LoadImage(QuiverFile f, bool bPreviewLoaded = false);
 	void GrowDecodeSizeForZoom(QuiverFile f, gint &width, gint &height);
 
 	void SetCurrentOrientation(int iOrientation, bool bUpdateExif = true);
@@ -1902,7 +1905,7 @@ void Viewer::ViewerImpl::CacheImageAtSize(QuiverFile f, int w, int h)
 	}
 }
 
-void Viewer::ViewerImpl::LoadImage(QuiverFile f)
+void Viewer::ViewerImpl::LoadImage(QuiverFile f, bool bPreviewLoaded /* = false */)
 {
 	gint width=0, height=0;
 
@@ -1935,7 +1938,7 @@ void Viewer::ViewerImpl::LoadImage(QuiverFile f)
 
 	GrowDecodeSizeForZoom(f, width, height);
 
-	LoadImageAtSize(f, width, height);
+	LoadImageAtSize(f, width, height, bPreviewLoaded);
 }
 
 /* Zoomed modes scale the image up on screen, so past 1:1 the widget-sized
@@ -1971,24 +1974,18 @@ void Viewer::ViewerImpl::GrowDecodeSizeForZoom(QuiverFile f, gint &width, gint &
 		height = zoom_height;
 }
 
-void Viewer::ViewerImpl::LoadImageAtSize(QuiverFile f, int w, int h)
+void Viewer::ViewerImpl::LoadImageAtSize(QuiverFile f, int w, int h, bool bPreviewLoaded /* = false */)
 {
-	if (m_bMaximizeViewableArea)
-	{
-		ImageLoader::LoadParams params = {};
-		params.orientation = GetCurrentOrientation(true);
-		params.max_width = w;
-		params.max_height = h;
-		params.reload = false;
-		params.fullsize = false;
-		params.no_thumb_preview = false;
-		params.state = ImageLoader::LOAD;
-		m_ImageLoader.LoadImage(f,params);
-	}
-	else
-	{
-		m_ImageLoader.LoadImageAtSize(f,w,h);
-	}
+	ImageLoader::LoadParams params = {};
+	params.orientation = m_bMaximizeViewableArea ? GetCurrentOrientation(true) : f.GetOrientation();
+	params.max_width = w;
+	params.max_height = h;
+	params.reload = false;
+	params.fullsize = false;
+	params.no_thumb_preview = bPreviewLoaded;
+	params.loaded_quick_preview = bPreviewLoaded;
+	params.state = ImageLoader::LOAD;
+	m_ImageLoader.LoadImage(f,params);
 }
 
 void Viewer::ViewerImpl::CacheNext(bool bDirectionForward)
@@ -2154,6 +2151,7 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		GdkTexture *cached_thumb = m_ImageLoader.InCache(f.GetURI())
 			? NULL
 			: m_ThumbnailCache.GetTexture(f.GetURI());
+		bool bPreviewShown = false;
 		if (NULL != cached_thumb)
 		{
 			int w = f.GetWidth();
@@ -2173,9 +2171,10 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 			quiver_image_view_set_texture_at_size_ex(QUIVER_IMAGE_VIEW(m_pImageView), cached_thumb, w, h,
 				Viewer::ShouldResetViewForNewImage(GTK_WIDGET(m_pImageView), TRUE));
 			g_object_unref(cached_thumb);
+			bPreviewShown = true;
 		}
 		
-		LoadImage(f);
+		LoadImage(f, bPreviewShown);
 		
 		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
 		      m_ImageListPtr->GetCurrentIndex() );	
@@ -4643,6 +4642,7 @@ static void viewer_imageview_reload(QuiverImageView *imageview,gpointer data)
 	params.reload = false;
 	params.fullsize = true;
 	params.no_thumb_preview = true;
+	params.loaded_quick_preview = true;
 	params.state = ImageLoader::LOAD;
 
 	pViewerImpl->m_ImageLoader.LoadImage(pViewerImpl->m_ImageListPtr->GetCurrent(),params);
@@ -6271,24 +6271,32 @@ void Viewer::ViewerImpl::ApplyVideoPreviewZoom(gdouble zoom)
 {
 	QuiverImageView* iv = QUIVER_IMAGE_VIEW(m_pImageView);
 	if (NULL == iv || !QUIVER_IS_IMAGE_VIEW(iv) || zoom <= 0.)
+	{
 		return;
+	}
 	/* the preview is only on screen while the video page is still deferred */
 	if (m_pStack != NULL && GTK_IS_STACK(m_pStack))
 	{
 		GtkWidget* page = gtk_stack_get_visible_child(GTK_STACK(m_pStack));
 		if (page != m_pImageView)
+		{
 			return;
+		}
 	}
 
 	GdkTexture* tex = quiver_image_view_get_texture(iv);
 	if (NULL == tex || m_ImageListPtr == NULL)
+	{
 		return;
+	}
 
 	QuiverFile vf = m_ImageListPtr->GetCurrent();
 	gint videoW = vf.GetWidth();
 	gint videoH = vf.GetHeight();
 	if (videoW <= 0 || videoH <= 0)
+	{
 		return;
+	}
 
 	/* The size to scale the zoom by is the size of the *picture*, not of the
 	 * texture holding it: a magnification is relative to the picture and a zoom
@@ -6298,15 +6306,26 @@ void Viewer::ViewerImpl::ApplyVideoPreviewZoom(gdouble zoom)
 	 * two magnifications. */
 	gint pictureW = 0, pictureH = 0;
 	if (!GetPreviewPictureSize(&pictureW, &pictureH))
+	{
 		return;
+	}
 
 	/* show the preview at the size the video will occupy at this zoom, so the
 	 * framing the user chose is the framing playback starts with */
 	gdouble mag = zoom * ((gdouble)videoW / (gdouble)pictureW);
 	if (mag <= 0. || mag > 16.)
+	{
 		return;
+	}
 
 	BorrowImageViewForPreviewZoom();
+	if (zoom > m_dVideoZoomMin + 0.005 || mag > 1.0)
+	{
+		if (!viewer_view_mode_is_zoomed(quiver_image_view_get_view_mode(iv)))
+		{
+			quiver_image_view_set_view_mode(iv, QUIVER_IMAGE_VIEW_MODE_ZOOM);
+		}
+	}
 	{
 		/* Where it is looking stays where it was looking.  While the view is
 		 * showing this video's own preview, its centre is that pan already; when
@@ -8779,7 +8798,12 @@ void Viewer::ViewerImpl::FrameVideoPreviewFromVideo(gboolean bNewPicture)
 	}
 
 	/* the same on-screen scale the video will have: picture * mag == frame * zoom */
-	gdouble mag = m_dVideoZoom * ((gdouble)videoW / (gdouble)picture_width);
+	gdouble current_video_zoom = m_dVideoZoom;
+	if (current_video_zoom <= m_dVideoZoomMin + 0.005 && m_dVideoZoomFinal > m_dVideoZoomMin + 0.005)
+	{
+		current_video_zoom = m_dVideoZoomFinal;
+	}
+	gdouble mag = current_video_zoom * ((gdouble)videoW / (gdouble)picture_width);
 	if (mag <= 0. || mag > 16.)
 	{
 		m_bFramingVideoPreview = bWasFraming;
@@ -8796,6 +8820,13 @@ void Viewer::ViewerImpl::FrameVideoPreviewFromVideo(gboolean bNewPicture)
 	gdouble center_y = m_fVideoPanFY;
 
 	BorrowImageViewForPreviewZoom();
+	if (current_video_zoom > m_dVideoZoomMin + 0.005 || mag > 1.0)
+	{
+		if (!viewer_view_mode_is_zoomed(quiver_image_view_get_view_mode(iv)))
+		{
+			quiver_image_view_set_view_mode(iv, QUIVER_IMAGE_VIEW_MODE_ZOOM);
+		}
+	}
 	/* the pan as a fraction of the picture, which is a fraction of the frame:
 	 * a preview of a video has the frame's aspect, so it is the same point.
 	 * Both at once and at once: a zoom that eases in passes through a
@@ -8826,6 +8857,10 @@ static void frame_video_preview_from_frames(QuiverImageView *imageview, GdkTextu
 	{
 		impl->m_bFramingVideoPreview = true;
 		impl->m_sPreviewPanItem.clear();
+		if (impl->IsVideo() && impl->m_bVideoZoomFromPreview)
+		{
+			reset_view_mode = FALSE;
+		}
 	}
 	if (imageview != NULL && QUIVER_IS_IMAGE_VIEW(imageview))
 		quiver_image_view_set_animation_frames(imageview, frames, delays_ms, n_frames,
@@ -8846,6 +8881,10 @@ static void frame_video_preview_from_video(QuiverImageView *imageview, GdkTextur
 	{
 		impl->m_bFramingVideoPreview = true;
 		impl->m_sPreviewPanItem.clear();
+		if (impl->IsVideo() && impl->m_bVideoZoomFromPreview)
+		{
+			reset_view_mode = FALSE;
+		}
 	}
 	if (imageview != NULL && QUIVER_IS_IMAGE_VIEW(imageview) && texture != NULL)
 		quiver_image_view_set_texture_at_size_ex(imageview, texture, width, height, reset_view_mode);
