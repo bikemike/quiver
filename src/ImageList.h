@@ -94,6 +94,8 @@ public:
 	QuiverFile const operator[](unsigned int n) const;
 
 	void Sort(SortBy o, bool bSortAscending = true, bool bAsync = false);
+	SortBy GetSortBy() const;
+	bool GetSortAscending() const;
 
 public:
 	class ImageListImpl;

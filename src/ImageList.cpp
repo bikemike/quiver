@@ -541,10 +541,20 @@ void ImageList::Sort(SortBy o, bool bSortAscending, bool bAsync)
 	
 	m_ImageListImplPtr->Sort(o, bSortAscending, true, bAsync);
 
-	if (bNewOrder || iOldIndex != GetCurrentIndex())
+	if (GetSize() > 0 && (bNewOrder || iOldIndex != GetCurrentIndex()))
 	{
 		EmitContentsChangedEvent();
 	}
+}
+
+ImageList::SortBy ImageList::GetSortBy() const
+{
+	return m_ImageListImplPtr->m_SortBy;
+}
+
+bool ImageList::GetSortAscending() const
+{
+	return m_ImageListImplPtr->m_bSortAscend;
 }
 
 void ImageList::Reload()
@@ -563,8 +573,15 @@ void ImageList::Reload()
 void ImageList::Reverse()
 {
 	m_ImageListImplPtr->m_bSortAscend = !m_ImageListImplPtr->m_bSortAscend;
-	std::reverse(m_ImageListImplPtr->m_QuiverFileList.begin(),m_ImageListImplPtr->m_QuiverFileList.end());
-	m_ImageListImplPtr->m_iCurrentIndex = GetSize() - m_ImageListImplPtr->m_iCurrentIndex -1;
+	if (!m_ImageListImplPtr->m_QuiverFileList.empty())
+	{
+		std::reverse(m_ImageListImplPtr->m_QuiverFileList.begin(),m_ImageListImplPtr->m_QuiverFileList.end());
+		m_ImageListImplPtr->m_iCurrentIndex = GetSize() - m_ImageListImplPtr->m_iCurrentIndex - 1;
+	}
+	else
+	{
+		m_ImageListImplPtr->m_iCurrentIndex = 0;
+	}
 	EmitContentsChangedEvent();
 }
 

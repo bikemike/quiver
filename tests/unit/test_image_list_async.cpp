@@ -11,7 +11,10 @@
 #include "IImageListEventHandler.h"
 #include "Browser.h"
 #include "Statusbar.h"
+#include "Preferences.h"
+#include "QuiverPrefs.h"
 #include "test_helpers.h"
+#include <utime.h>
 
 // Fills a directory with a small set of sample image files so the async
 // loader has something (and only something) to enumerate.
@@ -322,10 +325,106 @@ TEST_CASE("ImageList: Sort by file size ascending and descending",
     CHECK((*list)[0].GetFileSize() == 100);
     CHECK((*list)[1].GetFileSize() == 1000);
     CHECK((*list)[2].GetFileSize() == 10000);
-
     // Test SortByFileSize descending (largest first)
     list->Sort(ImageList::SORT_BY_FILE_SIZE, false, false);
     CHECK((*list)[0].GetFileSize() == 10000);
     CHECK((*list)[1].GetFileSize() == 1000);
     CHECK((*list)[2].GetFileSize() == 100);
+}
+
+TEST_CASE("ImageList: GetSortBy and GetSortAscending reflect sort state",
+          "[unit][imagelist]")
+{
+    ImageListPtr list(new ImageList());
+    CHECK(list->GetSortBy() == ImageList::SORT_BY_FILENAME_NATURAL);
+    CHECK(list->GetSortAscending() == true);
+
+    list->Sort(ImageList::SORT_BY_DATE, false, false);
+    CHECK(list->GetSortBy() == ImageList::SORT_BY_DATE);
+    CHECK(list->GetSortAscending() == false);
+
+    // Reversing an empty list toggles direction safely without underflow
+    list->Reverse();
+    CHECK(list->GetSortAscending() == true);
+    CHECK(list->GetCurrentIndex() == 0);
+}
+
+TEST_CASE("ImageList: Initial sort order (by date descending) applied on load",
+          "[unit][imagelist]")
+{
+    std::string dir = make_temp_dir();
+    std::string fileA = dir + "/a.jpg";
+    std::string fileB = dir + "/b.jpg";
+    std::string fileC = dir + "/c.jpg";
+
+    std::string src = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    gchar* data = nullptr;
+    gsize len = 0;
+    REQUIRE(g_file_get_contents(src.c_str(), &data, &len, nullptr));
+    REQUIRE(g_file_set_contents(fileA.c_str(), data, (gssize)len, nullptr));
+    REQUIRE(g_file_set_contents(fileB.c_str(), data, (gssize)len, nullptr));
+    REQUIRE(g_file_set_contents(fileC.c_str(), data, (gssize)len, nullptr));
+    g_free(data);
+
+    struct utimbuf tb;
+    tb.actime = 1000000;
+    tb.modtime = 1000000;
+    utime(fileA.c_str(), &tb);
+
+    tb.actime = 2000000;
+    tb.modtime = 2000000;
+    utime(fileB.c_str(), &tb);
+
+    tb.actime = 3000000;
+    tb.modtime = 3000000;
+    utime(fileC.c_str(), &tb);
+
+    std::string uri = path_to_uri(dir);
+    ImageListPtr list(new ImageList());
+
+    // Configure sort order before loading files, matching app startup with saved prefs
+    list->Sort(ImageList::SORT_BY_DATE, false, false);
+    REQUIRE(list->GetSortBy() == ImageList::SORT_BY_DATE);
+    REQUIRE(list->GetSortAscending() == false);
+
+    std::list<std::string> folders = { uri };
+    list->UpdateImageListAsync(&folders);
+
+    pump_until([&] { return list->GetSize() >= 3; });
+    REQUIRE(list->GetSize() == 3);
+
+    // Verify async loader pre-cached creation/mtime dates because sort mode is SORT_BY_DATE
+    CHECK((*list)[0].HasCachedTimeT());
+    CHECK((*list)[1].HasCachedTimeT());
+    CHECK((*list)[2].HasCachedTimeT());
+
+    // Verify descending date order (most recent first: C, then B, then A)
+    CHECK((*list)[0].GetTimeT() >= (*list)[1].GetTimeT());
+    CHECK((*list)[1].GetTimeT() >= (*list)[2].GetTimeT());
+    CHECK((*list)[0].GetFilePath() == fileC);
+    CHECK((*list)[2].GetFilePath() == fileA);
+}
+
+TEST_CASE("ImageList: Preferences sort order application",
+          "[unit][imagelist]")
+{
+    PreferencesPtr prefs = Preferences::GetInstance();
+    int savedSortBy = prefs->GetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, ImageList::SORT_BY_FILENAME_NATURAL);
+    bool savedReversed = prefs->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, false);
+
+    // Simulate saved sort-by-date reversed
+    prefs->SetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, ImageList::SORT_BY_DATE);
+    prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, true);
+
+    ImageListPtr list(new ImageList());
+    int sortby = prefs->GetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, ImageList::SORT_BY_FILENAME_NATURAL);
+    bool bDec = prefs->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, false);
+    list->Sort((ImageList::SortBy)sortby, !bDec, false);
+
+    CHECK(list->GetSortBy() == ImageList::SORT_BY_DATE);
+    CHECK(list->GetSortAscending() == false);
+
+    // Restore original prefs
+    prefs->SetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, savedSortBy);
+    prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, savedReversed);
 }

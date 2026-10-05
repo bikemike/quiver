@@ -2084,6 +2084,11 @@ void Quiver::SetWindowTitle(string s)
 
 void Quiver::ImageChanged()
 {
+	if (!m_QuiverImplPtr || !m_QuiverImplPtr->m_bInitialized)
+	{
+		return;
+	}
+
 	if ( m_QuiverImplPtr->m_ImageListPtr->GetSize() )
 	{
 		QuiverFile f = m_QuiverImplPtr->m_ImageListPtr->GetCurrent();
@@ -2622,12 +2627,16 @@ void Quiver::Init()
 
 	{
 		int sortby = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_BY,ImageList::SORT_BY_FILENAME_NATURAL);
+		if (sortby < ImageList::SORT_BY_FILENAME || sortby > ImageList::SORT_BY_RANDOM)
+		{
+			sortby = ImageList::SORT_BY_FILENAME_NATURAL;
+		}
 		QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, sortby);
-	}
 
-	{
 		bool bDec = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_REVERSED,false);
 		QuiverUtils::ToggleActionSetActive(ACTION_QUIVER_SORT_DESCENDING, bDec);
+
+		m_QuiverImplPtr->m_ImageListPtr->Sort((ImageList::SortBy)sortby, !bDec, false);
 	}
 
 	/* ToggleActionSetActive() only acts when the state actually changes, so
@@ -4017,6 +4026,7 @@ void Quiver::OnSlideShow(bool bStart)
 		if (bRandomOrder)
 		{
 			QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, ImageList::SORT_BY_RANDOM);
+			m_QuiverImplPtr->m_ImageListPtr->Sort(ImageList::SORT_BY_RANDOM, true, false);
 			m_QuiverImplPtr->m_ImageListPtr->SetCurrentIndex(0);
 		}
 
@@ -4028,7 +4038,17 @@ void Quiver::OnSlideShow(bool bStart)
 		PreferencesPtr prefsPtr = Preferences::GetInstance();
 		{
 			int sortby = prefsPtr->GetInteger(QUIVER_PREFS_APP,QUIVER_PREFS_APP_SORT_BY,ImageList::SORT_BY_FILENAME_NATURAL);
+			if (sortby < ImageList::SORT_BY_FILENAME || sortby > ImageList::SORT_BY_RANDOM)
+			{
+				sortby = ImageList::SORT_BY_FILENAME_NATURAL;
+			}
 			QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, sortby);
+			bool bDec = prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, false);
+			if (m_QuiverImplPtr->m_ImageListPtr->GetSortBy() != (ImageList::SortBy)sortby ||
+			    m_QuiverImplPtr->m_ImageListPtr->GetSortAscending() != !bDec)
+			{
+				m_QuiverImplPtr->m_ImageListPtr->Sort((ImageList::SortBy)sortby, !bDec, false);
+			}
 		}
 
 		m_QuiverImplPtr->m_ViewerPtr->SlideShowStop();
@@ -4059,7 +4079,17 @@ void Quiver::AbortSlideShow()
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	int sortby = prefsPtr->GetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, ImageList::SORT_BY_FILENAME_NATURAL);
+	if (sortby < ImageList::SORT_BY_FILENAME || sortby > ImageList::SORT_BY_RANDOM)
+	{
+		sortby = ImageList::SORT_BY_FILENAME_NATURAL;
+	}
 	QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_SORT_BY_NAME_NATURAL, sortby);
+	bool bDec = prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, false);
+	if (m_QuiverImplPtr->m_ImageListPtr->GetSortBy() != (ImageList::SortBy)sortby ||
+	    m_QuiverImplPtr->m_ImageListPtr->GetSortAscending() != !bDec)
+	{
+		m_QuiverImplPtr->m_ImageListPtr->Sort((ImageList::SortBy)sortby, !bDec, false);
+	}
 
 	m_QuiverImplPtr->m_ViewerPtr->SlideShowStop();
 	QuiverUtils::ToggleActionSetState(ACTION_QUIVER_SLIDESHOW, FALSE);
@@ -4790,22 +4820,37 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 
 void QuiverImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 { (void)event; 
-	parent->m_pQuiver->ImageChanged();
+	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	{
+		parent->m_pQuiver->ImageChanged();
+	}
 }
 void QuiverImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
 { (void)event; 
-	parent->m_pQuiver->ImageChanged();
+	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	{
+		parent->m_pQuiver->ImageChanged();
+	}
 }
 void QuiverImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
 { (void)event; 
-	parent->m_pQuiver->ImageChanged();
+	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	{
+		parent->m_pQuiver->ImageChanged();
+	}
 }
 void QuiverImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
 { (void)event; 
-	parent->m_pQuiver->ImageChanged();
+	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	{
+		parent->m_pQuiver->ImageChanged();
+	}
 }
 void QuiverImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
 { (void)event; 
-	parent->m_pQuiver->ImageChanged();
+	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	{
+		parent->m_pQuiver->ImageChanged();
+	}
 }
 
