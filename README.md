@@ -11,14 +11,13 @@ and manage bookmarks.
 | Dependency        | Purpose                       | Debian/Ubuntu package          | Fedora package                  |
 | ----------------- | ----------------------------- | ------------------------------ | ------------------------------- |
 | CMake >= 3.10     | Build system                  | `cmake`                        | `cmake`                         |
-| C/C++ compiler    | Compilation                   | `build-essential`              | `gcc gcc-c++`                   |
+| C++20 compiler    | Compilation                   | `build-essential`              | `gcc gcc-c++`                   |
 | pkg-config        | Locating libraries            | `pkg-config`                   | `pkgconf-pkg-config`            |
 | GTK 4            | GUI toolkit                   | `libgtk-4-dev`                 | `gtk4-devel`                    |
 | GLib / GIO        | Core library & I/O            | `libglib2.0-dev`               | `glib2-devel`                   |
 | libglycin         | Sandboxed image decoding      | `libglycin-2-dev`, `glycin-loaders` | `glycin-devel`, `glycin-loaders` |
 | libexiv2          | EXIF metadata editing         | `libexiv2-dev`                 | `exiv2-devel`                   |
-| libexif           | EXIF metadata reading         | `libexif-dev`                  | `libexif-devel`                 |
-| SQLite            | Database storage              | `libsqlite3-dev`               | `sqlite-devel`                  |
+| FFmpeg            | Video metadata & processing   | `libavformat-dev libavcodec-dev libavutil-dev libswscale-dev` | `ffmpeg-devel` |
 | GStreamer 1.0     | Video playback                | `libgstreamer1.0-dev`          | `gstreamer1-devel`              |
 | GStreamer plugins | Base plugins (video, GL, app) | `libgstreamer-plugins-base1.0-dev` | `gstreamer1-plugins-base-devel` |
 | libjpeg           | JPEG encode/decode            | `libjpeg-dev`                  | `libjpeg-turbo-devel`           |
@@ -99,6 +98,125 @@ To use an installed data directory instead:
 
 ```sh
 cmake -B build -DQUIVER_DATADIR=/usr/share/quiver
+```
+
+## External Tools
+
+Quiver allows you to integrate custom external tools, commands, and scripts to process your images and videos or integrate with desktop utilities.
+
+Access the configuration via **Tools → External Tools...** in the main menu.
+
+### Command Line Tokens
+
+When configuring a command line for an external tool, the following tokens are substituted:
+
+| Token | Description | Example Replacement |
+| :--- | :--- | :--- |
+| `%f` | Absolute path(s) to the selected file(s) | `"/home/user/Pictures/photo.jpg"` |
+| `%d` | Directory path(s) of the selected file(s) | `"/home/user/Pictures"` |
+
+- **Command supports multiple files**:
+  - When checked, all selected files are passed into a single execution (e.g. `my_script "%f"` expands to `my_script "photo1.jpg" "photo2.jpg"`).
+  - When unchecked, the command is executed once for each selected file in sequence.
+
+### Task Manager & Background Execution
+
+- **Only show in Task Manager on error**:
+  Check this option for fast launchers or desktop commands (e.g. `nautilus "%d"`, `gimp "%f"`, or clipboard scripts).
+  - On clean completion (exit code 0), the command runs silently in the background without popping up the Task Manager dialog or leaving completed items.
+  - If the command fails (non-zero exit code or spawn error), the Task Manager opens automatically with the error details and stderr expanded.
+- **Task Manager "Clear Finished"**:
+  When managing multiple tasks, click **Clear Finished** in the Task Manager header bar to dismiss all completed tasks in one click.
+
+### Keyboard Shortcuts
+
+You can assign custom hotkeys to any external tool:
+1. In the External Tool editor, click **Set Shortcut...**.
+2. Press the desired key combination (e.g. `<Control><Alt>O`, `F4`). Quiver automatically checks for conflicts against built-in shortcuts.
+3. The assigned accelerator will appear directly in the Tools menu and will activate the tool in both Browser and Viewer modes.
+4. External tool shortcuts can also be viewed and managed in **Preferences → Shortcuts** under the "External Tools" category.
+
+### Reporting Progress from Scripts
+
+Long-running external tools (e.g. batch image converters, watermarkers, video encoders) can stream real-time progress, status descriptions, and logs back to the Quiver Task Manager dialog.
+
+`ExternalToolTask` parses standard output line-by-line while executing. In addition, Quiver automatically sets `PYTHONUNBUFFERED=1` in the child environment so Python scripts stream immediately without pipe buffering.
+
+#### Supported Progress Protocols
+
+1. **Zenity Protocol (Classic Linux/GNOME shell scripts)**:
+   - Print an integer `0` to `100` on a line to update the progress percentage:
+     ```sh
+     echo "45"
+     ```
+   - Print a line starting with `#` to update the task status message:
+     ```sh
+     echo "# Optimizing image 3 of 10..."
+     ```
+2. **Prefix Directives (Self-documenting format)**:
+   - `PROGRESS: <0-100>`: Updates the progress fraction.
+   - `STATUS: <message>`: Updates the status description text.
+   - `PROGRESS: <0-100> | <message>`: Updates both fraction and message simultaneously.
+3. **Generic Percentage Matching**:
+   - Any line containing standard percentage patterns (e.g. `[ 45%]`, `45%`, `Progress: 45%`) emitted by tools like `ffmpeg`, `rsync`, or `curl`.
+4. **Live Log Output**:
+   - All standard output and standard error lines stream live into the expandable **Details** panel of the Task Manager.
+
+#### Script Examples
+
+##### Bash Script Example (`batch_resize.sh`):
+
+```bash
+#!/bin/bash
+# External tool command in Quiver: /path/to/batch_resize.sh %f
+# Supports multiple files: [x]
+
+TOTAL=$#
+CURRENT=0
+
+echo "STATUS: Starting batch resize of $TOTAL items..."
+
+for FILE in "$@"; do
+    ((CURRENT++))
+    PERCENT=$(( CURRENT * 100 / TOTAL ))
+    
+    # Update progress and status
+    echo "PROGRESS: $PERCENT | Processing ($CURRENT/$TOTAL): $(basename "$FILE")"
+    
+    # Process the file (e.g. with ImageMagick)
+    magick "$FILE" -resize 1920x1080\> "${FILE%.*}_resized.jpg"
+    
+    sleep 0.1
+done
+
+echo "STATUS: Finished processing $TOTAL items."
+echo "PROGRESS: 100"
+```
+
+##### Python Script Example (`optimize_images.py`):
+
+```python
+#!/usr/bin/env python3
+# External tool command in Quiver: python3 /path/to/optimize_images.py %f
+# Supports multiple files: [x]
+
+import sys
+import time
+
+files = sys.argv[1:]
+total = len(files)
+
+print(f"STATUS: Optimizing {total} files...", flush=True)
+
+for i, filepath in enumerate(files, 1):
+    pct = int((i / total) * 100)
+    print(f"PROGRESS: {pct} | [{i}/{total}] Optimizing {filepath}...", flush=True)
+    
+    # Perform your processing here
+    time.sleep(0.2)
+
+print("STATUS: Optimization complete!", flush=True)
+print("PROGRESS: 100", flush=True)
 ```
 
 ## Testing
