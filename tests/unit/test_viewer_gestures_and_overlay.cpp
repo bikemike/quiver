@@ -4228,5 +4228,98 @@ TEST_CASE("Viewer slideshow activates crossfade transition on advance",
     viewer.reset();
 }
 
+TEST_CASE("Viewer slideshow plays video without bringing up HUD or timeline or play button",
+          "[unit][viewer][slideshow][video]")
+{
+    REQUIRE_DISPLAY();
+
+    PreferencesPtr prefs = Preferences::GetInstance();
+    prefs->SetBoolean(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_TRANSITION, true);
+    prefs->SetInteger(QUIVER_PREFS_SLIDESHOW, QUIVER_PREFS_SLIDESHOW_DURATION, 1000);
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::string imgDir = QuiverTest_GetImagesDir();
+    std::list<std::string> files;
+    files.push_back(imgDir + "/sample_4k.jpg");
+    files.push_back(imgDir + "/sample_video.mp4");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 20) {
+        for (int i = 0; i < rounds; ++i) {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(15000);
+        }
+    };
+    settle(30);
+
+    GtkWidget *playBtn = viewer->GetCenterPlayButton();
+    GtkWidget *hudBar = viewer->GetViewerOverlayBar();
+    GtkWidget *timeline = viewer->GetTimelineRow();
+    REQUIRE(playBtn != nullptr);
+    REQUIRE(hudBar != nullptr);
+    REQUIRE(timeline != nullptr);
+
+    viewer->SlideShowStart();
+    REQUIRE(viewer->IsSlideShowRunning());
+
+    /* Wait for slideshow advance timer to reach the video */
+    for (int i = 0; i < 150; ++i) {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(15000);
+        if (list->GetCurrent().IsVideo()) {
+            break;
+        }
+    }
+    REQUIRE(list->GetCurrent().IsVideo());
+
+    /* Give a few ticks for video playback to begin */
+    settle(10);
+
+    /* While the video is playing in the slideshow and pointer is idle,
+     * HUD, timeline, and center play button must NOT be visible */
+    CHECK_FALSE(gtk_widget_get_visible(playBtn));
+    CHECK_FALSE(gtk_widget_get_visible(hudBar));
+    CHECK_FALSE(gtk_widget_get_visible(timeline));
+
+    /* Simulate pointer motion on the viewer */
+    GtkWidget *imgView = viewer->GetImageView();
+    GListModel *controllers = gtk_widget_observe_controllers(imgView);
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); i++)
+    {
+        GObject *obj = (GObject*)g_list_model_get_item(controllers, i);
+        if (GTK_IS_EVENT_CONTROLLER_MOTION(obj))
+        {
+            g_signal_emit_by_name(obj, "motion", 100.0, 100.0);
+        }
+        g_object_unref(obj);
+    }
+    g_object_unref(controllers);
+
+    settle(10);
+
+    /* Pointer movement brings up HUD and timeline, but not center play button */
+    CHECK(gtk_widget_get_visible(hudBar));
+    CHECK(gtk_widget_get_visible(timeline));
+    CHECK_FALSE(gtk_widget_get_visible(playBtn));
+
+    viewer->SlideShowStop();
+    viewer->StopVideo(false);
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+
+
 
 

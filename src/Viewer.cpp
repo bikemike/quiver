@@ -769,18 +769,28 @@ public:
 		if (IsPlaying())
 		{
 			m_bVideoPlaybackStarted = true;
-			m_bTimelineVisible = true;
-			UpdateTimelineVisibility();
+			bool in_active_slideshow = m_bSlideShowRunning && !m_bSlideShowPaused;
+			bool keep_visible = m_bPointerOverOverlayBar || IsPointerOverControls();
+			if (!in_active_slideshow || keep_visible)
+			{
+				m_bTimelineVisible = true;
+				UpdateTimelineVisibility();
+				/* show HUD via opacity fade-in */
+				viewer_controls_show(this);
+				StartControlsFade(true);
+			}
+			else
+			{
+				m_bTimelineVisible = false;
+				UpdateTimelineVisibility();
+			}
+
 			if (m_pPlayImage && GTK_IS_IMAGE(m_pPlayImage))
 				gtk_image_set_from_icon_name(GTK_IMAGE(m_pPlayImage), "media-playback-pause-symbolic");
 
 			/* hide center play button during playback */
 			if (m_pCenterPlayBtn)
 				gtk_widget_set_visible(m_pCenterPlayBtn, FALSE);
-
-			/* show HUD via opacity fade-in */
-			viewer_controls_show(this);
-			StartControlsFade(true);
 
 			m_iTimeoutPlayProgress = g_timeout_add(200,timeout_play_position,this);
 		}
@@ -5847,7 +5857,11 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 					g_object_set(G_OBJECT(m_pPipeline), "mute", m_bMuted ? TRUE : FALSE, NULL);
 				}
 				gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
-				TriggerPlayPauseAnimation(true);
+				bool in_active_slideshow = m_bSlideShowRunning && !m_bSlideShowPaused;
+				if (!in_active_slideshow)
+				{
+					TriggerPlayPauseAnimation(true);
+				}
 				RefreshAutoHideTimer();
 			}
 		}
@@ -5905,7 +5919,11 @@ void Viewer::ViewerImpl::PlayPauseVideo()
 		g_object_set(G_OBJECT(m_pPipeline), "volume", m_dVolume, NULL);
 		gst_element_set_state(GST_ELEMENT(m_pPipeline), GST_STATE_PLAYING);
 
-		TriggerPlayPauseAnimation(true);
+		bool in_active_slideshow = m_bSlideShowRunning && !m_bSlideShowPaused;
+		if (!in_active_slideshow)
+		{
+			TriggerPlayPauseAnimation(true);
+		}
 		RefreshAutoHideTimer();
 	}
 	g_free(uri);
@@ -11517,8 +11535,7 @@ static gboolean timeout_advance_slideshow (gpointer data)
 				if (pViewerImpl->IsVideo())
 				{
 					pViewerImpl->m_SlideShowState = Viewer::ViewerImpl::SLIDESHOW_STATE_PLAY_VIDEO;
-					// show the video image for one second before playing video
-					iWaitTime = 1000; 
+					iWaitTime = SLIDESHOW_WAIT_DURATION; 
 				}
 				else
 				{
@@ -12287,7 +12304,8 @@ void Viewer::ViewerImpl::UpdateHUDTooltips()
 void Viewer::ViewerImpl::UpdateCenterPlayButtonVisibility()
 {
 	if (!m_pCenterPlayBtn) return;
-	bool show = IsVideo() && !m_bVideoPlaybackStarted;
+	bool in_active_slideshow = m_bSlideShowRunning && !m_bSlideShowPaused;
+	bool show = IsVideo() && !m_bVideoPlaybackStarted && !in_active_slideshow;
 	gtk_widget_set_visible(m_pCenterPlayBtn, show);
 }
 
