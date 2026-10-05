@@ -212,8 +212,8 @@ void ShortcutManager::RegisterDefaultActions()
     });
     m_actions.push_back({
         "Close", "File & Window", "Close / Quit",
-        "Close viewer or exit application",
-        {"<Control>q", "q", "<Control>w", "Escape", "<Alt>F4"}, {"<Control>q", "q", "<Control>w", "Escape", "<Alt>F4"}, false
+        "Exit application",
+        {"<Control>q", "q", "<Control>w", "<Alt>F4"}, {"<Control>q", "q", "<Control>w", "<Alt>F4"}, false
     });
     m_actions.push_back({
         "Preferences", "File & Window", "Preferences",
@@ -512,6 +512,9 @@ void ShortcutManager::LoadFromPreferences()
             }
             if (def.action_name == "GoFolderParent" && loaded.size() == 1 && loaded[0] == "<Alt>Up") {
                 loaded.push_back("BackSpace");
+            }
+            if (def.action_name == "Close") {
+                loaded.erase(std::remove(loaded.begin(), loaded.end(), "Escape"), loaded.end());
             }
             def.current_accels = loaded;
         } else {

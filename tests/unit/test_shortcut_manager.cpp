@@ -115,6 +115,7 @@ TEST_CASE("ShortcutManager Default Action Registry", "[unit][shortcuts][fast]")
         REQUIRE(std::find(close_def->default_accels.begin(), close_def->default_accels.end(), "<Alt>F4") != close_def->default_accels.end());
         REQUIRE(std::find(close_def->default_accels.begin(), close_def->default_accels.end(), "q") != close_def->default_accels.end());
         REQUIRE(std::find(close_def->default_accels.begin(), close_def->default_accels.end(), "<Control>q") != close_def->default_accels.end());
+        REQUIRE(std::find(close_def->default_accels.begin(), close_def->default_accels.end(), "Escape") == close_def->default_accels.end());
     }
 
     SECTION("SuppressAllAccelerators for text input")
@@ -399,6 +400,17 @@ TEST_CASE("ShortcutManager Viewer/Browser Mode Transition and Secondary Action A
     accels_prev2 = gtk_application_get_accels_for_action(g_pApp, "quiver.ImagePrevious_2");
     REQUIRE((!accels_prev2 || !accels_prev2[0]));
     g_strfreev(accels_prev2);
+
+    // quiver.Close must NOT have Escape accelerator mapped on g_pApp
+    gchar **accels_close = gtk_application_get_accels_for_action(g_pApp, "quiver.Close");
+    if (accels_close) {
+        bool close_has_escape = false;
+        for (int i = 0; accels_close[i]; i++) {
+            if (std::string(accels_close[i]) == "Escape") close_has_escape = true;
+        }
+        CHECK_FALSE(close_has_escape);
+        g_strfreev(accels_close);
+    }
 
     if (created_app) {
         g_object_unref(g_pApp);
