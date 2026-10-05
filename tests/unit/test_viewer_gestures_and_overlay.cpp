@@ -4045,3 +4045,71 @@ TEST_CASE("Viewer preserves user zoom when full image loads after quick preview"
     viewer.reset();
 }
 
+TEST_CASE("Viewer filmstrip stays enabled in preferences and restores when exiting fullscreen",
+          "[unit][viewer][fullscreen][filmstrip]")
+{
+    REQUIRE_DISPLAY();
+
+    PreferencesPtr prefs = Preferences::GetInstance();
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, true);
+    prefs->SetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_HIDE_FS, true);
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> files;
+    files.push_back(QuiverTest_GetImagesDir() + "/sample_4k.jpg");
+    list->Add(&files);
+    viewer->SetImageList(list);
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 800, 600);
+    gtk_window_present(GTK_WINDOW(win));
+
+    auto settle = [](int rounds = 20) {
+        for (int i = 0; i < rounds; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(10000);
+        }
+    };
+    settle();
+
+    /* Filmstrip action must be active initially */
+    REQUIRE(QuiverUtils::ToggleActionGetActive("ViewFilmStrip") == TRUE);
+    REQUIRE(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, false) == true);
+
+    /* Hide filmstrip as done when entering fullscreen */
+    viewer->SetFilmstripHiddenByFS(true);
+    settle(10);
+
+    CHECK(viewer->IsFilmstripHiddenByFS() == true);
+    CHECK(gtk_widget_get_visible(viewer->GetFilmstripWidget()) == FALSE);
+    /* Action and preference MUST remain active/true */
+    CHECK(QuiverUtils::ToggleActionGetActive("ViewFilmStrip") == TRUE);
+    CHECK(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, false) == true);
+
+    /* UpdateUI must not turn off ViewFilmStrip action or preference */
+    viewer->UpdateUI();
+    settle(10);
+    CHECK(QuiverUtils::ToggleActionGetActive("ViewFilmStrip") == TRUE);
+    CHECK(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, false) == true);
+
+    /* Restore filmstrip on exiting fullscreen */
+    viewer->SetFilmstripHiddenByFS(false);
+    settle(20);
+
+    CHECK(viewer->IsFilmstripHiddenByFS() == false);
+    CHECK(gtk_widget_get_visible(viewer->GetFilmstripWidget()) == TRUE);
+    CHECK(QuiverUtils::ToggleActionGetActive("ViewFilmStrip") == TRUE);
+    CHECK(prefs->GetBoolean(QUIVER_PREFS_VIEWER, QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW, false) == true);
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+
+

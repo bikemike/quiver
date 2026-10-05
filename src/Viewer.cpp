@@ -1768,16 +1768,6 @@ void Viewer::ViewerImpl::UpdateUI()
 		QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_ROTATE_FOR_BEST_FIT, bMaximize ? TRUE : FALSE);
 
 		bool bShowFilmStrip = prefsPtr->GetBoolean(QUIVER_PREFS_VIEWER,QUIVER_PREFS_VIEWER_FILMSTRIP_SHOW);
-		bool bFS = false;
-		if (m_pOverlay)
-		{
-			GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(m_pOverlay));
-			bFS = root && GTK_IS_WINDOW(root) && gtk_window_is_fullscreen(GTK_WINDOW(root));
-		}
-		if (bFS && m_bHideFilmstripFS)
-		{
-			bShowFilmStrip = false;
-		}
 		QuiverUtils::ToggleActionSetActive(ACTION_VIEWER_VIEW_FILM_STRIP, bShowFilmStrip ? TRUE : FALSE);
 	}
 }
@@ -4294,6 +4284,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 
 		if( QuiverUtils::ToggleActionGetActive(g_action_get_name(G_ACTION(action))) )
 		{
+			pViewerImpl->m_bFilmstripHiddenByFS = false;
 			if (pViewerImpl->m_bFilmstripOverlay)
 			{
 				pViewerImpl->ShowFilmstripOverlay();
@@ -11369,6 +11360,30 @@ void Viewer::CancelFilmstripHide()
 void Viewer::SetFilmstripHiddenByFS(bool bHidden)
 {
 	m_ViewerImplPtr->m_bFilmstripHiddenByFS = bHidden;
+	if (bHidden)
+	{
+		m_ViewerImplPtr->CancelFilmstripHide();
+		m_ViewerImplPtr->CancelFilmstripFade();
+		if (m_ViewerImplPtr->m_pIconView)
+		{
+			gtk_widget_set_visible(m_ViewerImplPtr->m_pIconView, FALSE);
+		}
+	}
+	else
+	{
+		if (QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP))
+		{
+			if (m_ViewerImplPtr->m_bFilmstripOverlay)
+			{
+				m_ViewerImplPtr->ShowFilmstripOverlay();
+			}
+			else if (m_ViewerImplPtr->m_pIconView)
+			{
+				gtk_widget_set_visible(m_ViewerImplPtr->m_pIconView, TRUE);
+				gtk_widget_set_opacity(m_ViewerImplPtr->m_pIconView, 1.0);
+			}
+		}
+	}
 }
 
 bool Viewer::IsFilmstripHiddenByFS() const
@@ -11407,6 +11422,14 @@ void Viewer::OnExitFullscreen()
 			m_ViewerImplPtr->UpdateTimelineVisibility();
 		m_ViewerImplPtr->StartControlsFade(true);
 		m_ViewerImplPtr->RefreshAutoHideTimer();
+	}
+}
+
+void Viewer::UpdateUI()
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->UpdateUI();
 	}
 }
 

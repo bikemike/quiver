@@ -2175,7 +2175,7 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 		pQuiverImpl->m_iTimeoutMouseMotionNotify = g_timeout_add(1500, timeout_event_motion_notify, pQuiverImpl);
 
 		/* hide the filmstrip on fullscreen (if preference says so) */
-		if (pQuiverImpl->m_bViewerMode)
+		if (pQuiverImpl->m_ViewerPtr)
 		{
 			bool bHideFS = pQuiverImpl->m_ViewerPtr->IsHideFilmstripFS();
 			bool bFilmstripActive =
@@ -2184,8 +2184,6 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 			if (bFilmstripActive && bHideFS)
 			{
 				pQuiverImpl->m_ViewerPtr->SetFilmstripHiddenByFS(true);
-				pQuiverImpl->m_ViewerPtr->CancelFilmstripHide();
-				gtk_widget_set_visible(pQuiverImpl->m_ViewerPtr->GetFilmstripWidget(), FALSE);
 			}
 		}
 		
@@ -2212,14 +2210,10 @@ static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer da
 		pQuiverImpl->m_bSlideShowRestoreFromFS = false;
 
 		/* restore the filmstrip if we hid it for fullscreen */
-		if (pQuiverImpl->m_bViewerMode && pQuiverImpl->m_bFilmStripVisibleBeforeFS)
+		if (pQuiverImpl->m_ViewerPtr && pQuiverImpl->m_bFilmStripVisibleBeforeFS)
 		{
 			pQuiverImpl->m_ViewerPtr->SetFilmstripHiddenByFS(false);
-			if (QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP))
-			{
-				if (pQuiverImpl->m_ViewerPtr->IsFilmstripOverlay())
-					pQuiverImpl->m_ViewerPtr->ShowFilmstripOverlay();
-			}
+			pQuiverImpl->m_bFilmStripVisibleBeforeFS = false;
 		}
 
 		/* Leaving fullscreen via the keyboard produces no motion event, so
@@ -3569,6 +3563,25 @@ void Quiver::ShowViewer()
 
 	// Naked space/arrow navigation shortcuts are only active in the viewer.
 	QuiverImpl::SetViewerNavigationAccelerators(true);
+
+	if (m_QuiverImplPtr->m_ViewerPtr)
+	{
+		bool bFS = (GDK_WINDOW_STATE_FULLSCREEN & m_QuiverImplPtr->m_WindowState);
+		if (bFS && m_QuiverImplPtr->m_ViewerPtr->IsHideFilmstripFS())
+		{
+			bool bFilmstripActive = QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP);
+			m_QuiverImplPtr->m_bFilmStripVisibleBeforeFS = bFilmstripActive;
+			if (bFilmstripActive)
+			{
+				m_QuiverImplPtr->m_ViewerPtr->SetFilmstripHiddenByFS(true);
+			}
+		}
+		else if (!bFS && m_QuiverImplPtr->m_ViewerPtr->IsFilmstripHiddenByFS())
+		{
+			m_QuiverImplPtr->m_ViewerPtr->SetFilmstripHiddenByFS(false);
+			m_QuiverImplPtr->m_bFilmStripVisibleBeforeFS = false;
+		}
+	}
 
 	m_QuiverImplPtr->m_ViewerPtr->GrabFocus();
 }

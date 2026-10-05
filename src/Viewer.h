@@ -136,6 +136,7 @@ public:
 	 * auto-hidden while idle in fullscreen would stay invisible. Restore
 	 * it and bring the controls back exactly as a motion event would. */
 	void OnExitFullscreen();
+	void UpdateUI();
 
 	GtkWidget *GetNavControlPill() const;
 	GtkWidget *GetNavigationControl() const;
