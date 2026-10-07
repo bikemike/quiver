@@ -287,5 +287,24 @@ TEST_CASE("QuiverFile date metadata detection", "[unit][file][date]")
         g_unlink(tmpPath);
     }
 
+    SECTION("SVG file does not crash when resolving metadata or date")
+    {
+        std::string svgPath = "/workspace/nightlight_24dp_E8EAED_FILL1_wght400_GRAD0_opsz24.svg";
+        if (g_file_test(svgPath.c_str(), G_FILE_TEST_EXISTS))
+        {
+            gchar* svgUri = g_filename_to_uri(svgPath.c_str(), NULL, NULL);
+            REQUIRE(svgUri != NULL);
+
+            QuiverFile qf(svgUri);
+            REQUIRE(qf.GetExifData() == nullptr);
+            REQUIRE(qf.GetXmpData() == nullptr);
+            REQUIRE(qf.GetIptcData() == nullptr);
+            REQUIRE(qf.HasDateMetadata() == false);
+            REQUIRE(qf.GetTimeT(true) != 0);
+
+            g_free(svgUri);
+        }
+    }
+
     g_free(sampleUri);
 }

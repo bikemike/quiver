@@ -1204,31 +1204,34 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 #else
 				auto image = Exiv2::ImageFactory::open(io);
 #endif
-				image->readMetadata();
-
-				Exiv2::ExifData exifData = image->exifData();
-				if (!exifData.empty())
+				if (nullptr != image.get())
 				{
-					m_ExifData =
-						std::make_shared<Exiv2::ExifData>(std::move(exifData));
-					m_fDataExists =
-						(QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_EXIF);
+					image->readMetadata();
 
-					/* the "did the user edit anything" baseline; kept even
-					 * though it is a full copy, because dropping it would
-					 * turn every save into a blind rewrite */
-					m_ExifDataOriginal =
-						std::make_shared<Exiv2::ExifData>(*m_ExifData);
+					Exiv2::ExifData exifData = image->exifData();
+					if (!exifData.empty())
+					{
+						m_ExifData =
+							std::make_shared<Exiv2::ExifData>(std::move(exifData));
+						m_fDataExists =
+							(QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_EXIF);
+
+						/* the "did the user edit anything" baseline; kept even
+						 * though it is a full copy, because dropping it would
+						 * turn every save into a blind rewrite */
+						m_ExifDataOriginal =
+							std::make_shared<Exiv2::ExifData>(*m_ExifData);
+					}
+
+					/* taken from the parse just done, not from another one */
+					auto xmp = image->xmpData();
+					if (!xmp.empty())
+						m_XmpData = std::make_shared<const Exiv2::XmpData>(std::move(xmp));
+
+					auto iptc = image->iptcData();
+					if (!iptc.empty())
+						m_IptcData = std::make_shared<const Exiv2::IptcData>(std::move(iptc));
 				}
-
-				/* taken from the parse just done, not from another one */
-				auto xmp = image->xmpData();
-				if (!xmp.empty())
-					m_XmpData = std::make_shared<const Exiv2::XmpData>(std::move(xmp));
-
-				auto iptc = image->iptcData();
-				if (!iptc.empty())
-					m_IptcData = std::make_shared<const Exiv2::IptcData>(std::move(iptc));
 
 			}
 			catch (...)

@@ -284,6 +284,10 @@ static int jpeg_apply_exif_metadata(const char* pPath,
 	try
 	{
 		auto image = Exiv2::ImageFactory::open(pPath);
+		if (nullptr == image.get())
+		{
+			return -1;
+		}
 		image->readMetadata();
 
 		Exiv2::ExifData& dst = image->exifData();
