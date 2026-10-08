@@ -68,6 +68,7 @@ private:
     };
     std::vector<CallbackEntry> m_change_callbacks;
     void NotifyShortcutsChanged();
+    void SyncExternalToolShortcut(const std::string &action_name, const std::string &accel);
     ShortcutManager();
     ~ShortcutManager() = default;
     ShortcutManager(const ShortcutManager&) = delete;

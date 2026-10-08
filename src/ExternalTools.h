@@ -15,11 +15,19 @@ typedef boost::shared_ptr<ExternalTools> ExternalToolsPtr;
 class ExternalTool
 {
 public:
-	ExternalTool() : m_bSupportsMultiple(false), m_bShowOutput(false), m_bShowErrors(false), m_bShowOnlyOnError(false), m_iID(-1) {};
+	ExternalTool() :
+		m_bAllowMultiple(false), m_bSeparateProcess(false),
+		m_bTargetImages(true), m_bTargetVideos(true),
+		m_bShowOutput(false), m_bShowErrors(false), m_bShowOnlyOnError(false),
+		m_iID(-1) {};
 	ExternalTool(std::string name, std::string tooltip, std::string icon,
 		std::string cmd, bool bSupportsMult, bool bShowOutput, bool bShowErrors, bool bShowOnlyOnError = false, std::string shortcut = "") :
 		m_strName(name), m_strTooltip(tooltip), m_strCmd(cmd), m_strIcon(icon),
-		m_bSupportsMultiple(bSupportsMult), m_bShowOutput(bShowOutput), m_bShowErrors(bShowErrors),
+		m_bAllowMultiple(bSupportsMult),
+		m_bSeparateProcess(!bSupportsMult),
+		m_bTargetImages(true),
+		m_bTargetVideos(true),
+		m_bShowOutput(bShowOutput), m_bShowErrors(bShowErrors),
 		m_bShowOnlyOnError(bShowOnlyOnError), m_strShortcut(shortcut),
 		m_iID(-1)
 		{};
@@ -41,8 +49,26 @@ public:
 	std::string GetIcon() const{return m_strIcon;}
 	void        SetIcon(std::string icon) { m_strIcon = icon;}
 
-	bool        GetSupportsMultiple() const{return m_bSupportsMultiple;}
-	void        SetSupportsMultiple(bool bSupportsMultiple){m_bSupportsMultiple = bSupportsMultiple;}
+	bool        GetAllowMultiple() const { return m_bAllowMultiple; }
+	void        SetAllowMultiple(bool bAllowMultiple) { m_bAllowMultiple = bAllowMultiple; }
+
+	bool        GetSeparateProcess() const { return m_bSeparateProcess; }
+	void        SetSeparateProcess(bool bSeparateProcess) { m_bSeparateProcess = bSeparateProcess; }
+
+	bool        GetSupportsMultiple() const { return !m_bSeparateProcess; }
+	void        SetSupportsMultiple(bool bSupportsMultiple) { m_bSeparateProcess = !bSupportsMultiple; }
+
+	bool        GetTargetImages() const { return m_bTargetImages; }
+	void        SetTargetImages(bool bTargetImages) { m_bTargetImages = bTargetImages; }
+
+	bool        GetTargetVideos() const { return m_bTargetVideos; }
+	void        SetTargetVideos(bool bTargetVideos) { m_bTargetVideos = bTargetVideos; }
+
+	std::string GetExtensions() const { return m_strExtensions; }
+	void        SetExtensions(const std::string& extensions) { m_strExtensions = extensions; }
+
+	bool        MatchesFile(const std::string& filepath, bool is_video) const;
+	static std::vector<std::string> ParseExtensions(const std::string& exts_str);
 
 	bool        GetShowOutput() const{return m_bShowOutput;}
 	void        SetShowOutput(bool bShowOutput){m_bShowOutput = bShowOutput;}
@@ -64,7 +90,11 @@ private:
 	std::string m_strTooltip;	
 	std::string m_strCmd;	
 	std::string m_strIcon;
-	bool m_bSupportsMultiple;
+	bool m_bAllowMultiple;
+	bool m_bSeparateProcess;
+	bool m_bTargetImages;
+	bool m_bTargetVideos;
+	std::string m_strExtensions;
 	bool m_bShowOutput;
 	bool m_bShowErrors;
 	bool m_bShowOnlyOnError;

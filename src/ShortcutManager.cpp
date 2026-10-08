@@ -389,6 +389,8 @@ bool ShortcutManager::SetAccelerators(const std::string &action_name, const std:
     SaveToPreferences();
     ApplyShortcutsForAction(action_name);
     NotifyShortcutsChanged();
+    std::string primary = normalized.empty() ? "" : normalized[0];
+    SyncExternalToolShortcut(action_name, primary);
     return true;
 }
 
@@ -405,6 +407,8 @@ bool ShortcutManager::AddAccelerator(const std::string &action_name, const std::
         SaveToPreferences();
         ApplyShortcutsForAction(action_name);
         NotifyShortcutsChanged();
+        std::string primary = def->current_accels.empty() ? "" : def->current_accels[0];
+        SyncExternalToolShortcut(action_name, primary);
         return true;
     }
     return false;
@@ -422,6 +426,8 @@ bool ShortcutManager::RemoveAccelerator(const std::string &action_name, const st
         SaveToPreferences();
         ApplyShortcutsForAction(action_name);
         NotifyShortcutsChanged();
+        std::string primary = def->current_accels.empty() ? "" : def->current_accels[0];
+        SyncExternalToolShortcut(action_name, primary);
         return true;
     }
     return false;
@@ -435,16 +441,47 @@ void ShortcutManager::ResetToDefault(const std::string &action_name)
     SaveToPreferences();
     ApplyShortcutsForAction(action_name);
     NotifyShortcutsChanged();
+    std::string primary = def->current_accels.empty() ? "" : def->current_accels[0];
+    SyncExternalToolShortcut(action_name, primary);
 }
 
 void ShortcutManager::ResetAllToDefaults()
 {
     for (auto &def : m_actions) {
         def.current_accels = def.default_accels;
+        if (def.category == "External Tools") {
+            std::string primary = def.current_accels.empty() ? "" : def.current_accels[0];
+            SyncExternalToolShortcut(def.action_name, primary);
+        }
     }
     SaveToPreferences();
     ApplyShortcuts();
     NotifyShortcutsChanged();
+}
+
+void ShortcutManager::SyncExternalToolShortcut(const std::string &action_name, const std::string &accel)
+{
+    const std::string prefix = "ExternalTool_";
+    if (action_name.rfind(prefix, 0) != 0) return;
+
+    int id = -1;
+    try {
+        id = std::stoi(action_name.substr(prefix.length()));
+    } catch (...) {
+        return;
+    }
+
+    ExternalToolsPtr tools = ExternalTools::GetInstance();
+    if (!tools) return;
+
+    const ExternalTool *tool = tools->GetExternalTool(id);
+    if (!tool) return;
+
+    if (tool->GetShortcut() != accel) {
+        ExternalTool updated = *tool;
+        updated.SetShortcut(accel);
+        tools->UpdateExternalTool(updated);
+    }
 }
 
 std::string ShortcutManager::FindConflictingAction(const std::string &accel, const std::string &exclude_action) const

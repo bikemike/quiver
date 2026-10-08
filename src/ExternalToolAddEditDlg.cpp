@@ -38,7 +38,11 @@ public:
 	GtkEntry*              m_pEntryIcon;
 	GtkButton*             m_pButtonOk;
 	GtkButton*             m_pButtonCancel;
-	GtkCheckButton*        m_pToggleMultiple;
+	GtkCheckButton*        m_pToggleAllowMultiple;
+	GtkCheckButton*        m_pToggleSeparateProcess;
+	GtkCheckButton*        m_pToggleTargetImages;
+	GtkCheckButton*        m_pToggleTargetVideos;
+	GtkEntry*              m_pEntryExtensions;
 	GtkCheckButton*        m_pToggleShowOnlyOnError;
 	GtkLabel*              m_pLabelShortcut;
 	GtkButton*             m_pButtonShortcutSet;
@@ -92,11 +96,48 @@ void ExternalToolAddEditDlg::Run()
 			m_PrivPtr->m_ExternalTool.SetTooltip( tooltip );
 			m_PrivPtr->m_ExternalTool.SetIcon( gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryIcon)) );
 			m_PrivPtr->m_ExternalTool.SetCmd( gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryCmd)) );
-			m_PrivPtr->m_ExternalTool.SetSupportsMultiple( gtk_check_button_get_active(m_PrivPtr->m_pToggleMultiple) ? true : false );
+			if (m_PrivPtr->m_pToggleAllowMultiple)
+			{
+				m_PrivPtr->m_ExternalTool.SetAllowMultiple( gtk_check_button_get_active(m_PrivPtr->m_pToggleAllowMultiple) ? true : false );
+			}
+			if (m_PrivPtr->m_pToggleSeparateProcess)
+			{
+				m_PrivPtr->m_ExternalTool.SetSeparateProcess( gtk_check_button_get_active(m_PrivPtr->m_pToggleSeparateProcess) ? true : false );
+			}
+			if (m_PrivPtr->m_pToggleTargetImages)
+			{
+				m_PrivPtr->m_ExternalTool.SetTargetImages( gtk_check_button_get_active(m_PrivPtr->m_pToggleTargetImages) ? true : false );
+			}
+			if (m_PrivPtr->m_pToggleTargetVideos)
+			{
+				m_PrivPtr->m_ExternalTool.SetTargetVideos( gtk_check_button_get_active(m_PrivPtr->m_pToggleTargetVideos) ? true : false );
+			}
+			if (m_PrivPtr->m_pEntryExtensions)
+			{
+				m_PrivPtr->m_ExternalTool.SetExtensions( gtk_editable_get_text(GTK_EDITABLE(m_PrivPtr->m_pEntryExtensions)) );
+			}
 			if (m_PrivPtr->m_pToggleShowOnlyOnError)
 			{
 				m_PrivPtr->m_ExternalTool.SetShowOnlyOnError( gtk_check_button_get_active(m_PrivPtr->m_pToggleShowOnlyOnError) ? true : false );
 			}
+
+			// If a shortcut conflict was detected for m_strCurrentShortcut, remove it from the conflicting action
+			if (!m_PrivPtr->m_strCurrentShortcut.empty())
+			{
+				std::string current_action = "ExternalTool_" + std::to_string(m_PrivPtr->m_ExternalTool.GetID());
+				std::string conflict = ShortcutManager::GetInstance().FindConflictingAction(m_PrivPtr->m_strCurrentShortcut, current_action);
+				if (!conflict.empty())
+				{
+					for (const auto &act : ShortcutManager::GetInstance().GetActions())
+					{
+						if (act.label == conflict)
+						{
+							ShortcutManager::GetInstance().RemoveAccelerator(act.action_name, m_PrivPtr->m_strCurrentShortcut);
+						}
+					}
+				}
+			}
+
 			m_PrivPtr->m_ExternalTool.SetShortcut( m_PrivPtr->m_strCurrentShortcut );
 		}
 		if (NULL != m_PrivPtr->m_pWidget)
@@ -330,7 +371,11 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 			gtk_window_set_titlebar(GTK_WINDOW(m_pWidget), GTK_WIDGET(hbar));
 		}
 
-		m_pToggleMultiple        = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_multiple"));
+		m_pToggleAllowMultiple   = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_allow_multiple"));
+		m_pToggleSeparateProcess = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_separate_process"));
+		m_pToggleTargetImages    = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_target_images"));
+		m_pToggleTargetVideos    = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_target_videos"));
+		m_pEntryExtensions       = GTK_ENTRY       ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_extensions"));
 		m_pToggleShowOnlyOnError = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_show_only_on_error"));
 		m_pEntryName             = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_name"));
 		m_pEntryCmd              = GTK_ENTRY        ( gtk_builder_get_object(m_pGtkBuilder, "external_tools_edit_cmd"));
@@ -347,8 +392,7 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 				NULL != m_pEntryName && 
 				NULL != m_pEntryCmd && 
 				NULL != m_pEntryTooltip && 
-				NULL != m_pEntryIcon && 
-				NULL != m_pToggleMultiple
+				NULL != m_pEntryIcon
 				); 
 
 		if (m_bLoadedDlg)
@@ -363,12 +407,42 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::LoadWidgets()
 			gtk_entry_set_activates_default(m_pEntryTooltip, TRUE);
 			gtk_entry_set_activates_default(m_pEntryIcon, TRUE);
 
-			gtk_check_button_set_active(m_pToggleMultiple, m_ExternalTool.GetSupportsMultiple() ? TRUE : FALSE );
+			if (m_pToggleAllowMultiple)
+			{
+				gtk_check_button_set_active(m_pToggleAllowMultiple, m_ExternalTool.GetAllowMultiple() ? TRUE : FALSE );
+			}
+			if (m_pToggleSeparateProcess)
+			{
+				gtk_check_button_set_active(m_pToggleSeparateProcess, m_ExternalTool.GetSeparateProcess() ? TRUE : FALSE );
+				gtk_widget_set_sensitive(GTK_WIDGET(m_pToggleSeparateProcess), m_ExternalTool.GetAllowMultiple() ? TRUE : FALSE );
+			}
+			if (m_pToggleTargetImages)
+			{
+				gtk_check_button_set_active(m_pToggleTargetImages, m_ExternalTool.GetTargetImages() ? TRUE : FALSE );
+			}
+			if (m_pToggleTargetVideos)
+			{
+				gtk_check_button_set_active(m_pToggleTargetVideos, m_ExternalTool.GetTargetVideos() ? TRUE : FALSE );
+			}
+			if (m_pEntryExtensions)
+			{
+				gtk_editable_set_text(GTK_EDITABLE(m_pEntryExtensions), m_ExternalTool.GetExtensions().c_str());
+				gtk_entry_set_activates_default(m_pEntryExtensions, TRUE);
+			}
 			if (m_pToggleShowOnlyOnError)
 			{
 				gtk_check_button_set_active(m_pToggleShowOnlyOnError, m_ExternalTool.GetShowOnlyOnError() ? TRUE : FALSE );
 			}
 			m_strCurrentShortcut = m_ExternalTool.GetShortcut();
+			if (m_strCurrentShortcut.empty() && m_ExternalTool.GetID() != -1)
+			{
+				std::string act_name = "ExternalTool_" + std::to_string(m_ExternalTool.GetID());
+				const ShortcutActionDef *act_def = ShortcutManager::GetInstance().GetAction(act_name);
+				if (act_def && !act_def->current_accels.empty())
+				{
+					m_strCurrentShortcut = act_def->current_accels[0];
+				}
+			}
 			UpdateShortcutLabel();
 		}
 	}
@@ -387,6 +461,15 @@ void ExternalToolAddEditDlg::ExternalToolAddEditDlgPriv::ConnectSignals()
 {
 	if (m_bLoadedDlg)
 	{
+		if (m_pToggleAllowMultiple && m_pToggleSeparateProcess)
+		{
+			g_signal_connect(m_pToggleAllowMultiple, "toggled",
+				G_CALLBACK(+[](GtkCheckButton *btn, gpointer user_data) {
+					auto *priv = static_cast<ExternalToolAddEditDlgPriv*>(user_data);
+					gboolean active = gtk_check_button_get_active(btn);
+					gtk_widget_set_sensitive(GTK_WIDGET(priv->m_pToggleSeparateProcess), active);
+				}), this);
+		}
 		g_signal_connect(m_pWidget, "close-request",
 			G_CALLBACK(+[](GtkWidget* widget, gpointer user_data) -> gboolean {
 				(void)widget;

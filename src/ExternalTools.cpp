@@ -2,6 +2,8 @@
 #include "Preferences.h"
 #include <gtk/gtk.h>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
 
 #include "QuiverStockIcons.h"
 
@@ -14,6 +16,11 @@
 #define EXTERNAL_TOOL_KEY_COMMAND            "command"
 #define EXTERNAL_TOOL_KEY_ICON               "icon"
 #define EXTERNAL_TOOL_KEY_SUPPORT_MULTIPLE   "supports_multiple_files"
+#define EXTERNAL_TOOL_KEY_ALLOW_MULTIPLE     "allow_multiple_selection"
+#define EXTERNAL_TOOL_KEY_SEPARATE_PROCESS   "separate_process_per_file"
+#define EXTERNAL_TOOL_KEY_TARGET_IMAGES      "target_images"
+#define EXTERNAL_TOOL_KEY_TARGET_VIDEOS      "target_videos"
+#define EXTERNAL_TOOL_KEY_EXTENSIONS         "extensions"
 #define EXTERNAL_TOOL_KEY_SHOW_OUTPUT        "show_output"
 #define EXTERNAL_TOOL_KEY_SHOW_ERRORS        "show_errors"
 #define EXTERNAL_TOOL_KEY_SHOW_ONLY_ON_ERROR "show_only_on_error"
@@ -148,6 +155,31 @@ void ExternalTools::LoadFromPreferences()
 				errors = prefs->GetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ERRORS);
 				only_on_error = prefs->GetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ONLY_ON_ERROR, false);
 				shortcut = prefs->GetString(section,EXTERNAL_TOOL_KEY_SHORTCUT, "");
+
+				bool allow_multi = false;
+				if (prefs->HasKey(section, EXTERNAL_TOOL_KEY_ALLOW_MULTIPLE))
+				{
+					allow_multi = prefs->GetBoolean(section, EXTERNAL_TOOL_KEY_ALLOW_MULTIPLE);
+				}
+				else
+				{
+					// For legacy configs without this key: if it supported multiple files, allow; otherwise default to false (safe)
+					allow_multi = multi;
+				}
+
+				bool sep_process = false;
+				if (prefs->HasKey(section, EXTERNAL_TOOL_KEY_SEPARATE_PROCESS))
+				{
+					sep_process = prefs->GetBoolean(section, EXTERNAL_TOOL_KEY_SEPARATE_PROCESS);
+				}
+				else
+				{
+					sep_process = !multi;
+				}
+
+				bool target_images = prefs->GetBoolean(section, EXTERNAL_TOOL_KEY_TARGET_IMAGES, true);
+				bool target_videos = prefs->GetBoolean(section, EXTERNAL_TOOL_KEY_TARGET_VIDEOS, true);
+				string extensions = prefs->GetString(section, EXTERNAL_TOOL_KEY_EXTENSIONS, "");
 				
 				if (icon.empty())
 				{
@@ -155,6 +187,11 @@ void ExternalTools::LoadFromPreferences()
 				}
 				
 				ExternalTool b(name, tooltip, icon, cmd, multi, output, errors, only_on_error, shortcut);
+				b.SetAllowMultiple(allow_multi);
+				b.SetSeparateProcess(sep_process);
+				b.SetTargetImages(target_images);
+				b.SetTargetVideos(target_videos);
+				b.SetExtensions(extensions);
 				b.SetCategory(*itr);
 				b.SetID(*itr2);
 				m_mapExternalTools[*itr2] = b;
@@ -189,6 +226,11 @@ void ExternalTools::SaveToPreferences()
 		prefs->SetString(section,EXTERNAL_TOOL_KEY_ICON, itr->second.GetIcon());
 
 		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SUPPORT_MULTIPLE, itr->second.GetSupportsMultiple());
+		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_ALLOW_MULTIPLE, itr->second.GetAllowMultiple());
+		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SEPARATE_PROCESS, itr->second.GetSeparateProcess());
+		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_TARGET_IMAGES, itr->second.GetTargetImages());
+		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_TARGET_VIDEOS, itr->second.GetTargetVideos());
+		prefs->SetString(section,EXTERNAL_TOOL_KEY_EXTENSIONS, itr->second.GetExtensions());
 		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_OUTPUT, itr->second.GetShowOutput());
 		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ERRORS, itr->second.GetShowErrors());
 		prefs->SetBoolean(section,EXTERNAL_TOOL_KEY_SHOW_ONLY_ON_ERROR, itr->second.GetShowOnlyOnError());
@@ -414,5 +456,59 @@ bool ExternalTools::MoveDown (int id)
 	return false;
 }
 
+std::vector<std::string> ExternalTool::ParseExtensions(const std::string& exts_str)
+{
+	std::vector<std::string> exts;
+	std::string current;
+	for (size_t i = 0; i <= exts_str.length(); ++i)
+	{
+		char c = (i < exts_str.length()) ? exts_str[i] : ',';
+		if (c == ',' || c == ';' || isspace(static_cast<unsigned char>(c)))
+		{
+			size_t start = 0;
+			while (start < current.length() && (current[start] == '.' || isspace(static_cast<unsigned char>(current[start]))))
+				start++;
+			size_t end = current.length();
+			while (end > start && isspace(static_cast<unsigned char>(current[end - 1])))
+				end--;
+			if (start < end)
+			{
+				std::string ext = current.substr(start, end - start);
+				std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return std::tolower(ch); });
+				if (!ext.empty() && std::find(exts.begin(), exts.end(), ext) == exts.end())
+				{
+					exts.push_back(ext);
+				}
+			}
+			current.clear();
+		}
+		else
+		{
+			current += c;
+		}
+	}
+	return exts;
+}
 
+bool ExternalTool::MatchesFile(const std::string& filepath, bool is_video) const
+{
+	if (is_video && !m_bTargetVideos) return false;
+	if (!is_video && !m_bTargetImages) return false;
 
+	if (!m_strExtensions.empty())
+	{
+		std::vector<std::string> allowed = ParseExtensions(m_strExtensions);
+		if (!allowed.empty())
+		{
+			size_t dot = filepath.rfind('.');
+			if (dot == std::string::npos) return false;
+			std::string ext = filepath.substr(dot + 1);
+			std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return std::tolower(ch); });
+			if (std::find(allowed.begin(), allowed.end(), ext) == allowed.end())
+			{
+				return false;
+			}
+		}
+	}
+	return true;
+}

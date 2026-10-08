@@ -163,6 +163,7 @@ public:
 	 * (browser icon view vs. viewer image view). */
 	void ParentUndoToast();
 	static gboolean TrashToastTimeout(gpointer user_data);
+	void UpdateExternalToolsSensitivity();
 
 // member variables
 	Quiver *m_pQuiver;
@@ -613,6 +614,64 @@ void QuiverImpl::LoadExternalTools()
 		}
 		g_menu_append_section(m_pExternalToolsMenu, NULL, G_MENU_MODEL(dynSection));
 		g_object_unref(dynSection);
+	}
+	UpdateExternalToolsSensitivity();
+}
+
+void QuiverImpl::UpdateExternalToolsSensitivity()
+{
+	if (!m_ExternalToolsPtr) return;
+
+	bool bInViewer = m_bViewerMode;
+	vector<ExternalTool> externaltools = m_ExternalToolsPtr->GetExternalTools();
+
+	for (const auto &tool : externaltools)
+	{
+		stringstream ss;
+		ss << "ExternalTool_" << tool.GetID();
+		string act_name = ss.str();
+
+		GAction *action = QuiverUtils::GetAction(act_name.c_str());
+		if (action && G_IS_SIMPLE_ACTION(action))
+		{
+			bool enabled = false;
+			if (bInViewer)
+			{
+				if (m_ImageListPtr && 0 != m_ImageListPtr->GetSize())
+				{
+					QuiverFile f = m_ImageListPtr->GetCurrent();
+					enabled = tool.MatchesFile(f.GetFilePath(), f.IsVideo());
+				}
+			}
+			else
+			{
+				if (m_BrowserPtr && m_ImageListPtr)
+				{
+					list<unsigned int> sel = m_BrowserPtr->GetSelection();
+					size_t match_count = 0;
+					for (auto idx : sel)
+					{
+						if (idx < m_ImageListPtr->GetSize())
+						{
+							QuiverFile f = (*m_ImageListPtr)[idx];
+							if (tool.MatchesFile(f.GetFilePath(), f.IsVideo()))
+							{
+								match_count++;
+							}
+						}
+					}
+					if (match_count == 1)
+					{
+						enabled = true;
+					}
+					else if (match_count > 1)
+					{
+						enabled = tool.GetAllowMultiple();
+					}
+				}
+			}
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), enabled ? TRUE : FALSE);
+		}
 	}
 }
 
@@ -2143,6 +2202,7 @@ void Quiver::ImageChanged()
 		QuiverFile f;
 		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
 	}
+	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
 }
 
 static gboolean event_window_state( GObject *obj, GParamSpec *pspec, gpointer data )
@@ -3593,6 +3653,7 @@ void Quiver::ShowViewer()
 		}
 	}
 
+	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
 	m_QuiverImplPtr->m_ViewerPtr->GrabFocus();
 }
 
@@ -3634,6 +3695,7 @@ void Quiver::ShowBrowser()
 	// checkbox selection.
 	QuiverImpl::SetViewerNavigationAccelerators(false);
 
+	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
 	m_QuiverImplPtr->m_BrowserPtr->GrabFocus();
 }
 
@@ -3758,6 +3820,7 @@ void QuiverImpl::BrowserEventHandler::HandleSelectionChanged(BrowserEventPtr eve
 	g_snprintf(status_text, 256, "%lu items selected (%llu bytes)",(unsigned long)selection.size(), (unsigned long long)total_size);
 
 	//parent->m_StatusbarPtr->SetText(status_text);
+	parent->UpdateExternalToolsSensitivity();
 }
 
 void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_ptr)
@@ -4712,36 +4775,52 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 
 		if (NULL != extTool)
 		{
-
-			list<unsigned int> selection = pQuiverImpl->m_BrowserPtr->GetSelection();
 			list<string> files;
-
 			bool bInViewer = pQuiverImpl->m_bViewerMode;
-			if (bInViewer || 1 == selection.size())
+			if (bInViewer)
 			{
-				QuiverFile f;
-				if (bInViewer)
-					f = pQuiverImpl->m_ImageListPtr->GetCurrent();
-				else
-					f = (*pQuiverImpl->m_ImageListPtr)[selection.front()];
-				
-				string file, directory;
-
-				file = f.GetFilePath();
-				files.push_back(file);
-			}
-			else if (1 < selection.size())
-			{
-				list<unsigned int>::iterator itr;
-				for (itr = selection.begin(); selection.end() != itr; ++itr)
+				if (pQuiverImpl->m_ImageListPtr && 0 != pQuiverImpl->m_ImageListPtr->GetSize())
 				{
-					files.push_back((*pQuiverImpl->m_ImageListPtr)[*itr].GetFilePath());
+					QuiverFile f = pQuiverImpl->m_ImageListPtr->GetCurrent();
+					if (extTool->MatchesFile(f.GetFilePath(), f.IsVideo()))
+					{
+						files.push_back(f.GetFilePath());
+					}
 				}
+			}
+			else
+			{
+				list<unsigned int> selection = pQuiverImpl->m_BrowserPtr ? pQuiverImpl->m_BrowserPtr->GetSelection() : list<unsigned int>();
+				if (pQuiverImpl->m_ImageListPtr)
+				{
+					list<unsigned int>::iterator itr;
+					for (itr = selection.begin(); selection.end() != itr; ++itr)
+					{
+						if (*itr < pQuiverImpl->m_ImageListPtr->GetSize())
+						{
+							QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[*itr];
+							if (extTool->MatchesFile(f.GetFilePath(), f.IsVideo()))
+							{
+								files.push_back(f.GetFilePath());
+							}
+						}
+					}
+				}
+			}
+
+			if (files.empty())
+			{
+				return;
+			}
+
+			if (!bInViewer && files.size() > 1 && !extTool->GetAllowMultiple())
+			{
+				return;
 			}
 			
 			list<string> commands;
 
-			if (extTool->GetSupportsMultiple())
+			if (!extTool->GetSeparateProcess())
 			{
 				string str_files;
 				string str_dirs;

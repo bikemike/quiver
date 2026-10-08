@@ -335,11 +335,74 @@
               </object>
             </child>
             <child>
-              <object class="GtkCheckButton" id="external_tools_edit_multiple">
+              <object class="GtkCheckButton" id="external_tools_edit_allow_multiple">
                 <property name="valign">center</property>
-                <property name="label" translatable="1">Command supports _multiple files</property>
+                <property name="label" translatable="1">Enable for _multi-file selection</property>
                 <property name="focusable">1</property>
                 <property name="use_underline">1</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkCheckButton" id="external_tools_edit_separate_process">
+                <property name="valign">center</property>
+                <property name="margin-start">20</property>
+                <property name="label" translatable="1">_Separate process for each file</property>
+                <property name="focusable">1</property>
+                <property name="use_underline">1</property>
+                <property name="tooltip-text" translatable="1">When checked, the command is executed separately for each file. When unchecked, all files are passed to a single command.</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="hbox_media_types">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">12</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="GtkLabel" id="label_media_types">
+                    <property name="valign">center</property>
+                    <property name="xalign">0</property>
+                    <property name="label" translatable="1">&lt;b&gt;Supported Media:&lt;/b&gt;</property>
+                    <property name="use_markup">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkCheckButton" id="external_tools_edit_target_images">
+                    <property name="valign">center</property>
+                    <property name="label" translatable="1">_Images</property>
+                    <property name="focusable">1</property>
+                    <property name="use_underline">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkCheckButton" id="external_tools_edit_target_videos">
+                    <property name="valign">center</property>
+                    <property name="label" translatable="1">_Videos</property>
+                    <property name="focusable">1</property>
+                    <property name="use_underline">1</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="vbox_extensions">
+                <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
+                <property name="valign">center</property>
+                <child>
+                  <object class="GtkLabel" id="label_extensions">
+                    <property name="valign">center</property>
+                    <property name="xalign">0</property>
+                    <property name="label" translatable="1">&lt;b&gt;File Extensions&lt;/b&gt; &lt;small&gt;(comma-separated, empty for all)&lt;/small&gt;</property>
+                    <property name="use_markup">1</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="external_tools_edit_extensions">
+                    <property name="valign">center</property>
+                    <property name="focusable">1</property>
+                    <property name="placeholder-text">e.g. jpg, png, mp4</property>
+                  </object>
+                </child>
               </object>
             </child>
             <child>
