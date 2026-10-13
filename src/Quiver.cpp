@@ -1331,6 +1331,12 @@ void QuiverImpl::SaveAs()
 
 bool QuiverImpl::CanClose()
 {
+	/* Do not allow closing the main window while any dialog is displayed. */
+	if (!QuiverUtils::CanCloseWindow(m_pQuiverWindow))
+	{
+		return false;
+	}
+
 	if (m_ImageListPtr)
 	{
 		m_ImageListPtr->StopAsyncLoad();
@@ -2307,6 +2313,11 @@ gboolean Quiver::event_close_request( GtkWindow *window, gpointer data )
 void Quiver::Close()
 {
 	if (m_bClosing)
+	{
+		return;
+	}
+
+	if (m_QuiverImplPtr && !m_QuiverImplPtr->CanClose())
 	{
 		return;
 	}

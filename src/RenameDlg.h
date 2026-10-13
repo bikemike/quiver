@@ -7,6 +7,7 @@
 #include <boost/shared_ptr.hpp>
 
 #include "QuiverFile.h"
+#include "FileConflictCheck.h"
 
 class RenameDlg
 {
@@ -33,6 +34,14 @@ public:
 	// (true) or a whole folder (false); the user can flip between the two
 	// while the dialog is open, so this must be re-read after Run().
 	bool        GetFilesMode() const;
+
+	std::string GetStatusText() const;
+	std::vector<FileConflictCheck::Result> GetConflictResults() const;
+
+	bool        GetShowAll() const;
+	void        SetShowAll(bool bShowAll);
+	guint       GetPreviewItemCount() const;
+	std::string GetPreviewItemIssue(guint index) const;
 
 	class       RenameDlgPriv;
 	typedef boost::shared_ptr<RenameDlgPriv> RenameDlgPrivPtr;

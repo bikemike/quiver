@@ -274,6 +274,10 @@ namespace QuiverUtils
 	/* Traverses a GtkPopoverMenu hierarchy and ensures that all GtkImage icons
 	 * associated with menu items are made visible. */
 	void EnablePopoverMenuIcons(GtkWidget *popover);
+
+	/* Returns false and presents the active dialog if any dialog or secondary window
+	 * (other than TaskManager) is currently displayed, preventing the main window from closing. */
+	bool CanCloseWindow(GtkWidget* mainWindow);
 }
 
 #endif

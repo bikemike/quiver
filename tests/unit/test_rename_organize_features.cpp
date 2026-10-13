@@ -152,6 +152,792 @@ TEST_CASE("Rename Dialog: Type column removed from preview table", "[unit][renam
     }
 }
 
+TEST_CASE("Rename Dialog: dry-run indicates renamed count and sorts files to be renamed above unchanged", "[unit][rename][gui]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpDir = g_dir_make_tmp("quiver_test_rename_display_XXXXXX", NULL);
+    REQUIRE(tmpDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    std::string fileMatched = std::string(tmpDir) + "/Photo_001.jpg";
+    std::string fileToRenameA = std::string(tmpDir) + "/a_unmatched.jpg";
+    std::string fileToRenameB = std::string(tmpDir) + "/b_unmatched.jpg";
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+    REQUIRE(g_file_set_contents(fileMatched.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fileToRenameA.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fileToRenameB.c_str(), contents, length, NULL));
+    g_free(contents);
+
+    gchar* uriMatched = g_filename_to_uri(fileMatched.c_str(), NULL, NULL);
+    gchar* uriA = g_filename_to_uri(fileToRenameA.c_str(), NULL, NULL);
+    gchar* uriB = g_filename_to_uri(fileToRenameB.c_str(), NULL, NULL);
+    REQUIRE(uriMatched != nullptr);
+    REQUIRE(uriA != nullptr);
+    REQUIRE(uriB != nullptr);
+
+    std::vector<QuiverFile> files;
+    files.push_back(QuiverFile(uriMatched));
+    files.push_back(QuiverFile(uriB));
+    files.push_back(QuiverFile(uriA));
+
+    g_free(uriMatched);
+    g_free(uriA);
+    g_free(uriB);
+
+    struct RenameDisplayCapture {
+        bool checked;
+        std::string statusText;
+        int64_t startMs;
+    } cap{false, "", static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    RenameDlg rename;
+    rename.SetFiles(files);
+
+    g_timeout_add(20, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<RenameDisplayCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Rename");
+        if (win != NULL)
+        {
+            std::vector<GtkWidget*> entries;
+            FindWidgetsByType(win, GTK_TYPE_ENTRY, entries);
+            for (GtkWidget* e : entries)
+            {
+                const char* cur = gtk_editable_get_text(GTK_EDITABLE(e));
+                if (cur && strcmp(cur, "Photo_###") != 0)
+                {
+                    gtk_editable_set_text(GTK_EDITABLE(e), "Photo_###");
+                    break;
+                }
+            }
+
+            std::vector<GtkWidget*> labels;
+            FindWidgetsByType(win, GTK_TYPE_LABEL, labels);
+            for (GtkWidget* l : labels)
+            {
+                const char* txt = gtk_label_get_text(GTK_LABEL(l));
+                if (txt != NULL)
+                {
+                    if (strstr(txt, "files will be renamed") != NULL)
+                    {
+                        c->statusText = txt;
+                        c->checked = true;
+                        break;
+                    }
+                }
+            }
+
+            if (c->checked || static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    rename.Run();
+
+    REQUIRE(cap.checked);
+    REQUIRE(cap.statusText.find("2 of 3 files will be renamed, 1 file already matches its template (3 files have no date metadata)") != std::string::npos);
+
+    auto results = rename.GetConflictResults();
+    REQUIRE(results.size() == 3);
+    REQUIRE(results[0].strSrcName != results[0].strDstName);
+    REQUIRE(results[1].strSrcName != results[1].strDstName);
+    REQUIRE(results[0].strSrcName == "a_unmatched.jpg");
+    REQUIRE(results[1].strSrcName == "b_unmatched.jpg");
+    REQUIRE(results[2].strSrcName == results[2].strDstName);
+    REQUIRE(results[2].strSrcName == "Photo_001.jpg");
+
+    g_unlink(fileMatched.c_str());
+    g_unlink(fileToRenameA.c_str());
+    g_unlink(fileToRenameB.c_str());
+    g_rmdir(tmpDir);
+    g_free(tmpDir);
+}
+
+TEST_CASE("Rename Dialog: plural matching files count and all-renamed count", "[unit][rename][gui]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpDir = g_dir_make_tmp("quiver_test_rename_plural_XXXXXX", NULL);
+    REQUIRE(tmpDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    std::string fMatch1 = std::string(tmpDir) + "/Pic_001.jpg";
+    std::string fMatch2 = std::string(tmpDir) + "/Pic_002.jpg";
+    std::string fNew1 = std::string(tmpDir) + "/img_x.jpg";
+    std::string fNew2 = std::string(tmpDir) + "/img_y.jpg";
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+    REQUIRE(g_file_set_contents(fMatch1.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fMatch2.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fNew1.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fNew2.c_str(), contents, length, NULL));
+    g_free(contents);
+
+    gchar* uriMatch1 = g_filename_to_uri(fMatch1.c_str(), NULL, NULL);
+    gchar* uriMatch2 = g_filename_to_uri(fMatch2.c_str(), NULL, NULL);
+    gchar* uriNew1 = g_filename_to_uri(fNew1.c_str(), NULL, NULL);
+    gchar* uriNew2 = g_filename_to_uri(fNew2.c_str(), NULL, NULL);
+
+    std::vector<QuiverFile> files;
+    files.push_back(QuiverFile(uriMatch1));
+    files.push_back(QuiverFile(uriMatch2));
+    files.push_back(QuiverFile(uriNew2));
+    files.push_back(QuiverFile(uriNew1));
+
+    g_free(uriMatch1);
+    g_free(uriMatch2);
+    g_free(uriNew1);
+    g_free(uriNew2);
+
+    struct RenamePluralCapture {
+        bool checked;
+        std::string statusText;
+        int64_t startMs;
+    } cap{false, "", static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    RenameDlg rename;
+    rename.SetFiles(files);
+
+    g_timeout_add(20, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<RenamePluralCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Rename");
+        if (win != NULL)
+        {
+            std::vector<GtkWidget*> entries;
+            FindWidgetsByType(win, GTK_TYPE_ENTRY, entries);
+            for (GtkWidget* e : entries)
+            {
+                const char* cur = gtk_editable_get_text(GTK_EDITABLE(e));
+                if (cur && strcmp(cur, "Pic_###") != 0)
+                {
+                    gtk_editable_set_text(GTK_EDITABLE(e), "Pic_###");
+                    break;
+                }
+            }
+
+            std::vector<GtkWidget*> labels;
+            FindWidgetsByType(win, GTK_TYPE_LABEL, labels);
+            for (GtkWidget* l : labels)
+            {
+                const char* txt = gtk_label_get_text(GTK_LABEL(l));
+                if (txt != NULL && strstr(txt, "files will be renamed") != NULL)
+                {
+                    c->statusText = txt;
+                    c->checked = true;
+                    break;
+                }
+            }
+
+            if (c->checked || static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    rename.Run();
+
+    REQUIRE(cap.checked);
+    // 2 files to be renamed, 2 files already match
+    REQUIRE(cap.statusText.find("2 of 4 files will be renamed, 2 files already match their template (4 files have no date metadata)") != std::string::npos);
+
+    auto results = rename.GetConflictResults();
+    REQUIRE(results.size() == 4);
+    // Files to be renamed are sorted above unchanged ones
+    REQUIRE(results[0].strSrcName != results[0].strDstName);
+    REQUIRE(results[1].strSrcName != results[1].strDstName);
+    REQUIRE(results[2].strSrcName == results[2].strDstName);
+    REQUIRE(results[3].strSrcName == results[3].strDstName);
+
+    g_unlink(fMatch1.c_str());
+    g_unlink(fMatch2.c_str());
+    g_unlink(fNew1.c_str());
+    g_unlink(fNew2.c_str());
+    g_rmdir(tmpDir);
+    g_free(tmpDir);
+}
+
+TEST_CASE("Rename Dialog: 'See All' button expands preview beyond row cap sampling", "[unit][rename][gui]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpDir = g_dir_make_tmp("quiver_test_rename_see_all_XXXXXX", NULL);
+    REQUIRE(tmpDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+
+    const int totalFiles = 505;
+    std::vector<std::string> filePaths;
+    filePaths.reserve(totalFiles);
+    std::vector<QuiverFile> files;
+    files.reserve(totalFiles);
+
+    for (int i = 0; i < totalFiles; ++i)
+    {
+        char filename[64];
+        g_snprintf(filename, sizeof(filename), "/img_%04d.jpg", i + 1);
+        std::string fullPath = std::string(tmpDir) + filename;
+        REQUIRE(g_file_set_contents(fullPath.c_str(), contents, length, NULL));
+        filePaths.push_back(fullPath);
+
+        gchar* uri = g_filename_to_uri(fullPath.c_str(), NULL, NULL);
+        REQUIRE(uri != nullptr);
+        files.push_back(QuiverFile(uri));
+        g_free(uri);
+    }
+    g_free(contents);
+
+    struct SeeAllCapture {
+        bool checked;
+        GtkWidget* btnSeeAll;
+        guint initialCount;
+        guint expandedCount;
+        guint collapsedCount;
+        std::string initialBtnLabel;
+        std::string expandedBtnLabel;
+        std::string collapsedBtnLabel;
+        int64_t startMs;
+    } cap{false, NULL, 0, 0, 0, "", "", "", static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    RenameDlg rename;
+    rename.SetFiles(files);
+
+    g_timeout_add(30, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<SeeAllCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Rename");
+        if (win != NULL)
+        {
+            if (c->btnSeeAll == NULL)
+            {
+                std::vector<GtkWidget*> buttons;
+                FindWidgetsByType(win, GTK_TYPE_BUTTON, buttons);
+                for (GtkWidget* b : buttons)
+                {
+                    const char* lbl = gtk_button_get_label(GTK_BUTTON(b));
+                    if (lbl && strcmp(lbl, "See All") == 0)
+                    {
+                        if (gtk_widget_get_visible(b))
+                        {
+                            c->btnSeeAll = b;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (c->btnSeeAll != NULL && !c->checked)
+            {
+                std::vector<GtkWidget*> colViews;
+                FindWidgetsByType(win, GTK_TYPE_COLUMN_VIEW, colViews);
+                if (!colViews.empty())
+                {
+                    GListModel* model = G_LIST_MODEL(gtk_column_view_get_model(GTK_COLUMN_VIEW(colViews[0])));
+                    c->initialCount = g_list_model_get_n_items(model);
+                    c->initialBtnLabel = gtk_button_get_label(GTK_BUTTON(c->btnSeeAll));
+
+                    // Click "See All"
+                    g_signal_emit_by_name(c->btnSeeAll, "clicked");
+                    c->expandedCount = g_list_model_get_n_items(model);
+                    c->expandedBtnLabel = gtk_button_get_label(GTK_BUTTON(c->btnSeeAll));
+
+                    // Click again to toggle back
+                    g_signal_emit_by_name(c->btnSeeAll, "clicked");
+                    c->collapsedCount = g_list_model_get_n_items(model);
+                    c->collapsedBtnLabel = gtk_button_get_label(GTK_BUTTON(c->btnSeeAll));
+
+                    c->checked = true;
+                    gtk_window_close(GTK_WINDOW(win));
+                    return G_SOURCE_REMOVE;
+                }
+            }
+
+            if (static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    rename.Run();
+
+    REQUIRE(cap.checked);
+    REQUIRE(cap.initialBtnLabel == "See All");
+    REQUIRE(cap.initialCount == 501);
+
+    REQUIRE(cap.expandedBtnLabel == "Show Sample");
+    REQUIRE(cap.expandedCount == 505);
+
+    REQUIRE(cap.collapsedBtnLabel == "See All");
+    REQUIRE(cap.collapsedCount == 501);
+
+    for (const auto& p : filePaths)
+    {
+        g_unlink(p.c_str());
+    }
+    g_rmdir(tmpDir);
+    g_free(tmpDir);
+}
+
+TEST_CASE("Rename Dialog: files without date metadata sort below conflicts and above dated files, status indicates no-date count", "[unit][rename][gui][date]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpDir = g_dir_make_tmp("quiver_test_rename_date_XXXXXX", NULL);
+    REQUIRE(tmpDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+
+    std::string fDated = std::string(tmpDir) + "/z_dated.jpg";
+    std::string fUndatedMatch = std::string(tmpDir) + "/Pic_002.jpg";
+    std::string fUndatedRename = std::string(tmpDir) + "/a_undated.jpg";
+
+    REQUIRE(g_file_set_contents(fDated.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fUndatedMatch.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fUndatedRename.c_str(), contents, length, NULL));
+    g_free(contents);
+
+    // Give fDated an EXIF date tag so it has date metadata
+    {
+        auto image = Exiv2::ImageFactory::open(fDated.c_str());
+        REQUIRE(image.get() != nullptr);
+        image->readMetadata();
+        image->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        image->writeMetadata();
+    }
+
+    gchar* uDated = g_filename_to_uri(fDated.c_str(), NULL, NULL);
+    gchar* uUndatedMatch = g_filename_to_uri(fUndatedMatch.c_str(), NULL, NULL);
+    gchar* uUndatedRename = g_filename_to_uri(fUndatedRename.c_str(), NULL, NULL);
+
+    std::vector<QuiverFile> files;
+    files.push_back(QuiverFile(uDated));
+    files.push_back(QuiverFile(uUndatedMatch));
+    files.push_back(QuiverFile(uUndatedRename));
+
+    g_free(uDated);
+    g_free(uUndatedMatch);
+    g_free(uUndatedRename);
+
+    struct DateSortCapture {
+        bool checked;
+        std::string statusText;
+        std::vector<bool> colResizable;
+        std::vector<int> colFixedWidth;
+        int64_t startMs;
+    } cap{false, "", {}, {}, static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    RenameDlg rename;
+    rename.SetFiles(files);
+
+    g_timeout_add(20, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<DateSortCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Rename");
+        if (win != NULL)
+        {
+            std::vector<GtkWidget*> entries;
+            FindWidgetsByType(win, GTK_TYPE_ENTRY, entries);
+            for (GtkWidget* e : entries)
+            {
+                const char* cur = gtk_editable_get_text(GTK_EDITABLE(e));
+                if (cur && strcmp(cur, "Pic_###") != 0)
+                {
+                    gtk_editable_set_text(GTK_EDITABLE(e), "Pic_###");
+                    break;
+                }
+            }
+
+            std::vector<GtkWidget*> labels;
+            FindWidgetsByType(win, GTK_TYPE_LABEL, labels);
+            for (GtkWidget* l : labels)
+            {
+                const char* txt = gtk_label_get_text(GTK_LABEL(l));
+                if (txt != NULL && strstr(txt, "files will be renamed") != NULL)
+                {
+                    c->statusText = txt;
+                    c->checked = true;
+                    break;
+                }
+            }
+
+            if (c->checked)
+            {
+                std::vector<GtkWidget*> colViews;
+                FindWidgetsByType(win, GTK_TYPE_COLUMN_VIEW, colViews);
+                if (!colViews.empty())
+                {
+                    GListModel* cols = gtk_column_view_get_columns(GTK_COLUMN_VIEW(colViews[0]));
+                    guint nCols = g_list_model_get_n_items(cols);
+                    for (guint i = 0; i < nCols; ++i)
+                    {
+                        GtkColumnViewColumn* col = GTK_COLUMN_VIEW_COLUMN(g_list_model_get_item(cols, i));
+                        c->colResizable.push_back(gtk_column_view_column_get_resizable(col) == TRUE);
+                        c->colFixedWidth.push_back(gtk_column_view_column_get_fixed_width(col));
+                        g_object_unref(col);
+                    }
+                }
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+
+            if (static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    rename.Run();
+
+    REQUIRE(cap.checked);
+    // Status message specifies count of files that have no date metadata
+    REQUIRE(cap.statusText.find("2 of 3 files will be renamed, 1 file already matches its template (2 files have no date metadata)") != std::string::npos);
+
+    // Conflict results ordering:
+    // 1. Conflicts at top
+    // 2. No metadata warnings (all files lacking date metadata sort here above normal renames)
+    // 3. Normal rename (files to be renamed with date metadata)
+    // 4. 'no change' items at the very bottom
+    auto results = rename.GetConflictResults();
+    REQUIRE(results.size() == 3);
+    // Row 0: a_undated.jpg (no date metadata)
+    REQUIRE_FALSE(results[0].bHasDateMetadata);
+    REQUIRE(results[0].strSrcName == "a_undated.jpg");
+    REQUIRE(rename.GetPreviewItemIssue(0) == "No date metadata (uses file modification time)");
+    // Row 1: Pic_002.jpg (no date metadata, matches template -> warning sorts above normal rename!)
+    REQUIRE_FALSE(results[1].bHasDateMetadata);
+    REQUIRE(results[1].strSrcName == "Pic_002.jpg");
+    REQUIRE(rename.GetPreviewItemIssue(1) == "No date metadata (uses file modification time)");
+    // Row 2: z_dated.jpg (has date metadata, will be renamed)
+    REQUIRE(results[2].bHasDateMetadata);
+    REQUIRE(results[2].strSrcName == "z_dated.jpg");
+    REQUIRE(rename.GetPreviewItemIssue(2) == "");
+
+    // Columns: icon is fixed (32), text columns are resizable with fixed base widths
+    REQUIRE(cap.colFixedWidth.size() == 4);
+    REQUIRE(cap.colFixedWidth[0] == 32);
+    REQUIRE(cap.colFixedWidth[1] == 170);
+    REQUIRE(cap.colFixedWidth[2] == 170);
+    REQUIRE(cap.colFixedWidth[3] == 180);
+    REQUIRE(cap.colResizable[1] == true);
+    REQUIRE(cap.colResizable[2] == true);
+    REQUIRE(cap.colResizable[3] == true);
+
+    g_unlink(fDated.c_str());
+    g_unlink(fUndatedMatch.c_str());
+    g_unlink(fUndatedRename.c_str());
+    g_rmdir(tmpDir);
+    g_free(tmpDir);
+}
+
+TEST_CASE("Rename Dialog: items that won't be renamed show 'no change' in issue column", "[unit][rename][gui][issue]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpDir = g_dir_make_tmp("quiver_test_rename_no_change_XXXXXX", NULL);
+    REQUIRE(tmpDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    std::string fWillRename = std::string(tmpDir) + "/orig_1.jpg";
+    std::string fMatches = std::string(tmpDir) + "/Photo_002.jpg";
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+    REQUIRE(g_file_set_contents(fWillRename.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fMatches.c_str(), contents, length, NULL));
+    g_free(contents);
+
+    // Give both files EXIF dates so neither has a missing-date warning
+    {
+        auto img1 = Exiv2::ImageFactory::open(fWillRename.c_str());
+        REQUIRE(img1.get() != nullptr);
+        img1->readMetadata();
+        img1->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        img1->writeMetadata();
+
+        auto img2 = Exiv2::ImageFactory::open(fMatches.c_str());
+        REQUIRE(img2.get() != nullptr);
+        img2->readMetadata();
+        img2->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        img2->writeMetadata();
+    }
+
+    gchar* uWillRename = g_filename_to_uri(fWillRename.c_str(), NULL, NULL);
+    gchar* uMatches = g_filename_to_uri(fMatches.c_str(), NULL, NULL);
+
+    std::vector<QuiverFile> files;
+    files.push_back(QuiverFile(uWillRename));
+    files.push_back(QuiverFile(uMatches));
+
+    g_free(uWillRename);
+    g_free(uMatches);
+
+    struct NoChangeCapture {
+        bool checked;
+        std::string statusText;
+        int64_t startMs;
+    } cap{false, "", static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    RenameDlg rename;
+    rename.SetFiles(files);
+
+    g_timeout_add(20, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<NoChangeCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Rename");
+        if (win != NULL)
+        {
+            std::vector<GtkWidget*> entries;
+            FindWidgetsByType(win, GTK_TYPE_ENTRY, entries);
+            for (GtkWidget* e : entries)
+            {
+                const char* cur = gtk_editable_get_text(GTK_EDITABLE(e));
+                if (cur && strcmp(cur, "Photo_###") != 0)
+                {
+                    gtk_editable_set_text(GTK_EDITABLE(e), "Photo_###");
+                    break;
+                }
+            }
+
+            std::vector<GtkWidget*> labels;
+            FindWidgetsByType(win, GTK_TYPE_LABEL, labels);
+            for (GtkWidget* l : labels)
+            {
+                const char* txt = gtk_label_get_text(GTK_LABEL(l));
+                if (txt != NULL && strstr(txt, "files will be renamed") != NULL)
+                {
+                    c->statusText = txt;
+                    c->checked = true;
+                    break;
+                }
+            }
+
+            if (c->checked)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+
+            if (static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    rename.Run();
+
+    REQUIRE(cap.checked);
+    REQUIRE(cap.statusText.find("1 of 2 files will be renamed, 1 file already matches its template") != std::string::npos);
+
+    REQUIRE(rename.GetPreviewItemCount() == 2);
+    auto results = rename.GetConflictResults();
+    REQUIRE(results.size() == 2);
+    REQUIRE(results[0].strSrcName != results[0].strDstName);
+    REQUIRE(results[1].strSrcName == results[1].strDstName);
+
+    // Row 1 is the unchanged file (Photo_002.jpg -> Photo_002.jpg), issue is "no change"
+    REQUIRE(rename.GetPreviewItemIssue(1) == "no change");
+
+    g_unlink(fWillRename.c_str());
+    g_unlink(fMatches.c_str());
+    g_rmdir(tmpDir);
+    g_free(tmpDir);
+}
+
+TEST_CASE("Rename Dialog: preview sorting hierarchy (conflicts, no metadata, no conflicts, no change)", "[unit][rename][gui][sort]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpDir = g_dir_make_tmp("quiver_test_rename_4tier_XXXXXX", NULL);
+    REQUIRE(tmpDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+
+    // Template "Item_###"
+    // Item_001.jpg -> pre-existing on disk (not in rename list) causing collision
+    // 1. File to collide: orig_a.jpg -> maps to Item_001.jpg (Conflict, Rank 0)
+    // 2. File without date: orig_b.jpg -> maps to Item_002.jpg (No metadata, Rank 1)
+    // 3. File with date: orig_c.jpg -> maps to Item_003.jpg (No conflict/normal, Rank 2)
+    // 4. File already matching: Item_004.jpg -> maps to Item_004.jpg (No change, Rank 3)
+
+    std::string fDiskExisting = std::string(tmpDir) + "/Item_001.jpg";
+    std::string fCollide = std::string(tmpDir) + "/orig_a.jpg";
+    std::string fNoDate = std::string(tmpDir) + "/orig_b.jpg";
+    std::string fWithDate = std::string(tmpDir) + "/orig_c.jpg";
+    std::string fNoChange = std::string(tmpDir) + "/Item_004.jpg";
+
+    REQUIRE(g_file_set_contents(fDiskExisting.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fCollide.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fNoDate.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fWithDate.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fNoChange.c_str(), contents, length, NULL));
+    g_free(contents);
+
+    // Give fWithDate and fNoChange EXIF date tags so they have date metadata
+    {
+        auto image = Exiv2::ImageFactory::open(fWithDate.c_str());
+        REQUIRE(image.get() != nullptr);
+        image->readMetadata();
+        image->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        image->writeMetadata();
+
+        auto image2 = Exiv2::ImageFactory::open(fNoChange.c_str());
+        REQUIRE(image2.get() != nullptr);
+        image2->readMetadata();
+        image2->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        image2->writeMetadata();
+    }
+
+    gchar* uCollide = g_filename_to_uri(fCollide.c_str(), NULL, NULL);
+    gchar* uNoDate = g_filename_to_uri(fNoDate.c_str(), NULL, NULL);
+    gchar* uWithDate = g_filename_to_uri(fWithDate.c_str(), NULL, NULL);
+    gchar* uNoChange = g_filename_to_uri(fNoChange.c_str(), NULL, NULL);
+
+    std::vector<QuiverFile> files;
+    files.push_back(QuiverFile(uCollide));
+    files.push_back(QuiverFile(uNoDate));
+    files.push_back(QuiverFile(uWithDate));
+    files.push_back(QuiverFile(uNoChange));
+
+    g_free(uCollide);
+    g_free(uNoDate);
+    g_free(uWithDate);
+    g_free(uNoChange);
+
+    RenameDlg rename;
+    rename.SetFiles(files);
+
+    struct FourTierCapture {
+        bool checked;
+        int64_t startMs;
+    } cap{false, static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    g_timeout_add(20, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<FourTierCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Rename");
+        if (win != NULL)
+        {
+            std::vector<GtkWidget*> entries;
+            FindWidgetsByType(win, GTK_TYPE_ENTRY, entries);
+            for (GtkWidget* e : entries)
+            {
+                const char* cur = gtk_editable_get_text(GTK_EDITABLE(e));
+                if (cur && strcmp(cur, "Item_###") != 0)
+                {
+                    gtk_editable_set_text(GTK_EDITABLE(e), "Item_###");
+                    break;
+                }
+            }
+
+            std::vector<GtkWidget*> labels;
+            FindWidgetsByType(win, GTK_TYPE_LABEL, labels);
+            for (GtkWidget* l : labels)
+            {
+                const char* txt = gtk_label_get_text(GTK_LABEL(l));
+                if (txt != NULL && strstr(txt, "files will be renamed") != NULL)
+                {
+                    c->checked = true;
+                    break;
+                }
+            }
+
+            if (c->checked)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+
+            if (static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    rename.Run();
+
+    REQUIRE(cap.checked);
+    REQUIRE(rename.GetPreviewItemCount() == 4);
+    auto results = rename.GetConflictResults();
+    REQUIRE(results.size() == 4);
+
+    // 1. Conflict at top
+    REQUIRE(results[0].HasConflict());
+    REQUIRE(results[0].strSrcName == "orig_a.jpg");
+
+    // 2. No metadata below conflict (for file that will be renamed)
+    REQUIRE_FALSE(results[1].HasConflict());
+    REQUIRE_FALSE(results[1].bHasDateMetadata);
+    REQUIRE(results[1].strSrcName != results[1].strDstName);
+    REQUIRE(results[1].strSrcName == "orig_b.jpg");
+
+    // 3. No conflict (normal rename with date metadata) below no metadata
+    REQUIRE_FALSE(results[2].HasConflict());
+    REQUIRE(results[2].bHasDateMetadata);
+    REQUIRE(results[2].strSrcName != results[2].strDstName);
+    REQUIRE(results[2].strSrcName == "orig_c.jpg");
+
+    // 4. 'No change' items at the very bottom
+    REQUIRE_FALSE(results[3].HasConflict());
+    REQUIRE(results[3].strSrcName == results[3].strDstName);
+    REQUIRE(results[3].strSrcName == "Item_004.jpg");
+    REQUIRE(rename.GetPreviewItemIssue(3) == "no change");
+
+    g_unlink(fDiskExisting.c_str());
+    g_unlink(fCollide.c_str());
+    g_unlink(fNoDate.c_str());
+    g_unlink(fWithDate.c_str());
+    g_unlink(fNoChange.c_str());
+    g_rmdir(tmpDir);
+    g_free(tmpDir);
+}
+
 TEST_CASE("Organize Dialog: Friendly path, non-expanding spinbox, and preview columns", "[unit][organize][gui]")
 {
     if (!QuiverTest_HasDisplay())
@@ -570,3 +1356,4 @@ TEST_CASE("Organize Dialog: files without date metadata are flagged in the Issue
     g_free(tmpSrcDir);
     g_free(tmpDstDir);
 }
+

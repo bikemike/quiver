@@ -4,6 +4,7 @@
 #include "quiver-i18n.h"
 #include "BookmarkAddEditDlg.h"
 #include "Bookmarks.h"
+#include "TaskManagerDlg.h"
 
 extern "C" {
 #include <libswscale/swscale.h>
@@ -2187,6 +2188,72 @@ void AddAccelGroup(GtkWindow* /*window*/) {
 			g_free(bookmark_name);
 		}
 		return added;
+	}
+
+	static bool is_quiver_dialog(GtkWindow* win, GtkWindow* mainWindow)
+	{
+		if (!win)
+			return false;
+
+		if (mainWindow != NULL)
+		{
+			GtkWindow* trans = gtk_window_get_transient_for(win);
+			while (trans)
+			{
+				if (trans == mainWindow)
+					return true;
+				trans = gtk_window_get_transient_for(trans);
+			}
+		}
+
+		if (gtk_window_get_modal(win))
+			return true;
+
+		const char* title = gtk_window_get_title(win);
+		if (title != NULL)
+		{
+			if (strcmp(title, "Rename") == 0 ||
+			    strcmp(title, "Organize") == 0 ||
+			    strcmp(title, "Quiver Preferences") == 0 ||
+			    strcmp(title, "Manage Bookmarks") == 0 ||
+			    strcmp(title, "External Tools") == 0 ||
+			    strcmp(title, "Adjust Date") == 0 ||
+			    strcmp(title, "Add/Edit Bookmark") == 0)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool CanCloseWindow(GtkWidget* mainWindow)
+	{
+		/* Do not allow closing the main window while any dialog is displayed. */
+		GList* tops = gtk_window_list_toplevels();
+		GtkWindow* mainGtkWin = mainWindow ? GTK_WINDOW(mainWindow) : NULL;
+		for (GList* l = tops; l != NULL; l = l->next)
+		{
+			GtkWindow* win = GTK_WINDOW(l->data);
+			if (GTK_WIDGET(win) != mainWindow && gtk_widget_get_visible(GTK_WIDGET(win)))
+			{
+				/* TaskManagerDlg is an informational task monitor, not a blocking dialog. */
+				if (TaskManagerDlg::GetInstance() &&
+				    GTK_WIDGET(win) == TaskManagerDlg::GetInstance()->GetWidget())
+				{
+					continue;
+				}
+
+				if (is_quiver_dialog(win, mainGtkWin))
+				{
+					gtk_window_present(win);
+					g_list_free(tops);
+					return false;
+				}
+			}
+		}
+		g_list_free(tops);
+		return true;
 	}
 
 }

@@ -8,6 +8,7 @@
 #include "RenameDlg.h"
 #include "OrganizeDlg.h"
 #include "BookmarkAddEditDlg.h"
+#include "QuiverUtils.h"
 #include "test_helpers.h"
 
 static guint ToplevelCount()
@@ -216,4 +217,69 @@ TEST_CASE("Adjust Date is the only modal dialog", "[unit][gui][dialog]")
     edit.Run();
     REQUIRE(cap.w != NULL);
     REQUIRE(!cap.modal);
+}
+
+TEST_CASE("Main window close is blocked while dialogs are displayed", "[unit][gui][dialog][close]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    GtkWidget *mainWin = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(mainWin), "Quiver Test Main Window");
+    gtk_widget_set_visible(mainWin, TRUE);
+
+    /* When no dialogs are displayed, CanCloseWindow returns true */
+    REQUIRE(QuiverUtils::CanCloseWindow(mainWin));
+
+    /* When Rename dialog is displayed, CanCloseWindow returns false */
+    struct RenameCloseCapture {
+        GtkWidget *mainWin;
+        bool canCloseWhileOpen;
+    } cap{mainWin, true};
+
+    g_timeout_add(50, +[](gpointer data) -> gboolean {
+        auto *c = static_cast<RenameCloseCapture*>(data);
+        GtkWidget *w = FindToplevelByTitle("Rename");
+        if (w != NULL && gtk_widget_get_visible(w))
+        {
+            c->canCloseWhileOpen = QuiverUtils::CanCloseWindow(c->mainWin);
+            gtk_window_close(GTK_WINDOW(w));
+            return G_SOURCE_REMOVE;
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    RenameDlg rename;
+    rename.Run();
+
+    REQUIRE_FALSE(cap.canCloseWhileOpen);
+
+    /* After the dialog is closed, CanCloseWindow returns true again */
+    REQUIRE(QuiverUtils::CanCloseWindow(mainWin));
+
+    /* Also verify Organize dialog blocks closing */
+    struct OrgCloseCapture {
+        GtkWidget *mainWin;
+        bool canCloseWhileOpen;
+    } orgCap{mainWin, true};
+
+    g_timeout_add(50, +[](gpointer data) -> gboolean {
+        auto *c = static_cast<OrgCloseCapture*>(data);
+        GtkWidget *w = FindToplevelByTitle("Organize");
+        if (w != NULL && gtk_widget_get_visible(w))
+        {
+            c->canCloseWhileOpen = QuiverUtils::CanCloseWindow(c->mainWin);
+            gtk_window_close(GTK_WINDOW(w));
+            return G_SOURCE_REMOVE;
+        }
+        return G_SOURCE_CONTINUE;
+    }, &orgCap);
+
+    OrganizeDlg organize;
+    organize.Run();
+
+    REQUIRE_FALSE(orgCap.canCloseWhileOpen);
+    REQUIRE(QuiverUtils::CanCloseWindow(mainWin));
+
+    gtk_window_destroy(GTK_WINDOW(mainWin));
 }
