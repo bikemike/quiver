@@ -1,6 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
+#include <config.h>
+#include <gtk/gtk.h>
 #include "AdjustDateTask.h"
 #include "QuiverFile.h"
+#include "QuiverVideoOps.h"
+#include "QuiverUtils.h"
 #include "test_helpers.h"
 
 #include <exiv2/exiv2.hpp>
@@ -458,4 +462,150 @@ TEST_CASE("AdjustDateTask Mixed Batch of Images and Videos", "[unit][adjust_date
     g_free(uriVid);
     g_unlink(tmpImgPath);
     g_unlink(tmpVidPath);
+}
+
+TEST_CASE("AdjustDateDialog radio options mutual exclusivity", "[unit][adjust_date][dialog]")
+{
+    REQUIRE_DISPLAY();
+    GtkBuilder* builder = gtk_builder_new();
+    std::string uiPath = quiver_get_resource_path("quiver.ui");
+    const char* objectids[] = {
+        "AdjustDateDialog",
+        "adjustment3",
+        "adjustment4",
+        "adjustment5",
+        "adjustment6",
+        "adjustment7",
+        NULL};
+    gboolean loaded = gtk_builder_add_objects_from_file(builder, uiPath.c_str(), objectids, NULL);
+    REQUIRE(loaded);
+
+    GtkCheckButton* radioAdjust = GTK_CHECK_BUTTON(gtk_builder_get_object(builder, "adjustdatedlg_radio_adjust_date"));
+    GtkCheckButton* radioSet = GTK_CHECK_BUTTON(gtk_builder_get_object(builder, "adjustdatedlg_radio_set_date"));
+    REQUIRE(radioAdjust != nullptr);
+    REQUIRE(radioSet != nullptr);
+
+    // Initial state: adjust date is active, set date is inactive
+    REQUIRE(gtk_check_button_get_active(radioAdjust) == TRUE);
+    REQUIRE(gtk_check_button_get_active(radioSet) == FALSE);
+
+    // Activating Set Date must automatically deactivate Adjust Date
+    gtk_check_button_set_active(radioSet, TRUE);
+    REQUIRE(gtk_check_button_get_active(radioSet) == TRUE);
+    REQUIRE(gtk_check_button_get_active(radioAdjust) == FALSE);
+
+    // Activating Adjust Date must automatically deactivate Set Date
+    gtk_check_button_set_active(radioAdjust, TRUE);
+    REQUIRE(gtk_check_button_get_active(radioAdjust) == TRUE);
+    REQUIRE(gtk_check_button_get_active(radioSet) == FALSE);
+
+    g_object_unref(builder);
+}
+
+TEST_CASE("Video Snapshot EXIF date calculation and metadata", "[unit][video][snapshot]")
+{
+    std::string sampleVid = QuiverTest_GetImagesDir() + "/sample_video.mp4";
+    REQUIRE(g_file_test(sampleVid.c_str(), G_FILE_TEST_EXISTS));
+
+    gchar* videoUri = g_filename_to_uri(sampleVid.c_str(), NULL, NULL);
+    REQUIRE(videoUri != nullptr);
+
+    QuiverFile qf(videoUri);
+    time_t createDate = qf.GetTimeT(true);
+    REQUIRE(createDate > 0);
+
+    // Prepare a temporary snapshot png
+    char tmpSnapPath[] = "/tmp/quiver_test_snap_XXXXXX.png";
+    int fdSnap = g_mkstemp(tmpSnapPath);
+    REQUIRE(fdSnap >= 0);
+    close(fdSnap);
+
+    static const unsigned char k1x1Png[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+        0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+    };
+    REQUIRE(g_file_set_contents(tmpSnapPath, (const char*)k1x1Png, sizeof(k1x1Png), NULL));
+
+    // sample_video.mp4 has duration 1.0s (1,000,000,000 ns).
+    // Test with offset 0.4s (400,000,000 ns).
+    gint64 current_pos_ns = 400000000;
+    gint64 duration_ns = 1000000000;
+
+    bool success = QuiverVideoOps::WriteSnapshotExif(tmpSnapPath, videoUri, "sample_video.mp4", current_pos_ns, duration_ns);
+    REQUIRE(success);
+
+    // Calculate expected timestamp: createDate - duration + offset = createDate - 1.0 + 0.4 = createDate - 0.6
+    double expectedTime = (double)createDate - 1.0 + 0.4;
+    time_t expectedTimeT = (time_t)std::round(expectedTime);
+    struct tm tmExp = {};
+    localtime_r(&expectedTimeT, &tmExp);
+    char szExpDate[64];
+    snprintf(szExpDate, sizeof(szExpDate), "%04d:%02d:%02d %02d:%02d:%02d",
+        tmExp.tm_year + 1900, tmExp.tm_mon + 1, tmExp.tm_mday,
+        tmExp.tm_hour, tmExp.tm_min, tmExp.tm_sec);
+
+    // Verify written EXIF metadata using Exiv2
+    auto image = Exiv2::ImageFactory::open(tmpSnapPath);
+    REQUIRE(image.get() != nullptr);
+    image->readMetadata();
+    Exiv2::ExifData& exif = image->exifData();
+
+    REQUIRE(exif.findKey(Exiv2::ExifKey("Exif.Photo.DateTimeOriginal")) != exif.end());
+    REQUIRE(exif["Exif.Photo.DateTimeOriginal"].toString() == std::string(szExpDate));
+    REQUIRE(exif["Exif.Photo.DateTimeDigitized"].toString() == std::string(szExpDate));
+    REQUIRE(exif["Exif.Image.DateTime"].toString() == std::string(szExpDate));
+
+    REQUIRE(exif.findKey(Exiv2::ExifKey("Exif.Image.DocumentName")) != exif.end());
+    REQUIRE(exif["Exif.Image.DocumentName"].toString() == "sample_video.mp4");
+
+    REQUIRE(exif.findKey(Exiv2::ExifKey("Exif.Photo.UserComment")) != exif.end());
+    std::string userComment = exif["Exif.Photo.UserComment"].toString();
+    REQUIRE(userComment.find("Captured from sample_video.mp4 at 00:00") != std::string::npos);
+
+    REQUIRE(exif.findKey(Exiv2::ExifKey("Exif.Image.ImageDescription")) != exif.end());
+    std::string imgDesc = exif["Exif.Image.ImageDescription"].toString();
+    REQUIRE(imgDesc.find("Frame captured from sample_video.mp4 at 00:00") != std::string::npos);
+
+    g_free(videoUri);
+    g_unlink(tmpSnapPath);
+
+    std::string realVid = "/workspace/2026-09-13 04.50.30 MJ horn honk.mp4";
+    if (g_file_test(realVid.c_str(), G_FILE_TEST_EXISTS))
+    {
+        gchar* realVidUri = g_filename_to_uri(realVid.c_str(), NULL, NULL);
+        REQUIRE(realVidUri != nullptr);
+
+        char tmpSnap2[] = "/tmp/quiver_test_snap2_XXXXXX.png";
+        int fd2 = g_mkstemp(tmpSnap2);
+        REQUIRE(fd2 >= 0);
+        close(fd2);
+        REQUIRE(g_file_set_contents(tmpSnap2, (const char*)k1x1Png, sizeof(k1x1Png), NULL));
+
+        bool ok = QuiverVideoOps::WriteSnapshotExif(tmpSnap2, realVidUri, "2026-09-13 04.50.30 MJ horn honk.mp4", 15000000000ULL /* 15s */);
+        REQUIRE(ok);
+
+        auto img2 = Exiv2::ImageFactory::open(tmpSnap2);
+        REQUIRE(img2.get() != nullptr);
+        img2->readMetadata();
+        Exiv2::ExifData& exif2 = img2->exifData();
+
+        // Check software/encoder copied
+        REQUIRE(exif2.findKey(Exiv2::ExifKey("Exif.Image.Software")) != exif2.end());
+        REQUIRE(exif2["Exif.Image.Software"].toString().find("Lavf") != std::string::npos);
+
+        // Check comment copied into UserComment
+        REQUIRE(exif2.findKey(Exiv2::ExifKey("Exif.Photo.UserComment")) != exif2.end());
+        REQUIRE(exif2["Exif.Photo.UserComment"].toString().find("Camera: jrcam") != std::string::npos);
+
+        // Check title copied into ImageDescription
+        REQUIRE(exif2.findKey(Exiv2::ExifKey("Exif.Image.ImageDescription")) != exif2.end());
+        REQUIRE(exif2["Exif.Image.ImageDescription"].toString().find("Frigate Recording") != std::string::npos);
+
+        g_free(realVidUri);
+        g_unlink(tmpSnap2);
+    }
 }

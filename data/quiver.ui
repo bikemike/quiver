@@ -882,7 +882,8 @@
                               <object class="GtkCheckButton" id="adjustdatedlg_radio_set_date">
                                 <property name="label" translatable="1">Set date to (YYYY:MM:DD HH:MM:SS):</property>
                                 <property name="focusable">1</property>
-                                <property name="active">1</property>
+                                <property name="group">adjustdatedlg_radio_adjust_date</property>
+                                <property name="active">0</property>
                               </object>
                             </child>
                             <child>
@@ -929,28 +930,28 @@
                             <property name="spacing">6</property>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_mtime">
-                                <property name="label" translatable="1">File Modification TIme</property>
+                                <property name="label" translatable="1">File Modification Time</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
                               </object>
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_exif_date">
-                                <property name="label" translatable="1">EXIF Date and Time</property>
+                                <property name="label" translatable="1">Metadata Date and Time (EXIF / Video Date)</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
                               </object>
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_exif_date_orig">
-                                <property name="label" translatable="1">EXIF Date and Time (original)</property>
+                                <property name="label" translatable="1">Original Date and Time (DateTimeOriginal / Video Creation Time)</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
                               </object>
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="adjustdatedlg_checkbox_exif_date_digitized">
-                                <property name="label" translatable="1">EXIF Date and Time (digitized)</property>
+                                <property name="label" translatable="1">Digitized Date and Time (DateTimeDigitized)</property>
                                 <property name="focusable">1</property>
                                 <property name="active">1</property>
                               </object>

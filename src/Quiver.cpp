@@ -4689,8 +4689,17 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_ADJUST_DATE))
 	{
-		AdjustDateDlg dlg;
 		std::list<unsigned int> selItems = pQuiverImpl->m_BrowserPtr->GetSelection();
+		if (selItems.empty() && pQuiverImpl->m_ImageListPtr && pQuiverImpl->m_ImageListPtr->GetCurrentIndex() != (unsigned int)-1)
+		{
+			selItems.push_back(pQuiverImpl->m_ImageListPtr->GetCurrentIndex());
+		}
+		if (selItems.empty())
+		{
+			return;
+		}
+
+		AdjustDateDlg dlg;
 		if (!selItems.empty())
 		{
 			QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[selItems.front()];
@@ -4737,7 +4746,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 				}
 
 				// adjust exif date
-				std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
+				std::list<unsigned int>& items = selItems;
 				std::list<unsigned int>::iterator itr;
 				for (itr = items.begin(); items.end() != itr; ++itr)
 				{
@@ -4784,7 +4793,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 						adjustDateTaskPtr->AddAdjustDateFields(AdjustDateTask::DATE_FIELD_EXIF_DATE_TIME_DIGITIZED);
 					}
 
-					std::list<unsigned int> items = pQuiverImpl->m_BrowserPtr->GetSelection();
+					std::list<unsigned int>& items = selItems;
 					std::list<unsigned int>::iterator itr;
 					for (itr = items.begin(); items.end() != itr; ++itr)
 					{

@@ -248,6 +248,10 @@ void AdjustDateDlg::AdjustDateDlgPriv::LoadWidgets()
 
 	m_pToggleAdjustDate    = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_adjust_date") );
 	m_pToggleSetDate       = GTK_CHECK_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_radio_set_date") );
+	if (NULL != m_pToggleAdjustDate && NULL != m_pToggleSetDate)
+	{
+		gtk_check_button_set_group(m_pToggleSetDate, m_pToggleAdjustDate);
+	}
 	m_pSpinYears           = GTK_SPIN_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_spinbutton_years") );
 	m_pSpinDays            = GTK_SPIN_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_spinbutton_days") );
 	m_pSpinHours           = GTK_SPIN_BUTTON( gtk_builder_get_object(m_pGtkBuilder, "adjustdatedlg_spinbutton_hours") );
