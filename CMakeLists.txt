@@ -117,6 +117,7 @@ install(FILES
     data/pause.png
     data/filmstrip.png
     data/filmstrip-big.png
+    data/timezone21.bin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/quiver
 )
 

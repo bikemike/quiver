@@ -347,6 +347,14 @@ static VideoInfo ProbeVideoInfo(const gchar* szUri)
 			{
 				AVDictionaryEntry* pTag =
 					av_dict_get(pFmt->metadata, key, NULL, 0);
+				if (NULL == pTag)
+				{
+					for (unsigned int i = 0; i < pFmt->nb_streams; i++)
+					{
+						pTag = av_dict_get(pFmt->streams[i]->metadata, key, NULL, 0);
+						if (NULL != pTag) break;
+					}
+				}
 				return (NULL != pTag) ? pTag->value : NULL;
 			};
 
@@ -358,8 +366,19 @@ static VideoInfo ProbeVideoInfo(const gchar* szUri)
 			if (NULL == pModel) pModel = get_tag("com.android.model");
 			if (NULL != pModel) info.camera_model = pModel;
 
-			const char* pLoc = get_tag("location");
-			if (NULL == pLoc) pLoc = get_tag("location-eng");
+			static const char* const kLocationTags[] = {
+				"location",
+				"location-eng",
+				"com.apple.quicktime.location.ISO6709",
+				"com.apple.quicktime.location.iso6709",
+				"location.ISO6709",
+			};
+			const char* pLoc = NULL;
+			for (const char* locKey : kLocationTags)
+			{
+				pLoc = get_tag(locKey);
+				if (NULL != pLoc) break;
+			}
 			if (NULL != pLoc) info.gps_location = pLoc;
 
 			/* Collect every remaining container-level tag so the property
@@ -371,6 +390,9 @@ static VideoInfo ProbeVideoInfo(const gchar* szUri)
 				"make", "model",
 				"com.android.manufacturer", "com.android.model",
 				"location", "location-eng",
+				"com.apple.quicktime.location.ISO6709",
+				"com.apple.quicktime.location.iso6709",
+				"location.ISO6709",
 			};
 			const AVDictionaryEntry* pTag = NULL;
 			while (NULL != (pTag = av_dict_iterate(pFmt->metadata, pTag)))
@@ -1385,8 +1407,23 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 			values["Camera"] = combine_camera(info.camera_make,
 				info.camera_model);
 			if (!info.gps_location.empty())
+			{
 				values["GPS Location"] = QuiverGps::LocationFromIso6709(
 					info.gps_location);
+				double lat = 0.0, lon = 0.0, alt = 0.0;
+				bool hasAlt = false;
+				if (QuiverGps::ParseIso6709(info.gps_location, lat, lon, hasAlt, alt))
+				{
+					time_t t = m_QuiverFile.GetTimeT(true);
+					QuiverGps::ZoneLocationInfo zinfo = QuiverGps::GetZoneLocationInfo(lat, lon, t);
+					if (!zinfo.timezone.empty())
+						values["Timezone"] = zinfo.timezone;
+					if (!zinfo.timezoneLocation.empty())
+						values["Timezone Location"] = zinfo.timezoneLocation;
+					if (!zinfo.country.empty())
+						values["Country"] = zinfo.country;
+				}
+			}
 		}
 	}
 	else
@@ -1416,6 +1453,20 @@ void PropertyView::PropertyViewImpl::PopulateSummary()
 			values["GPS Location"] = QuiverGps::LocationString(m_ExifData);
 			values["GPS Altitude"] = QuiverGps::CoordinateString(m_ExifData,
 				"Exif.GPSInfo.GPSAltitude", NULL);
+
+			double lat = 0.0, lon = 0.0, alt = 0.0;
+			bool hasAlt = false;
+			if (QuiverGps::GetExifGps(*m_ExifData, lat, lon, hasAlt, alt))
+			{
+				time_t t = m_QuiverFile.GetTimeT(true);
+				QuiverGps::ZoneLocationInfo zinfo = QuiverGps::GetZoneLocationInfo(lat, lon, t);
+				if (!zinfo.timezone.empty())
+					values["Timezone"] = zinfo.timezone;
+				if (!zinfo.timezoneLocation.empty())
+					values["Timezone Location"] = zinfo.timezoneLocation;
+				if (!zinfo.country.empty())
+					values["Country"] = zinfo.country;
+			}
 		}
 	}
 
@@ -1747,6 +1798,20 @@ void PropertyView::PropertyViewImpl::PopulateVideo()
 		{
 			std::string gps = QuiverGps::FormatIso6709(info.gps_location);
 			add("GPS Location", gps.c_str(), FALSE);
+
+			double lat = 0.0, lon = 0.0, alt = 0.0;
+			bool hasAlt = false;
+			if (QuiverGps::ParseIso6709(info.gps_location, lat, lon, hasAlt, alt))
+			{
+				time_t t = m_QuiverFile.GetTimeT(true);
+				QuiverGps::ZoneLocationInfo zinfo = QuiverGps::GetZoneLocationInfo(lat, lon, t);
+				if (!zinfo.timezone.empty())
+					add("Timezone", zinfo.timezone.c_str(), FALSE);
+				if (!zinfo.timezoneLocation.empty())
+					add("Timezone Location", zinfo.timezoneLocation.c_str(), FALSE);
+				if (!zinfo.country.empty())
+					add("Country", zinfo.country.c_str(), FALSE);
+			}
 		}
 
 		if ('\0' != info.creation_time[0])

@@ -72,12 +72,16 @@ TEST_CASE("Summary layout ranks the most useful properties first", "[summary]")
 	/* what the user compares at a glance comes before the bookkeeping */
 	REQUIRE(common[0] == "File Name");
 	const std::vector<std::string> key = { "Date Taken", "Dimensions",
-		"GPS Location" };
+		"GPS Location", "Timezone", "Timezone Location", "Country" };
 	for (const std::string& k : key)
 	{
 		REQUIRE(Has(common, k));
 		REQUIRE(IndexOf(common, k) < IndexOf(common, "File Size"));
 	}
+	REQUIRE(IndexOf(common, "GPS Location") < IndexOf(common, "Timezone"));
+	REQUIRE(IndexOf(common, "Timezone") < IndexOf(common, "Timezone Location"));
+	REQUIRE(IndexOf(common, "Timezone Location") < IndexOf(common, "Country"));
+	REQUIRE(IndexOf(common, "Country") < IndexOf(common, "File Size"));
 	REQUIRE(IndexOf(common, "File Size") <
 		IndexOf(common, "Last Modified"));
 	REQUIRE(IndexOf(common, "Last Modified") < IndexOf(common, "Type"));

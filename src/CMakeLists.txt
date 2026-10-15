@@ -65,6 +65,7 @@ set(QUIVER_CORE_SOURCES
     libjpeg/gio_jdatadst.c
     libjpeg/gio_jdatasrc.c
     libjpeg/transupp.c
+    3rdparty/zonedetect/zonedetect.c
 )
 
 add_library(quiver_core STATIC ${QUIVER_CORE_SOURCES})
@@ -80,6 +81,7 @@ target_compile_definitions(quiver_core PUBLIC
 target_include_directories(quiver_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/zonedetect
     ${CMAKE_BINARY_DIR}
 )
 

@@ -21,6 +21,7 @@
 #include "Timer.h"
 #include "QuiverUtils.h"
 #include "QuiverVideoOps.h"
+#include "QuiverGps.h"
 #include "ImageCache.h"
 #include "ImageDecoder.h"
 #include "MD5.h"
@@ -1280,9 +1281,10 @@ std::shared_ptr<const Exiv2::IptcData> QuiverFile::QuiverFileImpl::GetIptcData()
 // ISO-8601 strings with an explicit zone ('+' offset or 'Z' suffix) are
 // flagged as zoned; unzoned "YYYY-MM-DD HH:MM:SS" or
 // "YYYY-MM-DDTHH:MM:SS" strings come back as local wall clock.
-static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbExplicitTZ)
+static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbHasOffset, bool* pbIsUTC)
 {
-	*pbExplicitTZ = false;
+	if (NULL != pbHasOffset) *pbHasOffset = false;
+	if (NULL != pbIsUTC) *pbIsUTC = false;
 	if (NULL == szValue || '\0' == szValue[0])
 		return NULL;
 
@@ -1291,8 +1293,20 @@ static GDateTime* ParseContainerDateString(const gchar* szValue, bool* pbExplici
 	{
 		size_t len = strlen(szValue);
 		char cLast = (0 < len) ? szValue[len - 1] : '\0';
-		*pbExplicitTZ = (NULL != strchr(szValue, '+')) ||
-			'Z' == cLast || 'z' == cLast;
+		if ('Z' == cLast || 'z' == cLast)
+		{
+			if (NULL != pbIsUTC) *pbIsUTC = true;
+		}
+		else
+		{
+			// Check if there is an explicit +/- offset after the date part (e.g. "+07:00" or "-05:00")
+			const char* pPlus = strchr(szValue, '+');
+			const char* pMinus = (len > 10) ? strchr(szValue + 10, '-') : NULL;
+			if (NULL != pPlus || NULL != pMinus)
+			{
+				if (NULL != pbHasOffset) *pbHasOffset = true;
+			}
+		}
 		return pDate;
 	}
 
@@ -1391,9 +1405,19 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 		std::shared_ptr<Exiv2::ExifData> pExifData = GetExifData();
 		if (NULL != pExifData.get())
 		{
-			// use date_time_original
+			// use date_time_original, or digitized, or date_time
 			auto it = pExifData->findKey(
 				Exiv2::ExifKey("Exif.Photo.DateTimeOriginal"));
+			if (pExifData->end() == it)
+			{
+				it = pExifData->findKey(
+					Exiv2::ExifKey("Exif.Photo.DateTimeDigitized"));
+			}
+			if (pExifData->end() == it)
+			{
+				it = pExifData->findKey(
+					Exiv2::ExifKey("Exif.Image.DateTime"));
+			}
 			if (pExifData->end() != it)
 			{
 				char szDate[20];
@@ -1453,7 +1477,8 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 					"creation_time",
 				};
 
-				bool bExplicitTZ = false;
+				bool bHasOffset = false;
+				bool bIsUTC = false;
 				GDateTime* pGDate = NULL;
 				for (size_t i = 0; NULL == pGDate &&
 					i < G_N_ELEMENTS(kContainerDateTags); i++)
@@ -1463,7 +1488,7 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 					if (NULL != pTag)
 					{
 						pGDate = ParseContainerDateString(
-							pTag->value, &bExplicitTZ);
+							pTag->value, &bHasOffset, &bIsUTC);
 					}
 				}
 				for (unsigned i = 0; NULL == pGDate &&
@@ -1476,33 +1501,34 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 					if (NULL != pTag)
 					{
 						pGDate = ParseContainerDateString(
-							pTag->value, &bExplicitTZ);
+							pTag->value, &bHasOffset, &bIsUTC);
 					}
 				}
 
 				if (NULL != pGDate)
 				{
-					// Explicitly zoned tags are trusted as-is.  Unzoned
-					// container times (mvhd etc.) carry no usable zone;
-					// phones that follow the ISO/QuickTime UTC standard
-					// (Google Pixel, Android, iPhone/iPad) store true
-					// UTC, so detect those from the container metadata
-					// and fall back to the PXL_/VID_ camera name prefix
-					// as a soft hint.  Otherwise read the fields as
-					// local wall clock to match the legacy exiftool
-					// behaviour.
-					if (bExplicitTZ)
+					if (bHasOffset)
 					{
-						// zoned tags parse to an absolute instant
-						m_cachedMetadataTimeT = g_date_time_to_unix(pGDate);
+						// Explicitly zoned tag with local offset (e.g. +07:00): the camera/device
+						// recorded the local wall-clock time plus offset. Preserve the recorded
+						// local wall-clock time so it displays the actual time of day the video
+						// was captured (matching photos).
+						struct tm tm_wall = {};
+						tm_wall.tm_year = g_date_time_get_year(pGDate) - 1900;
+						tm_wall.tm_mon = g_date_time_get_month(pGDate) - 1;
+						tm_wall.tm_mday = g_date_time_get_day_of_month(pGDate);
+						tm_wall.tm_hour = g_date_time_get_hour(pGDate);
+						tm_wall.tm_min = g_date_time_get_minute(pGDate);
+						tm_wall.tm_sec = (int)g_date_time_get_seconds(pGDate);
+						tm_wall.tm_isdst = -1;
+						m_cachedMetadataTimeT = mktime(&tm_wall);
 					}
-					else if (ContainerIsKnownUTCSource(pFmt) ||
+					else if (bIsUTC || ContainerIsKnownUTCSource(pFmt) ||
 						FileNameHasCameraPrefix(m_szURI))
 					{
-						// unzoned container times are parsed above as
-						// local wall clock; these devices store the
-						// fields in true UTC, so rebuild them as UTC
-						GDateTime* pUtc = g_date_time_new_utc(
+						// Time is UTC (either explicitly 'Z' or ISO/QuickTime standard on Pixel/iPhone).
+						// Rebuild as UTC so we can query the recording location's timezone.
+						GDateTime* pUtc = bIsUTC ? g_date_time_ref(pGDate) : g_date_time_new_utc(
 							g_date_time_get_year(pGDate),
 							g_date_time_get_month(pGDate),
 							g_date_time_get_day_of_month(pGDate),
@@ -1511,7 +1537,72 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 							g_date_time_get_seconds(pGDate));
 						if (NULL != pUtc)
 						{
-							m_cachedMetadataTimeT = g_date_time_to_unix(pUtc);
+							bool bConverted = false;
+							// Look for GPS location metadata in the container
+							static const char* const kGpsTags[] = {
+								"location",
+								"location-eng",
+								"com.apple.quicktime.location.ISO6709",
+								"com.apple.quicktime.location.iso6709",
+								"location.ISO6709",
+							};
+							const char* pLocStr = NULL;
+							for (size_t k = 0; NULL == pLocStr && k < G_N_ELEMENTS(kGpsTags); k++)
+							{
+								AVDictionaryEntry* e = av_dict_get(pFmt->metadata, kGpsTags[k], NULL, 0);
+								if (NULL != e && NULL != e->value && '\0' != e->value[0])
+									pLocStr = e->value;
+							}
+							for (unsigned k = 0; NULL == pLocStr && k < pFmt->nb_streams; k++)
+							{
+								for (size_t j = 0; NULL == pLocStr && j < G_N_ELEMENTS(kGpsTags); j++)
+								{
+									AVDictionaryEntry* e = av_dict_get(pFmt->streams[k]->metadata, kGpsTags[j], NULL, 0);
+									if (NULL != e && NULL != e->value && '\0' != e->value[0])
+										pLocStr = e->value;
+								}
+							}
+
+							double lat = 0.0, lon = 0.0, alt = 0.0;
+							bool hasAlt = false;
+							bool hasCoords = false;
+							if (NULL != pLocStr && QuiverGps::ParseIso6709(pLocStr, lat, lon, hasAlt, alt))
+							{
+								hasCoords = true;
+							}
+							else if (NULL != GetExifData().get() && QuiverGps::GetExifGps(*GetExifData(), lat, lon, hasAlt, alt))
+							{
+								hasCoords = true;
+							}
+
+							if (hasCoords)
+							{
+								GTimeZone* pDestTz = QuiverGps::GetGTimeZone(lat, lon);
+								if (NULL != pDestTz)
+								{
+									GDateTime* pDest = g_date_time_to_timezone(pUtc, pDestTz);
+									if (NULL != pDest)
+									{
+										struct tm tm_dest = {};
+										tm_dest.tm_year = g_date_time_get_year(pDest) - 1900;
+										tm_dest.tm_mon = g_date_time_get_month(pDest) - 1;
+										tm_dest.tm_mday = g_date_time_get_day_of_month(pDest);
+										tm_dest.tm_hour = g_date_time_get_hour(pDest);
+										tm_dest.tm_min = g_date_time_get_minute(pDest);
+										tm_dest.tm_sec = (int)g_date_time_get_seconds(pDest);
+										tm_dest.tm_isdst = -1;
+										m_cachedMetadataTimeT = mktime(&tm_dest);
+										bConverted = true;
+										g_date_time_unref(pDest);
+									}
+									g_time_zone_unref(pDestTz);
+								}
+							}
+
+							if (!bConverted)
+							{
+								m_cachedMetadataTimeT = g_date_time_to_unix(pUtc);
+							}
 							g_date_time_unref(pUtc);
 						}
 					}
