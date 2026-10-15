@@ -142,6 +142,9 @@ public:
 	GtkWidget *GetNavigationControl() const;
 	void UpdateNavigationControl();
 
+	void ShowLoadingProgress(const std::string& text, double fraction);
+	void HideLoadingProgress();
+
 	class ViewerImpl;
 	typedef boost::shared_ptr<ViewerImpl> ViewerImplPtr;
 

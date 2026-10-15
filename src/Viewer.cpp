@@ -1011,10 +1011,11 @@ public:
 	guint m_iTimeoutMouseMotionNotify;
 	guint m_iTimeoutPlayProgress;
 
-	/* "Slideshow paused. [Resume]" pill, shown while a slideshow is paused
-	 * (on an image or a video) so the user can both see the paused state and
-	 * resume without hunting for a hotkey. */
 	GtkWidget *m_pSlideShowPausedPill;
+	GtkWidget *m_pLoadingOverlayBox;
+	GtkWidget *m_pLoadingOverlayLabel;
+	GtkWidget *m_pLoadingOverlayBar;
+	guint m_iTimeoutLoadingPulse;
 
 	int   m_iSlideShowDuration;
 	int   m_iSlideShowWaitCount;
@@ -1401,6 +1402,11 @@ public:
 	void ShowSlideShowPausedPill();
 	void HideSlideShowPausedPill();
 
+	/* Loading HUD pill helpers */
+	void ShowLoadingProgress(const std::string& text, double fraction);
+	void HideLoadingProgress();
+	void HandleLoadProgress(double fraction, int current, int total);
+
 	bool        m_bVideoPreviewClick = false;
 	gdouble     m_dVideoPreviewClickX = 0.0;
 	gdouble     m_dVideoPreviewClickY = 0.0;
@@ -1435,6 +1441,7 @@ public:
 		virtual void HandleItemAdded(ImageListEventPtr event);
 		virtual void HandleItemRemoved(ImageListEventPtr event);
 		virtual void HandleItemChanged(ImageListEventPtr event);
+		virtual void HandleLoadProgress(double fraction, int current, int total) override;
 	private:
 		Viewer::ViewerImpl *parent;
 	};
@@ -6216,6 +6223,7 @@ void Viewer::ViewerImpl::Snapshot()
 		{
 			gchar* dir = g_path_get_dirname(path);
 			gchar* base = g_path_get_basename(path);
+			std::string videoFilename = (base != NULL) ? base : "";
 			gchar* ext = g_strrstr(base, ".");
 			gchar* snap_name = NULL;
 			if (ext != NULL)
@@ -6230,6 +6238,15 @@ void Viewer::ViewerImpl::Snapshot()
 			if (!gdk_texture_save_to_png(texture, snap_name))
 			{
 				g_warning("Snapshot save failed: %s", snap_name);
+			}
+			else
+			{
+				gint64 duration_ns = 0;
+				if (m_pPipeline != NULL)
+					gst_element_query_duration(GST_ELEMENT(m_pPipeline), GST_FORMAT_TIME, &duration_ns);
+				if (duration_ns <= 0)
+					duration_ns = m_iLastVideoDuration;
+				QuiverVideoOps::WriteSnapshotExif(snap_name, uri, videoFilename.c_str(), current_pos, duration_ns);
 			}
 			g_free(snap_name);
 			g_free(dir);
@@ -6922,6 +6939,9 @@ static void viewer_widget_tree_destroyed_cb(GtkWidget *widget, gpointer user_dat
 	pViewer->m_pNavigationControl = NULL;
 	pViewer->m_pNavControlPill = NULL;
 	pViewer->m_pSlideShowPausedPill = NULL;
+	pViewer->m_pLoadingOverlayBox = NULL;
+	pViewer->m_pLoadingOverlayLabel = NULL;
+	pViewer->m_pLoadingOverlayBar = NULL;
 
 	pViewer->m_pViewerOverlayBar = NULL;
 	pViewer->m_pViewerPrevBtn = NULL;
@@ -7086,6 +7106,11 @@ Viewer::ViewerImpl::~ViewerImpl()
 	{
 		g_source_remove(m_iTimeoutSlideshowID);
 		m_iTimeoutSlideshowID = 0;
+	}
+	if (0 != m_iTimeoutLoadingPulse)
+	{
+		g_source_remove(m_iTimeoutLoadingPulse);
+		m_iTimeoutLoadingPulse = 0;
 	}
 	if (0 != m_iTimeoutMouseMotionNotify)
 	{
@@ -10210,6 +10235,10 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_iTimeoutUpdateListID = 0;
 	m_iTimeoutSlideshowID = 0;
 	m_pSlideShowPausedPill = NULL;
+	m_pLoadingOverlayBox = NULL;
+	m_pLoadingOverlayLabel = NULL;
+	m_pLoadingOverlayBar = NULL;
+	m_iTimeoutLoadingPulse = 0;
 	m_pNavControlPill = NULL;
 	m_pNavigationControl = NULL;
 	m_bSlideShowMachineAdvancing = false;
@@ -10773,6 +10802,28 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pSlideShowPausedPill, FALSE);
 	gtk_widget_set_visible(m_pSlideShowPausedPill, FALSE);
 
+	/* Loading HUD pill (mirroring browser's loading progress HUD) */
+	m_pLoadingOverlayBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+	gtk_widget_add_css_class(m_pLoadingOverlayBox, "osd");
+	gtk_widget_add_css_class(m_pLoadingOverlayBox, "viewer-overlay-bar");
+	gtk_widget_add_css_class(m_pLoadingOverlayBox, "browser-loading-hud");
+	gtk_widget_set_halign(m_pLoadingOverlayBox, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(m_pLoadingOverlayBox, GTK_ALIGN_END);
+	gtk_widget_set_margin_bottom(m_pLoadingOverlayBox, 50);
+	gtk_widget_set_can_target(m_pLoadingOverlayBox, FALSE);
+
+	m_pLoadingOverlayLabel = gtk_label_new("Loading folder...");
+	gtk_widget_add_css_class(m_pLoadingOverlayLabel, "caption");
+	gtk_box_append(GTK_BOX(m_pLoadingOverlayBox), m_pLoadingOverlayLabel);
+
+	m_pLoadingOverlayBar = gtk_progress_bar_new();
+	gtk_widget_set_size_request(m_pLoadingOverlayBar, 160, -1);
+	gtk_box_append(GTK_BOX(m_pLoadingOverlayBox), m_pLoadingOverlayBar);
+
+	gtk_overlay_add_overlay(GTK_OVERLAY(m_pOverlay), m_pLoadingOverlayBox);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pOverlay), m_pLoadingOverlayBox, FALSE);
+	gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);
+
 	gtk_grid_attach (GTK_GRID (m_pGrid), m_pOverlay, 0, 0, 1, 1);
 
 	//gtk_widget_set_hexpand(m_pImageView, TRUE);
@@ -11200,6 +11251,10 @@ void Viewer::Show()
 
 
 	m_ViewerImplPtr->m_ImageListPtr->UnblockHandler(m_ViewerImplPtr->m_ImageListEventHandlerPtr);
+	if (m_ViewerImplPtr->m_ImageListPtr && !m_ViewerImplPtr->m_ImageListPtr->IsLoading())
+	{
+		m_ViewerImplPtr->HideLoadingProgress();
+	}
 	m_ViewerImplPtr->UpdateNavigationControl();
 
 }
@@ -11208,6 +11263,7 @@ void Viewer::Hide()
 {
 	m_ViewerImplPtr->StopVideo(true);
 	m_ViewerImplPtr->SlideShowStop(true);
+	m_ViewerImplPtr->HideLoadingProgress();
 	/* The pointer is hidden on the window, not on the viewer, because that is
 	 * what a fullscreen video needs - and the browser is in that same window.
 	 * Leaving the viewer therefore has to hand the pointer back, and cancel the
@@ -11669,6 +11725,140 @@ void Viewer::ViewerImpl::HideSlideShowPausedPill()
 	if (m_pSlideShowPausedPill && G_IS_OBJECT(m_pSlideShowPausedPill) && GTK_IS_WIDGET(m_pSlideShowPausedPill))
 	{
 		gtk_widget_set_visible(m_pSlideShowPausedPill, FALSE);
+	}
+}
+
+static gboolean viewer_loading_pulse_cb(gpointer data)
+{
+	Viewer::ViewerImpl* pImpl = static_cast<Viewer::ViewerImpl*>(data);
+	if (pImpl->m_pLoadingOverlayBar && GTK_IS_PROGRESS_BAR(pImpl->m_pLoadingOverlayBar))
+	{
+		gtk_progress_bar_pulse(GTK_PROGRESS_BAR(pImpl->m_pLoadingOverlayBar));
+	}
+	if (pImpl->m_StatusbarPtr)
+	{
+		pImpl->m_StatusbarPtr->PulseProgress();
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+void Viewer::ViewerImpl::ShowLoadingProgress(const std::string& text, double fraction)
+{
+	if (!m_pLoadingOverlayBox)
+		return;
+
+	if (m_pLoadingOverlayLabel)
+	{
+		gtk_label_set_text(GTK_LABEL(m_pLoadingOverlayLabel), text.c_str());
+	}
+
+	if (m_pLoadingOverlayBar)
+	{
+		if (fraction < 0.0)
+		{
+			if (0 == m_iTimeoutLoadingPulse)
+			{
+				m_iTimeoutLoadingPulse = g_timeout_add(80, viewer_loading_pulse_cb, this);
+			}
+			gtk_progress_bar_pulse(GTK_PROGRESS_BAR(m_pLoadingOverlayBar));
+		}
+		else
+		{
+			if (0 != m_iTimeoutLoadingPulse)
+			{
+				g_source_remove(m_iTimeoutLoadingPulse);
+				m_iTimeoutLoadingPulse = 0;
+			}
+			gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pLoadingOverlayBar), fraction);
+		}
+	}
+
+	gtk_widget_set_visible(m_pLoadingOverlayBox, TRUE);
+
+	if (m_StatusbarPtr)
+	{
+		if (fraction < 0.0)
+		{
+			m_StatusbarPtr->PulseProgress();
+		}
+		else
+		{
+			m_StatusbarPtr->SetProgressFraction(fraction);
+		}
+		m_StatusbarPtr->SetText(text);
+	}
+}
+
+void Viewer::ViewerImpl::HideLoadingProgress()
+{
+	if (0 != m_iTimeoutLoadingPulse)
+	{
+		g_source_remove(m_iTimeoutLoadingPulse);
+		m_iTimeoutLoadingPulse = 0;
+	}
+	if (m_pLoadingOverlayBox)
+	{
+		gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);
+	}
+	if (m_pLoadingOverlayBar)
+	{
+		gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pLoadingOverlayBar), 0.0);
+	}
+	if (m_StatusbarPtr)
+	{
+		m_StatusbarPtr->SetProgressFraction(0.0);
+		m_StatusbarPtr->SetText("");
+	}
+}
+
+void Viewer::ViewerImpl::HandleLoadProgress(double fraction, int current, int total)
+{
+	if (fraction >= 1.0)
+	{
+		HideLoadingProgress();
+		return;
+	}
+
+	char szMsg[128] = {0};
+	if (fraction < 0.0)
+	{
+		if (current > 0)
+		{
+			snprintf(szMsg, sizeof(szMsg), "Loading folder... (%d items)", current);
+		}
+		else
+		{
+			snprintf(szMsg, sizeof(szMsg), "Loading folder...");
+		}
+	}
+	else
+	{
+		if (total > 0)
+		{
+			snprintf(szMsg, sizeof(szMsg), "Reading dates... %d / %d", current, total);
+		}
+		else
+		{
+			snprintf(szMsg, sizeof(szMsg), "Loading... %d%%", (int)(fraction * 100));
+		}
+	}
+
+	ShowLoadingProgress(szMsg, fraction);
+}
+
+void Viewer::ShowLoadingProgress(const std::string& text, double fraction)
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->ShowLoadingProgress(text, fraction);
+	}
+}
+
+void Viewer::HideLoadingProgress()
+{
+	if (m_ViewerImplPtr)
+	{
+		m_ViewerImplPtr->HideLoadingProgress();
 	}
 }
 
@@ -12421,6 +12611,22 @@ void Viewer::ViewerImpl::UpdateHUDPosition()
 			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVideoOptionsBtn), GTK_ARROW_UP);
 		if (m_pVolumeButton)
 			gtk_menu_button_set_direction(GTK_MENU_BUTTON(m_pVolumeButton), GTK_ARROW_UP);
+	}
+
+	if (m_pLoadingOverlayBox)
+	{
+		if (hudPos == HUD_POS_TOP)
+		{
+			gtk_widget_set_valign(m_pLoadingOverlayBox, GTK_ALIGN_START);
+			gtk_widget_set_margin_top(m_pLoadingOverlayBox, 50 + offset);
+			gtk_widget_set_margin_bottom(m_pLoadingOverlayBox, 0);
+		}
+		else
+		{
+			gtk_widget_set_valign(m_pLoadingOverlayBox, GTK_ALIGN_END);
+			gtk_widget_set_margin_bottom(m_pLoadingOverlayBox, 50 + offset);
+			gtk_widget_set_margin_top(m_pLoadingOverlayBox, 0);
+		}
 	}
 
 	UpdateNavControlPosition();
@@ -13219,6 +13425,11 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEvent
 		params.state = ImageLoader::LOAD;
 		parent->m_ImageLoader.LoadImage(parent->m_ImageListPtr->GetCurrent(),params);
 	}
+}
+
+void Viewer::ViewerImpl::ImageListEventHandler::HandleLoadProgress(double fraction, int current, int total)
+{
+	parent->HandleLoadProgress(fraction, current, total);
 }
 
 

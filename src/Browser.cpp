@@ -399,6 +399,7 @@ public:
 	GtkWidget *m_pLoadingOverlayBox;
 	GtkWidget *m_pLoadingOverlayLabel;
 	GtkWidget *m_pLoadingOverlayBar;
+	guint m_iTimeoutLoadingPulse;
 
 	void ShowLoadingProgress(const std::string& text, double fraction);
 	void HideLoadingProgress();
@@ -997,6 +998,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_pLoadingOverlayBox = NULL;
 	m_pLoadingOverlayLabel = NULL;
 	m_pLoadingOverlayBar = NULL;
+	m_iTimeoutLoadingPulse = 0;
 	/*
 	 * layout for the browser gui:
 	 * hpaned
@@ -1504,6 +1506,11 @@ Browser::BrowserImpl::~BrowserImpl()
 	if (m_spAlive)
 	{
 		*m_spAlive = false;
+	}
+	if (0 != m_iTimeoutLoadingPulse)
+	{
+		g_source_remove(m_iTimeoutLoadingPulse);
+		m_iTimeoutLoadingPulse = 0;
 	}
 	m_ThumbnailLoader.Stop();
 
@@ -4430,6 +4437,10 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 
 void Browser::BrowserImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
 {
+	if (!gtk_widget_get_visible(parent->m_pBrowserWidget))
+	{
+		return;
+	}
 	parent->SetImageIndex(event->GetIndex(),true);
 	
 	parent->m_BrowserParent->EmitCursorChangedEvent();
@@ -4463,7 +4474,29 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleItemChanged(ImageListEve
 
 void Browser::BrowserImpl::ImageListEventHandler::HandleLoadProgress(double fraction, int current, int total)
 {
+	if (!gtk_widget_get_visible(parent->m_pBrowserWidget))
+	{
+		if (fraction >= 1.0)
+		{
+			parent->HideLoadingProgress();
+		}
+		return;
+	}
 	parent->HandleLoadProgress(fraction, current, total);
+}
+
+static gboolean browser_loading_pulse_cb(gpointer data)
+{
+	Browser::BrowserImpl* pImpl = static_cast<Browser::BrowserImpl*>(data);
+	if (pImpl->m_pLoadingOverlayBar && GTK_IS_PROGRESS_BAR(pImpl->m_pLoadingOverlayBar))
+	{
+		gtk_progress_bar_pulse(GTK_PROGRESS_BAR(pImpl->m_pLoadingOverlayBar));
+	}
+	if (pImpl->m_StatusbarPtr)
+	{
+		pImpl->m_StatusbarPtr->PulseProgress();
+	}
+	return G_SOURCE_CONTINUE;
 }
 
 void Browser::BrowserImpl::ShowLoadingProgress(const std::string& text, double fraction)
@@ -4480,10 +4513,19 @@ void Browser::BrowserImpl::ShowLoadingProgress(const std::string& text, double f
 	{
 		if (fraction < 0.0)
 		{
+			if (0 == m_iTimeoutLoadingPulse)
+			{
+				m_iTimeoutLoadingPulse = g_timeout_add(80, browser_loading_pulse_cb, this);
+			}
 			gtk_progress_bar_pulse(GTK_PROGRESS_BAR(m_pLoadingOverlayBar));
 		}
 		else
 		{
+			if (0 != m_iTimeoutLoadingPulse)
+			{
+				g_source_remove(m_iTimeoutLoadingPulse);
+				m_iTimeoutLoadingPulse = 0;
+			}
 			gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pLoadingOverlayBar), fraction);
 		}
 	}
@@ -4506,6 +4548,11 @@ void Browser::BrowserImpl::ShowLoadingProgress(const std::string& text, double f
 
 void Browser::BrowserImpl::HideLoadingProgress()
 {
+	if (0 != m_iTimeoutLoadingPulse)
+	{
+		g_source_remove(m_iTimeoutLoadingPulse);
+		m_iTimeoutLoadingPulse = 0;
+	}
 	if (m_pLoadingOverlayBox)
 	{
 		gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);

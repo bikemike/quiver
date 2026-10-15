@@ -4281,8 +4281,11 @@ TEST_CASE("Viewer slideshow plays video without bringing up HUD or timeline or p
     }
     REQUIRE(list->GetCurrent().IsVideo());
 
-    /* Give a few ticks for video playback to begin */
-    settle(10);
+    /* Wait for video playback to begin */
+    for (int i = 0; i < 50; ++i) {
+        settle(2);
+        if (viewer->IsVideoPlaying()) break;
+    }
 
     /* While the video is playing in the slideshow and pointer is idle,
      * HUD, timeline, and center play button must NOT be visible */
@@ -4313,6 +4316,44 @@ TEST_CASE("Viewer slideshow plays video without bringing up HUD or timeline or p
 
     viewer->SlideShowStop();
     viewer->StopVideo(false);
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+    viewer.reset();
+}
+
+TEST_CASE("Viewer loading progress HUD shows and hides properly", "[unit][viewer][overlay]")
+{
+    REQUIRE_DISPLAY();
+    ViewerPtr viewer(new Viewer());
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), viewer->GetWidget());
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    auto find_widget_with_class = [](GtkWidget* root, const char* cls, auto& self) -> GtkWidget* {
+        if (!root) return nullptr;
+        if (gtk_widget_has_css_class(root, cls)) return root;
+        for (GtkWidget* c = gtk_widget_get_first_child(root); c != nullptr; c = gtk_widget_get_next_sibling(c))
+        {
+            GtkWidget* res = self(c, cls, self);
+            if (res) return res;
+        }
+        return nullptr;
+    };
+
+    GtkWidget* hud = find_widget_with_class(viewer->GetWidget(), "browser-loading-hud", find_widget_with_class);
+    REQUIRE(hud != nullptr);
+    CHECK_FALSE(gtk_widget_get_visible(hud));
+
+    viewer->ShowLoadingProgress("Loading folder... (50 items)", -1.0);
+    while (g_main_context_iteration(NULL, FALSE));
+    CHECK(gtk_widget_get_visible(hud));
+
+    viewer->HideLoadingProgress();
+    while (g_main_context_iteration(NULL, FALSE));
+    CHECK_FALSE(gtk_widget_get_visible(hud));
 
     gtk_window_set_child(GTK_WINDOW(win), NULL);
     gtk_window_destroy(GTK_WINDOW(win));
