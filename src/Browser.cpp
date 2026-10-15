@@ -36,6 +36,7 @@
 #include "RenameTask.h"
 
 #include "QuiverClipboard.h"
+#include "QuiverMetadata.h"
 #include "TaskManager.h"
 
 #include "Statusbar.h"
@@ -2682,6 +2683,26 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionRename), bHasSelection && !b->IsTrashMode());
 	}
 
+	GAction *actionAdjustDate = QuiverUtils::GetAction(ACTION_QUIVER_ADJUST_DATE);
+	if (NULL != actionAdjustDate && G_IS_SIMPLE_ACTION(actionAdjustDate))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionAdjustDate), bHasSelection && !b->IsTrashMode());
+	}
+
+	const gboolean bHasSingleSelection = (NULL != selection && NULL == selection->next);
+
+	GAction *actionCopyMeta = QuiverUtils::GetAction(ACTION_QUIVER_COPY_METADATA);
+	if (NULL != actionCopyMeta && G_IS_SIMPLE_ACTION(actionCopyMeta))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionCopyMeta), bHasSingleSelection && !b->IsTrashMode());
+	}
+
+	GAction *actionPasteMeta = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+	if (NULL != actionPasteMeta && G_IS_SIMPLE_ACTION(actionPasteMeta))
+	{
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionPasteMeta), bHasSingleSelection && !b->IsTrashMode() && QuiverMetadata::MetadataClipboard::GetInstance().HasData());
+	}
+
 	GAction *actionCopy = QuiverUtils::GetAction(ACTION_BROWSER_COPY);
 	if (NULL != actionCopy && G_IS_SIMPLE_ACTION(actionCopy))
 	{
@@ -2692,6 +2713,20 @@ static void iconview_selection_changed_cb(QuiverIconView *iconview, gpointer use
 	if (NULL != actionCut && G_IS_SIMPLE_ACTION(actionCut))
 	{
 		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionCut), bHasSelection && !b->IsTrashMode());
+	}
+
+	GAction *actionPaste = QuiverUtils::GetAction(ACTION_BROWSER_PASTE);
+	if (NULL != actionPaste && G_IS_SIMPLE_ACTION(actionPaste))
+	{
+		bool canPasteFiles = false;
+		if (b->m_ImageListPtr)
+		{
+			std::list<std::string> dirs = b->m_ImageListPtr->GetFolderList();
+			const gboolean bHasClipboard = (QuiverFileOps::ClipboardHasItems() || QuiverClipboard::HasFiles()) ? TRUE : FALSE;
+			canPasteFiles = !b->IsTrashMode() && (1 == dirs.size()) && bHasClipboard;
+		}
+		bool canPasteMeta = bHasSingleSelection && !b->IsTrashMode() && QuiverMetadata::MetadataClipboard::GetInstance().HasData();
+		g_simple_action_set_enabled(G_SIMPLE_ACTION(actionPaste), canPasteFiles || canPasteMeta);
 	}
 
 	if (NULL != selection)
@@ -3043,6 +3078,7 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 	 * out what cannot run right now. */
 	GList *selection = quiver_icon_view_get_selection(
 		QUIVER_ICON_VIEW(pBrowserImpl->m_pIconView));
+	const guint nSel = g_list_length(selection);
 	const gboolean bHasSelection = (NULL != selection);
 	const gboolean bHasClipboard = (QuiverFileOps::ClipboardHasItems() || QuiverClipboard::HasFiles()) ? TRUE : FALSE;
 	bool bHasFolder = false;
@@ -3068,8 +3104,9 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_PASTE)))
 		{
 			std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
-			bool canPaste = !bTrash && (dirs.size() == 1) && bHasClipboard;
-			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), canPaste);
+			bool canPasteFiles = !bTrash && (dirs.size() == 1) && bHasClipboard;
+			bool canPasteMeta = !bTrash && (1 == nSel) && QuiverMetadata::MetadataClipboard::GetInstance().HasData();
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), canPasteFiles || canPasteMeta);
 		}
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_NEW_FOLDER)))
 		{
@@ -3098,13 +3135,18 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 		{
 			if (NULL != (a = QuiverUtils::GetAction(ACTION_QUIVER_QUICK_RENAME)))
 				g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && !bTrash);
+			if (NULL != (a = QuiverUtils::GetAction(ACTION_QUIVER_ADJUST_DATE)))
+				g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && !bTrash);
+			if (NULL != (a = QuiverUtils::GetAction(ACTION_QUIVER_COPY_METADATA)))
+				g_simple_action_set_enabled(G_SIMPLE_ACTION(a), (1 == nSel) && !bTrash);
+			if (NULL != (a = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA)))
+				g_simple_action_set_enabled(G_SIMPLE_ACTION(a), (1 == nSel) && !bTrash && QuiverMetadata::MetadataClipboard::GetInstance().HasData());
 		}
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_TRASH)))
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection);
 		if (NULL != (a = QuiverUtils::GetAction(ACTION_BROWSER_RESTORE)))
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(a), bHasSelection && bTrash);
 	}
-	const guint nSel = g_list_length(selection);
 
 	/* Trash title row: the original file name + location of the (first)
 	 * selected trash item. */
@@ -3175,11 +3217,20 @@ static void browser_show_context_menu(GtkWidget *widget, gdouble x, gdouble y, g
 			"<Control>c", NULL, "edit-copy-symbolic");
 		browser_menu_item(menu, "Cut", "quiver." ACTION_BROWSER_CUT,
 			"<Control>x", NULL, "edit-cut-symbolic");
-		if (bHasClipboard)
+		if (bHasClipboard || ((1 == nSel) && QuiverMetadata::MetadataClipboard::GetInstance().HasData()))
+		{
 			browser_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
 				"<Control>v", NULL, "edit-paste-symbolic");
+		}
 		browser_menu_item(menu, "Rename", "quiver." ACTION_QUIVER_QUICK_RENAME,
 			"F2", NULL, "document-edit-symbolic");
+		browser_menu_item(menu, "Adjust Date…", "quiver." ACTION_QUIVER_ADJUST_DATE,
+			NULL, NULL, "x-office-calendar-symbolic");
+		if (1 == nSel)
+		{
+			browser_menu_item(menu, "Copy Metadata", "quiver." ACTION_QUIVER_COPY_METADATA,
+				"<Shift><Control>c", NULL, "edit-copy-symbolic");
+		}
 		if (bHasFolder)
 		{
 			browser_menu_item(menu, "Add Bookmark", "quiver." ACTION_BROWSER_ADD_BOOKMARK,
@@ -3837,6 +3888,12 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			return;
 		QuiverFileOps::ClipboardSet(uris, false);
 		QuiverClipboard::SetClipboard(uris, false);
+		QuiverMetadata::MetadataClipboard::GetInstance().Clear();
+		GAction* actionPasteMeta = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+		if (actionPasteMeta && G_IS_SIMPLE_ACTION(actionPasteMeta))
+		{
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(actionPasteMeta), FALSE);
+		}
 		if (pBrowserImpl->m_StatusbarPtr)
 			pBrowserImpl->m_StatusbarPtr->PushText("Copied to clipboard");
 	}
@@ -3847,11 +3904,27 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			return;
 		QuiverFileOps::ClipboardSet(uris, true);
 		QuiverClipboard::SetClipboard(uris, true);
+		QuiverMetadata::MetadataClipboard::GetInstance().Clear();
+		GAction* actionPasteMeta = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+		if (actionPasteMeta && G_IS_SIMPLE_ACTION(actionPasteMeta))
+		{
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(actionPasteMeta), FALSE);
+		}
 		if (pBrowserImpl->m_StatusbarPtr)
 			pBrowserImpl->m_StatusbarPtr->PushText("Cut to clipboard");
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_PASTE))
 	{
+		if (QuiverMetadata::MetadataClipboard::GetInstance().HasData())
+		{
+			GAction *a = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+			if (a)
+			{
+				g_action_activate(a, NULL);
+			}
+			return;
+		}
+
 		std::list<std::string> dirs = pBrowserImpl->m_ImageListPtr->GetFolderList();
 		if (1 != dirs.size() || pBrowserImpl->IsTrashMode())
 			return; /* single-folder view only */

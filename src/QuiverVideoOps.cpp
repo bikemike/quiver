@@ -21,6 +21,11 @@ extern "C" {
 
 #include <libquiver/quiver-pixbuf-utils.h>
 #include "QuiverUtils.h"
+#include "QuiverFile.h"
+#include "QuiverGps.h"
+#include <exiv2/exiv2.hpp>
+#include <cmath>
+#include <ctime>
 
 namespace QuiverVideoOps
 {
@@ -842,6 +847,204 @@ gboolean Probe(const gchar *uri,
 
 	close_source(vs);
 	return TRUE;
+}
+
+bool WriteSnapshotExif(const gchar* snap_path,
+	const gchar* video_uri,
+	const gchar* video_filename,
+	gint64 current_pos_ns,
+	gint64 duration_ns)
+{
+	if (NULL == snap_path || NULL == video_uri)
+		return false;
+
+	if (duration_ns <= 0)
+	{
+		Probe(video_uri, &duration_ns);
+	}
+
+	double duration_sec = (duration_ns > 0) ? ((double)duration_ns / 1e9) : 0.0;
+	double offset_sec = (current_pos_ns > 0) ? ((double)current_pos_ns / 1e9) : 0.0;
+
+	QuiverFile videoFile(video_uri);
+	time_t createDate = 0;
+	bool bHasCreateDate = videoFile.HasDateMetadata();
+	if (bHasCreateDate)
+	{
+		createDate = videoFile.GetTimeT(true);
+		if (createDate <= 0)
+			bHasCreateDate = false;
+	}
+
+	std::string make, model, software, artist, copyright, title, comment, location;
+	QuiverAvio::Container container;
+	if (container.Open(video_uri))
+	{
+		AVFormatContext* pFmt = container.fmt();
+		if (NULL != pFmt)
+		{
+			auto get_tag = [&](const char* key) -> const char*
+			{
+				AVDictionaryEntry* pTag = av_dict_get(pFmt->metadata, key, NULL, 0);
+				if (NULL == pTag)
+				{
+					for (unsigned int i = 0; i < pFmt->nb_streams; i++)
+					{
+						pTag = av_dict_get(pFmt->streams[i]->metadata, key, NULL, 0);
+						if (NULL != pTag) break;
+					}
+				}
+				return (NULL != pTag) ? pTag->value : NULL;
+			};
+
+			const char* pVal = get_tag("make");
+			if (NULL == pVal) pVal = get_tag("com.android.manufacturer");
+			if (NULL != pVal) make = pVal;
+
+			pVal = get_tag("model");
+			if (NULL == pVal) pVal = get_tag("com.android.model");
+			if (NULL != pVal) model = pVal;
+
+			pVal = get_tag("encoder");
+			if (NULL == pVal) pVal = get_tag("software");
+			if (NULL != pVal) software = pVal;
+
+			pVal = get_tag("artist");
+			if (NULL == pVal) pVal = get_tag("author");
+			if (NULL != pVal) artist = pVal;
+
+			pVal = get_tag("copyright");
+			if (NULL != pVal) copyright = pVal;
+
+			pVal = get_tag("title");
+			if (NULL != pVal) title = pVal;
+
+			pVal = get_tag("comment");
+			if (NULL == pVal) pVal = get_tag("description");
+			if (NULL != pVal) comment = pVal;
+
+			static const char* const kLocationTags[] = {
+				"location",
+				"location-eng",
+				"com.apple.quicktime.location.ISO6709",
+				"com.apple.quicktime.location.iso6709",
+				"location.ISO6709",
+			};
+			for (const char* locKey : kLocationTags)
+			{
+				pVal = get_tag(locKey);
+				if (NULL != pVal)
+				{
+					location = pVal;
+					break;
+				}
+			}
+		}
+	}
+
+	try
+	{
+		auto image = Exiv2::ImageFactory::open(snap_path);
+		if (!image.get())
+			return false;
+
+		image->readMetadata();
+		Exiv2::ExifData& exifData = image->exifData();
+
+		if (bHasCreateDate)
+		{
+			double frame_timestamp = (double)createDate - duration_sec + offset_sec;
+			time_t frame_time_t = (time_t)std::round(frame_timestamp);
+
+			struct tm tmDate = {};
+			localtime_r(&frame_time_t, &tmDate);
+			char szDate[64];
+			snprintf(szDate, sizeof(szDate), "%04d:%02d:%02d %02d:%02d:%02d",
+				tmDate.tm_year + 1900, tmDate.tm_mon + 1, tmDate.tm_mday,
+				tmDate.tm_hour, tmDate.tm_min, tmDate.tm_sec);
+
+			exifData["Exif.Image.DateTime"] = szDate;
+			exifData["Exif.Photo.DateTimeOriginal"] = szDate;
+			exifData["Exif.Photo.DateTimeDigitized"] = szDate;
+
+			double subsecond = frame_timestamp - std::floor(frame_timestamp);
+			if (subsecond < 0.0) subsecond = 0.0;
+			int millisec = (int)(subsecond * 1000.0 + 0.5);
+			if (millisec > 999) millisec = 999;
+			char szSubSec[16];
+			snprintf(szSubSec, sizeof(szSubSec), "%03d", millisec);
+			exifData["Exif.Photo.SubSecTimeOriginal"] = szSubSec;
+			exifData["Exif.Photo.SubSecTimeDigitized"] = szSubSec;
+			exifData["Exif.Photo.SubSecTime"] = szSubSec;
+		}
+
+		if (!make.empty()) exifData["Exif.Image.Make"] = make;
+		if (!model.empty()) exifData["Exif.Image.Model"] = model;
+		if (!software.empty()) exifData["Exif.Image.Software"] = software;
+		if (!artist.empty()) exifData["Exif.Image.Artist"] = artist;
+		if (!copyright.empty()) exifData["Exif.Image.Copyright"] = copyright;
+
+		int total_sec = (int)offset_sec;
+		int hrs = total_sec / 3600;
+		int mins = (total_sec % 3600) / 60;
+		int secs = total_sec % 60;
+		char szOffset[32];
+		if (hrs > 0)
+			snprintf(szOffset, sizeof(szOffset), "%02d:%02d:%02d", hrs, mins, secs);
+		else
+			snprintf(szOffset, sizeof(szOffset), "%02d:%02d", mins, secs);
+
+		std::string vName = (video_filename != NULL && video_filename[0] != '\0')
+			? video_filename : "";
+		if (vName.empty())
+		{
+			gchar* uri_base = g_filename_from_uri(video_uri, NULL, NULL);
+			if (NULL != uri_base)
+			{
+				gchar* b = g_path_get_basename(uri_base);
+				if (NULL != b) { vName = b; g_free(b); }
+				g_free(uri_base);
+			}
+		}
+
+		if (!vName.empty())
+			exifData["Exif.Image.DocumentName"] = vName;
+
+		std::string userComment = "Captured from " + (!vName.empty() ? vName : "video") + " at " + szOffset;
+		if (!comment.empty())
+		{
+			userComment += " (" + comment + ")";
+		}
+		exifData["Exif.Photo.UserComment"] = "charset=Ascii " + userComment;
+
+		std::string imgDesc;
+		if (!title.empty())
+		{
+			imgDesc = title + " - captured from " + (!vName.empty() ? vName : "video") + " at " + szOffset;
+		}
+		else
+		{
+			imgDesc = "Frame captured from " + (!vName.empty() ? vName : "video") + " at " + szOffset;
+		}
+		exifData["Exif.Image.ImageDescription"] = imgDesc;
+
+		if (!location.empty())
+		{
+			double dLat = 0.0, dLon = 0.0, dAlt = 0.0;
+			bool bHasAlt = false;
+			if (QuiverGps::ParseIso6709(location, dLat, dLon, bHasAlt, dAlt))
+			{
+				QuiverGps::SetExifGps(exifData, dLat, dLon, bHasAlt, dAlt);
+			}
+		}
+
+		image->writeMetadata();
+		return true;
+	}
+	catch (...)
+	{
+		return false;
+	}
 }
 
 }

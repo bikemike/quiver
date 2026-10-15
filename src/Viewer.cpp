@@ -32,6 +32,7 @@
 #include "QuiverStockIcons.h"
 #include "QuiverFileOps.h"
 #include "QuiverClipboard.h"
+#include "QuiverMetadata.h"
 
 #include "IImageListEventHandler.h"
 
@@ -1663,6 +1664,18 @@ void Viewer::ViewerImpl::UpdateUI()
 		action = QuiverUtils::GetAction(ACTION_VIEWER_ZOOM_FIT);
 		if (NULL != action)
 			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bHasItems);
+		action = QuiverUtils::GetAction(ACTION_QUIVER_ADJUST_DATE);
+		if (NULL != action)
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bHasItems);
+		action = QuiverUtils::GetAction(ACTION_QUIVER_COPY_METADATA);
+		if (NULL != action)
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bHasItems);
+		action = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+		if (NULL != action)
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bHasItems && QuiverMetadata::MetadataClipboard::GetInstance().HasData());
+		action = QuiverUtils::GetAction(ACTION_BROWSER_PASTE);
+		if (NULL != action)
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(action), bHasItems && QuiverMetadata::MetadataClipboard::GetInstance().HasData());
 		gboolean bCanPrev = FALSE;
 		gboolean bCanNext = FALSE;
 		if (bHasItems)
@@ -4407,6 +4420,12 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		uris.push_back(f.GetURI());
 		QuiverFileOps::ClipboardSet(uris, false);
 		QuiverClipboard::SetClipboard(uris, false);
+		QuiverMetadata::MetadataClipboard::GetInstance().Clear();
+		GAction* actionPasteMeta = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+		if (actionPasteMeta && G_IS_SIMPLE_ACTION(actionPasteMeta))
+		{
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(actionPasteMeta), FALSE);
+		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_CUT))
 	{
@@ -4420,6 +4439,12 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		uris.push_back(f.GetURI());
 		QuiverFileOps::ClipboardSet(uris, true);
 		QuiverClipboard::SetClipboard(uris, true);
+		QuiverMetadata::MetadataClipboard::GetInstance().Clear();
+		GAction* actionPasteMeta = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+		if (actionPasteMeta && G_IS_SIMPLE_ACTION(actionPasteMeta))
+		{
+			g_simple_action_set_enabled(G_SIMPLE_ACTION(actionPasteMeta), FALSE);
+		}
 	}
 	else if (0 == strcmp(szAction, ACTION_VIEWER_ROTATE_FOR_BEST_FIT))
 	{
@@ -6825,8 +6850,17 @@ static void viewer_show_context_menu(GtkWidget *widget, gdouble x_root, gdouble 
 	{
 		viewer_menu_item(menu, "Copy", "quiver." ACTION_VIEWER_COPY,
 			"<Control>c", title_id, "edit-copy-symbolic");
+		if (QuiverMetadata::MetadataClipboard::GetInstance().HasData())
+		{
+			viewer_menu_item(menu, "Paste", "quiver." ACTION_BROWSER_PASTE,
+				"<Control>v", NULL, "edit-paste-symbolic");
+		}
 		viewer_menu_item(menu, "Rename", "quiver." ACTION_QUIVER_QUICK_RENAME,
 			"F2", NULL, "document-edit-symbolic");
+		viewer_menu_item(menu, "Adjust Date…", "quiver." ACTION_QUIVER_ADJUST_DATE,
+			NULL, NULL, "x-office-calendar-symbolic");
+		viewer_menu_item(menu, "Copy Metadata", "quiver." ACTION_QUIVER_COPY_METADATA,
+			"<Shift><Control>c", title_id, "edit-copy-symbolic");
 		GMenu *rotate_section = g_menu_new();
 		viewer_menu_item(rotate_section, "Rotate Counterclockwise",
 			"quiver." ACTION_VIEWER_ROTATE_CCW, "<Shift>r", NULL, "object-rotate-left-symbolic");

@@ -36,6 +36,9 @@ set(QUIVER_CORE_SOURCES
     ViewerEventSource.cpp
     AdjustDateDlg.cpp
     AdjustDateTask.cpp
+    QuiverMetadata.cpp
+    PasteMetadataDlg.cpp
+    PasteMetadataTask.cpp
     BookmarksEventSource.cpp
     BookmarksDlg.cpp
     BookmarkAddEditDlg.cpp

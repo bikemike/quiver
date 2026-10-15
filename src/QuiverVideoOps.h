@@ -77,6 +77,18 @@ namespace QuiverVideoOps
 		gint* pixel_aspect_ratio_denominator = NULL,
 		VideoAbortFn abort_fn = NULL,
 		gpointer abort_data = NULL);
+
+	/* Writes EXIF metadata to a video snapshot image file (e.g. PNG).
+	 * If the source video has creation date metadata, calculates the frame's
+	 * creation date as (video_create_date - video_duration + frame_offset) and
+	 * writes DateTimeOriginal, DateTimeDigitized, and DateTime (with subseconds).
+	 * Also copies over make, model, software, artist, copyright, GPS location,
+	 * and notes the source video filename and time offset. */
+	bool WriteSnapshotExif(const gchar* snap_path,
+		const gchar* video_uri,
+		const gchar* video_filename,
+		gint64 current_pos_ns,
+		gint64 duration_ns = 0);
 }
 
 #endif

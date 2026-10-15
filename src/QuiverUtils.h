@@ -17,6 +17,12 @@ namespace QuiverUtils
 	 * acted on the browser's selection and offered the wrong file.  There is
 	 * one action now, aimed at whichever pane is showing. */
 #define ACTION_QUIVER_QUICK_RENAME "QuickRename"
+#define ACTION_QUIVER_ADJUST_DATE  "AdjustDate"
+#define ACTION_QUIVER_COPY_METADATA "CopyMetadata"
+#define ACTION_QUIVER_PASTE_METADATA "PasteMetadata"
+#ifndef ACTION_BROWSER_PASTE
+#define ACTION_BROWSER_PASTE "BrowserPaste"
+#endif
 
 	/* Prompt user to add a bookmark for the given list of URIs.
 	 * Displays BookmarkAddEditDlg prefilled with folder names.

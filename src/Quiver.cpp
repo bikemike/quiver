@@ -43,6 +43,9 @@ extern "C" {
 #include "SaveImageTask.h"
 #include "AdjustDateDlg.h"
 #include "AdjustDateTask.h"
+#include "QuiverMetadata.h"
+#include "PasteMetadataDlg.h"
+#include "PasteMetadataTask.h"
 
 #include "ImageListFilter.h"
 #include "OrganizeDlg.h"
@@ -2518,6 +2521,8 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_BOOKMARKS_ADD, "<Control>d", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_BOOKMARKS_EDIT, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ADJUST_DATE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_COPY_METADATA, "<Shift><Control>c", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	QuiverUtils::AddSimpleAction(ACTION_QUIVER_PASTE_METADATA, "<Shift><Control>v", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ORGANIZE, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_RENAME, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_QUICK_RENAME, "F2", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
@@ -4754,6 +4759,145 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 					TaskManager::GetInstance()->AddTask(adjustDateTaskPtr);
 				}
 			}
+		}
+	}
+	else if (0 == strcmp(szAction, ACTION_QUIVER_COPY_METADATA))
+	{
+		bool bViewerActive = (pQuiverImpl->m_ViewerPtr && gtk_widget_get_visible(pQuiverImpl->m_ViewerPtr->GetWidget()));
+		std::list<unsigned int> selItems;
+		if (bViewerActive)
+		{
+			if (pQuiverImpl->m_ImageListPtr && pQuiverImpl->m_ImageListPtr->GetCurrentIndex() != (unsigned int)-1)
+			{
+				selItems.push_back(pQuiverImpl->m_ImageListPtr->GetCurrentIndex());
+			}
+		}
+		else
+		{
+			selItems = pQuiverImpl->m_BrowserPtr->GetSelection();
+			if (selItems.empty() && pQuiverImpl->m_ImageListPtr && pQuiverImpl->m_ImageListPtr->GetCurrentIndex() != (unsigned int)-1)
+			{
+				selItems.push_back(pQuiverImpl->m_ImageListPtr->GetCurrentIndex());
+			}
+		}
+		if (selItems.size() != 1)
+		{
+			return;
+		}
+
+		QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[selItems.front()];
+		QuiverMetadata::MetadataPayload payload;
+		if (QuiverMetadata::ExtractMetadata(f, payload))
+		{
+			QuiverMetadata::MetadataClipboard::GetInstance().SetPayload(payload);
+
+			// Replace any standard file copy buffer
+			QuiverFileOps::ClipboardClear();
+			GdkDisplay *disp = gdk_display_get_default();
+			if (disp)
+			{
+				GdkClipboard *cb = gdk_display_get_clipboard(disp);
+				if (cb)
+				{
+					gdk_clipboard_set_content(cb, NULL);
+				}
+			}
+
+			GAction* actionPaste = QuiverUtils::GetAction(ACTION_QUIVER_PASTE_METADATA);
+			if (actionPaste && G_IS_SIMPLE_ACTION(actionPaste))
+			{
+				g_simple_action_set_enabled(G_SIMPLE_ACTION(actionPaste), TRUE);
+			}
+			GAction* actionBrowserPaste = QuiverUtils::GetAction(ACTION_BROWSER_PASTE);
+			if (actionBrowserPaste && G_IS_SIMPLE_ACTION(actionBrowserPaste))
+			{
+				g_simple_action_set_enabled(G_SIMPLE_ACTION(actionBrowserPaste), TRUE);
+			}
+
+			std::string msg = "Metadata copied from " + f.GetFileName();
+			if (pQuiverImpl->m_StatusbarPtr)
+			{
+				pQuiverImpl->m_StatusbarPtr->SetText(msg);
+			}
+			if (pQuiverImpl->m_BrowserPtr)
+			{
+				pQuiverImpl->m_BrowserPtr->UpdateUI();
+			}
+			if (pQuiverImpl->m_ViewerPtr)
+			{
+				pQuiverImpl->m_ViewerPtr->UpdateUI();
+			}
+		}
+	}
+	else if (0 == strcmp(szAction, ACTION_QUIVER_PASTE_METADATA))
+	{
+		if (!QuiverMetadata::MetadataClipboard::GetInstance().HasData())
+		{
+			return;
+		}
+
+		bool bViewerActive = (pQuiverImpl->m_ViewerPtr && gtk_widget_get_visible(pQuiverImpl->m_ViewerPtr->GetWidget()));
+		std::list<unsigned int> selItems;
+		if (bViewerActive)
+		{
+			if (pQuiverImpl->m_ImageListPtr && pQuiverImpl->m_ImageListPtr->GetCurrentIndex() != (unsigned int)-1)
+			{
+				selItems.push_back(pQuiverImpl->m_ImageListPtr->GetCurrentIndex());
+			}
+		}
+		else
+		{
+			selItems = pQuiverImpl->m_BrowserPtr->GetSelection();
+			if (selItems.empty() && pQuiverImpl->m_ImageListPtr && pQuiverImpl->m_ImageListPtr->GetCurrentIndex() != (unsigned int)-1)
+			{
+				selItems.push_back(pQuiverImpl->m_ImageListPtr->GetCurrentIndex());
+			}
+		}
+		if (selItems.size() != 1)
+		{
+			return;
+		}
+
+		bool allImages = true;
+		std::vector<QuiverFile> targets;
+		for (unsigned int idx : selItems)
+		{
+			QuiverFile f = (*pQuiverImpl->m_ImageListPtr)[idx];
+			if (f.IsVideo()) allImages = false;
+			targets.push_back(f);
+		}
+
+		PasteMetadataDlg dlg(QuiverMetadata::MetadataClipboard::GetInstance().GetPayload(),
+		                     targets.size(), allImages);
+		if (dlg.Run())
+		{
+			QuiverMetadata::PasteOptions opts = dlg.GetOptions();
+			auto notifyCb = [pQuiverImpl](QuiverFile f, bool success) {
+				if (!success) return;
+				if (pQuiverImpl->m_CurrentQuiverFile.GetURI() && f.GetURI() &&
+				    0 == strcmp(pQuiverImpl->m_CurrentQuiverFile.GetURI(), f.GetURI()))
+				{
+					pQuiverImpl->m_CurrentQuiverFile.Reload();
+				}
+				pQuiverImpl->m_PropertyView.SetQuiverFile(f);
+				if (pQuiverImpl->m_StatusbarPtr)
+				{
+					pQuiverImpl->m_StatusbarPtr->SetQuiverFile(f);
+					pQuiverImpl->m_StatusbarPtr->PushText("Metadata pasted to " + f.GetFileName());
+				}
+				if (pQuiverImpl->m_BrowserPtr)
+				{
+					pQuiverImpl->m_BrowserPtr->InvalidateView();
+					pQuiverImpl->m_BrowserPtr->UpdateUI();
+				}
+				if (pQuiverImpl->m_ViewerPtr)
+				{
+					pQuiverImpl->m_ViewerPtr->UpdateUI();
+				}
+			};
+			PasteMetadataTaskPtr taskPtr(new PasteMetadataTask(
+				targets, QuiverMetadata::MetadataClipboard::GetInstance().GetPayload(), opts, notifyCb));
+			TaskManager::GetInstance()->AddTask(taskPtr);
 		}
 	}
 	else if (g_str_has_prefix(szAction,"Bookmark_"))

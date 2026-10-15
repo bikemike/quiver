@@ -29,6 +29,7 @@ extern "C" {
 #include "QuiverSummary.h"
 #include "VideoDateEditTask.h"
 #include "TaskManager.h"
+#include "QuiverMetadata.h"
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -2415,19 +2416,23 @@ static void property_row_right_click_cb(GtkGestureClick *gesture, gint n_press,
 	{
 		GtkSelectionModel* model =
 			gtk_column_view_get_model(GTK_COLUMN_VIEW(colview));
-		if (NULL == model || !GTK_IS_SINGLE_SELECTION(model)) return;
-		GtkSingleSelection* single = GTK_SINGLE_SELECTION(model);
-		const guint pos = gtk_single_selection_get_selected(single);
-		if (GTK_INVALID_LIST_POSITION == pos) return;
-		item = g_list_model_get_item(G_LIST_MODEL(single), pos);
-		if (NULL == item) return;
+		if (NULL != model && GTK_IS_SINGLE_SELECTION(model))
+		{
+			GtkSingleSelection* single = GTK_SINGLE_SELECTION(model);
+			const guint pos = gtk_single_selection_get_selected(single);
+			if (GTK_INVALID_LIST_POSITION != pos)
+			{
+				item = g_list_model_get_item(G_LIST_MODEL(single), pos);
+			}
+		}
 	}
+	if (NULL == item && NULL == pImpl->m_QuiverFile.GetURI()) return;
 
 	std::string groupName;
 	std::string selectedKey;
 	gboolean is_group = FALSE;
 
-	if (G_TYPE_CHECK_INSTANCE_TYPE(item, exif_item_get_type()))
+	if (NULL != item && G_TYPE_CHECK_INSTANCE_TYPE(item, exif_item_get_type()))
 	{
 		ExifItem *ei = EXIF_ITEM(item);
 		is_group = ei->is_group;
@@ -2443,8 +2448,12 @@ static void property_row_right_click_cb(GtkGestureClick *gesture, gint n_press,
 		}
 	}
 
-	const std::string value = property_item_value(item);
-	g_object_unref(item);
+	std::string value;
+	if (NULL != item)
+	{
+		value = property_item_value(item);
+		g_object_unref(item);
+	}
 
 	GMenu *menu = g_menu_new();
 
@@ -2522,6 +2531,27 @@ static void property_row_right_click_cb(GtkGestureClick *gesture, gint n_press,
 		}
 	}
 
+	if (NULL != pImpl->m_QuiverFile.GetURI())
+	{
+		GMenuItem *copyMeta = g_menu_item_new("Copy Metadata", "quiver." ACTION_QUIVER_COPY_METADATA);
+		g_menu_item_set_attribute(copyMeta, "icon", "s", "edit-copy-symbolic");
+		g_menu_append_item(menu, copyMeta);
+		g_object_unref(copyMeta);
+
+		if (QuiverMetadata::MetadataClipboard::GetInstance().HasData())
+		{
+			GMenuItem *pasteMeta = g_menu_item_new("Paste", "quiver." ACTION_BROWSER_PASTE);
+			g_menu_item_set_attribute(pasteMeta, "icon", "s", "edit-paste-symbolic");
+			g_menu_append_item(menu, pasteMeta);
+			g_object_unref(pasteMeta);
+		}
+
+		GMenuItem *adjustDate = g_menu_item_new("Adjust Date…", "quiver." ACTION_QUIVER_ADJUST_DATE);
+		g_menu_item_set_attribute(adjustDate, "icon", "s", "x-office-calendar-symbolic");
+		g_menu_append_item(menu, adjustDate);
+		g_object_unref(adjustDate);
+	}
+
 	if (0 == g_menu_model_get_n_items(G_MENU_MODEL(menu)))
 	{
 		g_object_unref(menu);
@@ -2531,6 +2561,7 @@ static void property_row_right_click_cb(GtkGestureClick *gesture, gint n_press,
 	GtkPopover *popover = GTK_POPOVER(gtk_popover_menu_new_from_model(G_MENU_MODEL(menu)));
 	g_object_unref(menu);
 
+	gtk_widget_insert_action_group(GTK_WIDGET(popover), "quiver", G_ACTION_GROUP(QuiverUtils::GetActionGroup()));
 	gtk_widget_set_parent(GTK_WIDGET(popover), colview);
 	QuiverUtils::ShowContextMenuAt(popover, colview, x, y);
 	pImpl->m_pRowPopover = GTK_WIDGET(popover);
