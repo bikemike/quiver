@@ -1,8 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include "RecentItems.h"
 #include "ImageListAttributes.h"
+#include "ImageList.h"
+#include "test_helpers.h"
 #include <string>
 #include <list>
+#include <unistd.h>
+#include <glib.h>
 
 static ImageListAttributesPtr make_attrs(std::initializer_list<const char*> folders, bool recursive)
 {
@@ -180,4 +184,64 @@ TEST_CASE("RecentItems deletion pruning", "[unit][recent][fast]")
 		recent.Record("file:///x.jpg", ImageListAttributesPtr());
 		REQUIRE(recent.GetSize() == 0);
 	}
+}
+
+TEST_CASE("ImageList SetToSingleFile sets single item and preserves attributes", "[unit][recent][imagelist]")
+{
+	ImageListPtr imgList(new ImageList(false));
+	ImageListAttributesPtr attrs = make_attrs({"file:///some/folder"}, true);
+
+	std::string imgPath = QuiverTest_GetImagesDir() + "/sample_rotated.jpg";
+	gchar* uri = g_filename_to_uri(imgPath.c_str(), NULL, NULL);
+	REQUIRE(uri != NULL);
+
+	imgList->SetToSingleFile(uri, attrs);
+
+	REQUIRE(imgList->GetSize() == 1);
+	REQUIRE(imgList->GetCurrentIndex() == 0);
+	REQUIRE(imgList->GetCurrent().GetURI() != NULL);
+	REQUIRE(std::string(imgList->GetCurrent().GetURI()) == std::string(uri));
+	REQUIRE(imgList->GetAttributes() == attrs);
+
+	g_free(uri);
+}
+
+TEST_CASE("RecentItems multi-context recall preserves original list attributes", "[unit][recent]")
+{
+	RecentItems recent;
+	ImageListAttributesPtr bookmarkAttrs = make_attrs({"file:///bookmark/folder1", "file:///bookmark/folder2"}, true);
+	ImageListAttributesPtr downloadsAttrs = make_attrs({"file:///downloads"}, false);
+
+	// Step 1 & 2: User opens bookmark with 2 folders recursive, clicks through items
+	recent.Record("file:///bookmark/folder1/img1.jpg", bookmarkAttrs);
+	recent.Record("file:///bookmark/folder1/img2.jpg", bookmarkAttrs);
+	recent.Record("file:///bookmark/folder2/img3.jpg", bookmarkAttrs);
+
+	// Step 3 & 4: User navigates to Downloads and views an item there
+	recent.Record("file:///downloads/download1.jpg", downloadsAttrs);
+
+	// Verify order: download1 is index 0, img3 is index 1
+	REQUIRE(recent.GetEntries()[0].uri == "file:///downloads/download1.jpg");
+	REQUIRE(recent.GetEntries()[1].uri == "file:///bookmark/folder2/img3.jpg");
+
+	// Step 5: Recall img3 (last selected in bookmark)
+	const RecentItems::Entry* pEntry = recent.Find("file:///bookmark/folder2/img3.jpg");
+	REQUIRE(pEntry != NULL);
+
+	// Copy by value as done in OnOpenRecent
+	std::string recalledURI = pEntry->uri;
+	ImageListAttributesPtr recalledAttrs = pEntry->pAttributes;
+
+	// Simulate re-recording img3 (e.g. SetToSingleFile or viewing again)
+	recent.Record(recalledURI, recalledAttrs);
+
+	// The recalled attributes MUST match bookmarkAttrs, NOT downloadsAttrs
+	REQUIRE(recalledAttrs == bookmarkAttrs);
+	REQUIRE(recalledAttrs->Matches(*bookmarkAttrs));
+	REQUIRE_FALSE(recalledAttrs->Matches(*downloadsAttrs));
+
+	// Even after the re-record, img3's stored attributes must still be bookmarkAttrs
+	const RecentItems::Entry* updatedEntry = recent.Find("file:///bookmark/folder2/img3.jpg");
+	REQUIRE(updatedEntry != NULL);
+	REQUIRE(updatedEntry->pAttributes->Matches(*bookmarkAttrs));
 }

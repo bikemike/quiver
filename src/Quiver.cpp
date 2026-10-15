@@ -241,6 +241,7 @@ public:
 	 * updated in ImageChanged() so switching still <-> video re-filters the
 	 * hamburger menu. */
 	bool m_bCurrentIsVideo;
+	bool m_bOpeningRecent;
 	
 	bool m_bTimeoutEventMotionNotifyRunning;
 	bool m_bTimeoutEventMotionNotifyMouseMoved;
@@ -376,6 +377,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pBuilder = NULL;
 	m_bViewerMode = false;
 	m_bCurrentIsVideo = false;
+	m_bOpeningRecent = false;
 	m_pHeaderBar = NULL;
 	m_pMenuButton = NULL;
 	m_pPrefButton = NULL;
@@ -1410,6 +1412,12 @@ void QuiverImpl::RecordRecentView(const QuiverFile& f)
 	{
 		return;
 	}
+	/* Avoid recording temporary intermediate single-file state while loading
+	 * a recent item's original context. */
+	if (m_bOpeningRecent)
+	{
+		return;
+	}
 
 	ImageListAttributesPtr attrs = m_ImageListPtr ? m_ImageListPtr->GetAttributes()
 		: ImageListAttributesPtr();
@@ -1655,53 +1663,81 @@ void QuiverImpl::OnOpenRecent(const std::string& uri)
 		return;
 	}
 
-	const RecentItems::Entry* entry = m_RecentItems.Find(uri);
-	if (NULL == entry || !entry->pAttributes)
+	const RecentItems::Entry* pEntry = m_RecentItems.Find(uri);
+	if (NULL == pEntry || !pEntry->pAttributes)
 	{
 		m_RecentItems.RemoveByURI(uri);
 		RebuildRecentMenuDeferred();
 		return;
 	}
 
+	/* Copy URI and ImageListAttributes by value up front.
+	 * Subsequent operations (such as SetToSingleFile or tree updates) can fire events
+	 * or mutate m_Entries, which would invalidate any raw pointer into the deque. */
+	std::string targetURI = pEntry->uri;
+	ImageListAttributesPtr targetAttrs = pEntry->pAttributes;
+
 	ImageListAttributesPtr current = m_ImageListPtr ? m_ImageListPtr->GetAttributes()
 		: ImageListAttributesPtr();
 
-	/* Same list as the item was viewed in: jump the selection in place and
-	 * stay in whatever mode the user is currently in.  Identity match first,
-	 * then a content-equality fallback for a re-created list with the same
-	 * definition. */
-	bool bSameList = (current == entry->pAttributes)
-		|| (current && entry->pAttributes->Matches(*current));
+	/* Same list as the item was viewed in: jump the selection in place.
+	 * Identity match first, then a content-equality fallback for a re-created
+	 * list with the same definition. */
+	bool bSameList = (current == targetAttrs)
+		|| (current && targetAttrs->Matches(*current));
 	if (bSameList && 0 < m_ImageListPtr->GetSize())
 	{
 		const char* pszCurrentURI = m_ImageListPtr->GetCurrent().GetURI();
-		if (pszCurrentURI && uri == pszCurrentURI)
+		if (pszCurrentURI && targetURI == pszCurrentURI)
 		{
+			if (NULL != m_pQuiver)
+			{
+				m_pQuiver->ShowViewer();
+			}
 			return; // already on this item
 		}
-		if (m_ImageListPtr->SetCurrentFile(uri))
+		if (m_ImageListPtr->SetCurrentFile(targetURI))
 		{
+			if (NULL != m_pQuiver)
+			{
+				m_pQuiver->ShowViewer();
+			}
 			return;
 		}
 		/* The item no longer exists in the current list (e.g. deleted out from
 		 * under the app); fall through to reload its original context. */
 	}
-	else if (bSameList)
-	{
-		return;
-	}
 
-	/* Different list context: restore the item inside the image list it was
-	 * originally viewed in — re-load that folder set and select the item.
+	/* Different list context (or item no longer in current list): restore the item inside the
+	 * image list it was originally viewed in — re-load that folder set and select the item.
 	 * Land in the viewer, since the point is to view the item again. */
+	m_bOpeningRecent = true;
+
+	if (m_BrowserPtr && m_BrowserPtr->GetFolderTree() && targetAttrs)
+	{
+		m_BrowserPtr->GetFolderTree()->SetSelectedFolders(
+			targetAttrs->GetFolders(),
+			targetAttrs->GetRecursive(),
+			targetAttrs->GetRecursiveFolders());
+	}
+	if (m_ImageListPtr)
+	{
+		m_ImageListPtr->SetToSingleFile(targetURI, targetAttrs);
+	}
 	if (NULL != m_pQuiver)
 	{
 		m_pQuiver->ShowViewer();
 	}
+	if (m_ViewerPtr)
+	{
+		m_ViewerPtr->ShowLoadingProgress("Loading folder...", -1.0);
+	}
 	if (m_ImageListPtr)
 	{
-		m_ImageListPtr->UpdateImageListAsync(entry->pAttributes, false, uri);
+		m_ImageListPtr->UpdateImageListAsync(targetAttrs, false, targetURI);
 	}
+
+	m_bOpeningRecent = false;
 }
 
 /* GMenu-based menu handling for GtkPopoverMenuBar.
@@ -4913,7 +4949,19 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 		if (NULL != b)
 		{
 			list<string> uris = b->GetURIs();
-			pQuiverImpl->m_ImageListPtr->SetImageList(&uris, b->GetRecursive());
+			if (pQuiverImpl->m_BrowserPtr && pQuiverImpl->m_BrowserPtr->GetFolderTree())
+			{
+				pQuiverImpl->m_BrowserPtr->GetFolderTree()->SetSelectedFolders(uris, b->GetRecursive());
+			}
+			if (pQuiverImpl->m_ViewerPtr)
+			{
+				pQuiverImpl->m_ViewerPtr->ShowLoadingProgress("Loading folder...", -1.0);
+			}
+			if (pQuiverImpl->m_BrowserPtr)
+			{
+				pQuiverImpl->m_BrowserPtr->ShowLoadingProgress("Loading folder...", -1.0);
+			}
+			pQuiverImpl->m_ImageListPtr->UpdateImageListAsync(&uris, b->GetRecursive(), true);
 		}
 	}
 	else if (g_str_has_prefix(szAction,"ExternalTool_"))

@@ -671,6 +671,19 @@ void Browser::UpdateFullscreenSidebar()
 	m_BrowserImplPtr->UpdateFullscreenSidebar();
 }
 
+void Browser::UpdateUI()
+{
+	m_BrowserImplPtr->UpdateUI();
+}
+
+void Browser::InvalidateView()
+{
+	if (m_BrowserImplPtr && m_BrowserImplPtr->m_pIconView)
+	{
+		quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(m_BrowserImplPtr->m_pIconView));
+	}
+}
+
 
 void Browser::Rename()
 {
@@ -1734,16 +1747,48 @@ void Browser::BrowserImpl::Show()
 	}
 
 	gtk_widget_set_visible(m_pBrowserWidget, TRUE);
-	
+
+	if (m_ImageListPtr)
+	{
+		if (m_ImageListPtr->IsLoading())
+		{
+			ShowLoadingProgress("Loading folder...", -1.0);
+		}
+		else
+		{
+			HideLoadingProgress();
+		}
+	}
+
+	if (m_FolderTreePtr && m_ImageListPtr)
+	{
+		std::list<std::string> treeDirs;
+		bool bRecursive = false;
+		std::set<std::string> recFolders;
+		ImageListAttributesPtr attrs = m_ImageListPtr->GetAttributes();
+		if (attrs && !attrs->IsEmpty())
+		{
+			treeDirs = attrs->GetFolders();
+			bRecursive = attrs->GetRecursive();
+			recFolders = attrs->GetRecursiveFolders();
+		}
+		else
+		{
+			treeDirs = m_ImageListPtr->GetFolderList();
+		}
+		m_FolderTreePtr->SetSelectedFolders(treeDirs, bRecursive, recFolders);
+	}
+
 	if (m_ImageListPtr->GetSize() && m_QuiverFileCurrent != m_ImageListPtr->GetCurrent() )
 	{
 		SetImageIndex(m_ImageListPtr->GetCurrentIndex(), true);
 	}
-	m_ImageListPtr->UnblockHandler(m_ImageListEventHandlerPtr);
 }
 
 void Browser::BrowserImpl::Hide()
 {
+	HideLoadingProgress();
+
 	gtk_widget_set_visible(m_pBrowserWidget, FALSE);
 	if (NULL != m_pToolbar && NULL != gtk_widget_get_parent(GTK_WIDGET(m_pToolItemThumbSizer)))
 	{
@@ -1756,8 +1801,6 @@ void Browser::BrowserImpl::Hide()
 			gtk_box_remove(GTK_BOX(m_pToolbar), m_pToolItemThumbSizer);
 		}
 	}
-	
-	m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
 }
 
 void Browser::BrowserImpl::SetImageList(ImageListPtr imglist)
@@ -1767,14 +1810,22 @@ void Browser::BrowserImpl::SetImageList(ImageListPtr imglist)
 	m_ImageListPtr = imglist;
 	
 	m_ImageListPtr->AddEventHandler(m_ImageListEventHandlerPtr);
-	
-	if (FALSE == gtk_widget_get_visible(m_pBrowserWidget))
-	{
-		m_ImageListPtr->BlockHandler(m_ImageListEventHandlerPtr);
-	}
 
-	list<string> dirs = m_ImageListPtr->GetFolderList();
-	m_FolderTreePtr->SetSelectedFolders(dirs);
+	std::list<std::string> dirs;
+	bool bRecursive = false;
+	std::set<std::string> recFolders;
+	ImageListAttributesPtr attrs = m_ImageListPtr->GetAttributes();
+	if (attrs && !attrs->IsEmpty())
+	{
+		dirs = attrs->GetFolders();
+		bRecursive = attrs->GetRecursive();
+		recFolders = attrs->GetRecursiveFolders();
+	}
+	else
+	{
+		dirs = m_ImageListPtr->GetFolderList();
+	}
+	m_FolderTreePtr->SetSelectedFolders(dirs, bRecursive, recFolders);
 	
 	list<string> files = m_ImageListPtr->GetFileList();
 	dirs.insert(dirs.end(), files.begin(), files.end());
@@ -4357,7 +4408,21 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	
 	if (!parent->m_bFolderTreeEvent)
 	{
-		parent->m_FolderTreePtr->SetSelectedFolders(dirs);
+		std::list<std::string> treeDirs;
+		bool bRecursive = false;
+		std::set<std::string> recFolders;
+		ImageListAttributesPtr attrs = parent->m_ImageListPtr->GetAttributes();
+		if (attrs && !attrs->IsEmpty())
+		{
+			treeDirs = attrs->GetFolders();
+			bRecursive = attrs->GetRecursive();
+			recFolders = attrs->GetRecursiveFolders();
+		}
+		else
+		{
+			treeDirs = dirs;
+		}
+		parent->m_FolderTreePtr->SetSelectedFolders(treeDirs, bRecursive, recFolders);
 	}
 	parent->m_bFolderTreeEvent = false;
 	parent->UpdateUI();

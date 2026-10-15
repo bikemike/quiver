@@ -34,6 +34,8 @@ public:
 	virtual QuiverFile Get(unsigned int nIndex) const = 0;
 
 	virtual void Remove(unsigned int nIndex) = 0;
+
+	virtual bool IsLoading() const { return false; }
 };
 
 typedef boost::shared_ptr<IImageListView> IImageListViewPtr;

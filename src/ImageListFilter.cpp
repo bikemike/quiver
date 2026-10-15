@@ -308,6 +308,16 @@ void ImageListFilter::HandleItemChanged(ImageListEventPtr event)
 	}
 }
 
+bool ImageListFilter::IsLoading() const
+{
+	return m_pSource ? m_pSource->IsLoading() : false;
+}
+
+void ImageListFilter::HandleLoadProgress(double fraction, int current, int total)
+{
+	EmitLoadProgress(fraction, current, total);
+}
+
 // event handler plumbing
 
 void ImageListFilter::FilterEventHandler::HandleContentsChanged(ImageListEventPtr event)
@@ -320,3 +330,5 @@ void ImageListFilter::FilterEventHandler::HandleItemRemoved(ImageListEventPtr ev
 { m_pParent->HandleItemRemoved(event); }
 void ImageListFilter::FilterEventHandler::HandleItemChanged(ImageListEventPtr event)
 { m_pParent->HandleItemChanged(event); }
+void ImageListFilter::FilterEventHandler::HandleLoadProgress(double fraction, int current, int total)
+{ m_pParent->HandleLoadProgress(fraction, current, total); }

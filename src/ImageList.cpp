@@ -174,6 +174,7 @@ public:
 	void StartAsyncSortByDate(bool bSortAscend, bool bUpdateCurrentIndex, const std::string& strURI);
 	void StopAsyncLoad();
 	void StopAsyncSort();
+	bool IsLoading() const { return m_pAsyncLoadThread != NULL || m_pAsyncSortThread != NULL; }
 	void PostAsyncLoadProgress(gint uiGeneration, double fraction, int current, int total);
 	void PostAsyncSortProgress(gint uiGeneration, double fraction, int current, int total);
 
@@ -468,6 +469,36 @@ void ImageList::SetImageList(const std::list<std::string> *file_list, bool bRecu
 	{ 
 		EmitContentsChangedEvent();
 	}	
+}
+
+void ImageList::SetToSingleFile(const std::string& uri, ImageListAttributesPtr attributes)
+{
+	ImageListImpl* impl = m_ImageListImplPtr.get();
+
+	impl->StopAsyncLoad();
+	impl->StopAsyncSort();
+
+	impl->Clear();
+
+	if (attributes)
+	{
+		impl->m_pAttributes = attributes;
+	}
+
+	GFile* gFile = g_file_new_for_commandline_arg(uri.c_str());
+	if (gFile)
+	{
+		char* guri = g_file_get_uri(gFile);
+		if (guri)
+		{
+			impl->AddFile(guri);
+			g_free(guri);
+		}
+		g_object_unref(gFile);
+	}
+	impl->m_iCurrentIndex = 0;
+
+	EmitContentsChangedEvent();
 }
 
 void ImageList::UpdateImageList(const list<string> *file_list)
@@ -865,6 +896,13 @@ void ImageList::StopAsyncSort()
 	m_ImageListImplPtr->StopAsyncSort();
 }
 
+bool ImageList::IsLoading() const
+{
+	if (!m_ImageListImplPtr)
+		return false;
+	return m_ImageListImplPtr->IsLoading();
+}
+
 
 void ImageList::ImageListImpl::LoadMimeTypes()
 {
@@ -1107,7 +1145,19 @@ void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool
 		{
 			existing = m_pAttributes->GetFolders();
 		}
-		SetAttributes(file_list, bNewList ? NULL : &existing, bRecursive);
+		if (bNewList && 1 == file_list->size() && !m_mapDirs.empty())
+		{
+			std::list<std::string> dirs;
+			for (PathMonitorMap::const_iterator dIt = m_mapDirs.begin(); dIt != m_mapDirs.end(); ++dIt)
+			{
+				dirs.push_back(dIt->first);
+			}
+			SetAttributes(&dirs, NULL, bRecursive);
+		}
+		else
+		{
+			SetAttributes(file_list, bNewList ? NULL : &existing, bRecursive);
+		}
 	}
 
 	// sort - update the current index if the 
@@ -1583,7 +1633,7 @@ static void EnumerateChildren(ImageList::ImageListImpl* impl, GFile* dir, AsyncF
 		g_object_unref(child);
 		g_free(child_uri);
 
-		if (pData->quiverFiles.size() % 100 == 0)
+		if (!pData->quiverFiles.empty() && (pData->quiverFiles.size() % 50 == 0))
 		{
 			impl->PostAsyncLoadProgress(pData->uiGeneration, -1.0, (int)pData->quiverFiles.size(), 0);
 		}
@@ -1595,6 +1645,8 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 {
 	AsyncFolderLoadData* pData = (AsyncFolderLoadData*)data;
 	ImageListImpl* impl = pData->impl;
+
+	impl->PostAsyncLoadProgress(pData->uiGeneration, -1.0, 0, 0);
 
 	// a single file argument means load the whole parent directory
 	// and select the file, mirroring the synchronous Add() behavior
@@ -1648,9 +1700,12 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 				GFile* parent = g_file_get_parent(entry);
 				if (NULL != parent)
 				{
-					char* file_uri = g_file_get_uri(entry);
-					pData->strCurrentURI = file_uri;
-					g_free(file_uri);
+					if (pData->strCurrentURI.empty())
+					{
+						char* file_uri = g_file_get_uri(entry);
+						pData->strCurrentURI = file_uri;
+						g_free(file_uri);
+					}
 
 					EnumerateChildren(impl, parent, pData, false);
 
@@ -1677,6 +1732,11 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 			g_object_unref(entryInfo);
 		}
 		g_object_unref(entry);
+	}
+
+	if (!pData->quiverFiles.empty())
+	{
+		impl->PostAsyncLoadProgress(pData->uiGeneration, -1.0, (int)pData->quiverFiles.size(), 0);
 	}
 
 	// resolve lazy metadata (creation dates) on the loader thread ONLY
@@ -1721,6 +1781,11 @@ gboolean ImageList::ImageListImpl::AsyncFolderLoadCommit(gpointer data)
 		ImageListImpl* impl = pData->impl;
 		if (!impl->m_bAbortAsyncLoad && g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) == pData->uiGeneration)
 		{
+			if (impl->m_pAsyncLoadThread)
+			{
+				g_thread_join(impl->m_pAsyncLoadThread);
+				impl->m_pAsyncLoadThread = NULL;
+			}
 			size_t iOldSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
 			impl->CommitFolderLoad(pData);
 			size_t iNewSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
@@ -1739,19 +1804,28 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 {
 	Clear();
 
-	std::list<std::string>::const_iterator itr;
-	for (itr = pData->folders.begin(); pData->folders.end() != itr; ++itr)
+	bool bSingleFile = (1 == pData->folders.size());
+	if (bSingleFile && !pData->dirs.empty())
 	{
-		pair<PathMonitorMap::iterator,bool> p = m_mapDirs.insert(PathMonitorPair(*itr,NULL));
-		if (p.second && m_bEnableMonitor)
+		SetAttributes(&(pData->dirs), NULL, pData->bRecursive, pData->recursiveFolders);
+	}
+
+	std::list<std::string>::const_iterator itr;
+	if (!bSingleFile || pData->dirs.empty())
+	{
+		for (itr = pData->folders.begin(); pData->folders.end() != itr; ++itr)
 		{
-			GFile* dir = g_file_new_for_uri(itr->c_str());
-			p.first->second = g_file_monitor(dir, G_FILE_MONITOR_NONE, NULL, NULL);
-			if (NULL != p.first->second)
+			pair<PathMonitorMap::iterator,bool> p = m_mapDirs.insert(PathMonitorPair(*itr,NULL));
+			if (p.second && m_bEnableMonitor)
 			{
-				g_signal_connect(G_OBJECT(p.first->second), "changed", G_CALLBACK(monitor_callback), this);
+				GFile* dir = g_file_new_for_commandline_arg(itr->c_str());
+				p.first->second = g_file_monitor(dir, G_FILE_MONITOR_NONE, NULL, NULL);
+				if (NULL != p.first->second)
+				{
+					g_signal_connect(G_OBJECT(p.first->second), "changed", G_CALLBACK(monitor_callback), this);
+				}
+				g_object_unref(dir);
 			}
-			g_object_unref(dir);
 		}
 	}
 	for (itr = pData->dirs.begin(); pData->dirs.end() != itr; ++itr)
@@ -1759,7 +1833,7 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 		pair<PathMonitorMap::iterator,bool> p = m_mapDirs.insert(PathMonitorPair(*itr,NULL));
 		if (p.second && m_bEnableMonitor)
 		{
-			GFile* dir = g_file_new_for_uri(itr->c_str());
+			GFile* dir = g_file_new_for_commandline_arg(itr->c_str());
 			p.first->second = g_file_monitor(dir, G_FILE_MONITOR_NONE, NULL, NULL);
 			if (NULL != p.first->second)
 			{
@@ -1773,7 +1847,7 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 		pair<PathMonitorMap::iterator,bool> p = m_mapFiles.insert(PathMonitorPair(*itr,NULL));
 		if (p.second && m_bEnableMonitor)
 		{
-			GFile* file = g_file_new_for_uri(itr->c_str());
+			GFile* file = g_file_new_for_commandline_arg(itr->c_str());
 			p.first->second = g_file_monitor(file, G_FILE_MONITOR_NONE, NULL, NULL);
 			if (NULL != p.first->second)
 			{
@@ -1882,7 +1956,18 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 		    oldRecursiveFolders == newRecursiveFolders &&
 		    0 < impl->m_QuiverFileList.size())
 		{
-			return;
+			if (!strSelectURI.empty())
+			{
+				if (impl->SetCurrentImage(strSelectURI))
+				{
+					impl->m_pImageList->SetCurrentFile(strSelectURI);
+					return;
+				}
+			}
+			else
+			{
+				return;
+			}
 		}
 	}
 
@@ -1910,7 +1995,7 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 	pData->bRecursive = bRecursive;
 	pData->bSelectFirstItem = bSelectFirstItem;
 	pData->bHoldFirstIndex = bHoldFirstIndex;
-	if (pRecursiveFolders != NULL)
+	if (pRecursiveFolders != NULL && !pRecursiveFolders->empty())
 	{
 		pData->bHasRecursiveFolders = true;
 		pData->recursiveFolders = *pRecursiveFolders;
@@ -2403,6 +2488,11 @@ gboolean ImageList::ImageListImpl::AsyncSortCommit(gpointer data)
 		ImageListImpl* impl = pData->impl;
 		if (!impl->m_bAbortAsyncSort && g_atomic_int_get(&impl->m_uiAsyncSortGeneration) == pData->uiGeneration)
 		{
+			if (impl->m_pAsyncSortThread)
+			{
+				g_thread_join(impl->m_pAsyncSortThread);
+				impl->m_pAsyncSortThread = NULL;
+			}
 			impl->m_QuiverFileList = std::move(pData->files);
 			SortByDate sortby;
 			std::sort(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(), sortby);

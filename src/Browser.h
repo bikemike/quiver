@@ -58,6 +58,9 @@ public:
 	 * rather than waiting for the browser's next UpdateUI(). */
 	void UpdateFullscreenSidebar();
 
+	void UpdateUI();
+	void InvalidateView();
+
 	class BrowserImpl;
 private:
 	boost::shared_ptr<BrowserImpl> m_BrowserImplPtr;

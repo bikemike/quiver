@@ -51,6 +51,8 @@ public:
 
 	virtual void Remove(unsigned int nIndex);
 
+	virtual bool IsLoading() const override;
+
 protected:
 
 	class FilterEventHandler : public IImageListEventHandler
@@ -62,6 +64,7 @@ protected:
 		virtual void HandleItemAdded(ImageListEventPtr event);
 		virtual void HandleItemRemoved(ImageListEventPtr event);
 		virtual void HandleItemChanged(ImageListEventPtr event);
+		virtual void HandleLoadProgress(double fraction, int current, int total);
 	private:
 		ImageListFilter* m_pParent;
 	};
@@ -82,6 +85,7 @@ protected:
 	void HandleItemAdded(ImageListEventPtr event);
 	void HandleItemRemoved(ImageListEventPtr event);
 	void HandleItemChanged(ImageListEventPtr event);
+	void HandleLoadProgress(double fraction, int current, int total);
 
 	IImageListViewPtr m_pSource;
 	Predicate         m_pred;

@@ -227,7 +227,7 @@ public:
 	bool GetSelectedFoldersRecursive() const;
 	std::set<std::string> GetSelectedRecursiveFolders() const;
 
-	void SetSelectedFolders(std::list<std::string> &uris);
+	void SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive = false, const std::set<std::string>& recursiveFolders = std::set<std::string>());
 	std::list<std::string> GetSelectedURIsFromModels() const;
 	std::list<std::string> GetAddBookmarkURIs(const std::string& clicked_uri) const;
 	void ClearAllCheckboxes();
@@ -396,9 +396,9 @@ std::list<std::string> FolderTree::GetAddBookmarkURIs(const std::string& clicked
 	return std::list<std::string>();
 }
 
-void FolderTree::SetSelectedFolders(std::list<std::string> &uris)
+void FolderTree::SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive, const std::set<std::string>& recursiveFolders)
 {
-	m_FolderTreeImplPtr->SetSelectedFolders(uris);
+	m_FolderTreeImplPtr->SetSelectedFolders(uris, bRecursive, recursiveFolders);
 }
 
 void FolderTree::AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name)
@@ -1180,8 +1180,9 @@ guint FolderTree::FolderTreeImpl::FindItemByURI(const gchar* uri, gboolean check
 	return G_MAXUINT;
 }
 
-void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uris)
+void  FolderTree::FolderTreeImpl::SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive, const std::set<std::string>& recursiveFolders)
 {
+	(void)recursiveFolders;
 	ClearAllCheckboxes();
 
 	if (m_pFolderExpander && !uris.empty() && !gtk_expander_get_expanded(GTK_EXPANDER(m_pFolderExpander)))
@@ -1194,13 +1195,71 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(std::list<std::string> &uri
 	// path while tree items always carry file:// URIs
 	std::list<std::string> normUris;
 	{
-		std::list<std::string>::iterator itr;
+		std::list<std::string>::const_iterator itr;
 		for (itr = uris.begin(); uris.end() != itr; ++itr)
 		{
 			std::string normalized = folder_tree_normalize_uri(itr->c_str());
 			if (!normalized.empty())
 				normUris.push_back(normalized);
 		}
+	}
+
+	// Compare with bookmarks: if a bookmark has the same folder set and recursive setting,
+	// check off that bookmark in the bookmarks list and check its folders.
+	bool bBookmarkMatched = false;
+	if (m_pBookmarkStore)
+	{
+		BookmarksPtr bmPtr = Bookmarks::GetInstance();
+		if (bmPtr)
+		{
+			std::set<std::string> targetSet;
+			for (const auto& u : normUris)
+			{
+				std::string s = u;
+				while (!s.empty() && s.back() == '/') s.pop_back();
+				targetSet.insert(s);
+			}
+
+			guint bn = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
+			for (guint i = 0; i < bn; i++)
+			{
+				DirItem* it = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pBookmarkStore), i));
+				if (it)
+				{
+					if (it->bookmark_id >= 0)
+					{
+						const Bookmark* bm = bmPtr->GetBookmark(it->bookmark_id);
+						if (bm && bm->GetRecursive() == bRecursive)
+						{
+							std::set<std::string> bmSet;
+							for (const auto& u : bm->GetURIs())
+							{
+								std::string norm = folder_tree_normalize_uri(u.c_str());
+								std::string s = !norm.empty() ? norm : u;
+								while (!s.empty() && s.back() == '/') s.pop_back();
+								bmSet.insert(s);
+							}
+							if (!bmSet.empty() && bmSet == targetSet)
+							{
+								dir_item_set_checked(it, TRUE);
+								if (m_pBookmarkSelectionModel)
+								{
+									gtk_selection_model_select_item(
+										GTK_SELECTION_MODEL(m_pBookmarkSelectionModel), i, FALSE);
+								}
+								bBookmarkMatched = true;
+							}
+						}
+					}
+					g_object_unref(it);
+				}
+			}
+		}
+	}
+
+	if (bBookmarkMatched && m_pBookmarkExpander && !gtk_expander_get_expanded(GTK_EXPANDER(m_pBookmarkExpander)))
+	{
+		gtk_expander_set_expanded(GTK_EXPANDER(m_pBookmarkExpander), TRUE);
 	}
 
 	guint first_found = G_MAXUINT;

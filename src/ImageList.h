@@ -32,6 +32,7 @@ public:
 
 	void SetImageList(std::string file, bool bRecursive = false);
 	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
+	void SetToSingleFile(const std::string& uri, ImageListAttributesPtr attributes = ImageListAttributesPtr());
 	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
 	void UpdateImageList(const std::list<std::string> *file_list);
 	/* bPreserveCurrentIndex is for a request that merely extends the list
@@ -96,6 +97,8 @@ public:
 	void Sort(SortBy o, bool bSortAscending = true, bool bAsync = false);
 	SortBy GetSortBy() const;
 	bool GetSortAscending() const;
+
+	virtual bool IsLoading() const override;
 
 public:
 	class ImageListImpl;

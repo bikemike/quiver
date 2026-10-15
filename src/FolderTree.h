@@ -28,7 +28,7 @@ public:
 	void SetFoldersExpanded(bool expanded);
 	bool GetFoldersExpanded() const;
 
-	void SetSelectedFolders(std::list<std::string> &uris);
+	void SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive = false, const std::set<std::string>& recursiveFolders = std::set<std::string>());
 	std::list<std::string> GetSelectedFolders() const;
 	/* True when any checked item of the combined selection requires its
 	 * folders to be loaded recursively (currently: a checked bookmark whose

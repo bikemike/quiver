@@ -428,3 +428,114 @@ TEST_CASE("ImageList: Preferences sort order application",
     prefs->SetInteger(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_BY, savedSortBy);
     prefs->SetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_SORT_REVERSED, savedReversed);
 }
+
+TEST_CASE("ImageList async folder load: reload attributes and select URI (RecentItems context restore)",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dirA = make_temp_dir();
+    std::string dirB = make_temp_dir();
+    seed_dir(dirA, 4);
+    seed_dir(dirB, 4);
+
+    std::string uriA = path_to_uri(dirA);
+    std::string uriB = path_to_uri(dirB);
+
+    ImageListPtr list(new ImageList());
+
+    std::list<std::string> foldersA = { uriA };
+    std::list<std::string> foldersB = { uriB };
+
+    auto loaded_folder = [&](const std::string& uri) {
+        std::list<std::string> folders = list->GetFolderList();
+        return std::find(folders.begin(), folders.end(), uri) != folders.end() &&
+               list->GetSize() >= 4;
+    };
+
+    list->UpdateImageListAsync(&foldersA);
+    pump_until([&] { return loaded_folder(uriA); });
+    REQUIRE(list->GetSize() == 4);
+
+    ImageListAttributesPtr attrsA = list->GetAttributes();
+    REQUIRE(attrsA != nullptr);
+
+    // Now switch to folder B
+    list->UpdateImageListAsync(&foldersB);
+    pump_until([&] { return loaded_folder(uriB); });
+    REQUIRE(list->GetSize() == 4);
+
+    ImageListAttributesPtr attrsB = list->GetAttributes();
+    REQUIRE(attrsB != nullptr);
+    REQUIRE(attrsB != attrsA);
+
+    // Now restore folder A with a target item
+    std::string targetURI = uriA + "/img2.jpg";
+    list->UpdateImageListAsync(attrsA, false, targetURI);
+    pump_until([&] { return loaded_folder(uriA); });
+    REQUIRE(list->GetSize() == 4);
+    CHECK(list->GetCurrent().GetURI() == targetURI);
+}
+
+TEST_CASE("ImageList async single-file load: context restore with different selected URI",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dir = make_temp_dir();
+    seed_dir(dir, 4);
+
+    std::string file0 = path_to_uri(dir + "/img0.jpg");
+    std::string file2 = path_to_uri(dir + "/img2.jpg");
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> single = { file0 };
+
+    list->UpdateImageListAsync(&single);
+    pump_until([&] { return list->GetSize() >= 4; });
+    REQUIRE(list->GetSize() == 4);
+
+    ImageListAttributesPtr attrs = list->GetAttributes();
+    REQUIRE(attrs != nullptr);
+    std::string dirURI = path_to_uri(dir);
+    REQUIRE(attrs->GetFolders().size() == 1);
+    CHECK(attrs->GetFolders().front() == dirURI);
+
+    // Verify folder list only has the directory and not the individual file
+    std::list<std::string> folderList = list->GetFolderList();
+    REQUIRE(folderList.size() == 1);
+    CHECK(folderList.front() == dirURI);
+
+    // Now reload using attrs and ask to select file2 (mimicking OnOpenRecent for a file in this folder)
+    list->UpdateImageListAsync(attrs, false, file2);
+    pump_until([&] { return list->GetCurrent().GetURI() == file2; });
+    REQUIRE(list->GetSize() == 4);
+    CHECK(list->GetCurrent().GetURI() == file2);
+}
+
+TEST_CASE("ImageList synchronous single-file Add: sets parent folder attributes",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dir = make_temp_dir();
+    seed_dir(dir, 3);
+
+    std::string file1 = path_to_uri(dir + "/img1.jpg");
+    std::string dirURI = path_to_uri(dir);
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> single = { file1 };
+
+    list->Add(&single);
+    REQUIRE(list->GetSize() == 3);
+
+    ImageListAttributesPtr attrs = list->GetAttributes();
+    REQUIRE(attrs != nullptr);
+    REQUIRE(attrs->GetFolders().size() == 1);
+    CHECK(attrs->GetFolders().front() == dirURI);
+
+    std::list<std::string> folderList = list->GetFolderList();
+    REQUIRE(folderList.size() == 1);
+    CHECK(folderList.front() == dirURI);
+}

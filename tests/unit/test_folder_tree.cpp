@@ -1001,6 +1001,70 @@ TEST_CASE("FolderTree bookmark checkbox checks the whole bookmark",
     bm->Remove(added_id2);
 }
 
+TEST_CASE("FolderTree SetSelectedFolders matches bookmark and checks bookmark and folders",
+          "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+    FolderTreeTestConfigFixture cfg;
+
+    std::string base = folder_tree_test_make_temp_dir();
+    std::string subA = base + "/subA";
+    std::string subB = base + "/subB";
+    g_mkdir_with_parents(subA.c_str(), 0755);
+    g_mkdir_with_parents(subB.c_str(), 0755);
+    std::string uriA = folder_tree_test_path_to_uri(subA);
+    std::string uriB = folder_tree_test_path_to_uri(subB);
+
+    BookmarksPtr bm = Bookmarks::GetInstance();
+    std::list<std::string> uris = { uriA, uriB };
+    Bookmark b1("Two Folders Recursive", "desc", "folder-symbolic", uris, true);
+    REQUIRE(bm->AddBookmark(b1));
+    int added_id1 = bm->GetBookmarks().back().GetID();
+
+    struct AutoRemoveBookmark {
+        BookmarksPtr bm;
+        int id;
+        ~AutoRemoveBookmark() { if (bm) bm->Remove(id); }
+    } cleanup1{ bm, added_id1 };
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), tree->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 600);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    GtkWidget* bm_widget = tree->GetBookmarksWidget();
+    REQUIRE(bm_widget != nullptr);
+    GtkSelectionModel* bm_sel = gtk_list_view_get_model(GTK_LIST_VIEW(bm_widget));
+    REQUIRE(bm_sel != nullptr);
+    REQUIRE(g_list_model_get_n_items(G_LIST_MODEL(bm_sel)) >= 1);
+    GObject* item0 = (GObject*)g_list_model_get_item(G_LIST_MODEL(bm_sel), 0);
+    REQUIRE(item0 != nullptr);
+    GtkWidget* check0 = GTK_WIDGET(g_object_get_data(item0, "bound-check"));
+    g_object_unref(item0);
+    REQUIRE(check0 != nullptr);
+    REQUIRE(gtk_check_button_get_active(GTK_CHECK_BUTTON(check0)) == FALSE);
+
+    // Call SetSelectedFolders with the bookmark's URIs and recursive = true
+    tree->SetSelectedFolders(uris, true);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Bookmark should be checked off!
+    CHECK(gtk_check_button_get_active(GTK_CHECK_BUTTON(check0)) == TRUE);
+
+    // GetSelectedFolders should return the bookmark's folders
+    std::list<std::string> selected = tree->GetSelectedFolders();
+    CHECK(std::find(selected.begin(), selected.end(), uriA) != selected.end());
+    CHECK(std::find(selected.begin(), selected.end(), uriB) != selected.end());
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+    g_rmdir(subA.c_str());
+    g_rmdir(subB.c_str());
+    g_rmdir(base.c_str());
+}
+
 TEST_CASE("FolderTree drop expand on folder with many subfolders materializes rows",
           "[unit][foldertree][gui]")
 {

@@ -91,6 +91,9 @@ public:
                 m_currentIndex = m_files.size() - 1;
         }
     }
+
+    bool m_bIsLoading = false;
+    bool IsLoading() const override { return m_bIsLoading; }
 };
 
 TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
@@ -180,5 +183,57 @@ TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
         REQUIRE(filter.GetSize() == 3);
         REQUIRE(filter.GetCurrentIndex() == 0);
         REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///other/x.jpg");
+    }
+
+    SECTION("ImageListFilter forwards IsLoading from source")
+    {
+        mock->m_bIsLoading = false;
+        REQUIRE_FALSE(filter.IsLoading());
+
+        mock->m_bIsLoading = true;
+        REQUIRE(filter.IsLoading());
+
+        mock->m_bIsLoading = false;
+        REQUIRE_FALSE(filter.IsLoading());
+    }
+
+    SECTION("ImageListFilter forwards LoadProgress to listeners")
+    {
+        class TestProgressHandler : public IImageListEventHandler
+        {
+        public:
+            std::vector<std::tuple<double, int, int>> events;
+            void HandleContentsChanged(ImageListEventPtr) override {}
+            void HandleCurrentIndexChanged(ImageListEventPtr) override {}
+            void HandleItemAdded(ImageListEventPtr) override {}
+            void HandleItemRemoved(ImageListEventPtr) override {}
+            void HandleItemChanged(ImageListEventPtr) override {}
+            void HandleLoadProgress(double fraction, int current, int total) override
+            {
+                events.push_back(std::make_tuple(fraction, current, total));
+            }
+        };
+
+        boost::shared_ptr<TestProgressHandler> handler(new TestProgressHandler());
+        filter.AddEventHandler(handler);
+
+        // Source emits indeterminate progress
+        mock->EmitLoadProgress(-1.0, 50, 0);
+        // Source emits determinate progress
+        mock->EmitLoadProgress(0.5, 50, 100);
+        // Source emits load complete
+        mock->EmitLoadProgress(1.0, 100, 100);
+
+        REQUIRE(handler->events.size() == 3);
+        REQUIRE(std::get<0>(handler->events[0]) == -1.0);
+        REQUIRE(std::get<1>(handler->events[0]) == 50);
+
+        REQUIRE(std::get<0>(handler->events[1]) == 0.5);
+        REQUIRE(std::get<1>(handler->events[1]) == 50);
+        REQUIRE(std::get<2>(handler->events[1]) == 100);
+
+        REQUIRE(std::get<0>(handler->events[2]) == 1.0);
+
+        filter.RemoveEventHandler(handler);
     }
 }
