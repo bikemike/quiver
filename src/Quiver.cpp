@@ -3753,22 +3753,123 @@ void Quiver::ShowBrowser()
 
 
 
+static GtkWidget* find_about_stack(GtkWidget *root)
+{
+	if (!root) return NULL;
+	if (GTK_IS_STACK(root)) return root;
+	for (GtkWidget *c = gtk_widget_get_first_child(root); c != NULL; c = gtk_widget_get_next_sibling(c))
+	{
+		GtkWidget *res = find_about_stack(c);
+		if (res) return res;
+	}
+	return NULL;
+}
+
+static void on_about_visible_child_notify(GObject *gobject, GParamSpec *pspec, gpointer user_data)
+{
+	(void)pspec;
+	GtkStack *stack = GTK_STACK(gobject);
+	GtkWidget *box = GTK_WIDGET(user_data);
+	const char *name = gtk_stack_get_visible_child_name(stack);
+	gboolean is_license = (name && strcmp(name, "license") == 0);
+
+	/* When viewing the license page, hide the logo and app name headers so the
+	 * license text view expands to fill the full height and width of the dialog. */
+	for (GtkWidget *c = gtk_widget_get_first_child(box); c != NULL; c = gtk_widget_get_next_sibling(c))
+	{
+		if (c != GTK_WIDGET(stack))
+		{
+			gtk_widget_set_visible(c, !is_license);
+		}
+	}
+}
+
 void Quiver::OnAbout()
 {
-	const char * authors[] = {"mike morrison <mike_morrison@alumni.uvic.ca>",NULL};
-	const char * artists[] = {"mike morrison <mike_morrison@alumni.uvic.ca>",NULL};
-	const char * documenters[] = {"mike morrison <mike_morrison@alumni.uvic.ca>",NULL};
+	static const char szLicenseText[] =
+		"Quiver is free software: you can redistribute it and/or modify\n"
+		"it under the terms of the GNU General Public License as published by\n"
+		"the Free Software Foundation, either version 2 of the License, or\n"
+		"(at your option) any later version.\n\n"
+		"Quiver is distributed in the hope that it will be useful,\n"
+		"but WITHOUT ANY WARRANTY; without even the implied warranty of\n"
+		"MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n"
+		"GNU General Public License for more details.\n\n"
+		"===================================================================\n"
+		"Third-Party Libraries and Data\n"
+		"===================================================================\n\n"
+		"• GTK 4, GLib & GIO\n"
+		"  License: GNU Lesser General Public License (LGPL) v2.1 or later\n"
+		"  Copyright © 1995-2026 The GTK and GLib developers\n\n"
+		"• Exiv2\n"
+		"  License: GNU General Public License (GPL) v2.0 or later\n"
+		"  Copyright © 2004-2026 Andreas Huggel and the Exiv2 authors\n\n"
+		"• FFmpeg (libavformat, libavcodec, libavutil, libswscale)\n"
+		"  License: GNU Lesser General Public License (LGPL) v2.1 or later\n"
+		"  Copyright © 2000-2026 the FFmpeg developers\n\n"
+		"• GStreamer\n"
+		"  License: GNU Lesser General Public License (LGPL) v2.1 or later\n"
+		"  Copyright © 1999-2026 the GStreamer developers\n\n"
+		"• ZoneDetect\n"
+		"  License: MIT License\n"
+		"  Copyright © 2018 Bertold Van den Bergh (vandenbergh@bertold.org)\n"
+		"  Permission is hereby granted, free of charge, to any person obtaining a copy\n"
+		"  of this software and associated documentation files, to deal in the Software\n"
+		"  without restriction, including without limitation the rights to use, copy,\n"
+		"  modify, merge, publish, distribute, sublicense, and/or sell copies.\n\n"
+		"• Timezone Boundary Data\n"
+		"  Contains data from Natural Earth, placed in the Public Domain.\n"
+		"  Contains information from timezone-boundary-builder (Evan Siroky),\n"
+		"  made available under the Open Database License (ODbL).\n\n"
+		"• Independent JPEG Group (libjpeg)\n"
+		"  License: IJG License\n"
+		"  Copyright © 1991-2010 Thomas G. Lane, Guido Vollbeding\n"
+		"  This software is based in part on the work of the Independent JPEG Group.\n\n"
+		"• ZLIB\n"
+		"  License: zlib License\n"
+		"  Copyright © 1995-2022 Jean-loup Gailly and Mark Adler\n\n"
+		"• Boost C++ Libraries\n"
+		"  License: Boost Software License 1.0\n"
+		"  Copyright © Beman Dawes, David Abrahams, et al.\n\n"
+		"• Natural Order String Comparison (strnatcmp)\n"
+		"  License: zlib License\n"
+		"  Copyright © 2000, 2004 Martin Pool\n\n"
+		"• RSA Data Security MD5 Message-Digest Algorithm\n"
+		"  Copyright © 1991-1992 RSA Data Security, Inc.\n"
+		"  License to copy and use this software is granted provided that it is\n"
+		"  identified as the 'RSA Data Security, Inc. MD5 Message-Digest Algorithm'.\n\n"
+		"• Glycin / GdkPixbuf\n"
+		"  License: GNU Lesser General Public License (LGPL) v2.1 or later\n"
+		"  Copyright © GNOME Project and contributors\n";
+
 	gtk_show_about_dialog(GTK_WINDOW(m_QuiverImplPtr->m_pQuiverWindow),
-		"name",GETTEXT_PACKAGE,
-		"version",PACKAGE_VERSION,
-		"copyright","copyright (c) 2008\nmike morrison",
-		"comments","a gtk image viewer",
-		"authors",authors,
-		"artists",artists,
-		"documenters",documenters,
-		"website",PACKAGE_BUGREPORT,
-		"website-label","quiver website",
+		"program-name", GETTEXT_PACKAGE,
+		"version", PACKAGE_VERSION,
+		"copyright", "Copyright \xc2\xa9 2008-2026 Mike Morrison",
+		"comments", "A fast, responsive image and video viewer for GTK",
+		"website", PACKAGE_BUGREPORT,
+		"website-label", "Quiver Website",
+		"license-type", GTK_LICENSE_CUSTOM,
+		"license", szLicenseText,
+		"wrap-license", TRUE,
 		NULL);
+
+	GtkWidget *about = GTK_WIDGET(g_object_get_data(
+		G_OBJECT(m_QuiverImplPtr->m_pQuiverWindow), "gtk-about-dialog"));
+	if (about)
+	{
+		gtk_window_set_resizable(GTK_WINDOW(about), TRUE);
+		gtk_window_set_default_size(GTK_WINDOW(about), 780, 580);
+
+		GtkWidget *stack = find_about_stack(about);
+		GtkWidget *box = stack ? gtk_widget_get_parent(stack) : NULL;
+		if (stack && box && !g_object_get_data(G_OBJECT(stack), "quiver-license-handler"))
+		{
+			g_object_set_data(G_OBJECT(stack), "quiver-license-handler", GINT_TO_POINTER(1));
+			g_signal_connect(stack, "notify::visible-child-name",
+				G_CALLBACK(on_about_visible_child_notify), box);
+		}
+	}
 }
 
 
