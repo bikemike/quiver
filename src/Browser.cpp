@@ -4682,7 +4682,6 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	{
 		const std::list<std::string>& uris = event->GetURIs();
 		// landing on the first item mirrors the bookmark menu behavior
-		parent->ShowLoadingProgress("Loading folder...", -1.0);
 		parent->m_ImageListPtr->UpdateImageListAsync(&uris, event->GetRecursive(), true);
 		return;
 	}
@@ -4695,7 +4694,6 @@ void Browser::BrowserImpl::FolderTreeEventHandler::HandleSelectionChanged(Folder
 	 * stays selected wherever the merged list put it.  A plain row click
 	 * navigates instead and still lands on the first item of the new folder. */
 	bool bPreserveIndex = (NULL == event) || event->PreserveCurrentIndex();
-	parent->ShowLoadingProgress("Loading folder...", -1.0);
 	parent->m_ImageListPtr->UpdateImageListAsync(&listFolders, bFoldersRecursive, !bPreserveIndex, "", &recursiveFolders, bPreserveIndex);
 }
 

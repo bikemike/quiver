@@ -10,6 +10,7 @@
 #include "ImageList.h"
 #include "IImageListEventHandler.h"
 #include "Browser.h"
+#include "FolderTree.h"
 #include "Statusbar.h"
 #include "Preferences.h"
 #include "QuiverPrefs.h"
@@ -538,4 +539,107 @@ TEST_CASE("ImageList synchronous single-file Add: sets parent folder attributes"
     std::list<std::string> folderList = list->GetFolderList();
     REQUIRE(folderList.size() == 1);
     CHECK(folderList.front() == dirURI);
+}
+
+TEST_CASE("ImageList async folder load: reselecting same folder emits completion and does not hang HUD",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dir = make_temp_dir();
+    seed_dir(dir, 4);
+    std::string uri = path_to_uri(dir);
+
+    ImageListPtr list(new ImageList());
+    boost::shared_ptr<TestProgressHandler> handler(new TestProgressHandler());
+    list->AddEventHandler(handler);
+
+    std::list<std::string> folders = { uri };
+    list->UpdateImageListAsync(&folders);
+
+    pump_until([&] { return list->GetSize() >= 4; });
+    REQUIRE(list->GetSize() == 4);
+    REQUIRE(handler->m_dLastFraction == 1.0);
+
+    // Reset handler stats
+    handler->m_iProgressCount = 0;
+    handler->m_dLastFraction = -2.0;
+
+    // Reselecting the same folder must emit completion progress without starting an async load thread
+    list->UpdateImageListAsync(&folders);
+    REQUIRE_FALSE(list->IsLoading());
+    REQUIRE(handler->m_iProgressCount > 0);
+    REQUIRE(handler->m_dLastFraction == 1.0);
+
+    list->RemoveEventHandler(handler);
+}
+
+TEST_CASE("Browser folder tree: clicking the same folder a second time does not show infinite loading HUD",
+          "[unit][browser][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dir = make_temp_dir();
+    seed_dir(dir, 4);
+    std::string uri = path_to_uri(dir);
+
+    BrowserPtr browser(new Browser());
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), browser->GetWidget());
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    auto find_widget_with_class = [](GtkWidget* root, const char* cls, auto& self) -> GtkWidget* {
+        if (!root) return nullptr;
+        if (gtk_widget_has_css_class(root, cls)) return root;
+        for (GtkWidget* c = gtk_widget_get_first_child(root); c != nullptr; c = gtk_widget_get_next_sibling(c))
+        {
+            GtkWidget* res = self(c, cls, self);
+            if (res) return res;
+        }
+        return nullptr;
+    };
+
+    GtkWidget* hud = find_widget_with_class(browser->GetWidget(), "browser-loading-hud", find_widget_with_class);
+    REQUIRE(hud != nullptr);
+    CHECK_FALSE(gtk_widget_get_visible(hud));
+
+    ImageListPtr list(new ImageList());
+    browser->SetImageList(list);
+
+    FolderTreePtr folderTree = browser->GetFolderTree();
+    REQUIRE(folderTree != nullptr);
+
+    // Initial folder selection in the tree
+    folderTree->SetSelectedFolders({ uri });
+    folderTree->EmitSelectionChangedEvent(false);
+
+    // Wait until loaded
+    pump_until([&] { return list->GetSize() >= 4; });
+    REQUIRE(list->GetSize() == 4);
+
+    // Settle GTK events
+    for (int i = 0; i < 10; ++i)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(10000);
+    }
+    CHECK_FALSE(gtk_widget_get_visible(hud));
+
+    // Click the same folder a second time
+    folderTree->EmitSelectionChangedEvent(false);
+
+    // Settle GTK events
+    for (int i = 0; i < 10; ++i)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(10000);
+    }
+
+    // Verify HUD does not pop up or stay stuck visible with infinite progress
+    CHECK_FALSE(gtk_widget_get_visible(hud));
+
+    gtk_window_set_child(GTK_WINDOW(win), NULL);
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
 }

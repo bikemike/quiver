@@ -1728,10 +1728,6 @@ void QuiverImpl::OnOpenRecent(const std::string& uri)
 	{
 		m_pQuiver->ShowViewer();
 	}
-	if (m_ViewerPtr)
-	{
-		m_ViewerPtr->ShowLoadingProgress("Loading folder...", -1.0);
-	}
 	if (m_ImageListPtr)
 	{
 		m_ImageListPtr->UpdateImageListAsync(targetAttrs, false, targetURI);
@@ -3989,7 +3985,6 @@ void QuiverImpl::BrowserEventHandler::HandleItemActivated(BrowserEventPtr event_
 			currentItem = parent->m_BrowserPtr->GetCurrentFolderChild();
 		}
 		file_list.push_back(parent->m_ImageListPtr->GetCurrent().GetURI());
-		parent->m_BrowserPtr->ShowLoadingProgress("Loading folder...", -1.0);
 		parent->m_ImageListPtr->UpdateImageListAsync(&file_list, false, !bSelectPreview, currentItem);
 	}
 	else
@@ -5062,14 +5057,6 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 			if (pQuiverImpl->m_BrowserPtr && pQuiverImpl->m_BrowserPtr->GetFolderTree())
 			{
 				pQuiverImpl->m_BrowserPtr->GetFolderTree()->SetSelectedFolders(uris, b->GetRecursive());
-			}
-			if (pQuiverImpl->m_ViewerPtr)
-			{
-				pQuiverImpl->m_ViewerPtr->ShowLoadingProgress("Loading folder...", -1.0);
-			}
-			if (pQuiverImpl->m_BrowserPtr)
-			{
-				pQuiverImpl->m_BrowserPtr->ShowLoadingProgress("Loading folder...", -1.0);
 			}
 			pQuiverImpl->m_ImageListPtr->UpdateImageListAsync(&uris, b->GetRecursive(), true);
 		}

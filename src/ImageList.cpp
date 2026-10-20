@@ -1958,14 +1958,20 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 		{
 			if (!strSelectURI.empty())
 			{
+				int old_index = impl->m_iCurrentIndex;
 				if (impl->SetCurrentImage(strSelectURI))
 				{
-					impl->m_pImageList->SetCurrentFile(strSelectURI);
+					if ((unsigned int)old_index != impl->m_iCurrentIndex)
+					{
+						impl->m_pImageList->EmitCurrentIndexChangedEvent(impl->m_iCurrentIndex, old_index);
+					}
+					EmitLoadProgress(1.0, 0, 0);
 					return;
 				}
 			}
 			else
 			{
+				EmitLoadProgress(1.0, 0, 0);
 				return;
 			}
 		}
@@ -2014,6 +2020,7 @@ void ImageList::UpdateImageListAsync(ImageListAttributesPtr attributes, bool bSe
 {
 	if (!attributes)
 	{
+		EmitLoadProgress(1.0, 0, 0);
 		return;
 	}
 
