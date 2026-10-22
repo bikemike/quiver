@@ -1134,7 +1134,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	 * deserializers (QuiverClipboard) feed with the incoming file list. */
 	{
 		GtkDragSource *drag_source = gtk_drag_source_new();
-		gtk_drag_source_set_actions(drag_source, (GdkDragAction)(GDK_ACTION_MOVE | GDK_ACTION_COPY));
+		GdkDragAction drag_actions = static_cast<GdkDragAction>(GDK_ACTION_COPY | GDK_ACTION_MOVE);
+		gtk_drag_source_set_actions(drag_source, drag_actions);
 		g_signal_connect(drag_source, "prepare",
 			G_CALLBACK(browser_drag_source_prepare), this);
 		g_signal_connect(drag_source, "drag-begin",
@@ -1146,8 +1147,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 		gtk_widget_add_controller(GTK_WIDGET(m_pIconView),
 			GTK_EVENT_CONTROLLER(drag_source));
 
-		GtkDropTarget *drop_target = gtk_drop_target_new(G_TYPE_STRING,
-			(GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+		GtkDropTarget *drop_target = gtk_drop_target_new(G_TYPE_STRING, drag_actions);
 		/* the folder under the pointer can only be judged against what is
 		 * being dragged, and only a preloading target knows that before the
 		 * user releases; GTK reads it, we just look at ::value.  The cost is
@@ -1558,14 +1558,17 @@ Browser::BrowserImpl::~BrowserImpl()
 	 * is still alive, so the widgets are torn down before BrowserImpl is. */
 
 	/* disconnect signal handlers on the notebook while it still exists */
-	g_signal_handlers_disconnect_matched(
-		m_pNotebook,
-		G_SIGNAL_MATCH_DATA,
-		0,
-		0,
-		NULL,
-		NULL,
-		this);
+	if (m_pNotebook && G_IS_OBJECT(m_pNotebook))
+	{
+		g_signal_handlers_disconnect_matched(
+			m_pNotebook,
+			G_SIGNAL_MATCH_DATA,
+			0,
+			0,
+			NULL,
+			NULL,
+			this);
+	}
 
 	/* cancel the icon-view refresh timer before the widgets go away */
 	if (0 != m_iTimeoutUpdateListID)
@@ -1590,7 +1593,7 @@ Browser::BrowserImpl::~BrowserImpl()
 	 *    unparent it before the icon view is destroyed */
 	if (m_pContextMenuPopover)
 	{
-		if (gtk_widget_get_parent(m_pContextMenuPopover))
+		if (GTK_IS_WIDGET(m_pContextMenuPopover) && gtk_widget_get_parent(m_pContextMenuPopover))
 		{
 			gtk_widget_unparent(m_pContextMenuPopover);
 		}
@@ -1605,7 +1608,7 @@ Browser::BrowserImpl::~BrowserImpl()
 	 *    NOT part of m_pBrowserWidget, release it while both still exist */
 	if (m_pThumbSizerPopover)
 	{
-		if (gtk_widget_get_parent(m_pThumbSizerPopover))
+		if (GTK_IS_WIDGET(m_pThumbSizerPopover) && gtk_widget_get_parent(m_pThumbSizerPopover))
 		{
 			gtk_widget_unparent(m_pThumbSizerPopover);
 		}
@@ -1614,7 +1617,7 @@ Browser::BrowserImpl::~BrowserImpl()
 	}
 	if (m_pToolItemThumbSizer)
 	{
-		if (gtk_widget_get_parent(m_pToolItemThumbSizer))
+		if (GTK_IS_WIDGET(m_pToolItemThumbSizer) && gtk_widget_get_parent(m_pToolItemThumbSizer))
 		{
 			gtk_widget_unparent(m_pToolItemThumbSizer);
 		}

@@ -2372,7 +2372,10 @@ static gboolean filmstrip_fade_cb(gpointer user_data)
 	if (p->m_bFadingIn)
 	{
 		p->m_dFadeOpacity = MIN(p->m_dFadeOpacity + FADE_STEP, 1.0);
-		gtk_widget_set_opacity(p->m_pIconView, p->m_dFadeOpacity);
+		if (p->m_pIconView && GTK_IS_WIDGET(p->m_pIconView))
+		{
+			gtk_widget_set_opacity(p->m_pIconView, p->m_dFadeOpacity);
+		}
 		if (p->m_dFadeOpacity >= 1.0)
 		{
 			p->m_iTimeoutFilmstripFade = 0;
@@ -2382,10 +2385,16 @@ static gboolean filmstrip_fade_cb(gpointer user_data)
 	else
 	{
 		p->m_dFadeOpacity = MAX(p->m_dFadeOpacity - FADE_STEP, 0.0);
-		gtk_widget_set_opacity(p->m_pIconView, p->m_dFadeOpacity);
+		if (p->m_pIconView && GTK_IS_WIDGET(p->m_pIconView))
+		{
+			gtk_widget_set_opacity(p->m_pIconView, p->m_dFadeOpacity);
+		}
 		if (p->m_dFadeOpacity <= 0.0)
 		{
-			gtk_widget_set_visible(p->m_pIconView, FALSE);
+			if (p->m_pIconView && GTK_IS_WIDGET(p->m_pIconView))
+			{
+				gtk_widget_set_visible(p->m_pIconView, FALSE);
+			}
 			p->m_iTimeoutFilmstripFade = 0;
 			return G_SOURCE_REMOVE;
 		}
@@ -2419,7 +2428,7 @@ void Viewer::ViewerImpl::StartFilmstripFade(bool fadeIn)
 
 static void set_control_visible(GtkWidget* w, bool visible)
 {
-	if (!w) return;
+	if (!w || !GTK_IS_WIDGET(w)) return;
 	if (visible)
 	{
 		gtk_widget_set_opacity(w, 1.0);
@@ -2434,9 +2443,9 @@ static void set_control_visible(GtkWidget* w, bool visible)
 /* The unified overlay bar and timeline row fade/show/hide together. */
 static void viewer_set_controls_opacity(Viewer::ViewerImpl* p, double opacity)
 {
-	if (p->m_pViewerOverlayBar)
+	if (p->m_pViewerOverlayBar && GTK_IS_WIDGET(p->m_pViewerOverlayBar))
 		gtk_widget_set_opacity(p->m_pViewerOverlayBar, opacity);
-	if (p->m_pTimelineRow && p->IsVideo() && p->m_bVideoPlaybackStarted)
+	if (p->m_pTimelineRow && GTK_IS_WIDGET(p->m_pTimelineRow) && p->IsVideo() && p->m_bVideoPlaybackStarted)
 		gtk_widget_set_opacity(p->m_pTimelineRow, opacity);
 }
 
@@ -2577,11 +2586,14 @@ static gboolean play_anim_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock,
 
 	if (t >= 1.0)
 	{
-		gtk_widget_set_opacity(p->m_pPlayAnimWidget, 0.0);
-		gtk_widget_set_visible(p->m_pPlayAnimWidget, FALSE);
+		if (p->m_pPlayAnimWidget && GTK_IS_WIDGET(p->m_pPlayAnimWidget))
+		{
+			gtk_widget_set_opacity(p->m_pPlayAnimWidget, 0.0);
+			gtk_widget_set_visible(p->m_pPlayAnimWidget, FALSE);
+		}
 		p->m_iPlayAnimTickId = 0;
 		p->m_iPlayAnimStartTime = 0;
-		if (p->m_pPlayButton)
+		if (p->m_pPlayButton && GTK_IS_WIDGET(p->m_pPlayButton))
 		{
 			gtk_widget_set_opacity(p->m_pPlayButton, 1.0);
 		}
@@ -2616,30 +2628,33 @@ static gboolean play_anim_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock,
 	int btn_size = (int)(base_btn_size * scale + 0.5);
 	int icon_size = (int)(base_icon_size * scale + 0.5);
 
-	gtk_widget_set_size_request(p->m_pPlayAnimWidget, btn_size, btn_size);
-	if (p->m_pPlayAnimImage)
+	if (p->m_pPlayAnimWidget && GTK_IS_WIDGET(p->m_pPlayAnimWidget))
 	{
-		gtk_image_set_pixel_size(GTK_IMAGE(p->m_pPlayAnimImage), icon_size);
+		gtk_widget_set_size_request(p->m_pPlayAnimWidget, btn_size, btn_size);
+		if (p->m_pPlayAnimImage && GTK_IS_WIDGET(p->m_pPlayAnimImage))
+		{
+			gtk_image_set_pixel_size(GTK_IMAGE(p->m_pPlayAnimImage), icon_size);
+		}
+		gtk_widget_set_opacity(p->m_pPlayAnimWidget, opacity);
 	}
-	gtk_widget_set_opacity(p->m_pPlayAnimWidget, opacity);
 
 	return G_SOURCE_CONTINUE;
 }
 
 void Viewer::ViewerImpl::CancelPlayPauseAnimation()
 {
-	if (0 != m_iPlayAnimTickId && NULL != m_pPlayAnimWidget)
+	if (0 != m_iPlayAnimTickId && NULL != m_pPlayAnimWidget && GTK_IS_WIDGET(m_pPlayAnimWidget))
 	{
 		gtk_widget_remove_tick_callback(m_pPlayAnimWidget, m_iPlayAnimTickId);
 		m_iPlayAnimTickId = 0;
 	}
 	m_iPlayAnimStartTime = 0;
-	if (NULL != m_pPlayAnimWidget)
+	if (NULL != m_pPlayAnimWidget && GTK_IS_WIDGET(m_pPlayAnimWidget))
 	{
 		gtk_widget_set_opacity(m_pPlayAnimWidget, 0.0);
 		gtk_widget_set_visible(m_pPlayAnimWidget, FALSE);
 	}
-	if (NULL != m_pPlayButton)
+	if (NULL != m_pPlayButton && GTK_IS_WIDGET(m_pPlayButton))
 	{
 		gtk_widget_set_opacity(m_pPlayButton, 1.0);
 	}
@@ -13158,7 +13173,10 @@ static gboolean nav_control_fade_cb(gpointer user_data)
 	if (p->m_bNavControlFadingIn)
 	{
 		p->m_dNavControlFadeOpacity = MIN(p->m_dNavControlFadeOpacity + FADE_STEP, 1.0);
-		gtk_widget_set_opacity(p->m_pNavControlPill, p->m_dNavControlFadeOpacity);
+		if (p->m_pNavControlPill && GTK_IS_WIDGET(p->m_pNavControlPill))
+		{
+			gtk_widget_set_opacity(p->m_pNavControlPill, p->m_dNavControlFadeOpacity);
+		}
 		if (p->m_dNavControlFadeOpacity >= 1.0)
 		{
 			p->m_iTimeoutNavControlFade = 0;
@@ -13168,10 +13186,16 @@ static gboolean nav_control_fade_cb(gpointer user_data)
 	else
 	{
 		p->m_dNavControlFadeOpacity = MAX(p->m_dNavControlFadeOpacity - FADE_STEP, 0.0);
-		gtk_widget_set_opacity(p->m_pNavControlPill, p->m_dNavControlFadeOpacity);
+		if (p->m_pNavControlPill && GTK_IS_WIDGET(p->m_pNavControlPill))
+		{
+			gtk_widget_set_opacity(p->m_pNavControlPill, p->m_dNavControlFadeOpacity);
+		}
 		if (p->m_dNavControlFadeOpacity <= 0.0)
 		{
-			gtk_widget_set_visible(p->m_pNavControlPill, FALSE);
+			if (p->m_pNavControlPill && GTK_IS_WIDGET(p->m_pNavControlPill))
+			{
+				gtk_widget_set_visible(p->m_pNavControlPill, FALSE);
+			}
 			p->ApplyNavControlMinSize(false);
 			p->m_iTimeoutNavControlFade = 0;
 			return G_SOURCE_REMOVE;
@@ -13200,7 +13224,7 @@ void Viewer::ViewerImpl::StartNavControlFade(bool fadeIn)
  * only does work on a transition edge. */
 void Viewer::ViewerImpl::UpdateNavControlVisibility()
 {
-	if (NULL == m_pNavControlPill)
+	if (NULL == m_pNavControlPill || !GTK_IS_WIDGET(m_pNavControlPill))
 		return;
 
 	bool bNeeded = IsNavControlNeeded();
@@ -13226,11 +13250,14 @@ void Viewer::ViewerImpl::UpdateNavControlVisibility()
 		ApplyNavControlMinSize(true);
 		if (m_dNavControlFadeOpacity >= 1.0)
 			m_dNavControlFadeOpacity = 0.0;
-		gtk_widget_set_opacity(m_pNavControlPill, m_dNavControlFadeOpacity);
-		gtk_widget_set_visible(m_pNavControlPill, TRUE);
+		if (m_pNavControlPill && GTK_IS_WIDGET(m_pNavControlPill))
+		{
+			gtk_widget_set_opacity(m_pNavControlPill, m_dNavControlFadeOpacity);
+			gtk_widget_set_visible(m_pNavControlPill, TRUE);
+		}
 		StartNavControlFade(true);
 	}
-	else if (gtk_widget_get_visible(m_pNavControlPill))
+	else if (m_pNavControlPill && GTK_IS_WIDGET(m_pNavControlPill) && gtk_widget_get_visible(m_pNavControlPill))
 	{
 		StartNavControlFade(false);
 	}

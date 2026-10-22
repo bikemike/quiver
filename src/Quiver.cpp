@@ -497,11 +497,12 @@ void QuiverImpl::SetScreenAwake(bool bKeepAwake)
 		{
 			/* inhibit idle (screen blanker, lock) + suspend so a slideshow
 			 * or an actively-played video keeps the display lit */
+			GtkApplicationInhibitFlags inhibit_flags = static_cast<GtkApplicationInhibitFlags>(
+				GTK_APPLICATION_INHIBIT_IDLE | GTK_APPLICATION_INHIBIT_SUSPEND);
 			m_uiScreenInhibitCookie = gtk_application_inhibit(
 				GTK_APPLICATION(g_pApp),
 				GTK_WINDOW(m_pQuiverWindow),
-				(GtkApplicationInhibitFlags)
-					(GTK_APPLICATION_INHIBIT_IDLE | GTK_APPLICATION_INHIBIT_SUSPEND),
+				inhibit_flags,
 				"Slideshow or video playback");
 		}
 		++m_uiScreenAwakeRefCount;
@@ -2981,48 +2982,7 @@ void Quiver::Init()
 
 	// add the gui elements to the main window
 	gtk_window_set_child (GTK_WINDOW (m_QuiverImplPtr->m_pQuiverWindow), vbox);
-	
-	/*
-	 * FIXME
-	gtk_drag_dest_set(m_pQuiverWindow,GTK_DEST_DEFAULT_ALL,
-					quiver_drag_target_table, 3, (GdkDragAction)(GDK_ACTION_COPY|GDK_ACTION_MOVE));
-	*/
-/*
-	g_signal_connect (G_OBJECT (m_pQuiverWindow), "drag_data_received",
-				GTK_SIGNAL_FUNC (Quiver::signal_drag_data_received), this);
 
-
-	gtk_drag_source_set (m_ViewerPtr->GetWidget(), (GdkModifierType)(GDK_BUTTON1_MASK | GDK_BUTTON3_MASK),
-			   quiver_drag_target_table, 3, (GdkDragAction)(
-	//GDK_ACTION_COPY | GDK_ACTION_MOVE | 	GDK_ACTION_LINK));
-*/
-
-	/*
-	gtk_drag_source_set_icon (m_Viewer, 
-				gtk_widget_get_colormap (window),
-				drag_icon, drag_mask);
-	*/		
-/*
-	gtk_signal_connect (GTK_OBJECT (m_ViewerPtr->GetWidget()), "drag_data_get",
-		      GTK_SIGNAL_FUNC (Quiver::signal_drag_data_get), this);
-	gtk_signal_connect (GTK_OBJECT (m_ViewerPtr->GetWidget()), "drag_data_delete",
-		      GTK_SIGNAL_FUNC (Quiver::signal_drag_data_delete), this);
-
-	gtk_signal_connect (GTK_OBJECT (m_ViewerPtr->GetWidget()), "drag_begin",
-	      GTK_SIGNAL_FUNC (Quiver::signal_drag_begin), this);
-	
-	gtk_signal_connect (GTK_OBJECT (m_ViewerPtr->GetWidget()), "drag_end",
-	      GTK_SIGNAL_FUNC (Quiver::signal_drag_end), this);		  
-*/
-/*	
-	g_signal_connect (G_OBJECT (m_pQuiverWindow), "drag_drop",
-				G_CALLBACK (signal_drag_drop), this);
-			
-
-	g_signal_connect (G_OBJECT (m_pQuiverWindow), "drag_motion",
-				G_CALLBACK (signal_drag_motion), this);
-*/
-					
 	m_iIdleInitID = g_idle_add(idle_quiver_init,this);
 	
 	gtk_widget_set_visible (GTK_WIDGET(m_QuiverImplPtr->m_pQuiverWindow), TRUE);
@@ -4462,7 +4422,6 @@ static void quiver_escape_action(QuiverImpl *pQuiverImpl)
 		{
 			// 2. if in viewer and zoom fit return to browser
 			pQuiver->ShowBrowser();
-			bDoneSomething = true;
 		}
 	}
 }

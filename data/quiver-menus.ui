@@ -207,6 +207,11 @@
           <attribute name="icon">edit-copy-symbolic</attribute>
         </item>
         <item>
+          <attribute name="label">Paste Metadata...</attribute>
+          <attribute name="action">quiver.PasteMetadata</attribute>
+          <attribute name="icon">edit-paste-symbolic</attribute>
+        </item>
+        <item>
           <attribute name="label">Rename...</attribute>
           <attribute name="action">quiver.Rename</attribute>
           <attribute name="icon">document-edit-symbolic</attribute>
@@ -281,6 +286,11 @@
       <attribute name="label">Copy Metadata</attribute>
       <attribute name="action">quiver.CopyMetadata</attribute>
       <attribute name="icon">edit-copy-symbolic</attribute>
+    </item>
+    <item>
+      <attribute name="label">Paste Metadata...</attribute>
+      <attribute name="action">quiver.PasteMetadata</attribute>
+      <attribute name="icon">edit-paste-symbolic</attribute>
     </item>
     <item>
       <attribute name="label">Rename...</attribute>
