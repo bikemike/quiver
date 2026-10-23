@@ -3,7 +3,10 @@
 
 #include <gtk/gtk.h>
 #include <string>
+#include <vector>
 #include <boost/shared_ptr.hpp>
+
+#include "FileConflictCheck.h"
 
 class OrganizeDlg
 {
@@ -27,6 +30,11 @@ public:
 	bool        GetIncludeSubfolders() const;
 	bool        GetRenameFiles() const;
 
+	std::vector<FileConflictCheck::Result> GetConflictResults() const;
+	bool        GetShowAll() const;
+	void        SetShowAll(bool bShowAll);
+	guint       GetPreviewItemCount() const;
+	std::string GetPreviewItemIssue(guint index) const;
 
 	class       OrganizeDlgPriv;
 	typedef boost::shared_ptr<OrganizeDlgPriv> OrganizeDlgPrivPtr;

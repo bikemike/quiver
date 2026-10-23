@@ -238,6 +238,7 @@ bool OrganizeTask::ComputeMappings(const Options& opts,
 			continue;
 		}
 
+		bool bDayExtensionApplied = (opts.iDayExtension > 0 && g_date_time_get_hour(datetime) < opts.iDayExtension);
 		std::string strFolder = DoVariableSubstitution(opts.strFolderTemplate, datetime, opts.iDayExtension);
 		std::string strDstDir = opts.strDestDirURI + G_DIR_SEPARATOR_S + strFolder + opts.strAppendedText;
 
@@ -273,6 +274,7 @@ bool OrganizeTask::ComputeMappings(const Options& opts,
 		vectMappings.back().strContentType =
 			(NULL != f.GetMimeType()) ? f.GetMimeType() : "";
 		vectMappings.back().bHasDateMetadata = f.HasDateMetadata();
+		vectMappings.back().bDayExtensionApplied = bDayExtensionApplied;
 
 		if (NULL != fnProgress && 0 < vectQuiverFiles.size())
 		{

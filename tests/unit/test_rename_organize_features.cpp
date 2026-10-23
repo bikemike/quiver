@@ -949,7 +949,9 @@ TEST_CASE("Organize Dialog: Friendly path, non-expanding spinbox, and preview co
         bool spinVExpand;
         bool parentVExpand;
         std::vector<std::string> columnTitles;
-    } cap{false, "", true, true, {}};
+        std::vector<int> columnWidths;
+        std::vector<bool> columnResizable;
+    } cap{false, "", true, true, {}, {}, {}};
 
     OrganizeDlg organize;
     organize.SetInputFolder("file:///tmp/quiver_organize_test_folder");
@@ -995,6 +997,8 @@ TEST_CASE("Organize Dialog: Friendly path, non-expanding spinbox, and preview co
                     GtkColumnViewColumn* col = GTK_COLUMN_VIEW_COLUMN(g_list_model_get_item(cols, i));
                     const char* title = gtk_column_view_column_get_title(col);
                     c->columnTitles.push_back(title ? title : "");
+                    c->columnWidths.push_back(gtk_column_view_column_get_fixed_width(col));
+                    c->columnResizable.push_back(gtk_column_view_column_get_resizable(col) == TRUE);
                     g_object_unref(col);
                 }
             }
@@ -1022,6 +1026,22 @@ TEST_CASE("Organize Dialog: Friendly path, non-expanding spinbox, and preview co
     REQUIRE(cap.columnTitles[2] == "New Path");
     REQUIRE(cap.columnTitles[3] == "New Name");
     REQUIRE(cap.columnTitles[4] == "Issue");
+
+    // Column widths must be fixed to prevent jumping when row counts change
+    REQUIRE(cap.columnWidths.size() == 5);
+    REQUIRE(cap.columnWidths[0] == 32);
+    REQUIRE(cap.columnWidths[1] == 160);
+    REQUIRE(cap.columnWidths[2] == 170);
+    REQUIRE(cap.columnWidths[3] == 160);
+    REQUIRE(cap.columnWidths[4] == 180);
+
+    // Icon column non-resizable, data columns resizable
+    REQUIRE(cap.columnResizable.size() == 5);
+    REQUIRE_FALSE(cap.columnResizable[0]);
+    REQUIRE(cap.columnResizable[1]);
+    REQUIRE(cap.columnResizable[2]);
+    REQUIRE(cap.columnResizable[3]);
+    REQUIRE(cap.columnResizable[4]);
 }
 
 TEST_CASE("Organize Dialog: 2-column layout and rename sensitivity", "[unit][organize][gui]")
@@ -1351,6 +1371,311 @@ TEST_CASE("Organize Dialog: files without date metadata are flagged in the Issue
     g_free(dstUri);
     g_unlink(datedFile.c_str());
     g_unlink(undatedFile.c_str());
+    g_rmdir(tmpSrcDir);
+    g_rmdir(tmpDstDir);
+    g_free(tmpSrcDir);
+    g_free(tmpDstDir);
+}
+
+TEST_CASE("Organize Dialog: 'See All' button expands preview beyond row cap sampling", "[unit][organize][gui]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpSrcDir = g_dir_make_tmp("quiver_test_org_see_all_src_XXXXXX", NULL);
+    gchar* tmpDstDir = g_dir_make_tmp("quiver_test_org_see_all_dst_XXXXXX", NULL);
+    REQUIRE(tmpSrcDir != nullptr);
+    REQUIRE(tmpDstDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+
+    const int totalFiles = 205;
+    std::vector<std::string> filePaths;
+    filePaths.reserve(totalFiles);
+
+    for (int i = 0; i < totalFiles; ++i)
+    {
+        char filename[64];
+        g_snprintf(filename, sizeof(filename), "/img_%04d.jpg", i + 1);
+        std::string fullPath = std::string(tmpSrcDir) + filename;
+        REQUIRE(g_file_set_contents(fullPath.c_str(), contents, length, NULL));
+        filePaths.push_back(fullPath);
+    }
+    g_free(contents);
+
+    gchar* srcUri = g_filename_to_uri(tmpSrcDir, NULL, NULL);
+    gchar* dstUri = g_filename_to_uri(tmpDstDir, NULL, NULL);
+    REQUIRE(srcUri != NULL);
+    REQUIRE(dstUri != NULL);
+
+    char cfgPath[256];
+    strncpy(cfgPath, "/tmp/quiver_test_org_see_all_XXXXXX.ini", sizeof(cfgPath) - 1);
+    cfgPath[sizeof(cfgPath) - 1] = '\0';
+    int fd = g_mkstemp(cfgPath);
+    if (fd >= 0)
+        close(fd);
+    strncpy(g_szConfigFilePath, cfgPath, sizeof(cfgPath) - 1);
+    g_szConfigFilePath[sizeof(cfgPath) - 1] = '\0';
+    Preferences::Reset();
+    PreferencesPtr prefs = Preferences::GetInstance();
+    REQUIRE(prefs != NULL);
+    prefs->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY, dstUri);
+
+    struct SeeAllCapture {
+        bool checked;
+        GtkWidget* btnSeeAll;
+        guint initialCount;
+        guint expandedCount;
+        guint collapsedCount;
+        std::string initialBtnLabel;
+        std::string expandedBtnLabel;
+        std::string collapsedBtnLabel;
+        int64_t startMs;
+    } cap{false, NULL, 0, 0, 0, "", "", "", static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    OrganizeDlg organize;
+    organize.SetInputFolder(srcUri);
+
+    g_timeout_add(30, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<SeeAllCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Organize");
+        if (win != NULL)
+        {
+            if (c->btnSeeAll == NULL)
+            {
+                std::vector<GtkWidget*> buttons;
+                FindWidgetsByType(win, GTK_TYPE_BUTTON, buttons);
+                for (GtkWidget* b : buttons)
+                {
+                    const char* lbl = gtk_button_get_label(GTK_BUTTON(b));
+                    if (lbl && strcmp(lbl, "See All") == 0)
+                    {
+                        if (gtk_widget_get_visible(b))
+                        {
+                            c->btnSeeAll = b;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (c->btnSeeAll != NULL && !c->checked)
+            {
+                std::vector<GtkWidget*> colViews;
+                FindWidgetsByType(win, GTK_TYPE_COLUMN_VIEW, colViews);
+                if (!colViews.empty())
+                {
+                    GListModel* model = G_LIST_MODEL(gtk_column_view_get_model(GTK_COLUMN_VIEW(colViews[0])));
+                    c->initialCount = g_list_model_get_n_items(model);
+                    c->initialBtnLabel = gtk_button_get_label(GTK_BUTTON(c->btnSeeAll));
+
+                    // Click "See All"
+                    g_signal_emit_by_name(c->btnSeeAll, "clicked");
+                    c->expandedCount = g_list_model_get_n_items(model);
+                    c->expandedBtnLabel = gtk_button_get_label(GTK_BUTTON(c->btnSeeAll));
+
+                    // Click again to toggle back
+                    g_signal_emit_by_name(c->btnSeeAll, "clicked");
+                    c->collapsedCount = g_list_model_get_n_items(model);
+                    c->collapsedBtnLabel = gtk_button_get_label(GTK_BUTTON(c->btnSeeAll));
+
+                    c->checked = true;
+                    gtk_window_close(GTK_WINDOW(win));
+                    return G_SOURCE_REMOVE;
+                }
+            }
+
+            if (static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    organize.Run();
+
+    REQUIRE(cap.checked);
+    REQUIRE(cap.initialBtnLabel == "See All");
+    REQUIRE(cap.initialCount == 201); // 200 items + 1 dummy item
+
+    REQUIRE(cap.expandedBtnLabel == "Show Sample");
+    REQUIRE(cap.expandedCount == 205);
+
+    REQUIRE(cap.collapsedBtnLabel == "See All");
+    REQUIRE(cap.collapsedCount == 201);
+
+    for (const auto& p : filePaths)
+    {
+        g_unlink(p.c_str());
+    }
+    Preferences::Reset();
+    g_unlink(cfgPath);
+    g_free(srcUri);
+    g_free(dstUri);
+    g_rmdir(tmpSrcDir);
+    g_rmdir(tmpDstDir);
+    g_free(tmpSrcDir);
+    g_free(tmpDstDir);
+}
+
+TEST_CASE("Organize Dialog: preview sorting hierarchy and day extension offset indication", "[unit][organize][gui][sort]")
+{
+    if (!QuiverTest_HasDisplay())
+        SKIP("No display");
+
+    gchar* tmpSrcDir = g_dir_make_tmp("quiver_test_org_sort_src_XXXXXX", NULL);
+    gchar* tmpDstDir = g_dir_make_tmp("quiver_test_org_sort_dst_XXXXXX", NULL);
+    REQUIRE(tmpSrcDir != nullptr);
+    REQUIRE(tmpDstDir != nullptr);
+
+    std::string sampleJpg = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    REQUIRE(g_file_test(sampleJpg.c_str(), G_FILE_TEST_EXISTS));
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+
+    // Files to create:
+    // 1. a_collide.jpg (EXIF: 2024:06:15 10:20:30) -> collides with pre-existing file in dest
+    // 2. b_undated.jpg (no EXIF metadata)
+    // 3. c_night.jpg (EXIF: 2024:06:15 01:15:00) -> 1:15 AM < 3 hours offset, lands in previous day
+    // 4. d_day.jpg (EXIF: 2024:06:15 15:30:00) -> 3:30 PM >= 3 hours offset, normal organize
+    std::string fCollide = std::string(tmpSrcDir) + "/a_collide.jpg";
+    std::string fUndated = std::string(tmpSrcDir) + "/b_undated.jpg";
+    std::string fNight = std::string(tmpSrcDir) + "/c_night.jpg";
+    std::string fDay = std::string(tmpSrcDir) + "/d_day.jpg";
+
+    REQUIRE(g_file_set_contents(fCollide.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fUndated.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fNight.c_str(), contents, length, NULL));
+    REQUIRE(g_file_set_contents(fDay.c_str(), contents, length, NULL));
+
+    // Pre-create conflicting file in destination (default template is YYYY/YYYY-MM-DD)
+    std::string destSubdir = std::string(tmpDstDir) + "/2024/2024-06-15";
+    REQUIRE(0 == g_mkdir_with_parents(destSubdir.c_str(), 0755));
+    std::string fPreExisting = destSubdir + "/2024-06-15 10.20.30-01.jpg";
+    REQUIRE(g_file_set_contents(fPreExisting.c_str(), contents, length, NULL));
+    g_free(contents);
+
+    // Set EXIF dates
+    {
+        auto imgCollide = Exiv2::ImageFactory::open(fCollide.c_str());
+        REQUIRE(imgCollide.get() != nullptr);
+        imgCollide->readMetadata();
+        imgCollide->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 10:20:30";
+        imgCollide->writeMetadata();
+
+        auto imgNight = Exiv2::ImageFactory::open(fNight.c_str());
+        REQUIRE(imgNight.get() != nullptr);
+        imgNight->readMetadata();
+        imgNight->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 01:15:00";
+        imgNight->writeMetadata();
+
+        auto imgDay = Exiv2::ImageFactory::open(fDay.c_str());
+        REQUIRE(imgDay.get() != nullptr);
+        imgDay->readMetadata();
+        imgDay->exifData()["Exif.Photo.DateTimeOriginal"] = "2024:06:15 15:30:00";
+        imgDay->writeMetadata();
+    }
+
+    gchar* srcUri = g_filename_to_uri(tmpSrcDir, NULL, NULL);
+    gchar* dstUri = g_filename_to_uri(tmpDstDir, NULL, NULL);
+    REQUIRE(srcUri != NULL);
+    REQUIRE(dstUri != NULL);
+
+    char cfgPath[256];
+    strncpy(cfgPath, "/tmp/quiver_test_org_sort_XXXXXX.ini", sizeof(cfgPath) - 1);
+    cfgPath[sizeof(cfgPath) - 1] = '\0';
+    int fd = g_mkstemp(cfgPath);
+    if (fd >= 0)
+        close(fd);
+    strncpy(g_szConfigFilePath, cfgPath, sizeof(cfgPath) - 1);
+    g_szConfigFilePath[sizeof(cfgPath) - 1] = '\0';
+    Preferences::Reset();
+    PreferencesPtr prefs = Preferences::GetInstance();
+    REQUIRE(prefs != NULL);
+    prefs->SetString(QUIVER_PREFS_APP, QUIVER_PREFS_APP_PHOTO_LIBRARY, dstUri);
+    OrganizeDlg organize;
+    organize.SetInputFolder(srcUri);
+
+    struct SortCapture {
+        OrganizeDlg* organize;
+        bool checked;
+        int64_t startMs;
+    } cap{&organize, false, static_cast<int64_t>(g_get_monotonic_time() / 1000)};
+
+    g_timeout_add(30, +[](gpointer data) -> gboolean {
+        auto* c = static_cast<SortCapture*>(data);
+        GtkWidget* win = FindToplevelByTitle("Organize");
+        if (win != NULL)
+        {
+            if (c->organize->GetPreviewItemCount() == 4)
+            {
+                c->checked = true;
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+
+            if (static_cast<int64_t>(g_get_monotonic_time() / 1000) - c->startMs > 5000)
+            {
+                gtk_window_close(GTK_WINDOW(win));
+                return G_SOURCE_REMOVE;
+            }
+        }
+        return G_SOURCE_CONTINUE;
+    }, &cap);
+
+    organize.Run();
+
+    REQUIRE(cap.checked);
+    REQUIRE(organize.GetPreviewItemCount() == 4);
+    auto results = organize.GetConflictResults();
+    REQUIRE(results.size() == 4);
+
+    // 1. Conflict at top (Rank 0)
+    REQUIRE(results[0].HasConflict());
+    REQUIRE(results[0].strSrcName == "a_collide.jpg");
+    REQUIRE_FALSE(organize.GetPreviewItemIssue(0).empty());
+
+    // 2. No date metadata (Rank 1)
+    REQUIRE_FALSE(results[1].HasConflict());
+    REQUIRE_FALSE(results[1].bHasDateMetadata);
+    REQUIRE(results[1].strSrcName == "b_undated.jpg");
+    REQUIRE(organize.GetPreviewItemIssue(1) == "No date metadata (uses file modification time)");
+
+    // 3. Day extension offset applied (Rank 2)
+    REQUIRE_FALSE(results[2].HasConflict());
+    REQUIRE(results[2].bHasDateMetadata);
+    REQUIRE(results[2].bDayExtensionApplied);
+    REQUIRE(results[2].strSrcName == "c_night.jpg");
+    REQUIRE(organize.GetPreviewItemIssue(2) == "Lands in previous day (offset applied)");
+
+    // 4. Normal organize (Rank 3)
+    REQUIRE_FALSE(results[3].HasConflict());
+    REQUIRE(results[3].bHasDateMetadata);
+    REQUIRE_FALSE(results[3].bDayExtensionApplied);
+    REQUIRE(results[3].strSrcName == "d_day.jpg");
+    REQUIRE(organize.GetPreviewItemIssue(3) == "");
+
+    Preferences::Reset();
+    g_unlink(cfgPath);
+    g_free(srcUri);
+    g_free(dstUri);
+    g_unlink(fCollide.c_str());
+    g_unlink(fUndated.c_str());
+    g_unlink(fNight.c_str());
+    g_unlink(fDay.c_str());
+    g_unlink(fPreExisting.c_str());
+    g_rmdir(destSubdir.c_str());
+    std::string destYearDir = std::string(tmpDstDir) + "/2024";
+    g_rmdir(destYearDir.c_str());
     g_rmdir(tmpSrcDir);
     g_rmdir(tmpDstDir);
     g_free(tmpSrcDir);

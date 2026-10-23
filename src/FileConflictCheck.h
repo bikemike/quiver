@@ -28,6 +28,8 @@ public:
 		// false when the source has no date metadata of its own and the
 		// filesystem modification time stands in for it
 		bool bHasDateMetadata = true;
+		// true when the photo lands in the previous day due to day extension offset
+		bool bDayExtensionApplied = false;
 
 		Mapping() {}
 		Mapping(const std::string& src, const std::string& dst)
@@ -45,7 +47,9 @@ public:
 		std::string strIconName;        // themed icon name, e.g. "video-x-generic"
 		std::string strDstRelPath;   // destination relative folder path
 		std::string strDstURI;       // destination full URI
+		std::string strSrcURI;       // source full URI
 		bool bHasDateMetadata = true; // see Mapping::bHasDateMetadata
+		bool bDayExtensionApplied = false; // see Mapping::bDayExtensionApplied
 
 		bool HasConflict() const { return !strConflictWith.empty(); }
 	};

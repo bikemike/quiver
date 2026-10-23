@@ -60,6 +60,14 @@ static const char* organize_preview_icon_pixbuf(const std::string& strIconName)
 	return strIconName.c_str();
 }
 
+enum OrganizeIssueSeverity
+{
+	ORGANIZE_ISSUE_INFO = 0,     // e.g. "no change" (#77767e)
+	ORGANIZE_ISSUE_NOTICE = 1,   // e.g. "Lands in previous day" (#1c71d8)
+	ORGANIZE_ISSUE_WARNING = 2,  // e.g. "No date metadata" (#c64600)
+	ORGANIZE_ISSUE_ERROR = 3     // e.g. conflict (#e01b24)
+};
+
 // row item type for the preview column view
 typedef struct {
 	GObject  parent_instance;
@@ -68,7 +76,7 @@ typedef struct {
 	gchar*   rel_path;
 	gchar*   dst_name;
 	gchar*   issue;         // why this row is flagged, empty when fine
-	gboolean issue_is_error; // conflict (blocking, red) vs advisory (orange)
+	int      issue_severity; // ORGANIZE_ISSUE_*
 } OrganizePreviewItem;
 
 typedef struct {
@@ -104,12 +112,12 @@ static void organize_preview_item_init (OrganizePreviewItem* item)
 	item->rel_path = NULL;
 	item->dst_name = NULL;
 	item->issue = NULL;
-	item->issue_is_error = FALSE;
+	item->issue_severity = ORGANIZE_ISSUE_INFO;
 }
 
 static OrganizePreviewItem* organize_preview_item_new (const gchar* icon,
 	const gchar* src, const gchar* rel_path, const gchar* dst,
-	const gchar* issue, gboolean issue_is_error)
+	const gchar* issue, int issue_severity)
 {
 	OrganizePreviewItem* item = static_cast<OrganizePreviewItem*>(
 		g_object_new(ORGANIZE_PREVIEW_ITEM_TYPE, NULL));
@@ -118,7 +126,7 @@ static OrganizePreviewItem* organize_preview_item_new (const gchar* icon,
 	item->rel_path = g_strdup(rel_path);
 	item->dst_name = g_strdup(dst);
 	item->issue = g_strdup(issue);
-	item->issue_is_error = issue_is_error;
+	item->issue_severity = issue_severity;
 	return item;
 }
 
@@ -173,9 +181,18 @@ static void organize_preview_text_bind (GtkSignalListItemFactory* factory, GtkLi
 	gboolean bIssue = (NULL != item->issue && '\0' != item->issue[0]);
 	if (bIssue && ORGANIZE_PREVIEW_COL_ISSUE == iCol)
 	{
+		const char* szColor = NULL;
+		switch (item->issue_severity)
+		{
+			case ORGANIZE_ISSUE_ERROR:   szColor = "#e01b24"; break;
+			case ORGANIZE_ISSUE_WARNING: szColor = "#c64600"; break;
+			case ORGANIZE_ISSUE_NOTICE:  szColor = "#1c71d8"; break;
+			case ORGANIZE_ISSUE_INFO:
+			default:                     szColor = "#77767e"; break;
+		}
 		gchar* esc = g_markup_escape_text(szText ? szText : "", -1);
 		gchar* markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
-			item->issue_is_error ? "#e01b24" : "#c64600", esc);
+			szColor, esc);
 		gtk_label_set_markup(GTK_LABEL(label), markup);
 		g_free(markup);
 		g_free(esc);
@@ -237,6 +254,7 @@ public:
 
 	std::string GetFolderTemplate() const;
 	bool GetRenameFiles() const;
+	void PopulatePreviewList();
 
 	bool m_bRunDone;
 	int  m_iRunResponse;
@@ -277,10 +295,12 @@ public:
 	GtkWidget*              m_pLabelTemplateInfo;
 	GtkWidget*              m_pLabelWarning;
 	GtkWidget*              m_pLabelStatus;
+	GtkButton*              m_pBtnSeeAll;
 	GtkProgressBar*         m_pProgressBar;
 	GtkWidget*              m_pScrolledPreview;
 	GtkWidget*              m_pTreeViewPreview;
 	GListStore*             m_pListStorePreview;
+	bool                    m_bShowAll;
 
 	guint                   m_iConflictCheckID;
 	guint                   m_iConflictPollID;
@@ -395,6 +415,61 @@ bool OrganizeDlg::GetRenameFiles() const
 	return m_PrivPtr->GetRenameFiles();
 }
 
+std::vector<FileConflictCheck::Result> OrganizeDlg::GetConflictResults() const
+{
+	if (m_PrivPtr)
+	{
+		return m_PrivPtr->m_vectConflicts;
+	}
+	return {};
+}
+
+bool OrganizeDlg::GetShowAll() const
+{
+	return m_PrivPtr ? m_PrivPtr->m_bShowAll : false;
+}
+
+void OrganizeDlg::SetShowAll(bool bShowAll)
+{
+	if (m_PrivPtr)
+	{
+		m_PrivPtr->m_bShowAll = bShowAll;
+		if (m_PrivPtr->m_bLoadedDlg)
+		{
+			m_PrivPtr->PopulatePreviewList();
+		}
+	}
+}
+
+guint OrganizeDlg::GetPreviewItemCount() const
+{
+	if (m_PrivPtr && m_PrivPtr->m_pListStorePreview)
+	{
+		return g_list_model_get_n_items(G_LIST_MODEL(m_PrivPtr->m_pListStorePreview));
+	}
+	return 0;
+}
+
+std::string OrganizeDlg::GetPreviewItemIssue(guint index) const
+{
+	if (m_PrivPtr && m_PrivPtr->m_pListStorePreview)
+	{
+		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_PrivPtr->m_pListStorePreview));
+		if (index < n)
+		{
+			gpointer item = g_list_model_get_item(G_LIST_MODEL(m_PrivPtr->m_pListStorePreview), index);
+			if (item)
+			{
+				OrganizePreviewItem* p = ORGANIZE_PREVIEW_ITEM(item);
+				std::string issue = (p && p->issue) ? p->issue : "";
+				g_object_unref(item);
+				return issue;
+			}
+		}
+	}
+	return "";
+}
+
 
 
 // private stuff
@@ -417,10 +492,12 @@ OrganizeDlg::OrganizeDlgPriv::OrganizeDlgPriv(OrganizeDlg *parent) :
 	m_pLabelTemplateInfo = NULL;
 	m_pLabelWarning = NULL;
 	m_pLabelStatus = NULL;
+	m_pBtnSeeAll = NULL;
 	m_pProgressBar = NULL;
 	m_pScrolledPreview = NULL;
 	m_pTreeViewPreview = NULL;
 	m_pListStorePreview = NULL;
+	m_bShowAll = false;
 	m_iConflictCheckID = 0;
 	m_iConflictPollID = 0;
 	m_pConflictCancel = NULL;
@@ -595,13 +672,19 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 		{
 			GtkColumnViewColumn* column =
 				gtk_column_view_column_new("", organize_preview_column_factory(ORGANIZE_PREVIEW_COL_ICON));
+			gtk_column_view_column_set_fixed_width(column, 32);
+			gtk_column_view_column_set_resizable(column, FALSE);
+			gtk_column_view_column_set_expand(column, FALSE);
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewPreview), column);
 		}
 		static const char* szTitles[] = { NULL, "Original Name", "New Path", "New Name", "Issue" };
+		static const int nColWidths[] = { 0, 160, 170, 160, 180 };
 		for (int c = ORGANIZE_PREVIEW_COL_SRC ; c <= ORGANIZE_PREVIEW_COL_ISSUE ; c++)
 		{
 			GtkColumnViewColumn* column =
 				gtk_column_view_column_new(szTitles[c], organize_preview_column_factory(c));
+			gtk_column_view_column_set_fixed_width(column, nColWidths[c]);
+			gtk_column_view_column_set_resizable(column, TRUE);
 			gtk_column_view_column_set_expand(column, TRUE);
 			gtk_column_view_append_column(GTK_COLUMN_VIEW(m_pTreeViewPreview), column);
 		}
@@ -610,11 +693,21 @@ void OrganizeDlg::OrganizeDlgPriv::LoadWidgets()
 			m_pTreeViewPreview);
 		gtk_box_append(GTK_BOX(content_area), m_pScrolledPreview);
 
+		GtkWidget* statusBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+
 		m_pLabelStatus = gtk_label_new(NULL);
 		gtk_label_set_use_markup(GTK_LABEL(m_pLabelStatus), TRUE);
 		gtk_label_set_wrap(GTK_LABEL(m_pLabelStatus), TRUE);
 		gtk_label_set_xalign(GTK_LABEL(m_pLabelStatus), 0.0);
-		gtk_box_append(GTK_BOX(content_area), m_pLabelStatus);
+		gtk_widget_set_hexpand(m_pLabelStatus, TRUE);
+		gtk_box_append(GTK_BOX(statusBox), m_pLabelStatus);
+
+		m_pBtnSeeAll = GTK_BUTTON(gtk_button_new_with_label("See All"));
+		gtk_widget_set_valign(GTK_WIDGET(m_pBtnSeeAll), GTK_ALIGN_CENTER);
+		gtk_widget_set_visible(GTK_WIDGET(m_pBtnSeeAll), FALSE);
+		gtk_box_append(GTK_BOX(statusBox), GTK_WIDGET(m_pBtnSeeAll));
+
+		gtk_box_append(GTK_BOX(content_area), statusBox);
 
 		m_pProgressBar = GTK_PROGRESS_BAR(gtk_progress_bar_new());
 		gtk_box_append(GTK_BOX(content_area), GTK_WIDGET(m_pProgressBar));
@@ -806,6 +899,34 @@ void OrganizeDlg::OrganizeDlgPriv::ConnectSignals()
 
 		g_signal_connect(m_pSpinExtension,
 			"value-changed",(GCallback)on_spin_changed,this);
+
+		if (NULL != m_pBtnSeeAll)
+		{
+			g_signal_connect(m_pBtnSeeAll, "clicked",
+				G_CALLBACK(+[](GtkButton* button, gpointer user_data) {
+					(void)button;
+					OrganizeDlg::OrganizeDlgPriv* priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
+					priv->m_bShowAll = !priv->m_bShowAll;
+					priv->PopulatePreviewList();
+				}), this);
+		}
+
+		if (NULL != m_pTreeViewPreview)
+		{
+			g_signal_connect(m_pTreeViewPreview, "activate",
+				G_CALLBACK(+[](GtkColumnView* self, guint position, gpointer user_data) {
+					(void)self;
+					OrganizeDlg::OrganizeDlgPriv* priv = static_cast<OrganizeDlg::OrganizeDlgPriv*>(user_data);
+					if (!priv->m_bShowAll && priv->m_vectConflicts.size() > PREVIEW_ROW_CAP)
+					{
+						if (position == PREVIEW_ROW_CAP)
+						{
+							priv->m_bShowAll = true;
+							priv->PopulatePreviewList();
+						}
+					}
+				}), this);
+		}
 
 	}
 	
@@ -1076,6 +1197,78 @@ void OrganizeDlg::OrganizeDlgPriv::CancelConflictCheck()
 	m_pConflict.reset(new ConflictShared());
 }
 
+void OrganizeDlg::OrganizeDlgPriv::PopulatePreviewList()
+{
+	if (NULL == m_pListStorePreview)
+		return;
+
+	g_list_store_remove_all(m_pListStorePreview);
+	const bool bCap = (!m_bShowAll && m_vectConflicts.size() > PREVIEW_ROW_CAP);
+	const size_t nRows = bCap ? PREVIEW_ROW_CAP : m_vectConflicts.size();
+
+	for (size_t i = 0 ; i < nRows ; i++)
+	{
+		const FileConflictCheck::Result& r = m_vectConflicts[i];
+		gchar* szIcon = organize_preview_icon_pixbuf(r.strIconName)
+			? g_strdup(r.strIconName.c_str()) : NULL;
+		std::string strIssue = r.strConflictWith;
+		int severity = ORGANIZE_ISSUE_INFO;
+		if (r.HasConflict())
+		{
+			severity = ORGANIZE_ISSUE_ERROR;
+		}
+		else if (!r.bHasDateMetadata)
+		{
+			if (r.bDayExtensionApplied)
+				strIssue = "No date metadata; lands in previous day (offset applied)";
+			else
+				strIssue = "No date metadata (uses file modification time)";
+			severity = ORGANIZE_ISSUE_WARNING;
+		}
+		else if (r.bDayExtensionApplied)
+		{
+			strIssue = "Lands in previous day (offset applied)";
+			severity = ORGANIZE_ISSUE_NOTICE;
+		}
+		else if (!r.strSrcURI.empty() && r.strSrcURI == r.strDstURI)
+		{
+			strIssue = "no change";
+			severity = ORGANIZE_ISSUE_INFO;
+		}
+
+		OrganizePreviewItem* item = organize_preview_item_new(
+			szIcon, r.strSrcName.c_str(), r.strDstRelPath.c_str(),
+			r.strDstName.c_str(), strIssue.c_str(), severity);
+		g_free(szIcon);
+		g_list_store_append(m_pListStorePreview, item);
+		g_object_unref(item);
+	}
+
+	if (bCap)
+	{
+		char szMore[128];
+		g_snprintf(szMore, sizeof(szMore), "… and %d more files",
+			(int)(m_vectConflicts.size() - PREVIEW_ROW_CAP));
+		OrganizePreviewItem* item = organize_preview_item_new(
+			NULL, szMore, NULL, NULL, NULL, ORGANIZE_ISSUE_INFO);
+		g_list_store_append(m_pListStorePreview, item);
+		g_object_unref(item);
+	}
+
+	if (NULL != m_pBtnSeeAll)
+	{
+		if (m_vectConflicts.size() > PREVIEW_ROW_CAP)
+		{
+			gtk_button_set_label(m_pBtnSeeAll, m_bShowAll ? "Show Sample" : "See All");
+			gtk_widget_set_visible(GTK_WIDGET(m_pBtnSeeAll), TRUE);
+		}
+		else
+		{
+			gtk_widget_set_visible(GTK_WIDGET(m_pBtnSeeAll), FALSE);
+		}
+	}
+}
+
 void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 {
 	if (NULL != m_pProgressBar)
@@ -1087,56 +1280,51 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 		m_bConflictFound = state.bFound;
 	}
 
-	// blocking conflicts first, then rows whose only issue is missing date
-	// metadata, then by name (natural order)
+	// Hierarchy:
+	// 1. Conflicts at the top
+	// 2. No date metadata warnings below conflicts
+	// 3. Day extension notice (lands in previous day due to offset)
+	// 4. Normal files to organize
+	// 5. 'No change' items at the very bottom
+	// Tie-breaker within each group: natural case-insensitive order by filename
 	std::stable_sort(m_vectConflicts.begin(), m_vectConflicts.end(),
 		[](const FileConflictCheck::Result& a, const FileConflictCheck::Result& b)
 		{
-			if (a.HasConflict() != b.HasConflict())
-				return a.HasConflict();
-			if (a.bHasDateMetadata != b.bHasDateMetadata)
-				return !a.bHasDateMetadata;
+			auto getRank = [](const FileConflictCheck::Result& r) -> int
+			{
+				if (r.HasConflict())
+					return 0; // 1. conflicts at the top
+				if (!r.bHasDateMetadata)
+					return 1; // 2. no date metadata
+				if (r.bDayExtensionApplied)
+					return 2; // 3. day extension applied
+				if (r.strSrcURI != r.strDstURI)
+					return 3; // 4. normal organize
+				return 4;     // 5. unchanged
+			};
+
+			int rankA = getRank(a);
+			int rankB = getRank(b);
+			if (rankA != rankB)
+				return rankA < rankB;
+
 			return 0 > strnatcasecmp(a.strSrcName.c_str(), b.strSrcName.c_str());
 		});
 
 	size_t nConflicts = 0;
+	size_t nNoDate = 0;
+	size_t nDayExt = 0;
 	for (size_t i = 0 ; i < m_vectConflicts.size() ; i++)
 	{
 		if (m_vectConflicts[i].HasConflict())
 			nConflicts++;
+		if (!m_vectConflicts[i].bHasDateMetadata)
+			nNoDate++;
+		if (m_vectConflicts[i].bDayExtensionApplied)
+			nDayExt++;
 	}
 
-	// live preview table
-	if (NULL != m_pListStorePreview)
-	{
-		g_list_store_remove_all(m_pListStorePreview);
-		const size_t nRows = MIN(m_vectConflicts.size(), PREVIEW_ROW_CAP);
-		for (size_t i = 0 ; i < nRows ; i++)
-		{
-			const FileConflictCheck::Result& r = m_vectConflicts[i];
-			gchar* szIcon = organize_preview_icon_pixbuf(r.strIconName)
-				? g_strdup(r.strIconName.c_str()) : NULL;
-			std::string strIssue = r.strConflictWith;
-			if (strIssue.empty() && !r.bHasDateMetadata)
-				strIssue = "No date metadata (uses file modification time)";
-			OrganizePreviewItem* item = organize_preview_item_new(
-				szIcon, r.strSrcName.c_str(), r.strDstRelPath.c_str(),
-				r.strDstName.c_str(), strIssue.c_str(), r.HasConflict());
-			g_free(szIcon);
-			g_list_store_append(m_pListStorePreview, item);
-			g_object_unref(item);
-		}
-		if (m_vectConflicts.size() > PREVIEW_ROW_CAP)
-		{
-			char szMore[128];
-			g_snprintf(szMore, sizeof(szMore), "… and %d more files",
-				(int)(m_vectConflicts.size() - PREVIEW_ROW_CAP));
-			OrganizePreviewItem* item = organize_preview_item_new(
-				NULL, szMore, NULL, NULL, NULL, FALSE);
-			g_list_store_append(m_pListStorePreview, item);
-			g_object_unref(item);
-		}
-	}
+	PopulatePreviewList();
 
 	if (0 == m_vectConflicts.size())
 	{
@@ -1177,11 +1365,32 @@ void OrganizeDlg::OrganizeDlgPriv::ApplyConflictResults(ConflictShared& state)
 		if (NULL != m_pLabelStatus)
 		{
 			std::string strCount = std::to_string(m_vectConflicts.size());
-			gtk_label_set_markup(GTK_LABEL(m_pLabelStatus),
-				(("<span foreground=\"#2ec27e\">Ready: <b>")
+			std::string strMsg = "<span foreground=\"#2ec27e\">Ready: <b>"
 				+ strCount
 				+ (1 == m_vectConflicts.size() ? " file" : " files")
-				+ "</b> to organize.</span>").c_str());
+				+ "</b> to organize.</span>";
+			std::vector<std::string> notes;
+			if (nNoDate > 0)
+			{
+				notes.push_back(std::to_string(nNoDate)
+					+ (1 == nNoDate ? " file has no date metadata" : " files have no date metadata"));
+			}
+			if (nDayExt > 0)
+			{
+				notes.push_back(std::to_string(nDayExt)
+					+ (1 == nDayExt ? " file lands in previous day" : " files land in previous day"));
+			}
+			if (!notes.empty())
+			{
+				strMsg += " <span foreground=\"#77767e\">(";
+				for (size_t i = 0 ; i < notes.size() ; ++i)
+				{
+					if (i > 0) strMsg += ", ";
+					strMsg += notes[i];
+				}
+				strMsg += ")</span>";
+			}
+			gtk_label_set_markup(GTK_LABEL(m_pLabelStatus), strMsg.c_str());
 		}
 	}
 
