@@ -759,6 +759,7 @@ void Browser::BrowserImpl::Rename()
 			{
 				renameTaskPtr->SetInputFolder(dlg.GetInputFolder());
 			}
+			renameTaskPtr->SetTargetImageList(pBrowserImpl->m_ImageListPtr);
 			TaskManager::GetInstance()->AddTask(renameTaskPtr);
 		}
 		return;
@@ -1845,7 +1846,7 @@ void Browser::BrowserImpl::SetImageList(ImageListPtr imglist)
 	{
 		selected = m_ImageListPtr->GetCurrent().GetURI();
 	}
-	m_BrowserHistory.Add(dirs, selected);
+	m_BrowserHistory.Add(dirs, selected, bRecursive, recFolders);
 	
 	UpdateUI();
 }
@@ -3919,24 +3920,24 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 			pBrowserImpl->m_bBrowserHistoryEvent = true;
 			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrentFiles();
 			string selected = pBrowserImpl->m_BrowserHistory.GetCurrentSelected();
-			pBrowserImpl->m_ImageListPtr->SetImageList(&files);
-			pBrowserImpl->m_ImageListPtr->SetCurrentFile(selected);
-			pBrowserImpl->m_bBrowserHistoryEvent = false;
+			bool bRec = pBrowserImpl->m_BrowserHistory.GetCurrentRecursive();
+			const std::set<std::string>& recFolders = pBrowserImpl->m_BrowserHistory.GetCurrentRecursiveFolders();
+			pBrowserImpl->m_ImageListPtr->UpdateImageListAsync(&files, bRec, selected.empty(), selected, &recFolders);
+			pBrowserImpl->UpdateUI();
 		}
 	}
 	else if (0 == strcmp(szAction,ACTION_BROWSER_HISTORY_FORWARD))
 	{
-		pBrowserImpl->m_bBrowserHistoryEvent = true;
 		if (pBrowserImpl->m_BrowserHistory.GoForward())
 		{
 			pBrowserImpl->m_bBrowserHistoryEvent = true;
 			const list<string>& files = pBrowserImpl->m_BrowserHistory.GetCurrentFiles();
 			string selected = pBrowserImpl->m_BrowserHistory.GetCurrentSelected();
-			pBrowserImpl->m_ImageListPtr->SetImageList(&files);
-			pBrowserImpl->m_ImageListPtr->SetCurrentFile(selected);
-			pBrowserImpl->m_bBrowserHistoryEvent = false;
+			bool bRec = pBrowserImpl->m_BrowserHistory.GetCurrentRecursive();
+			const std::set<std::string>& recFolders = pBrowserImpl->m_BrowserHistory.GetCurrentRecursiveFolders();
+			pBrowserImpl->m_ImageListPtr->UpdateImageListAsync(&files, bRec, selected.empty(), selected, &recFolders);
+			pBrowserImpl->UpdateUI();
 		}
-		pBrowserImpl->m_bBrowserHistoryEvent = false;
 	}	
 	else if (0 == strcmp(szAction,ACTION_BROWSER_COPY))
 	{
@@ -4362,8 +4363,17 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 			selected = parent->m_ImageListPtr->GetCurrent().GetURI();
 		}
 		dirs.insert(dirs.end(), files.begin(), files.end());
-		parent->m_BrowserHistory.Add(dirs, selected);
+		bool bRec = false;
+		std::set<std::string> recFolders;
+		ImageListAttributesPtr attrs = parent->m_ImageListPtr->GetAttributes();
+		if (attrs && !attrs->IsEmpty())
+		{
+			bRec = attrs->GetRecursive();
+			recFolders = attrs->GetRecursiveFolders();
+		}
+		parent->m_BrowserHistory.Add(dirs, selected, bRec, recFolders);
 	}
+	parent->m_bBrowserHistoryEvent = false;
 
 	// refresh the list
 	if (0 != parent->m_ImageListPtr->GetSize())

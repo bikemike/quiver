@@ -5,6 +5,7 @@
 #include <random>
 #include <memory>
 #include <atomic>
+#include <thread>
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
@@ -68,10 +69,69 @@ typedef std::pair<std::string,GFileMonitorEvent> PathChangedPair;
 
 
 #include <vector>
+#include <mutex>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "ImageList.h"
 
 using namespace std;
+
+static std::mutex s_ActiveOpsMutex;
+static std::unordered_map<std::string, std::string> s_ActiveRenames;
+static std::unordered_set<std::string> s_ActiveRenameDests;
+static std::unordered_map<std::string, std::string> s_ActiveCopies; // dst -> src
+
+void ImageList::RegisterActiveRenames(const std::vector<std::pair<std::string, std::string>>& renames)
+{
+	std::lock_guard<std::mutex> lock(s_ActiveOpsMutex);
+	for (const auto& r : renames)
+	{
+		s_ActiveRenames[r.first] = r.second;
+		s_ActiveRenameDests.insert(r.second);
+	}
+}
+
+void ImageList::UnregisterActiveRenames(const std::vector<std::pair<std::string, std::string>>& renames)
+{
+	std::lock_guard<std::mutex> lock(s_ActiveOpsMutex);
+	for (const auto& r : renames)
+	{
+		s_ActiveRenames.erase(r.first);
+		s_ActiveRenameDests.erase(r.second);
+	}
+}
+
+bool ImageList::IsActiveRename(const std::string& uri)
+{
+	std::lock_guard<std::mutex> lock(s_ActiveOpsMutex);
+	return (s_ActiveRenames.find(uri) != s_ActiveRenames.end()) ||
+	       (s_ActiveRenameDests.find(uri) != s_ActiveRenameDests.end());
+}
+
+void ImageList::RegisterActiveCopy(const std::string& src_uri, const std::string& dst_uri)
+{
+	std::lock_guard<std::mutex> lock(s_ActiveOpsMutex);
+	s_ActiveCopies[dst_uri] = src_uri;
+}
+
+void ImageList::UnregisterActiveCopy(const std::string& dst_uri)
+{
+	std::lock_guard<std::mutex> lock(s_ActiveOpsMutex);
+	s_ActiveCopies.erase(dst_uri);
+}
+
+bool ImageList::GetActiveCopySource(const std::string& dst_uri, std::string& src_uri)
+{
+	std::lock_guard<std::mutex> lock(s_ActiveOpsMutex);
+	auto it = s_ActiveCopies.find(dst_uri);
+	if (it != s_ActiveCopies.end())
+	{
+		src_uri = it->second;
+		return true;
+	}
+	return false;
+}
 
 // ============================================================================
 // ImageListImpl: private implementation (hidden from header file)
@@ -168,6 +228,8 @@ public:
 	void Sort();
 	void Sort(bool bUpdateCurrentIndex);
 	void Sort(ImageList::SortBy o, bool descending, bool bUpdateCurrentIndex, bool bAsync = false);
+	void ApplyRenames(const std::vector<std::pair<std::string, std::string>>& renames);
+	bool IsURIInImageList(const std::string& uri, const std::string& src_uri = "") const;
 
 	static gpointer AsyncSortThread(gpointer data);
 	static gboolean AsyncSortCommit(gpointer data);
@@ -203,29 +265,30 @@ public:
 	PathMonitorMap m_mapFiles;
 	
 	PathChangedMap m_mapPathChanged;
+	std::map<std::string, std::string> m_mapMoves;
 	
-	guint m_iTimeoutPathChanged;
+	guint m_iTimeoutPathChanged = 0;
 	
-	unsigned int m_iCurrentIndex;
+	unsigned int m_iCurrentIndex = 0;
 
 	std::shared_ptr<int> m_pLifetimeToken;
-	gint m_uiAsyncLoadGeneration;
-	gint m_uiAsyncSortGeneration;
+	gint m_uiAsyncLoadGeneration = 0;
+	gint m_uiAsyncSortGeneration = 0;
 
-	ImageList::SortBy m_SortBy;
-	bool m_bSortAscend;
-	bool m_bEnableMonitor;
+	ImageList::SortBy m_SortBy = ImageList::SORT_BY_FILENAME_NATURAL;
+	bool m_bSortAscend = true;
+	bool m_bEnableMonitor = true;
 
 	/* The definition (root folder set + recursive flag) this list is built
 	 * from.  Shared with consumers like the recently-viewed list, which hold
 	 * their own pointer to it. */
 	ImageListAttributesPtr m_pAttributes;
 
-	GThread* m_pAsyncLoadThread;
-	std::atomic<bool> m_bAbortAsyncLoad;
+	GThread* m_pAsyncLoadThread = nullptr;
+	std::atomic<bool> m_bAbortAsyncLoad{false};
 
-	GThread* m_pAsyncSortThread;
-	std::atomic<bool> m_bAbortAsyncSort;
+	GThread* m_pAsyncSortThread = nullptr;
+	std::atomic<bool> m_bAbortAsyncSort{false};
 };
 
 // sort functions
@@ -635,50 +698,152 @@ void ImageList::Clear()
 // ImageListImpl: private implementation 
 //=============================================================================
 
+static void queue_path_moved(ImageList::ImageListImpl *impl, const char* src_uri, const char* dst_uri);
+static void queue_path_changed(ImageList::ImageListImpl *impl, char* uri, GFileMonitorEvent event_type);
+
 static gboolean timeout_path_changed(gpointer user_data)
 {
-	// FIXME: go through this list of 
-	// changes and sort them out.
-	
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
-
 	impl->m_iTimeoutPathChanged = 0;
-	
-	PathChangedMap::iterator itr;
-	
-	/*
-	printf("==================\n");
-	for (itr = impl->m_mapPathChanged.begin(); impl->m_mapPathChanged.end() != itr; ++itr)
+
+	size_t nTotalOps = impl->m_mapMoves.size() + impl->m_mapPathChanged.size();
+	if (0 == nTotalOps)
 	{
-		printf("TIMEOUT: [%d] %s\n",itr->second, itr->first.c_str());
+		return FALSE;
 	}
-	printf("==================\n\n");
-	*/
-	
-	bool bContentsChanged = false;
-	
+
+	bool bBulk = (nTotalOps > 3);
+	bool bContentsChanged = bBulk;
+	bool bNeedsSort = false;
+	std::vector<std::string> vectAddedURIs;
+
+	// 1. Process moves (in-place rename/move)
+	std::unordered_set<std::string> urisMovedOut;
+	for (auto& movePair : impl->m_mapMoves)
+	{
+		const std::string& src_uri = movePair.first;
+		const std::string& dst_uri = movePair.second;
+
+		QuiverFile f(src_uri.c_str());
+		auto qitr = find(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(), f);
+		if (impl->m_QuiverFileList.end() != qitr)
+		{
+			if (impl->IsURIInImageList(dst_uri, src_uri))
+			{
+				auto monItr = impl->m_mapFiles.find(src_uri);
+				if (monItr != impl->m_mapFiles.end())
+				{
+					GFileMonitor* mon = monItr->second;
+					impl->m_mapFiles.erase(monItr);
+					impl->m_mapFiles[dst_uri] = mon;
+				}
+
+				qitr->SetURI(dst_uri.c_str());
+				bNeedsSort = true;
+				if (!bContentsChanged)
+				{
+					impl->m_pImageList->EmitItemChangedEvent(qitr - impl->m_QuiverFileList.begin());
+				}
+			}
+			else
+			{
+				urisMovedOut.insert(src_uri);
+			}
+		}
+	}
+	impl->m_mapMoves.clear();
+
+	if (!urisMovedOut.empty())
+	{
+		for (const auto& uri : urisMovedOut)
+		{
+			auto monItr = impl->m_mapFiles.find(uri);
+			if (monItr != impl->m_mapFiles.end())
+			{
+				if (monItr->second) g_object_unref(monItr->second);
+				impl->m_mapFiles.erase(monItr);
+			}
+		}
+
+		impl->m_QuiverFileList.erase(
+			std::remove_if(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(),
+				[&urisMovedOut](const QuiverFile& item) {
+					return urisMovedOut.find(item.GetURI()) != urisMovedOut.end();
+				}),
+			impl->m_QuiverFileList.end());
+
+		if (impl->m_iCurrentIndex >= impl->m_QuiverFileList.size())
+		{
+			impl->m_iCurrentIndex = impl->m_QuiverFileList.empty() ? 0 : impl->m_QuiverFileList.size() - 1;
+		}
+		bContentsChanged = true;
+	}
+
+	// 2. Process bulk deletions efficiently
+	std::unordered_set<std::string> setDeleted;
+	if (bBulk)
+	{
+		for (auto& entry : impl->m_mapPathChanged)
+		{
+			if (entry.second == G_FILE_MONITOR_EVENT_DELETED)
+			{
+				if (impl->RemoveMonitor(entry.first))
+				{
+					bContentsChanged = true;
+				}
+				else
+				{
+					setDeleted.insert(entry.first);
+				}
+			}
+		}
+
+		if (!setDeleted.empty())
+		{
+			for (const auto& delUri : setDeleted)
+			{
+				auto monItr = impl->m_mapFiles.find(delUri);
+				if (monItr != impl->m_mapFiles.end())
+				{
+					if (monItr->second) g_object_unref(monItr->second);
+					impl->m_mapFiles.erase(monItr);
+				}
+			}
+
+			size_t oldSize = impl->m_QuiverFileList.size();
+			impl->m_QuiverFileList.erase(
+				std::remove_if(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(),
+					[&setDeleted](const QuiverFile& file) {
+						return setDeleted.find(file.GetURI()) != setDeleted.end();
+					}),
+				impl->m_QuiverFileList.end());
+
+			if (impl->m_QuiverFileList.size() != oldSize)
+			{
+				bContentsChanged = true;
+				if (impl->m_iCurrentIndex >= impl->m_QuiverFileList.size())
+				{
+					impl->m_iCurrentIndex = impl->m_QuiverFileList.empty() ? 0 : impl->m_QuiverFileList.size() - 1;
+				}
+			}
+		}
+	}
+
+	// 3. Process remaining path changed events
+	PathChangedMap::iterator itr;
 	for (itr = impl->m_mapPathChanged.begin(); impl->m_mapPathChanged.end() != itr; ++itr)
 	{
 		GFileMonitorEvent event_type = itr->second;
-		
+
 		switch (event_type)
 		{
 			case G_FILE_MONITOR_EVENT_DELETED:
+				if (!bBulk)
 				{
-					// Snapshot the size before touching the lists so every
-					// remove path can decide whether it really changed the
-					// list (and thus must notify observers).  The old code
-					// compared size() to itself and never fired events for
-					// externally deleted files, leaving filters stale.
 					unsigned int iSizeBefore = impl->m_QuiverFileList.size();
 
 					if (impl->RemoveMonitor(itr->first))
 					{
-						// The watched path itself went away (a file removed
-						// externally, or a whole monitored folder deleted).
-						// RemoveMonitor() erases one or many entries without
-						// emitting events, so use a safe superset event when
-						// the list actually shrank.
 						if (impl->m_QuiverFileList.size() != iSizeBefore)
 						{
 							bContentsChanged = true;
@@ -688,7 +853,7 @@ static gboolean timeout_path_changed(gpointer user_data)
 					{
 						QuiverFileList::iterator qitr;
 						QuiverFile f(itr->first.c_str());
-						qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
+						qitr = find(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(), f);
 						if (impl->m_QuiverFileList.end() != qitr)
 						{
 							int iIndex = qitr - impl->m_QuiverFileList.begin();
@@ -703,66 +868,92 @@ static gboolean timeout_path_changed(gpointer user_data)
 					}
 				}
 				break;
+
 			case G_FILE_MONITOR_EVENT_PRE_UNMOUNT:
 			case G_FILE_MONITOR_EVENT_UNMOUNTED:
 			case G_FILE_MONITOR_EVENT_MOVED:
 				break;
+
 			case G_FILE_MONITOR_EVENT_CREATED:
 			case G_FILE_MONITOR_EVENT_CHANGED:
 			case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
 			case G_FILE_MONITOR_EVENT_ATTRIBUTE_CHANGED:
-				// basically we have to deal with all these events in the same way,
-				// if the item is not in the list, add it, and reload it.
-				
 				{
 					QuiverFileList::iterator qitr;
 					QuiverFile f(itr->first.c_str());
-					qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
+					qitr = find(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(), f);
 					if (impl->m_QuiverFileList.end() == qitr)
 					{
-						// file did not exist in list so emit an add event
-						if (impl->AddFile(itr->first.c_str()))
+						// Check if this newly created file is a known copy of an existing file
+						std::string copy_src;
+						bool bAddedCopy = false;
+						if (ImageList::GetActiveCopySource(itr->first, copy_src))
 						{
-							impl->Sort(true);
-							 
-							QuiverFile f(itr->first.c_str());
-		 			
-							QuiverFileList::iterator qitr;
-							qitr = find(impl->m_QuiverFileList.begin(),impl->m_QuiverFileList.end(),f);
-							if (impl->m_QuiverFileList.end() != qitr)
+							QuiverFile srcQuery(copy_src.c_str());
+							auto srcItr = find(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(), srcQuery);
+							if (srcItr != impl->m_QuiverFileList.end())
 							{
+								QuiverFile copyFile = QuiverFile::CreateCopy(*srcItr, itr->first.c_str());
+								impl->m_QuiverFileList.push_back(copyFile);
+								bNeedsSort = true;
+								bAddedCopy = true;
 								if (!bContentsChanged)
 								{
-									impl->m_pImageList->EmitItemAddedEvent(qitr - impl->m_QuiverFileList.begin());
+									vectAddedURIs.push_back(itr->first);
 								}
+							}
+							ImageList::UnregisterActiveCopy(itr->first);
+						}
+
+						if (!bAddedCopy && impl->AddFile(itr->first.c_str()))
+						{
+							bNeedsSort = true;
+							if (!bContentsChanged)
+							{
+								vectAddedURIs.push_back(itr->first);
 							}
 						}
 					}
 					else
 					{
-						// file was already in the list, so emit a changed event
-						//printf("change file %s\n",itr->first.c_str());
 						qitr->Reload();
 						if (!bContentsChanged)
 						{
 							impl->m_pImageList->EmitItemChangedEvent(qitr - impl->m_QuiverFileList.begin());
 						}
 					}
-					
 				}
 				break;
+
 			default:
 				break;
 		}
 	}
-	
+	impl->m_mapPathChanged.clear();
+
+	// Sort once at the end outside the loop
+	if (bNeedsSort)
+	{
+		impl->Sort(true);
+	}
+
 	if (bContentsChanged)
 	{
 		impl->m_pImageList->EmitContentsChangedEvent();
 	}
-	
-	impl->m_mapPathChanged.clear();
-	
+	else if (!vectAddedURIs.empty())
+	{
+		for (const auto& uri : vectAddedURIs)
+		{
+			QuiverFile f(uri.c_str());
+			auto qitr = find(impl->m_QuiverFileList.begin(), impl->m_QuiverFileList.end(), f);
+			if (qitr != impl->m_QuiverFileList.end())
+			{
+				impl->m_pImageList->EmitItemAddedEvent(qitr - impl->m_QuiverFileList.begin());
+			}
+		}
+	}
+
 	return FALSE;
 }
 
@@ -774,11 +965,27 @@ static void queue_path_changed(ImageList::ImageListImpl *impl, char* uri, GFileM
 	if (0 != impl->m_iTimeoutPathChanged)
 	{
 		g_source_remove(impl->m_iTimeoutPathChanged);
+		impl->m_iTimeoutPathChanged = 0;
 	}
 
 	impl->m_mapPathChanged[uri] = event_type;
 
-	impl->m_iTimeoutPathChanged = g_timeout_add(50, timeout_path_changed,impl);
+	impl->m_iTimeoutPathChanged = g_timeout_add(50, timeout_path_changed, impl);
+}
+
+static void queue_path_moved(ImageList::ImageListImpl *impl, const char* src_uri, const char* dst_uri)
+{
+	if (!src_uri || !dst_uri)
+		return;
+
+	if (0 != impl->m_iTimeoutPathChanged)
+	{
+		g_source_remove(impl->m_iTimeoutPathChanged);
+		impl->m_iTimeoutPathChanged = 0;
+	}
+
+	impl->m_mapMoves[src_uri] = dst_uri;
+	impl->m_iTimeoutPathChanged = g_timeout_add(50, timeout_path_changed, impl);
 }
 
 static
@@ -792,24 +999,42 @@ void monitor_callback (
 	ImageList::ImageListImpl *impl = (ImageList::ImageListImpl*)user_data;
 
 	char* uri = g_file_get_uri(file);
-	
+	if (NULL == uri)
+		return;
+
+	char* other_uri = (NULL != other_file) ? g_file_get_uri(other_file) : NULL;
+
+	// Check if this event corresponds to an active internal rename
+	if (ImageList::IsActiveRename(uri) || (NULL != other_uri && ImageList::IsActiveRename(other_uri)))
+	{
+		g_free(uri);
+		if (NULL != other_uri)
+			g_free(other_uri);
+		return;
+	}
+
 	switch (event_type)
 	{
 		case G_FILE_MONITOR_EVENT_MOVED_IN:
-			g_free(uri);
-			uri = g_file_get_uri(other_file);
-			queue_path_changed(impl, uri, G_FILE_MONITOR_EVENT_CREATED);
+			if (NULL != other_uri)
+			{
+				queue_path_changed(impl, other_uri, G_FILE_MONITOR_EVENT_CREATED);
+			}
 			break;
 		case G_FILE_MONITOR_EVENT_MOVED_OUT:
 			queue_path_changed(impl, uri, G_FILE_MONITOR_EVENT_DELETED);
 			break;
+#if GLIB_CHECK_VERSION(2, 42, 0)
+		case G_FILE_MONITOR_EVENT_RENAMED:
+#endif
 		case G_FILE_MONITOR_EVENT_MOVED:
-			queue_path_changed(impl, uri, G_FILE_MONITOR_EVENT_DELETED);
-			if (NULL != other_file)
+			if (NULL != other_uri)
 			{
-				char* other_uri = g_file_get_uri(other_file);
-				queue_path_changed(impl, other_uri, G_FILE_MONITOR_EVENT_CREATED);
-				g_free(other_uri);
+				queue_path_moved(impl, uri, other_uri);
+			}
+			else
+			{
+				queue_path_changed(impl, uri, G_FILE_MONITOR_EVENT_DELETED);
 			}
 			break;
 		case G_FILE_MONITOR_EVENT_CHANGED:
@@ -825,8 +1050,214 @@ void monitor_callback (
 			break;
 	}
 
+	if (NULL != other_uri)
+	{
+		g_free(other_uri);
+	}
 	g_free(uri);
+}
 
+bool ImageList::ImageListImpl::IsURIInImageList(const std::string& uri, const std::string& src_uri /* = "" */) const
+{
+	if (uri.empty())
+		return false;
+
+	// Check if the file itself is an individually watched file
+	if (m_mapFiles.find(uri) != m_mapFiles.end())
+		return true;
+
+	GFile* file = g_file_new_for_uri(uri.c_str());
+	if (!file)
+		return false;
+
+	GFile* parent = g_file_get_parent(file);
+	g_object_unref(file);
+	if (!parent)
+		return false;
+
+	char* parent_uri_c = g_file_get_uri(parent);
+	g_object_unref(parent);
+	if (!parent_uri_c)
+		return false;
+
+	std::string parent_uri(parent_uri_c);
+	g_free(parent_uri_c);
+
+	// Check if parent directory is directly monitored in m_mapDirs
+	if (m_mapDirs.find(parent_uri) != m_mapDirs.end())
+		return true;
+
+	// Check against attributes (roots and recursive folders)
+	if (m_pAttributes && !m_pAttributes->IsEmpty())
+	{
+		const std::list<std::string>& roots = m_pAttributes->GetFolders();
+		bool bRecursive = m_pAttributes->GetRecursive();
+		const std::set<std::string>& recFolders = m_pAttributes->GetRecursiveFolders();
+
+		for (const auto& root : roots)
+		{
+			if (parent_uri == root)
+				return true;
+
+			if (bRecursive)
+			{
+				std::string prefix = root;
+				if (!prefix.empty() && prefix.back() != '/')
+					prefix += '/';
+				if (uri.starts_with(prefix))
+					return true;
+			}
+			else if (!recFolders.empty() && recFolders.find(root) != recFolders.end())
+			{
+				std::string prefix = root;
+				if (!prefix.empty() && prefix.back() != '/')
+					prefix += '/';
+				if (uri.starts_with(prefix))
+					return true;
+			}
+		}
+	}
+
+	// If this is an individual file list (no monitored root directories)
+	// and src_uri is provided, check if dst remains in the same directory as src
+	if (!src_uri.empty() && m_mapDirs.empty())
+	{
+		GFile* srcFile = g_file_new_for_uri(src_uri.c_str());
+		if (srcFile)
+		{
+			GFile* srcParent = g_file_get_parent(srcFile);
+			g_object_unref(srcFile);
+			if (srcParent)
+			{
+				char* src_parent_uri_c = g_file_get_uri(srcParent);
+				g_object_unref(srcParent);
+				if (src_parent_uri_c)
+				{
+					bool bSameDir = (parent_uri == src_parent_uri_c);
+					g_free(src_parent_uri_c);
+					if (bSameDir)
+						return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+bool ImageList::IsURIInImageList(const std::string& uri, const std::string& src_uri /* = "" */) const
+{
+	return m_ImageListImplPtr->IsURIInImageList(uri, src_uri);
+}
+
+void ImageList::ImageListImpl::ApplyRenames(const std::vector<std::pair<std::string, std::string>>& renames)
+{
+	if (renames.empty() || m_QuiverFileList.empty())
+		return;
+
+	std::unordered_map<std::string, std::string> mapRenames;
+	for (const auto& p : renames)
+	{
+		mapRenames[p.first] = p.second;
+	}
+
+	std::unordered_set<std::string> urisToRemove;
+	bool bAnyRenamed = false;
+	for (auto& f : m_QuiverFileList)
+	{
+		auto it = mapRenames.find(f.GetURI());
+		if (it != mapRenames.end())
+		{
+			const std::string& dst_uri = it->second;
+			if (IsURIInImageList(dst_uri, f.GetURI()))
+			{
+				auto monItr = m_mapFiles.find(f.GetURI());
+				if (monItr != m_mapFiles.end())
+				{
+					GFileMonitor* mon = monItr->second;
+					m_mapFiles.erase(monItr);
+					m_mapFiles[dst_uri] = mon;
+				}
+
+				f.SetURI(dst_uri.c_str());
+				bAnyRenamed = true;
+			}
+			else
+			{
+				urisToRemove.insert(f.GetURI());
+			}
+		}
+	}
+
+	if (!urisToRemove.empty())
+	{
+		for (const auto& uri : urisToRemove)
+		{
+			auto monItr = m_mapFiles.find(uri);
+			if (monItr != m_mapFiles.end())
+			{
+				if (monItr->second) g_object_unref(monItr->second);
+				m_mapFiles.erase(monItr);
+			}
+		}
+
+		m_QuiverFileList.erase(
+			std::remove_if(m_QuiverFileList.begin(), m_QuiverFileList.end(),
+				[&urisToRemove](const QuiverFile& item) {
+					return urisToRemove.find(item.GetURI()) != urisToRemove.end();
+				}),
+			m_QuiverFileList.end());
+
+		if (m_iCurrentIndex >= m_QuiverFileList.size())
+		{
+			m_iCurrentIndex = m_QuiverFileList.empty() ? 0 : m_QuiverFileList.size() - 1;
+		}
+		bAnyRenamed = true;
+	}
+
+	if (bAnyRenamed)
+	{
+		Sort(true);
+		m_pImageList->EmitContentsChangedEvent();
+	}
+}
+
+struct AsyncRenameData
+{
+	ImageList::ImageListImpl* impl;
+	std::weak_ptr<int> lifetimeToken;
+	std::vector<std::pair<std::string, std::string>> renames;
+};
+
+static gboolean async_apply_renames_cb(gpointer data)
+{
+	AsyncRenameData* pData = static_cast<AsyncRenameData*>(data);
+	auto token = pData->lifetimeToken.lock();
+	if (token)
+	{
+		pData->impl->ApplyRenames(pData->renames);
+	}
+	delete pData;
+	return G_SOURCE_REMOVE;
+}
+
+static const std::thread::id s_MainThreadId = std::this_thread::get_id();
+
+void ImageList::ApplyRenames(const std::vector<std::pair<std::string, std::string>>& renames)
+{
+	if (std::this_thread::get_id() == s_MainThreadId || g_main_context_is_owner(g_main_context_default()))
+	{
+		m_ImageListImplPtr->ApplyRenames(renames);
+	}
+	else
+	{
+		AsyncRenameData* pData = new AsyncRenameData{
+			m_ImageListImplPtr.get(),
+			m_ImageListImplPtr->m_pLifetimeToken,
+			renames
+		};
+		g_idle_add(async_apply_renames_cb, pData);
+	}
 }
 
 
@@ -839,6 +1270,8 @@ ImageList::ImageListImpl::ImageListImpl(ImageList *pImageList)
 	m_SortBy = ImageList::SORT_BY_FILENAME_NATURAL;
 
 	m_bSortAscend = true;
+	m_bEnableMonitor = true;
+	m_iTimeoutPathChanged = 0;
 	m_iCurrentIndex = 0;
 	m_uiAsyncLoadGeneration = 0;
 	m_uiAsyncSortGeneration = 0;
@@ -2163,6 +2596,14 @@ void ImageList::ImageListImpl::Clear()
 		}
 	}
 	
+	if (0 != m_iTimeoutPathChanged)
+	{
+		g_source_remove(m_iTimeoutPathChanged);
+		m_iTimeoutPathChanged = 0;
+	}
+	m_mapMoves.clear();
+	m_mapPathChanged.clear();
+
 	m_mapDirs.clear();
 	m_mapFiles.clear();
 	m_QuiverFileList.clear();

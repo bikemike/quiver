@@ -149,6 +149,11 @@ void OrganizeTask::SetDayExtension(int extension)
 	m_iDayExtension = extension;
 }
 
+void OrganizeTask::SetTargetImageList(ImageListPtr imageListPtr)
+{
+	m_TargetImageListPtr = imageListPtr;
+}
+
 std::string OrganizeTask::DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int dayExtension)
 {
 	std::map<std::string, std::string> mapSubstFields;
@@ -293,6 +298,7 @@ void OrganizeTask::Run()
 {
 	std::string strText;
 	std::map<std::string, int> mapFileCounter;
+	std::vector<std::pair<std::string, std::string>> appliedRenames;
 
 	// populate list:
 	ImageListPtr imgListPtr(new ImageList(false));
@@ -428,6 +434,14 @@ void OrganizeTask::Run()
 		pImpl->m_iLastXFerRVal = (int)(responseType - MessageBox::RESPONSE_TYPE_CUSTOM1);
 		*/
 		error = NULL;
+		gchar* szDstURI = g_file_get_uri(dst);
+		std::vector<std::pair<std::string, std::string>> activePair;
+		if (szDstURI)
+		{
+			activePair.push_back(std::make_pair(std::string(f.GetURI()), std::string(szDstURI)));
+			ImageList::RegisterActiveRenames(activePair);
+		}
+
 		gboolean moved =
 			g_file_move(src,
 				dst,
@@ -439,7 +453,21 @@ void OrganizeTask::Run()
 		if (moved)
 		{
 			f.RemoveCachedThumbnail(-1);
+			if (!activePair.empty())
+			{
+				appliedRenames.push_back(activePair.front());
+			}
 		}
+		else if (!activePair.empty())
+		{
+			ImageList::UnregisterActiveRenames(activePair);
+		}
+
+		if (szDstURI)
+		{
+			g_free(szDstURI);
+		}
+
 		// if there was an error, 
 		if (NULL != error)
 		{
@@ -465,6 +493,26 @@ void OrganizeTask::Run()
 		{
 			break;
 		}
+	}
+
+	if (!appliedRenames.empty())
+	{
+		if (m_TargetImageListPtr)
+		{
+			m_TargetImageListPtr->ApplyRenames(appliedRenames);
+		}
+
+		struct UnregisterRenamesData
+		{
+			std::vector<std::pair<std::string, std::string>> renames;
+		};
+		UnregisterRenamesData* pUnreg = new UnregisterRenamesData{appliedRenames};
+		g_timeout_add_seconds(2, [](gpointer data) -> gboolean {
+			UnregisterRenamesData* p = static_cast<UnregisterRenamesData*>(data);
+			ImageList::UnregisterActiveRenames(p->renames);
+			delete p;
+			return G_SOURCE_REMOVE;
+		}, pUnreg);
 	}
 }
 

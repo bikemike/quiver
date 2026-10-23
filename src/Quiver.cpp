@@ -4699,6 +4699,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 			{
 				renameTaskPtr->SetInputFolder( dlg.GetInputFolder() );
 			}
+			renameTaskPtr->SetTargetImageList(pQuiverImpl->m_ImageListPtr);
 
 			TaskManager::GetInstance()->AddTask(renameTaskPtr);
 		}
@@ -4738,6 +4739,7 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 				organizeTaskPtr->AddFile(f);	
 			}				
 			*/
+			organizeTaskPtr->SetTargetImageList(pQuiverImpl->m_ImageListPtr);
 
 			TaskManager::GetInstance()->AddTask(organizeTaskPtr);
 		}

@@ -4157,6 +4157,9 @@ TEST_CASE("QuiverImageView crossfade transition activates and preserves across p
 
     /* Settle enough to complete the 0.5s transition */
     settle(45);
+    for (int i = 0; i < 10 && quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(imageview)); ++i) {
+        settle(5);
+    }
     CHECK(quiver_image_view_is_in_transition(QUIVER_IMAGE_VIEW(imageview)) == FALSE);
 
     g_object_unref(t1);

@@ -192,6 +192,8 @@ public:
 
 	void Init(const gchar *uri, GFileInfo *info);
 	void Reload();
+	void SetURI(const gchar* new_uri);
+	static QuiverFile CreateCopy(const QuiverFile& src, const gchar* dst_uri);
 	
 	const char* GetMimeType();
 	GFileInfo* GetFileInfo();
@@ -2055,6 +2057,113 @@ std::string QuiverFile::GetFilePath() const
 const gchar* QuiverFile::GetURI() const
 {
 	return m_QuiverFilePtr->m_szURI;
+}
+
+void QuiverFile::QuiverFileImpl::SetURI(const gchar* new_uri)
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+	if (NULL == new_uri)
+		return;
+
+	if (NULL != m_szURI)
+	{
+		unsigned int n_elements = G_N_ELEMENTS(ThumbnailSizes);
+		for (unsigned int i = 0; i < n_elements; i++)
+		{
+			c_ThumbnailCache.m_mapThumbnailCache[ThumbnailSizes[i].size]->RemoveTexture(m_szURI);
+		}
+		delete [] m_szURI;
+	}
+
+	m_szURI = new gchar [ strlen(new_uri) + 1 ];
+	g_stpcpy(m_szURI, new_uri);
+
+	if (NULL != m_szMimeType)
+	{
+		g_free(m_szMimeType);
+		m_szMimeType = NULL;
+	}
+
+	if (NULL != m_pGFileInfo)
+	{
+		GFile* file = g_file_new_for_uri(m_szURI);
+		char* basename = g_file_get_basename(file);
+		if (NULL != basename)
+		{
+			g_file_info_set_name(m_pGFileInfo, basename);
+			g_file_info_set_display_name(m_pGFileInfo, basename);
+			g_free(basename);
+		}
+		g_object_unref(file);
+	}
+}
+
+void QuiverFile::SetURI(const gchar* newURI)
+{
+	if (m_QuiverFilePtr)
+	{
+		m_QuiverFilePtr->SetURI(newURI);
+	}
+}
+
+QuiverFile QuiverFile::QuiverFileImpl::CreateCopy(const QuiverFile& src, const gchar* dst_uri)
+{
+	if (!src.m_QuiverFilePtr || !dst_uri)
+		return QuiverFile(dst_uri);
+
+	std::lock_guard<std::recursive_mutex> lockSrc(src.m_QuiverFilePtr->m_MetadataMutex);
+
+	GFileInfo* dup_info = NULL;
+	if (src.m_QuiverFilePtr->m_pGFileInfo)
+	{
+		dup_info = g_file_info_dup(src.m_QuiverFilePtr->m_pGFileInfo);
+		GFile* file = g_file_new_for_uri(dst_uri);
+		char* basename = g_file_get_basename(file);
+		if (basename)
+		{
+			g_file_info_set_name(dup_info, basename);
+			g_file_info_set_display_name(dup_info, basename);
+			g_free(basename);
+		}
+		g_object_unref(file);
+	}
+
+	QuiverFile dst(dst_uri, dup_info);
+	if (dup_info)
+	{
+		g_object_unref(dup_info);
+	}
+
+	if (dst.m_QuiverFilePtr)
+	{
+		std::lock_guard<std::recursive_mutex> lockDst(dst.m_QuiverFilePtr->m_MetadataMutex);
+		dst.m_QuiverFilePtr->m_iWidth = src.m_QuiverFilePtr->m_iWidth;
+		dst.m_QuiverFilePtr->m_iHeight = src.m_QuiverFilePtr->m_iHeight;
+		dst.m_QuiverFilePtr->m_iOrientation = src.m_QuiverFilePtr->m_iOrientation;
+		dst.m_QuiverFilePtr->m_cachedTimeT = src.m_QuiverFilePtr->m_cachedTimeT;
+		dst.m_QuiverFilePtr->m_cachedMetadataTimeT = src.m_QuiverFilePtr->m_cachedMetadataTimeT;
+		if (src.m_QuiverFilePtr->m_szMimeType)
+		{
+			if (dst.m_QuiverFilePtr->m_szMimeType)
+			{
+				g_free(dst.m_QuiverFilePtr->m_szMimeType);
+			}
+			dst.m_QuiverFilePtr->m_szMimeType = g_strdup(src.m_QuiverFilePtr->m_szMimeType);
+		}
+		dst.m_QuiverFilePtr->m_ExifData = src.m_QuiverFilePtr->m_ExifData;
+		dst.m_QuiverFilePtr->m_ExifDataOriginal = src.m_QuiverFilePtr->m_ExifDataOriginal;
+		dst.m_QuiverFilePtr->m_XmpData = src.m_QuiverFilePtr->m_XmpData;
+		dst.m_QuiverFilePtr->m_IptcData = src.m_QuiverFilePtr->m_IptcData;
+		dst.m_QuiverFilePtr->m_fDataLoaded = src.m_QuiverFilePtr->m_fDataLoaded;
+		dst.m_QuiverFilePtr->m_fDataExists = src.m_QuiverFilePtr->m_fDataExists;
+	}
+
+	return dst;
+}
+
+QuiverFile QuiverFile::CreateCopy(const QuiverFile& src, const gchar* dstURI)
+{
+	return QuiverFileImpl::CreateCopy(src, dstURI);
 }
 
 

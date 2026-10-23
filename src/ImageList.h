@@ -60,6 +60,19 @@ public:
 
 	std::vector<QuiverFile> GetQuiverFiles();
 
+	// Batch rename support
+	void ApplyRenames(const std::vector<std::pair<std::string, std::string>>& renames);
+	bool IsURIInImageList(const std::string& uri, const std::string& src_uri = "") const;
+
+	// Static active operation tracking to suppress filesystem monitor chatter from internal tasks
+	static void RegisterActiveRenames(const std::vector<std::pair<std::string, std::string>>& renames);
+	static void UnregisterActiveRenames(const std::vector<std::pair<std::string, std::string>>& renames);
+	static bool IsActiveRename(const std::string& uri);
+
+	static void RegisterActiveCopy(const std::string& src_uri, const std::string& dst_uri);
+	static void UnregisterActiveCopy(const std::string& dst_uri);
+	static bool GetActiveCopySource(const std::string& dst_uri, std::string& src_uri);
+
 	virtual void Remove(unsigned int iIndex);
 	void RemoveRange(unsigned int iStart, unsigned int iEnd);
 

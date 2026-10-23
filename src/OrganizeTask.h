@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 
+class ImageList;
+typedef boost::shared_ptr<ImageList> ImageListPtr;
+
 class OrganizeTask : public AbstractTask
 {
 
@@ -47,6 +50,7 @@ public:
 	void                SetAppendedText(std::string strAppend);
 
 	void                SetDayExtension(int extension);
+	void                SetTargetImageList(ImageListPtr imageListPtr);
 
 	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int dayExtension = 0);
 
@@ -94,6 +98,7 @@ private:
 	std::string m_strFileTemplate;
 	std::string m_strAppendedText;
 	int         m_iDayExtension;
+	ImageListPtr m_TargetImageListPtr;
 };
 
 typedef boost::shared_ptr<OrganizeTask> OrganizeTaskPtr;

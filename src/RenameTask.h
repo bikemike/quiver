@@ -43,6 +43,8 @@ public:
 
 	void                SetSortBy(ImageList::SortBy sortBy);
 
+	void                SetTargetImageList(ImageListPtr pImageList);
+
 	static std::string  DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int count);
 
 	// dry-run of the batch rename: computes every source->destination
@@ -85,6 +87,7 @@ private:
 	std::string       m_strTemplate;
 	int               m_iStartNumber;
 	ImageList::SortBy m_eSortBy;
+	ImageListPtr      m_TargetImageListPtr;
 };
 
 typedef boost::shared_ptr<RenameTask> RenameTaskPtr;

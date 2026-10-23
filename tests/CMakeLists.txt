@@ -50,6 +50,7 @@ unit/test_image_cache.cpp
     unit/test_rename_organize_features.cpp
     unit/test_optimization_benchmarks.cpp
     unit/test_metadata_copy_paste.cpp
+    unit/test_rename_batch_optimization.cpp
 )
 
 add_executable(quiver_unit_tests ${UNIT_TEST_SOURCES})

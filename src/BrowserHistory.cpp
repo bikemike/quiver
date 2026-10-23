@@ -6,30 +6,23 @@ BrowserHistory::BrowserHistory() : m_iCurrentIndex(0)
 {
 }
 
-void BrowserHistory::Add(const std::list<std::string>& listItems, std::string selectedItem)
+void BrowserHistory::Add(const std::list<std::string>& listItems, std::string selectedItem,
+                        bool bRecursive,
+                        const std::set<std::string>& recursiveFolders)
 {
-	if (0 != m_vectHistory.size() && m_iCurrentIndex < m_vectHistory.size() -1)
+	if (!m_vectHistory.empty() && m_iCurrentIndex < m_vectHistory.size() - 1)
 	{
-		vector<list<string> >::iterator itr;
-		itr = m_vectHistory.begin();
-		itr += m_iCurrentIndex + 1;
-		m_vectHistory.erase(itr, m_vectHistory.end());
-	}
-
-	if (0 != m_vectHistorySelected.size() && m_iCurrentIndex < m_vectHistorySelected.size() -1)
-	{
-		vector<string>::iterator itr;
-		itr = m_vectHistorySelected.begin();
-		itr += m_iCurrentIndex + 1;
-		m_vectHistorySelected.erase(itr, m_vectHistorySelected.end());
+		m_vectHistory.erase(m_vectHistory.begin() + m_iCurrentIndex + 1, m_vectHistory.end());
 	}
 	
-	m_vectHistory.push_back(listItems);
-	m_vectHistorySelected.push_back(selectedItem);
+	BrowserHistoryEntry entry;
+	entry.listItems = listItems;
+	entry.selectedItem = selectedItem;
+	entry.bRecursive = bRecursive;
+	entry.recursiveFolders = recursiveFolders;
+	m_vectHistory.push_back(entry);
 	m_iCurrentIndex = m_vectHistory.size() - 1;
 }
-
-
 
 bool BrowserHistory::HasIndex(unsigned int index) const
 {
@@ -38,15 +31,13 @@ bool BrowserHistory::HasIndex(unsigned int index) const
 
 bool BrowserHistory::CanGoForward() const
 {
-	return (0 != m_vectHistory.size() && m_iCurrentIndex < m_vectHistory.size() - 1);
+	return (!m_vectHistory.empty() && m_iCurrentIndex < m_vectHistory.size() - 1);
 }
-
 
 bool BrowserHistory::CanGoBack() const
 {
 	return (0 < m_iCurrentIndex);
 }
-
 
 bool BrowserHistory::GoForward()
 {
@@ -68,47 +59,55 @@ bool BrowserHistory::GoBack()
 	return rval;
 }
 
-
 const std::list<std::string>& BrowserHistory::GetCurrentFiles() const
 {
 	if (m_iCurrentIndex < m_vectHistory.size())
 	{
-		vector<list<string> >::const_iterator itr;
-		itr = m_vectHistory.begin();
-		itr += m_iCurrentIndex;
-		return *itr;
+		return m_vectHistory[m_iCurrentIndex].listItems;
 	}
 	return m_listEmpty;
 }
 
 std::string BrowserHistory::GetCurrentSelected() const
 {
-	if (m_iCurrentIndex < m_vectHistorySelected.size())
+	if (m_iCurrentIndex < m_vectHistory.size())
 	{
-		vector<string>::const_iterator itr;
-		itr = m_vectHistorySelected.begin();
-		itr += m_iCurrentIndex;
-		return *itr;
+		return m_vectHistory[m_iCurrentIndex].selectedItem;
 	}
 	return std::string();
 }
 
 void BrowserHistory::SetCurrentSelected(std::string selected)
 {
-	if (m_iCurrentIndex < m_vectHistorySelected.size())
+	if (m_iCurrentIndex < m_vectHistory.size())
 	{
-		m_vectHistorySelected[m_iCurrentIndex] = selected;
+		m_vectHistory[m_iCurrentIndex].selectedItem = selected;
 	}
+}
+
+bool BrowserHistory::GetCurrentRecursive() const
+{
+	if (m_iCurrentIndex < m_vectHistory.size())
+	{
+		return m_vectHistory[m_iCurrentIndex].bRecursive;
+	}
+	return false;
+}
+
+const std::set<std::string>& BrowserHistory::GetCurrentRecursiveFolders() const
+{
+	if (m_iCurrentIndex < m_vectHistory.size())
+	{
+		return m_vectHistory[m_iCurrentIndex].recursiveFolders;
+	}
+	return m_setEmpty;
 }
 
 const std::list<std::string>& BrowserHistory::GetFilesAtIndex(unsigned int index) const
 {
 	if (index < m_vectHistory.size())
 	{
-		vector<list<string> >::const_iterator itr;
-		itr = m_vectHistory.begin();
-		itr += index;
-		return *itr;
+		return m_vectHistory[index].listItems;
 	}
 
 	return m_listEmpty;
@@ -116,12 +115,9 @@ const std::list<std::string>& BrowserHistory::GetFilesAtIndex(unsigned int index
 
 std::string BrowserHistory::GetSelectedAtIndex(unsigned int index) const
 {
-	if (index < m_vectHistorySelected.size())
+	if (index < m_vectHistory.size())
 	{
-		vector<string>::const_iterator itr;
-		itr = m_vectHistorySelected.begin();
-		itr += index;
-		return *itr;
+		return m_vectHistory[index].selectedItem;
 	}
 
 	return std::string();

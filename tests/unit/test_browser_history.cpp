@@ -105,4 +105,24 @@ TEST_CASE("BrowserHistory Navigation and Stacks", "[unit][history][fast]")
         history.SetCurrentSelected("b.jpg");
         REQUIRE(history.GetCurrentSelected() == "b.jpg");
     }
+
+    SECTION("Recursive folder settings preserved in history")
+    {
+        std::list<std::string> dirA = {"dirA"};
+        std::set<std::string> recA = {"dirA"};
+        history.Add(dirA, "", true, recA);
+
+        std::list<std::string> dirB = {"dirB"};
+        history.Add(dirB, "b.jpg", false);
+
+        REQUIRE(history.GetCurrentRecursive() == false);
+        REQUIRE(history.GetCurrentRecursiveFolders().empty());
+
+        REQUIRE(history.GoBack());
+        REQUIRE(history.GetCurrentRecursive() == true);
+        REQUIRE(history.GetCurrentRecursiveFolders() == recA);
+
+        REQUIRE(history.GoForward());
+        REQUIRE(history.GetCurrentRecursive() == false);
+    }
 }

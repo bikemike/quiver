@@ -46,6 +46,8 @@ public:
 	static void ClearThumbnailCache();
 
 	const gchar* GetURI() const;
+	void SetURI(const gchar* newURI);
+	static QuiverFile CreateCopy(const QuiverFile& src, const gchar* dstURI);
 
 	bool HasThumbnail(int iSize = 0);
 

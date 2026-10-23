@@ -124,6 +124,11 @@ void RenameTask::SetSortBy(ImageList::SortBy sortBy)
 	m_eSortBy = sortBy;
 }
 
+void RenameTask::SetTargetImageList(ImageListPtr pImageList)
+{
+	m_TargetImageListPtr = pImageList;
+}
+
 std::string  RenameTask::DoVariableSubstitution(std::string strTemplate, GDateTime* datetime, int count)
 {
 	std::map<std::string, std::string> mapSubstFields;
@@ -416,6 +421,8 @@ void RenameTask::Run()
 
 	}
 
+	std::vector<std::pair<std::string, std::string>> appliedRenames;
+
 	while (m_iCurrentFile < m_vectQuiverFiles.size() )
 	{
 
@@ -464,6 +471,11 @@ void RenameTask::Run()
 		GError* error = NULL;
 		if (0 != strcmp(basename, strDstName.c_str()))
 		{
+			gchar* szDstURI = g_file_get_uri(dst);
+			std::vector<std::pair<std::string, std::string>> activePair;
+			activePair.push_back(std::make_pair(std::string(f.GetURI()), std::string(szDstURI)));
+			ImageList::RegisterActiveRenames(activePair);
+
 			if (g_file_move(src,
 					dst,
 					G_FILE_COPY_NONE,
@@ -473,7 +485,13 @@ void RenameTask::Run()
 					&error))
 			{
 				f.RemoveCachedThumbnail(-1);
+				appliedRenames.push_back(activePair.front());
 			}
+			else
+			{
+				ImageList::UnregisterActiveRenames(activePair);
+			}
+			g_free(szDstURI);
 		}
 		// if there was an error, 
 		if (NULL != error)
@@ -531,7 +549,27 @@ void RenameTask::Run()
 		{
 			//break;
 		}
-	}				
+	}
+
+	if (!appliedRenames.empty())
+	{
+		if (m_TargetImageListPtr)
+		{
+			m_TargetImageListPtr->ApplyRenames(appliedRenames);
+		}
+
+		struct UnregisterRenamesData
+		{
+			std::vector<std::pair<std::string, std::string>> renames;
+		};
+		UnregisterRenamesData* pUnreg = new UnregisterRenamesData{appliedRenames};
+		g_timeout_add_seconds(2, [](gpointer data) -> gboolean {
+			UnregisterRenamesData* p = static_cast<UnregisterRenamesData*>(data);
+			ImageList::UnregisterActiveRenames(p->renames);
+			delete p;
+			return G_SOURCE_REMOVE;
+		}, pUnreg);
+	}
 }
 
 void RenameTask::Cancelled()

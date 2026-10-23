@@ -1,5 +1,6 @@
 #include "QuiverFileOps.h"
 #include "QuiverMetrics.h"
+#include "ImageList.h"
 
 #include <string.h>
 
@@ -450,6 +451,15 @@ namespace QuiverFileOps
 				}
 			}
 
+			if (!bCut)
+			{
+				ImageList::RegisterActiveCopy(*it, dst_uri);
+			}
+			else
+			{
+				ImageList::RegisterActiveRenames({std::make_pair(*it, dst_uri)});
+			}
+
 			bool ok = bCut
 				? file_move_uri(it->c_str(), dst_uri.c_str(), bOverwrite)
 				: file_copy_uri(it->c_str(), dst_uri.c_str(), bOverwrite);
@@ -470,14 +480,42 @@ namespace QuiverFileOps
 					copied_dsts.push_back(dst_uri);
 				}
 			}
+			else
+			{
+				if (!bCut)
+				{
+					ImageList::UnregisterActiveCopy(dst_uri);
+				}
+				else
+				{
+					ImageList::UnregisterActiveRenames({std::make_pair(*it, dst_uri)});
+				}
+			}
 		}
 
 		if (count > 0)
 		{
 			if (bCut)
+			{
 				UndoStackRecordMove(moved_pairs);
+				std::vector<std::pair<std::string, std::string>> renames;
+				for (const auto& p : moved_pairs)
+				{
+					renames.push_back(std::make_pair(p.src_uri, p.dst_uri));
+				}
+				struct UnregData { std::vector<std::pair<std::string, std::string>> r; };
+				UnregData* u = new UnregData{renames};
+				g_timeout_add_seconds(2, [](gpointer data) -> gboolean {
+					UnregData* p = static_cast<UnregData*>(data);
+					ImageList::UnregisterActiveRenames(p->r);
+					delete p;
+					return G_SOURCE_REMOVE;
+				}, u);
+			}
 			else
+			{
 				UndoStackRecordCopy(copied_dsts);
+			}
 		}
 
 		return count;
