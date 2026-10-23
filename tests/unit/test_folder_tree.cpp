@@ -1613,6 +1613,151 @@ TEST_CASE("FolderTree Add Bookmark context menu action", "[unit][foldertree][boo
     }
 }
 
+TEST_CASE("FolderTree Edit Bookmark context menu action", "[unit][foldertree][bookmarks]")
+{
+    REQUIRE_DISPLAY();
+    FolderTreeTestConfigFixture cfg;
+
+    BookmarksPtr bmPtr = Bookmarks::GetInstance();
+    REQUIRE(bmPtr != nullptr);
+    std::string testDir = folder_tree_test_make_temp_dir();
+    std::string testUri = folder_tree_test_path_to_uri(testDir);
+    std::list<std::string> uris = { testUri };
+    Bookmark bm("Sample Bookmark", "Sample Desc", "folder-symbolic", uris, false);
+    bmPtr->AddBookmark(bm);
+
+    int bmId = -1;
+    auto bmList = bmPtr->GetBookmarks();
+    for (const auto& b : bmList)
+    {
+        if (b.GetName() == "Sample Bookmark")
+        {
+            bmId = b.GetID();
+            break;
+        }
+    }
+    REQUIRE(bmId >= 0);
+
+    FolderTreePtr tree(new FolderTree());
+    GtkWidget* sidebar = tree->GetWidget();
+    REQUIRE(sidebar != nullptr);
+
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), sidebar);
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 400);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    GAction* editAction = QuiverUtils::GetAction("FolderTreeEditBookmark");
+    REQUIRE(editAction != nullptr);
+    CHECK(g_action_get_enabled(editAction) == TRUE);
+
+    GtkPopoverMenu* popover = nullptr;
+    for (GtkWidget* child = gtk_widget_get_first_child(sidebar); child != nullptr; child = gtk_widget_get_next_sibling(child))
+    {
+        if (GTK_IS_POPOVER_MENU(child))
+        {
+            popover = GTK_POPOVER_MENU(child);
+            break;
+        }
+    }
+    REQUIRE(popover != nullptr);
+
+    auto menu_has_action = [](GMenuModel* model, const char* action_name, auto& self, std::string* out_label = nullptr, int* out_target_int = nullptr, std::string* out_icon = nullptr) -> bool {
+        if (!model) return false;
+        guint n = g_menu_model_get_n_items(model);
+        for (guint i = 0; i < n; i++)
+        {
+            gchar* act = nullptr;
+            if (g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_ACTION, "s", &act))
+            {
+                if (act && strcmp(act, action_name) == 0)
+                {
+                    if (out_label)
+                    {
+                        gchar* lbl = nullptr;
+                        if (g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_LABEL, "s", &lbl))
+                        {
+                            *out_label = lbl ? lbl : "";
+                            g_free(lbl);
+                        }
+                    }
+                    if (out_target_int)
+                    {
+                        gint val = -1;
+                        if (g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_TARGET, "i", &val))
+                        {
+                            *out_target_int = val;
+                        }
+                    }
+                    if (out_icon)
+                    {
+                        gchar* ic = nullptr;
+                        if (g_menu_model_get_item_attribute(model, i, "icon", "s", &ic))
+                        {
+                            *out_icon = ic ? ic : "";
+                            g_free(ic);
+                        }
+                    }
+                    g_free(act);
+                    return true;
+                }
+                g_free(act);
+            }
+            GMenuModel* section = g_menu_model_get_item_link(model, i, G_MENU_LINK_SECTION);
+            if (section)
+            {
+                bool found = self(section, action_name, self, out_label, out_target_int, out_icon);
+                g_object_unref(section);
+                if (found) return true;
+            }
+            GMenuModel* submenu = g_menu_model_get_item_link(model, i, G_MENU_LINK_SUBMENU);
+            if (submenu)
+            {
+                bool found = self(submenu, action_name, self, out_label, out_target_int, out_icon);
+                g_object_unref(submenu);
+                if (found) return true;
+            }
+        }
+        return false;
+    };
+
+    SECTION("Context menu on a bookmark row contains Edit Bookmark with bookmark ID and suppresses Add Bookmark")
+    {
+        tree->ShowContextMenuForTest(testUri.c_str(), bmId);
+        GMenuModel* model = gtk_popover_menu_get_menu_model(popover);
+        REQUIRE(model != nullptr);
+
+        std::string label;
+        int target_id = -1;
+        std::string icon;
+        bool has_edit = menu_has_action(model, "quiver.FolderTreeEditBookmark", menu_has_action, &label, &target_id, &icon);
+        CHECK(has_edit == true);
+        CHECK(label == "Edit Bookmark…");
+        CHECK(target_id == bmId);
+        CHECK(icon == "document-edit-symbolic");
+
+        bool has_add = menu_has_action(model, "quiver.FolderTreeAddBookmark", menu_has_action);
+        CHECK(has_add == false);
+    }
+
+    SECTION("Context menu on a normal folder row contains Add Bookmark and does NOT contain Edit Bookmark")
+    {
+        tree->ShowContextMenuForTest(testUri.c_str(), -1);
+        GMenuModel* model = gtk_popover_menu_get_menu_model(popover);
+        REQUIRE(model != nullptr);
+
+        bool has_add = menu_has_action(model, "quiver.FolderTreeAddBookmark", menu_has_action);
+        CHECK(has_add == true);
+
+        bool has_edit = menu_has_action(model, "quiver.FolderTreeEditBookmark", menu_has_action);
+        CHECK(has_edit == false);
+    }
+
+    gtk_window_destroy(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+}
+
 TEST_CASE("FolderTree collapsible sections", "[unit][foldertree][gui]")
 {
     REQUIRE_DISPLAY();

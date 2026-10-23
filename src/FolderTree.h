@@ -43,6 +43,7 @@ public:
 	 * the clicked folder.  This intentionally follows the selection, not the
 	 * checkbox state that drives the combined picture list. */
 	std::list<std::string> GetAddBookmarkURIs(const std::string& clicked_uri) const;
+	void ShowContextMenuForTest(const char* target_uri, int bookmark_id = -1);
 	void AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name);
 	void RemoveFolder(const char *folder_uri);
 

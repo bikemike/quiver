@@ -16,6 +16,7 @@
 #include "QuiverFileOps.h"
 #include "QuiverClipboard.h"
 #include "Bookmarks.h"
+#include "BookmarkAddEditDlg.h"
 #include "IBookmarksEventHandler.h"
 #include "QuiverPrefs.h"
 #include "Preferences.h"
@@ -194,10 +195,11 @@ static std::string folder_tree_normalize_uri(const gchar* arg)
 static gboolean view_capture_button_press (GtkEventController *controller, GdkEvent *event, gpointer userdata);
 static gboolean view_on_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata);
 static void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
-	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata);
+	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata, int bookmark_id = -1);
 static void folder_tree_action_paste_into(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static void folder_tree_action_new_folder(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static void folder_tree_action_add_bookmark(GSimpleAction* action, GVariant* parameter, gpointer userdata);
+static void folder_tree_action_edit_bookmark(GSimpleAction* action, GVariant* parameter, gpointer userdata);
 static gboolean folder_tree_drop_motion_cb(GtkDropTarget *target, gdouble x, gdouble y, gpointer userdata);
 static void folder_tree_drop_value_notify_cb(GObject *object, GParamSpec *pspec, gpointer userdata);
 static gboolean folder_tree_update_status(FolderTree::FolderTreeImpl* impl, GtkDropTarget* target);
@@ -487,6 +489,16 @@ std::list<std::string> FolderTree::GetAddBookmarkURIs(const std::string& clicked
 		return m_FolderTreeImplPtr->GetAddBookmarkURIs(clicked_uri);
 	}
 	return std::list<std::string>();
+}
+
+void FolderTree::ShowContextMenuForTest(const char* target_uri, int bookmark_id)
+{
+	if (m_FolderTreeImplPtr && m_FolderTreeImplPtr->m_pWidget)
+	{
+		TreePasteMode mode = (target_uri && folder_tree_uri_is_directory(target_uri))
+			? TreePasteMode::PASTE_INTO_FOLDER : TreePasteMode::PASTE_NONE;
+		view_popup_menu_at(m_FolderTreeImplPtr->m_pWidget, 0, 0, mode, target_uri, m_FolderTreeImplPtr.get(), bookmark_id);
+	}
 }
 
 void FolderTree::SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive, const std::set<std::string>& recursiveFolders)
@@ -1925,7 +1937,7 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 		}
 		TreePasteMode mode = folder_tree_uri_is_directory(item->uri)
 			? TreePasteMode::PASTE_INTO_FOLDER : TreePasteMode::PASTE_NONE;
-		view_popup_menu_at(w, x, y, mode, item->uri, impl);
+		view_popup_menu_at(w, x, y, mode, item->uri, impl, item->bookmark_id);
 	}
 }
 
@@ -2994,6 +3006,12 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 			g_signal_connect(a, "activate", G_CALLBACK(folder_tree_action_add_bookmark), this);
 			QuiverUtils::AddAction(G_ACTION(a));
 		}
+		if (NULL == QuiverUtils::GetAction("FolderTreeEditBookmark"))
+		{
+			GSimpleAction *a = g_simple_action_new("FolderTreeEditBookmark", G_VARIANT_TYPE_INT32);
+			g_signal_connect(a, "activate", G_CALLBACK(folder_tree_action_edit_bookmark), this);
+			QuiverUtils::AddAction(G_ACTION(a));
+		}
 	}
 	gtk_widget_set_parent(m_pMenuPopover, m_pWidget);
 	g_signal_connect(m_pWidget, "destroy",
@@ -3843,8 +3861,38 @@ folder_tree_action_add_bookmark (GSimpleAction* action, GVariant* parameter, gpo
 	QuiverUtils::PromptAddBookmark(uris);
 }
 
+static void
+folder_tree_action_edit_bookmark (GSimpleAction* action, GVariant* parameter, gpointer userdata)
+{ (void)action; (void)userdata;
+	if (NULL == parameter)
+		return;
+
+	gint32 bm_id = g_variant_get_int32(parameter);
+	if (bm_id < 0)
+		return;
+
+	BookmarksPtr bmPtr = Bookmarks::GetInstance();
+	if (!bmPtr)
+		return;
+
+	const Bookmark* b = bmPtr->GetBookmark(bm_id);
+	if (!b)
+		return;
+
+	BookmarkAddEditDlg dlg(*b);
+	dlg.Run();
+	if (!dlg.Cancelled())
+	{
+		Bookmark newbm = dlg.GetBookmark();
+		if (!newbm.GetName().empty())
+		{
+			bmPtr->UpdateBookmark(newbm);
+		}
+	}
+}
+
 void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
-	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata)
+	TreePasteMode paste_mode, const gchar* target_uri, gpointer userdata, int bookmark_id)
 {
 	FolderTree::FolderTreeImpl* pFolderTreeImpl = (FolderTree::FolderTreeImpl*)userdata;
 	if (NULL == pFolderTreeImpl || NULL == pFolderTreeImpl->m_pMenuPopover)
@@ -3856,6 +3904,15 @@ void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 	GMenu *menu = g_menu_new();
 
 	GMenu *folder_section = g_menu_new();
+	if (bookmark_id >= 0)
+	{
+		GMenuItem *edit_bookmark = g_menu_item_new("Edit Bookmark…", NULL);
+		g_menu_item_set_action_and_target(edit_bookmark, "quiver.FolderTreeEditBookmark", "i", bookmark_id);
+		g_menu_item_set_attribute(edit_bookmark, "icon", "s", "document-edit-symbolic");
+		g_menu_append_item(folder_section, edit_bookmark);
+		g_object_unref(edit_bookmark);
+	}
+
 	if (target_uri != NULL && QuiverUtils::IsDirectoryURI(target_uri))
 	{
 		GMenuItem *new_folder = g_menu_item_new("New Folder", NULL);
@@ -3864,11 +3921,14 @@ void view_popup_menu_at (GtkWidget *treeview, gdouble x, gdouble y,
 		g_menu_append_item(folder_section, new_folder);
 		g_object_unref(new_folder);
 
-		GMenuItem *add_bookmark = g_menu_item_new("Add Bookmark", NULL);
-		g_menu_item_set_action_and_target(add_bookmark, "quiver.FolderTreeAddBookmark", "s", target_uri);
-		g_menu_item_set_attribute(add_bookmark, "icon", "s", "bookmark-new-symbolic");
-		g_menu_append_item(folder_section, add_bookmark);
-		g_object_unref(add_bookmark);
+		if (bookmark_id < 0)
+		{
+			GMenuItem *add_bookmark = g_menu_item_new("Add Bookmark", NULL);
+			g_menu_item_set_action_and_target(add_bookmark, "quiver.FolderTreeAddBookmark", "s", target_uri);
+			g_menu_item_set_attribute(add_bookmark, "icon", "s", "bookmark-new-symbolic");
+			g_menu_append_item(folder_section, add_bookmark);
+			g_object_unref(add_bookmark);
+		}
 	}
 
 	if (TreePasteMode::PASTE_NONE != paste_mode &&
@@ -4060,21 +4120,55 @@ static gboolean view_on_key_press(GtkEventControllerKey *controller, guint keyva
 	if (GDK_KEY_Menu == keyval || ((state & GDK_SHIFT_MASK) && (GDK_KEY_F10 == keyval)))
 	{
 		const gchar* target_uri = NULL;
-		guint cursor_pos = folder_tree_get_focused_position(pFolderTreeImpl);
-		guint n = pFolderTreeImpl->m_pTreeListModel ? g_list_model_get_n_items(G_LIST_MODEL(pFolderTreeImpl->m_pTreeListModel)) : 0;
-		if (cursor_pos != G_MAXUINT && cursor_pos < n)
+		int bookmark_id = -1;
+		TreePasteMode paste_mode = TreePasteMode::PASTE_INTO_FOLDER;
+
+		GtkWidget* lv = GTK_WIDGET(pFolderTreeImpl->m_pListView);
+		GtkRoot* root = lv ? gtk_widget_get_root(lv) : NULL;
+		GtkWidget* f = root ? gtk_root_get_focus(root) : NULL;
+		if (!f && lv)
+			f = gtk_widget_get_focus_child(lv);
+
+		DirItem* focused_item = NULL;
+		for (GtkWidget* w = f; w && w != lv; w = gtk_widget_get_parent(w))
 		{
-			GtkTreeListRow* row = gtk_tree_list_model_get_row(
-				pFolderTreeImpl->m_pTreeListModel, cursor_pos);
-			if (row)
+			FolderTreeRowWidgets* rw = static_cast<FolderTreeRowWidgets*>(
+				g_object_get_data(G_OBJECT(w), "row-widgets"));
+			if (rw && rw->bound_item)
 			{
-				DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
-				if (item)
-					target_uri = item->uri;
-				g_object_unref(row);
+				focused_item = rw->bound_item;
+				break;
 			}
 		}
-		view_popup_menu_at(treeview, -1, -1, TreePasteMode::PASTE_INTO_FOLDER, target_uri, userdata);
+
+		if (focused_item)
+		{
+			target_uri = focused_item->uri;
+			bookmark_id = focused_item->bookmark_id;
+			if (!folder_tree_uri_is_directory(target_uri))
+				paste_mode = TreePasteMode::PASTE_NONE;
+		}
+		else
+		{
+			guint cursor_pos = folder_tree_get_focused_position(pFolderTreeImpl);
+			guint n = pFolderTreeImpl->m_pTreeListModel ? g_list_model_get_n_items(G_LIST_MODEL(pFolderTreeImpl->m_pTreeListModel)) : 0;
+			if (cursor_pos != G_MAXUINT && cursor_pos < n)
+			{
+				GtkTreeListRow* row = gtk_tree_list_model_get_row(
+					pFolderTreeImpl->m_pTreeListModel, cursor_pos);
+				if (row)
+				{
+					DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
+					if (item)
+					{
+						target_uri = item->uri;
+						bookmark_id = item->bookmark_id;
+					}
+					g_object_unref(row);
+				}
+			}
+		}
+		view_popup_menu_at(treeview, -1, -1, paste_mode, target_uri, userdata, bookmark_id);
 		return TRUE;
 	}
 
