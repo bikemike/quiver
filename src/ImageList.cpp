@@ -2219,13 +2219,8 @@ gboolean ImageList::ImageListImpl::AsyncFolderLoadCommit(gpointer data)
 				g_thread_join(impl->m_pAsyncLoadThread);
 				impl->m_pAsyncLoadThread = NULL;
 			}
-			size_t iOldSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
 			impl->CommitFolderLoad(pData);
-			size_t iNewSize = impl->m_mapDirs.size() + impl->m_mapFiles.size();
-			if (!(0 == iOldSize && 0 == iNewSize))
-			{
-				impl->m_pImageList->EmitContentsChangedEvent();
-			}
+			impl->m_pImageList->EmitContentsChangedEvent();
 			impl->m_pImageList->EmitLoadProgress(1.0, 0, 0);
 		}
 	}

@@ -4791,12 +4791,19 @@ static void viewer_imageview_view_mode_changed(QuiverImageView *imageview,gpoint
 }
 
 static gboolean viewer_imageview_key_press_event(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata)
-{ (void)controller; (void)keycode; (void)state;
+{ (void)controller; (void)keycode;
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)userdata;
-	if (pViewerImpl && pViewerImpl->IsVideo() && (keyval == GDK_KEY_m || keyval == GDK_KEY_M))
+	GdkModifierType mods = (GdkModifierType)(state & gtk_accelerator_get_default_mod_mask());
+
+	if (pViewerImpl && pViewerImpl->IsVideo() && (keyval == GDK_KEY_m || keyval == GDK_KEY_M) && 0 == (mods & (GDK_ALT_MASK | GDK_CONTROL_MASK | GDK_SUPER_MASK)))
 	{
 		pViewerImpl->ToggleMute();
 		return TRUE;
+	}
+
+	if (0 != (mods & (GDK_ALT_MASK | GDK_CONTROL_MASK | GDK_SUPER_MASK)))
+	{
+		return FALSE;
 	}
 
 	if (GDK_KEY_Left == keyval || GDK_KEY_Page_Up == keyval || GDK_KEY_Up == keyval)
@@ -11172,6 +11179,11 @@ GtkWidget *Viewer::GetWidget()
 void Viewer::SetImageList(IImageListViewPtr imgList)
 {
 	m_ViewerImplPtr->SetImageList(imgList);
+}
+
+IImageListViewPtr Viewer::GetImageList() const
+{
+	return m_ViewerImplPtr ? m_ViewerImplPtr->m_ImageListPtr : IImageListViewPtr();
 }
 
 bool Viewer::ResetViewMode()

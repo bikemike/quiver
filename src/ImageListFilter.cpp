@@ -3,7 +3,7 @@
 #include <algorithm>
 
 ImageListFilter::ImageListFilter(IImageListViewPtr pSource, Predicate pred)
-	: m_pSource(pSource), m_pred(pred), m_bMapValid(false), m_iLastEmittedView(-1)
+	: m_pSource(pSource), m_pred(pred), m_bMapValid(false), m_iLastSourceSize(0), m_iLastEmittedView(-1)
 {
 	m_pEventHandlerPtr.reset(new FilterEventHandler(this));
 	if (m_pSource)
@@ -23,16 +23,33 @@ ImageListFilter::~ImageListFilter()
 void ImageListFilter::RebuildIfNeeded() const
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	if (m_bMapValid)
-		return;
+	unsigned int n = m_pSource ? m_pSource->GetSize() : 0;
+	const char* first_uri = (n > 0) ? m_pSource->Get(0).GetURI() : NULL;
+	std::string current_first_uri = first_uri ? first_uri : "";
+
+	if (m_bMapValid && m_iLastSourceSize == n && m_szLastFirstSourceURI == current_first_uri)
+	{
+		bool bOutOfBounds = false;
+		for (size_t k = 0; k < m_vectMap.size(); ++k)
+		{
+			if (m_vectMap[k] >= n)
+			{
+				bOutOfBounds = true;
+				break;
+			}
+		}
+		if (!bOutOfBounds)
+			return;
+	}
 
 	m_vectMap.clear();
-	unsigned int n = m_pSource ? m_pSource->GetSize() : 0;
 	for (unsigned int i = 0 ; i < n ; i++)
 	{
 		if (m_pred(SourceGet(i)))
 			m_vectMap.push_back(i);
 	}
+	m_iLastSourceSize = n;
+	m_szLastFirstSourceURI = current_first_uri;
 	m_bMapValid = true;
 }
 
@@ -79,7 +96,8 @@ int ImageListFilter::ResolveViewIndex() const
 		for (unsigned int v = 0 ; v < n ; v++)
 		{
 			unsigned int iCur = (iStart + v) % n;
-			if (m_szCurrentURI == SourceGet(m_vectMap[iCur]).GetURI())
+			const char* uri = SourceGet(m_vectMap[iCur]).GetURI();
+			if (uri != NULL && m_szCurrentURI == uri)
 			{
 				m_iLastEmittedView = (int)iCur;
 				return m_iLastEmittedView;
@@ -99,7 +117,8 @@ int ImageListFilter::ResolveViewIndex() const
 			iPos = 0;
 	}
 
-	m_szCurrentURI = SourceGet(m_vectMap[iPos]).GetURI();
+	const char* uri = SourceGet(m_vectMap[iPos]).GetURI();
+	m_szCurrentURI = uri ? uri : "";
 	m_iLastEmittedView = (int)iPos;
 	return m_iLastEmittedView;
 }
@@ -168,7 +187,10 @@ bool ImageListFilter::SetCurrentIndex(unsigned int iIndex)
 		return false;
 	bool bOk = m_pSource->SetCurrentIndex(m_vectMap[iIndex]);
 	if (bOk)
-		m_szCurrentURI = SourceGet(m_vectMap[iIndex]).GetURI();
+	{
+		const char* uri = SourceGet(m_vectMap[iIndex]).GetURI();
+		m_szCurrentURI = uri ? uri : "";
+	}
 	return bOk;
 }
 
@@ -238,6 +260,8 @@ void ImageListFilter::HandleContentsChanged(ImageListEventPtr event)
 	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	m_bMapValid = false;
 	m_szCurrentURI.clear();
+	m_szLastFirstSourceURI.clear();
+	m_iLastSourceSize = 0;
 	m_iLastEmittedView = -1;
 	EmitContentsChangedEvent();
 }
@@ -252,7 +276,8 @@ void ImageListFilter::HandleCurrentIndexChanged(ImageListEventPtr event)
 	if (!m_pred(SourceGet(event->GetIndex())))
 		return;
 
-	m_szCurrentURI = SourceGet(event->GetIndex()).GetURI();
+	const char* uri = SourceGet(event->GetIndex()).GetURI();
+	m_szCurrentURI = uri ? uri : "";
 	int iNew = ResolveViewIndex();
 
 	if (iNew != iOld)

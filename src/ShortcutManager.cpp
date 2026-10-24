@@ -284,13 +284,13 @@ void ShortcutManager::RegisterDefaultActions()
     });
     m_actions.push_back({
         "GoFolderNext", "Browser", "Next Folder",
-        "Navigate to next folder in history",
-        {"<Shift><Alt>Right"}, {"<Shift><Alt>Right"}, false, true
+        "Navigate to next directory",
+        {"<Shift><Alt>Right"}, {"<Shift><Alt>Right"}, false, false
     });
     m_actions.push_back({
         "GoFolderPrev", "Browser", "Previous Folder",
-        "Navigate to previous folder in history",
-        {"<Shift><Alt>Left"}, {"<Shift><Alt>Left"}, false, true
+        "Navigate to previous directory",
+        {"<Shift><Alt>Left"}, {"<Shift><Alt>Left"}, false, false
     });
     m_actions.push_back({
         "BrowserSelectAll", "Browser", "Select All",

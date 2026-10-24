@@ -99,6 +99,18 @@ TEST_CASE("ShortcutManager Default Action Registry", "[unit][shortcuts][fast]")
         REQUIRE(std::find(parent_def->default_accels.begin(), parent_def->default_accels.end(), "BackSpace") != parent_def->default_accels.end());
         REQUIRE(parent_def->is_browser_only == true);
         REQUIRE_FALSE(parent_def->is_viewer_only);
+
+        const ShortcutActionDef *next_folder_def = sm.GetAction("GoFolderNext");
+        REQUIRE(next_folder_def != nullptr);
+        REQUIRE(std::find(next_folder_def->default_accels.begin(), next_folder_def->default_accels.end(), "<Shift><Alt>Right") != next_folder_def->default_accels.end());
+        REQUIRE_FALSE(next_folder_def->is_browser_only);
+        REQUIRE_FALSE(next_folder_def->is_viewer_only);
+
+        const ShortcutActionDef *prev_folder_def = sm.GetAction("GoFolderPrev");
+        REQUIRE(prev_folder_def != nullptr);
+        REQUIRE(std::find(prev_folder_def->default_accels.begin(), prev_folder_def->default_accels.end(), "<Shift><Alt>Left") != prev_folder_def->default_accels.end());
+        REQUIRE_FALSE(prev_folder_def->is_browser_only);
+        REQUIRE_FALSE(prev_folder_def->is_viewer_only);
     }
 
     SECTION("Properties and Window defaults")

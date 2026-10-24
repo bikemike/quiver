@@ -25,6 +25,7 @@ public:
 	GtkWidget *GetWidget();
 
 	void SetImageList(IImageListViewPtr imgList);
+	IImageListViewPtr GetImageList() const;
 	int GetCurrentOrientation();
 
 	/* Rename the item the viewer is showing.  The single global rename action

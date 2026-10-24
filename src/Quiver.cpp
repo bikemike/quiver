@@ -74,6 +74,10 @@ extern "C" {
 
 #include <boost/algorithm/string.hpp>
 #include "quiver-i18n.h"
+extern "C"
+{
+#include "strnatcmp.h"
+}
 
 #include <set>
 
@@ -168,6 +172,7 @@ public:
 	void ParentUndoToast();
 	static gboolean TrashToastTimeout(gpointer user_data);
 	void UpdateExternalToolsSensitivity();
+	IImageListViewPtr GetActiveImageListView() const;
 
 // member variables
 	Quiver *m_pQuiver;
@@ -630,6 +635,19 @@ void QuiverImpl::LoadExternalTools()
 	UpdateExternalToolsSensitivity();
 }
 
+IImageListViewPtr QuiverImpl::GetActiveImageListView() const
+{
+	if (m_bViewerMode && m_ViewerPtr)
+	{
+		IImageListViewPtr vList = m_ViewerPtr->GetImageList();
+		if (vList)
+		{
+			return vList;
+		}
+	}
+	return m_ImageListPtr;
+}
+
 void QuiverImpl::UpdateExternalToolsSensitivity()
 {
 	if (!m_ExternalToolsPtr) return;
@@ -649,9 +667,10 @@ void QuiverImpl::UpdateExternalToolsSensitivity()
 			bool enabled = false;
 			if (bInViewer)
 			{
-				if (m_ImageListPtr && 0 != m_ImageListPtr->GetSize())
+				IImageListViewPtr activeList = GetActiveImageListView();
+				if (activeList && 0 != activeList->GetSize())
 				{
-					QuiverFile f = m_ImageListPtr->GetCurrent();
+					QuiverFile f = activeList->GetCurrent();
 					enabled = tool.MatchesFile(f.GetFilePath(), f.IsVideo());
 				}
 			}
@@ -2239,9 +2258,11 @@ void Quiver::ImageChanged()
 		return;
 	}
 
-	if ( m_QuiverImplPtr->m_ImageListPtr->GetSize() )
+	IImageListViewPtr activeList = m_QuiverImplPtr->GetActiveImageListView();
+
+	if ( activeList && activeList->GetSize() )
 	{
-		QuiverFile f = m_QuiverImplPtr->m_ImageListPtr->GetCurrent();
+		QuiverFile f = activeList->GetCurrent();
 
 		{
 			/* Save the outgoing file: per-preference, either silently or with a
@@ -2277,7 +2298,7 @@ void Quiver::ImageChanged()
 		}
 		
 		{
-			m_QuiverImplPtr->m_StatusbarPtr->SetPosition(m_QuiverImplPtr->m_ImageListPtr->GetCurrentIndex()+1,m_QuiverImplPtr->m_ImageListPtr->GetSize());
+			m_QuiverImplPtr->m_StatusbarPtr->SetPosition(activeList->GetCurrentIndex()+1,activeList->GetSize());
 			m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
 		}
 		{
@@ -2292,6 +2313,36 @@ void Quiver::ImageChanged()
 		m_QuiverImplPtr->m_StatusbarPtr->SetPosition(0,0);
 		QuiverFile f;
 		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
+		m_QuiverImplPtr->m_CurrentQuiverFile = f;
+		m_QuiverImplPtr->m_PropertyView.SetQuiverFile(f);
+
+		std::string folderURI;
+		if (m_QuiverImplPtr->m_ImageListPtr)
+		{
+			std::list<std::string> folders = m_QuiverImplPtr->m_ImageListPtr->GetFolderList();
+			if (!folders.empty())
+			{
+				folderURI = folders.back();
+			}
+		}
+		if (folderURI.empty() && m_QuiverImplPtr->m_BrowserPtr && m_QuiverImplPtr->m_BrowserPtr->GetFolderTree())
+		{
+			std::list<std::string> treeFolders = m_QuiverImplPtr->m_BrowserPtr->GetFolderTree()->GetSelectedFolders();
+			if (!treeFolders.empty())
+			{
+				folderURI = treeFolders.back();
+			}
+		}
+
+		if (!folderURI.empty())
+		{
+			std::string folderPath = QuiverFile(folderURI.c_str()).GetFilePath();
+			SetWindowTitle(folderPath);
+		}
+		else
+		{
+			SetWindowTitle("");
+		}
 	}
 	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
 }
@@ -2830,7 +2881,7 @@ void Quiver::Init()
 				"  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);"
 				"}"
 				".quiver-undo-toast label { color: #ffffff; }"
-				".quiver-undo-toast image { color: #f5c211; margin-end: 2px; }"
+				".quiver-undo-toast image { color: #f5c211; margin-right: 2px; }"
 				".quiver-undo-toast button { border-radius: 9999px; }"
 				"popover.menu separator {"
 				"  min-height: 1px;"
@@ -3728,6 +3779,7 @@ void Quiver::ShowViewer()
 
 	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
 	m_QuiverImplPtr->m_ViewerPtr->GrabFocus();
+	ImageChanged();
 }
 
 void Quiver::ShowBrowser()
@@ -3770,6 +3822,7 @@ void Quiver::ShowBrowser()
 
 	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
 	m_QuiverImplPtr->m_BrowserPtr->GrabFocus();
+	ImageChanged();
 }
 
 
@@ -4491,6 +4544,131 @@ static void quiver_escape_action(QuiverImpl *pQuiverImpl)
 	}
 }
 
+static bool GetSiblingDirectoryURI(ImageListPtr imgList, bool bNext, std::string& outTargetURI)
+{
+	if (!imgList)
+		return false;
+
+	std::list<std::string> folders = imgList->GetFolderList();
+	if (folders.empty() && imgList->GetSize() > 0)
+	{
+		QuiverFile cur = imgList->GetCurrent();
+		const char* cur_uri = cur.GetURI();
+		if (cur_uri && cur_uri[0] != '\0')
+		{
+			GFile* curFile = g_file_new_for_uri(cur_uri);
+			if (curFile)
+			{
+				GFile* curParent = g_file_get_parent(curFile);
+				if (curParent)
+				{
+					char* parent_uri = g_file_get_uri(curParent);
+					if (parent_uri)
+					{
+						folders.push_back(parent_uri);
+						g_free(parent_uri);
+					}
+					g_object_unref(curParent);
+				}
+				g_object_unref(curFile);
+			}
+		}
+	}
+
+	if (folders.empty())
+		return false;
+
+	std::string currentFolder = folders.back();
+	GFile* curFolderFile = g_file_new_for_uri(currentFolder.c_str());
+	if (!curFolderFile)
+		return false;
+
+	GFile* parentDir = g_file_get_parent(curFolderFile);
+	if (!parentDir)
+	{
+		g_object_unref(curFolderFile);
+		return false;
+	}
+
+	std::vector<std::pair<std::string, std::string>> siblings; // name, uri
+	GFileEnumerator* enumerator = g_file_enumerate_children(
+		parentDir,
+		G_FILE_ATTRIBUTE_STANDARD_NAME ","
+		G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+		G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN,
+		G_FILE_QUERY_INFO_NONE,
+		NULL,
+		NULL);
+
+	if (enumerator)
+	{
+		GFileInfo* info = NULL;
+		while ((info = g_file_enumerator_next_file(enumerator, NULL, NULL)) != NULL)
+		{
+			const char* name = g_file_info_get_name(info);
+			if (name && name[0] != '.' && !g_file_info_get_is_hidden(info))
+			{
+				if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY)
+				{
+					GFile* child = g_file_get_child(parentDir, name);
+					if (child)
+					{
+						char* child_uri = g_file_get_uri(child);
+						if (child_uri)
+						{
+							siblings.emplace_back(std::string(name), std::string(child_uri));
+							g_free(child_uri);
+						}
+						g_object_unref(child);
+					}
+				}
+			}
+			g_object_unref(info);
+		}
+		g_object_unref(enumerator);
+	}
+
+	g_object_unref(parentDir);
+
+	if (siblings.empty())
+	{
+		g_object_unref(curFolderFile);
+		return false;
+	}
+
+	std::sort(siblings.begin(), siblings.end(), [](const auto& a, const auto& b) {
+		return strnatcasecmp(a.first.c_str(), b.first.c_str()) < 0;
+	});
+
+	int currentIdx = -1;
+	for (size_t i = 0; i < siblings.size(); ++i)
+	{
+		GFile* sibFile = g_file_new_for_uri(siblings[i].second.c_str());
+		if (sibFile)
+		{
+			if (g_file_equal(sibFile, curFolderFile) || siblings[i].second == currentFolder)
+			{
+				currentIdx = (int)i;
+				g_object_unref(sibFile);
+				break;
+			}
+			g_object_unref(sibFile);
+		}
+	}
+
+	g_object_unref(curFolderFile);
+
+	if (currentIdx == -1)
+		return false;
+
+	int targetIdx = bNext ? (currentIdx + 1) : (currentIdx - 1);
+	if (targetIdx < 0 || targetIdx >= (int)siblings.size())
+		return false;
+
+	outTargetURI = siblings[targetIdx].second;
+	return true;
+}
+
 static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data)
 { (void)parameter; 
 	QuiverImpl *pQuiverImpl = (QuiverImpl*)data;
@@ -4616,94 +4794,69 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	{
 		list<string> folders;
 		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
+		if (folders.empty() && pQuiverImpl->m_ImageListPtr->GetSize() > 0)
+		{
+			QuiverFile cur = pQuiverImpl->m_ImageListPtr->GetCurrent();
+			const char* cur_uri = cur.GetURI();
+			if (cur_uri && cur_uri[0] != '\0')
+			{
+				GFile* curFile = g_file_new_for_uri(cur_uri);
+				if (curFile)
+				{
+					GFile* curParent = g_file_get_parent(curFile);
+					if (curParent)
+					{
+						char* parent_uri = g_file_get_uri(curParent);
+						if (parent_uri)
+						{
+							folders.push_back(parent_uri);
+							g_free(parent_uri);
+						}
+						g_object_unref(curParent);
+					}
+					g_object_unref(curFile);
+				}
+			}
+		}
 		if (!folders.empty())
 		{
 			std::string lastFolder = folders.back();
 
 			GFile* dir = g_file_new_for_uri(lastFolder.c_str());
-			GFile* parent = g_file_get_parent(dir);
-			if (NULL != parent)
+			if (dir)
 			{
-				char* uri = g_file_get_uri(parent);
-				pQuiverImpl->m_ImageListPtr->SetImageList(uri);
-				pQuiverImpl->m_ImageListPtr->SetCurrentFile(lastFolder);
-				g_free(uri);
-				g_object_unref(parent);
-			}
-			g_object_unref(dir);
-		}
-	}
-	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_NEXT))
-	{
-		list<string> folders;
-		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
-		if (!folders.empty())
-		{
-			GFile* folder = g_file_new_for_uri(folders.back().c_str());
-			GFile* parent = g_file_get_parent(folder);
-			std::string lastFolder = folders.back();
-			ImageListPtr tmpListPtr(new ImageList());
-			char* uri = g_file_get_uri(parent);
-			tmpListPtr->SetImageList(uri);
-			g_free(uri);
-			g_object_unref(parent);
-			g_object_unref(folder);
-
-			bool bFoundCurrent = false;
-			bool bFoundNext  = false;
-			string newFolder;
-			for (guint i = 0; i < tmpListPtr->GetSize(); ++i)
-			{
-				QuiverFile f = (*tmpListPtr)[i];
-				if (f.IsFolder())
+				GFile* parent = g_file_get_parent(dir);
+				if (NULL != parent)
 				{
-					newFolder = f.GetURI();
-					if (newFolder == lastFolder)
-						bFoundCurrent = true;
-					else if (bFoundCurrent)
+					char* uri = g_file_get_uri(parent);
+					if (uri)
 					{
-						bFoundNext = true;
-						break;
+						std::list<std::string> newFolderList = { uri };
+						if (pQuiverImpl->m_BrowserPtr && pQuiverImpl->m_BrowserPtr->GetFolderTree())
+						{
+							pQuiverImpl->m_BrowserPtr->GetFolderTree()->SetSelectedFolders(newFolderList, false);
+						}
+						pQuiverImpl->m_ImageListPtr->UpdateImageListAsync(&newFolderList, false, false, lastFolder);
+						g_free(uri);
 					}
-
+					g_object_unref(parent);
 				}
+				g_object_unref(dir);
 			}
-
-			if (bFoundNext)
-				pQuiverImpl->m_ImageListPtr->SetImageList(newFolder);
 		}
 	}
-	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PREV))
+	else if(0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_NEXT) || 0 == strcmp(szAction,ACTION_QUIVER_GO_FOLDER_PREV))
 	{
-		list<string> folders;
-		folders = pQuiverImpl->m_ImageListPtr->GetFolderList();
-		if (!folders.empty())
+		bool bNext = (0 == strcmp(szAction, ACTION_QUIVER_GO_FOLDER_NEXT));
+		std::string targetFolder;
+		if (GetSiblingDirectoryURI(pQuiverImpl->m_ImageListPtr, bNext, targetFolder))
 		{
-			GFile* folder = g_file_new_for_uri(folders.front().c_str());
-			GFile* parent = g_file_get_parent(folder);
-			std::string lastFolder = folders.back();
-			ImageListPtr tmpListPtr(new ImageList());
-			char* uri = g_file_get_uri(parent);
-			tmpListPtr->SetImageList(uri);
-			g_free(uri);
-			g_object_unref(parent);
-			g_object_unref(folder);
-
-			string newFolder;
-			for (guint i = 0; i < tmpListPtr->GetSize(); ++i)
+			std::list<std::string> newFolderList = { targetFolder };
+			if (pQuiverImpl->m_BrowserPtr && pQuiverImpl->m_BrowserPtr->GetFolderTree())
 			{
-				QuiverFile f = (*tmpListPtr)[i];
-				if (f.IsFolder())
-				{
-					string tmp = f.GetURI();
-					if (tmp == lastFolder)
-						break;
-					newFolder = tmp;
-				}
+				pQuiverImpl->m_BrowserPtr->GetFolderTree()->SetSelectedFolders(newFolderList, false);
 			}
-
-			if (!newFolder.empty())
-				pQuiverImpl->m_ImageListPtr->SetImageList(newFolder);
+			pQuiverImpl->m_ImageListPtr->UpdateImageListAsync(&newFolderList, false, true);
 		}
 	}
 	else if(0 == strcmp(szAction,ACTION_QUIVER_QUICK_RENAME))
@@ -5116,9 +5269,10 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 			bool bInViewer = pQuiverImpl->m_bViewerMode;
 			if (bInViewer)
 			{
-				if (pQuiverImpl->m_ImageListPtr && 0 != pQuiverImpl->m_ImageListPtr->GetSize())
+				IImageListViewPtr activeList = pQuiverImpl->GetActiveImageListView();
+				if (activeList && 0 != activeList->GetSize())
 				{
-					QuiverFile f = pQuiverImpl->m_ImageListPtr->GetCurrent();
+					QuiverFile f = activeList->GetCurrent();
 					if (extTool->MatchesFile(f.GetFilePath(), f.IsVideo()))
 					{
 						files.push_back(f.GetFilePath());

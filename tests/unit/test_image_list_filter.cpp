@@ -236,4 +236,33 @@ TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
 
         filter.RemoveEventHandler(handler);
     }
+
+    SECTION("All items filtered out produces empty view")
+    {
+        boost::shared_ptr<MockImageListView> all_dirs_mock(
+            new MockImageListView({"file:///tmp/dir1", "file:///tmp/dir2"}));
+        ImageListFilter filter_dirs(all_dirs_mock, [](const QuiverFile&) { return false; });
+        REQUIRE(filter_dirs.GetSize() == 0);
+        QuiverFile cur = filter_dirs.GetCurrent();
+        REQUIRE(cur.GetURI() == nullptr);
+    }
+
+    SECTION("Stale map when source shrinks without event does not crash in ResolveViewIndex")
+    {
+        boost::shared_ptr<MockImageListView> shrink_mock(
+            new MockImageListView({"file:///test/1.jpg", "file:///test/2.jpg"}));
+        ImageListFilter filter_shrink(shrink_mock, [](const QuiverFile&) { return true; });
+
+        REQUIRE(filter_shrink.GetSize() == 2);
+        REQUIRE(std::string(filter_shrink.GetCurrent().GetURI()) == "file:///test/1.jpg");
+
+        // Clear mock files directly without emitting event to simulate out-of-order event dispatch
+        shrink_mock->m_files.clear();
+
+        // GetCurrent() should not crash (previously segfaulted on strlen(NULL))
+        QuiverFile cur = filter_shrink.GetCurrent();
+        REQUIRE(cur.GetURI() == nullptr);
+        REQUIRE(filter_shrink.GetSize() == 0);
+    }
 }
+

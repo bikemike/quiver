@@ -4380,6 +4380,10 @@ void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageLis
 	{
 		parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
 	}
+	else
+	{
+		parent->SetImageIndex(0, true);
+	}
 			
 	quiver_icon_view_invalidate_window(QUIVER_ICON_VIEW(parent->m_pIconView));
 	parent->m_ThumbnailLoader.UpdateList(true);	

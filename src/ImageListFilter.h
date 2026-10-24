@@ -100,6 +100,8 @@ protected:
 
 	mutable std::vector<unsigned int> m_vectMap; // view idx -> source idx
 	mutable bool                      m_bMapValid;
+	mutable unsigned int              m_iLastSourceSize;
+	mutable std::string               m_szLastFirstSourceURI;
 	mutable std::string               m_szCurrentURI; // tracked current item; empty = unset
 	mutable int                       m_iLastEmittedView; // -1 = none
 };
