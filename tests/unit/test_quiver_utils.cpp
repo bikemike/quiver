@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "QuiverUtils.h"
 #include "QuiverFileOps.h"
+#include "Bookmarks.h"
 #include "test_helpers.h"
 #if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -938,3 +939,59 @@ TEST_CASE("Display basenames work for URIs that have no local path")
 	CHECK(QuiverUtils::GetDisplayBasename("") == "");
 	CHECK(QuiverUtils::GetDisplayBasename(NULL) == "");
 }
+
+TEST_CASE("CheckLocationExists and CheckBookmarkLocationAvailable", "[unit][quiverutils]")
+{
+    // Existing paths
+    CHECK(QuiverUtils::CheckLocationExists("/tmp"));
+    CHECK(QuiverUtils::CheckLocationExists("file:///tmp"));
+    CHECK(QuiverUtils::CheckLocationExists("trash:///"));
+
+    // Non-existent paths
+    CHECK_FALSE(QuiverUtils::CheckLocationExists(NULL));
+    CHECK_FALSE(QuiverUtils::CheckLocationExists(""));
+    CHECK_FALSE(QuiverUtils::CheckLocationExists("/non_existent_path_42_xyz_abc"));
+    CHECK_FALSE(QuiverUtils::CheckLocationExists("file:///non_existent_path_42_xyz_abc"));
+
+    // Bookmark checking
+    std::list<std::string> valid_uris = {"file:///tmp"};
+    Bookmark valid_bm("Valid Bookmark", "", "", valid_uris, false);
+    std::string unavail_name;
+    CHECK(QuiverUtils::CheckBookmarkLocationAvailable(valid_bm, &unavail_name));
+
+    std::list<std::string> invalid_uris = {"file:///non_existent_path_42_xyz_abc"};
+    Bookmark invalid_bm("Missing Drive", "", "", invalid_uris, false);
+    CHECK_FALSE(QuiverUtils::CheckBookmarkLocationAvailable(invalid_bm, &unavail_name));
+    CHECK(unavail_name == "Missing Drive");
+
+    // Bookmark without custom name falls back to basename
+    Bookmark unnamed_bm("", "", "", invalid_uris, false);
+    unavail_name.clear();
+    CHECK_FALSE(QuiverUtils::CheckBookmarkLocationAvailable(unnamed_bm, &unavail_name));
+    CHECK(unavail_name == "non_existent_path_42_xyz_abc");
+}
+
+TEST_CASE("HUD Toast notifications and callbacks", "[unit][quiverutils]")
+{
+    struct ToastData {
+        std::string msg;
+        std::string icon;
+        int timeout = 0;
+    } toast_data;
+
+    QuiverUtils::SetHUDToastCallback(+[](const char* msg, const char* icon, int timeout, gpointer user_data) {
+        ToastData* td = static_cast<ToastData*>(user_data);
+        td->msg = msg ? msg : "";
+        td->icon = icon ? icon : "";
+        td->timeout = timeout;
+    }, &toast_data);
+
+    QuiverUtils::ShowHUDToast("Location unavailable: USB Drive", "dialog-warning-symbolic", 4000);
+    CHECK(toast_data.msg == "Location unavailable: USB Drive");
+    CHECK(toast_data.icon == "dialog-warning-symbolic");
+    CHECK(toast_data.timeout == 4000);
+    CHECK(QuiverUtils::GetLastHUDToast() == "Location unavailable: USB Drive");
+
+    QuiverUtils::SetHUDToastCallback(NULL, NULL);
+}
+

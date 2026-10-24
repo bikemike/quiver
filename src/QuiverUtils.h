@@ -8,8 +8,28 @@
 
 #include "QuiverFileOps.h"
 
+class Bookmark;
+
 namespace QuiverUtils
 {
+	/* Checks if a given URI or filesystem path exists and is accessible.
+	 * Supports file://, trash://, and native paths. Returns false if the path
+	 * does not exist or if the underlying media is disconnected. */
+	bool CheckLocationExists(const char* uri_or_path);
+
+	/* Checks if all locations associated with the bookmark exist.
+	 * If any location is unavailable, returns false and optionally fills
+	 * out_unavailable_name with the bookmark name or missing target name/path. */
+	bool CheckBookmarkLocationAvailable(const Bookmark& bm, std::string* out_unavailable_name = NULL);
+
+	/* HUD toast notifications.
+	 * SetHUDToastCallback registers a callback (implemented by QuiverImpl)
+	 * to display floating pill HUD toasts. */
+	typedef void (*HUDToastCallback)(const char* message, const char* icon_name, int timeout_ms, gpointer user_data);
+	void SetHUDToastCallback(HUDToastCallback cb, gpointer user_data);
+	void ShowHUDToast(const char* message, const char* icon_name = "dialog-warning-symbolic", int timeout_ms = 4000);
+	const std::string& GetLastHUDToast();
+
 	/* Quick-rename of one file, shared by the browser and the viewer.  The
 	 * browser and the viewer each used to register their own "F2" action, and
 	 * an app-wide accel belongs to a single action, so whichever registered

@@ -2256,4 +2256,97 @@ void AddAccelGroup(GtkWindow* /*window*/) {
 		return true;
 	}
 
+	static HUDToastCallback s_hud_toast_cb = NULL;
+	static gpointer s_hud_toast_user_data = NULL;
+	static std::string s_last_hud_toast;
+
+	void SetHUDToastCallback(HUDToastCallback cb, gpointer user_data)
+	{
+		s_hud_toast_cb = cb;
+		s_hud_toast_user_data = user_data;
+	}
+
+	void ShowHUDToast(const char* message, const char* icon_name, int timeout_ms)
+	{
+		s_last_hud_toast = message ? message : "";
+		if (s_hud_toast_cb && message)
+		{
+			s_hud_toast_cb(message, icon_name ? icon_name : "dialog-warning-symbolic", timeout_ms, s_hud_toast_user_data);
+		}
+	}
+
+	const std::string& GetLastHUDToast()
+	{
+		return s_last_hud_toast;
+	}
+
+	bool CheckLocationExists(const char* uri_or_path)
+	{
+		if (!uri_or_path || !uri_or_path[0])
+			return false;
+
+		if (g_str_has_prefix(uri_or_path, "trash://"))
+			return true;
+
+		GFile* file = NULL;
+		if (g_str_has_prefix(uri_or_path, "file://") || strstr(uri_or_path, "://") != NULL)
+		{
+			file = g_file_new_for_uri(uri_or_path);
+		}
+		else
+		{
+			file = g_file_new_for_path(uri_or_path);
+		}
+
+		if (!file)
+			return false;
+
+		gboolean exists = g_file_query_exists(file, NULL);
+		g_object_unref(file);
+		return exists ? true : false;
+	}
+
+	bool CheckBookmarkLocationAvailable(const Bookmark& bm, std::string* out_unavailable_name)
+	{
+		std::list<std::string> uris = bm.GetURIs();
+		if (uris.empty())
+		{
+			if (out_unavailable_name)
+				*out_unavailable_name = bm.GetName();
+			return false;
+		}
+
+		for (const auto& uri : uris)
+		{
+			if (!CheckLocationExists(uri.c_str()))
+			{
+				if (out_unavailable_name)
+				{
+					if (!bm.GetName().empty())
+					{
+						*out_unavailable_name = bm.GetName();
+					}
+					else
+					{
+						char* path = g_filename_from_uri(uri.c_str(), NULL, NULL);
+						if (path)
+						{
+							char* bname = g_path_get_basename(path);
+							*out_unavailable_name = (bname && bname[0] && strcmp(bname, "/") != 0) ? bname : path;
+							g_free(bname);
+							g_free(path);
+						}
+						else
+						{
+							*out_unavailable_name = uri;
+						}
+					}
+				}
+				return false;
+			}
+		}
+		return true;
+	}
+
 }
+

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "FolderTree.h"
+#include "quiver-i18n.h"
 #include "QuiverStockIcons.h"
 #include "QuiverUtils.h"
 #include "QuiverFileOps.h"
@@ -1688,6 +1689,14 @@ static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 		if (state & GDK_CONTROL_MASK)
 		{
 			gboolean new_val = !item->checked;
+			if (new_val && !QuiverUtils::CheckLocationExists(item->uri))
+			{
+				std::string msg = _("Location unavailable");
+				if (item->display_name && item->display_name[0])
+					msg += std::string(": ") + item->display_name;
+				QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+				return;
+			}
 			dir_item_set_checked(item, new_val);
 			if (impl->m_pShortcutsSelectionModel && pos != G_MAXUINT)
 			{
@@ -1725,6 +1734,14 @@ static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 		}
 		else
 		{
+			if (!QuiverUtils::CheckLocationExists(item->uri))
+			{
+				std::string msg = _("Location unavailable");
+				if (item->display_name && item->display_name[0])
+					msg += std::string(": ") + item->display_name;
+				QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+				return;
+			}
 			impl->ClearAllCheckboxes();
 			dir_item_set_checked(item, TRUE);
 			if (impl->m_pShortcutsSelectionModel && pos != G_MAXUINT)
@@ -1743,6 +1760,14 @@ static void shortcut_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 	else if (button == 2)
 	{
 		gboolean new_val = !item->checked;
+		if (new_val && !QuiverUtils::CheckLocationExists(item->uri))
+		{
+			std::string msg = _("Location unavailable");
+			if (item->display_name && item->display_name[0])
+				msg += std::string(": ") + item->display_name;
+			QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+			return;
+		}
 		dir_item_set_checked(item, new_val);
 		if (impl->m_pShortcutsSelectionModel && pos != G_MAXUINT)
 		{
@@ -1807,9 +1832,32 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 
 	if (button == 1)
 	{
+		const Bookmark* bm = NULL;
+		if (item->bookmark_id >= 0)
+		{
+			BookmarksPtr bmPtr = Bookmarks::GetInstance();
+			bm = bmPtr->GetBookmark(item->bookmark_id);
+		}
+
 		if (state & GDK_CONTROL_MASK)
 		{
 			gboolean new_val = !item->checked;
+			if (new_val)
+			{
+				std::string unavail_name;
+				bool avail = bm ? QuiverUtils::CheckBookmarkLocationAvailable(*bm, &unavail_name)
+				                : QuiverUtils::CheckLocationExists(item->uri);
+				if (!avail)
+				{
+					std::string msg = _("Location unavailable");
+					if (!unavail_name.empty())
+						msg += ": " + unavail_name;
+					else if (item->display_name && item->display_name[0])
+						msg += std::string(": ") + item->display_name;
+					QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+					return;
+				}
+			}
 			dir_item_set_checked(item, new_val);
 			if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
 			{
@@ -1824,12 +1872,6 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 					gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), flat_pos, FALSE);
 				else
 					gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), flat_pos);
-			}
-			const Bookmark* bm = NULL;
-			if (item->bookmark_id >= 0)
-			{
-				BookmarksPtr bmPtr = Bookmarks::GetInstance();
-				bm = bmPtr->GetBookmark(item->bookmark_id);
 			}
 			if (NULL != bm)
 			{
@@ -1848,6 +1890,19 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 		}
 		else
 		{
+			std::string unavail_name;
+			bool avail = bm ? QuiverUtils::CheckBookmarkLocationAvailable(*bm, &unavail_name)
+			                : QuiverUtils::CheckLocationExists(item->uri);
+			if (!avail)
+			{
+				std::string msg = _("Location unavailable");
+				if (!unavail_name.empty())
+					msg += ": " + unavail_name;
+				else if (item->display_name && item->display_name[0])
+					msg += std::string(": ") + item->display_name;
+				QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+				return;
+			}
 			impl->ClearAllCheckboxes();
 			dir_item_set_checked(item, TRUE);
 			if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
@@ -1857,12 +1912,6 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 			if (impl->m_pSelectionModel && flat_pos != G_MAXUINT)
 			{
 				gtk_selection_model_select_item(GTK_SELECTION_MODEL(impl->m_pSelectionModel), flat_pos, TRUE);
-			}
-			const Bookmark* bm = NULL;
-			if (item->bookmark_id >= 0)
-			{
-				BookmarksPtr bmPtr = Bookmarks::GetInstance();
-				bm = bmPtr->GetBookmark(item->bookmark_id);
 			}
 			if (NULL != bm)
 			{
@@ -1885,6 +1934,28 @@ static void bookmark_row_on_clicked(GtkGestureClick* gesture, int n_press, doubl
 	else if (button == 2)
 	{
 		gboolean new_val = !item->checked;
+		if (new_val)
+		{
+			const Bookmark* bm = NULL;
+			if (item->bookmark_id >= 0)
+			{
+				BookmarksPtr bmPtr = Bookmarks::GetInstance();
+				bm = bmPtr->GetBookmark(item->bookmark_id);
+			}
+			std::string unavail_name;
+			bool avail = bm ? QuiverUtils::CheckBookmarkLocationAvailable(*bm, &unavail_name)
+			                : QuiverUtils::CheckLocationExists(item->uri);
+			if (!avail)
+			{
+				std::string msg = _("Location unavailable");
+				if (!unavail_name.empty())
+					msg += ": " + unavail_name;
+				else if (item->display_name && item->display_name[0])
+					msg += std::string(": ") + item->display_name;
+				QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+				return;
+			}
+		}
 		dir_item_set_checked(item, new_val);
 		if (impl->m_pBookmarkSelectionModel && pos != G_MAXUINT)
 		{
@@ -2535,6 +2606,17 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 				{
 					if (item->row_kind == ROW_KIND_SHORTCUT)
 					{
+						if (active && !QuiverUtils::CheckLocationExists(item->uri))
+						{
+							g_object_set_data(G_OBJECT(w), "set-active-guard", GINT_TO_POINTER(1));
+							gtk_check_button_set_active(GTK_CHECK_BUTTON(w), FALSE);
+							g_object_set_data(G_OBJECT(w), "set-active-guard", NULL);
+							std::string msg = _("Location unavailable");
+							if (item->display_name && item->display_name[0])
+								msg += std::string(": ") + item->display_name;
+							QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+							return;
+						}
 						dir_item_set_checked(item, active);
 						guint sc_pos = rw->bound_sc_pos;
 						if (impl->m_pShortcutsSelectionModel && sc_pos != G_MAXUINT)
@@ -2562,6 +2644,25 @@ void FolderTree::FolderTreeImpl::CreateWidget()
 						{
 							BookmarksPtr bmPtr = Bookmarks::GetInstance();
 							bm = bmPtr->GetBookmark(item->bookmark_id);
+						}
+						if (active)
+						{
+							std::string unavail_name;
+							bool avail = bm ? QuiverUtils::CheckBookmarkLocationAvailable(*bm, &unavail_name)
+							                : QuiverUtils::CheckLocationExists(item->uri);
+							if (!avail)
+							{
+								g_object_set_data(G_OBJECT(w), "set-active-guard", GINT_TO_POINTER(1));
+								gtk_check_button_set_active(GTK_CHECK_BUTTON(w), FALSE);
+								g_object_set_data(G_OBJECT(w), "set-active-guard", NULL);
+								std::string msg = _("Location unavailable");
+								if (!unavail_name.empty())
+									msg += ": " + unavail_name;
+								else if (item->display_name && item->display_name[0])
+									msg += std::string(": ") + item->display_name;
+								QuiverUtils::ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+								return;
+							}
 						}
 						dir_item_set_checked(item, active);
 						if (impl->m_pBookmarkSelectionModel && bm_pos != G_MAXUINT)

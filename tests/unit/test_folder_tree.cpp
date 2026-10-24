@@ -2103,3 +2103,68 @@ TEST_CASE("FolderTree directory rows display tree expander arrows and bind list 
     gtk_window_set_child(GTK_WINDOW(win), nullptr);
     gtk_window_destroy(GTK_WINDOW(win));
 }
+
+TEST_CASE("FolderTree unavailable bookmark triggers HUD toast and rejects selection", "[unit][foldertree][bookmarks]")
+{
+    REQUIRE_DISPLAY();
+    FolderTreeTestConfigFixture configFixture;
+
+    BookmarksPtr bmPtr = Bookmarks::GetInstance();
+    REQUIRE(bmPtr != nullptr);
+
+    std::string missing_uri = "file:///tmp/quiver_test_non_existent_mount_xyz";
+    std::list<std::string> uris = { missing_uri };
+    Bookmark bm("Missing Removable Media", "Removable USB", "media-removable", uris, false);
+    REQUIRE(bmPtr->AddBookmark(bm));
+    int bmId = bmPtr->GetBookmarks().back().GetID();
+
+    struct AutoRemoveBookmark {
+        BookmarksPtr bm;
+        int id;
+        ~AutoRemoveBookmark() { if (bm) bm->Remove(id); }
+    } cleanup{ bmPtr, bmId };
+
+    FolderTreePtr tree(new FolderTree());
+    tree->SetBookmarksExpanded(true);
+
+    boost::shared_ptr<FolderTreeTestBookmarkHandler> handler(new FolderTreeTestBookmarkHandler());
+    tree->AddEventHandler(handler);
+
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), tree->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 400, 600);
+    gtk_window_present(GTK_WINDOW(win));
+    for (int i = 0; i < 5; i++)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(5000);
+    }
+
+    GtkWidget* bm_widget = tree->GetBookmarksWidget();
+    REQUIRE(bm_widget != nullptr);
+    GtkSelectionModel* bm_sel = gtk_list_view_get_model(GTK_LIST_VIEW(bm_widget));
+    REQUIRE(bm_sel != nullptr);
+
+    guint n_items = g_list_model_get_n_items(G_LIST_MODEL(bm_sel));
+    REQUIRE(n_items >= 1);
+
+    GObject* target_item = (GObject*)g_list_model_get_item(G_LIST_MODEL(bm_sel), n_items - 1);
+    REQUIRE(target_item != nullptr);
+    GtkWidget* target_check = GTK_WIDGET(g_object_get_data(target_item, "bound-check"));
+    REQUIRE(target_check != nullptr);
+
+    // Toggling the checkbox for an unavailable bookmark must display a HUD toast
+    // and keep the checkbox unchecked
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(target_check), TRUE);
+    while (g_main_context_iteration(NULL, FALSE));
+
+    CHECK(gtk_check_button_get_active(GTK_CHECK_BUTTON(target_check)) == FALSE);
+    CHECK(handler->bookmarkOpens == 0);
+    CHECK(QuiverUtils::GetLastHUDToast() == "Location unavailable: Missing Removable Media");
+
+    g_object_unref(target_item);
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+}
+

@@ -142,6 +142,7 @@ public:
 	void RebuildRecentDeletionsMenu();
 	void ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, unsigned int count,
 		const char *restored_uri = NULL);
+	void ShowHUDToast(const char *message, const char *icon_name = "dialog-warning-symbolic", int timeout_ms = 4000);
 	void HideTrashToast();
 	void OnUndoDelete();                 // Ctrl+Z / undo button: restore newest batch
 	void OnUndoDeleteAt(unsigned int pos); // menu: restore a specific batch
@@ -205,6 +206,7 @@ public:
 	GtkWidget *m_pUndoToast;
 	GtkWidget *m_pUndoPopupAnchorBrowser; /* Browser::GetIconViewOverlay() */
 	GtkWidget *m_pUndoPopupAnchorViewer;  /* Viewer::GetOverlay() */
+	GtkWidget *m_pUndoIcon;
 	GtkWidget *m_pUndoLabel;
 	GtkWidget *m_pUndoButton;
 	/* "Take me there" button shown on a restore toast; jumps the browser to
@@ -215,6 +217,7 @@ public:
 	guint m_iUndoToastTimer;
 	/* Pointer is hovering over the toast: the auto-dismiss timer pauses. */
 	bool m_bUndoToastHover;
+	bool m_bToastCentered;
 	GtkWidget *m_pToolbar;
 	GtkWidget *m_pToolbarSharedBox;
 	GtkWidget *m_pToolbarBrowserBox;
@@ -388,11 +391,13 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pUndoToast = NULL;
 	m_pUndoPopupAnchorBrowser = NULL;
 	m_pUndoPopupAnchorViewer = NULL;
+	m_pUndoIcon = NULL;
 	m_pUndoLabel = NULL;
 	m_pUndoButton = NULL;
 	m_pUndoShowButton = NULL;
 	m_iUndoToastTimer = 0;
 	m_bUndoToastHover = false;
+	m_bToastCentered = false;
 	m_pMenuRotateRow = NULL;
 	m_pMenubarBuilder = NULL;
 	m_pAppMenuModel = NULL;
@@ -429,6 +434,7 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 }
 QuiverImpl::~QuiverImpl()
 {
+	QuiverUtils::SetHUDToastCallback(NULL, NULL);
 	if (0 != m_iTimeoutMouseMotionNotify)
 	{
 		g_source_remove(m_iTimeoutMouseMotionNotify);
@@ -884,6 +890,12 @@ void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, un
 		return;
 	}
 
+	m_bToastCentered = false;
+	if (NULL != m_pUndoIcon)
+	{
+		gtk_widget_set_visible(m_pUndoIcon, FALSE);
+	}
+
 	/* Float over whichever view the user is looking at. */
 	ParentUndoToast();
 
@@ -959,6 +971,44 @@ void QuiverImpl::ShowTrashToast(QuiverFileOps::TrashUndoChangedReason reason, un
 	m_iUndoToastTimer = g_timeout_add(6000, TrashToastTimeout, this);
 }
 
+void QuiverImpl::ShowHUDToast(const char* message, const char* icon_name, int timeout_ms)
+{
+	if (NULL == m_pUndoToast || NULL == message)
+		return;
+
+	m_bToastCentered = true;
+	ParentUndoToast();
+
+	m_strRestoredURI.clear();
+	gtk_label_set_text(GTK_LABEL(m_pUndoLabel), message);
+
+	if (NULL != m_pUndoIcon)
+	{
+		if (NULL != icon_name && icon_name[0] != '\0')
+		{
+			gtk_image_set_from_icon_name(GTK_IMAGE(m_pUndoIcon), icon_name);
+			gtk_widget_set_visible(m_pUndoIcon, TRUE);
+		}
+		else
+		{
+			gtk_widget_set_visible(m_pUndoIcon, FALSE);
+		}
+	}
+
+	gtk_widget_set_visible(m_pUndoButton, FALSE);
+	gtk_widget_set_visible(m_pUndoShowButton, FALSE);
+
+	if (0 != m_iUndoToastTimer)
+	{
+		g_source_remove(m_iUndoToastTimer);
+		m_iUndoToastTimer = 0;
+	}
+	gtk_widget_set_visible(m_pUndoToast, TRUE);
+	if (m_bUndoToastHover)
+		return;
+	m_iUndoToastTimer = g_timeout_add(timeout_ms > 0 ? timeout_ms : 4000, TrashToastTimeout, this);
+}
+
 void QuiverImpl::TakeMeToRestored()
 {
 	if (m_strRestoredURI.empty())
@@ -1005,17 +1055,16 @@ void QuiverImpl::ParentUndoToast()
 	if (NULL == anchored)
 		return;
 
-	if (gtk_widget_get_parent(m_pUndoToast) == anchored)
-		return;
-
-	if (gtk_widget_get_parent(m_pUndoToast) != NULL)
+	if (gtk_widget_get_parent(m_pUndoToast) != anchored)
 	{
-		gtk_widget_unparent(m_pUndoToast);
+		if (gtk_widget_get_parent(m_pUndoToast) != NULL)
+		{
+			gtk_widget_unparent(m_pUndoToast);
+		}
+		gtk_overlay_add_overlay(GTK_OVERLAY(anchored), m_pUndoToast);
 	}
-	gtk_overlay_add_overlay(GTK_OVERLAY(anchored), m_pUndoToast);
-	/* Keep it pinned to the top-right of the view and out of the way of the
-	 * viewer's bottom media controls. */
-	gtk_widget_set_halign(m_pUndoToast, GTK_ALIGN_END);
+	/* Center for HUD toasts, top-right for undo/trash toasts */
+	gtk_widget_set_halign(m_pUndoToast, m_bToastCentered ? GTK_ALIGN_CENTER : GTK_ALIGN_END);
 	gtk_widget_set_valign(m_pUndoToast, GTK_ALIGN_START);
 }
 
@@ -2776,9 +2825,13 @@ void Quiver::Init()
 			gtk_css_provider_load_from_string(sCssProvider,
 				".quiver-undo-toast {"
 				"  background-color: rgba(25, 25, 25, 0.94);"
-				"  border-radius: 10px;"
+				"  border-radius: 9999px;"
+				"  padding: 4px 14px;"
+				"  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);"
 				"}"
 				".quiver-undo-toast label { color: #ffffff; }"
+				".quiver-undo-toast image { color: #f5c211; margin-end: 2px; }"
+				".quiver-undo-toast button { border-radius: 9999px; }"
 				"popover.menu separator {"
 				"  min-height: 1px;"
 				"  background-color: alpha(currentColor, 0.15);"
@@ -2857,13 +2910,18 @@ void Quiver::Init()
 	gtk_widget_set_margin_start(m_QuiverImplPtr->m_pUndoToast, 12);
 	gtk_widget_set_visible(m_QuiverImplPtr->m_pUndoToast, FALSE);
 
+	m_QuiverImplPtr->m_pUndoIcon = gtk_image_new();
+	gtk_widget_set_margin_start(m_QuiverImplPtr->m_pUndoIcon, 6);
+	gtk_widget_set_visible(m_QuiverImplPtr->m_pUndoIcon, FALSE);
+	gtk_box_append(GTK_BOX(m_QuiverImplPtr->m_pUndoToast), m_QuiverImplPtr->m_pUndoIcon);
+
 	m_QuiverImplPtr->m_pUndoLabel = gtk_label_new("");
 	gtk_label_set_ellipsize(GTK_LABEL(m_QuiverImplPtr->m_pUndoLabel), PANGO_ELLIPSIZE_END);
 	gtk_label_set_max_width_chars(GTK_LABEL(m_QuiverImplPtr->m_pUndoLabel), 48);
 	gtk_widget_set_margin_top(m_QuiverImplPtr->m_pUndoLabel, 6);
 	gtk_widget_set_margin_bottom(m_QuiverImplPtr->m_pUndoLabel, 6);
-	gtk_widget_set_margin_start(m_QuiverImplPtr->m_pUndoLabel, 10);
-	gtk_widget_set_margin_end(m_QuiverImplPtr->m_pUndoLabel, 10);
+	gtk_widget_set_margin_start(m_QuiverImplPtr->m_pUndoLabel, 6);
+	gtk_widget_set_margin_end(m_QuiverImplPtr->m_pUndoLabel, 8);
 	gtk_box_append(GTK_BOX(m_QuiverImplPtr->m_pUndoToast), m_QuiverImplPtr->m_pUndoLabel);
 
 	m_QuiverImplPtr->m_pUndoButton = gtk_button_new_with_label("Undo");
@@ -2913,7 +2971,7 @@ void Quiver::Init()
 					gtk_widget_get_visible(p->m_pUndoToast))
 				{
 					p->m_iUndoToastTimer =
-						g_timeout_add(6000, QuiverImpl::TrashToastTimeout, p);
+						g_timeout_add(p->m_bToastCentered ? 4000 : 6000, QuiverImpl::TrashToastTimeout, p);
 				}
 			}), m_QuiverImplPtr.get());
 		gtk_widget_add_controller(m_QuiverImplPtr->m_pUndoToast, toast_hover);
@@ -2921,6 +2979,13 @@ void Quiver::Init()
 
 	/* Start anchored over the browser icon view (the initial mode). */
 	m_QuiverImplPtr->ParentUndoToast();
+	QuiverUtils::SetHUDToastCallback(+[](const char* message, const char* icon_name, int timeout_ms, gpointer user_data) {
+		QuiverImpl* p = (QuiverImpl*)user_data;
+		if (p)
+		{
+			p->ShowHUDToast(message, icon_name, timeout_ms);
+		}
+	}, m_QuiverImplPtr.get());
 
 	// menubar / hamburger menu button
 	prefs_show = prefsPtr->GetBoolean(QUIVER_PREFS_APP,QUIVER_PREFS_APP_MENUBAR_SHOW, true);
@@ -5014,6 +5079,17 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 		const Bookmark* b = bookmarksPtr->GetBookmark(id);
 		if (NULL != b)
 		{
+			std::string unavail_name;
+			if (!QuiverUtils::CheckBookmarkLocationAvailable(*b, &unavail_name))
+			{
+				std::string msg = _("Location unavailable");
+				if (!unavail_name.empty())
+				{
+					msg += ": " + unavail_name;
+				}
+				pQuiverImpl->ShowHUDToast(msg.c_str(), "dialog-warning-symbolic", 4000);
+				return;
+			}
 			list<string> uris = b->GetURIs();
 			if (pQuiverImpl->m_BrowserPtr && pQuiverImpl->m_BrowserPtr->GetFolderTree())
 			{
