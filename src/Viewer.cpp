@@ -11,6 +11,9 @@
 #include <gst/gst.h>
 #include <gst/video/video.h> // For GstVideoSink
 #include <gtk/gtk.h> // For GtkSink
+#ifdef __linux__
+#include <malloc.h>
+#endif
 
 #include "Viewer.h"
 #include "ThreadUtil.h"
@@ -1273,6 +1276,7 @@ public:
 	bool        m_bFilmstripOverlay;   // true when filmstrip floats over the image
 	bool        m_bHideFilmstripFS;    // true when filmstrip should hide in fullscreen
 	bool        m_bFilmstripHiddenByFS; // true while filmstrip is hidden due to fullscreen
+	bool        m_bInitialFilmstripMapped; // true after first map
 	GtkWidget*  m_pFilmstripEdge;      // invisible event box along the edge for hover-reveal
 	GtkWidget*  m_pFilmstripOverlayContainer; // the GtkOverlay or alignment that holds the filmstrip in overlay mode
 	guint       m_iTimeoutFilmstripHide; // auto-hide timer ID (0 = not running)
@@ -2114,13 +2118,12 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 	if (0 != m_ImageListPtr->GetSize() && m_ImageListPtr->SetCurrentIndex(index))
 	{
 		StopVideo(false);
-
 		m_pViewer->EmitCursorChangedEvent();
 
-		/* in overlay mode, briefly show the filmstrip on navigation */
 		if (m_bFilmstripOverlay)
 		{
-			if (!IsPointerOverFilmstrip())
+			bool over = IsPointerOverFilmstrip();
+			if (!over)
 			{
 				ShowFilmstripOverlay();
 				ScheduleFilmstripHide();
@@ -2160,7 +2163,6 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		 * later and turn it straight back.  LoadImage() sets this too, so doing it
 		 * here first is not a second source of truth, just the earlier one. */
 		SetCurrentOrientation(f.GetOrientation(), false);
-
 		UpdateNavigationControl();
 
 		/* Only put a thumbnail on screen when the full image is not already in
@@ -2168,9 +2170,11 @@ void Viewer::ViewerImpl::SetImageIndex(int index, bool bDirectionForward, bool b
 		 * showing one over an image the cache already holds is a downgrade, and it
 		 * is a second, entirely separate preview path from the loader's - this one
 		 * never appears in the loader's trace at all. */
-		GdkTexture *cached_thumb = m_ImageLoader.InCache(f.GetURI())
+		bool in_cache = m_ImageLoader.InCache(f.GetURI());
+		GdkTexture *cached_thumb = in_cache
 			? NULL
 			: m_ThumbnailCache.GetTexture(f.GetURI());
+
 		bool bPreviewShown = false;
 		if (NULL != cached_thumb)
 		{
@@ -2271,7 +2275,7 @@ int  Viewer::ViewerImpl::GetMaximizedOrientation(QuiverFile f, bool bCombinedWit
 
 	if (bCombinedWithFileOrientation)
 	{
-		orientation = combine_matrix[orientation][f.GetOrientation()];
+		orientation = combine_matrix[f.GetOrientation()][orientation];
 	}
 
 	return orientation;
@@ -2691,6 +2695,7 @@ void Viewer::ViewerImpl::ShowFilmstripOverlay()
 	if (!m_bFilmstripOverlay) return;
 	if (!QuiverUtils::ToggleActionGetActive(ACTION_VIEWER_VIEW_FILM_STRIP)) return;
 	if (m_bFilmstripHiddenByFS) return;
+
 	/* A playing video is no reason to refuse: reaching the next item without
 	 * stopping the one being watched is what the strip is for, and keeping it out
 	 * of the way of the video controls is what the pointer-over-controls test and
@@ -4852,10 +4857,18 @@ static void viewer_icon_view_map_cb(GtkWidget *widget, gpointer user_data)
 	(void)widget;
 	Viewer::ViewerImpl* v = (Viewer::ViewerImpl*)user_data;
 	v->m_ThumbnailLoader.SetMapped(true);
-	/* The first UpdateList(true) often runs at startup before the
+	/* The first UpdateList runs at startup before the
 	 * filmstrip is mapped, so every thumbnail was skipped.  Re-queue
-	 * the visible range now that the filmstrip is mapped (and allocated). */
-	v->m_ThumbnailLoader.UpdateList(true);
+	 * the visible range once mapped. */
+	if (!v->m_bInitialFilmstripMapped)
+	{
+		v->m_bInitialFilmstripMapped = true;
+		v->QueueIconViewUpdate(0);
+	}
+	else
+	{
+		v->QueueIconViewUpdate(100);
+	}
 }
 
 static void viewer_icon_view_unmap_cb(GtkWidget *widget, gpointer user_data)
@@ -10099,6 +10112,7 @@ Viewer::ViewerImpl::ViewerImpl(Viewer *pViewer) :
 	m_bFilmstripOverlay(false),
 	m_bHideFilmstripFS(true),
 	m_bFilmstripHiddenByFS(false),
+	m_bInitialFilmstripMapped(false),
 	m_pFilmstripEdge(NULL),
 	m_pFilmstripOverlayContainer(NULL),
 	m_iTimeoutFilmstripHide(0),
@@ -13430,6 +13444,12 @@ static void image_view_adjustment_changed (GtkAdjustment *adjustment, gpointer u
 //=============================================================================
 void Viewer::ViewerImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 { (void)event; 
+	parent->m_ThumbnailCache.Clear();
+	parent->m_ImageLoader.ClearCache();
+	QuiverFile::ClearThumbnailCache();
+#ifdef __linux__
+	malloc_trim(0);
+#endif
 	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
 	parent->m_ThumbnailLoader.UpdateList(true);
 }

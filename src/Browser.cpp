@@ -7,6 +7,9 @@
 #include <gtk/gtk.h>
 #include <pango/pangocairo.h>
 #include <string.h>
+#ifdef __linux__
+#include <malloc.h>
+#endif
 #include <list>
 #include <map>
 #include <set>
@@ -4341,6 +4344,11 @@ static void browser_action_handler_cb(GSimpleAction *action, GVariant *parameter
 //=============================================================================
 void Browser::BrowserImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 { (void)event; 
+	parent->m_ThumbnailCache.Clear();
+	QuiverFile::ClearThumbnailCache();
+#ifdef __linux__
+	malloc_trim(0);
+#endif
 	parent->HideLoadingProgress();
 	// get the list of files and folders in the image list
 	list<string> dirs  = parent->m_ImageListPtr->GetFolderList();

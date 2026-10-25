@@ -24,23 +24,8 @@ void ImageListFilter::RebuildIfNeeded() const
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	unsigned int n = m_pSource ? m_pSource->GetSize() : 0;
-	const char* first_uri = (n > 0) ? m_pSource->Get(0).GetURI() : NULL;
-	std::string current_first_uri = first_uri ? first_uri : "";
-
-	if (m_bMapValid && m_iLastSourceSize == n && m_szLastFirstSourceURI == current_first_uri)
-	{
-		bool bOutOfBounds = false;
-		for (size_t k = 0; k < m_vectMap.size(); ++k)
-		{
-			if (m_vectMap[k] >= n)
-			{
-				bOutOfBounds = true;
-				break;
-			}
-		}
-		if (!bOutOfBounds)
-			return;
-	}
+	if (m_bMapValid && m_iLastSourceSize == n)
+		return;
 
 	m_vectMap.clear();
 	for (unsigned int i = 0 ; i < n ; i++)
@@ -49,7 +34,6 @@ void ImageListFilter::RebuildIfNeeded() const
 			m_vectMap.push_back(i);
 	}
 	m_iLastSourceSize = n;
-	m_szLastFirstSourceURI = current_first_uri;
 	m_bMapValid = true;
 }
 
@@ -260,7 +244,6 @@ void ImageListFilter::HandleContentsChanged(ImageListEventPtr event)
 	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
 	m_bMapValid = false;
 	m_szCurrentURI.clear();
-	m_szLastFirstSourceURI.clear();
 	m_iLastSourceSize = 0;
 	m_iLastEmittedView = -1;
 	EmitContentsChangedEvent();

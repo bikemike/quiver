@@ -2263,7 +2263,6 @@ void Quiver::ImageChanged()
 	if ( activeList && activeList->GetSize() )
 	{
 		QuiverFile f = activeList->GetCurrent();
-
 		{
 			/* Save the outgoing file: per-preference, either silently or with a
 			 * confirmation prompt.  Dialog is a message box because the File menu
@@ -2306,7 +2305,6 @@ void Quiver::ImageChanged()
 			 * loop. */
 			m_QuiverImplPtr->m_PropertyView.SetQuiverFile(f);
 		}
-		
 	}
 	else
 	{

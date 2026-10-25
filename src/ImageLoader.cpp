@@ -661,27 +661,8 @@ bool ImageLoader::LoadQuickPreview()
 
 void ImageLoader::Load()
 {
-	/* Everything below works from this command's own orientation, snapshotted
-	 * once.  The alternative was to consult the shared m_iLoadOrientation field
-	 * throughout, but the GUI thread rewrites that on every navigation, so a
-	 * rotation made while this decode was running leaked in halfway: a load
-	 * asked for 6 turned and stamped 8, because the next file's navigation had
-	 * already written 8 by the time the texture was rotated.  The result was
-	 * cached under this file's URI stamped at an orientation its pixels were
-	 * never brought to, and the stamp was the only record of where they were.
-	 * GetNextCommand() has already folded the current orientation into the
-	 * command by this point, and rotating again mid-load enqueues another
-	 * command that handles it. */
 	const int iLoadOrientation = m_Command.params.orientation;
 
-
-	
-	/* Give up before touching anything if a newer load is already queued.  This
-	 * used to be discovered at delivery time instead, by which point the work was
-	 * long done: the cache-hit rotation below had resampled a full-size texture
-	 * and restamped the cached entry to the orientation nobody was going to see,
-	 * which the next command then had to rotate straight back.  Dropping out here
-	 * costs nothing - the queued command is the one that will display. */
 	if (NewerLoadPending())
 	{
 		return;
@@ -741,7 +722,7 @@ void ImageLoader::Load()
 			 height < m_Command.params.max_height &&
 			 width < real_width && height < real_height)))
 		{
-						m_ImageCache.RemoveTexture(m_Command.quiverFile.GetURI());
+			m_ImageCache.RemoveTexture(m_Command.quiverFile.GetURI());
 		}
 				
 		g_object_unref(texture);

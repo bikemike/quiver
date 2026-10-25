@@ -13,6 +13,10 @@
 #include <stdlib.h>
 #include <set>
 
+#ifdef __linux__
+#include <malloc.h>
+#endif
+
 extern "C"
 {
 #include "strnatcmp.h"
@@ -2195,11 +2199,19 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 
 	if (!impl->m_bAbortAsyncLoad && g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) == pData->uiGeneration)
 	{
-		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, AsyncFolderLoadCommit, pData, [](gpointer d){ delete (AsyncFolderLoadData*)d; });
+		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, AsyncFolderLoadCommit, pData, [](gpointer d){
+			delete (AsyncFolderLoadData*)d;
+#ifdef __linux__
+			malloc_trim(0);
+#endif
+		});
 	}
 	else
 	{
 		delete pData;
+#ifdef __linux__
+		malloc_trim(0);
+#endif
 	}
 
 	return NULL;
@@ -2285,7 +2297,9 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 		}
 	}
 
-	m_QuiverFileList.assign(pData->quiverFiles.begin(), pData->quiverFiles.end());
+	m_QuiverFileList.assign(std::make_move_iterator(pData->quiverFiles.begin()),
+	                        std::make_move_iterator(pData->quiverFiles.end()));
+	pData->quiverFiles.clear();
 
 	m_iCurrentIndex = 0;
 	bool bFoundURI = false;
@@ -2602,6 +2616,10 @@ void ImageList::ImageListImpl::Clear()
 	m_mapDirs.clear();
 	m_mapFiles.clear();
 	m_QuiverFileList.clear();
+	m_QuiverFileList.shrink_to_fit();
+#ifdef __linux__
+	malloc_trim(0);
+#endif
 	m_iCurrentIndex = 0;
 }
 

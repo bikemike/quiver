@@ -18,6 +18,7 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include <utime.h>
 
 static GtkWidget* FindToplevelByTitle(const char* title)
 {
@@ -1554,6 +1555,17 @@ TEST_CASE("Organize Dialog: preview sorting hierarchy and day extension offset i
 
     REQUIRE(g_file_set_contents(fCollide.c_str(), contents, length, NULL));
     REQUIRE(g_file_set_contents(fUndated.c_str(), contents, length, NULL));
+    {
+        time_t now = time(NULL);
+        struct tm tmNow;
+        localtime_r(&now, &tmNow);
+        tmNow.tm_hour = 12;
+        tmNow.tm_min = 0;
+        tmNow.tm_sec = 0;
+        time_t noon = mktime(&tmNow);
+        struct utimbuf utUndated = { noon, noon };
+        utime(fUndated.c_str(), &utUndated);
+    }
     REQUIRE(g_file_set_contents(fNight.c_str(), contents, length, NULL));
     REQUIRE(g_file_set_contents(fDay.c_str(), contents, length, NULL));
 

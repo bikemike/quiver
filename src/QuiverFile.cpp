@@ -207,6 +207,7 @@ public:
 	std::string GetFilePath() const;
 
 	void LoadExifData();
+	void ReleaseMetadataIfNotModified();
 	int GetOrientation();
 	bool SetOrientation(int iOrientation);
 	time_t GetTimeT(bool fromExif = true);
@@ -262,12 +263,10 @@ public:
  	
  	std::shared_ptr<Exiv2::ExifData> m_ExifData;
  	std::shared_ptr<Exiv2::ExifData> m_ExifDataOriginal;
-	/* Decoded embedded EXIF thumbnail, cached because the property panel asks
-	 * for it on every selection and re-decoding it costs ~16ms each time.
-	 * m_bExifThumbTried separates "not decoded yet" from "no thumbnail
-	 * exists", so a file with none does not retry on every selection. */
-	GdkTexture* m_pExifThumbTexture;
+	/* Track whether embedded EXIF thumbnail exists so a file with none does
+	 * not retry on every call. */
 	bool m_bExifThumbTried;
+	bool m_bHasExifThumb;
 
 	/* XMP and IPTC come out of the same readMetadata() as the EXIF, and are
 	 * kept here so the property view does not parse the file again for each
@@ -305,6 +304,7 @@ public:
 	bool m_bThumbloadFail;
 	time_t m_cachedTimeT = 0;
 	time_t m_cachedMetadataTimeT = 0;
+	bool m_bMetadataDateResolved = false;
 };
 
 class ThreadPoolDestructor
@@ -388,8 +388,8 @@ QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GFileInfo *info)
 void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 {
 	m_bThumbloadFail = false;
-	m_pExifThumbTexture = NULL;
 	m_bExifThumbTried = false;
+	m_bHasExifThumb = false;
 
 	//m_szURI = (gchar*)malloc (sizeof(gchar) * strlen(uri) + 1 );
 	if (NULL != uri)
@@ -431,6 +431,9 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 	
 	m_dLoadTimeSeconds = -1;
 
+	m_cachedTimeT = 0;
+	m_cachedMetadataTimeT = 0;
+	m_bMetadataDateResolved = false;
 }
 
 const char* QuiverFile::QuiverFileImpl::GetMimeType()
@@ -500,12 +503,6 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 
 QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 {
-	if (NULL != m_pExifThumbTexture)
-	{
-		g_object_unref(m_pExifThumbTexture);
-		m_pExifThumbTexture = NULL;
-	}
-
 	if (m_pGFileInfo != NULL)
 	{
 		g_object_unref(m_pGFileInfo);
@@ -526,20 +523,13 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetExifThumbnailTexture()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 
-	GdkTexture *thumb_texture = NULL;
-
-	if (IsVideo())
+	if (IsVideo() || (m_bExifThumbTried && !m_bHasExifThumb))
 	{
 		return NULL;
 	}
 
-	/* Callers own the returned texture, so a cache hit hands out a new ref. */
-	if (m_bExifThumbTried)
-	{
-		return (NULL != m_pExifThumbTexture)
-			? (GdkTexture*)g_object_ref(m_pExifThumbTexture) : NULL;
-	}
-
+	GdkTexture *thumb_texture = NULL;
+	bool bWasExifLoaded = (m_fDataLoaded & QUIVER_FILE_DATA_EXIF) != 0;
 	LoadExifData();
 
 	if (m_fDataExists & QUIVER_FILE_DATA_EXIF && NULL != m_ExifData.get())
@@ -570,11 +560,13 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetExifThumbnailTexture()
 		}
 	}
 
-	m_bExifThumbTried = true;
-	if (NULL != thumb_texture)
+	if (!bWasExifLoaded)
 	{
-		m_pExifThumbTexture = (GdkTexture*)g_object_ref(thumb_texture);
+		ReleaseMetadataIfNotModified();
 	}
+
+	m_bExifThumbTried = true;
+	m_bHasExifThumb = (thumb_texture != NULL);
 
 	return thumb_texture;
 }
@@ -1151,12 +1143,8 @@ void QuiverFile::QuiverFileImpl::Reload()
 	m_ExifDataOriginal.reset();
 	/* EXIF is about to be re-parsed, so the cached decoded thumbnail may
 	 * no longer describe this file. */
-	if (NULL != m_pExifThumbTexture)
-	{
-		g_object_unref(m_pExifThumbTexture);
-		m_pExifThumbTexture = NULL;
-	}
 	m_bExifThumbTried = false;
+	m_bHasExifThumb = false;
 	m_XmpData.reset();
 	m_IptcData.reset();
 	
@@ -1244,6 +1232,19 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 		}
 
 		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded | QUIVER_FILE_DATA_EXIF);
+	}
+}
+
+void QuiverFile::QuiverFileImpl::ReleaseMetadataIfNotModified()
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+	if (!(m_fDataModified & QUIVER_FILE_DATA_EXIF))
+	{
+		m_ExifData.reset();
+		m_ExifDataOriginal.reset();
+		m_XmpData.reset();
+		m_IptcData.reset();
+		m_fDataLoaded = (QuiverDataFlags)(m_fDataLoaded & ~QUIVER_FILE_DATA_EXIF);
 	}
 }
 
@@ -1399,8 +1400,18 @@ static bool FileNameHasCameraPrefix(const gchar* szURI)
 // must hold m_MetadataMutex.
 bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
+	if (m_bMetadataDateResolved)
+		return 0 != m_cachedMetadataTimeT;
+
 	if (0 != m_cachedMetadataTimeT)
+	{
+		m_bMetadataDateResolved = true;
 		return true;
+	}
+
+	bool bWasExifLoaded = (m_fDataLoaded & QUIVER_FILE_DATA_EXIF);
 
 	if (!IsVideo())
 	{
@@ -1445,6 +1456,36 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 				}
 
 			}
+		}
+
+		if (0 == m_iOrientation && m_ExifData)
+		{
+			try
+			{
+				auto it = m_ExifData->findKey(
+					Exiv2::ExifKey("Exif.Image.Orientation"));
+				if (m_ExifData->end() != it)
+				{
+#if EXIV2_TEST_VERSION(0,28,0)
+					m_iOrientation = it->toInt64();
+#else
+					m_iOrientation = it->toLong();
+#endif
+				}
+				else
+				{
+					m_iOrientation = 1;
+				}
+			}
+			catch (...)
+			{
+				m_iOrientation = 1;
+			}
+		}
+
+		if (!bWasExifLoaded)
+		{
+			ReleaseMetadataIfNotModified();
 		}
 	}
 	else
@@ -1617,8 +1658,13 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 				}
 			}
 		}
+		if (!bWasExifLoaded)
+		{
+			ReleaseMetadataIfNotModified();
+		}
 	}
 
+	m_bMetadataDateResolved = true;
 	return 0 != m_cachedMetadataTimeT;
 }
 
@@ -1719,6 +1765,8 @@ bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pE
 			}
 		}
 		
+		m_iOrientation = 0;
+
 		if (GetOrientation() != iOldOrientation)
 		{
 			// remove cached thumbnails because they are cached
@@ -1866,7 +1914,14 @@ int QuiverFile::QuiverFileImpl::GetOrientation()
 		return 1;
 	}
 
-	if (0 == m_iOrientation && !(m_fDataLoaded & QUIVER_FILE_DATA_EXIF))
+	if (0 != m_iOrientation && !(m_fDataModified & QUIVER_FILE_DATA_EXIF))
+	{
+		return m_iOrientation;
+	}
+
+	bool bWasExifLoaded = (m_fDataLoaded & QUIVER_FILE_DATA_EXIF);
+
+	if (!(m_fDataLoaded & QUIVER_FILE_DATA_EXIF))
 	{
 		LoadExifData();
 	}
@@ -1910,6 +1965,11 @@ int QuiverFile::QuiverFileImpl::GetOrientation()
 	{
 		m_iOrientation = 1;
 	}
+
+	if (!bWasExifLoaded)
+	{
+		ReleaseMetadataIfNotModified();
+	}
 	
 	return m_iOrientation;
 }
@@ -1946,7 +2006,12 @@ bool QuiverFile::QuiverFileImpl::SetOrientation(int iOrientation)
 	// operator[] creates the entry if it doesn't exist
 	(*pExifData)["Exif.Image.Orientation"].setValue(value.get());
 
-	return SetExifData(pExifData);
+	bool res = SetExifData(pExifData);
+	if (res)
+	{
+		m_iOrientation = iOrientation;
+	}
+	return res;
 }
 
 // =================================================================================================
