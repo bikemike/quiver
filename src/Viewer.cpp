@@ -4205,7 +4205,10 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			{
 				QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
 				if (f.GetURI())
+				{
+					pViewerImpl->m_ThumbnailCache.RemoveTexture(f.GetURI());
 					QuiverFileOps::UndoStackRecordRotate(f.GetURI(), +1);
+				}
 			}
 		}
 	}
@@ -4225,7 +4228,10 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			{
 				QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
 				if (f.GetURI())
+				{
+					pViewerImpl->m_ThumbnailCache.RemoveTexture(f.GetURI());
 					QuiverFileOps::UndoStackRecordRotate(f.GetURI(), -1);
+				}
 			}
 		}
 	}
@@ -11330,6 +11336,10 @@ static void viewer_rotate_undo_cb(const char* uri, int undo_direction, gpointer 
 		quiver_image_view_rotate(imageview, undo_direction > 0 ? TRUE : FALSE);
 		int orient_op = undo_direction > 0 ? ORIENTATION_ROTATE_CW : ORIENTATION_ROTATE_CCW;
 		impl->SetCurrentOrientation(orientation_matrix[orient_op][impl->GetCurrentOrientation()]);
+		if (uri)
+		{
+			impl->m_ThumbnailCache.RemoveTexture(uri);
+		}
 	}
 }
 
@@ -13470,11 +13480,22 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleItemRemoved(ImageListEvent
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
 {
+	if (parent->m_ImageListPtr && event->GetIndex() < parent->m_ImageListPtr->GetSize())
+	{
+		QuiverFile f = parent->m_ImageListPtr->Get(event->GetIndex());
+		if (f.GetURI())
+		{
+			parent->m_ThumbnailCache.RemoveTexture(f.GetURI());
+		}
+		parent->m_ThumbnailLoader.UpdateList(true);
+		if (parent->m_pIconView && QUIVER_IS_ICON_VIEW(parent->m_pIconView))
+		{
+			quiver_icon_view_invalidate_cell(QUIVER_ICON_VIEW(parent->m_pIconView), event->GetIndex());
+		}
+	}
+
 	if (parent->m_ImageListPtr->GetCurrentIndex() == event->GetIndex())
 	{
-		parent->m_ThumbnailCache.RemoveTexture(parent->m_ImageListPtr->GetCurrent().GetURI());
-		parent->m_ThumbnailLoader.UpdateList(true);
-	
 		ImageLoader::LoadParams params = {};
 	
 		params.orientation = parent->GetCurrentOrientation(true);

@@ -5,8 +5,15 @@
 #include <string>
 
 
-SaveImageTask::SaveImageTask(QuiverFile file)
-	: m_QuiverFile(file)
+#include <glib.h>
+
+SaveImageTask::SaveImageTask(QuiverFile file, NotifyCallback notifyCb /* = nullptr */)
+	: m_dFileSavePercent(0.0), m_QuiverFile(file), m_notifyCb(notifyCb)
+{
+	m_QuiverFile.SetSaving(true);
+}
+
+SaveImageTask::~SaveImageTask()
 {
 }
 
@@ -54,34 +61,40 @@ double SaveImageTask::GetProgress() const
 
 void SaveImageTask::Run()
 {
-
-
-	if (m_QuiverFile.Modified() && m_QuiverFile.IsWriteable())
+	bool bSuccess = false;
+	if (m_QuiverFile.IsWriteable())
 	{
 		std::string strMimeType = m_QuiverFile.GetMimeType();
 		
 		ImageSaveManagerPtr saverPtr = ImageSaveManager::GetInstance();
 		
-		  
 		if (saverPtr->IsFormatSupported(strMimeType))
 		{
-			saverPtr->SaveImage(m_QuiverFile);
+			bSuccess = saverPtr->SaveImage(m_QuiverFile);
 		}
 	}
 
+	struct DispatchData
+	{
+		QuiverFile file;
+		bool success;
+		SaveImageTask::NotifyCallback cb;
+	};
+
+	DispatchData* dd = new DispatchData{m_QuiverFile, bSuccess, m_notifyCb};
+	g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, +[](gpointer user_data) -> gboolean {
+		DispatchData* data = static_cast<DispatchData*>(user_data);
+		data->file.SetSaving(false);
+		if (data->cb)
+		{
+			data->cb(data->file, data->success);
+		}
+		delete data;
+		return G_SOURCE_REMOVE;
+	}, dd, NULL);
+
+	m_dFileSavePercent = 1.0;
 	EmitTaskProgressUpdatedEvent();
-
-	/*
-	if (ShouldPause())
-	{
-		break;
-	}
-
-	if (ShouldCancel())
-	{
-		break;
-	}
-	*/
 }
 
 

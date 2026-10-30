@@ -27,39 +27,39 @@ public:
 
     bool Next() override {
         if (HasNext()) {
-            m_currentIndex++;
-            return true;
+            return SetCurrentIndex(m_currentIndex + 1);
         }
         return false;
     }
 
     bool Previous() override {
         if (HasPrevious()) {
-            m_currentIndex--;
-            return true;
+            return SetCurrentIndex(m_currentIndex - 1);
         }
         return false;
     }
 
     bool First() override {
         if (!m_files.empty()) {
-            m_currentIndex = 0;
-            return true;
+            return SetCurrentIndex(0);
         }
         return false;
     }
 
     bool Last() override {
         if (!m_files.empty()) {
-            m_currentIndex = m_files.size() - 1;
-            return true;
+            return SetCurrentIndex(m_files.size() - 1);
         }
         return false;
     }
 
     bool SetCurrentIndex(unsigned int iIndex) override {
         if (iIndex < m_files.size()) {
+            unsigned int old = m_currentIndex;
             m_currentIndex = iIndex;
+            if (old != m_currentIndex) {
+                EmitCurrentIndexChangedEvent(m_currentIndex, old);
+            }
             return true;
         }
         return false;
@@ -263,6 +263,130 @@ TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
         QuiverFile cur = filter_shrink.GetCurrent();
         REQUIRE(cur.GetURI() == nullptr);
         REQUIRE(filter_shrink.GetSize() == 0);
+    }
+
+    SECTION("Navigation emits CurrentIndexChangedEvent and maintains GetCurrent consistency")
+    {
+        class TestNavHandler : public IImageListEventHandler
+        {
+        public:
+            ImageListFilter* m_pFilter;
+            std::vector<std::pair<unsigned int, unsigned int>> index_changes;
+            std::vector<std::string> current_uris_at_event;
+
+            TestNavHandler(ImageListFilter* f) : m_pFilter(f) {}
+
+            void HandleContentsChanged(ImageListEventPtr) override {}
+            void HandleCurrentIndexChanged(ImageListEventPtr event) override
+            {
+                index_changes.push_back({event->GetIndex(), event->GetOldIndex()});
+                QuiverFile cur = m_pFilter->GetCurrent();
+                current_uris_at_event.push_back(cur.GetURI() ? cur.GetURI() : "");
+            }
+            void HandleItemAdded(ImageListEventPtr) override {}
+            void HandleItemRemoved(ImageListEventPtr) override {}
+            void HandleItemChanged(ImageListEventPtr) override {}
+            void HandleLoadProgress(double, int, int) override {}
+        };
+
+        boost::shared_ptr<TestNavHandler> navHandler(new TestNavHandler(&filter));
+        filter.AddEventHandler(navHandler);
+
+        // Reset to first
+        REQUIRE(filter.First());
+        navHandler->index_changes.clear();
+        navHandler->current_uris_at_event.clear();
+
+        // 1. Next() moves from index 0 (a.jpg) to 1 (c.jpg)
+        REQUIRE(filter.Next());
+        REQUIRE(navHandler->index_changes.size() == 1);
+        REQUIRE(navHandler->index_changes[0].first == 1);
+        REQUIRE(navHandler->index_changes[0].second == 0);
+        // CRUCIAL: GetCurrent() inside handler must report the new item c.jpg
+        REQUIRE(navHandler->current_uris_at_event[0] == "file:///test/c.jpg");
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///test/c.jpg");
+
+        // 2. Next() moves from index 1 (c.jpg) to 2 (e.jpg)
+        REQUIRE(filter.Next());
+        REQUIRE(navHandler->index_changes.size() == 2);
+        REQUIRE(navHandler->index_changes[1].first == 2);
+        REQUIRE(navHandler->index_changes[1].second == 1);
+        REQUIRE(navHandler->current_uris_at_event[1] == "file:///test/e.jpg");
+
+        // 3. Next() at end fails and does not emit spurious event
+        REQUIRE_FALSE(filter.Next());
+        REQUIRE(navHandler->index_changes.size() == 2);
+
+        // 4. Previous() moves from index 2 (e.jpg) back to 1 (c.jpg)
+        REQUIRE(filter.Previous());
+        REQUIRE(navHandler->index_changes.size() == 3);
+        REQUIRE(navHandler->index_changes[2].first == 1);
+        REQUIRE(navHandler->index_changes[2].second == 2);
+        REQUIRE(navHandler->current_uris_at_event[2] == "file:///test/c.jpg");
+
+        // 5. First() moves from index 1 back to 0 (a.jpg)
+        REQUIRE(filter.First());
+        REQUIRE(navHandler->index_changes.size() == 4);
+        REQUIRE(navHandler->index_changes[3].first == 0);
+        REQUIRE(navHandler->index_changes[3].second == 1);
+        REQUIRE(navHandler->current_uris_at_event[3] == "file:///test/a.jpg");
+
+        // 6. Previous() at start fails and does not emit spurious event
+        REQUIRE_FALSE(filter.Previous());
+        REQUIRE(navHandler->index_changes.size() == 4);
+
+        // 7. Last() moves from index 0 directly to 2 (e.jpg)
+        REQUIRE(filter.Last());
+        REQUIRE(navHandler->index_changes.size() == 5);
+        REQUIRE(navHandler->index_changes[4].first == 2);
+        REQUIRE(navHandler->index_changes[4].second == 0);
+        REQUIRE(navHandler->current_uris_at_event[4] == "file:///test/e.jpg");
+
+        filter.RemoveEventHandler(navHandler);
+    }
+
+    SECTION("Source moving to filtered-out item does not emit filter index change")
+    {
+        class TestNavHandler : public IImageListEventHandler
+        {
+        public:
+            int change_count = 0;
+            void HandleContentsChanged(ImageListEventPtr) override {}
+            void HandleCurrentIndexChanged(ImageListEventPtr) override { change_count++; }
+            void HandleItemAdded(ImageListEventPtr) override {}
+            void HandleItemRemoved(ImageListEventPtr) override {}
+            void HandleItemChanged(ImageListEventPtr) override {}
+            void HandleLoadProgress(double, int, int) override {}
+        };
+
+        boost::shared_ptr<TestNavHandler> navHandler(new TestNavHandler());
+        filter.AddEventHandler(navHandler);
+
+        REQUIRE(filter.First());
+        navHandler->change_count = 0;
+
+        // Source item 1 is "file:///test/b.png", which does not match .jpg predicate
+        mock->SetCurrentIndex(1);
+        REQUIRE(navHandler->change_count == 0);
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///test/a.jpg");
+
+        // Source item 2 is "file:///test/c.jpg", which matches .jpg predicate
+        mock->SetCurrentIndex(2);
+        REQUIRE(navHandler->change_count == 1);
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///test/c.jpg");
+
+        filter.RemoveEventHandler(navHandler);
+    }
+
+    SECTION("Empty filter First and Last return false safely")
+    {
+        boost::shared_ptr<MockImageListView> empty_mock(new MockImageListView({}));
+        ImageListFilter empty_filter(empty_mock, [](const QuiverFile&) { return true; });
+        REQUIRE(empty_filter.GetSize() == 0);
+        REQUIRE_FALSE(empty_filter.First());
+        REQUIRE_FALSE(empty_filter.Last());
+        REQUIRE_FALSE(empty_filter.Next());
+        REQUIRE_FALSE(empty_filter.Previous());
     }
 }
 

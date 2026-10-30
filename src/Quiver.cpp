@@ -366,6 +366,7 @@ public:
 	/* Pending idle handler coalescing recent-menu rebuilds.  See
 	 * RebuildRecentMenuDeferred(). */
 	guint m_recentMenuIdleId;
+	std::shared_ptr<bool> m_aliveToken;
 };
 
 
@@ -379,7 +380,8 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 		  m_PreferencesEventHandler( new PreferencesEventHandler(this) ),
 		  m_ImageListEventHandler ( new ImageListEventHandler(this) ),
 		  m_BookmarksEventHandler ( new BookmarksEventHandler(this) ),
-		  m_ExternalToolsEventHandler ( new ExternalToolsEventHandler(this) )
+		  m_ExternalToolsEventHandler ( new ExternalToolsEventHandler(this) ),
+		  m_aliveToken(std::make_shared<bool>(true))
 {
 	m_pQuiver = parent;
 	m_pBuilder = NULL;
@@ -439,6 +441,10 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 }
 QuiverImpl::~QuiverImpl()
 {
+	if (m_aliveToken)
+	{
+		*m_aliveToken = false;
+	}
 	QuiverUtils::SetHUDToastCallback(NULL, NULL);
 	if (0 != m_iTimeoutMouseMotionNotify)
 	{
@@ -1192,15 +1198,54 @@ static void quiver_new_folder_undo_cb(const char *folder_uri, gpointer user_data
 
 void QuiverImpl::Save()
 {
-	if (m_CurrentQuiverFile.Modified() && m_CurrentQuiverFile.IsWriteable())
+	if ((m_CurrentQuiverFile.Modified() || m_CurrentQuiverFile.IsSaving()) && m_CurrentQuiverFile.IsWriteable())
 	{
-		SaveImageTaskPtr saveImageTaskPtr(new SaveImageTask(m_CurrentQuiverFile));
+		if (m_CurrentQuiverFile.IsSaving())
+		{
+			return;
+		}
+
+		QuiverFile fileToSave = m_CurrentQuiverFile;
+		IImageListViewPtr activeList = GetActiveImageListView();
+		std::weak_ptr<bool> aliveToken = m_aliveToken;
+
+		SaveImageTaskPtr saveImageTaskPtr(new SaveImageTask(fileToSave, [this, fileToSave, activeList, aliveToken](QuiverFile /* file */, bool success) {
+			auto alive = aliveToken.lock();
+			if (!alive || !*alive)
+			{
+				return;
+			}
+
+			if (success)
+			{
+				if (activeList)
+				{
+					for (unsigned int i = 0; i < activeList->GetSize(); ++i)
+					{
+						if (activeList->Get(i) == fileToSave)
+						{
+							activeList->EmitItemChangedEvent(i);
+							break;
+						}
+					}
+				}
+			}
+			else
+			{
+				ShowHUDToast("Failed to save changes", "dialog-warning-symbolic");
+			}
+		}));
 		TaskManager::GetInstance()->AddTask(saveImageTaskPtr);
 	}
 }
 
 bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 {
+	if (m_CurrentQuiverFile.IsSaving())
+	{
+		return true;
+	}
+
 	/* Only offer to save a modified file we can write back to. */
 	if (!m_CurrentQuiverFile.Modified() || !m_CurrentQuiverFile.IsWriteable())
 	{
@@ -1292,6 +1337,7 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 	gtk_box_append(GTK_BOX(hbox), btnDiscard);
 
 	GtkWidget *btnSave = gtk_button_new_with_label(_("Save"));
+	gtk_widget_add_css_class(btnSave, "suggested-action");
 	g_signal_connect(btnSave, "clicked",
 		G_CALLBACK(+[](GtkButton *, gpointer ud) {
 			auto *d = static_cast<PromptData*>(ud);
@@ -1301,6 +1347,7 @@ bool QuiverImpl::MaybeSaveModified(bool bAllowCancel)
 	gtk_box_append(GTK_BOX(hbox), btnSave);
 
 	gtk_window_set_default_widget(GTK_WINDOW(dlg), btnSave);
+	QuiverUtils::GrabFocusForWidget(btnSave);
 
 	/* Escape cancels (or discards if cancel is not allowed). */
 	GtkEventController *key_ctrl = gtk_event_controller_key_new();
@@ -2263,6 +2310,11 @@ void Quiver::ImageChanged()
 	if ( activeList && activeList->GetSize() )
 	{
 		QuiverFile f = activeList->GetCurrent();
+		if (f == m_QuiverImplPtr->m_CurrentQuiverFile)
+		{
+			return;
+		}
+
 		{
 			/* Save the outgoing file: per-preference, either silently or with a
 			 * confirmation prompt.  Dialog is a message box because the File menu
@@ -3182,11 +3234,32 @@ void Quiver::ApplyForceDarkTheme()
 		return;
 
 	GtkSettings *settings = gtk_settings_get_for_display(display);
+	if (settings == NULL)
+		return;
 
 	PreferencesPtr prefsPtr = Preferences::GetInstance();
 	bool bForceDark = prefsPtr->GetBoolean(QUIVER_PREFS_APP, QUIVER_PREFS_APP_FORCE_DARK_THEME, false);
 
-	g_object_set(settings, "gtk-application-prefer-dark-theme", bForceDark, NULL);
+	if (g_object_class_find_property(G_OBJECT_GET_CLASS(settings), "gtk-interface-color-scheme"))
+	{
+		gtk_settings_reset_property(settings, "gtk-application-prefer-dark-theme");
+		if (bForceDark)
+		{
+#if GTK_CHECK_VERSION(4, 20, 0)
+			g_object_set(settings, "gtk-interface-color-scheme", GTK_INTERFACE_COLOR_SCHEME_DARK, NULL);
+#else
+			g_object_set(settings, "gtk-interface-color-scheme", 2, NULL);
+#endif
+		}
+		else
+		{
+			gtk_settings_reset_property(settings, "gtk-interface-color-scheme");
+		}
+	}
+	else
+	{
+		g_object_set(settings, "gtk-application-prefer-dark-theme", bForceDark, NULL);
+	}
 }
 
 void Quiver::SaveSettings()

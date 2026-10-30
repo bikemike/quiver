@@ -52,6 +52,8 @@ public:
 	bool HasThumbnail(int iSize = 0);
 
 	bool Modified() const;
+	bool IsSaving() const;
+	void SetSaving(bool bSaving);
 
 	bool IsFolder() const;
 	bool IsVideo();

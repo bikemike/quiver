@@ -154,12 +154,16 @@ bool ImageListFilter::Previous()
 bool ImageListFilter::First()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+	if (GetSize() == 0)
+		return false;
 	return SetCurrentIndex(0);
 }
 
 bool ImageListFilter::Last()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+	if (GetSize() == 0)
+		return false;
 	return SetCurrentIndex(GetSize() - 1);
 }
 

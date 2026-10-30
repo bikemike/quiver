@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include "QuiverFile.h"
 #include "ImageDecoder.h"
+#include "SaveImageTask.h"
+#include "TaskManager.h"
 #include "test_helpers.h"
 #include <exiv2/exiv2.hpp>
 #include <glib.h>
@@ -307,4 +309,90 @@ TEST_CASE("QuiverFile date metadata detection", "[unit][file][date]")
     }
 
     g_free(sampleUri);
+}
+
+TEST_CASE("QuiverFile saving state and async SaveImageTask", "[unit][file][save_async]")
+{
+    std::string imagesDir = QuiverTest_GetImagesDir();
+    std::string sampleJpg = imagesDir + "/sample_4k.jpg";
+
+    char tmpPath[] = "/tmp/quiver_test_async_save_XXXXXX.jpg";
+    int fd = g_mkstemp(tmpPath);
+    REQUIRE(fd >= 0);
+    close(fd);
+
+    char* contents = nullptr;
+    gsize length = 0;
+    REQUIRE(g_file_get_contents(sampleJpg.c_str(), &contents, &length, NULL));
+    REQUIRE(g_file_set_contents(tmpPath, contents, length, NULL));
+    g_free(contents);
+
+    gchar* tmpUri = g_filename_to_uri(tmpPath, NULL, NULL);
+    REQUIRE(tmpUri != NULL);
+
+    SECTION("SetSaving suppresses Modified flag and restores it when saving ends without saving")
+    {
+        QuiverFile qf(tmpUri);
+        REQUIRE_FALSE(qf.Modified());
+        REQUIRE_FALSE(qf.IsSaving());
+
+        // Modify orientation
+        REQUIRE(qf.SetOrientation(6));
+        REQUIRE(qf.Modified());
+        REQUIRE_FALSE(qf.IsSaving());
+
+        // Simulate save started
+        qf.SetSaving(true);
+        REQUIRE(qf.IsSaving());
+        REQUIRE_FALSE(qf.Modified()); // Modified() should be suppressed while saving
+
+        // Simulate save failure or cancellation: saving ends, but data wasn't saved
+        qf.SetSaving(false);
+        REQUIRE_FALSE(qf.IsSaving());
+        REQUIRE(qf.Modified()); // Modified() is unsuppressed again
+    }
+
+    SECTION("SaveImageTask runs asynchronously and notifies GUI thread upon completion")
+    {
+        QuiverFile qf(tmpUri);
+        REQUIRE(qf.SetOrientation(8));
+        REQUIRE(qf.Modified());
+
+        bool callbackInvoked = false;
+        bool saveSuccess = false;
+        QuiverFile completedFile;
+
+        SaveImageTaskPtr task(new SaveImageTask(qf, [&](QuiverFile file, bool success) {
+            callbackInvoked = true;
+            saveSuccess = success;
+            completedFile = file;
+        }));
+
+        // Immediately after task construction, file should be in saving state with Modified suppressed
+        REQUIRE(qf.IsSaving());
+        REQUIRE_FALSE(qf.Modified());
+
+        TaskManagerPtr tm = TaskManager::GetInstance();
+        tm->AddTask(task);
+
+        // Pump the GLib main context until the idle callback is dispatched
+        for (int i = 0; i < 200 && !callbackInvoked; ++i)
+        {
+            while (g_main_context_iteration(NULL, FALSE));
+            g_usleep(10000); // 10ms
+        }
+
+        REQUIRE(callbackInvoked);
+        REQUIRE(saveSuccess);
+        REQUIRE_FALSE(qf.IsSaving());
+        REQUIRE_FALSE(qf.Modified());
+
+        // Verify the orientation was actually persisted to disk
+        QuiverFile reloadedQf(tmpUri);
+        REQUIRE(reloadedQf.GetOrientation() == 8);
+        REQUIRE_FALSE(reloadedQf.Modified());
+    }
+
+    g_free(tmpUri);
+    g_unlink(tmpPath);
 }

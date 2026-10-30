@@ -28,6 +28,7 @@
 
 #include <map>
 #include <cmath>
+#include <atomic>
 #include <mutex>
 #include <boost/algorithm/string.hpp>
 
@@ -240,6 +241,8 @@ public:
 #endif
 	
 	bool Modified() const;
+	bool IsSaving() const;
+	void SetSaving(bool bSaving);
 	bool IsVideo();
 	bool IsFolder() const;
 
@@ -302,6 +305,7 @@ public:
 	static boost::shared_ptr<GThreadPool> c_ThreadPoolPtr;
 
 	bool m_bThumbloadFail;
+	std::atomic<bool> m_bSaving{false};
 	time_t m_cachedTimeT = 0;
 	time_t m_cachedMetadataTimeT = 0;
 	bool m_bMetadataDateResolved = false;
@@ -428,6 +432,7 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 	m_iOrientation = 0;
 	
 	m_fDataModified = QUIVER_FILE_DATA_NONE;
+	m_bSaving.store(false);
 	
 	m_dLoadTimeSeconds = -1;
 
@@ -749,21 +754,6 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 		loaded_from_legacy = (0 < path_index);
 		bool valid = true;
 
-		auto ori_itr = png_meta.find("Thumb::Image::Orientation");
-		if (ori_itr != png_meta.end())
-		{
-			int thumb_ori = atoi(ori_itr->second.c_str());
-			if ((m_fDataLoaded & QUIVER_FILE_DATA_EXIF) && m_iOrientation != 0 && thumb_ori != m_iOrientation)
-			{
-				valid = false;
-				save_thumbnail_to_cache = TRUE;
-			}
-			else
-			{
-				m_iOrientation = thumb_ori;
-			}
-		}
-
 		auto mtime_itr = png_meta.find("Thumb::MTime");
 		if (mtime_itr != png_meta.end())
 		{
@@ -781,6 +771,7 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 			if (tv_sec != mtime)
 			{
 				valid = false;
+				save_thumbnail_to_cache = TRUE;
 			}
 			else
 			{
@@ -799,6 +790,24 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 				{
 					valid = false;
 					save_thumbnail_to_cache = TRUE;
+				}
+			}
+		}
+
+		if (valid)
+		{
+			auto ori_itr = png_meta.find("Thumb::Image::Orientation");
+			if (ori_itr != png_meta.end())
+			{
+				int thumb_ori = atoi(ori_itr->second.c_str());
+				if ((m_fDataLoaded & QUIVER_FILE_DATA_EXIF) && m_iOrientation != 0 && thumb_ori != m_iOrientation)
+				{
+					valid = false;
+					save_thumbnail_to_cache = TRUE;
+				}
+				else if (thumb_ori >= 1 && thumb_ori <= 8 && 0 == m_iOrientation)
+				{
+					m_iOrientation = thumb_ori;
 				}
 			}
 		}
@@ -1152,7 +1161,12 @@ void QuiverFile::QuiverFileImpl::Reload()
 	for (unsigned int i = 0 ; i < n_elements; i++)
 	{
 		c_ThumbnailCache.m_mapThumbnailCache[ThumbnailSizes[i].size]->RemoveTexture(strURI);
-			
+		gchar *thumb_path = quiver_thumbnail_path_for_uri(strURI.c_str(), ThumbnailSizes[i].name);
+		g_remove(thumb_path);
+		g_free(thumb_path);
+		gchar *legacy_thumb_path = quiver_thumbnail_path_for_uri_legacy(strURI.c_str(), ThumbnailSizes[i].name);
+		g_remove(legacy_thumb_path);
+		g_free(legacy_thumb_path);
 	}
 
 	Init(strURI.c_str(), NULL);
@@ -1775,7 +1789,12 @@ bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pE
 			for (unsigned int i = 0 ; i < n_elements; i++)
 			{
 				c_ThumbnailCache.m_mapThumbnailCache[ThumbnailSizes[i].size]->RemoveTexture(m_szURI);
-
+				gchar *thumb_path = quiver_thumbnail_path_for_uri(m_szURI, ThumbnailSizes[i].name);
+				g_remove(thumb_path);
+				g_free(thumb_path);
+				gchar *legacy_thumb_path = quiver_thumbnail_path_for_uri_legacy(m_szURI, ThumbnailSizes[i].name);
+				g_remove(legacy_thumb_path);
+				g_free(legacy_thumb_path);
 			}
 		}
 
@@ -1792,7 +1811,17 @@ bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pE
 
 bool QuiverFile::QuiverFileImpl::Modified() const
 {
-	return (0 != m_fDataModified);
+	return (0 != m_fDataModified) && !m_bSaving.load();
+}
+
+bool QuiverFile::QuiverFileImpl::IsSaving() const
+{
+	return m_bSaving.load();
+}
+
+void QuiverFile::QuiverFileImpl::SetSaving(bool bSaving)
+{
+	m_bSaving.store(bSaving);
 }
 
 bool QuiverFile::QuiverFileImpl::IsFolder() const
@@ -1988,7 +2017,7 @@ bool QuiverFile::QuiverFileImpl::SetOrientation(int iOrientation)
 	LoadExifData();
 	if (NULL == m_ExifData.get())
 	{
-		return false;
+		m_ExifData = std::make_shared<Exiv2::ExifData>();
 	}
 
 	/* SetExifData() diffs what it is given against the load-time snapshot and
@@ -2043,7 +2072,20 @@ void QuiverFile::ClearThumbnailCache()
 
 bool QuiverFile::Modified() const
 {
-	return m_QuiverFilePtr->Modified();
+	return m_QuiverFilePtr ? m_QuiverFilePtr->Modified() : false;
+}
+
+bool QuiverFile::IsSaving() const
+{
+	return m_QuiverFilePtr ? m_QuiverFilePtr->IsSaving() : false;
+}
+
+void QuiverFile::SetSaving(bool bSaving)
+{
+	if (m_QuiverFilePtr)
+	{
+		m_QuiverFilePtr->SetSaving(bSaving);
+	}
 }
 
 bool QuiverFile::IsFolder() const

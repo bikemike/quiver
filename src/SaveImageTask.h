@@ -4,33 +4,38 @@
 #include "AbstractTask.h"
 #include "QuiverFile.h"
 
+#include <functional>
 #include <vector>
 
 class SaveImageTask : public AbstractTask
 {
 public:
-	                    SaveImageTask(QuiverFile file);
+	typedef std::function<void(QuiverFile, bool)> NotifyCallback;
 
-	virtual std::string GetDescription() const;
+	                    SaveImageTask(QuiverFile file, NotifyCallback notifyCb = nullptr);
+	virtual             ~SaveImageTask();
+
+	virtual std::string GetDescription() const override;
 
 	// quantity type may be kb, items, images, files, 
 	// or anything else the task iterates over
-	virtual std::string GetIterationTypeName(bool shortname = false, bool plural = true) const;
+	virtual std::string GetIterationTypeName(bool shortname = false, bool plural = true) const override;
 
 	// get total and current iteration
-	virtual int         GetTotalIterations() const;
-	virtual int         GetCurrentIteration() const;
+	virtual int         GetTotalIterations() const override;
+	virtual int         GetCurrentIteration() const override;
 
-	virtual double      GetProgress() const;
+	virtual double      GetProgress() const override;
 
-	virtual bool        IsHidden() const {return true;}
+	virtual bool        IsHidden() const override {return true;}
 
 protected:
-	virtual void        Run();
+	virtual void        Run() override;
 
 private:
 	double m_dFileSavePercent;
 	QuiverFile m_QuiverFile;
+	NotifyCallback m_notifyCb;
 };
 
 typedef boost::shared_ptr<SaveImageTask> SaveImageTaskPtr;
