@@ -6,13 +6,19 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
+#include <cmath>
 #include <vector>
 #include <utility>
 #include <algorithm>
 #include <thread>
 #include <semaphore>
 #include <zlib.h>
+#include <jpeglib.h>
+#include <setjmp.h>
+#include <libquiver/quiver-pixbuf-utils.h>
 #include "QuiverUtils.h"
+
+extern "C" void jpeg_gio_src(j_decompress_ptr cinfo, GInputStream *infile);
 
 #if HAVE_GLYCIN
 ImageDecoderBackend ImageDecoder::s_backend = ImageDecoderBackend::AUTO;
@@ -67,6 +73,14 @@ static bool is_video_mimetype(const char* mimetype)
            strcmp(mimetype, "application/x-ms-wmv") == 0;
 }
 
+static bool is_jpeg_mimetype(const char* mimetype)
+{
+    if (!mimetype) return false;
+    return strcmp(mimetype, "image/jpeg") == 0 ||
+           strcmp(mimetype, "image/jpg") == 0 ||
+           strcmp(mimetype, "image/pjpeg") == 0;
+}
+
 /* Cap on how big a file may be before we give up on header probing and let the
  * caller fall back to a full decode.
  *
@@ -110,6 +124,194 @@ namespace
         DecodeSlotGuard(const DecodeSlotGuard&) = delete;
         DecodeSlotGuard& operator=(const DecodeSlotGuard&) = delete;
     };
+} // namespace
+
+namespace
+{
+    struct JpegErrorManager
+    {
+        struct jpeg_error_mgr base;
+        jmp_buf jump;
+        char message[JMSG_LENGTH_MAX];
+    };
+
+    void jpeg_error_exit(j_common_ptr cinfo)
+    {
+        JpegErrorManager *err = reinterpret_cast<JpegErrorManager*>(cinfo->err);
+        (*cinfo->err->format_message)(cinfo, err->message);
+        longjmp(err->jump, 1);
+    }
+
+    void jpeg_emit_message(j_common_ptr cinfo, int msg_level)
+    {
+        (void)cinfo;
+        (void)msg_level;
+    }
+
+    bool decode_jpeg_stream_scaled(GInputStream *in, int max_width, int max_height,
+                                   int *out_width, int *out_height,
+                                   unsigned char **out_rgb, GError **error)
+    {
+        *out_width = 0;
+        *out_height = 0;
+        *out_rgb = nullptr;
+
+        struct jpeg_decompress_struct cinfo;
+        JpegErrorManager jerr;
+        std::memset(&cinfo, 0, sizeof(cinfo));
+        std::memset(&jerr, 0, sizeof(jerr));
+        cinfo.err = jpeg_std_error(&jerr.base);
+        jerr.base.error_exit = jpeg_error_exit;
+        jerr.base.emit_message = jpeg_emit_message;
+
+        volatile bool created = false;
+        unsigned char *volatile rgb = nullptr;
+
+        if (setjmp(jerr.jump))
+        {
+            if (rgb)
+                g_free((void *)rgb);
+            if (created)
+                jpeg_destroy_decompress(&cinfo);
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                jerr.message[0] ? jerr.message : "JPEG decode failed");
+            return false;
+        }
+
+        jpeg_create_decompress(&cinfo);
+        created = true;
+        jpeg_gio_src(&cinfo, in);
+        jpeg_read_header(&cinfo, TRUE);
+
+        const int longest = std::max((int)cinfo.image_width, (int)cinfo.image_height);
+        const int target = std::max(max_width, max_height);
+        int scale = 8;
+        if (longest > 0 && target > 0)
+        {
+            scale = (int)std::ceil(8.0 * (double)target / (double)longest);
+            scale = std::clamp(scale, 1, 8);
+        }
+        if (scale < 8)
+        {
+            cinfo.scale_num = scale;
+            cinfo.scale_denom = 8;
+        }
+        else
+        {
+            cinfo.scale_num = 1;
+            cinfo.scale_denom = 1;
+        }
+        cinfo.out_color_space = JCS_RGB;
+        jpeg_start_decompress(&cinfo);
+
+        const int width = (int)cinfo.output_width;
+        const int height = (int)cinfo.output_height;
+        if (width <= 0 || height <= 0)
+        {
+            jpeg_destroy_decompress(&cinfo);
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                "JPEG has no pixels");
+            return false;
+        }
+
+        const gsize stride = (gsize)width * 3;
+        rgb = (unsigned char *)g_malloc(stride * (gsize)height);
+        while (cinfo.output_scanline < cinfo.output_height)
+        {
+            JSAMPROW row = rgb + stride * cinfo.output_scanline;
+            if (jpeg_read_scanlines(&cinfo, &row, 1) == 0)
+            {
+                g_free((void *)rgb);
+                jpeg_destroy_decompress(&cinfo);
+                g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                    "JPEG decode stalled");
+                return false;
+            }
+        }
+        jpeg_finish_decompress(&cinfo);
+        jpeg_destroy_decompress(&cinfo);
+
+        *out_width = width;
+        *out_height = height;
+        *out_rgb = (unsigned char *)rgb;
+        return true;
+    }
+
+    GdkTexture* decode_jpeg_file_scaled(GFile *file, int max_width, int max_height,
+                                        GCancellable *cancellable, GError **error)
+    {
+        GError *read_error = NULL;
+        GInputStream *in = G_INPUT_STREAM(g_file_read(file, cancellable, &read_error));
+        if (!in)
+        {
+            if (read_error)
+            {
+                if (error)
+                    *error = read_error;
+                else
+                    g_error_free(read_error);
+            }
+            return NULL;
+        }
+
+        int width = 0;
+        int height = 0;
+        unsigned char *rgb = nullptr;
+        GError *decode_error = NULL;
+        bool decoded = false;
+        {
+            DecodeSlotGuard slot;
+            decoded = decode_jpeg_stream_scaled(in, max_width, max_height,
+                                                &width, &height, &rgb, &decode_error);
+        }
+        g_object_unref(in);
+
+        if (!decoded)
+        {
+            if (decode_error)
+            {
+                if (error)
+                    *error = decode_error;
+                else
+                    g_error_free(decode_error);
+            }
+            return NULL;
+        }
+
+        const gsize pixel_count = (gsize)width * (gsize)height;
+        std::vector<unsigned char> rgba(pixel_count * 4);
+        for (gsize i = 0; i < pixel_count; ++i)
+        {
+            rgba[i * 4] = rgb[i * 3];
+            rgba[i * 4 + 1] = rgb[i * 3 + 1];
+            rgba[i * 4 + 2] = rgb[i * 3 + 2];
+            rgba[i * 4 + 3] = 255;
+        }
+        g_free(rgb);
+
+        GBytes *bytes = g_bytes_new(rgba.data(), rgba.size());
+        GdkTexture *texture = gdk_memory_texture_new(width, height, GDK_MEMORY_R8G8B8A8,
+                                                     bytes, (gsize)width * 4);
+        g_bytes_unref(bytes);
+        if (!texture)
+            return NULL;
+
+        if (width > max_width || height > max_height)
+        {
+            guint scaled_width = (guint)width;
+            guint scaled_height = (guint)height;
+            quiver_rect_get_bound_size(max_width, max_height,
+                                       &scaled_width, &scaled_height, FALSE);
+            GdkTexture *scaled = QuiverUtils::ScaleTexture(texture, scaled_width, scaled_height);
+            if (scaled)
+            {
+                g_object_unref(texture);
+                texture = scaled;
+            }
+        }
+
+        return texture;
+    }
 } // namespace
 
 // -------------------------------------------------------------------------
@@ -896,6 +1098,40 @@ GdkTexture* ImageDecoder::DecodeFileTexture(GFile *file, const char *mimetype,
             g_error_free(err);
     }
     return NULL;
+}
+
+GdkTexture* ImageDecoder::DecodeFileTextureAtSize(GFile *file, const char *mimetype,
+                                                 int max_width, int max_height,
+                                                 GCancellable *cancellable,
+                                                 GError **error,
+                                                 goffset known_size)
+{
+    if (!file)
+        return NULL;
+
+    if (is_video_mimetype(mimetype) || is_size_too_large(known_size))
+        return NULL;
+
+    if (max_width <= 0 || max_height <= 0 || !is_jpeg_mimetype(mimetype))
+        return DecodeFileTexture(file, mimetype, cancellable, error, known_size);
+
+    GError *jpeg_error = NULL;
+    GdkTexture *texture = decode_jpeg_file_scaled(file, max_width, max_height,
+                                                  cancellable, &jpeg_error);
+    if (texture)
+        return texture;
+
+    if (jpeg_error && g_error_matches(jpeg_error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+        if (error)
+            *error = jpeg_error;
+        else
+            g_error_free(jpeg_error);
+        return NULL;
+    }
+
+    g_clear_error(&jpeg_error);
+    return DecodeFileTexture(file, mimetype, cancellable, error, known_size);
 }
 
 #if HAVE_GLYCIN && HAVE_GDK_PIXBUF

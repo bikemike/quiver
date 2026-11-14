@@ -73,6 +73,12 @@ public:
                                          GError **error = NULL,
                                          goffset known_size = -1);
 
+    static GdkTexture* DecodeFileTextureAtSize(GFile *file, const char *mimetype,
+                                               int max_width, int max_height,
+                                               GCancellable *cancellable = NULL,
+                                               GError **error = NULL,
+                                               goffset known_size = -1);
+
     /* Turn @texture into @orientation, taking ownership of it.
      *
      * The decoders above all hand back the pixels exactly as they are stored -

@@ -102,14 +102,14 @@ TEST_CASE("QuiverFile URI and Media Detection", "[unit][file]")
                 CHECK(gdk_texture_get_height(exifThumb) == 90);
                 g_object_unref(exifThumb);
 
-                // Size 128 uses EXIF thumbnail and reorients to upright portrait (72x128)
+                // Size 128 is decoded from the image and reorients to upright portrait (72x128)
                 GdkTexture *t128 = qf.GetThumbnailTexture(128);
                 REQUIRE(t128 != NULL);
                 CHECK(gdk_texture_get_width(t128) == 72);
                 CHECK(gdk_texture_get_height(t128) == 128);
                 g_object_unref(t128);
 
-                // Size 256 uses full image decode and produces upright portrait (144x256)
+                // Size 256 is decoded from the image and produces upright portrait (144x256)
                 GdkTexture *t256 = qf.GetThumbnailTexture(256);
                 REQUIRE(t256 != NULL);
                 CHECK(gdk_texture_get_width(t256) == 144);

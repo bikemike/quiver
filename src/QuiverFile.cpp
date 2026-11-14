@@ -898,48 +898,6 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 
 	if (!bSkipGeneration)
 	{
-		if (NULL == thumb_texture && 128 >= thumbSize->size && !IsVideo())
-		{
-			thumb_texture = GetExifThumbnailTexture();
-			if (NULL != thumb_texture)
-			{
-				if (1 < GetOrientation())
-				{
-					GdkTexture *new_tex = QuiverUtils::TextureExifReorientate(thumb_texture, GetOrientation());
-					if (NULL != new_tex)
-					{
-						g_object_unref(thumb_texture);
-						thumb_texture = new_tex;
-					}
-				}
-
-				guint size = thumbSize->size;
-				guint tex_width = gdk_texture_get_width(thumb_texture);
-				guint tex_height = gdk_texture_get_height(thumb_texture);
-				double thumb_ratio = tex_width / (double)tex_height;
-				int act_w = GetWidth();
-				int act_h = GetHeight();
-				if (4 < GetOrientation())
-				{
-					std::swap(act_w, act_h);
-				}
-				double actual_ratio = (act_h > 0) ? (act_w / (double)act_h) : 1.0;
-
-				if (fabs(thumb_ratio - actual_ratio) < 0.05 && (tex_width >= size || tex_height >= size))
-				{
-					quiver_rect_get_bound_size(size, size, &tex_width, &tex_height, FALSE);
-					GdkTexture *scaled = QuiverUtils::ScaleTexture(thumb_texture, tex_width, tex_height);
-					g_object_unref(thumb_texture);
-					thumb_texture = scaled;
-				}
-				else
-				{
-					g_object_unref(thumb_texture);
-					thumb_texture = NULL;
-				}
-			}
-		}
-
 		if (NULL == thumb_texture)
 		{
 			int size = thumbSize->size;
@@ -998,7 +956,8 @@ GdkTexture * QuiverFile::QuiverFileImpl::GetThumbnailTexture(int iSize /* = 0 */
 					orig_h = m_iHeight;
 				}
 
-				thumb_texture = ImageDecoder::DecodeFileTexture(gfile, GetMimeType(), NULL, &tmp_error, KnownSize());
+				thumb_texture = ImageDecoder::DecodeFileTextureAtSize(gfile, GetMimeType(),
+					size, size, NULL, &tmp_error, KnownSize());
 				g_object_unref(gfile);
 				if (tmp_error)
 				{
