@@ -48,6 +48,9 @@ extern "C" {
 #include "PasteMetadataTask.h"
 
 #include "ImageListFilter.h"
+#include "FilteredImageList.h"
+#include "ImageFilterState.h"
+#include "QuiverMapView.h"
 #include "OrganizeDlg.h"
 #include "OrganizeTask.h"
 
@@ -80,6 +83,8 @@ extern "C"
 }
 
 #include <set>
+#include <limits>
+#include <ctime>
 
 
 // globals needed for preferences
@@ -88,6 +93,24 @@ gchar g_szConfigDir[256]      = "";
 gchar g_szConfigFilePath[256] = "";
 
 using namespace std;
+
+namespace
+{
+bool MapDebugEnabled()
+{
+	static const bool enabled = g_getenv("QUIVER_DEBUG_MAP") != NULL;
+	return enabled;
+}
+
+bool MapDebugVerbose()
+{
+	static const bool enabled = g_getenv("QUIVER_DEBUG_MAP_VERBOSE") != NULL;
+	return enabled;
+}
+}
+
+#define MAP_DEBUG(...) \
+	do { if (MapDebugEnabled()) g_print("[map-debug] " __VA_ARGS__); } while (0)
 
 // GTK4 compat: GdkWindowState removed in GTK4; track fullscreen via a bool.
 typedef guint GdkWindowState;
@@ -101,6 +124,52 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 static void quiver_escape_action(QuiverImpl *pQuiverImpl);
 
 static gboolean timeout_event_motion_notify (gpointer data);
+
+struct ShowBrowserFrameProbe
+{
+	gint64 start_us;
+};
+
+struct ShowBrowserPaintProbe
+{
+	gint64 start_us;
+	gulong handler;
+};
+
+static gint64 g_last_escape_key_us = 0;
+
+static gboolean quiver_key_capture_cb(GtkEventControllerKey*, guint keyval,
+	guint, GdkModifierType, gpointer)
+{
+	if (keyval == GDK_KEY_Escape && quiver_metrics_enabled())
+	{
+		g_last_escape_key_us = quiver_metrics_now_us();
+		quiver_metric_mark("input", "escape key");
+	}
+	return FALSE;
+}
+
+static gboolean showbrowser_first_frame_cb(GtkWidget*, GdkFrameClock*, gpointer data)
+{
+	ShowBrowserFrameProbe* probe = static_cast<ShowBrowserFrameProbe*>(data);
+	quiver_metric_emit("showbrowser", "first frame",
+		(gdouble)(quiver_metrics_now_us() - probe->start_us) / 1000.0, "ms");
+	return G_SOURCE_REMOVE;
+}
+
+static void showbrowser_frame_probe_free(gpointer data)
+{
+	delete static_cast<ShowBrowserFrameProbe*>(data);
+}
+
+static void showbrowser_after_paint_cb(GdkFrameClock* clock, gpointer data)
+{
+	ShowBrowserPaintProbe* probe = static_cast<ShowBrowserPaintProbe*>(data);
+	quiver_metric_emit("showbrowser", "after paint",
+		(gdouble)(quiver_metrics_now_us() - probe->start_us) / 1000.0, "ms");
+	g_signal_handler_disconnect(clock, probe->handler);
+	delete probe;
+}
 
 
 class QuiverImpl
@@ -130,8 +199,15 @@ public:
 	 * anything (slideshow, video playback) needs the display on. */
 	void SetScreenAwake(bool bKeepAwake);
 	
-	static void ShowViewerUIItems(QuiverImpl *pQuiverImpl, bool bShow);
-	static void ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow);
+	void ApplyRegionFilter(double latTop, double lonLeft, double latBottom, double lonRight);
+	void ClearRegionFilter();
+	void ApplyViewerRegionFilter();
+	void ApplyFilters();
+	void UpdateSpatialFilters();
+	void OnFilterControlsChanged();
+	void ClearAllFilters();
+	void UpdateFilterButtonState();
+	void CreateFilterPopover();
 	static void SetViewerNavigationAccelerators(bool bEnable);
 	static void CreateToolbarButtons(QuiverImpl *pQuiverImpl);
 	void RebuildMenubar();
@@ -171,7 +247,8 @@ public:
 	 * (browser icon view vs. viewer image view). */
 	void ParentUndoToast();
 	static gboolean TrashToastTimeout(gpointer user_data);
-	void UpdateExternalToolsSensitivity();
+	void UpdateExternalToolsSensitivity(
+		const list<unsigned int>* pBrowserSelection = nullptr);
 	IImageListViewPtr GetActiveImageListView() const;
 
 // member variables
@@ -225,10 +302,7 @@ public:
 	bool m_bToastCentered;
 	GtkWidget *m_pToolbar;
 	GtkWidget *m_pToolbarSharedBox;
-	GtkWidget *m_pToolbarBrowserBox;
-	GtkWidget *m_pToolbarViewerBox;
-	GtkWidget *m_pUIModeViewerBtn;
-	GtkWidget *m_pUIModeBrowserBtn;
+	GtkWidget *m_pToolbarFilterBox;
 	GtkWidget *m_pNBProperties;
 	GtkWidget* m_pHPanedMainArea;
 	
@@ -237,6 +311,48 @@ public:
 	bool m_bFilmStripVisibleBeforeFS;
 			
 	ImageListPtr m_ImageListPtr;
+	/* Non-spatial filter + display filters.  The base filter is shared by the
+	 * map index, so spatial changes must not rebuild it. */
+	ImageFilterState m_FilterState;
+	ImageListAttributesPtr m_LastImageListAttributes;
+	boost::shared_ptr<ImageListFilter> m_BaseListFilter;
+	boost::shared_ptr<ImageListFilter> m_BrowserListFilter;
+	boost::shared_ptr<FilteredImageList> m_BrowserListView;
+	bool m_bMetadataReady;
+	bool m_bMetadataFiltersDirty;
+	bool m_bImageListLoadInProgress;
+	bool m_bPendingImageListDefinitionChanged;
+	bool m_bUpdatingFilterControls;
+	std::size_t m_MetadataDone;
+	std::size_t m_MetadataTotal;
+	/* Viewer's live folder-filtered view; its predicate is swapped while a
+	 * map region filter is active. */
+	boost::shared_ptr<ImageListFilter> m_ViewerListFilter;
+	/* Geographic bounds currently in force for the viewer filter. */
+	bool m_bRegionFilterActive;
+	double m_dFilterLatTop;
+	double m_dFilterLatBottom;
+	double m_dFilterLonLeft;
+	double m_dFilterLonRight;
+	/* The viewer is hidden while the map is panned, so defer its expensive
+	 * predicate swap until the viewer is actually opened. */
+	bool m_bViewerFilterNeedsUpdate;
+
+	GtkWidget* m_pFilterButton;
+	GtkWidget* m_pFilterClearButton;
+	GtkWidget* m_pFilterPopover;
+	GtkWidget* m_pFilterTextEntry;
+	GtkWidget* m_pFilterDateCheck;
+	GtkWidget* m_pFilterDateStart;
+	GtkWidget* m_pFilterDateEnd;
+	GtkWidget* m_pFilterSizeCheck;
+	GtkWidget* m_pFilterSizeMin;
+	GtkWidget* m_pFilterSizeMax;
+	GtkWidget* m_pFilterMediaDropdown;
+	GtkWidget* m_pFilterGpsDropdown;
+	GtkWidget* m_pFilterIndexLabel;
+
+	std::unique_ptr<QuiverMapView> m_MapViewPtr;
 
 	int m_iAppX;
 	int m_iAppY;
@@ -277,6 +393,7 @@ public:
 
 	GtkBuilder *m_pBuilder;
 	bool m_bViewerMode;
+	bool m_bMapMode;
 
 // nested classes
 
@@ -317,6 +434,7 @@ public:
 		virtual void HandleItemAdded(ImageListEventPtr event);
 		virtual void HandleItemRemoved(ImageListEventPtr event);
 		virtual void HandleItemChanged(ImageListEventPtr event);
+		virtual void HandleLoadProgress(double fraction, int current, int total);
 	private:
 		QuiverImpl *parent;
 	};
@@ -386,6 +504,20 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pQuiver = parent;
 	m_pBuilder = NULL;
 	m_bViewerMode = false;
+	m_bMapMode = false;
+	m_bMetadataReady = false;
+	m_bMetadataFiltersDirty = false;
+	m_bImageListLoadInProgress = false;
+	m_bPendingImageListDefinitionChanged = false;
+	m_bUpdatingFilterControls = false;
+	m_MetadataDone = 0;
+	m_MetadataTotal = 0;
+	m_bRegionFilterActive = false;
+	m_dFilterLatTop = 0.0;
+	m_dFilterLatBottom = 0.0;
+	m_dFilterLonLeft = 0.0;
+	m_dFilterLonRight = 0.0;
+	m_bViewerFilterNeedsUpdate = false;
 	m_bCurrentIsVideo = false;
 	m_bOpeningRecent = false;
 	m_pHeaderBar = NULL;
@@ -410,10 +542,20 @@ QuiverImpl::QuiverImpl (Quiver *parent) :
 	m_pAppMenuModel = NULL;
 	m_pToolbar = NULL;
 	m_pToolbarSharedBox = NULL;
-	m_pToolbarBrowserBox = NULL;
-	m_pToolbarViewerBox = NULL;
-	m_pUIModeViewerBtn = NULL;
-	m_pUIModeBrowserBtn = NULL;
+	m_pToolbarFilterBox = NULL;
+	m_pFilterButton = NULL;
+	m_pFilterClearButton = NULL;
+	m_pFilterPopover = NULL;
+	m_pFilterTextEntry = NULL;
+	m_pFilterDateCheck = NULL;
+	m_pFilterDateStart = NULL;
+	m_pFilterDateEnd = NULL;
+	m_pFilterSizeCheck = NULL;
+	m_pFilterSizeMin = NULL;
+	m_pFilterSizeMax = NULL;
+	m_pFilterMediaDropdown = NULL;
+	m_pFilterGpsDropdown = NULL;
+	m_pFilterIndexLabel = NULL;
 	
 	m_BookmarksPtr = Bookmarks::GetInstance();
 	m_BookmarksPtr->AddEventHandler(m_BookmarksEventHandler);
@@ -497,6 +639,7 @@ QuiverImpl::~QuiverImpl()
 		m_ImageListPtr->StopAsyncSort();
 	}
 	m_ImageListPtr.reset();
+	m_MapViewPtr.reset();
 	m_BrowserPtr.reset();
 	m_ViewerPtr.reset();
 	m_StatusbarPtr.reset();
@@ -651,15 +794,30 @@ IImageListViewPtr QuiverImpl::GetActiveImageListView() const
 			return vList;
 		}
 	}
+	if (m_BrowserListFilter)
+		return m_BrowserListFilter;
 	return m_ImageListPtr;
 }
 
-void QuiverImpl::UpdateExternalToolsSensitivity()
+void QuiverImpl::UpdateExternalToolsSensitivity(
+	const list<unsigned int>* pBrowserSelection)
 {
 	if (!m_ExternalToolsPtr) return;
 
 	bool bInViewer = m_bViewerMode;
 	vector<ExternalTool> externaltools = m_ExternalToolsPtr->GetExternalTools();
+
+	/* Fetch the browser selection once rather than once per tool.  Mode
+	 * switches already have it, so they pass it in instead of querying the
+	 * icon view (and its master-index map) a second time. */
+	list<unsigned int> selection;
+	if (!bInViewer)
+	{
+		if (pBrowserSelection)
+			selection = *pBrowserSelection;
+		else if (m_BrowserPtr && m_ImageListPtr)
+			selection = m_BrowserPtr->GetSelection();
+	}
 
 	for (const auto &tool : externaltools)
 	{
@@ -682,11 +840,10 @@ void QuiverImpl::UpdateExternalToolsSensitivity()
 			}
 			else
 			{
-				if (m_BrowserPtr && m_ImageListPtr)
+				if (m_ImageListPtr)
 				{
-					list<unsigned int> sel = m_BrowserPtr->GetSelection();
 					size_t match_count = 0;
-					for (auto idx : sel)
+					for (auto idx : selection)
 					{
 						if (idx < m_ImageListPtr->GetSize())
 						{
@@ -1502,6 +1659,7 @@ bool QuiverImpl::CanClose()
 #define ACTION_QUIVER_ABOUT                                  "About"
 #define ACTION_QUIVER_UI_MODE_BROWSER                        "UIModeBrowser"
 #define ACTION_QUIVER_UI_MODE_VIEWER                         "UIModeViewer"
+#define ACTION_QUIVER_UI_MODE_MAP                            "UIModeMap"
 #define ACTION_QUIVER_ESCAPE                                 "QuiverEscape"
 #define ACTION_QUIVER_OPEN_RECENT                            "OpenRecent"
 #define ACTION_VIEWER_VIEW_FILM_STRIP                        "ViewFilmStrip"
@@ -2028,7 +2186,11 @@ void QuiverImpl::RebuildMenubar()
 	 * switch entry (location="viewer") and the zoom/rotate rows only appear in
 	 * the modes where they belong. */
 	std::set<std::string> contexts;
-	if (m_bViewerMode)
+	if (m_bMapMode)
+	{
+		contexts.insert("map");
+	}
+	else if (m_bViewerMode)
 	{
 		contexts.insert("viewer");
 		contexts.insert(m_bCurrentIsVideo ? "viewer-video" : "viewer-image");
@@ -2306,12 +2468,37 @@ void Quiver::ImageChanged()
 	}
 
 	IImageListViewPtr activeList = m_QuiverImplPtr->GetActiveImageListView();
+	if (MapDebugVerbose())
+	{
+		MAP_DEBUG("ImageChanged viewer=%d map=%d active=%p size=%u current=%d "
+			"base=%u browser=%u areaActive=%d ready=%d\n",
+			m_QuiverImplPtr->m_bViewerMode ? 1 : 0,
+			m_QuiverImplPtr->m_bMapMode ? 1 : 0,
+			(void*)activeList.get(), activeList ? activeList->GetSize() : 0u,
+			activeList && activeList->GetSize() > 0
+				? (int)activeList->GetCurrentIndex() : -1,
+			m_QuiverImplPtr->m_BaseListFilter
+				? m_QuiverImplPtr->m_BaseListFilter->GetSize() : 0u,
+			m_QuiverImplPtr->m_BrowserListFilter
+				? m_QuiverImplPtr->m_BrowserListFilter->GetSize() : 0u,
+			m_QuiverImplPtr->m_FilterState.area.active ? 1 : 0,
+			m_QuiverImplPtr->m_bMetadataReady ? 1 : 0);
+	}
 
 	if ( activeList && activeList->GetSize() )
 	{
 		QuiverFile f = activeList->GetCurrent();
 		if (f == m_QuiverImplPtr->m_CurrentQuiverFile)
 		{
+			/* The predicate may have changed around an unchanged current item;
+			 * the position/count still need to reflect the new filtered list. */
+			if (MapDebugVerbose())
+			{
+				MAP_DEBUG("ImageChanged unchanged current -> status %u of %u\n",
+					activeList->GetCurrentIndex() + 1, activeList->GetSize());
+			}
+			m_QuiverImplPtr->m_StatusbarPtr->SetPosition(
+				activeList->GetCurrentIndex() + 1, activeList->GetSize());
 			return;
 		}
 
@@ -2349,6 +2536,11 @@ void Quiver::ImageChanged()
 		}
 		
 		{
+			if (MapDebugVerbose())
+			{
+				MAP_DEBUG("ImageChanged new current -> status %u of %u\n",
+					activeList->GetCurrentIndex() + 1, activeList->GetSize());
+			}
 			m_QuiverImplPtr->m_StatusbarPtr->SetPosition(activeList->GetCurrentIndex()+1,activeList->GetSize());
 			m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
 		}
@@ -2360,6 +2552,7 @@ void Quiver::ImageChanged()
 	}
 	else
 	{
+		MAP_DEBUG("ImageChanged empty active list -> status 0 of 0\n");
 		m_QuiverImplPtr->m_StatusbarPtr->SetPosition(0,0);
 		QuiverFile f;
 		m_QuiverImplPtr->m_StatusbarPtr->SetQuiverFile(f);
@@ -2651,6 +2844,14 @@ void Quiver::Init()
 	m_QuiverImplPtr->m_pQuiverWindow = gtk_application_window_new (g_pApp);
 	gtk_widget_set_name(m_QuiverImplPtr->m_pQuiverWindow,"Quiver Window");
 
+	if (quiver_metrics_enabled())
+	{
+		GtkEventController* metric_keys = gtk_event_controller_key_new();
+		gtk_event_controller_set_propagation_phase(metric_keys, GTK_PHASE_CAPTURE);
+		gtk_widget_add_controller(m_QuiverImplPtr->m_pQuiverWindow, metric_keys);
+		g_signal_connect(metric_keys, "key-pressed", G_CALLBACK(quiver_key_capture_cb), NULL);
+	}
+
 	m_QuiverImplPtr->m_pHeaderBar = gtk_header_bar_new();
 	gtk_widget_set_name(m_QuiverImplPtr->m_pHeaderBar, "Quiver HeaderBar");
 	gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(m_QuiverImplPtr->m_pHeaderBar), TRUE);
@@ -2696,8 +2897,14 @@ void Quiver::Init()
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_CLOSE, "<Control>q", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_ESCAPE, "Escape", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_PREFERENCES, "<Control>p", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UI_MODE_BROWSER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
-	QuiverUtils::AddSimpleAction(ACTION_QUIVER_UI_MODE_VIEWER, "", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
+	static const char *const uiModeActions[] = {
+		ACTION_QUIVER_UI_MODE_BROWSER,
+		ACTION_QUIVER_UI_MODE_VIEWER,
+		ACTION_QUIVER_UI_MODE_MAP
+	};
+	static const gint uiModeValues[] = { 0, 1, 2 };
+	QuiverUtils::AddRadioActions(uiModeActions, uiModeValues, 3, 0,
+		quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_GO_FOLDER_PARENT, "<Alt>Up", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_GO_FOLDER_NEXT, "<Shift><Alt>Right", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
 	QuiverUtils::AddSimpleAction(ACTION_QUIVER_GO_FOLDER_PREV, "<Shift><Alt>Left", quiver_new_action_handler_cb, m_QuiverImplPtr.get());
@@ -3125,6 +3332,120 @@ void Quiver::Init()
 	gtk_box_append (GTK_BOX (hbox_browser_viewer_container), browser_widget);
 	gtk_box_append (GTK_BOX (hbox_browser_viewer_container), viewer_widget);
 
+	/* Map mode replaces the browser's icon-grid area.  Created here (after
+	 * GTK/Shumate are up) and wired to this QuiverImpl. */
+	m_QuiverImplPtr->m_MapViewPtr.reset(new QuiverMapView());
+	GtkWidget* map_widget = m_QuiverImplPtr->m_MapViewPtr->GetWidget();
+	gtk_widget_set_hexpand(map_widget, TRUE);
+	gtk_widget_set_vexpand(map_widget, TRUE);
+	m_QuiverImplPtr->m_MapViewPtr->SetSelectCallback(
+		[m_QuiverImplPtr = m_QuiverImplPtr.get()](const std::string& uri) {
+			if (m_QuiverImplPtr->m_ImageListPtr &&
+				m_QuiverImplPtr->m_ImageListPtr->SetCurrentFile(uri))
+			{
+				m_QuiverImplPtr->m_pQuiver->ImageChanged();
+			}
+		});
+	m_QuiverImplPtr->m_MapViewPtr->SetActivateCallback(
+		[m_QuiverImplPtr = m_QuiverImplPtr.get()](const std::string& uri) {
+			if (!uri.empty() && m_QuiverImplPtr->m_ImageListPtr)
+				m_QuiverImplPtr->m_ImageListPtr->SetCurrentFile(uri);
+			m_QuiverImplPtr->m_pQuiver->ShowViewer();
+		});
+	m_QuiverImplPtr->m_MapViewPtr->SetRegionFilterCallback(
+		[m_QuiverImplPtr = m_QuiverImplPtr.get()](double latTop, double lonLeft,
+			double latBottom, double lonRight) {
+			m_QuiverImplPtr->ApplyRegionFilter(latTop, lonLeft, latBottom, lonRight);
+		});
+	m_QuiverImplPtr->m_MapViewPtr->SetMetadataProgressCallback(
+		[m_QuiverImplPtr = m_QuiverImplPtr.get()](std::size_t done,
+			std::size_t total) {
+			m_QuiverImplPtr->m_MetadataDone = done;
+			m_QuiverImplPtr->m_MetadataTotal = total;
+			if (0 == total)
+			{
+				/* A new scan replaces the previous one.  Hide its progress
+				 * instead of leaving the old list's fraction on screen until
+				 * the replacement reports its first batch. */
+				if (m_QuiverImplPtr->m_BrowserPtr)
+					m_QuiverImplPtr->m_BrowserPtr->HideMetadataProgress();
+				m_QuiverImplPtr->UpdateFilterButtonState();
+				return;
+			}
+			const bool metadataFilters = m_QuiverImplPtr->m_FilterState.dateActive ||
+				m_QuiverImplPtr->m_FilterState.gps !=
+					ImageFilterState::GpsFilter::Any;
+			if (m_QuiverImplPtr->m_BrowserPtr &&
+				(!m_QuiverImplPtr->m_bMetadataReady || metadataFilters))
+			{
+				char text[128];
+				g_snprintf(text, sizeof(text),
+					"Indexing dates and GPS… %zu/%zu", done, total);
+				const double fraction = total > 0
+					? (double)done / (double)total : -1.0;
+				m_QuiverImplPtr->m_BrowserPtr->ShowMetadataProgress(text,
+					fraction);
+			}
+			m_QuiverImplPtr->UpdateFilterButtonState();
+		});
+	m_QuiverImplPtr->m_MapViewPtr->SetMetadataReadyCallback(
+		[m_QuiverImplPtr = m_QuiverImplPtr.get()](bool ready) {
+			if (ready && m_QuiverImplPtr->m_bImageListLoadInProgress)
+			{
+				MAP_DEBUG("MetadataReady deferred while image list load is in progress\n");
+				return;
+			}
+			if (ready)
+			{
+				const bool wasReady = m_QuiverImplPtr->m_bMetadataReady;
+				m_QuiverImplPtr->m_bMetadataReady = true;
+				const bool metadataFilters = m_QuiverImplPtr->m_FilterState.dateActive ||
+					m_QuiverImplPtr->m_FilterState.gps !=
+						ImageFilterState::GpsFilter::Any;
+				MAP_DEBUG("MetadataReady wasReady=%d metadataFilters=%d "
+					"dirty=%d area=%d base=%u browser=%u\n",
+					wasReady ? 1 : 0, metadataFilters ? 1 : 0,
+					m_QuiverImplPtr->m_bMetadataFiltersDirty ? 1 : 0,
+					m_QuiverImplPtr->m_FilterState.area.active ? 1 : 0,
+					m_QuiverImplPtr->m_BaseListFilter
+						? m_QuiverImplPtr->m_BaseListFilter->GetSize() : 0u,
+					m_QuiverImplPtr->m_BrowserListFilter
+						? m_QuiverImplPtr->m_BrowserListFilter->GetSize() : 0u);
+				if (metadataFilters &&
+					(!wasReady || m_QuiverImplPtr->m_bMetadataFiltersDirty))
+				{
+					m_QuiverImplPtr->ApplyFilters();
+				}
+				else if (!wasReady &&
+					m_QuiverImplPtr->m_FilterState.area.active)
+				{
+					/* The metadata pass has just finished resolving GPS for
+					 * this list.  Re-evaluate the region predicate now: when
+					 * the viewport filter was applied while metadata was
+					 * still loading, the cached-GPS-only predicate matched
+					 * nothing and the statusbar stuck at "0 of 0" until the
+					 * map was moved again.  Do not repeat this for later map
+					 * index refreshes: rebuilding the predicates resets the
+					 * filtered selection. */
+					m_QuiverImplPtr->UpdateSpatialFilters();
+				}
+				m_QuiverImplPtr->m_bMetadataFiltersDirty = false;
+				MAP_DEBUG("MetadataReady done base=%u browser=%u active=%u\n",
+					m_QuiverImplPtr->m_BaseListFilter
+						? m_QuiverImplPtr->m_BaseListFilter->GetSize() : 0u,
+					m_QuiverImplPtr->m_BrowserListFilter
+						? m_QuiverImplPtr->m_BrowserListFilter->GetSize() : 0u,
+					m_QuiverImplPtr->GetActiveImageListView()
+						? m_QuiverImplPtr->GetActiveImageListView()->GetSize() : 0u);
+				if (m_QuiverImplPtr->m_BrowserPtr)
+					m_QuiverImplPtr->m_BrowserPtr->HideMetadataProgress();
+			}
+			m_QuiverImplPtr->UpdateFilterButtonState();
+		});
+	/* The map is a browsing mode, so it shares the browser's icon-grid area
+	 * and leaves the folder tree/bookmarks visible for navigation. */
+	m_QuiverImplPtr->m_BrowserPtr->SetMapWidget(map_widget);
+
 	// pack the hpaned (main gui area)
 	gtk_paned_set_start_child(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), hbox_browser_viewer_container);
 	gtk_paned_set_end_child(GTK_PANED(m_QuiverImplPtr->m_pHPanedMainArea), m_QuiverImplPtr->m_pNBProperties);
@@ -3152,6 +3473,8 @@ void Quiver::Init()
 	m_iIdleInitID = g_idle_add(idle_quiver_init,this);
 	
 	gtk_widget_set_visible (GTK_WIDGET(m_QuiverImplPtr->m_pQuiverWindow), TRUE);
+
+	quiver_metrics_start_stall_watchdog(10, 50);
 
 	//test adding a custom item to the menu
 	m_QuiverImplPtr->LoadExternalTools();
@@ -3376,6 +3699,20 @@ static void on_app_activate(GApplication* app, gpointer data)
 	}
 }
 
+static void FilterBenignGdkFrameTimingWarnings(const gchar* log_domain,
+	GLogLevelFlags log_level, const gchar* message, gpointer user_data)
+{
+	if (!(log_level & G_LOG_FLAG_FATAL) && NULL != message &&
+		(g_str_has_prefix(message,
+			"gdk_frame_timings_presented() called on discarded frame.") ||
+		g_str_has_prefix(message,
+			"Duplicate call to gdk_frame_timings_presented() with different values:")))
+	{
+		return;
+	}
+	g_log_default_handler(log_domain, log_level, message, user_data);
+}
+
 int main (int argc, char **argv)
 {
 	for (int i = 1; i < argc; ++i)
@@ -3407,6 +3744,10 @@ int main (int argc, char **argv)
 
  	/* init threads */
 	//g_type_init ();
+
+	g_log_set_handler("Gdk",
+		(GLogLevelFlags)(G_LOG_LEVEL_WARNING | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION),
+		FilterBenignGdkFrameTimingWarnings, NULL);
 
 	/* Initialize the widget set */
 	gtk_init ();
@@ -3576,12 +3917,35 @@ gboolean Quiver::IdleQuiverInit(gpointer data)
 	m_QuiverImplPtr->m_ImageListPtr->UpdateImageListAsync(&m_QuiverImplPtr->m_listImages,
 		m_QuiverImplPtr->m_bListImagesRecursive);
 
-	m_QuiverImplPtr->m_BrowserPtr->SetImageList(m_QuiverImplPtr->m_ImageListPtr);
-	// the viewer browses a folder-filtered view of the shared list
-	IImageListViewPtr pViewerList(
-		new ImageListFilter(m_QuiverImplPtr->m_ImageListPtr,
+	/* Build the filter stack once.  The browser facade keeps structural
+	 * operations on the master list while reads/navigation use the display
+	 * subset; the map indexes the non-spatial base subset. */
+	auto basePredicate = [state = m_QuiverImplPtr->m_FilterState,
+		ready = m_QuiverImplPtr->m_bMetadataReady](const QuiverFile& f) {
+		return state.MatchesBase(f, ready);
+	};
+	m_QuiverImplPtr->m_BaseListFilter.reset(
+		new ImageListFilter(m_QuiverImplPtr->m_ImageListPtr, basePredicate));
+	m_QuiverImplPtr->m_BrowserListFilter.reset(
+		new ImageListFilter(m_QuiverImplPtr->m_BaseListFilter,
+			[](const QuiverFile&) { return true; }));
+	m_QuiverImplPtr->m_BrowserListView.reset(
+		new FilteredImageList(m_QuiverImplPtr->m_ImageListPtr,
+			m_QuiverImplPtr->m_BrowserListFilter));
+	m_QuiverImplPtr->m_BrowserPtr->SetImageList(
+		m_QuiverImplPtr->m_BrowserListView);
+
+	m_QuiverImplPtr->m_ViewerListFilter.reset(
+		new ImageListFilter(m_QuiverImplPtr->m_BaseListFilter,
 			[](const QuiverFile& f) { return !f.IsFolder(); }));
+	IImageListViewPtr pViewerList(m_QuiverImplPtr->m_ViewerListFilter);
 	m_QuiverImplPtr->m_ViewerPtr->SetImageList(pViewerList);
+
+	if (m_QuiverImplPtr->m_MapViewPtr)
+	{
+		m_QuiverImplPtr->m_MapViewPtr->SetImageList(
+			m_QuiverImplPtr->m_BaseListFilter);
+	}
 
 	// call this a second time to make sure the list is updated
 	if (m_QuiverImplPtr->m_bViewerMode)
@@ -3708,13 +4072,10 @@ static void update_actionable_tooltips(GtkWidget *widget)
 
 void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 {
-	/* The toolbar (shared + browser + viewer control groups) is defined as
-	 * data/quiver-toolbar.ui, so its structure and action-name bindings live
-	 * in markup.  Merge/unmerge between the browser and viewer states is done
-	 * by toggling the visibility of the two distinct, per-state boxes
-	 * (browser_box / viewer_box); the shared box is always visible.  Because
-	 * they are separate boxes, one state's controls can never be removed while
-	 * the other state is active. */
+	/* The toolbar (mode + filter control groups) is defined as
+	 * data/quiver-toolbar.ui, so its structure lives in markup.  All three
+	 * mode buttons share a radio action group and stay visible in every
+	 * mode; the active member is bound to a checked GtkToggleButton. */
 	GtkBuilder *builder = gtk_builder_new_from_file(quiver_get_resource_path("quiver-toolbar.ui").c_str());
 	if (NULL == builder)
 	{
@@ -3723,11 +4084,15 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 	}
 
 	GtkWidget *toolbar = GTK_WIDGET(gtk_builder_get_object(builder, "QuiverToolbar"));
-	pQuiverImpl->m_pToolbarBrowserBox = GTK_WIDGET(gtk_builder_get_object(builder, "browser_box"));
 	pQuiverImpl->m_pToolbarSharedBox   = GTK_WIDGET(gtk_builder_get_object(builder, "shared_box"));
-	pQuiverImpl->m_pToolbarViewerBox   = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_box"));
-	pQuiverImpl->m_pUIModeViewerBtn    = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_viewer"));
-	pQuiverImpl->m_pUIModeBrowserBtn   = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_browser"));
+	pQuiverImpl->m_pToolbarFilterBox   = GTK_WIDGET(gtk_builder_get_object(builder, "filter_box"));
+
+	GtkWidget *modeBrowser = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_browser"));
+	GtkWidget *modeViewer = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_viewer"));
+	GtkWidget *modeMap = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_map"));
+	QuiverUtils::BindRadioWidget(modeBrowser, toolbar, ACTION_QUIVER_UI_MODE_BROWSER);
+	QuiverUtils::BindRadioWidget(modeViewer, toolbar, ACTION_QUIVER_UI_MODE_VIEWER);
+	QuiverUtils::BindRadioWidget(modeMap, toolbar, ACTION_QUIVER_UI_MODE_MAP);
 
 	/* "Recently Viewed" button: its menu model is the live recent menu, which
 	 * RebuildRecentMenu() repopulates as items are viewed or deleted.  The
@@ -3771,24 +4136,7 @@ void QuiverImpl::CreateToolbarButtons(QuiverImpl *pQuiverImpl)
 		quiver_toolbar_set_focus_on_click(pQuiverImpl->m_pHeaderBar, FALSE);
 	}
 
-	/* start in browser mode: hide the viewer controls until ShowViewer() */
-	gtk_widget_set_visible(pQuiverImpl->m_pToolbarViewerBox, FALSE);
-}
-
-void QuiverImpl::ShowViewerUIItems(QuiverImpl *pQuiverImpl, bool bShow)
-{
-	if (NULL != pQuiverImpl)
-	{
-		gtk_widget_set_visible(pQuiverImpl->m_pToolbarViewerBox, bShow);
-	}
-}
-
-void QuiverImpl::ShowBrowserUIItems(QuiverImpl *pQuiverImpl, bool bShow)
-{
-	if (NULL != pQuiverImpl)
-	{
-		gtk_widget_set_visible(pQuiverImpl->m_pToolbarBrowserBox, bShow);
-	}
+	pQuiverImpl->CreateFilterPopover();
 }
 
 /* Enable/disable the naked "space" / "<Shift>space" accelerators that navigate
@@ -3802,12 +4150,15 @@ void QuiverImpl::SetViewerNavigationAccelerators(bool bEnable)
 
 void Quiver::ShowViewer()
 {
+	m_QuiverImplPtr->ApplyViewerRegionFilter();
+
 	m_QuiverImplPtr->m_BrowserPtr->Hide();
 	m_QuiverImplPtr->m_ViewerPtr->Show();
+	m_QuiverImplPtr->m_BrowserPtr->ShowMapView(false);
 
 	m_QuiverImplPtr->m_bViewerMode = true;
-	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), true);
-	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), false);
+	m_QuiverImplPtr->m_bMapMode = false;
+	QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_UI_MODE_VIEWER, 1);
 	m_QuiverImplPtr->RebuildMenubar();
 
 	// the browser is hidden now, so it must stop answering for the keys the
@@ -3855,6 +4206,30 @@ void Quiver::ShowViewer()
 
 void Quiver::ShowBrowser()
 {
+	QuiverMetricTimer t_show_browser("showbrowser", "total");
+	quiver_metric_mark("showbrowser", "begin");
+
+	if (quiver_metrics_enabled())
+	{
+		quiver_metric_emit("showbrowser", "items",
+			(gdouble)(m_QuiverImplPtr->m_ImageListPtr ? m_QuiverImplPtr->m_ImageListPtr->GetSize() : 0u),
+			"count");
+		if (m_QuiverImplPtr->m_pQuiverWindow)
+		{
+			quiver_metric_emit("showbrowser", "window width",
+				(gdouble)gtk_widget_get_width(m_QuiverImplPtr->m_pQuiverWindow), "px");
+			quiver_metric_emit("showbrowser", "window height",
+				(gdouble)gtk_widget_get_height(m_QuiverImplPtr->m_pQuiverWindow), "px");
+			quiver_metric_emit("showbrowser", "scale",
+				(gdouble)gtk_widget_get_scale_factor(m_QuiverImplPtr->m_pQuiverWindow), "factor");
+		}
+		const gchar* renderer = g_getenv("GSK_RENDERER");
+		gchar* renderer_label = g_strdup_printf("renderer %s",
+			(NULL != renderer && '\0' != *renderer) ? renderer : "default");
+		quiver_metric_mark("showbrowser", renderer_label);
+		g_free(renderer_label);
+	}
+
 	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW)
 		|| (m_QuiverImplPtr->m_ViewerPtr && m_QuiverImplPtr->m_ViewerPtr->IsSlideShowRunning());
 	if (bInSlideShow)
@@ -3862,22 +4237,44 @@ void Quiver::ShowBrowser()
 		m_QuiverImplPtr->m_pQuiver->AbortSlideShow();
 	}
 
-	m_QuiverImplPtr->m_ViewerPtr->Hide();
-	m_QuiverImplPtr->m_BrowserPtr->Show();
+	{
+		QuiverMetricTimer t("showbrowser", "hide viewer");
+		m_QuiverImplPtr->m_ViewerPtr->Hide();
+		m_QuiverImplPtr->m_BrowserPtr->ShowMapView(false);
+	}
+
+	{
+		QuiverMetricTimer t("showbrowser", "browser show");
+		m_QuiverImplPtr->m_BrowserPtr->Show();
+	}
 
 	m_QuiverImplPtr->m_bViewerMode = false;
-	QuiverImpl::ShowViewerUIItems(m_QuiverImplPtr.get(), false);
-	QuiverImpl::ShowBrowserUIItems(m_QuiverImplPtr.get(), true);
-	m_QuiverImplPtr->RebuildMenubar();
+	m_QuiverImplPtr->m_bMapMode = false;
+	QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_UI_MODE_BROWSER, 0);
+
+	{
+		QuiverMetricTimer t("showbrowser", "rebuild menubar");
+		m_QuiverImplPtr->RebuildMenubar();
+	}
 
 	// the viewer is hidden now, so it hands the shared keys back to the browser
 	QuiverUtils::SetActivePane(false);
+
+	/* F2 and external-tool sensitivity both need the same selection.  Fetch
+	 * it once: GetSelection() maps the icon-view rows back through the
+	 * filtered list, which is O(list size) after a structural change. */
+	list<unsigned int> browserSelection;
+	if (m_QuiverImplPtr->m_BrowserPtr)
+	{
+		QuiverMetricTimer t("showbrowser", "get selection");
+		browserSelection = m_QuiverImplPtr->m_BrowserPtr->GetSelection();
+	}
 
 	// and F2 goes back to the browser, which decides from its own selection
 	if (GAction* a = QuiverUtils::GetAction(ACTION_QUIVER_QUICK_RENAME))
 	{
 		g_simple_action_set_enabled(G_SIMPLE_ACTION(a),
-			m_QuiverImplPtr->m_BrowserPtr->GetSelection().empty() ? FALSE : TRUE);
+			browserSelection.empty() ? FALSE : TRUE);
 	}
 
 	// keep a visible undo toast floating over the icon view
@@ -3891,9 +4288,518 @@ void Quiver::ShowBrowser()
 	// checkbox selection.
 	QuiverImpl::SetViewerNavigationAccelerators(false);
 
-	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
+	{
+		QuiverMetricTimer t("showbrowser", "external tools");
+		m_QuiverImplPtr->UpdateExternalToolsSensitivity(&browserSelection);
+	}
 	m_QuiverImplPtr->m_BrowserPtr->GrabFocus();
+	{
+		QuiverMetricTimer t("showbrowser", "image changed");
+		ImageChanged();
+	}
+
+	if (quiver_metrics_enabled() && m_QuiverImplPtr->m_pQuiverWindow)
+	{
+		const gint64 probe_start_us = quiver_metrics_now_us();
+		ShowBrowserFrameProbe* probe = new ShowBrowserFrameProbe{probe_start_us};
+		gtk_widget_add_tick_callback(m_QuiverImplPtr->m_pQuiverWindow,
+			showbrowser_first_frame_cb, probe, showbrowser_frame_probe_free);
+
+		GdkFrameClock* clock = gtk_widget_get_frame_clock(m_QuiverImplPtr->m_pQuiverWindow);
+		if (clock != NULL)
+		{
+			ShowBrowserPaintProbe* paint_probe = new ShowBrowserPaintProbe{probe_start_us, 0};
+			paint_probe->handler = g_signal_connect(clock, "after-paint",
+				G_CALLBACK(showbrowser_after_paint_cb), paint_probe);
+		}
+	}
+}
+
+void Quiver::ShowMap()
+{
+	if (!m_QuiverImplPtr->m_MapViewPtr)
+		return;
+
+	MAP_DEBUG("ShowMap enter list=%p listSize=%u base=%u browser=%u "
+		"areaActive=%d ready=%d viewer=%d map=%d\n",
+		(void*)m_QuiverImplPtr->m_ImageListPtr.get(),
+		m_QuiverImplPtr->m_ImageListPtr
+			? m_QuiverImplPtr->m_ImageListPtr->GetSize() : 0u,
+		m_QuiverImplPtr->m_BaseListFilter
+			? m_QuiverImplPtr->m_BaseListFilter->GetSize() : 0u,
+		m_QuiverImplPtr->m_BrowserListFilter
+			? m_QuiverImplPtr->m_BrowserListFilter->GetSize() : 0u,
+		m_QuiverImplPtr->m_FilterState.area.active ? 1 : 0,
+		m_QuiverImplPtr->m_bMetadataReady ? 1 : 0,
+		m_QuiverImplPtr->m_bViewerMode ? 1 : 0,
+		m_QuiverImplPtr->m_bMapMode ? 1 : 0);
+
+	bool bInSlideShow = QuiverUtils::ToggleActionGetActive(ACTION_QUIVER_SLIDESHOW)
+		|| (m_QuiverImplPtr->m_ViewerPtr && m_QuiverImplPtr->m_ViewerPtr->IsSlideShowRunning());
+	if (bInSlideShow)
+	{
+		m_QuiverImplPtr->m_pQuiver->AbortSlideShow();
+	}
+
+	m_QuiverImplPtr->m_ViewerPtr->Hide();
+	m_QuiverImplPtr->m_BrowserPtr->ShowMapView(true);
+	m_QuiverImplPtr->m_BrowserPtr->Show();
+
+	m_QuiverImplPtr->m_bViewerMode = false;
+	m_QuiverImplPtr->m_bMapMode = true;
+	QuiverUtils::SetRadioActionCurrent(ACTION_QUIVER_UI_MODE_MAP, 2);
+	m_QuiverImplPtr->RebuildMenubar();
+
+	QuiverUtils::SetActivePane(false);
+	QuiverImpl::SetViewerNavigationAccelerators(false);
+	m_QuiverImplPtr->UpdateExternalToolsSensitivity();
+
+	m_QuiverImplPtr->m_MapViewPtr->GrabFocus();
 	ImageChanged();
+	MAP_DEBUG("ShowMap leave mapMode=%d\n",
+		m_QuiverImplPtr->m_bMapMode ? 1 : 0);
+}
+
+namespace
+{
+bool ParseFilterDate(const char* text, bool endOfDay, time_t& out)
+{
+	if (NULL == text || '\0' == text[0])
+		return false;
+	int year = 0, month = 0, day = 0;
+	if (3 != sscanf(text, "%d-%d-%d", &year, &month, &day))
+		return false;
+	if (year < 1970 || year > 2200 || month < 1 || month > 12 ||
+		day < 1 || day > 31)
+	{
+		return false;
+	}
+	struct tm value = {};
+	value.tm_year = year - 1900;
+	value.tm_mon = month - 1;
+	value.tm_mday = day;
+	value.tm_hour = endOfDay ? 23 : 0;
+	value.tm_min = endOfDay ? 59 : 0;
+	value.tm_sec = endOfDay ? 59 : 0;
+	value.tm_isdst = -1;
+	out = mktime(&value);
+	return out != (time_t)-1;
+}
+
+unsigned long long FilterSizeMb(GtkWidget* spin)
+{
+	if (!spin || !GTK_IS_SPIN_BUTTON(spin))
+		return 0;
+	return (unsigned long long)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin));
+}
+}
+
+void QuiverImpl::ApplyRegionFilter(double latTop, double lonLeft,
+	double latBottom, double lonRight)
+{
+	if (MapDebugVerbose())
+	{
+		MAP_DEBUG("ApplyRegionFilter top=%f left=%f bottom=%f right=%f "
+			"list=%p size=%u base=%u browser=%u ready=%d\n",
+			latTop, lonLeft, latBottom, lonRight,
+			(void*)m_ImageListPtr.get(),
+			m_ImageListPtr ? m_ImageListPtr->GetSize() : 0u,
+			m_BaseListFilter ? m_BaseListFilter->GetSize() : 0u,
+			m_BrowserListFilter ? m_BrowserListFilter->GetSize() : 0u,
+			m_bMetadataReady ? 1 : 0);
+	}
+	m_bRegionFilterActive = true;
+	m_dFilterLatTop = latTop;
+	m_dFilterLatBottom = latBottom;
+	m_dFilterLonLeft = lonLeft;
+	m_dFilterLonRight = lonRight;
+	m_FilterState.area.active = true;
+	m_FilterState.area.latMin = latBottom;
+	m_FilterState.area.latMax = latTop;
+	m_FilterState.area.lonMin = lonLeft;
+	m_FilterState.area.lonMax = lonRight;
+	UpdateSpatialFilters();
+	UpdateFilterButtonState();
+	IImageListViewPtr active = GetActiveImageListView();
+	if (MapDebugVerbose())
+	{
+		MAP_DEBUG("ApplyRegionFilter result active=%p size=%u base=%u browser=%u\n",
+			(void*)active.get(), active ? active->GetSize() : 0u,
+			m_BaseListFilter ? m_BaseListFilter->GetSize() : 0u,
+			m_BrowserListFilter ? m_BrowserListFilter->GetSize() : 0u);
+	}
+}
+
+void QuiverImpl::ClearRegionFilter()
+{
+	MAP_DEBUG("ClearRegionFilter wasActive=%d base=%u browser=%u\n",
+		m_FilterState.area.active ? 1 : 0,
+		m_BaseListFilter ? m_BaseListFilter->GetSize() : 0u,
+		m_BrowserListFilter ? m_BrowserListFilter->GetSize() : 0u);
+	m_bRegionFilterActive = false;
+	m_FilterState.area = ImageFilterState::MapArea();
+	UpdateSpatialFilters();
+	UpdateFilterButtonState();
+}
+
+void QuiverImpl::CreateFilterPopover()
+{
+	if (!m_pToolbarFilterBox || m_pFilterButton)
+		return;
+
+	m_pFilterButton = gtk_menu_button_new();
+	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pFilterButton),
+		"funnel-symbolic");
+	gtk_widget_set_tooltip_text(m_pFilterButton, "Filter images");
+	gtk_widget_set_focus_on_click(m_pFilterButton, FALSE);
+	gtk_widget_set_focusable(m_pFilterButton, FALSE);
+
+	m_pFilterPopover = gtk_popover_new();
+	gtk_popover_set_has_arrow(GTK_POPOVER(m_pFilterPopover), FALSE);
+	gtk_menu_button_set_popover(GTK_MENU_BUTTON(m_pFilterButton), m_pFilterPopover);
+
+	GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+	gtk_widget_set_margin_top(box, 12);
+	gtk_widget_set_margin_bottom(box, 12);
+	gtk_widget_set_margin_start(box, 12);
+	gtk_widget_set_margin_end(box, 12);
+	gtk_widget_set_size_request(box, 300, -1);
+	gtk_popover_set_child(GTK_POPOVER(m_pFilterPopover), box);
+
+	m_pFilterTextEntry = gtk_search_entry_new();
+	gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(m_pFilterTextEntry),
+		"Filename or path contains");
+	gtk_box_append(GTK_BOX(box), m_pFilterTextEntry);
+	g_signal_connect(m_pFilterTextEntry, "search-changed",
+		G_CALLBACK(+[](GtkSearchEntry*, gpointer data) {
+			static_cast<QuiverImpl*>(data)->OnFilterControlsChanged();
+		}), this);
+
+	m_pFilterDateCheck = gtk_check_button_new_with_label("Date taken");
+	gtk_box_append(GTK_BOX(box), m_pFilterDateCheck);
+	GtkWidget* dateRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+	gtk_widget_set_margin_start(dateRow, 24);
+	m_pFilterDateStart = gtk_entry_new();
+	gtk_entry_set_placeholder_text(GTK_ENTRY(m_pFilterDateStart), "From YYYY-MM-DD");
+	m_pFilterDateEnd = gtk_entry_new();
+	gtk_entry_set_placeholder_text(GTK_ENTRY(m_pFilterDateEnd), "To YYYY-MM-DD");
+	gtk_widget_set_hexpand(m_pFilterDateStart, TRUE);
+	gtk_widget_set_hexpand(m_pFilterDateEnd, TRUE);
+	gtk_box_append(GTK_BOX(dateRow), m_pFilterDateStart);
+	gtk_box_append(GTK_BOX(dateRow), m_pFilterDateEnd);
+	gtk_box_append(GTK_BOX(box), dateRow);
+	for (GtkWidget* entry : {m_pFilterDateStart, m_pFilterDateEnd})
+	{
+		g_signal_connect(entry, "changed",
+			G_CALLBACK(+[](GtkEditable*, gpointer data) {
+				static_cast<QuiverImpl*>(data)->OnFilterControlsChanged();
+			}), this);
+	}
+	g_signal_connect(m_pFilterDateCheck, "toggled",
+		G_CALLBACK(+[](GtkCheckButton*, gpointer data) {
+			static_cast<QuiverImpl*>(data)->OnFilterControlsChanged();
+		}), this);
+
+	m_pFilterSizeCheck = gtk_check_button_new_with_label("File size (MB, 0 = no limit)");
+	gtk_box_append(GTK_BOX(box), m_pFilterSizeCheck);
+	GtkWidget* sizeRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+	gtk_widget_set_margin_start(sizeRow, 24);
+	m_pFilterSizeMin = gtk_spin_button_new_with_range(0, 1000000, 1);
+	m_pFilterSizeMax = gtk_spin_button_new_with_range(0, 1000000, 1);
+	gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(m_pFilterSizeMin), TRUE);
+	gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(m_pFilterSizeMax), TRUE);
+	gtk_widget_set_hexpand(m_pFilterSizeMin, TRUE);
+	gtk_widget_set_hexpand(m_pFilterSizeMax, TRUE);
+	gtk_box_append(GTK_BOX(sizeRow), m_pFilterSizeMin);
+	gtk_box_append(GTK_BOX(sizeRow), m_pFilterSizeMax);
+	gtk_box_append(GTK_BOX(box), sizeRow);
+	g_signal_connect(m_pFilterSizeCheck, "toggled",
+		G_CALLBACK(+[](GtkCheckButton*, gpointer data) {
+			static_cast<QuiverImpl*>(data)->OnFilterControlsChanged();
+		}), this);
+	for (GtkWidget* spin : {m_pFilterSizeMin, m_pFilterSizeMax})
+	{
+		g_signal_connect(spin, "value-changed",
+			G_CALLBACK(+[](GtkSpinButton*, gpointer data) {
+				static_cast<QuiverImpl*>(data)->OnFilterControlsChanged();
+			}), this);
+	}
+
+	static const char* const kMedia[] = {
+		"Any media", "Photos only", "Videos only", NULL };
+	static const char* const kGps[] = {
+		"Any location", "Has GPS", "No GPS", NULL };
+	m_pFilterMediaDropdown = gtk_drop_down_new_from_strings(kMedia);
+	m_pFilterGpsDropdown = gtk_drop_down_new_from_strings(kGps);
+	gtk_widget_set_tooltip_text(m_pFilterMediaDropdown, "Media type");
+	gtk_widget_set_tooltip_text(m_pFilterGpsDropdown, "GPS metadata");
+	gtk_box_append(GTK_BOX(box), m_pFilterMediaDropdown);
+	gtk_box_append(GTK_BOX(box), m_pFilterGpsDropdown);
+	g_signal_connect(m_pFilterMediaDropdown, "notify::selected",
+		G_CALLBACK(+[](GObject*, GParamSpec*, gpointer data) {
+			static_cast<QuiverImpl*>(data)->OnFilterControlsChanged();
+		}), this);
+	g_signal_connect(m_pFilterGpsDropdown, "notify::selected",
+		G_CALLBACK(+[](GObject*, GParamSpec*, gpointer data) {
+			static_cast<QuiverImpl*>(data)->OnFilterControlsChanged();
+		}), this);
+
+	m_pFilterIndexLabel = gtk_label_new("");
+	gtk_label_set_xalign(GTK_LABEL(m_pFilterIndexLabel), 0.0);
+	gtk_widget_add_css_class(m_pFilterIndexLabel, "dim-label");
+	gtk_widget_set_visible(m_pFilterIndexLabel, FALSE);
+	gtk_box_append(GTK_BOX(box), m_pFilterIndexLabel);
+
+	gtk_box_append(GTK_BOX(m_pToolbarFilterBox), m_pFilterButton);
+
+	m_pFilterClearButton = gtk_button_new_from_icon_name("filter-remove-symbolic");
+	gtk_widget_set_tooltip_text(m_pFilterClearButton, "Clear all filters");
+	gtk_widget_set_focus_on_click(m_pFilterClearButton, FALSE);
+	gtk_widget_set_focusable(m_pFilterClearButton, FALSE);
+	g_signal_connect(m_pFilterClearButton, "clicked",
+		G_CALLBACK(+[](GtkButton*, gpointer data) {
+			static_cast<QuiverImpl*>(data)->ClearAllFilters();
+		}), this);
+	gtk_box_append(GTK_BOX(m_pToolbarFilterBox), m_pFilterClearButton);
+
+	UpdateFilterButtonState();
+}
+
+void QuiverImpl::OnFilterControlsChanged()
+{
+	if (!m_pFilterTextEntry || m_bUpdatingFilterControls)
+		return;
+
+	m_FilterState.text = gtk_editable_get_text(GTK_EDITABLE(m_pFilterTextEntry));
+
+	const bool dateRequested = m_pFilterDateCheck &&
+		gtk_check_button_get_active(GTK_CHECK_BUTTON(m_pFilterDateCheck));
+	time_t start = 0, end = 0;
+	const bool startOk = ParseFilterDate(
+		gtk_editable_get_text(GTK_EDITABLE(m_pFilterDateStart)), false, start);
+	const bool endOk = ParseFilterDate(
+		gtk_editable_get_text(GTK_EDITABLE(m_pFilterDateEnd)), true, end);
+	m_FilterState.dateActive = dateRequested && startOk && endOk && start <= end;
+	m_FilterState.dateStart = start;
+	m_FilterState.dateEnd = end;
+
+	m_FilterState.sizeActive = m_pFilterSizeCheck &&
+		gtk_check_button_get_active(GTK_CHECK_BUTTON(m_pFilterSizeCheck));
+	const unsigned long long minMb = FilterSizeMb(m_pFilterSizeMin);
+	const unsigned long long maxMb = FilterSizeMb(m_pFilterSizeMax);
+	constexpr unsigned long long kMb = 1024ULL * 1024ULL;
+	m_FilterState.sizeMin = minMb * kMb;
+	m_FilterState.sizeMax = maxMb > 0 ? maxMb * kMb
+		: std::numeric_limits<unsigned long long>::max();
+
+	const guint media = m_pFilterMediaDropdown
+		? gtk_drop_down_get_selected(GTK_DROP_DOWN(m_pFilterMediaDropdown))
+		: 0;
+	m_FilterState.media = media == 1 ? ImageFilterState::MediaType::Photos
+		: media == 2 ? ImageFilterState::MediaType::Videos
+		: ImageFilterState::MediaType::Any;
+
+	const guint gps = m_pFilterGpsDropdown
+		? gtk_drop_down_get_selected(GTK_DROP_DOWN(m_pFilterGpsDropdown))
+		: 0;
+	m_FilterState.gps = gps == 1 ? ImageFilterState::GpsFilter::HasGps
+		: gps == 2 ? ImageFilterState::GpsFilter::NoGps
+		: ImageFilterState::GpsFilter::Any;
+
+	if (m_FilterState.dateActive ||
+		m_FilterState.gps != ImageFilterState::GpsFilter::Any)
+	{
+		m_bMetadataFiltersDirty = true;
+	}
+	ApplyFilters();
+}
+
+void QuiverImpl::ClearAllFilters()
+{
+	m_FilterState = ImageFilterState();
+	m_bRegionFilterActive = false;
+	m_bMetadataFiltersDirty = false;
+	/* Resetting the controls emits changed/toggled/notify signals.  Without
+	 * this guard each one re-enters OnFilterControlsChanged and runs a full
+	 * ApplyFilters pass, which rebuilds both filter chains and clears the
+	 * viewer/thumbnail caches repeatedly.  On a large list that looks like a
+	 * freeze. */
+	m_bUpdatingFilterControls = true;
+	if (m_pFilterTextEntry)
+		gtk_editable_set_text(GTK_EDITABLE(m_pFilterTextEntry), "");
+	if (m_pFilterDateCheck)
+		gtk_check_button_set_active(GTK_CHECK_BUTTON(m_pFilterDateCheck), FALSE);
+	if (m_pFilterDateStart)
+		gtk_editable_set_text(GTK_EDITABLE(m_pFilterDateStart), "");
+	if (m_pFilterDateEnd)
+		gtk_editable_set_text(GTK_EDITABLE(m_pFilterDateEnd), "");
+	if (m_pFilterSizeCheck)
+		gtk_check_button_set_active(GTK_CHECK_BUTTON(m_pFilterSizeCheck), FALSE);
+	if (m_pFilterSizeMin)
+		gtk_spin_button_set_value(GTK_SPIN_BUTTON(m_pFilterSizeMin), 0);
+	if (m_pFilterSizeMax)
+		gtk_spin_button_set_value(GTK_SPIN_BUTTON(m_pFilterSizeMax), 0);
+	if (m_pFilterMediaDropdown)
+		gtk_drop_down_set_selected(GTK_DROP_DOWN(m_pFilterMediaDropdown), 0);
+	if (m_pFilterGpsDropdown)
+		gtk_drop_down_set_selected(GTK_DROP_DOWN(m_pFilterGpsDropdown), 0);
+	m_bUpdatingFilterControls = false;
+	if (m_MapViewPtr)
+	{
+		m_MapViewPtr->ClearRegionFilterVisual();
+		/* Clearing filters from map mode should also leave the user looking
+		 * at the whole world, not at a stale close-up. */
+		if (m_bMapMode)
+			m_MapViewPtr->ZoomToWorld();
+	}
+	ApplyFilters();
+}
+
+void QuiverImpl::UpdateFilterButtonState()
+{
+	if (!m_pFilterButton)
+		return;
+	const bool active = !m_FilterState.IsEmpty();
+	gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(m_pFilterButton),
+		active ? "funnel-off-symbolic" : "funnel-symbolic");
+	if (active)
+		gtk_widget_add_css_class(m_pFilterButton, "suggested-action");
+	else
+		gtk_widget_remove_css_class(m_pFilterButton, "suggested-action");
+	gtk_widget_set_tooltip_text(m_pFilterButton,
+		active ? "Filters active (click to edit)" : "Filter images");
+
+	if (m_pFilterClearButton)
+	{
+		gtk_widget_set_sensitive(m_pFilterClearButton, active);
+		if (active)
+			gtk_widget_add_css_class(m_pFilterClearButton, "destructive-action");
+		else
+			gtk_widget_remove_css_class(m_pFilterClearButton, "destructive-action");
+	}
+
+	if (m_pFilterIndexLabel)
+	{
+		if (!m_bMetadataReady && m_MetadataTotal > 0)
+		{
+			char text[128];
+			g_snprintf(text, sizeof(text), "Indexing dates and GPS… %zu/%zu",
+				m_MetadataDone, m_MetadataTotal);
+			gtk_label_set_text(GTK_LABEL(m_pFilterIndexLabel), text);
+			gtk_widget_set_visible(m_pFilterIndexLabel, TRUE);
+		}
+		else
+		{
+			gtk_widget_set_visible(m_pFilterIndexLabel, FALSE);
+		}
+	}
+}
+
+void QuiverImpl::ApplyFilters()
+{
+	if (!m_BaseListFilter)
+		return;
+
+	ImageFilterState baseState = m_FilterState;
+	baseState.area.active = false;
+	const bool ready = m_bMetadataReady;
+	MAP_DEBUG("ApplyFilters before base=%u browser=%u ready=%d area=%d "
+		"date=%d gps=%d\n",
+		m_BaseListFilter->GetSize(),
+		m_BrowserListFilter ? m_BrowserListFilter->GetSize() : 0u,
+		ready ? 1 : 0, baseState.area.active ? 1 : 0,
+		baseState.dateActive ? 1 : 0, (int)baseState.gps);
+	m_BaseListFilter->SetPredicate(
+		[baseState, ready](const QuiverFile& f) {
+			return baseState.MatchesBase(f, ready);
+		});
+	UpdateSpatialFilters();
+	UpdateFilterButtonState();
+	MAP_DEBUG("ApplyFilters after base=%u browser=%u\n",
+		m_BaseListFilter->GetSize(),
+		m_BrowserListFilter ? m_BrowserListFilter->GetSize() : 0u);
+}
+
+void QuiverImpl::UpdateSpatialFilters()
+{
+	const bool ready = m_bMetadataReady;
+	const ImageFilterState state = m_FilterState;
+	if (MapDebugVerbose())
+	{
+		MAP_DEBUG("UpdateSpatialFilters before base=%u browser=%u active=%p "
+			"area=%d ready=%d lat=[%f,%f] lon=[%f,%f]\n",
+			m_BaseListFilter ? m_BaseListFilter->GetSize() : 0u,
+			m_BrowserListFilter ? m_BrowserListFilter->GetSize() : 0u,
+			(void*)GetActiveImageListView().get(),
+			state.area.active ? 1 : 0, ready ? 1 : 0,
+			state.area.latMin, state.area.latMax,
+			state.area.lonMin, state.area.lonMax);
+	}
+
+	if (m_BrowserListFilter)
+	{
+		/* The source is m_BaseListFilter, which already applied the
+		 * text/date/size/media/GPS half.  Repeating MatchesBase() here ran
+		 * the whole base predicate a second time for every item. */
+		m_BrowserListFilter->SetPredicate(
+			[state, ready](const QuiverFile& f) {
+				if (state.area.active && f.IsFolder())
+					return false;
+				return !state.area.active || !ready || state.MatchesSpatial(f);
+			});
+	}
+
+	m_bViewerFilterNeedsUpdate = true;
+	if (m_bViewerMode)
+		ApplyViewerRegionFilter();
+
+	if (m_pQuiver)
+		m_pQuiver->ImageChanged();
+	IImageListViewPtr active = GetActiveImageListView();
+	if (MapDebugVerbose())
+	{
+		MAP_DEBUG("UpdateSpatialFilters after base=%u browser=%u active=%p "
+			"activeSize=%u current=%d\n",
+			m_BaseListFilter ? m_BaseListFilter->GetSize() : 0u,
+			m_BrowserListFilter ? m_BrowserListFilter->GetSize() : 0u,
+			(void*)active.get(), active ? active->GetSize() : 0u,
+			active && active->GetSize() > 0
+				? (int)active->GetCurrentIndex() : -1);
+	}
+}
+
+void QuiverImpl::ApplyViewerRegionFilter()
+{
+	if (!m_bViewerFilterNeedsUpdate || !m_ViewerListFilter)
+		return;
+
+	const bool ready = m_bMetadataReady;
+	const ImageFilterState state = m_FilterState;
+	if (MapDebugVerbose())
+	{
+		MAP_DEBUG("ApplyViewerRegionFilter ready=%d area=%d before=%u\n",
+			ready ? 1 : 0, state.area.active ? 1 : 0,
+			m_ViewerListFilter->GetSize());
+	}
+	/* As with the browser filter, the source is already the base subset. */
+	m_ViewerListFilter->SetPredicate(
+		[state, ready](const QuiverFile& f) {
+			if (f.IsFolder())
+				return false;
+			return !state.area.active || !ready || state.MatchesSpatial(f);
+		});
+
+	if (m_ViewerPtr &&
+		m_ViewerPtr->GetImageList() != IImageListViewPtr(m_ViewerListFilter))
+	{
+		m_ViewerPtr->SetImageList(IImageListViewPtr(m_ViewerListFilter));
+	}
+	m_bViewerFilterNeedsUpdate = false;
+	if (MapDebugVerbose())
+	{
+		MAP_DEBUG("ApplyViewerRegionFilter after=%u\n",
+			m_ViewerListFilter->GetSize());
+	}
 }
 
 
@@ -4581,6 +5487,15 @@ void Quiver::OnShowMenubar(bool bShow)
 
 static void quiver_escape_action(QuiverImpl *pQuiverImpl)
 {
+	QuiverMetricTimer t_escape("input", "escape action");
+	const gint64 key_us = g_last_escape_key_us;
+	g_last_escape_key_us = 0;
+	if (key_us != 0)
+	{
+		quiver_metric_emit("input", "escape key to action",
+			(gdouble)(quiver_metrics_now_us() - key_us) / 1000.0, "ms");
+	}
+
 	// this action will do one of the following
 
 	Quiver *pQuiver = pQuiverImpl->m_pQuiver;
@@ -4610,6 +5525,21 @@ static void quiver_escape_action(QuiverImpl *pQuiverImpl)
 		if (!bDoneSomething)
 		{
 			// 2. if in viewer and zoom fit return to browser
+			pQuiver->ShowBrowser();
+		}
+	}
+	else if (!bDoneSomething && pQuiverImpl->m_bMapMode)
+	{
+		// In map mode Escape first drops an active region filter, then
+		// returns to the browser.
+		if (pQuiverImpl->m_bRegionFilterActive)
+		{
+			if (pQuiverImpl->m_MapViewPtr)
+				pQuiverImpl->m_MapViewPtr->ClearRegionFilterVisual();
+			pQuiverImpl->ClearRegionFilter();
+		}
+		else
+		{
 			pQuiver->ShowBrowser();
 		}
 	}
@@ -4797,6 +5727,10 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_VIEWER))
 	{
 		pQuiver->ShowViewer();
+	}
+	else if (0 == strcmp(szAction,ACTION_QUIVER_UI_MODE_MAP))
+	{
+		pQuiver->ShowMap();
 	}
 	else if (0 == strcmp(szAction, ACTION_QUIVER_ABOUT))
 	{
@@ -5459,11 +6393,79 @@ static void quiver_new_action_handler_cb(GSimpleAction *action, GVariant *parame
 }
 
 
+void QuiverImpl::ImageListEventHandler::HandleLoadProgress(double fraction,
+	int current, int total)
+{
+	if (!parent)
+		return;
+
+	if (fraction < 0.0 && 0 == current && 0 == total)
+	{
+		ImageListAttributesPtr attrs = parent->m_ImageListPtr
+			? parent->m_ImageListPtr->GetAttributes()
+			: ImageListAttributesPtr();
+		ImageListAttributesPtr previous = parent->m_LastImageListAttributes;
+		parent->m_bPendingImageListDefinitionChanged = attrs && previous &&
+			!attrs->Matches(*previous);
+		parent->m_bImageListLoadInProgress = true;
+	}
+	else if (!parent->m_ImageListPtr ||
+		!parent->m_ImageListPtr->IsLoading())
+	{
+		parent->m_bImageListLoadInProgress = false;
+		parent->m_bPendingImageListDefinitionChanged = false;
+	}
+}
+
 void QuiverImpl::ImageListEventHandler::HandleContentsChanged(ImageListEventPtr event)
 { (void)event; 
-	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	if (parent)
 	{
-		parent->m_pQuiver->ImageChanged();
+		ImageListAttributesPtr attrs = parent->m_ImageListPtr
+			? parent->m_ImageListPtr->GetAttributes()
+			: ImageListAttributesPtr();
+		ImageListAttributesPtr previous = parent->m_LastImageListAttributes;
+		if (attrs)
+			parent->m_LastImageListAttributes.reset(new ImageListAttributes(*attrs));
+		else
+			parent->m_LastImageListAttributes.reset();
+
+		const bool definitionChanged = attrs && previous &&
+			!attrs->Matches(*previous);
+		const bool newListDefinition = definitionChanged ||
+			parent->m_bPendingImageListDefinitionChanged;
+		if (newListDefinition && !parent->m_FilterState.IsEmpty())
+		{
+			parent->ClearAllFilters();
+		}
+		const bool resetMapForList = attrs && (!previous || newListDefinition ||
+			parent->m_bImageListLoadInProgress);
+		if (resetMapForList)
+		{
+			/* A new list definition starts a fresh metadata index.  Keeping
+			 * the old list's ready flag set would let the metadata-ready
+			 * callback treat the first completion of the new index as a
+			 * no-op, leaving the browser filter evaluated against unresolved
+			 * GPS caches (and therefore showing a different count from the
+			 * viewer, which rebuilds later). */
+			parent->m_bMetadataReady = false;
+			if (parent->m_MapViewPtr)
+				parent->m_MapViewPtr->ResetViewForImageList();
+		}
+
+		if (parent->m_FilterState.dateActive ||
+			parent->m_FilterState.gps != ImageFilterState::GpsFilter::Any)
+		{
+			parent->m_bMetadataFiltersDirty = true;
+		}
+		if (parent->m_bInitialized && parent->m_pQuiver)
+			parent->m_pQuiver->ImageChanged();
+
+		if (!parent->m_ImageListPtr || !parent->m_ImageListPtr->IsLoading())
+		{
+			parent->m_bImageListLoadInProgress = false;
+			parent->m_bPendingImageListDefinitionChanged = false;
+		}
 	}
 }
 void QuiverImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEventPtr event) 
@@ -5475,23 +6477,41 @@ void QuiverImpl::ImageListEventHandler::HandleCurrentIndexChanged(ImageListEvent
 }
 void QuiverImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPtr event)
 { (void)event; 
-	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	if (parent)
 	{
-		parent->m_pQuiver->ImageChanged();
+		if (parent->m_FilterState.dateActive ||
+			parent->m_FilterState.gps != ImageFilterState::GpsFilter::Any)
+		{
+			parent->m_bMetadataFiltersDirty = true;
+		}
+		if (parent->m_bInitialized && parent->m_pQuiver)
+			parent->m_pQuiver->ImageChanged();
 	}
 }
 void QuiverImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
 { (void)event; 
-	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	if (parent)
 	{
-		parent->m_pQuiver->ImageChanged();
+		if (parent->m_FilterState.dateActive ||
+			parent->m_FilterState.gps != ImageFilterState::GpsFilter::Any)
+		{
+			parent->m_bMetadataFiltersDirty = true;
+		}
+		if (parent->m_bInitialized && parent->m_pQuiver)
+			parent->m_pQuiver->ImageChanged();
 	}
 }
 void QuiverImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)
 { (void)event; 
-	if (parent && parent->m_bInitialized && parent->m_pQuiver)
+	if (parent)
 	{
-		parent->m_pQuiver->ImageChanged();
+		if (parent->m_FilterState.dateActive ||
+			parent->m_FilterState.gps != ImageFilterState::GpsFilter::Any)
+		{
+			parent->m_bMetadataFiltersDirty = true;
+		}
+		if (parent->m_bInitialized && parent->m_pQuiver)
+			parent->m_pQuiver->ImageChanged();
 	}
 }
 

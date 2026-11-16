@@ -53,6 +53,11 @@ guint64 quiver_metric_current_epoch(const char* scope);
 /* Logs the counters accumulated so far and resets them.  Called on exit. */
 void quiver_metrics_flush(void);
 
+/* Installs a high-priority recurring timer that reports gaps in main-loop
+ * servicing, which is how a synchronous stall between two trace records is
+ * made visible. */
+void quiver_metrics_start_stall_watchdog(guint interval_ms, guint threshold_ms);
+
 #ifdef __cplusplus
 } /* extern "C" */
 

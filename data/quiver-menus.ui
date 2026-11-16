@@ -58,10 +58,34 @@
         <attribute name="location">browser</attribute>
       </item>
       <item>
+        <attribute name="label">_Map</attribute>
+        <attribute name="action">quiver.UIModeMap</attribute>
+        <attribute name="icon">mark-location-symbolic</attribute>
+        <attribute name="location">browser</attribute>
+      </item>
+      <item>
         <attribute name="label">_Browser</attribute>
         <attribute name="action">quiver.UIModeBrowser</attribute>
         <attribute name="icon">folder-symbolic</attribute>
         <attribute name="location">viewer</attribute>
+      </item>
+      <item>
+        <attribute name="label">_Map</attribute>
+        <attribute name="action">quiver.UIModeMap</attribute>
+        <attribute name="icon">mark-location-symbolic</attribute>
+        <attribute name="location">viewer</attribute>
+      </item>
+      <item>
+        <attribute name="label">_Browser</attribute>
+        <attribute name="action">quiver.UIModeBrowser</attribute>
+        <attribute name="icon">folder-symbolic</attribute>
+        <attribute name="location">map</attribute>
+      </item>
+      <item>
+        <attribute name="label">_Viewer</attribute>
+        <attribute name="action">quiver.UIModeViewer</attribute>
+        <attribute name="icon">image-x-generic-symbolic</attribute>
+        <attribute name="location">map</attribute>
       </item>
     </section>
 

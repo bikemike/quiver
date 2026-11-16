@@ -3,23 +3,17 @@
   <!--
     Main application toolbar.
 
-    The toolbar is a GtkBox made of three child boxes:
-      * shared_box  - shown in both modes; reserved for shared controls on the
-                      far left, before the per-mode controls
-      * browser_box - shown only in browser mode
-      * viewer_box  - shown only in viewer mode
-    C++ code toggles browser_box / viewer_box visibility on state change, so
-    each state's toolbar group is an independent, per-state container (its own
-    "placeholder").  Because they are distinct boxes, unmerging one state never
-    disturbs the other state's controls.
+    The toolbar is a GtkBox made of two always-visible groups:
+      * shared_box - the browser / viewer / map mode radio buttons
+      * filter_box - the filter menu button and the clear-filter button
+    The mode buttons are GtkToggleButtons bound in C++ to a shared radio action
+    group, so the active mode stays visibly pressed.  Keeping every mode button
+    visible lets the user switch directly between all three views.
 
     The "Recently Viewed" menu button (button_recent) is a standalone object in
     this file; C++ packs it into the headerbar END, immediately to the left of
     the preferences button, so it sits on the opposite side of the headerbar
     from the toolbar's mode controls.
-
-    Toggle buttons bind to stateful boolean actions so GtkToggleButton reflects
-    the active state automatically.
 
     All icons are -symbolic variants so the headerbar stays monochrome and
     matches the GNOME style (Nautilus, etc.).
@@ -28,68 +22,13 @@
     <property name="orientation">horizontal</property>
     <property name="spacing">2</property>
 
-    <!-- ============ Shared controls (shown in both modes) ============ -->
+    <!-- ============ Mode controls (shown in every mode) ============ -->
     <child>
       <object class="GtkBox" id="shared_box">
         <property name="orientation">horizontal</property>
         <property name="spacing">2</property>
-      </object>
-    </child>
-
-    <!-- ===================== Browser-only controls ===================== -->
-    <child>
-      <object class="GtkBox" id="browser_box">
-        <property name="orientation">horizontal</property>
-        <property name="spacing">2</property>
         <child>
-          <object class="GtkButton" id="button_uimode_viewer">
-            <property name="action-name">quiver.UIModeViewer</property>
-            <property name="tooltip-text">View Image</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">image-x-generic-symbolic</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkSeparator">
-            <property name="orientation">vertical</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton">
-            <property name="action-name">quiver.BrowserHistoryBack</property>
-            <property name="tooltip-text">Go Back</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">go-previous-symbolic</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton">
-            <property name="action-name">quiver.BrowserHistoryForward</property>
-            <property name="tooltip-text">Go Forward</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">go-next-symbolic</property>
-              </object>
-            </child>
-          </object>
-        </child>
-      </object>
-    </child>
-
-    <!-- ===================== Viewer-only controls ===================== -->
-    <child>
-      <object class="GtkBox" id="viewer_box">
-        <property name="orientation">horizontal</property>
-        <property name="spacing">2</property>
-        <child>
-          <object class="GtkButton" id="button_uimode_browser">
-            <property name="action-name">quiver.UIModeBrowser</property>
+          <object class="GtkToggleButton" id="button_uimode_browser">
             <property name="tooltip-text">Browse Images</property>
             <child>
               <object class="GtkImage">
@@ -99,32 +38,33 @@
           </object>
         </child>
         <child>
-          <object class="GtkSeparator">
-            <property name="orientation">vertical</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton">
-            <property name="action-name">quiver.ImagePrevious</property>
-            <property name="tooltip-text">Go to previous image</property>
+          <object class="GtkToggleButton" id="button_uimode_map">
+            <property name="tooltip-text">Map</property>
             <child>
               <object class="GtkImage">
-                <property name="icon-name">go-previous-symbolic</property>
+                <property name="icon-name">mark-location-symbolic</property>
               </object>
             </child>
           </object>
         </child>
         <child>
-          <object class="GtkButton">
-            <property name="action-name">quiver.ImageNext</property>
-            <property name="tooltip-text">Go to next image</property>
+          <object class="GtkToggleButton" id="button_uimode_viewer">
+            <property name="tooltip-text">View Image</property>
             <child>
               <object class="GtkImage">
-                <property name="icon-name">go-next-symbolic</property>
+                <property name="icon-name">image-x-generic-symbolic</property>
               </object>
             </child>
           </object>
         </child>
+      </object>
+    </child>
+
+    <!-- ================= Filter controls (all modes) ==================== -->
+    <child>
+      <object class="GtkBox" id="filter_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">2</property>
       </object>
     </child>
   </object>

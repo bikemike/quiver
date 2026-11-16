@@ -12,6 +12,13 @@ set(QUIVER_CORE_SOURCES
     ImageListEventSource.cpp
     ImageListAttributes.cpp
     ImageListFilter.cpp
+    ImageFilterState.cpp
+    FilteredImageList.cpp
+    QuiverGpsIndex.cpp
+    QuiverOfflineTileSource.cpp
+    QuiverRasterTileSource.cpp
+    QuiverRasterMapLayer.cpp
+    QuiverMapView.cpp
     ImageDecoder.cpp
     ImageLoader.cpp
     IconViewThumbLoader.cpp
@@ -94,6 +101,9 @@ target_link_libraries(quiver_core PUBLIC
     PkgConfig::GIO
     PkgConfig::EXIV2
     PkgConfig::GSTREAMER
+    PkgConfig::SHUMATE
+    PkgConfig::SOUP3
+    PkgConfig::JSON_GLIB
     PkgConfig::FFMPEG
     JPEG::JPEG
     ZLIB::ZLIB

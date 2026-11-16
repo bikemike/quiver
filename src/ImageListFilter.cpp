@@ -20,6 +20,32 @@ ImageListFilter::~ImageListFilter()
 	}
 }
 
+void ImageListFilter::SetPredicate(Predicate pred)
+{
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		m_pred = pred;
+		m_bMapValid = false;
+		m_iLastSourceSize = 0;
+	}
+	/* Emit after unlocking: listeners may call back into this filter or its
+	 * source, and holding m_MapMutex here inverts the lock order used by
+	 * thumbnail loader threads (child filter -> source filter). */
+	EmitContentsChangedEvent();
+}
+
+ImageListFilter::Predicate ImageListFilter::GetPredicate() const
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+	return m_pred;
+}
+
+static bool ImageListFilterMatch(const ImageListFilter::Predicate& pred,
+	const QuiverFile& file)
+{
+	return !pred || pred(file);
+}
+
 void ImageListFilter::RebuildIfNeeded() const
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
@@ -30,7 +56,7 @@ void ImageListFilter::RebuildIfNeeded() const
 	m_vectMap.clear();
 	for (unsigned int i = 0 ; i < n ; i++)
 	{
-		if (m_pred(SourceGet(i)))
+		if (ImageListFilterMatch(m_pred, SourceGet(i)))
 			m_vectMap.push_back(i);
 	}
 	m_iLastSourceSize = n;
@@ -137,46 +163,70 @@ bool ImageListFilter::HasPrevious() const
 
 bool ImageListFilter::Next()
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	if (!HasNext())
-		return false;
-	return SetCurrentIndex((unsigned int)ResolveViewIndex() + 1);
+	unsigned int iTarget = 0;
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		if (!HasNext())
+			return false;
+		iTarget = (unsigned int)ResolveViewIndex() + 1;
+	}
+	return SetCurrentIndex(iTarget);
 }
 
 bool ImageListFilter::Previous()
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	if (!HasPrevious())
-		return false;
-	return SetCurrentIndex((unsigned int)ResolveViewIndex() - 1);
+	unsigned int iTarget = 0;
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		if (!HasPrevious())
+			return false;
+		iTarget = (unsigned int)ResolveViewIndex() - 1;
+	}
+	return SetCurrentIndex(iTarget);
 }
 
 bool ImageListFilter::First()
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	if (GetSize() == 0)
-		return false;
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		if (GetSize() == 0)
+			return false;
+	}
 	return SetCurrentIndex(0);
 }
 
 bool ImageListFilter::Last()
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	if (GetSize() == 0)
-		return false;
-	return SetCurrentIndex(GetSize() - 1);
+	unsigned int iTarget = 0;
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		const unsigned int iSize = GetSize();
+		if (iSize == 0)
+			return false;
+		iTarget = iSize - 1;
+	}
+	return SetCurrentIndex(iTarget);
 }
 
 bool ImageListFilter::SetCurrentIndex(unsigned int iIndex)
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	RebuildIfNeeded();
-	if (iIndex >= m_vectMap.size())
-		return false;
-	bool bOk = m_pSource->SetCurrentIndex(m_vectMap[iIndex]);
+	unsigned int iSourceIndex = 0;
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		RebuildIfNeeded();
+		if (iIndex >= m_vectMap.size())
+			return false;
+		iSourceIndex = m_vectMap[iIndex];
+	}
+
+	/* The source emits its change event synchronously while this call is in
+	 * progress.  Do not hold our mutex across it: the event handler and the
+	 * thumbnail loader take these mutexes in the opposite direction. */
+	const bool bOk = m_pSource->SetCurrentIndex(iSourceIndex);
 	if (bOk)
 	{
-		const char* uri = SourceGet(m_vectMap[iIndex]).GetURI();
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		const char* uri = SourceGet(iSourceIndex).GetURI();
 		m_szCurrentURI = uri ? uri : "";
 	}
 	return bOk;
@@ -234,89 +284,166 @@ QuiverFile ImageListFilter::Get(unsigned int nIndex) const
 
 void ImageListFilter::Remove(unsigned int nIndex)
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	RebuildIfNeeded();
-	if (nIndex >= m_vectMap.size())
-		return;
-	m_pSource->Remove(m_vectMap[nIndex]);
+	unsigned int iSourceIndex = 0;
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		RebuildIfNeeded();
+		if (nIndex >= m_vectMap.size())
+			return;
+		iSourceIndex = m_vectMap[nIndex];
+	}
+	m_pSource->Remove(iSourceIndex);
 }
 
 // event translation
+//
+// Every event is emitted after releasing m_MapMutex.  Listeners can call
+// back into this filter or the source chain, and worker threads acquire the
+// child filter mutex before the source mutex; emitting under our lock would
+// invert that order and deadlock.
 
 void ImageListFilter::HandleContentsChanged(ImageListEventPtr event)
 { (void)event;
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	m_bMapValid = false;
-	m_szCurrentURI.clear();
-	m_iLastSourceSize = 0;
-	m_iLastEmittedView = -1;
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		m_bMapValid = false;
+		m_szCurrentURI.clear();
+		m_iLastSourceSize = 0;
+		m_iLastEmittedView = -1;
+	}
 	EmitContentsChangedEvent();
 }
 
 void ImageListFilter::HandleCurrentIndexChanged(ImageListEventPtr event)
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	int iOld = m_iLastEmittedView;
-
-	// a selection on a filtered-out item (e.g. a folder clicked in the
-	// browser) must not move this view
-	if (!m_pred(SourceGet(event->GetIndex())))
-		return;
-
-	const char* uri = SourceGet(event->GetIndex()).GetURI();
-	m_szCurrentURI = uri ? uri : "";
-	int iNew = ResolveViewIndex();
-
-	if (iNew != iOld)
+	bool bEmit = false;
+	unsigned int iEmitNew = 0;
+	unsigned int iEmitOld = 0;
 	{
-		EmitCurrentIndexChangedEvent(
-			(0 <= iNew) ? (unsigned int)iNew : 0,
-			(0 < iOld) ? (unsigned int)iOld : 0);
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		const int iOld = m_iLastEmittedView;
+
+		// a selection on a filtered-out item (e.g. a folder clicked in the
+		// browser) must not move this view
+		if (!ImageListFilterMatch(m_pred, SourceGet(event->GetIndex())))
+			return;
+
+		const char* uri = SourceGet(event->GetIndex()).GetURI();
+		m_szCurrentURI = uri ? uri : "";
+		const int iNew = ResolveViewIndex();
+
+		if (iNew != iOld)
+		{
+			bEmit = true;
+			iEmitNew = (0 <= iNew) ? (unsigned int)iNew : 0;
+			iEmitOld = (0 < iOld) ? (unsigned int)iOld : 0;
+		}
 	}
+	if (bEmit)
+		EmitCurrentIndexChangedEvent(iEmitNew, iEmitOld);
 }
 
 void ImageListFilter::HandleItemAdded(ImageListEventPtr event)
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	bool bVisible = m_pred(SourceGet(event->GetIndex()));
-	m_bMapValid = false;
-	if (bVisible)
+	bool bEmit = false;
+	unsigned int iPos = 0;
 	{
-		unsigned int iPos = 0;
-		MapPosOfSource(event->GetIndex(), iPos);
-		EmitItemAddedEvent(iPos);
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		const bool bVisible = ImageListFilterMatch(m_pred,
+			SourceGet(event->GetIndex()));
+		m_bMapValid = false;
+		if (bVisible)
+		{
+			MapPosOfSource(event->GetIndex(), iPos);
+			bEmit = true;
+		}
 	}
 	// an invisible addition does not change the view at all
+	if (bEmit)
+		EmitItemAddedEvent(iPos);
 }
 
 void ImageListFilter::HandleItemRemoved(ImageListEventPtr event)
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+	bool bEmit = false;
 	unsigned int iOldPos = 0;
-	bool bWasVisible = MapPosOfSource(event->GetIndex(), iOldPos);
-	m_bMapValid = false;
-	if (bWasVisible)
 	{
-		EmitItemRemovedEvent(iOldPos);
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		bEmit = MapPosOfSource(event->GetIndex(), iOldPos);
+		m_bMapValid = false;
 	}
 	// if the tracked current vanished it is re-anchored lazily by
 	// ResolveViewIndex()
+	if (bEmit)
+		EmitItemRemovedEvent(iOldPos);
 }
 
 void ImageListFilter::HandleItemChanged(ImageListEventPtr event)
 {
-	std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
-	unsigned int iOldPos = 0;
-	bool bWasVisible = MapPosOfSource(event->GetIndex(), iOldPos);
-	// a change can alter folder-ness, so the map may be stale too
-	m_bMapValid = false;
-	bool bIsVisible = m_pred(SourceGet(event->GetIndex()));
-	if (bWasVisible || bIsVisible)
+	enum class Change { None, Changed, Added, Removed };
+	Change change = Change::None;
+	unsigned int iPos = 0;
 	{
-		unsigned int iPos = iOldPos;
-		if (bIsVisible)
-			MapPosOfSource(event->GetIndex(), iPos);
+		std::lock_guard<std::recursive_mutex> lock(m_MapMutex);
+		const unsigned int iSource = event->GetIndex();
+		const unsigned int n = m_pSource ? m_pSource->GetSize() : 0;
+
+		if (iSource >= n)
+			return;
+
+		/* A structural change may have left the map dirty.  Rebuild once
+		 * here so this event still reaches listeners; subsequent item changes
+		 * are applied incrementally. */
+		if (!m_bMapValid)
+			RebuildIfNeeded();
+		if (m_iLastSourceSize != n)
+			return;
+
+		auto itr = std::lower_bound(m_vectMap.begin(), m_vectMap.end(),
+			iSource);
+		const bool bWasVisible = itr != m_vectMap.end() && *itr == iSource;
+		unsigned int iOldPos = bWasVisible
+			? (unsigned int)(itr - m_vectMap.begin()) : 0;
+		const bool bIsVisible = ImageListFilterMatch(m_pred,
+			SourceGet(iSource));
+
+		if (bWasVisible && bIsVisible)
+		{
+			change = Change::Changed;
+			iPos = iOldPos;
+		}
+		else if (!bWasVisible && bIsVisible)
+		{
+			/* An item that now matches is new to this view.  Add it in place
+			 * rather than discarding the whole map and rescanning. */
+			iPos = (unsigned int)(itr - m_vectMap.begin());
+			m_vectMap.insert(itr, iSource);
+			if (0 <= m_iLastEmittedView && iPos <= (unsigned int)m_iLastEmittedView)
+				++m_iLastEmittedView;
+			change = Change::Added;
+		}
+		else if (bWasVisible && !bIsVisible)
+		{
+			iPos = iOldPos;
+			m_vectMap.erase(itr);
+			if (0 <= m_iLastEmittedView && iPos < (unsigned int)m_iLastEmittedView)
+				--m_iLastEmittedView;
+			change = Change::Removed;
+		}
+	}
+	switch (change)
+	{
+	case Change::Changed:
 		EmitItemChangedEvent(iPos);
+		break;
+	case Change::Added:
+		EmitItemAddedEvent(iPos);
+		break;
+	case Change::Removed:
+		EmitItemRemovedEvent(iPos);
+		break;
+	case Change::None:
+		break;
 	}
 }
 

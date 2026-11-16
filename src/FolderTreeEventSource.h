@@ -20,8 +20,8 @@ public:
 	 * image list should keep the viewer's place.  Pass false from the paths
 	 * that clear the other checkboxes first (a plain click on a row), which
 	 * navigate to a different folder and should land on its first item. */
-	void EmitSelectionChangedEvent(bool bPreserveCurrentIndex = true);
-	void EmitBookmarkOpenEvent(const std::list<std::string>& uris, bool bRecursive);
+	virtual void EmitSelectionChangedEvent(bool bPreserveCurrentIndex = true);
+	virtual void EmitBookmarkOpenEvent(const std::list<std::string>& uris, bool bRecursive);
 private:
 	FolderTreeSignal m_sigSelectionChanged;
 	

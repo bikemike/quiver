@@ -1,4 +1,5 @@
 #include <config.h>
+#include "QuiverMetrics.h"
 
 #include <gdk/gdk.h>
 // GDK4: gdkx.h removed; X11-specific code guarded out.
@@ -4093,6 +4094,32 @@ static void viewer_radio_action_handler_cb(GSimpleAction *action, GVariant *para
 
 static Viewer::ViewerImpl *s_pLastRegisteredViewerImpl = NULL;
 
+static void viewer_remove_current_and_keep_position(Viewer::ViewerImpl* pViewerImpl)
+{
+	if (NULL == pViewerImpl || !pViewerImpl->m_ImageListPtr ||
+		0 == pViewerImpl->m_ImageListPtr->GetSize())
+	{
+		return;
+	}
+
+	const unsigned int iIndex = pViewerImpl->m_ImageListPtr->GetCurrentIndex();
+	pViewerImpl->m_ImageListPtr->Remove(iIndex);
+
+	const unsigned int iSize = pViewerImpl->m_ImageListPtr->GetSize();
+	if (0 == iSize)
+	{
+		pViewerImpl->SetImageIndex(0, true);
+		return;
+	}
+	const unsigned int iTarget = std::min(iIndex, iSize - 1);
+	QuiverFile f = pViewerImpl->m_ImageListPtr->GetCurrent();
+	if (pViewerImpl->m_ImageListPtr->GetCurrentIndex() != iTarget ||
+		pViewerImpl->m_QuiverFileCurrent != f)
+	{
+		pViewerImpl->SetImageIndex((int)iTarget, true);
+	}
+}
+
 static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter, gpointer data)
 { (void)parameter; 
 	Viewer::ViewerImpl *pViewerImpl = (Viewer::ViewerImpl*)data;
@@ -4406,8 +4433,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 			{
 				if (QuiverFileOps::PermanentlyDeleteTrashItem(f))
 				{
-					pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
-					pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex(),true);
+					viewer_remove_current_and_keep_position(pViewerImpl);
 				}
 			}
 		}
@@ -4420,8 +4446,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 				trashed.push_back(f);
 				QuiverFileOps::UndoStackRecord(trashed);
 
-				pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
-				pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex(),true);
+				viewer_remove_current_and_keep_position(pViewerImpl);
 			}
 		}
 	}
@@ -4438,8 +4463,7 @@ static void viewer_action_handler_cb(GSimpleAction *action, GVariant *parameter,
 		{
 			if (QuiverFileOps::RestoreTrashItem(f))
 			{
-				pViewerImpl->m_ImageListPtr->Remove(pViewerImpl->m_ImageListPtr->GetCurrentIndex());
-				pViewerImpl->SetImageIndex(pViewerImpl->m_ImageListPtr->GetCurrentIndex(),true);
+				viewer_remove_current_and_keep_position(pViewerImpl);
 			}
 		}
 	}
@@ -4679,6 +4703,7 @@ static void viewer_imageview_activated(QuiverImageView *imageview,gpointer data)
 { (void)imageview; 
 	Viewer::ViewerImpl *pViewerImpl;
 	pViewerImpl = (Viewer::ViewerImpl*)data;
+	quiver_metric_mark("input", "viewer image activated");
 	pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 }
 
@@ -6675,6 +6700,7 @@ viewer_button_press_cb(GtkGestureClick *gesture, gint n_press, gdouble x, gdoubl
 		{
 			return;
 		}
+		quiver_metric_mark("input", "viewer video activated");
 		pViewerImpl->m_pViewer->EmitItemActivatedEvent();
 		return;
 	}
@@ -11886,7 +11912,7 @@ void Viewer::ViewerImpl::HandleLoadProgress(double fraction, int current, int to
 	{
 		if (total > 0)
 		{
-			snprintf(szMsg, sizeof(szMsg), "Reading dates... %d / %d", current, total);
+			snprintf(szMsg, sizeof(szMsg), "Reading dates and GPS... %d / %d", current, total);
 		}
 		else
 		{
@@ -13474,8 +13500,31 @@ void Viewer::ViewerImpl::ImageListEventHandler::HandleItemAdded(ImageListEventPt
 	parent->m_ThumbnailLoader.UpdateList(true);
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemRemoved(ImageListEventPtr event)
-{ (void)event; 
-	parent->SetImageIndex(parent->m_ImageListPtr->GetCurrentIndex(),true);
+{
+	const unsigned int iSize = parent->m_ImageListPtr->GetSize();
+	if (0 == iSize)
+	{
+		parent->SetImageIndex(0,true);
+		parent->m_ThumbnailLoader.UpdateList(true);
+		return;
+	}
+
+	unsigned int iTarget = parent->m_ImageListPtr->GetCurrentIndex();
+	QuiverFile f = parent->m_ImageListPtr->GetCurrent();
+	if (parent->m_QuiverFileCurrent != f)
+	{
+		const unsigned int iRemoved = event->GetIndex();
+		if (iRemoved < iSize)
+		{
+			iTarget = iRemoved;
+		}
+	}
+	if (iTarget >= iSize)
+	{
+		iTarget = iSize - 1;
+	}
+
+	parent->SetImageIndex(iTarget,true);
 	parent->m_ThumbnailLoader.UpdateList(true);
 }
 void Viewer::ViewerImpl::ImageListEventHandler::HandleItemChanged(ImageListEventPtr event)

@@ -935,12 +935,26 @@ void AddAccelGroup(GtkWindow* /*window*/) {
 	}
 
 	static void radio_widget_toggled_cb(GtkWidget *widget, gpointer user_data) {
+		static const char *const sync_key = "quiver-radio-state-sync";
+		if (g_object_get_data(G_OBJECT(widget), sync_key))
+			return;
 		const gchar *action_name = (const gchar*)user_data;
 		GAction *action = QuiverUtils::GetAction(action_name);
 		if (NULL == action) return;
 		gboolean active = FALSE;
 		g_object_get(widget, "active", &active, NULL);
-		if (!active) return;
+		GVariant *state = g_action_get_state(action);
+		const gboolean action_active = (NULL != state) ? g_variant_get_boolean(state) : FALSE;
+		if (NULL != state) g_variant_unref(state);
+		if (!active) {
+			if (action_active) {
+				g_object_set_data(G_OBJECT(widget), sync_key, GINT_TO_POINTER(1));
+				g_object_set(widget, "active", TRUE, NULL);
+				g_object_set_data(G_OBJECT(widget), sync_key, NULL);
+			}
+			return;
+		}
+		if (action_active) return;
 		g_action_activate(action, NULL);
 	}
 

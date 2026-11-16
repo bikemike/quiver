@@ -2,10 +2,16 @@
 
 #include "QuiverGps.h"
 #include "QuiverFile.h"
+#include "QuiverMetadata.h"
+#include "test_helpers.h"
 
 #include <cmath>
 #include <ctime>
 #include <memory>
+
+#include <glib.h>
+#include <glib/gstdio.h>
+#include <unistd.h>
 
 namespace
 {
@@ -293,3 +299,48 @@ TEST_CASE("ZoneDetect coordinate to timezone lookup and video time resolution", 
 	}
 }
 
+
+TEST_CASE("QuiverFile reads GPS from video metadata", "[gps][video]")
+{
+	const std::string sample = QuiverTest_GetImagesDir() + "/sample_video.mp4";
+	char* contents = nullptr;
+	gsize len = 0;
+	REQUIRE(g_file_get_contents(sample.c_str(), &contents, &len, nullptr));
+	REQUIRE(len > 0);
+
+	char tmpPath[] = "/tmp/quiver_test_video_gps_XXXXXX.mp4";
+	int fd = g_mkstemp(tmpPath);
+	REQUIRE(fd >= 0);
+	close(fd);
+	REQUIRE(g_file_set_contents(tmpPath, contents, len, nullptr));
+	g_free(contents);
+
+	QuiverMetadata::MetadataPayload payload;
+	payload.valid = true;
+	payload.source_is_video = true;
+	payload.has_gps = true;
+	payload.gps_latitude = 20.2261;
+	payload.gps_longitude = 105.9188;
+	payload.has_altitude = true;
+	payload.gps_altitude = 12.5;
+
+	QuiverMetadata::PasteOptions options;
+	options.copy_gps = true;
+	REQUIRE(QuiverMetadata::ApplyMetadataToVideo(tmpPath, payload, options));
+
+	gchar* uri = g_filename_to_uri(tmpPath, nullptr, nullptr);
+	REQUIRE(uri != nullptr);
+	QuiverFile f(uri);
+	g_free(uri);
+
+	REQUIRE(f.HasGPS());
+	double lat = 0.0, lon = 0.0, alt = 0.0;
+	bool hasAlt = false;
+	REQUIRE(f.GetGPSCoordinates(lat, lon, hasAlt, alt));
+	REQUIRE(std::fabs(lat - 20.2261) < 1e-4);
+	REQUIRE(std::fabs(lon - 105.9188) < 1e-4);
+	REQUIRE(hasAlt);
+	REQUIRE(std::fabs(alt - 12.5) < 1e-4);
+
+	g_unlink(tmpPath);
+}

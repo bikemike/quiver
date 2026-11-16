@@ -224,6 +224,52 @@ TEST_CASE("A folder larger than the budget is capped, not grown", "[unit][cache]
 	CHECK(IconViewThumbLoader::ComputeCacheSize(100, 0, 1u << 20, 26) == 1);
 }
 
+/* Queue sizing.
+ *
+ * Cache retention and load queueing are two different budgets.  A large folder
+ * may keep thousands of thumbnails cached, but queueing all of them on every
+ * map or scroll spends the worker threads decoding cells far off screen.  This
+ * was visible on a 15k-folder viewer->browser switch: the cache was correctly
+ * capped at 4096, but UpdateList() queued exactly 4096 loads for a 10-cell
+ * viewport.
+ */
+
+TEST_CASE("The load queue is bounded by the viewport, not the cache", "[unit][cache]")
+{
+	const guint pages = 12;
+	const guint run_ahead = 2 * (pages + 1);
+
+	// The captured case: 15k items, 10 visible cells, 4096-thumbnail cache.
+	const guint cache = IconViewThumbLoader::ComputeCacheSize(15000,
+		128 * 128 * 4, 256u * 1024u * 1024u, run_ahead);
+	CHECK(cache == 4096);
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(10, pages, 15000) ==
+		10 + run_ahead);
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(10, pages, 15000) < cache);
+
+	// The run-ahead remains even for an empty viewport, and grows with the
+	// visible range rather than with the folder.
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(0, pages, 15000) == run_ahead);
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(200, pages, 15000) ==
+		200 + run_ahead);
+}
+
+TEST_CASE("The load queue never runs past the end of the folder", "[unit][cache]")
+{
+	const guint pages = 12;
+
+	// Small folders are loaded whole.
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(10, pages, 10) == 10);
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(20, pages, 10) == 10);
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(1, pages, 1) == 1);
+
+	// A viewport reporting more cells than the list settles on the list size.
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(500, pages, 300) == 300);
+
+	// Empty list, no work.
+	CHECK(IconViewThumbLoader::ComputePrefetchCount(0, pages, 0) == 0);
+}
+
 /* Regression guard: video thumbnails used to disappear completely.
  *
  * QuiverFileImpl::GetThumbnailTexture() bails out on its first line when

@@ -24,6 +24,7 @@
 #include <libquiver/quiver-pixbuf-utils.h>
 
 #include "Browser.h"
+#include "FilteredImageList.h"
 #include "ThreadUtil.h"
 #include "FolderTree.h"
 #include "ImageList.h"
@@ -398,14 +399,33 @@ public:
 	GtkWidget *m_pContextMenuTitleLabel;
 	/* Overlay wrapping the icon view (see GetIconViewOverlay()). */
 	GtkWidget *m_pIconViewOverlay;
+	/* Stack that swaps the icon grid for the map; the rest of the browser
+	 * (folder tree, preview, location row) stays in place. */
+	GtkWidget *m_pContentStack;
 
 	GtkWidget *m_pLoadingOverlayBox;
 	GtkWidget *m_pLoadingOverlayLabel;
 	GtkWidget *m_pLoadingOverlayBar;
 	guint m_iTimeoutLoadingPulse;
 
+	/* Folder loading and the date/GPS metadata pass share the single bottom
+	 * progress pill.  Each job keeps its own state so finishing one job
+	 * cannot hide progress for the other. */
+	bool m_bLoadingProgressActive;
+	std::string m_strLoadingProgressText;
+	double m_dLoadingProgressFraction;
+	bool m_bMetadataProgressActive;
+	std::string m_strMetadataProgressText;
+	double m_dMetadataProgressFraction;
+	/* The statusbar mirrors folder-load progress only; metadata progress
+	 * stays in the bottom pill so it cannot overwrite other status text. */
+	bool m_bStatusbarProgressActive;
+
 	void ShowLoadingProgress(const std::string& text, double fraction);
 	void HideLoadingProgress();
+	void ShowMetadataProgress(const std::string& text, double fraction);
+	void HideMetadataProgress();
+	void UpdateProgressDisplay();
 	void HandleLoadProgress(double fraction, int current, int total);
 	
 /* nested classes */
@@ -560,6 +580,14 @@ list<unsigned int> Browser::GetSelection()
 		item = g_list_next(item);
 	}
 	g_list_free(selection);
+
+	/* Selection indexes are positions in the filtered browser view, while
+	 * Quiver's actions operate on the master list. */
+	if (auto* filtered = dynamic_cast<FilteredImageList*>(
+			m_BrowserImplPtr->m_ImageListPtr.get()))
+	{
+		return filtered->MapViewIndicesToMaster(selection_list);
+	}
 	return selection_list;
 }
 
@@ -660,6 +688,24 @@ GtkWidget* Browser::GetIconViewOverlay()
 	return m_BrowserImplPtr->m_pIconViewOverlay;
 }
 
+void Browser::SetMapWidget(GtkWidget* mapWidget)
+{
+	if (!m_BrowserImplPtr->m_pContentStack || !mapWidget)
+		return;
+	if (gtk_stack_get_child_by_name(GTK_STACK(m_BrowserImplPtr->m_pContentStack), "map") == mapWidget)
+		return;
+	gtk_stack_add_named(GTK_STACK(m_BrowserImplPtr->m_pContentStack), mapWidget, "map");
+	gtk_stack_set_visible_child_name(GTK_STACK(m_BrowserImplPtr->m_pContentStack), "icons");
+}
+
+void Browser::ShowMapView(bool show)
+{
+	if (!m_BrowserImplPtr->m_pContentStack)
+		return;
+	gtk_stack_set_visible_child_name(GTK_STACK(m_BrowserImplPtr->m_pContentStack),
+		show ? "map" : "icons");
+}
+
 void Browser::ShowLoadingProgress(const std::string& text, double fraction)
 {
 	m_BrowserImplPtr->ShowLoadingProgress(text, fraction);
@@ -668,6 +714,16 @@ void Browser::ShowLoadingProgress(const std::string& text, double fraction)
 void Browser::HideLoadingProgress()
 {
 	m_BrowserImplPtr->HideLoadingProgress();
+}
+
+void Browser::ShowMetadataProgress(const std::string& text, double fraction)
+{
+	m_BrowserImplPtr->ShowMetadataProgress(text, fraction);
+}
+
+void Browser::HideMetadataProgress()
+{
+	m_BrowserImplPtr->HideMetadataProgress();
 }
 
 void Browser::UpdateFullscreenSidebar()
@@ -999,10 +1055,16 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	m_dDropStatusY = 0;
 	m_bDropFinished = false;
 	m_pIconViewOverlay = NULL;
+	m_pContentStack = NULL;
 	m_pLoadingOverlayBox = NULL;
 	m_pLoadingOverlayLabel = NULL;
 	m_pLoadingOverlayBar = NULL;
 	m_iTimeoutLoadingPulse = 0;
+	m_bLoadingProgressActive = false;
+	m_dLoadingProgressFraction = -1.0;
+	m_bMetadataProgressActive = false;
+	m_dMetadataProgressFraction = -1.0;
+	m_bStatusbarProgressActive = false;
 	/*
 	 * layout for the browser gui:
 	 * hpaned
@@ -1191,6 +1253,21 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_widget_set_hexpand(m_pIconViewOverlay, TRUE);
 	gtk_widget_set_vexpand(m_pIconViewOverlay, TRUE);
 
+	m_pContentStack = gtk_stack_new();
+	gtk_stack_set_transition_type(GTK_STACK(m_pContentStack),
+		GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+	gtk_widget_set_hexpand(m_pContentStack, TRUE);
+	gtk_widget_set_vexpand(m_pContentStack, TRUE);
+	gtk_stack_add_named(GTK_STACK(m_pContentStack), m_pIconViewOverlay, "icons");
+	gtk_stack_set_visible_child_name(GTK_STACK(m_pContentStack), "icons");
+
+	/* Loading/metadata overlays live above the content stack, so the same
+	 * pill is visible over both the icon grid and the map. */
+	GtkWidget* contentOverlay = gtk_overlay_new();
+	gtk_overlay_set_child(GTK_OVERLAY(contentOverlay), m_pContentStack);
+	gtk_widget_set_hexpand(contentOverlay, TRUE);
+	gtk_widget_set_vexpand(contentOverlay, TRUE);
+
 	m_pLoadingOverlayBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
 	gtk_widget_add_css_class(m_pLoadingOverlayBox, "osd");
 	gtk_widget_add_css_class(m_pLoadingOverlayBox, "viewer-overlay-bar");
@@ -1208,8 +1285,8 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_widget_set_size_request(m_pLoadingOverlayBar, 220, -1);
 	gtk_box_append(GTK_BOX(m_pLoadingOverlayBox), m_pLoadingOverlayBar);
 
-	gtk_overlay_add_overlay(GTK_OVERLAY(m_pIconViewOverlay), m_pLoadingOverlayBox);
-	gtk_overlay_set_measure_overlay(GTK_OVERLAY(m_pIconViewOverlay), m_pLoadingOverlayBox, FALSE);
+	gtk_overlay_add_overlay(GTK_OVERLAY(contentOverlay), m_pLoadingOverlayBox);
+	gtk_overlay_set_measure_overlay(GTK_OVERLAY(contentOverlay), m_pLoadingOverlayBox, FALSE);
 	gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);
 	
 	hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
@@ -1220,7 +1297,7 @@ Browser::BrowserImpl::BrowserImpl(Browser *parent) :
 	gtk_widget_set_hexpand(hbox, TRUE);
 	gtk_widget_set_vexpand(vbox, TRUE);
 	gtk_box_append (GTK_BOX (vbox), hbox);
-	gtk_box_append (GTK_BOX (vbox), m_pIconViewOverlay);
+	gtk_box_append (GTK_BOX (vbox), contentOverlay);
 	/* the preview keeps the height the divider gives it; it must not ask for
 	 * more when the sidebar column is resized */
 	gtk_widget_set_vexpand(m_pImageView, FALSE);
@@ -1720,6 +1797,9 @@ void Browser::BrowserImpl::UpdateUI()
 
 void Browser::BrowserImpl::Show()
 {
+	QuiverMetricTimer t_show("browser", "show total");
+	quiver_metric_mark("browser", "show begin");
+
 	if (NULL != m_pToolbar && NULL == gtk_widget_get_parent(GTK_WIDGET(m_pToolItemThumbSizer)))
 	{
 		if (GTK_IS_HEADER_BAR(m_pToolbar))
@@ -1732,6 +1812,7 @@ void Browser::BrowserImpl::Show()
 		}
 	}
 
+	quiver_metric_mark("browser", "cursor start");
  	if (0 != m_ImageListPtr->GetSize())
 	{
 		quiver_icon_view_set_cursor_cell( QUIVER_ICON_VIEW(m_pIconView),
@@ -1760,6 +1841,7 @@ void Browser::BrowserImpl::Show()
 	
 	}
 
+	quiver_metric_mark("browser", "cursor end");
 	gtk_widget_set_visible(m_pBrowserWidget, TRUE);
 
 	if (m_ImageListPtr)
@@ -1774,6 +1856,7 @@ void Browser::BrowserImpl::Show()
 		}
 	}
 
+	quiver_metric_mark("browser", "folder tree start");
 	if (m_FolderTreePtr && m_ImageListPtr)
 	{
 		std::list<std::string> treeDirs;
@@ -1792,11 +1875,14 @@ void Browser::BrowserImpl::Show()
 		}
 		m_FolderTreePtr->SetSelectedFolders(treeDirs, bRecursive, recFolders);
 	}
+	quiver_metric_mark("browser", "folder tree end");
 
+	quiver_metric_mark("browser", "set index start");
 	if (m_ImageListPtr->GetSize() && m_QuiverFileCurrent != m_ImageListPtr->GetCurrent() )
 	{
 		SetImageIndex(m_ImageListPtr->GetCurrentIndex(), true);
 	}
+	quiver_metric_mark("browser", "set index end");
 }
 
 void Browser::BrowserImpl::Hide()
@@ -2176,6 +2262,7 @@ static void browser_icon_view_map_cb(GtkWidget *widget, gpointer user_data)
 {
 	(void)widget;
 	Browser::BrowserImpl* b = (Browser::BrowserImpl*)user_data;
+	quiver_metric_mark("browser", "icon view mapped");
 	b->m_ThumbnailLoader.SetMapped(true);
 	/* The first UpdateList(true) often runs at startup before the
 	 * icon view is mapped, so every thumbnail was skipped.  Re-queue
@@ -4517,31 +4604,52 @@ static gboolean browser_loading_pulse_cb(gpointer data)
 	{
 		gtk_progress_bar_pulse(GTK_PROGRESS_BAR(pImpl->m_pLoadingOverlayBar));
 	}
-	if (pImpl->m_StatusbarPtr)
+	if (pImpl->m_bStatusbarProgressActive && pImpl->m_StatusbarPtr)
 	{
 		pImpl->m_StatusbarPtr->PulseProgress();
 	}
 	return G_SOURCE_CONTINUE;
 }
 
-void Browser::BrowserImpl::ShowLoadingProgress(const std::string& text, double fraction)
+void Browser::BrowserImpl::UpdateProgressDisplay()
 {
 	if (!m_pLoadingOverlayBox)
 		return;
 
-	if (m_pLoadingOverlayLabel)
+	const bool showLoad = m_bLoadingProgressActive;
+	const bool showMetadata = !showLoad && m_bMetadataProgressActive;
+
+	if (!showLoad && !showMetadata)
 	{
-		gtk_label_set_text(GTK_LABEL(m_pLoadingOverlayLabel), text.c_str());
+		if (0 != m_iTimeoutLoadingPulse)
+		{
+			g_source_remove(m_iTimeoutLoadingPulse);
+			m_iTimeoutLoadingPulse = 0;
+		}
+		gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);
+		if (m_pLoadingOverlayBar)
+			gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pLoadingOverlayBar), 0.0);
+		if (m_bStatusbarProgressActive && m_StatusbarPtr)
+		{
+			m_StatusbarPtr->SetProgressFraction(0.0);
+			m_StatusbarPtr->SetText("");
+		}
+		m_bStatusbarProgressActive = false;
+		return;
 	}
+
+	const std::string& text = showLoad ? m_strLoadingProgressText : m_strMetadataProgressText;
+	const double fraction = showLoad ? m_dLoadingProgressFraction : m_dMetadataProgressFraction;
+
+	if (m_pLoadingOverlayLabel)
+		gtk_label_set_text(GTK_LABEL(m_pLoadingOverlayLabel), text.c_str());
 
 	if (m_pLoadingOverlayBar)
 	{
 		if (fraction < 0.0)
 		{
 			if (0 == m_iTimeoutLoadingPulse)
-			{
 				m_iTimeoutLoadingPulse = g_timeout_add(80, browser_loading_pulse_cb, this);
-			}
 			gtk_progress_bar_pulse(GTK_PROGRESS_BAR(m_pLoadingOverlayBar));
 		}
 		else
@@ -4557,40 +4665,50 @@ void Browser::BrowserImpl::ShowLoadingProgress(const std::string& text, double f
 
 	gtk_widget_set_visible(m_pLoadingOverlayBox, TRUE);
 
-	if (m_StatusbarPtr)
+	if (showLoad && m_StatusbarPtr)
 	{
 		if (fraction < 0.0)
-		{
 			m_StatusbarPtr->PulseProgress();
-		}
 		else
-		{
 			m_StatusbarPtr->SetProgressFraction(fraction);
-		}
 		m_StatusbarPtr->SetText(text);
+		m_bStatusbarProgressActive = true;
 	}
+	else if (m_bStatusbarProgressActive && m_StatusbarPtr)
+	{
+		/* The folder load finished while metadata is still running. */
+		m_StatusbarPtr->SetProgressFraction(0.0);
+		m_StatusbarPtr->SetText("");
+		m_bStatusbarProgressActive = false;
+	}
+}
+
+void Browser::BrowserImpl::ShowLoadingProgress(const std::string& text, double fraction)
+{
+	m_bLoadingProgressActive = true;
+	m_strLoadingProgressText = text;
+	m_dLoadingProgressFraction = fraction;
+	UpdateProgressDisplay();
 }
 
 void Browser::BrowserImpl::HideLoadingProgress()
 {
-	if (0 != m_iTimeoutLoadingPulse)
-	{
-		g_source_remove(m_iTimeoutLoadingPulse);
-		m_iTimeoutLoadingPulse = 0;
-	}
-	if (m_pLoadingOverlayBox)
-	{
-		gtk_widget_set_visible(m_pLoadingOverlayBox, FALSE);
-	}
-	if (m_pLoadingOverlayBar)
-	{
-		gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(m_pLoadingOverlayBar), 0.0);
-	}
-	if (m_StatusbarPtr)
-	{
-		m_StatusbarPtr->SetProgressFraction(0.0);
-		m_StatusbarPtr->SetText("");
-	}
+	m_bLoadingProgressActive = false;
+	UpdateProgressDisplay();
+}
+
+void Browser::BrowserImpl::ShowMetadataProgress(const std::string& text, double fraction)
+{
+	m_bMetadataProgressActive = true;
+	m_strMetadataProgressText = text;
+	m_dMetadataProgressFraction = fraction;
+	UpdateProgressDisplay();
+}
+
+void Browser::BrowserImpl::HideMetadataProgress()
+{
+	m_bMetadataProgressActive = false;
+	UpdateProgressDisplay();
 }
 
 void Browser::BrowserImpl::HandleLoadProgress(double fraction, int current, int total)
@@ -4617,7 +4735,7 @@ void Browser::BrowserImpl::HandleLoadProgress(double fraction, int current, int 
 	{
 		if (total > 0)
 		{
-			snprintf(szMsg, sizeof(szMsg), "Reading dates... %d / %d", current, total);
+			snprintf(szMsg, sizeof(szMsg), "Reading dates and GPS... %d / %d", current, total);
 		}
 		else
 		{

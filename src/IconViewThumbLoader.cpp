@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 #include "IconViewThumbLoader.h"
+#include "QuiverMetrics.h"
 #include "ThreadUtil.h"
 #include <sched.h>
 #include <glib.h>
@@ -28,6 +29,24 @@ guint IconViewThumbLoader::ComputeCacheSize(guint n_items,
 		n = budget_bytes / bytes_per_item;
 
 	return n;
+}
+
+guint IconViewThumbLoader::ComputePrefetchCount(gulong visible_items,
+	guint pages, guint n_items)
+{
+	if (0 == n_items)
+		return 0;
+
+	/* The visible cells are the non-negotiable part.  The run-ahead is the
+	 * same bounded page window the cache sizing uses as its floor, so a
+	 * viewport smaller than the window still has something ready when the user
+	 * scrolls.  Clamp to the list: a viewport that briefly extends past the
+	 * end must not ask for indices that do not exist. */
+	const gulong run_ahead = 2 * (gulong)(pages + 1);
+	gulong count = visible_items + run_ahead;
+	if (count > n_items)
+		count = n_items;
+	return (guint)count;
 }
 
 IconViewThumbLoader::IconViewThumbLoader(gint iThreads, bool bAutoStart)
@@ -239,6 +258,8 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 	if (m_bStopThreads)
 		return;
 
+	QuiverMetricTimer t_update("thumbloader", "update list");
+
 	gulong iNewStart,iNewEnd;
 
 	GetVisibleRange(&iNewStart, &iNewEnd);
@@ -286,13 +307,31 @@ void IconViewThumbLoader::UpdateList(bool bForce/* = false*/)
 			w = h = 128;
 
 		const guint bytes_per_item = w * h * 4;
+		const guint prefetch_items = 2 * (m_uiNumCachePages + 1);
 		const guint cache_size = ComputeCacheSize(uiNumItems, bytes_per_item,
-			THUMB_CACHE_BUDGET_BYTES, 2 * (m_uiNumCachePages + 1));
+			THUMB_CACHE_BUDGET_BYTES, prefetch_items);
 
 		SetCacheSize(cache_size);
 
+		/* Retain up to cache_size thumbnails, but only queue the visible
+		 * cells plus a bounded run-ahead.  Queuing cache_size (thousands of
+		 * items in a large folder) on every map/scroll decodes the whole
+		 * folder in the background and starves the cells being painted. */
+		const gulong visible_items =
+			(iNewEnd >= iNewStart) ? iNewEnd - iNewStart + 1 : 0;
+		const guint load_count = ComputePrefetchCount(visible_items,
+			m_uiNumCachePages, uiNumItems);
+
 		std::vector<gulong> order = BuildLoadOrder(iNewStart, iNewEnd,
-			uiNumItems, cache_size, m_iScrollDir);
+			uiNumItems, load_count, m_iScrollDir);
+		quiver_metric_emit("thumbloader", "queue count",
+			(double)order.size(), "count");
+		quiver_metric_emit("thumbloader", "cache size",
+			(double)cache_size, "count");
+		quiver_metric_emit("thumbloader", "visible count",
+			(double)visible_items, "count");
+		quiver_metric_emit("thumbloader", "force", bForce ? 1.0 : 0.0,
+			"flag");
 		for (std::vector<gulong>::const_iterator i = order.begin();
 			i != order.end(); ++i)
 		{

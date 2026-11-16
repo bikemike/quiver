@@ -257,7 +257,12 @@ unsigned int ImageCache::GetSize()
 
 void ImageCache::SetSize(unsigned int size)
 {
+	QuiverMetricTimer t_set_size("imagecache", "set size");
+
 	std::lock_guard<std::mutex> lock(m_MutexImageCache);
+
+	const size_t size_before = m_mapImageCache.size();
+	unsigned int evicted = 0;
 
 	ImageCacheMap::iterator oldest, itr;
 	while (size < m_mapImageCache.size())
@@ -276,10 +281,21 @@ void ImageCache::SetSize(unsigned int size)
 				CurrentTimeInMilliseconds() - oldest->second.time);
 			FreeCacheItem(oldest->second);
 			m_mapImageCache.erase(oldest);
+			++evicted;
 		}
 	}
 
 	m_iCacheSize = size;
+
+	if (0 != evicted)
+	{
+		cache_metric_emit(m_strName.c_str(), "set size before",
+			(double)size_before, "count");
+		cache_metric_emit(m_strName.c_str(), "set size target",
+			(double)size, "count");
+		cache_metric_emit(m_strName.c_str(), "set size evicted",
+			(double)evicted, "count");
+	}
 }
 
 void ImageCache::AddTexture(string filename, GdkTexture * texture, unsigned long time)

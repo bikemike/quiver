@@ -48,8 +48,18 @@ parts:
       - zlib1g-dev
       - libboost-dev
       - libgdk-pixbuf-2.0-dev
+      - libshumate-dev
+      - libsoup-3.0-dev
+      - libjson-glib-dev
     stage-packages:
       - libgdk-pixbuf-2.0-0
+      - libshumate-1.0-1
+      - libshumate-common
+      - libjson-glib-1.0-0
+      - libsoup-3.0-0
+      - libprotobuf-c1
+      - libgraphene-1.0-0
+      - libsqlite3-0
       - gstreamer1.0-plugins-good
       - gstreamer1.0-plugins-bad
       - gstreamer1.0-plugins-ugly

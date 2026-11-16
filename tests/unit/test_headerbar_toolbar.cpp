@@ -24,65 +24,86 @@ TEST_CASE("Toolbar UI Layout and Widget Order", "[unit][gui][toolbar]")
     GtkWidget *toolbar = GTK_WIDGET(gtk_builder_get_object(builder, "QuiverToolbar"));
     REQUIRE(toolbar != nullptr);
 
-    GtkWidget *viewerBox = GTK_WIDGET(gtk_builder_get_object(builder, "viewer_box"));
-    REQUIRE(viewerBox != nullptr);
-
-    GtkWidget *browserBox = GTK_WIDGET(gtk_builder_get_object(builder, "browser_box"));
-    REQUIRE(browserBox != nullptr);
-
     GtkWidget *sharedBox = GTK_WIDGET(gtk_builder_get_object(builder, "shared_box"));
     REQUIRE(sharedBox != nullptr);
 
-    SECTION("Viewer mode: browser button is the first item in viewer_box")
-    {
-        GtkWidget *firstViewerChild = gtk_widget_get_first_child(viewerBox);
-        REQUIRE(firstViewerChild != nullptr);
+    GtkWidget *filterBox = GTK_WIDGET(gtk_builder_get_object(builder, "filter_box"));
+    REQUIRE(filterBox != nullptr);
 
+    REQUIRE(gtk_builder_get_object(builder, "viewer_box") == nullptr);
+    REQUIRE(gtk_builder_get_object(builder, "browser_box") == nullptr);
+    REQUIRE(gtk_builder_get_object(builder, "map_box") == nullptr);
+
+    SECTION("All three mode buttons are toggle buttons in shared_box")
+    {
         GtkWidget *buttonBrowser = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_browser"));
-        REQUIRE(buttonBrowser != nullptr);
-
-        // Verify the first child of viewer_box is indeed button_uimode_browser
-        REQUIRE(firstViewerChild == buttonBrowser);
-
-        const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(buttonBrowser));
-        REQUIRE(actionName != nullptr);
-        REQUIRE(std::string(actionName) == "quiver.UIModeBrowser");
-    }
-
-    SECTION("Browser mode: viewer button is the first item in browser_box")
-    {
-        GtkWidget *firstBrowserChild = gtk_widget_get_first_child(browserBox);
-        REQUIRE(firstBrowserChild != nullptr);
-
         GtkWidget *buttonViewer = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_viewer"));
+        GtkWidget *buttonMap = GTK_WIDGET(gtk_builder_get_object(builder, "button_uimode_map"));
+        REQUIRE(buttonBrowser != nullptr);
         REQUIRE(buttonViewer != nullptr);
+        REQUIRE(buttonMap != nullptr);
 
-        REQUIRE(firstBrowserChild == buttonViewer);
+        REQUIRE(GTK_IS_TOGGLE_BUTTON(buttonBrowser));
+        REQUIRE(GTK_IS_TOGGLE_BUTTON(buttonViewer));
+        REQUIRE(GTK_IS_TOGGLE_BUTTON(buttonMap));
 
-        const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(buttonViewer));
-        REQUIRE(actionName != nullptr);
-        REQUIRE(std::string(actionName) == "quiver.UIModeViewer");
+        REQUIRE(gtk_widget_get_first_child(sharedBox) == buttonBrowser);
+        REQUIRE(gtk_widget_get_next_sibling(buttonBrowser) == buttonMap);
+        REQUIRE(gtk_widget_get_next_sibling(buttonMap) == buttonViewer);
+        REQUIRE(gtk_widget_get_next_sibling(buttonViewer) == nullptr);
     }
 
-    SECTION("Viewer box has no zoom/rotate/trash controls")
+    SECTION("Toolbar has no browser history or viewer navigation arrows")
     {
-        // Viewer box must now only contain the browser mode button, separator,
-        // Previous and Next.  Zoom / rotate / trash were moved into the menu
-        // and the context menu.
+        std::set<std::string> actions;
+        std::function<void(GtkWidget*)> collect = [&](GtkWidget *widget) {
+            if (GTK_IS_ACTIONABLE(widget))
+            {
+                const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(widget));
+                if (actionName) actions.insert(actionName);
+            }
+            for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+                 child = gtk_widget_get_next_sibling(child))
+                collect(child);
+        };
+        collect(toolbar);
+
+        REQUIRE(actions.count("quiver.BrowserHistoryBack") == 0);
+        REQUIRE(actions.count("quiver.BrowserHistoryForward") == 0);
+        REQUIRE(actions.count("quiver.ImagePrevious") == 0);
+        REQUIRE(actions.count("quiver.ImageNext") == 0);
+    }
+
+    SECTION("Filter box follows the mode controls")
+    {
+        REQUIRE(gtk_widget_get_last_child(toolbar) == filterBox);
+        REQUIRE(gtk_widget_get_next_sibling(sharedBox) == filterBox);
+    }
+
+    SECTION("Toolbar has no zoom/rotate/trash controls")
+    {
+        // Zoom / rotate / trash were moved into the menu and context menu,
+        // and the previous/next arrows live in the viewer HUD.
         const char* names[] = {
             "quiver.ZoomIn", "quiver.ZoomOut", "quiver.Zoom100",
             "quiver.ZoomFit", "quiver.RotateCW", "quiver.RotateCCW",
             "quiver.ViewerTrash"
         };
-        for (GtkWidget *child = gtk_widget_get_first_child(viewerBox); child;
-             child = gtk_widget_get_next_sibling(child))
-        {
-            if (!GTK_IS_ACTIONABLE(child)) continue;
-            const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(child));
-            if (!actionName) continue;
-            for (const char *n : names)
-                REQUIRE(std::string(actionName) != n);
-        }
+        std::set<std::string> actions;
+        std::function<void(GtkWidget*)> collect = [&](GtkWidget *widget) {
+            if (GTK_IS_ACTIONABLE(widget))
+            {
+                const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(widget));
+                if (actionName) actions.insert(actionName);
+            }
+            for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+                 child = gtk_widget_get_next_sibling(child))
+                collect(child);
+        };
+        collect(toolbar);
+
+        for (const char *n : names)
+            REQUIRE(actions.count(n) == 0);
     }
 
     SECTION("Shared box has no slideshow control")
@@ -128,7 +149,8 @@ TEST_CASE("Toolbar UI Layout and Widget Order", "[unit][gui][toolbar]")
         REQUIRE(std::string(tip) == "Recently Viewed");
 
         // The button is not action-bound; Recents are driven by its menu model.
-        REQUIRE(gtk_actionable_get_action_name(GTK_ACTIONABLE(recentBtn)) == nullptr);
+        if (GTK_IS_ACTIONABLE(recentBtn))
+            REQUIRE(gtk_actionable_get_action_name(GTK_ACTIONABLE(recentBtn)) == nullptr);
 
         // It is a top-level object in the builder (parented into the headerbar
         // end at runtime), and must not be inside the shared toolbar box.
@@ -137,30 +159,6 @@ TEST_CASE("Toolbar UI Layout and Widget Order", "[unit][gui][toolbar]")
              child = gtk_widget_get_next_sibling(child))
         {
             REQUIRE(child != recentBtn);
-        }
-    }
-
-    SECTION("Browser box has no folder-tree / open-folder controls")
-    {
-        for (GtkWidget *child = gtk_widget_get_first_child(browserBox); child;
-             child = gtk_widget_get_next_sibling(child))
-        {
-            if (!GTK_IS_ACTIONABLE(child)) continue;
-            const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(child));
-            if (!actionName) continue;
-            REQUIRE(std::string(actionName) != "quiver.FileOpenFolder");
-            REQUIRE(std::string(actionName) != "quiver.BrowserViewSidebar");
-        }
-    }
-
-    SECTION("Browser box has no trash control")
-    {
-        for (GtkWidget *child = gtk_widget_get_first_child(browserBox); child;
-             child = gtk_widget_get_next_sibling(child))
-        {
-            if (!GTK_IS_ACTIONABLE(child)) continue;
-            const gchar *actionName = gtk_actionable_get_action_name(GTK_ACTIONABLE(child));
-            REQUIRE(std::string(actionName ? actionName : "") != "quiver.BrowserTrash");
         }
     }
 

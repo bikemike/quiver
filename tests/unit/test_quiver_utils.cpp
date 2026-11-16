@@ -195,6 +195,49 @@ TEST_CASE("QuiverUtils Action Management", "[unit][actions][fast]")
     }
 }
 
+TEST_CASE("QuiverUtils radio widgets keep exactly the active action selected", "[unit][gui][actions]")
+{
+    REQUIRE_DISPLAY();
+    QuiverUtils::InitActions();
+
+    int owner = 0;
+    const char* const names[] = {"test_radio_widget_a", "test_radio_widget_b"};
+    const gint values[] = {1, 2};
+    QuiverUtils::AddRadioActions(names, values, 2, 1, nullptr, &owner);
+
+    GtkWidget* window = gtk_window_new();
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget* a = gtk_toggle_button_new();
+    GtkWidget* b = gtk_toggle_button_new();
+    gtk_box_append(GTK_BOX(box), a);
+    gtk_box_append(GTK_BOX(box), b);
+    gtk_window_set_child(GTK_WINDOW(window), box);
+
+    QuiverUtils::BindRadioWidget(a, box, names[0]);
+    QuiverUtils::BindRadioWidget(b, box, names[1]);
+    REQUIRE(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a)));
+    REQUIRE_FALSE(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(b)));
+
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), TRUE);
+    CHECK(QuiverUtils::GetRadioActionCurrent(names[0]) == 2);
+    CHECK_FALSE(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a)));
+    CHECK(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(b)));
+
+    /* A radio member cannot be turned off by activating it again. */
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), FALSE);
+    CHECK(QuiverUtils::GetRadioActionCurrent(names[0]) == 2);
+    CHECK(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(b)));
+
+    /* State changes from outside the widget are reflected, without
+     * re-activating the action and showing the same mode again. */
+    QuiverUtils::SetRadioActionCurrent(names[0], 1);
+    CHECK(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a)));
+    CHECK_FALSE(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(b)));
+
+    gtk_window_destroy(GTK_WINDOW(window));
+    QuiverUtils::RemoveActionsFor(&owner);
+}
+
 TEST_CASE("QuiverUtils SetWidgetBgColor", "[unit][gui][color]")
 {
     REQUIRE_DISPLAY();

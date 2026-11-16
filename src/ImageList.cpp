@@ -143,6 +143,52 @@ bool ImageList::GetActiveCopySource(const std::string& dst_uri, std::string& src
 
 typedef std::vector<QuiverFile> QuiverFileList;
 
+class SortByFilenameNatural
+{
+public:
+	bool operator()(const QuiverFile &a, const QuiverFile &b) const
+	{
+		int rval = 0;
+
+		if (a.IsFolder() && !b.IsFolder())
+			return true;
+		else if (!a.IsFolder() && b.IsFolder())
+			return false;
+
+		string file1 = a.GetURI();
+		string file2 = b.GetURI();
+
+		string::size_type sep1 = file1.find_last_of(G_DIR_SEPARATOR);
+		string::size_type sep2 = file2.find_last_of(G_DIR_SEPARATOR);
+		if (string::npos != sep1 && string::npos != sep2)
+		{
+			string::size_type ext1 = file1.find_first_of(".",sep1);
+			string::size_type ext2 = file2.find_first_of(".",sep2);
+
+			if (0 == rval &&  string::npos != ext1 && string::npos != ext2)
+			{
+				rval = strnatcasecmp( file1.substr(0,ext1).c_str(), file2.substr(0, ext2).c_str());
+
+				if (0 == rval)
+				{
+					rval = strnatcasecmp( file1.substr(ext1,file1.size() - ext1).c_str(), file2.substr(ext2, file2.size() - ext2).c_str());
+				}
+
+			}
+			else
+			{
+				rval = strnatcasecmp(a.GetURI(),b.GetURI());
+			}
+		}
+		else
+		{
+			rval =  strnatcasecmp(a.GetURI(),b.GetURI());
+		}
+
+		return (0 > rval);
+	}
+};
+
 struct AsyncFolderLoadData
 {
 	std::weak_ptr<int> lifetimeToken;
@@ -155,11 +201,15 @@ struct AsyncFolderLoadData
 	std::string strCurrentURI;
 	bool bRecursive;
 	bool bHasRecursiveFolders;
+	bool bSingleFile = false;
 	std::set<std::string> recursiveFolders;
 	bool bSelectFirstItem;
 	/* the viewer sat on the first item when the load was requested; see
 	 * UpdateImageListAsync(..., bPreserveCurrentIndex) */
 	bool bHoldFirstIndex;
+	/* date sorting runs after the enumerated list has been shown */
+	bool bSortAfterLoad = false;
+	bool bSortUpdateCurrentIndex = false;
 };
 
 struct AsyncSortData
@@ -288,6 +338,14 @@ public:
 	 * their own pointer to it. */
 	ImageListAttributesPtr m_pAttributes;
 
+	/* The request that produced the items currently in m_QuiverFileList.
+	 * The monitor maps also contain recursively discovered child directories,
+	 * so they cannot be used to decide whether a new request is a no-op. */
+	bool m_bLoadedDefinitionValid = false;
+	StringSet m_LoadedFolders;
+	bool m_bLoadedRecursive = false;
+	std::set<std::string> m_LoadedRecursiveFolders;
+
 	GThread* m_pAsyncLoadThread = nullptr;
 	std::atomic<bool> m_bAbortAsyncLoad{false};
 
@@ -303,6 +361,24 @@ class SortByDate;
 class SortByDateModified;
 class SortByFileSize;
 
+
+static StringSet NormalizeFolderSet(const std::list<std::string>& folders)
+{
+	StringSet result;
+	for (std::list<std::string>::const_iterator itr = folders.begin();
+			folders.end() != itr; ++itr)
+	{
+		GFile* file = g_file_new_for_commandline_arg(itr->c_str());
+		char* uri = g_file_get_uri(file);
+		if (uri)
+		{
+			result.insert(uri);
+			g_free(uri);
+		}
+		g_object_unref(file);
+	}
+	return result;
+}
 
 StringSet ImageList::ImageListImpl::c_setSupportedMimeTypes;
 
@@ -383,6 +459,19 @@ ImageList::Remove(unsigned int iIndex)
 	{
 		EmitCurrentIndexChangedEvent(GetCurrentIndex(), iOldIndex);
 	}
+}
+
+void
+ImageList::RemoveRange(unsigned int iStart, unsigned int iEnd)
+{
+	if (iStart >= iEnd)
+		return;
+	const unsigned int size = GetSize();
+	if (iStart >= size)
+		return;
+	const unsigned int last = std::min(iEnd, size);
+	for (unsigned int i = last; i > iStart; i--)
+		Remove(i - 1);
 }
 
 
@@ -1455,7 +1544,9 @@ void ImageList::ImageListImpl::Add(const std::list<std::string> *file_list, bool
 	{
 		return;
 	}
-	
+
+	m_bLoadedDefinitionValid = false;
+
 	bool bNewList = true;
 	
 	string strCurrentURI;
@@ -2103,6 +2194,7 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 		}
 		g_object_unref(file);
 	}
+	pData->bSingleFile = bSingleFile;
 
 	std::list<std::string>::const_iterator itr;
 	for (itr = pData->folders.begin(); pData->folders.end() != itr; ++itr)
@@ -2176,26 +2268,9 @@ gpointer ImageList::ImageListImpl::AsyncFolderLoadThread(gpointer data)
 		impl->PostAsyncLoadProgress(pData->uiGeneration, -1.0, (int)pData->quiverFiles.size(), 0);
 	}
 
-	// resolve lazy metadata (creation dates) on the loader thread ONLY
-	// if sorting by EXIF date. For all other sort orders (by name,
-	// natural, modification date, file size, etc.), skip EXIF parsing!
-	if (impl->m_SortBy == ImageList::SORT_BY_DATE)
-	{
-		size_t total = pData->quiverFiles.size();
-		size_t count = 0;
-		for (auto& f : pData->quiverFiles)
-		{
-			if (impl->m_bAbortAsyncLoad || g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) != pData->uiGeneration)
-				break;
-
-			f.GetTimeT();
-			count++;
-			if (count % 25 == 0 || count == total)
-			{
-				impl->PostAsyncLoadProgress(pData->uiGeneration, (double)count / (double)total, (int)count, (int)total);
-			}
-		}
-	}
+	/* Commit the filenames immediately. Date metadata is resolved later on
+	 * the background sort thread so a large folder becomes visible without
+	 * waiting for EXIF/container reads. */
 
 	if (!impl->m_bAbortAsyncLoad && g_atomic_int_get(&impl->m_uiAsyncLoadGeneration) == pData->uiGeneration)
 	{
@@ -2233,7 +2308,17 @@ gboolean ImageList::ImageListImpl::AsyncFolderLoadCommit(gpointer data)
 			}
 			impl->CommitFolderLoad(pData);
 			impl->m_pImageList->EmitContentsChangedEvent();
-			impl->m_pImageList->EmitLoadProgress(1.0, 0, 0);
+
+			if (pData->bSortAfterLoad)
+			{
+				impl->Sort(ImageList::SORT_BY_DATE, impl->m_bSortAscend,
+				           pData->bSortUpdateCurrentIndex, true);
+			}
+			/* StartAsyncSortByDate reports its own 0.0..1.0 progress. */
+			if (NULL == impl->m_pAsyncSortThread)
+			{
+				impl->m_pImageList->EmitLoadProgress(1.0, 0, 0);
+			}
 		}
 	}
 
@@ -2244,14 +2329,18 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 {
 	Clear();
 
-	bool bSingleFile = (1 == pData->folders.size());
-	if (bSingleFile && !pData->dirs.empty())
+	m_LoadedFolders = NormalizeFolderSet(pData->folders);
+	m_bLoadedRecursive = pData->bRecursive;
+	m_LoadedRecursiveFolders = pData->recursiveFolders;
+	m_bLoadedDefinitionValid = true;
+
+	if (pData->bSingleFile && !pData->dirs.empty())
 	{
 		SetAttributes(&(pData->dirs), NULL, pData->bRecursive, pData->recursiveFolders);
 	}
 
 	std::list<std::string>::const_iterator itr;
-	if (!bSingleFile || pData->dirs.empty())
+	if (!pData->bSingleFile || pData->dirs.empty())
 	{
 		for (itr = pData->folders.begin(); pData->folders.end() != itr; ++itr)
 		{
@@ -2319,7 +2408,29 @@ void ImageList::ImageListImpl::CommitFolderLoad(AsyncFolderLoadData* pData)
 		m_iCurrentIndex = 0;
 	}
 
-	Sort(bFoundURI);
+	if (ImageList::SORT_BY_DATE == m_SortBy)
+	{
+		/* Show a stable filename order first; the date sort is committed from
+		 * the background after the list is visible. */
+		SortByFilenameNatural sortby;
+		std::sort(m_QuiverFileList.begin(), m_QuiverFileList.end(), sortby);
+
+		if (bFoundURI)
+		{
+			SetCurrentImage(pData->strCurrentURI);
+			pData->bSortUpdateCurrentIndex = true;
+		}
+		else if (!m_QuiverFileList.empty())
+		{
+			/* First load, select-first, and hold-first all keep position 0. */
+			m_iCurrentIndex = 0;
+		}
+		pData->bSortAfterLoad = !m_QuiverFileList.empty();
+	}
+	else
+	{
+		Sort(bFoundURI);
+	}
 
 	// "open this bookmark" semantics: clear the previous selection and
 	// land on the first item, matching the bookmark menu (SetImageList ->
@@ -2340,18 +2451,12 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 
 	/* Record the list definition (folder set + recursive flag + recursive folders) up front, so
 	 * GetAttributes() reflects the requested view even while the async load
-	 * is still running.  Snapshot the *previous* recursive settings first: the
-	 * skip-if-unchanged check below must also detect a pure recursive/non-
-	 * recursive switch for the same folder set. */
+	 * is still running. */
 	std::set<std::string> newRecursiveFolders;
 	if (pRecursiveFolders != NULL)
 	{
 		newRecursiveFolders = *pRecursiveFolders;
 	}
-	std::set<std::string> oldRecursiveFolders = (impl->m_pAttributes)
-		? impl->m_pAttributes->GetRecursiveFolders()
-		: std::set<std::string>();
-	gboolean bOldRecursive = (impl->m_pAttributes && impl->m_pAttributes->GetRecursive());
 	impl->SetAttributes(file_list, NULL, bRecursive, newRecursiveFolders);
 
 	if (0 == file_list->size())
@@ -2369,33 +2474,13 @@ void ImageList::UpdateImageListAsync(const std::list<std::string> *file_list, bo
 		return;
 	}
 
-	// skip the load if the folder set hasn't actually changed
+	// skip the load if the requested definition hasn't actually changed
 	{
-		StringSet setNewFolders;
-		list<string>::const_iterator itr;
-		for (itr = file_list->begin(); file_list->end() != itr; ++itr)
-		{
-			GFile* file = g_file_new_for_commandline_arg(itr->c_str());
-			char* uri = g_file_get_uri(file);
-			setNewFolders.insert(uri);
-			g_free(uri);
-			g_object_unref(file);
-		}
-
-		StringSet setOldFolders;
-		PathMonitorMap::iterator itr2;
-		for (itr2 = impl->m_mapDirs.begin(); impl->m_mapDirs.end() != itr2; ++itr2)
-		{
-			setOldFolders.insert(itr2->first);
-		}
-		for (itr2 = impl->m_mapFiles.begin(); impl->m_mapFiles.end() != itr2; ++itr2)
-		{
-			setOldFolders.insert(itr2->first);
-		}
-
-		if (setOldFolders == setNewFolders &&
-		    bOldRecursive == bRecursive &&
-		    oldRecursiveFolders == newRecursiveFolders &&
+		StringSet setNewFolders = NormalizeFolderSet(*file_list);
+		if (impl->m_bLoadedDefinitionValid &&
+		    impl->m_LoadedFolders == setNewFolders &&
+		    impl->m_bLoadedRecursive == bRecursive &&
+		    impl->m_LoadedRecursiveFolders == newRecursiveFolders &&
 		    0 < impl->m_QuiverFileList.size())
 		{
 			if (!strSelectURI.empty())
@@ -2589,6 +2674,8 @@ void ImageList::ImageListImpl::Reload()
 
 void ImageList::ImageListImpl::Clear()
 {
+	m_bLoadedDefinitionValid = false;
+
 	PathMonitorMap::iterator itr;
 	for (itr = m_mapDirs.begin(); m_mapDirs.end() != itr; ++itr)
 	{
@@ -2674,52 +2761,6 @@ void ImageList::ImageListImpl::Sort(bool bUpdateCurrentIndex)
 	Sort(m_SortBy, m_bSortAscend, bUpdateCurrentIndex);
 }
 
-
-class SortByFilenameNatural
-{
-public:
-	bool operator()(const QuiverFile &a, const QuiverFile &b) const
-	{
-		int rval = 0;
-
-		if (a.IsFolder() && !b.IsFolder())
-			return true;
-		else if (!a.IsFolder() && b.IsFolder())
-			return false;
-
-		string file1 = a.GetURI();
-		string file2 = b.GetURI();
-
-		string::size_type sep1 = file1.find_last_of(G_DIR_SEPARATOR);
-		string::size_type sep2 = file2.find_last_of(G_DIR_SEPARATOR);
-		if (string::npos != sep1 && string::npos != sep2)
-		{
-			string::size_type ext1 = file1.find_first_of(".",sep1);
-			string::size_type ext2 = file2.find_first_of(".",sep2);
-
-			if (0 == rval &&  string::npos != ext1 && string::npos != ext2)
-			{
-				rval = strnatcasecmp( file1.substr(0,ext1).c_str(), file2.substr(0, ext2).c_str());
-
-				if (0 == rval)
-				{
-					rval = strnatcasecmp( file1.substr(ext1,file1.size() - ext1).c_str(), file2.substr(ext2, file2.size() - ext2).c_str());
-				}
-
-			}
-			else
-			{
-				rval = strnatcasecmp(a.GetURI(),b.GetURI());
-			}
-		}
-		else
-		{
-			rval =  strnatcasecmp(a.GetURI(),b.GetURI());
-		}
-
-		return (0 > rval);
-	}
-};
 
 class SortByFilename
 {
@@ -2920,6 +2961,7 @@ gpointer ImageList::ImageListImpl::AsyncSortThread(gpointer data)
 		if (impl->m_bAbortAsyncSort || g_atomic_int_get(&impl->m_uiAsyncSortGeneration) != pData->uiGeneration)
 			break;
 
+		pData->files[i].ResolveMetadataForIndex();
 		pData->files[i].GetTimeT();
 		processed++;
 		if (processed % 25 == 0 || processed == total)

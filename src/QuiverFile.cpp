@@ -29,13 +29,86 @@
 #include <map>
 #include <cmath>
 #include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <boost/algorithm/string.hpp>
+
+#ifdef __linux__
+#include <unistd.h>
+#endif
 
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/dict.h>
 }
+
+namespace
+{
+/* Opt-in accounting for the large-list metadata pass.  Counters are cheap
+ * atomics; the formatted report is only produced when QUIVER_MEM_TRACE is
+ * set, so normal runs pay nothing beyond the increments. */
+std::atomic<long long> g_memLiveImpls{0};
+std::atomic<long long> g_memLiveExif{0};
+std::atomic<long long> g_memLiveExifOriginal{0};
+std::atomic<long long> g_memLiveXmp{0};
+std::atomic<long long> g_memLiveIptc{0};
+std::atomic<unsigned long long> g_memIndexResolved{0};
+bool g_memTraceEnabled = false;
+std::once_flag g_memTraceOnce;
+
+bool MemTraceEnabled()
+{
+	std::call_once(g_memTraceOnce, []() {
+		const char* value = g_getenv("QUIVER_MEM_TRACE");
+		g_memTraceEnabled = value != nullptr && g_strcmp0(value, "0") != 0;
+	});
+	return g_memTraceEnabled;
+}
+
+unsigned long long ResidentKb()
+{
+#ifdef __linux__
+	gchar* contents = nullptr;
+	gsize length = 0;
+	if (!g_file_get_contents("/proc/self/statm", &contents, &length, nullptr))
+		return 0;
+	unsigned long long totalPages = 0;
+	unsigned long long residentPages = 0;
+	const int fields = sscanf(contents, "%llu %llu", &totalPages,
+		&residentPages);
+	g_free(contents);
+	if (fields < 2)
+		return 0;
+	const long pageSize = sysconf(_SC_PAGESIZE);
+	return pageSize > 0
+		? residentPages * (unsigned long long)pageSize / 1024ULL : 0;
+#else
+	return 0;
+#endif
+}
+
+void TraceIndexMemory(unsigned long long resolved)
+{
+	if (!MemTraceEnabled())
+		return;
+
+	static std::mutex traceMutex;
+	std::lock_guard<std::mutex> lock(traceMutex);
+	g_printerr("[mem-trace] resolved=%llu rss=%lluKB impls=%lld "
+		"exif=%lld original=%lld xmp=%lld iptc=%lld\n",
+		resolved, ResidentKb(),
+		(long long)g_memLiveImpls.load(std::memory_order_relaxed),
+		(long long)g_memLiveExif.load(std::memory_order_relaxed),
+		(long long)g_memLiveExifOriginal.load(std::memory_order_relaxed),
+		(long long)g_memLiveXmp.load(std::memory_order_relaxed),
+		(long long)g_memLiveIptc.load(std::memory_order_relaxed));
+}
+
+void MemCounterAdd(std::atomic<long long>& counter, long long delta)
+{
+	counter.fetch_add(delta, std::memory_order_relaxed);
+}
+} // namespace
 
 static bool read_png_metadata_and_dimensions(const char* filepath,
                                             std::map<std::string, std::string>& out_meta,
@@ -207,7 +280,7 @@ public:
 
 	std::string GetFilePath() const;
 
-	void LoadExifData();
+	void LoadExifData(bool keepOriginal = false);
 	void ReleaseMetadataIfNotModified();
 	int GetOrientation();
 	bool SetOrientation(int iOrientation);
@@ -215,8 +288,17 @@ public:
 	bool HasCachedTimeT() const;
 	bool HasDateMetadata() const;
 	bool ResolveMetadataTimeT();
+	bool HasCachedDateTaken() const;
+	bool GetCachedDateTaken(time_t& outTime) const;
+	bool ResolveMetadataForIndex();
+	bool IsMetadataResolvedForIndex() const;
+
+	bool ResolveGps();
+	bool GetGPSCoordinates(double& outLat, double& outLon, bool& outHasAlt, double& outAlt);
+	bool HasCachedGPS() const;
+	bool GetCachedGPSCoordinates(double& outLat, double& outLon, bool& outHasAlt, double& outAlt) const;
 	
-	std::shared_ptr<Exiv2::ExifData> GetExifData();
+	std::shared_ptr<Exiv2::ExifData> GetExifData(bool keepOriginal = false);
 	std::shared_ptr<const Exiv2::ExifData> GetExifDataOriginal();
 	std::shared_ptr<const Exiv2::XmpData> GetXmpData();
 	std::shared_ptr<const Exiv2::IptcData> GetIptcData();
@@ -309,6 +391,18 @@ public:
 	time_t m_cachedTimeT = 0;
 	time_t m_cachedMetadataTimeT = 0;
 	bool m_bMetadataDateResolved = false;
+
+	/* Cached GPS result.  ResolveGps() serialises its scan with m_GpsMutex;
+	 * m_bGpsResolved is atomic so metadata edits can invalidate the cache
+	 * without taking that mutex (and without lock-order inversion against the
+	 * metadata mutex). */
+	mutable std::mutex m_GpsMutex;
+	mutable std::atomic<bool> m_bGpsResolved{false};
+	mutable bool m_bHasGps = false;
+	mutable double m_dGpsLat = 0.0;
+	mutable double m_dGpsLon = 0.0;
+	mutable bool m_bGpsHasAlt = false;
+	mutable double m_dGpsAlt = 0.0;
 };
 
 class ThreadPoolDestructor
@@ -380,12 +474,14 @@ ThumbnailCache QuiverFile::QuiverFileImpl::c_ThumbnailCache;
 
 QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar * uri)
 {
+	MemCounterAdd(g_memLiveImpls, 1);
 	// get the file info
 	Init(uri, NULL);
 }
 
 QuiverFile::QuiverFileImpl::QuiverFileImpl(const gchar *uri, GFileInfo *info)
 {
+	MemCounterAdd(g_memLiveImpls, 1);
 	Init(uri, info);
 }
 
@@ -439,6 +535,13 @@ void QuiverFile::QuiverFileImpl::Init(const gchar *uri, GFileInfo *info)
 	m_cachedTimeT = 0;
 	m_cachedMetadataTimeT = 0;
 	m_bMetadataDateResolved = false;
+
+	m_bGpsResolved.store(false);
+	m_bHasGps = false;
+	m_dGpsLat = 0.0;
+	m_dGpsLon = 0.0;
+	m_bGpsHasAlt = false;
+	m_dGpsAlt = 0.0;
 }
 
 const char* QuiverFile::QuiverFileImpl::GetMimeType()
@@ -508,6 +611,16 @@ GFileInfo* QuiverFile::QuiverFileImpl::GetFileInfo()
 
 QuiverFile::QuiverFileImpl::~QuiverFileImpl()
 {
+	if (m_ExifData)
+		MemCounterAdd(g_memLiveExif, -1);
+	if (m_ExifDataOriginal)
+		MemCounterAdd(g_memLiveExifOriginal, -1);
+	if (m_XmpData)
+		MemCounterAdd(g_memLiveXmp, -1);
+	if (m_IptcData)
+		MemCounterAdd(g_memLiveIptc, -1);
+	MemCounterAdd(g_memLiveImpls, -1);
+
 	if (m_pGFileInfo != NULL)
 	{
 		g_object_unref(m_pGFileInfo);
@@ -1107,6 +1220,14 @@ void QuiverFile::QuiverFileImpl::Reload()
 	delete [] m_szURI;
 	m_szURI = NULL;
 
+	if (m_ExifData)
+		MemCounterAdd(g_memLiveExif, -1);
+	if (m_ExifDataOriginal)
+		MemCounterAdd(g_memLiveExifOriginal, -1);
+	if (m_XmpData)
+		MemCounterAdd(g_memLiveXmp, -1);
+	if (m_IptcData)
+		MemCounterAdd(g_memLiveIptc, -1);
 	m_ExifData.reset();
 	m_ExifDataOriginal.reset();
 	/* EXIF is about to be re-parsed, so the cached decoded thumbnail may
@@ -1132,7 +1253,7 @@ void QuiverFile::QuiverFileImpl::Reload()
 }
 
 
-void QuiverFile::QuiverFileImpl::LoadExifData()
+void QuiverFile::QuiverFileImpl::LoadExifData(bool keepOriginal)
 {
 	static std::once_flag s_exiv2_init;
 	std::call_once(s_exiv2_init, []() {
@@ -1140,6 +1261,19 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 	});
 
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+
+	/* Read-only metadata users (date/GPS indexing, property views, thumbnails)
+	 * do not need the load-time snapshot.  Only an edit/save path asks for it,
+	 * via GetExifDataOriginal(), because that is the only place that has to
+	 * diff what the user changed against what was on disk. */
+	if (keepOriginal && (m_fDataLoaded & QUIVER_FILE_DATA_EXIF) &&
+		!m_ExifDataOriginal && m_ExifData &&
+		!(m_fDataModified & QUIVER_FILE_DATA_EXIF))
+	{
+		m_ExifDataOriginal =
+			std::make_shared<Exiv2::ExifData>(*m_ExifData);
+		MemCounterAdd(g_memLiveExifOriginal, 1);
+	}
 
 	if (NULL != m_szURI && !( m_fDataLoaded & QUIVER_FILE_DATA_EXIF ) )
 	{
@@ -1175,26 +1309,39 @@ void QuiverFile::QuiverFileImpl::LoadExifData()
 					Exiv2::ExifData exifData = image->exifData();
 					if (!exifData.empty())
 					{
+						if (!m_ExifData)
+							MemCounterAdd(g_memLiveExif, 1);
 						m_ExifData =
 							std::make_shared<Exiv2::ExifData>(std::move(exifData));
 						m_fDataExists =
 							(QuiverDataFlags)(m_fDataExists | QUIVER_FILE_DATA_EXIF);
 
-						/* the "did the user edit anything" baseline; kept even
-						 * though it is a full copy, because dropping it would
-						 * turn every save into a blind rewrite */
-						m_ExifDataOriginal =
-							std::make_shared<Exiv2::ExifData>(*m_ExifData);
+						/* the "did the user edit anything" baseline; allocated
+						 * only when an edit/save path explicitly asks for it */
+						if (keepOriginal && !m_ExifDataOriginal)
+						{
+							m_ExifDataOriginal =
+								std::make_shared<Exiv2::ExifData>(*m_ExifData);
+							MemCounterAdd(g_memLiveExifOriginal, 1);
+						}
 					}
 
 					/* taken from the parse just done, not from another one */
 					auto xmp = image->xmpData();
 					if (!xmp.empty())
+					{
+						if (!m_XmpData)
+							MemCounterAdd(g_memLiveXmp, 1);
 						m_XmpData = std::make_shared<const Exiv2::XmpData>(std::move(xmp));
+					}
 
 					auto iptc = image->iptcData();
 					if (!iptc.empty())
+					{
+						if (!m_IptcData)
+							MemCounterAdd(g_memLiveIptc, 1);
 						m_IptcData = std::make_shared<const Exiv2::IptcData>(std::move(iptc));
+					}
 				}
 
 			}
@@ -1213,6 +1360,14 @@ void QuiverFile::QuiverFileImpl::ReleaseMetadataIfNotModified()
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 	if (!(m_fDataModified & QUIVER_FILE_DATA_EXIF))
 	{
+		if (m_ExifData)
+			MemCounterAdd(g_memLiveExif, -1);
+		if (m_ExifDataOriginal)
+			MemCounterAdd(g_memLiveExifOriginal, -1);
+		if (m_XmpData)
+			MemCounterAdd(g_memLiveXmp, -1);
+		if (m_IptcData)
+			MemCounterAdd(g_memLiveIptc, -1);
 		m_ExifData.reset();
 		m_ExifDataOriginal.reset();
 		m_XmpData.reset();
@@ -1221,11 +1376,12 @@ void QuiverFile::QuiverFileImpl::ReleaseMetadataIfNotModified()
 	}
 }
 
-std::shared_ptr<Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifData()
+std::shared_ptr<Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifData(
+	bool keepOriginal)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 
-	LoadExifData();
+	LoadExifData(keepOriginal);
 	return m_ExifData;
 }
 
@@ -1233,7 +1389,7 @@ std::shared_ptr<const Exiv2::ExifData> QuiverFile::QuiverFileImpl::GetExifDataOr
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
 
-	LoadExifData();
+	LoadExifData(true);
 	return m_ExifDataOriginal;
 }
 
@@ -1371,6 +1527,33 @@ static bool FileNameHasCameraPrefix(const gchar* szURI)
 // separate from GetTimeT so that a GetTimeT(false) call -- which caches the
 // modification time into m_cachedTimeT -- cannot mask the answer.  Callers
 // must hold m_MetadataMutex.
+bool QuiverFile::QuiverFileImpl::IsMetadataResolvedForIndex() const
+{
+	return m_bGpsResolved.load() && m_bMetadataDateResolved;
+}
+
+bool QuiverFile::QuiverFileImpl::ResolveMetadataForIndex()
+{
+	if (IsFolder())
+		return false;
+
+	/* GPS goes first so its GetExifData() leaves the EXIF block loaded for
+	 * ResolveMetadataTimeT(); the explicit release then drops it once both
+	 * caches have been filled. */
+	const bool hasGps = ResolveGps();
+	ResolveMetadataTimeT();
+	ReleaseMetadataIfNotModified();
+
+	if (MemTraceEnabled())
+	{
+		const unsigned long long resolved =
+			g_memIndexResolved.fetch_add(1, std::memory_order_relaxed) + 1;
+		if ((resolved % 256) == 0)
+			TraceIndexMemory(resolved);
+	}
+	return hasGps;
+}
+
 bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
@@ -1641,6 +1824,141 @@ bool QuiverFile::QuiverFileImpl::ResolveMetadataTimeT()
 	return 0 != m_cachedMetadataTimeT;
 }
 
+bool QuiverFile::QuiverFileImpl::ResolveGps()
+{
+	std::lock_guard<std::mutex> lock(m_GpsMutex);
+	if (m_bGpsResolved.load())
+	{
+		return m_bHasGps;
+	}
+	m_bHasGps = false;
+	m_bGpsHasAlt = false;
+	m_dGpsLat = 0.0;
+	m_dGpsLon = 0.0;
+	m_dGpsAlt = 0.0;
+
+	if (NULL == m_szURI || IsFolder())
+	{
+		m_bGpsResolved.store(true);
+		return false;
+	}
+
+	double lat = 0.0, lon = 0.0, alt = 0.0;
+	bool hasAlt = false;
+
+	if (IsVideo())
+	{
+		// avformat is not documented thread-safe: serialise access the same
+		// way the metadata-time path does.
+		static std::mutex s_avformatMutex;
+		static std::once_flag s_avformatInitFlag;
+		std::lock_guard<std::mutex> avLock(s_avformatMutex);
+		std::call_once(s_avformatInitFlag,
+			[](){ av_log_set_level(AV_LOG_ERROR); });
+
+		QuiverAvio::Container container;
+		container.SetProbeStreams(false);
+		if (container.Open(m_szURI))
+		{
+			AVFormatContext* pFmt = container.fmt();
+			static const char* const kGpsTags[] = {
+				"location",
+				"location-eng",
+				"com.apple.quicktime.location.ISO6709",
+				"com.apple.quicktime.location.iso6709",
+				"location.ISO6709",
+			};
+			const char* pLocStr = NULL;
+			for (size_t k = 0; NULL == pLocStr && k < G_N_ELEMENTS(kGpsTags); k++)
+			{
+				AVDictionaryEntry* e = av_dict_get(pFmt->metadata, kGpsTags[k], NULL, 0);
+				if (NULL != e && NULL != e->value && '\0' != e->value[0])
+					pLocStr = e->value;
+			}
+			for (unsigned k = 0; NULL == pLocStr && k < pFmt->nb_streams; k++)
+			{
+				for (size_t j = 0; NULL == pLocStr && j < G_N_ELEMENTS(kGpsTags); j++)
+				{
+					AVDictionaryEntry* e = av_dict_get(pFmt->streams[k]->metadata, kGpsTags[j], NULL, 0);
+					if (NULL != e && NULL != e->value && '\0' != e->value[0])
+						pLocStr = e->value;
+				}
+			}
+			if (NULL != pLocStr)
+			{
+				m_bHasGps = QuiverGps::ParseIso6709(pLocStr, lat, lon, hasAlt, alt);
+			}
+		}
+
+		if (!m_bHasGps)
+		{
+			std::shared_ptr<Exiv2::ExifData> pExif = GetExifData();
+			if (NULL != pExif.get())
+			{
+				m_bHasGps = QuiverGps::GetExifGps(*pExif, lat, lon, hasAlt, alt);
+			}
+		}
+	}
+	else
+	{
+		std::shared_ptr<Exiv2::ExifData> pExif = GetExifData();
+		if (NULL != pExif.get())
+		{
+			m_bHasGps = QuiverGps::GetExifGps(*pExif, lat, lon, hasAlt, alt);
+		}
+	}
+
+	if (m_bHasGps && std::isfinite(lat) && std::isfinite(lon) &&
+		lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0)
+	{
+		m_dGpsLat = lat;
+		m_dGpsLon = lon;
+		m_bGpsHasAlt = hasAlt;
+		m_dGpsAlt = alt;
+	}
+	else
+	{
+		m_bHasGps = false;
+	}
+
+	/* Publish only once every coordinate field is written.  Cached readers
+	 * use the acquire load as their synchronisation point. */
+	m_bGpsResolved.store(true);
+	return m_bHasGps;
+}
+
+bool QuiverFile::QuiverFileImpl::GetGPSCoordinates(double& outLat, double& outLon, bool& outHasAlt, double& outAlt)
+{
+	if (!ResolveGps())
+	{
+		return false;
+	}
+	outLat = m_dGpsLat;
+	outLon = m_dGpsLon;
+	outHasAlt = m_bGpsHasAlt;
+	outAlt = m_dGpsAlt;
+	return true;
+}
+
+bool QuiverFile::QuiverFileImpl::HasCachedGPS() const
+{
+	double lat = 0.0, lon = 0.0, alt = 0.0;
+	bool hasAlt = false;
+	return GetCachedGPSCoordinates(lat, lon, hasAlt, alt);
+}
+
+bool QuiverFile::QuiverFileImpl::GetCachedGPSCoordinates(double& outLat,
+	double& outLon, bool& outHasAlt, double& outAlt) const
+{
+	if (!m_bGpsResolved.load() || !m_bHasGps)
+		return false;
+	outLat = m_dGpsLat;
+	outLon = m_dGpsLon;
+	outHasAlt = m_bGpsHasAlt;
+	outAlt = m_dGpsAlt;
+	return true;
+}
+
 time_t QuiverFile::QuiverFileImpl::GetTimeT(bool fromExif /* = true */)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
@@ -1682,6 +2000,21 @@ bool QuiverFile::QuiverFileImpl::HasDateMetadata() const
 	return const_cast<QuiverFileImpl*>(this)->ResolveMetadataTimeT();
 }
 
+bool QuiverFile::QuiverFileImpl::HasCachedDateTaken() const
+{
+	time_t value = 0;
+	return GetCachedDateTaken(value);
+}
+
+bool QuiverFile::QuiverFileImpl::GetCachedDateTaken(time_t& outTime) const
+{
+	std::lock_guard<std::recursive_mutex> lock(m_MetadataMutex);
+	if (!m_bMetadataDateResolved || 0 == m_cachedMetadataTimeT)
+		return false;
+	outTime = m_cachedMetadataTimeT;
+	return true;
+}
+
 
 
 // structural comparison for change detection (ignores byte-order and
@@ -1712,7 +2045,8 @@ bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pE
 	bool bSet = false;
 	bool bModified = false;
 
-	LoadExifData();
+	/* This is the edit/save path: it needs the on-disk snapshot to diff. */
+	LoadExifData(true);
 
 	if (NULL != pExifData.get() && NULL != m_ExifDataOriginal.get())
 	{
@@ -1722,6 +2056,8 @@ bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pE
 
 		if (bModified)
 		{
+			if (!m_ExifData)
+				MemCounterAdd(g_memLiveExif, 1);
 			m_ExifData = std::make_shared<Exiv2::ExifData>(*pExifData);
 
 			// set the modified flag
@@ -1761,9 +2097,16 @@ bool QuiverFile::QuiverFileImpl::SetExifData(std::shared_ptr<Exiv2::ExifData> pE
 	}
 	else if (NULL != pExifData.get() && NULL == m_ExifDataOriginal.get())
 	{
+		if (!m_ExifData)
+			MemCounterAdd(g_memLiveExif, 1);
 		m_ExifData = std::make_shared<Exiv2::ExifData>(*pExifData);
 		m_fDataModified = (QuiverDataFlags)(m_fDataModified|QUIVER_FILE_DATA_EXIF);
 		bSet = true;
+	}
+	if (bSet)
+	{
+		/* The map cache may hold the previous coordinates. */
+		m_bGpsResolved.store(false);
 	}
 	return bSet;
 }
@@ -1973,10 +2316,11 @@ bool QuiverFile::QuiverFileImpl::SetOrientation(int iOrientation)
 		return false;
 	}
 
-	LoadExifData();
+	LoadExifData(true);
 	if (NULL == m_ExifData.get())
 	{
 		m_ExifData = std::make_shared<Exiv2::ExifData>();
+		MemCounterAdd(g_memLiveExif, 1);
 	}
 
 	/* SetExifData() diffs what it is given against the load-time snapshot and
@@ -2220,6 +2564,14 @@ QuiverFile QuiverFile::QuiverFileImpl::CreateCopy(const QuiverFile& src, const g
 		dst.m_QuiverFilePtr->m_ExifDataOriginal = src.m_QuiverFilePtr->m_ExifDataOriginal;
 		dst.m_QuiverFilePtr->m_XmpData = src.m_QuiverFilePtr->m_XmpData;
 		dst.m_QuiverFilePtr->m_IptcData = src.m_QuiverFilePtr->m_IptcData;
+		if (dst.m_QuiverFilePtr->m_ExifData)
+			MemCounterAdd(g_memLiveExif, 1);
+		if (dst.m_QuiverFilePtr->m_ExifDataOriginal)
+			MemCounterAdd(g_memLiveExifOriginal, 1);
+		if (dst.m_QuiverFilePtr->m_XmpData)
+			MemCounterAdd(g_memLiveXmp, 1);
+		if (dst.m_QuiverFilePtr->m_IptcData)
+			MemCounterAdd(g_memLiveIptc, 1);
 		dst.m_QuiverFilePtr->m_fDataLoaded = src.m_QuiverFilePtr->m_fDataLoaded;
 		dst.m_QuiverFilePtr->m_fDataExists = src.m_QuiverFilePtr->m_fDataExists;
 	}
@@ -2654,6 +3006,85 @@ bool QuiverFile::HasDateMetadata() const
 	if (m_QuiverFilePtr)
 	{
 		return m_QuiverFilePtr->HasDateMetadata();
+	}
+	return false;
+}
+
+bool QuiverFile::ResolveDateTaken() const
+{
+	if (m_QuiverFilePtr)
+	{
+		return const_cast<QuiverFileImpl*>(m_QuiverFilePtr.get())->ResolveMetadataTimeT();
+	}
+	return false;
+}
+
+bool QuiverFile::ResolveMetadataForIndex() const
+{
+	if (m_QuiverFilePtr)
+	{
+		return const_cast<QuiverFileImpl*>(m_QuiverFilePtr.get())->ResolveMetadataForIndex();
+	}
+	return false;
+}
+
+bool QuiverFile::IsMetadataResolvedForIndex() const
+{
+	if (m_QuiverFilePtr)
+	{
+		return m_QuiverFilePtr->IsMetadataResolvedForIndex();
+	}
+	return false;
+}
+
+bool QuiverFile::HasCachedDateTaken() const
+{
+	if (m_QuiverFilePtr)
+	{
+		return m_QuiverFilePtr->HasCachedDateTaken();
+	}
+	return false;
+}
+
+bool QuiverFile::GetCachedDateTaken(time_t& outTime) const
+{
+	if (m_QuiverFilePtr)
+	{
+		return m_QuiverFilePtr->GetCachedDateTaken(outTime);
+	}
+	return false;
+}
+
+bool QuiverFile::GetGPSCoordinates(double& outLat, double& outLon, bool& outHasAlt, double& outAlt) const
+{
+	if (m_QuiverFilePtr)
+	{
+		return m_QuiverFilePtr->GetGPSCoordinates(outLat, outLon, outHasAlt, outAlt);
+	}
+	return false;
+}
+
+bool QuiverFile::HasGPS() const
+{
+	double lat = 0.0, lon = 0.0, alt = 0.0;
+	bool hasAlt = false;
+	return GetGPSCoordinates(lat, lon, hasAlt, alt);
+}
+
+bool QuiverFile::HasCachedGPS() const
+{
+	double lat = 0.0, lon = 0.0, alt = 0.0;
+	bool hasAlt = false;
+	return GetCachedGPSCoordinates(lat, lon, hasAlt, alt);
+}
+
+bool QuiverFile::GetCachedGPSCoordinates(double& outLat, double& outLon,
+	bool& outHasAlt, double& outAlt) const
+{
+	if (m_QuiverFilePtr)
+	{
+		return m_QuiverFilePtr->GetCachedGPSCoordinates(outLat, outLon,
+			outHasAlt, outAlt);
 	}
 	return false;
 }

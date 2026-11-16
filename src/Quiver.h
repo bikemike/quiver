@@ -48,6 +48,7 @@ public:
 	
 	void ShowBrowser();
 	void ShowViewer();
+	void ShowMap();
 
 	void SetWindowTitle(std::string s);
 

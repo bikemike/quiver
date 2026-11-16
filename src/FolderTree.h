@@ -29,6 +29,13 @@ public:
 	bool GetFoldersExpanded() const;
 
 	void SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive = false, const std::set<std::string>& recursiveFolders = std::set<std::string>());
+
+	/* Record the selection the tree is displaying before the browser rebuilds
+	 * its image list.  Returning from the viewer re-applies that same
+	 * selection; without this the first return looks like a new selection and
+	 * scrolls the sidebar to the first checked folder. */
+	void EmitSelectionChangedEvent(bool bPreserveCurrentIndex = true) override;
+	void EmitBookmarkOpenEvent(const std::list<std::string>& uris, bool bRecursive) override;
 	std::list<std::string> GetSelectedFolders() const;
 	/* True when any checked item of the combined selection requires its
 	 * folders to be loaded recursively (currently: a checked bookmark whose

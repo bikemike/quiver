@@ -1133,6 +1133,127 @@ TEST_CASE("FolderTree SetSelectedFolders matches bookmark and checks bookmark an
     g_rmdir(base.c_str());
 }
 
+TEST_CASE("FolderTree reopening a bookmark keeps the sidebar scroll position",
+          "[unit][foldertree][gui]")
+{
+    REQUIRE_DISPLAY();
+    FolderTreeTestConfigFixture cfg;
+
+    // Enough sibling folders that the sidebar is genuinely scrollable, with
+    // the bookmark pointing at the far end.
+    std::string base = folder_tree_test_make_temp_dir();
+    for (int i = 0; i < 300; i++)
+    {
+        char name[32];
+        snprintf(name, sizeof(name), "sub_%03d", i);
+        g_mkdir((base + "/" + name).c_str(), 0755);
+    }
+    std::string first_uri = folder_tree_test_path_to_uri(base + "/sub_000");
+    std::string last_uri = folder_tree_test_path_to_uri(base + "/sub_299");
+
+    BookmarksPtr bm = Bookmarks::GetInstance();
+    Bookmark bookmark("Scroll Test Bookmark", "desc", "folder-symbolic",
+                      std::list<std::string>{ last_uri }, false);
+    REQUIRE(bm->AddBookmark(bookmark));
+    int added_id = bm->GetBookmarks().back().GetID();
+    struct AutoRemoveBookmark {
+        BookmarksPtr bm;
+        int id;
+        ~AutoRemoveBookmark() { if (bm) bm->Remove(id); }
+    } cleanup{ bm, added_id };
+
+    FolderTreePtr tree(new FolderTree());
+    boost::shared_ptr<FolderTreeTestBookmarkHandler> handler(
+        new FolderTreeTestBookmarkHandler());
+    tree->AddEventHandler(boost::static_pointer_cast<IEventHandler>(handler));
+    tree->SetBookmarksExpanded(true);
+
+    GtkWidget* win = gtk_window_new();
+    gtk_window_set_child(GTK_WINDOW(win), tree->GetWidget());
+    gtk_window_set_default_size(GTK_WINDOW(win), 300, 400);
+    gtk_window_present(GTK_WINDOW(win));
+    while (g_main_context_iteration(NULL, FALSE));
+
+    // Reveal the temp tree so all 300 children exist.
+    tree->SetSelectedFolders(std::list<std::string>{ first_uri });
+    for (int iter = 0; iter < 10; iter++)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(5000);
+    }
+
+    GtkWidget* main_sw = gtk_widget_get_first_child(tree->GetWidget());
+    REQUIRE(main_sw != nullptr);
+    REQUIRE(GTK_IS_SCROLLED_WINDOW(main_sw));
+    GtkAdjustment* vadj =
+        gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(main_sw));
+    REQUIRE(vadj != nullptr);
+    REQUIRE(gtk_adjustment_get_upper(vadj) > 5000.0);
+
+    // Click the bookmark row body (not its checkbox).  This is the path that
+    // used to leave the selection cache stale.
+    GtkWidget* bm_widget = tree->GetBookmarksWidget();
+    REQUIRE(bm_widget != nullptr);
+    GtkSelectionModel* bm_sel = gtk_list_view_get_model(GTK_LIST_VIEW(bm_widget));
+    REQUIRE(bm_sel != nullptr);
+    REQUIRE(g_list_model_get_n_items(G_LIST_MODEL(bm_sel)) >= 1);
+    GObject* item0 = (GObject*)g_list_model_get_item(G_LIST_MODEL(bm_sel), 0);
+    REQUIRE(item0 != nullptr);
+    GtkWidget* check0 = GTK_WIDGET(g_object_get_data(item0, "bound-check"));
+    REQUIRE(check0 != nullptr);
+    GtkWidget* row_hbox = gtk_widget_get_parent(check0);
+    REQUIRE(row_hbox != nullptr);
+
+    GtkGestureClick* row_gesture = nullptr;
+    GListModel* ctrls = gtk_widget_observe_controllers(row_hbox);
+    REQUIRE(ctrls != nullptr);
+    for (guint i = 0; i < g_list_model_get_n_items(ctrls) && !row_gesture; i++)
+    {
+        gpointer c = g_list_model_get_item(ctrls, i);
+        if (GTK_IS_GESTURE_CLICK(c))
+            row_gesture = GTK_GESTURE_CLICK(c);
+        g_object_unref(c);
+    }
+    g_object_unref(ctrls);
+    REQUIRE(row_gesture != nullptr);
+
+    g_signal_emit_by_name(row_gesture, "pressed", 1, 200.0, 10.0);
+    g_signal_emit_by_name(row_gesture, "released", 1, 200.0, 10.0);
+    while (g_main_context_iteration(NULL, FALSE));
+    REQUIRE(handler->bookmarkOpens == 1);
+
+    // Simulate the user scrolling the sidebar before entering the viewer.
+    gtk_adjustment_set_value(vadj, 0.0);
+    for (int iter = 0; iter < 20; iter++)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(5000);
+    }
+    double scroll_before = gtk_adjustment_get_value(vadj);
+    g_object_unref(item0);
+
+    // Returning from the viewer re-applies the image list's selection.  It
+    // must be recognised as unchanged and must not scroll to the bookmark's
+    // folder again.
+    tree->SetSelectedFolders(std::list<std::string>{ last_uri }, false);
+    for (int iter = 0; iter < 20; iter++)
+    {
+        while (g_main_context_iteration(NULL, FALSE));
+        g_usleep(5000);
+    }
+    CHECK(std::abs(gtk_adjustment_get_value(vadj) - scroll_before) <= 50.0);
+
+    gtk_window_set_child(GTK_WINDOW(win), nullptr);
+    gtk_window_destroy(GTK_WINDOW(win));
+    for (int i = 0; i < 300; i++)
+    {
+        char name[32];
+        snprintf(name, sizeof(name), "sub_%03d", i);
+        g_rmdir((base + "/" + name).c_str());
+    }
+    g_rmdir(base.c_str());
+}
+
 TEST_CASE("FolderTree selecting a single folder that is part of a multi-folder recursive bookmark does not activate bookmark",
           "[unit][foldertree][gui]")
 {

@@ -22,6 +22,9 @@ unit/test_image_cache.cpp
     unit/test_external_tools.cpp
     unit/test_external_tool_task.cpp
     unit/test_image_list_filter.cpp
+    unit/test_image_filter_state.cpp
+    unit/test_gps_index.cpp
+    unit/test_map_view.cpp
     unit/test_image_list_async.cpp
     unit/test_image_list_remove.cpp
     unit/test_image_list_filter_delete.cpp

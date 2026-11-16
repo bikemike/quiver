@@ -21,6 +21,9 @@ and manage bookmarks.
 | GStreamer 1.0     | Video playback                | `libgstreamer1.0-dev`          | `gstreamer1-devel`              |
 | GStreamer plugins | Base plugins (video, GL, app) | `libgstreamer-plugins-base1.0-dev` | `gstreamer1-plugins-base-devel` |
 | libjpeg           | JPEG encode/decode            | `libjpeg-dev`                  | `libjpeg-turbo-devel`           |
+| libshumate        | GPS map view                  | `libshumate-dev`               | `libshumate-devel`              |
+| libsoup 3         | Online map tile downloads     | `libsoup-3.0-dev`              | `libsoup3-devel`                |
+| JSON-GLib         | Map tile metadata parsing     | `libjson-glib-dev`             | `json-glib-devel`               |
 | Boost            | Header-only utilities         | `libboost-dev`                 | `boost-devel`                   |
 
 GStreamer pulls in the following modules, all required:

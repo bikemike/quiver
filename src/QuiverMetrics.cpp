@@ -33,6 +33,30 @@ gint64 g_origin_us = 0;
 
 std::map<std::string, gint64> g_counters;
 
+struct StallWatchdog
+{
+	guint threshold_ms;
+	gint64 last_us;
+};
+
+void stall_watchdog_free(gpointer data)
+{
+	delete static_cast<StallWatchdog*>(data);
+}
+
+gboolean stall_watchdog_tick(gpointer data)
+{
+	StallWatchdog* watchdog = static_cast<StallWatchdog*>(data);
+	const gint64 now_us = g_get_monotonic_time();
+	const gint64 elapsed_ms = (now_us - watchdog->last_us) / 1000;
+	if (elapsed_ms >= (gint64)watchdog->threshold_ms)
+	{
+		quiver_metric_emit("mainloop", "stall", (double)elapsed_ms, "ms");
+	}
+	watchdog->last_us = now_us;
+	return G_SOURCE_CONTINUE;
+}
+
 const char* env_or_null(const char* name)
 {
 	const char* v = g_getenv(name);
@@ -170,6 +194,18 @@ guint64 quiver_metric_current_epoch(const char* scope)
 	}
 	g_mutex_unlock(&g_lock);
 	return n;
+}
+
+void quiver_metrics_start_stall_watchdog(guint interval_ms, guint threshold_ms)
+{
+	static gboolean installed = FALSE;
+	if (installed || !quiver_metrics_enabled())
+		return;
+	installed = TRUE;
+
+	StallWatchdog* watchdog = new StallWatchdog{threshold_ms, quiver_metrics_now_us()};
+	g_timeout_add_full(G_PRIORITY_HIGH, interval_ms, stall_watchdog_tick,
+		watchdog, stall_watchdog_free);
 }
 
 void quiver_metrics_flush(void)

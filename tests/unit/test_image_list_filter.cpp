@@ -1,7 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
+#include "FilteredImageList.h"
+#include "ImageList.h"
 #include "ImageListFilter.h"
 #include "IImageListView.h"
 #include "QuiverFile.h"
+#include "test_helpers.h"
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <vector>
 #include <string>
 
@@ -95,6 +101,83 @@ public:
     bool m_bIsLoading = false;
     bool IsLoading() const override { return m_bIsLoading; }
 };
+
+class TestableImageListFilter : public ImageListFilter
+{
+public:
+    using ImageListFilter::ImageListFilter;
+
+    std::recursive_mutex& MapMutex() { return m_MapMutex; }
+};
+
+class MapMutexProbe : public IImageListEventHandler
+{
+public:
+    explicit MapMutexProbe(std::recursive_mutex& mutex) : m_Mutex(mutex) {}
+
+    bool LockedDuringEvent() const { return m_bLockedDuringEvent.load(); }
+
+    void HandleContentsChanged(ImageListEventPtr) override { Probe(); }
+    void HandleCurrentIndexChanged(ImageListEventPtr) override { Probe(); }
+    void HandleItemAdded(ImageListEventPtr) override { Probe(); }
+    void HandleItemRemoved(ImageListEventPtr) override { Probe(); }
+    void HandleItemChanged(ImageListEventPtr) override { Probe(); }
+
+private:
+    void Probe()
+    {
+        std::atomic<bool> acquired{false};
+        std::thread probe([this, &acquired]() {
+            if (m_Mutex.try_lock())
+            {
+                acquired.store(true);
+                m_Mutex.unlock();
+            }
+        });
+        probe.join();
+        if (!acquired.load())
+            m_bLockedDuringEvent.store(true);
+    }
+
+    std::recursive_mutex& m_Mutex;
+    std::atomic<bool> m_bLockedDuringEvent{false};
+};
+
+TEST_CASE("ImageListFilter emits events outside its map mutex",
+    "[unit][filter][fast]")
+{
+    std::vector<std::string> uris = {
+        "file:///test/a.jpg",
+        "file:///test/b.jpg",
+        "file:///test/c.jpg"
+    };
+    boost::shared_ptr<MockImageListView> mock(new MockImageListView(uris));
+    boost::shared_ptr<TestableImageListFilter> filter(
+        new TestableImageListFilter(mock, [](const QuiverFile&) {
+            return true;
+        }));
+    boost::shared_ptr<MapMutexProbe> probe(
+        new MapMutexProbe(filter->MapMutex()));
+    filter->AddEventHandler(probe);
+
+    SECTION("SetPredicate")
+    {
+        filter->SetPredicate([](const QuiverFile&) { return true; });
+        CHECK_FALSE(probe->LockedDuringEvent());
+    }
+
+    SECTION("Source contents changed")
+    {
+        mock->EmitContentsChangedEvent();
+        CHECK_FALSE(probe->LockedDuringEvent());
+    }
+
+    SECTION("Navigation changes the source current index")
+    {
+        REQUIRE(filter->SetCurrentIndex(1));
+        CHECK_FALSE(probe->LockedDuringEvent());
+    }
+}
 
 TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
 {
@@ -378,6 +461,50 @@ TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
         filter.RemoveEventHandler(navHandler);
     }
 
+    SECTION("ItemChanged updates membership without discarding the view")
+    {
+        class ItemChangeHandler : public IImageListEventHandler
+        {
+        public:
+            std::vector<unsigned int> added;
+            std::vector<unsigned int> removed;
+            std::vector<unsigned int> changed;
+            void HandleContentsChanged(ImageListEventPtr) override {}
+            void HandleCurrentIndexChanged(ImageListEventPtr) override {}
+            void HandleItemAdded(ImageListEventPtr e) override { added.push_back(e->GetIndex()); }
+            void HandleItemRemoved(ImageListEventPtr e) override { removed.push_back(e->GetIndex()); }
+            void HandleItemChanged(ImageListEventPtr e) override { changed.push_back(e->GetIndex()); }
+            void HandleLoadProgress(double, int, int) override {}
+        };
+
+        boost::shared_ptr<ItemChangeHandler> handler(new ItemChangeHandler());
+        filter.AddEventHandler(handler);
+
+        REQUIRE(filter.Last());
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///test/e.jpg");
+
+        /* b.png becomes a matching item; it is inserted at view index 1 and
+         * the current selection (e.jpg) stays selected. */
+        mock->m_files[1] = QuiverFile("file:///test/b.jpg");
+        mock->EmitItemChangedEvent(1);
+        REQUIRE(filter.GetSize() == 4);
+        REQUIRE(std::string(filter.Get(1).GetURI()) == "file:///test/b.jpg");
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///test/e.jpg");
+        REQUIRE(handler->added == std::vector<unsigned int>{1});
+        REQUIRE(handler->removed.empty());
+
+        /* ...and changing it again to a non-match removes just that row. */
+        mock->m_files[1] = QuiverFile("file:///test/b.png");
+        mock->EmitItemChangedEvent(1);
+        REQUIRE(filter.GetSize() == 3);
+        REQUIRE(std::string(filter.Get(1).GetURI()) == "file:///test/c.jpg");
+        REQUIRE(std::string(filter.GetCurrent().GetURI()) == "file:///test/e.jpg");
+        REQUIRE(handler->removed == std::vector<unsigned int>{1});
+        REQUIRE(handler->changed.empty());
+
+        filter.RemoveEventHandler(handler);
+    }
+
     SECTION("Empty filter First and Last return false safely")
     {
         boost::shared_ptr<MockImageListView> empty_mock(new MockImageListView({}));
@@ -390,3 +517,96 @@ TEST_CASE("ImageListFilter Predicate and Navigation", "[unit][filter][fast]")
     }
 }
 
+
+TEST_CASE("ImageListFilter SetPredicate replaces the view live", "[image_list_filter]")
+{
+    boost::shared_ptr<MockImageListView> mock(new MockImageListView(
+        {"file:///test/a.jpg", "file:///test/b.png", "file:///test/c.jpg"}));
+    boost::shared_ptr<ImageListFilter> filter(new ImageListFilter(
+        mock, [](const QuiverFile&) { return true; }));
+    REQUIRE(filter->GetSize() == 3);
+
+    filter->SetPredicate([](const QuiverFile& f) {
+        std::string uri = f.GetURI() ? f.GetURI() : "";
+        return uri.size() >= 4 && uri.substr(uri.size() - 4) == ".jpg";
+    });
+    REQUIRE(filter->GetSize() == 2);
+    REQUIRE(std::string(filter->Get(0).GetURI()) == "file:///test/a.jpg");
+    REQUIRE(std::string(filter->Get(1).GetURI()) == "file:///test/c.jpg");
+
+    filter->SetPredicate([](const QuiverFile& f) {
+        std::string uri = f.GetURI() ? f.GetURI() : "";
+        return uri.size() >= 4 && uri.substr(uri.size() - 4) == ".png";
+    });
+    REQUIRE(filter->GetSize() == 1);
+    REQUIRE(std::string(filter->Get(0).GetURI()) == "file:///test/b.png");
+
+    filter->SetPredicate(ImageListFilter::Predicate());
+    REQUIRE(filter->GetSize() == 3);
+}
+
+TEST_CASE("ImageListFilter SetPredicate keeps the tracked current item",
+    "[unit][filter][fast]")
+{
+    boost::shared_ptr<MockImageListView> mock(new MockImageListView(
+        {"file:///test/a.jpg", "file:///test/b.jpg", "file:///test/c.jpg",
+         "file:///test/d.jpg", "file:///test/e.jpg"}));
+    boost::shared_ptr<ImageListFilter> filter(new ImageListFilter(
+        mock, [](const QuiverFile&) { return true; }));
+    REQUIRE(filter->SetCurrentIndex(3));
+    REQUIRE(filter->GetCurrentIndex() == 3);
+    REQUIRE(std::string(filter->GetCurrent().GetURI()) == "file:///test/d.jpg");
+
+    mock->m_currentIndex = 0;
+    filter->SetPredicate([](const QuiverFile&) { return true; });
+
+    REQUIRE(filter->GetCurrentIndex() == 3);
+    REQUIRE(std::string(filter->GetCurrent().GetURI()) == "file:///test/d.jpg");
+}
+
+TEST_CASE("FilteredImageList maps browser selection to master indices",
+	"[image_list_filter]")
+{
+	const std::string dir = QuiverTest_GetImagesDir();
+	std::list<std::string> files = {
+		dir + "/sample_4k.jpg",
+		dir + "/sample_rotated.jpg",
+		dir + "/sample_rotated_slong_ori.jpg",
+	};
+
+	ImageListPtr master(new ImageList(false));
+	master->SetImageList(&files);
+	REQUIRE(master->GetSize() == 3);
+
+	auto base = boost::shared_ptr<ImageListFilter>(
+		new ImageListFilter(master, [](const QuiverFile&) { return true; }));
+	auto browser = boost::shared_ptr<ImageListFilter>(
+		new ImageListFilter(base, [](const QuiverFile& f) {
+			return f.GetFileName().find("slong") == std::string::npos;
+		}));
+	boost::shared_ptr<FilteredImageList> filtered(
+		new FilteredImageList(master, browser));
+	REQUIRE(filtered->GetSize() == 2);
+
+	std::list<unsigned int> mapped = filtered->MapViewIndicesToMaster({1});
+	REQUIRE(mapped.size() == 1);
+	REQUIRE(mapped.front() < master->GetSize());
+	REQUIRE(std::string((*master)[mapped.front()].GetURI()) ==
+		std::string(filtered->Get(1).GetURI()));
+
+	std::string selectedUri = filtered->Get(1).GetURI();
+	REQUIRE(filtered->SetCurrentFile(selectedUri));
+	REQUIRE(std::string(master->GetCurrent().GetURI()) == selectedUri);
+
+	/* Keep the view size unchanged but change which master item it shows.
+	 * The cached URI->master-index map must be invalidated on contents
+	 * changes, not only when the size changes. */
+	browser->SetPredicate([](const QuiverFile& f) {
+		return f.GetFileName().find("sample_rotated.jpg") == std::string::npos;
+	});
+	REQUIRE(filtered->GetSize() == 2);
+	mapped = filtered->MapViewIndicesToMaster({1});
+	REQUIRE(mapped.size() == 1);
+	REQUIRE(std::string((*master)[mapped.front()].GetURI()) ==
+		std::string(filtered->Get(1).GetURI()));
+}

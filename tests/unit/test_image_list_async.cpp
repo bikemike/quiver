@@ -122,6 +122,27 @@ TEST_CASE("ImageList async folder load: selectFirstItem lands on the first item"
     REQUIRE(list->GetCurrentIndex() == 0);
 }
 
+TEST_CASE("ImageList async recursive folder load keeps the requested folder as its definition",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string root = make_temp_dir();
+    seed_dir(make_sub_dir(root, "sub"), 2);
+    std::string rootUri = path_to_uri(root);
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> folders = { rootUri };
+    list->UpdateImageListAsync(&folders, true, true);
+    pump_until([&] { return list->GetSize() == 2; });
+
+    ImageListAttributesPtr attrs = list->GetAttributes();
+    REQUIRE(attrs);
+    CHECK(attrs->GetFolders() == folders);
+    CHECK(attrs->GetRecursive());
+    CHECK(attrs->GetRecursiveFolders().empty());
+}
+
 TEST_CASE("ImageList async folder load: preserveCurrentIndex holds the viewer's place",
           "[unit][imagelist][gui]")
 {
@@ -204,9 +225,15 @@ class TestProgressHandler : public IImageListEventHandler
 {
 public:
     int m_iProgressCount = 0;
+    int m_iPositiveProgressBeforeContents = 0;
+    bool m_bContentsSeen = false;
     double m_dLastFraction = -2.0;
 
-    virtual void HandleContentsChanged(ImageListEventPtr event) { (void)event; }
+    virtual void HandleContentsChanged(ImageListEventPtr event)
+    {
+        (void)event;
+        m_bContentsSeen = true;
+    }
     virtual void HandleCurrentIndexChanged(ImageListEventPtr event) { (void)event; }
     virtual void HandleItemAdded(ImageListEventPtr event) { (void)event; }
     virtual void HandleItemRemoved(ImageListEventPtr event) { (void)event; }
@@ -217,6 +244,10 @@ public:
         (void)total;
         m_iProgressCount++;
         m_dLastFraction = fraction;
+        if (!m_bContentsSeen && fraction > 0.0)
+        {
+            m_iPositiveProgressBeforeContents++;
+        }
     }
 };
 
@@ -382,6 +413,8 @@ TEST_CASE("ImageList: Initial sort order (by date descending) applied on load",
 
     std::string uri = path_to_uri(dir);
     ImageListPtr list(new ImageList());
+    boost::shared_ptr<TestProgressHandler> handler(new TestProgressHandler());
+    list->AddEventHandler(handler);
 
     // Configure sort order before loading files, matching app startup with saved prefs
     list->Sort(ImageList::SORT_BY_DATE, false, false);
@@ -394,7 +427,13 @@ TEST_CASE("ImageList: Initial sort order (by date descending) applied on load",
     pump_until([&] { return list->GetSize() >= 3; });
     REQUIRE(list->GetSize() == 3);
 
-    // Verify async loader pre-cached creation/mtime dates because sort mode is SORT_BY_DATE
+    // Filenames are committed before date/GPS progress starts, so the folder
+    // is visible without waiting for metadata.
+    REQUIRE(handler->m_bContentsSeen);
+    CHECK(handler->m_iPositiveProgressBeforeContents == 0);
+
+    // The date sort and metadata scan complete in the background.
+    pump_until([&] { return !list->IsLoading(); });
     CHECK((*list)[0].HasCachedTimeT());
     CHECK((*list)[1].HasCachedTimeT());
     CHECK((*list)[2].HasCachedTimeT());
@@ -404,6 +443,8 @@ TEST_CASE("ImageList: Initial sort order (by date descending) applied on load",
     CHECK((*list)[1].GetTimeT() >= (*list)[2].GetTimeT());
     CHECK((*list)[0].GetFilePath() == fileC);
     CHECK((*list)[2].GetFilePath() == fileA);
+
+    list->RemoveEventHandler(handler);
 }
 
 TEST_CASE("ImageList: Preferences sort order application",
@@ -476,6 +517,177 @@ TEST_CASE("ImageList async folder load: reload attributes and select URI (Recent
     pump_until([&] { return loaded_folder(uriA); });
     REQUIRE(list->GetSize() == 4);
     CHECK(list->GetCurrent().GetURI() == targetURI);
+}
+
+class TestDefinitionHandler : public IImageListEventHandler
+{
+public:
+    explicit TestDefinitionHandler(ImageList* list) : m_pList(list) {}
+
+    int m_iContentsChanged = 0;
+    ImageListAttributesPtr m_Snapshot;
+
+    virtual void HandleContentsChanged(ImageListEventPtr event)
+    {
+        (void)event;
+        m_iContentsChanged++;
+        ImageListAttributesPtr attrs = m_pList->GetAttributes();
+        m_Snapshot.reset(attrs ? new ImageListAttributes(*attrs) : nullptr);
+    }
+    virtual void HandleCurrentIndexChanged(ImageListEventPtr event) { (void)event; }
+    virtual void HandleItemAdded(ImageListEventPtr event) { (void)event; }
+    virtual void HandleItemRemoved(ImageListEventPtr event) { (void)event; }
+    virtual void HandleItemChanged(ImageListEventPtr event) { (void)event; }
+
+private:
+    ImageList* m_pList;
+};
+
+TEST_CASE("ImageList contents change reports a new parent folder definition",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dirA = make_temp_dir();
+    std::string dirB = make_temp_dir();
+    seed_dir(dirA, 4);
+    seed_dir(dirB, 4);
+
+    std::string uriA = path_to_uri(dirA);
+    std::string uriB = path_to_uri(dirB);
+
+    ImageListPtr list(new ImageList());
+    boost::shared_ptr<TestDefinitionHandler> handler(new TestDefinitionHandler(list.get()));
+    list->AddEventHandler(handler);
+
+    auto loaded_folder = [&](const std::string& uri) {
+        std::list<std::string> folders = list->GetFolderList();
+        return std::find(folders.begin(), folders.end(), uri) != folders.end() &&
+               list->GetSize() >= 4;
+    };
+
+    std::list<std::string> foldersA = { uriA };
+    list->UpdateImageListAsync(&foldersA);
+    pump_until([&] { return loaded_folder(uriA); });
+    REQUIRE(handler->m_iContentsChanged > 0);
+    REQUIRE(handler->m_Snapshot != nullptr);
+    ImageListAttributesPtr attrsA = handler->m_Snapshot;
+
+    handler->m_iContentsChanged = 0;
+    std::list<std::string> foldersB = { uriB };
+    list->UpdateImageListAsync(&foldersB);
+    pump_until([&] { return loaded_folder(uriB); });
+    REQUIRE(handler->m_iContentsChanged > 0);
+    REQUIRE(handler->m_Snapshot != nullptr);
+    CHECK_FALSE(handler->m_Snapshot->Matches(*attrsA));
+
+    handler->m_iContentsChanged = 0;
+    list->UpdateImageListAsync(&foldersB);
+    for (int i = 0; i < 5; ++i)
+        while (g_main_context_iteration(nullptr, FALSE));
+    CHECK(handler->m_iContentsChanged == 0);
+    REQUIRE(handler->m_Snapshot != nullptr);
+    REQUIRE(list->GetAttributes() != nullptr);
+    CHECK(handler->m_Snapshot->Matches(*list->GetAttributes()));
+
+    list->RemoveEventHandler(handler);
+}
+
+TEST_CASE("ImageList async recursive folder load: reopening the same bookmark is a no-op",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string root = make_temp_dir();
+    seed_dir(root, 1);
+    seed_dir(make_sub_dir(root, "sub"), 2);
+    std::string rootUri = path_to_uri(root);
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> folders = { rootUri };
+    list->UpdateImageListAsync(&folders, true, true);
+    pump_until([&] { return list->GetSize() == 3; });
+    REQUIRE(list->GetSize() == 3);
+
+    boost::shared_ptr<TestDefinitionHandler> handler(new TestDefinitionHandler(list.get()));
+    list->AddEventHandler(handler);
+
+    list->UpdateImageListAsync(&folders, true, true);
+    CHECK_FALSE(list->IsLoading());
+    for (int i = 0; i < 5; ++i)
+        while (g_main_context_iteration(nullptr, FALSE));
+    CHECK(handler->m_iContentsChanged == 0);
+    CHECK(list->GetSize() == 3);
+
+    list->RemoveEventHandler(handler);
+}
+
+TEST_CASE("ImageList async folder load: switching back to the loaded folder cancels the pending load",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dirA = make_temp_dir();
+    std::string dirB = make_temp_dir();
+    seed_dir(dirA, 2);
+    seed_dir(dirB, 5);
+    std::string uriA = path_to_uri(dirA);
+    std::string uriB = path_to_uri(dirB);
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> foldersA = { uriA };
+    std::list<std::string> foldersB = { uriB };
+
+    list->UpdateImageListAsync(&foldersA);
+    pump_until([&] { return list->GetSize() == 2; });
+    REQUIRE(list->GetSize() == 2);
+
+    boost::shared_ptr<TestDefinitionHandler> handler(new TestDefinitionHandler(list.get()));
+    boost::shared_ptr<TestProgressHandler> progress(new TestProgressHandler());
+    list->AddEventHandler(handler);
+    list->AddEventHandler(progress);
+
+    list->UpdateImageListAsync(&foldersB, false, true);
+    list->UpdateImageListAsync(&foldersA, false, true);
+
+    CHECK_FALSE(list->IsLoading());
+    for (int i = 0; i < 5; ++i)
+        while (g_main_context_iteration(nullptr, FALSE));
+    CHECK(handler->m_iContentsChanged == 0);
+    CHECK(progress->m_dLastFraction == 1.0);
+    CHECK(list->GetSize() == 2);
+    CHECK(list->GetFolderList() == foldersA);
+
+    list->RemoveEventHandler(handler);
+    list->RemoveEventHandler(progress);
+}
+
+TEST_CASE("ImageList async single-file load: reopening the same file is a no-op",
+          "[unit][imagelist][gui]")
+{
+    REQUIRE_DISPLAY();
+
+    std::string dir = make_temp_dir();
+    seed_dir(dir, 4);
+    std::string file0 = path_to_uri(dir + "/img0.jpg");
+
+    ImageListPtr list(new ImageList());
+    std::list<std::string> single = { file0 };
+    list->UpdateImageListAsync(&single);
+    pump_until([&] { return list->GetSize() == 4; });
+    REQUIRE(list->GetSize() == 4);
+
+    boost::shared_ptr<TestDefinitionHandler> handler(new TestDefinitionHandler(list.get()));
+    list->AddEventHandler(handler);
+
+    list->UpdateImageListAsync(&single);
+    CHECK_FALSE(list->IsLoading());
+    for (int i = 0; i < 5; ++i)
+        while (g_main_context_iteration(nullptr, FALSE));
+    CHECK(handler->m_iContentsChanged == 0);
+    CHECK(list->GetSize() == 4);
+
+    list->RemoveEventHandler(handler);
 }
 
 TEST_CASE("ImageList async single-file load: context restore with different selected URI",

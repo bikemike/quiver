@@ -31,6 +31,13 @@ public:
 	ImageListFilter(IImageListViewPtr pSource, Predicate pred);
 	virtual ~ImageListFilter();
 
+	/* Replace the predicate live.  The view->source map is invalidated and
+	 * ContentsChanged is emitted so every consumer (viewer, filmstrip, map
+	 * counts) reloads against the new subset.  Passing an empty function
+	 * makes the filter show everything. */
+	void SetPredicate(Predicate pred);
+	Predicate GetPredicate() const;
+
 	virtual unsigned int GetSize() const;
 	virtual unsigned int GetCurrentIndex() const;
 
@@ -96,6 +103,10 @@ protected:
 	// loader worker threads (Viewer.cpp get-size paths), so a rebuild can
 	// race with a rebuild/removal on another thread - protect the state.
 	// Recursive so the re-entrant remove/emit paths can re-enter getters.
+	//
+	// Lock order: this mutex before any source filter/list mutex.  Never hold
+	// it while emitting an event or mutating the source, because those paths
+	// call listeners that may take mutexes in the opposite direction.
 	mutable std::recursive_mutex m_MapMutex;
 
 	mutable std::vector<unsigned int> m_vectMap; // view idx -> source idx

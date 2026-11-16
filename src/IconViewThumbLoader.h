@@ -62,6 +62,20 @@ public:
 	static guint ComputeCacheSize(guint n_items, guint bytes_per_item,
 		guint budget_bytes, guint prefetch_items);
 
+	/* How many thumbnails to queue for one viewport.  This is deliberately
+	 * separate from ComputeCacheSize(): the cache may retain thousands of
+	 * thumbnails so scrolling back is instant, but queuing that many loads on
+	 * every map or scroll would decode the whole folder in the background and
+	 * compete with the cells the user is actually looking at.  Only the
+	 * visible cells plus a bounded run-ahead are queued; the loader is asked
+	 * again when the viewport moves.
+	 *
+	 * @visible_items is the number of cells currently on screen, @pages the
+	 * configured run-ahead pages, and @n_items the list size.
+	 */
+	static guint ComputePrefetchCount(gulong visible_items, guint pages,
+		guint n_items);
+
 
 	typedef struct _ThreadData
 	{

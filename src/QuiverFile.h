@@ -132,6 +132,34 @@ public:
 	// (EXIF DateTimeOriginal or a video container date) rather than from
 	// the filesystem modification-time fallback
 	bool HasDateMetadata() const;
+
+	/* Date-taken cache used by the filter metadata scan.  The Resolve method
+	 * may parse EXIF/container metadata, so only call it from a worker (the
+	 * map/metadata index).  The Get/Has methods never parse and are safe in a
+	 * GUI predicate. */
+	bool ResolveDateTaken() const;
+	bool HasCachedDateTaken() const;
+	bool GetCachedDateTaken(time_t& outTime) const;
+
+	/* One metadata read for the date/GPS index: resolves GPS, then the
+	 * date-taken, so both share a single EXIF parse on photos, and releases
+	 * the parsed metadata afterwards.  Worker threads only. */
+	bool ResolveMetadataForIndex() const;
+	/* True once both the GPS and date-taken halves of the combined pass have
+	 * been cached (including "no GPS"/"no date" results). */
+	bool IsMetadataResolvedForIndex() const;
+
+	/* Cached GPS lookup.  Photos are read from EXIF; videos from the
+	 * container's ISO 6709 location tag (falling back to embedded EXIF).
+	 * The parse happens once and is cached on the shared implementation, so
+	 * the map's spatial index can call this for every file cheaply. */
+	bool GetGPSCoordinates(double& outLat, double& outLon, bool& outHasAlt, double& outAlt) const;
+	bool HasGPS() const;
+	/* Cached-only GPS lookup: never parses metadata.  Use these from GUI
+	 * filter predicates; Resolve GPS on the metadata worker first. */
+	bool HasCachedGPS() const;
+	bool GetCachedGPSCoordinates(double& outLat, double& outLon,
+		bool& outHasAlt, double& outAlt) const;
 	
 	double GetLoadTimeInSeconds() const;
 	

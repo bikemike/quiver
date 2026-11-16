@@ -30,39 +30,39 @@ public:
 	ImageList();
 	ImageList(bool bEnableMonitor);
 
-	void SetImageList(std::string file, bool bRecursive = false);
-	void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
-	void SetToSingleFile(const std::string& uri, ImageListAttributesPtr attributes = ImageListAttributesPtr());
-	void Add(const std::list<std::string> *file_list, bool bRecursive = false);
-	void UpdateImageList(const std::list<std::string> *file_list);
+	virtual void SetImageList(std::string file, bool bRecursive = false);
+	virtual void SetImageList(const std::list<std::string> *file_list, bool bRecursive = false);
+	virtual void SetToSingleFile(const std::string& uri, ImageListAttributesPtr attributes = ImageListAttributesPtr());
+	virtual void Add(const std::list<std::string> *file_list, bool bRecursive = false);
+	virtual void UpdateImageList(const std::list<std::string> *file_list);
 	/* bPreserveCurrentIndex is for a request that merely extends the list
 	 * already on screen (checking a folder in the folder tree), so the
 	 * viewer keeps its place: a viewer on the first item stays on index 0,
 	 * while any other index follows the current item to wherever the rebuilt
 	 * list put it.  Mutually exclusive with bSelectFirstItem. */
-	void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false, bool bSelectFirstItem = false, const std::string& strSelectURI = "", const std::set<std::string>* pRecursiveFolders = NULL, bool bPreserveCurrentIndex = false);
+	virtual void UpdateImageListAsync(const std::list<std::string> *file_list, bool bRecursive = false, bool bSelectFirstItem = false, const std::string& strSelectURI = "", const std::set<std::string>* pRecursiveFolders = NULL, bool bPreserveCurrentIndex = false);
 	/* Load the folder set described by attributes, installing that exact
 	 * attributes object as this list's current definition so its pointer
 	 * identity is preserved for shared holders ("recently viewed"). */
-	void UpdateImageListAsync(ImageListAttributesPtr attributes, bool bSelectFirstItem = false, const std::string& strSelectURI = "");
-	void StopAsyncLoad();
-	void StopAsyncSort();
+	virtual void UpdateImageListAsync(ImageListAttributesPtr attributes, bool bSelectFirstItem = false, const std::string& strSelectURI = "");
+	virtual void StopAsyncLoad();
+	virtual void StopAsyncSort();
 
 	/* The definition (root folder set + recursive flag) this list was built
 	 * from.  May be NULL before the first load completes. */
-	ImageListAttributesPtr GetAttributes() const;
+	virtual ImageListAttributesPtr GetAttributes() const;
 
 	static void AddIgnoredExtension(std::string ext);
 	static void ClearIgnoreList(std::string ext);
 
-	std::list<std::string> GetFolderList();
-	std::list<std::string> GetFileList();
+	virtual std::list<std::string> GetFolderList();
+	virtual std::list<std::string> GetFileList();
 
-	std::vector<QuiverFile> GetQuiverFiles();
+	virtual std::vector<QuiverFile> GetQuiverFiles();
 
 	// Batch rename support
-	void ApplyRenames(const std::vector<std::pair<std::string, std::string>>& renames);
-	bool IsURIInImageList(const std::string& uri, const std::string& src_uri = "") const;
+	virtual void ApplyRenames(const std::vector<std::pair<std::string, std::string>>& renames);
+	virtual bool IsURIInImageList(const std::string& uri, const std::string& src_uri = "") const;
 
 	// Static active operation tracking to suppress filesystem monitor chatter from internal tasks
 	static void RegisterActiveRenames(const std::vector<std::pair<std::string, std::string>>& renames);
@@ -74,14 +74,14 @@ public:
 	static bool GetActiveCopySource(const std::string& dst_uri, std::string& src_uri);
 
 	virtual void Remove(unsigned int iIndex);
-	void RemoveRange(unsigned int iStart, unsigned int iEnd);
+	virtual void RemoveRange(unsigned int iStart, unsigned int iEnd);
 
 	// reload the list from the items in the maps (F5)
-	void Reload();
+	virtual void Reload();
 
-	void Reverse(); // reverse the list
+	virtual void Reverse(); // reverse the list
 
-	void Clear();
+	virtual void Clear();
 
 	virtual bool HasNext() const;
 	virtual bool HasPrevious() const;
@@ -95,7 +95,7 @@ public:
 	virtual unsigned int GetCurrentIndex() const;
 
 	virtual bool SetCurrentIndex(unsigned int new_index );
-	bool SetCurrentFile(std::string file);
+	virtual bool SetCurrentFile(std::string file);
 
 	virtual QuiverFile GetNext() const;
 	virtual QuiverFile GetPrevious() const;
@@ -104,12 +104,12 @@ public:
 	virtual QuiverFile GetLast() const;
 
 	virtual QuiverFile Get(unsigned int n) const;
-	QuiverFile operator[](unsigned int n);
-	QuiverFile const operator[](unsigned int n) const;
+	virtual QuiverFile operator[](unsigned int n);
+	virtual QuiverFile const operator[](unsigned int n) const;
 
-	void Sort(SortBy o, bool bSortAscending = true, bool bAsync = false);
-	SortBy GetSortBy() const;
-	bool GetSortAscending() const;
+	virtual void Sort(SortBy o, bool bSortAscending = true, bool bAsync = false);
+	virtual SortBy GetSortBy() const;
+	virtual bool GetSortAscending() const;
 
 	virtual bool IsLoading() const override;
 

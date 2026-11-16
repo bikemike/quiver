@@ -74,6 +74,10 @@ struct _QuiverIconViewPrivate
 	gulong prelight_cell;
 	gulong drop_cell;
 	gulong cursor_cell_first;
+	/* Incremental selection tracking keeps single-item cursor movement and
+	 * quiver_icon_view_get_selection() O(1) for large lists. */
+	gulong n_selected_cells;
+	gulong single_selected_cell;
 	
 	gboolean mouse_button_is_down;
 	GdkModifierType last_activate_modifiers;
@@ -607,6 +611,8 @@ quiver_icon_view_init(QuiverIconView *iconview)
 
 	/* the following item is for multiselect */
 	iconview->priv->cursor_cell_first = G_MAXULONG;
+	iconview->priv->n_selected_cells = 0;
+	iconview->priv->single_selected_cell = G_MAXULONG;
 	iconview->priv->last_activate_modifiers = (GdkModifierType)0;
 
 
@@ -708,6 +714,8 @@ quiver_icon_view_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	if (alloc_w <= 0 || alloc_h <= 0)
 		return;
 
+	gint64 snapshot_start = quiver_metrics_enabled() ? quiver_metrics_now_us() : 0;
+
 	graphene_rect_t clip_rect;
 	graphene_rect_init(&clip_rect, 0, 0, (float)alloc_w, (float)alloc_h);
 	gtk_snapshot_push_clip(snapshot, &clip_rect);
@@ -715,6 +723,12 @@ quiver_icon_view_snapshot (GtkWidget *widget, GtkSnapshot *snapshot)
 	quiver_icon_view_snapshot_icons (widget, snapshot);
 
 	gtk_snapshot_pop(snapshot);
+
+	if (snapshot_start != 0)
+	{
+		quiver_metric_emit("iconview", "snapshot",
+			(gdouble)(quiver_metrics_now_us() - snapshot_start) / 1000.0, "ms");
+	}
 }
 
 static void
@@ -747,6 +761,8 @@ quiver_icon_view_size_allocate (GtkWidget     *widget,
 {
 	(void)baseline;
 	g_return_if_fail (QUIVER_IS_ICON_VIEW (widget));
+
+	gint64 allocate_start = quiver_metrics_enabled() ? quiver_metrics_now_us() : 0;
 
 	QuiverIconView *iconview = QUIVER_ICON_VIEW(widget);
 
@@ -903,6 +919,12 @@ quiver_icon_view_size_allocate (GtkWidget     *widget,
 	}
 
 	gtk_widget_queue_draw(widget);
+
+	if (allocate_start != 0)
+	{
+		quiver_metric_emit("iconview", "size allocate",
+			(gdouble)(quiver_metrics_now_us() - allocate_start) / 1000.0, "ms");
+	}
 }
 
 static void
@@ -2511,6 +2533,38 @@ quiver_icon_view_get_cell_for_xy(QuiverIconView *iconview,gint x, gint y)
 
 
 static void
+quiver_icon_view_track_cell_selection(QuiverIconView *iconview,gulong cell,gboolean selected)
+{
+	if (!iconview->priv->cell_items || cell >= iconview->priv->n_cell_items)
+		return;
+
+	CellItem *item = &iconview->priv->cell_items[cell];
+	if (item->selected == selected)
+		return;
+
+	item->selected = selected;
+	if (selected)
+	{
+		if (0 == iconview->priv->n_selected_cells)
+			iconview->priv->single_selected_cell = cell;
+		else
+			iconview->priv->single_selected_cell = G_MAXULONG;
+		iconview->priv->n_selected_cells++;
+	}
+	else
+	{
+		if (iconview->priv->n_selected_cells > 0)
+			iconview->priv->n_selected_cells--;
+		if (0 == iconview->priv->n_selected_cells ||
+			iconview->priv->single_selected_cell == cell ||
+			iconview->priv->n_selected_cells > 1)
+		{
+			iconview->priv->single_selected_cell = G_MAXULONG;
+		}
+	}
+}
+
+static void
 quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor_cell,GdkModifierType state,gboolean is_mouse)
 {
 	gulong old_cell = iconview->priv->cursor_cell;
@@ -2523,7 +2577,9 @@ quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor
 		if (is_mouse)
 		{
 			// for the mouse, we want to toggle the item on the control click
-			iconview->priv->cell_items[iconview->priv->cursor_cell].selected = !iconview->priv->cell_items[iconview->priv->cursor_cell].selected;
+			gulong cell = iconview->priv->cursor_cell;
+			gboolean selected = iconview->priv->cell_items[cell].selected;
+			quiver_icon_view_track_cell_selection(iconview,cell,!selected);
 			g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 		}
 		quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
@@ -2548,19 +2604,62 @@ quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor
 		gulong i;
 		gulong n_cells  = quiver_icon_view_get_n_items(iconview);
 		gboolean change_selection;
+		gint64 selection_scan_start_us = 0;
+
+		if (quiver_metrics_enabled())
+		{
+			quiver_metric_emit("iconview", "set cursor cells",
+				(gdouble)n_cells, "count");
+			quiver_metric_emit("iconview", "set cursor selected",
+				(gdouble)iconview->priv->n_selected_cells, "count");
+			quiver_metric_emit("iconview", "set cursor single",
+				(iconview->priv->single_selected_cell == G_MAXULONG) ? 0.0 : 1.0,
+				"flag");
+			selection_scan_start_us = quiver_metrics_now_us();
+		}
 
 		change_selection = FALSE;
-		for (i = 0; i < n_cells;i++)
+		if (1 == iconview->priv->n_selected_cells &&
+			iconview->priv->single_selected_cell != G_MAXULONG &&
+			iconview->priv->single_selected_cell < n_cells)
 		{
-			if (iconview->priv->cell_items[i].selected && i != new_cursor_cell)
+			/* Common arrow-key case: exactly one selected cell. */
+			if (iconview->priv->single_selected_cell != new_cursor_cell)
 			{
+				gulong old_selected = iconview->priv->single_selected_cell;
+				quiver_icon_view_track_cell_selection(iconview,old_selected,FALSE);
+				quiver_icon_view_invalidate_cell(iconview,old_selected);
 				change_selection = TRUE;
-				iconview->priv->cell_items[i].selected = FALSE;
-				quiver_icon_view_invalidate_cell(iconview,i);
+			}
+		}
+		else if (iconview->priv->n_selected_cells != 0)
+		{
+			for (i = 0; i < n_cells;i++)
+			{
+				if (iconview->priv->cell_items[i].selected && i != new_cursor_cell)
+				{
+					change_selection = TRUE;
+					quiver_icon_view_track_cell_selection(iconview,i,FALSE);
+					quiver_icon_view_invalidate_cell(iconview,i);
+				}
 			}
 		}
 
+		if (quiver_metrics_enabled())
+		{
+			quiver_metric_emit("iconview", "set cursor selection scan",
+				(gdouble)(quiver_metrics_now_us() - selection_scan_start_us) / 1000.0,
+				"ms");
+		}
+
 		iconview->priv->cursor_cell = new_cursor_cell;
+
+		/* Everything except (possibly) the new cursor is deselected now, so
+		 * the tracked single selection is unambiguous. */
+		if (0 == iconview->priv->n_selected_cells)
+			iconview->priv->single_selected_cell = G_MAXULONG;
+		else if (1 == iconview->priv->n_selected_cells)
+			iconview->priv->single_selected_cell = new_cursor_cell;
 		
 		if (!iconview->priv->cell_items[new_cursor_cell].selected)
 		{
@@ -2569,7 +2668,7 @@ quiver_icon_view_set_cursor_cell_full(QuiverIconView *iconview,gulong new_cursor
 
 		if (change_selection)
 		{
-			iconview->priv->cell_items[iconview->priv->cursor_cell].selected = TRUE;
+			quiver_icon_view_track_cell_selection(iconview,iconview->priv->cursor_cell,TRUE);
 			quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
 			g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
 		}
@@ -2688,7 +2787,7 @@ quiver_icon_view_set_select_all(QuiverIconView *iconview, gboolean selected)
 	{
 		if (iconview->priv->cell_items[i].selected != selected)
 		{
-			iconview->priv->cell_items[i].selected = selected;
+			quiver_icon_view_track_cell_selection(iconview,i,selected);
 			quiver_icon_view_invalidate_cell(iconview,i);
 			changed = TRUE;
 		}
@@ -2739,7 +2838,7 @@ quiver_icon_view_shift_select_cells(QuiverIconView *iconview,gulong new_cursor_c
 		{
 			if (!iconview->priv->cell_items[i].selected)
 			{
-				iconview->priv->cell_items[i].selected = TRUE;
+				quiver_icon_view_track_cell_selection(iconview,i,TRUE);
 				quiver_icon_view_invalidate_cell(iconview,i);
 				selection_changed = TRUE;
 			}
@@ -2749,7 +2848,7 @@ quiver_icon_view_shift_select_cells(QuiverIconView *iconview,gulong new_cursor_c
 		{
 			if (iconview->priv->cell_items[i].selected)
 			{
-				iconview->priv->cell_items[i].selected = FALSE;
+				quiver_icon_view_track_cell_selection(iconview,i,FALSE);
 				quiver_icon_view_invalidate_cell(iconview,i);
 				selection_changed = TRUE;
 			}
@@ -2844,7 +2943,7 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 			{
 				if (!iconview->priv->cell_items[current_cell].selected)
 				{
-					iconview->priv->cell_items[current_cell].selected = TRUE;
+					quiver_icon_view_track_cell_selection(iconview,current_cell,TRUE);
 					quiver_icon_view_invalidate_cell(iconview, current_cell);
 					selection_changed = TRUE;
 				}
@@ -2853,7 +2952,7 @@ quiver_icon_view_update_rubber_band_selection(QuiverIconView *iconview)
 			{
 				if (iconview->priv->cell_items[current_cell].selected)
 				{
-					iconview->priv->cell_items[current_cell].selected = FALSE;
+					quiver_icon_view_track_cell_selection(iconview,current_cell,FALSE);
 					quiver_icon_view_invalidate_cell(iconview, current_cell);
 					selection_changed = TRUE;
 				}
@@ -2918,13 +3017,27 @@ quiver_icon_view_get_n_items(QuiverIconView* iconview)
 	}
 	if (iconview->priv->n_cell_items != n_items)
 	{
-		
+		gint64 realloc_start_us = 0;
+		if (quiver_metrics_enabled())
+		{
+			quiver_metric_emit("iconview", "n items", (gdouble)n_items, "count");
+			realloc_start_us = quiver_metrics_now_us();
+		}
+
 		iconview->priv->n_cell_items = n_items;
 		g_free (iconview->priv->cell_items);
 		iconview->priv->cell_items = (CellItem*)g_malloc0( sizeof(CellItem)*(n_items+1) );
+		iconview->priv->n_selected_cells = 0;
+		iconview->priv->single_selected_cell = G_MAXULONG;
 		quiver_icon_view_update_icon_size(iconview);
 		
 		g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
+
+		if (quiver_metrics_enabled())
+		{
+			quiver_metric_emit("iconview", "n items reallocate",
+				(gdouble)(quiver_metrics_now_us() - realloc_start_us) / 1000.0, "ms");
+		}
 	}
 	return n_items;
 }
@@ -3571,9 +3684,11 @@ quiver_icon_view_key_controller_cb (GtkEventControllerKey *controller,
 				if (G_MAXULONG != iconview->priv->cursor_cell &&
 					iconview->priv->cursor_cell < n_cells)
 				{
-					iconview->priv->cell_items[iconview->priv->cursor_cell].selected = !iconview->priv->cell_items[iconview->priv->cursor_cell].selected;
+					gulong cell = iconview->priv->cursor_cell;
+					gboolean selected = iconview->priv->cell_items[cell].selected;
+					quiver_icon_view_track_cell_selection(iconview,cell,!selected);
 					g_signal_emit(iconview,iconview_signals[SIGNAL_SELECTION_CHANGED],0);
-					quiver_icon_view_invalidate_cell(iconview,iconview->priv->cursor_cell);
+					quiver_icon_view_invalidate_cell(iconview,cell);
 				}
 			}
 			break;
@@ -4242,7 +4357,7 @@ void quiver_icon_view_set_selection(QuiverIconView *iconview,const GList *select
 		gulong item = (gulong)selection_iter->data;
 		if (item < iconview->priv->n_cell_items)
 		{
-			iconview->priv->cell_items[item].selected = TRUE;
+			quiver_icon_view_track_cell_selection(iconview,item,TRUE);
 			quiver_icon_view_invalidate_cell(iconview,item);
 			selection_changed = TRUE;
 		}
@@ -4261,13 +4376,32 @@ GList* quiver_icon_view_get_selection(QuiverIconView *iconview)
 
 	selection = NULL;
 
+	if (0 == iconview->priv->n_selected_cells)
+		return NULL;
+
+	if (1 == iconview->priv->n_selected_cells &&
+		iconview->priv->single_selected_cell != G_MAXULONG &&
+		iconview->priv->single_selected_cell < iconview->priv->n_cell_items)
+	{
+		return g_list_append(NULL,(gpointer)iconview->priv->single_selected_cell);
+	}
+
+	gulong count = 0;
+	gulong single = G_MAXULONG;
 	for (i = 0 ; i < iconview->priv->n_cell_items; i++)
 	{
 		if (iconview->priv->cell_items[i].selected)
 		{
 			selection = g_list_append(selection,(gpointer)i);
+			count++;
+			single = (1 == count) ? i : G_MAXULONG;
 		}
 	}
+
+	if (iconview->priv->n_selected_cells != count)
+		iconview->priv->n_selected_cells = count;
+	iconview->priv->single_selected_cell = single;
+
 	return selection;
 }
 

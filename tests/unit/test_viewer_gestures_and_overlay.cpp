@@ -4367,3 +4367,170 @@ TEST_CASE("Viewer loading progress HUD shows and hides properly", "[unit][viewer
 
 
 
+
+TEST_CASE("Viewer delete keeps the following image in the same slot",
+          "[unit][viewer][delete]")
+{
+    REQUIRE_DISPLAY();
+    gchar* tpl = g_strdup("/tmp/quiver_viewer_delete_slot_XXXXXX");
+    REQUIRE(g_mkdtemp(tpl) != nullptr);
+    std::string dir(tpl);
+    std::string src = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    gchar* data = nullptr;
+    gsize len = 0;
+    REQUIRE(g_file_get_contents(src.c_str(), &data, &len, nullptr));
+
+    std::list<std::string> files;
+    std::vector<std::string> paths;
+    for (int i = 0; i < 10; ++i)
+    {
+        char* name = g_strdup_printf("%s/img%02d.jpg", dir.c_str(), i);
+        paths.push_back(name);
+        REQUIRE(g_file_set_contents(name, data, (gssize)len, nullptr));
+        char* uri = g_filename_to_uri(name, nullptr, nullptr);
+        files.push_back(uri);
+        g_free(uri);
+        g_free(name);
+    }
+    g_free(data);
+
+    ImageListPtr list(new ImageList());
+    list->Add(&files);
+    REQUIRE(list->GetSize() == 10);
+
+    boost::shared_ptr<ImageListFilter> base(new ImageListFilter(list,
+        [](const QuiverFile&) { return true; }));
+    boost::shared_ptr<ImageListFilter> viewerList(new ImageListFilter(base,
+        [](const QuiverFile& f) { return !f.IsFolder(); }));
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+    viewer->SetImageList(viewerList);
+    REQUIRE(viewerList->SetCurrentIndex(2));
+    viewer->Show();
+    for (int i = 0; i < 100; ++i)
+    {
+        while (g_main_context_iteration(nullptr, FALSE));
+        g_usleep(10000);
+    }
+    REQUIRE(viewerList->GetCurrentIndex() == 2);
+
+    GAction* action = QuiverUtils::GetAction("ViewerTrash");
+    REQUIRE(action != nullptr);
+    g_action_activate(action, nullptr);
+    for (int i = 0; i < 100; ++i)
+    {
+        while (g_main_context_iteration(nullptr, FALSE));
+        g_usleep(10000);
+    }
+
+    REQUIRE(viewerList->GetSize() == 9);
+    REQUIRE(viewerList->GetCurrentIndex() == 2);
+    REQUIRE(std::string(viewerList->GetCurrent().GetURI()).find("img03.jpg") != std::string::npos);
+
+    viewerList->SetPredicate([](const QuiverFile& f) { return !f.IsFolder(); });
+    for (int i = 0; i < 100; ++i)
+    {
+        while (g_main_context_iteration(nullptr, FALSE));
+        g_usleep(10000);
+    }
+    REQUIRE(viewerList->GetSize() == 9);
+    REQUIRE(viewerList->GetCurrentIndex() == 2);
+    REQUIRE(std::string(viewerList->GetCurrent().GetURI()).find("img03.jpg") != std::string::npos);
+
+    viewer->UnregisterActions();
+    viewer->Hide();
+    viewer.reset();
+    viewerList.reset();
+    base.reset();
+    list.reset();
+    for (auto& p : paths)
+        g_remove(p.c_str());
+    g_rmdir(dir.c_str());
+    g_free(tpl);
+}
+
+TEST_CASE("Viewer delete after region filter reapply removes current item",
+          "[unit][viewer][delete][region]")
+{
+    REQUIRE_DISPLAY();
+    gchar* tpl = g_strdup("/tmp/quiver_viewer_region_delete_XXXXXX");
+    REQUIRE(g_mkdtemp(tpl) != nullptr);
+    std::string dir(tpl);
+    std::string src = QuiverTest_GetImagesDir() + "/sample_4k.jpg";
+    gchar* data = nullptr;
+    gsize len = 0;
+    REQUIRE(g_file_get_contents(src.c_str(), &data, &len, nullptr));
+
+    std::list<std::string> files;
+    std::vector<std::string> paths;
+    for (int i = 0; i < 10; ++i)
+    {
+        char* name = g_strdup_printf("%s/img%02d.jpg", dir.c_str(), i);
+        paths.push_back(name);
+        REQUIRE(g_file_set_contents(name, data, (gssize)len, nullptr));
+        char* uri = g_filename_to_uri(name, nullptr, nullptr);
+        files.push_back(uri);
+        g_free(uri);
+        g_free(name);
+    }
+    g_free(data);
+
+    ImageListPtr list(new ImageList());
+    list->Add(&files);
+    REQUIRE(list->GetSize() == 10);
+
+    auto regionPred = [](const QuiverFile& f) {
+        if (f.IsFolder()) return false;
+        const std::string uri = f.GetURI() ? f.GetURI() : "";
+        const std::string name = uri.substr(uri.rfind('/') + 1);
+        return name.size() >= 8 && (std::stoi(name.substr(3, 2)) % 2) == 0;
+    };
+
+    boost::shared_ptr<ImageListFilter> base(new ImageListFilter(list,
+        [](const QuiverFile&) { return true; }));
+    boost::shared_ptr<ImageListFilter> viewerList(new ImageListFilter(base,
+        regionPred));
+
+    boost::shared_ptr<Viewer> viewer(new Viewer());
+    viewer->RegisterActions();
+    viewer->SetImageList(viewerList);
+    REQUIRE(viewerList->SetCurrentIndex(2));
+    viewer->Show();
+    auto pump = []() {
+        for (int i = 0; i < 100; ++i)
+        {
+            while (g_main_context_iteration(nullptr, FALSE));
+            g_usleep(10000);
+        }
+    };
+    pump();
+    REQUIRE(std::string(viewerList->GetCurrent().GetURI()).find("img04.jpg") != std::string::npos);
+
+    viewerList->SetPredicate(regionPred);
+    pump();
+    REQUIRE(viewerList->GetSize() == 5);
+    REQUIRE(viewerList->GetCurrentIndex() == 2);
+    REQUIRE(std::string(viewerList->GetCurrent().GetURI()).find("img04.jpg") != std::string::npos);
+
+    GAction* action = QuiverUtils::GetAction("ViewerTrash");
+    REQUIRE(action != nullptr);
+    g_action_activate(action, nullptr);
+    pump();
+
+    REQUIRE(viewerList->GetSize() == 4);
+    REQUIRE(viewerList->GetCurrentIndex() == 2);
+    REQUIRE(std::string(viewerList->GetCurrent().GetURI()).find("img06.jpg") != std::string::npos);
+    REQUIRE_FALSE(g_file_test(paths[4].c_str(), G_FILE_TEST_EXISTS));
+
+    viewer->UnregisterActions();
+    viewer->Hide();
+    viewer.reset();
+    viewerList.reset();
+    base.reset();
+    list.reset();
+    for (auto& p : paths)
+        g_remove(p.c_str());
+    g_rmdir(dir.c_str());
+    g_free(tpl);
+}

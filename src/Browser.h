@@ -50,8 +50,16 @@ public:
 	 * toast) can be parented on top of the image grid. */
 	GtkWidget *GetIconViewOverlay();
 
+	/* The icon grid and the map share this content area; the folder tree and
+	 * preview stay visible so switching to the map is just another browsing
+	 * mode. */
+	void SetMapWidget(GtkWidget* mapWidget);
+	void ShowMapView(bool show);
+
 	void ShowLoadingProgress(const std::string& text, double fraction);
 	void HideLoadingProgress();
+	void ShowMetadataProgress(const std::string& text, double fraction);
+	void HideMetadataProgress();
 
 	/* Applies (or lifts) the "hide the sidebar in fullscreen" preference.  The
 	 * window drives this itself, so it is called from the window-state handler

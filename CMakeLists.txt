@@ -25,6 +25,9 @@ pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
 pkg_check_modules(EXIV2 REQUIRED IMPORTED_TARGET exiv2)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
 pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-plugins-base-1.0 gstreamer-video-1.0 gstreamer-gl-1.0 gstreamer-app-1.0 gstreamer-pbutils-1.0)
+pkg_check_modules(SHUMATE REQUIRED IMPORTED_TARGET shumate-1.0)
+pkg_check_modules(SOUP3 REQUIRED IMPORTED_TARGET libsoup-3.0)
+pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 
 # Image decoding backend options
 option(ENABLE_GLYCIN "Enable libglycin backend for image loading" ON)
@@ -118,6 +121,8 @@ install(FILES
     data/filmstrip.png
     data/filmstrip-big.png
     data/timezone21.bin
+    data/world_boundaries.bin
+    data/osm-dark-style.json
     DESTINATION ${CMAKE_INSTALL_DATADIR}/quiver
 )
 
@@ -189,7 +194,7 @@ if (FILE_EXECUTABLE)
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 else()
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
-  set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.38), libgtk-4-1 (>= 4.12.0), libgstreamer1.0-0 (>= 1.2.0), libgstreamer-plugins-base1.0-0, libexiv2-28 | libexiv2-27, libjpeg8, zlib1g")
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.38), libgtk-4-1 (>= 4.12.0), libgstreamer1.0-0 (>= 1.2.0), libgstreamer-plugins-base1.0-0, libexiv2-28 | libexiv2-27, libjpeg8, zlib1g, libshumate-1.0-1, libsoup-3.0-0, libjson-glib-1.0-0")
   if (ENABLE_GLYCIN)
     string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS ", libglycin-2-0")
   endif()

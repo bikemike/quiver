@@ -192,6 +192,64 @@ static std::string folder_tree_normalize_uri(const gchar* arg)
 	return str;
 }
 
+static std::string folder_tree_trim_uri(std::string uri)
+{
+	std::string::size_type last = uri.find_last_not_of('/');
+	if (std::string::npos == last)
+		return uri;
+	/* Keep the slash in a root URI such as file:///. */
+	if (':' == uri[last])
+		return uri;
+	uri.resize(last + 1);
+	return uri;
+}
+
+static bool folder_tree_uri_equal(const std::string& a, const std::string& b)
+{
+	return folder_tree_trim_uri(a) == folder_tree_trim_uri(b);
+}
+
+static bool folder_tree_uri_has_prefix(const std::string& uri, const std::string& prefix)
+{
+	std::string u = folder_tree_trim_uri(uri);
+	std::string p = folder_tree_trim_uri(prefix);
+	if (u == p)
+		return true;
+	if (p.empty() || u.size() <= p.size() || 0 != u.compare(0, p.size(), p))
+		return false;
+	return '/' == p.back() || '/' == u[p.size()];
+}
+
+static std::set<std::string> folder_tree_selection_key(const std::list<std::string>& uris)
+{
+	std::set<std::string> key;
+	for (const auto& uri : uris)
+	{
+		std::string normalized = folder_tree_normalize_uri(uri.c_str());
+		if (normalized.empty())
+			continue;
+		while (!normalized.empty() && normalized.back() == '/')
+			normalized.pop_back();
+		key.insert(normalized);
+	}
+	return key;
+}
+
+static std::set<std::string> folder_tree_recursive_key(const std::set<std::string>& folders)
+{
+	std::set<std::string> key;
+	for (const auto& uri : folders)
+	{
+		std::string normalized = folder_tree_normalize_uri(uri.c_str());
+		if (normalized.empty())
+			normalized = uri;
+		while (!normalized.empty() && normalized.back() == '/')
+			normalized.pop_back();
+		key.insert(normalized);
+	}
+	return key;
+}
+
 // prototype
 static gboolean view_capture_button_press (GtkEventController *controller, GdkEvent *event, gpointer userdata);
 static gboolean view_on_key_press (GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer userdata);
@@ -246,14 +304,16 @@ public:
 	std::set<std::string> GetSelectedRecursiveFolders() const;
 
 	void SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive = false, const std::set<std::string>& recursiveFolders = std::set<std::string>());
+	void RememberSelection(const std::list<std::string>& uris, bool bRecursive,
+		const std::set<std::string>& recursiveFolders);
+	void RememberCurrentSelection();
 	std::list<std::string> GetSelectedURIsFromModels() const;
 	std::list<std::string> GetAddBookmarkURIs(const std::string& clicked_uri) const;
 	void ClearAllCheckboxes();
-	void SetCheckboxForItem(DirItem* item, gboolean value);
-	guint FindItemPosition(DirItem* target);
+	void SetCheckboxForRow(DirItem* item, GtkTreeListRow* row, gboolean value);
 	guint FindItemByURI(const gchar* uri, gboolean check_only);
 	DirItem* FindRootForPath(const gchar* uri);
-	void ExpandItem(DirItem* item);
+	GtkTreeListRow* FindRowForPath(const gchar* uri, DirItem** out_item);
 
 	void SyncTreeSelectionForURI(const gchar* uri, gboolean value);
 	void SyncShortcutSelectionForURI(const gchar* uri, gboolean value);
@@ -280,6 +340,14 @@ public:
 	bool                 m_bShortcutsExpanded;
 	bool                 m_bBookmarksExpanded;
 	bool                 m_bFoldersExpanded;
+
+	/* Last folder selection applied to the tree.  Returning from the viewer
+	 * re-applies the same image-list attributes, so this lets us skip the
+	 * clear-and-reselect pass when nothing actually changed. */
+	bool                 m_bLastSelectionValid;
+	std::set<std::string> m_LastSelectedFolders;
+	bool                 m_bLastSelectedRecursive;
+	std::set<std::string> m_LastSelectedRecursiveFolders;
 
 	// Shortcuts
 	GListStore*        m_pShortcutsStore;
@@ -507,6 +575,23 @@ void FolderTree::SetSelectedFolders(const std::list<std::string> &uris, bool bRe
 	m_FolderTreeImplPtr->SetSelectedFolders(uris, bRecursive, recursiveFolders);
 }
 
+void FolderTree::EmitSelectionChangedEvent(bool bPreserveCurrentIndex)
+{
+	if (m_FolderTreeImplPtr)
+		m_FolderTreeImplPtr->RememberCurrentSelection();
+	FolderTreeEventSource::EmitSelectionChangedEvent(bPreserveCurrentIndex);
+}
+
+void FolderTree::EmitBookmarkOpenEvent(const std::list<std::string>& uris, bool bRecursive)
+{
+	/* Opening a bookmark loads exactly these URIs; it does not carry the
+	 * per-folder recursive set that checkbox toggles do. */
+	if (m_FolderTreeImplPtr)
+		m_FolderTreeImplPtr->RememberSelection(uris, bRecursive,
+			std::set<std::string>());
+	FolderTreeEventSource::EmitBookmarkOpenEvent(uris, bRecursive);
+}
+
 void FolderTree::AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name)
 {
 	if (m_FolderTreeImplPtr)
@@ -541,6 +626,8 @@ FolderTree::FolderTreeImpl::FolderTreeImpl(FolderTree *parent)
 	m_bShortcutsExpanded = true;
 	m_bBookmarksExpanded = true;
 	m_bFoldersExpanded = true;
+	m_bLastSelectionValid = false;
+	m_bLastSelectedRecursive = false;
 	m_pShortcutsStore = NULL;
 	m_pShortcutsSelectionModel = NULL;
 	m_pShortcutsListView = NULL;
@@ -938,6 +1025,8 @@ std::list<std::string> FolderTree::FolderTreeImpl::GetAddBookmarkURIs(const std:
 
 void FolderTree::FolderTreeImpl::ClearAllCheckboxes()
 {
+	m_bLastSelectionValid = false;
+
 	if (m_pShortcutsStore)
 	{
 		guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pShortcutsStore));
@@ -980,7 +1069,11 @@ void FolderTree::FolderTreeImpl::ClearAllCheckboxes()
 				continue;
 			DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
 			if (item)
+			{
 				dir_item_set_checked(item, FALSE);
+				g_object_unref(item);
+			}
+			g_object_unref(row);
 		}
 	}
 
@@ -990,6 +1083,8 @@ void FolderTree::FolderTreeImpl::ClearAllCheckboxes()
 
 void FolderTree::FolderTreeImpl::SyncShortcutSelectionForURI(const gchar* uri, gboolean value)
 {
+	m_bLastSelectionValid = false;
+
 	if (!uri || !m_pShortcutsStore)
 		return;
 
@@ -1030,137 +1125,29 @@ void FolderTree::FolderTreeImpl::SyncShortcutSelectionForURI(const gchar* uri, g
 
 void FolderTree::FolderTreeImpl::SyncTreeSelectionForURI(const gchar* uri, gboolean value)
 {
-	if (!uri || !m_pTreeListModel || !m_pListStoreRoots)
+	m_bLastSelectionValid = false;
+
+	DirItem* item = NULL;
+	GtkTreeListRow* row = FindRowForPath(uri, &item);
+	if (NULL == row)
 		return;
-
-	std::string normalized = folder_tree_normalize_uri(uri);
-	if (normalized.empty())
-		return;
-	const char* target = normalized.c_str();
-
-	DirItem* root = FindRootForPath(target);
-	if (!root)
-		return;
-
-	if (root->uri && 0 == g_strcmp0(root->uri, target))
-	{
-		dir_item_set_checked(root, value);
-		return;
-	}
-
-	DirItem* current = root;
-	ExpandItem(current);
-
-	gchar* remaining = g_strdup(target);
-	gint tries = 0;
-	gboolean done = FALSE;
-	while (!done && tries < 1000)
-	{
-		tries++;
-		guint pos = FindItemPosition(current);
-		if (G_MAXUINT == pos)
-			break;
-		GtkTreeListRow* row = gtk_tree_list_model_get_row(m_pTreeListModel, pos);
-		if (!row)
-			break;
-
-		GListModel* children = gtk_tree_list_row_get_children(row);
-		if (!children)
-		{
-			break;
-		}
-
-		gchar* base = g_strdup(current->uri);
-		GFile* cur_file = g_file_new_for_uri(base);
-		GFile* tgt_file = g_file_new_for_uri(remaining);
-
-		DirItem* next = NULL;
-		guint child_count = g_list_model_get_n_items(children);
-		for (guint c = 0; c < child_count; c++)
-		{
-			DirItem* ch = DIR_ITEM(g_list_model_get_item(children, c));
-			if (!ch || !ch->uri)
-			{
-				if (ch) g_object_unref(ch);
-				continue;
-			}
-			GFile* ch_file = g_file_new_for_uri(ch->uri);
-			if (g_file_equal(ch_file, tgt_file))
-			{
-				next = ch;
-				done = TRUE;
-				g_object_unref(ch_file);
-				break;
-			}
-			else if (g_file_has_prefix(tgt_file, ch_file))
-			{
-				next = ch;
-				g_object_unref(ch_file);
-				break;
-			}
-			g_object_unref(ch_file);
-			g_object_unref(ch);
-		}
-		g_free(base);
-		g_object_unref(cur_file);
-		g_object_unref(tgt_file);
-
-		if (next)
-		{
-			current = next;
-			if (!done)
-				ExpandItem(current);
-			g_object_unref(next);
-		}
-		else
-		{
-			break;
-		}
-	}
-	g_free(remaining);
-
-	if (current)
-	{
-		dir_item_set_checked(current, value);
-	}
+	dir_item_set_checked(item, value);
+	g_object_unref(item);
+	g_object_unref(row);
 }
 
-void FolderTree::FolderTreeImpl::SetCheckboxForItem(DirItem* item, gboolean value)
+void FolderTree::FolderTreeImpl::SetCheckboxForRow(DirItem* item, GtkTreeListRow* row, gboolean value)
 {
 	dir_item_set_checked(item, value);
-	if (m_pSelectionModel && m_bFoldersExpanded)
+	if (m_pSelectionModel && m_bFoldersExpanded && row)
 	{
-		guint pos = FindItemPosition(item);
-		if (pos != G_MAXUINT)
-		{
-			guint flat_pos = GetTreeFlattenOffset() + pos;
-			if (value)
-				gtk_selection_model_select_item(GTK_SELECTION_MODEL(m_pSelectionModel), flat_pos, FALSE);
-			else
-				gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(m_pSelectionModel), flat_pos);
-		}
+		guint pos = gtk_tree_list_row_get_position(row);
+		guint flat_pos = GetTreeFlattenOffset() + pos;
+		if (value)
+			gtk_selection_model_select_item(GTK_SELECTION_MODEL(m_pSelectionModel), flat_pos, FALSE);
+		else
+			gtk_selection_model_unselect_item(GTK_SELECTION_MODEL(m_pSelectionModel), flat_pos);
 	}
-}
-
-guint FolderTree::FolderTreeImpl::FindItemPosition(DirItem* target)
-{
-	if (NULL == target)
-		return G_MAXUINT;
-	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pTreeListModel));
-	for (guint i = 0 ; i < n ; i++)
-	{
-		GtkTreeListRow* row = gtk_tree_list_model_get_row(m_pTreeListModel, i);
-		if (NULL == row)
-			continue;
-		DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
-		gboolean match = (item == target);
-		if (item)
-			g_object_unref(item);
-		g_object_unref(row);
-		if (match)
-			return i;
-	}
-	return G_MAXUINT;
 }
 
 DirItem* FolderTree::FolderTreeImpl::FindRootForPath(const gchar* uri)
@@ -1205,17 +1192,122 @@ DirItem* FolderTree::FolderTreeImpl::FindRootForPath(const gchar* uri)
 	return best;
 }
 
-void FolderTree::FolderTreeImpl::ExpandItem(DirItem* item)
+GtkTreeListRow* FolderTree::FolderTreeImpl::FindRowForPath(const gchar* uri, DirItem** out_item)
 {
-	guint pos = FindItemPosition(item);
-	if (G_MAXUINT == pos)
-		return;
-	GtkTreeListRow* row = gtk_tree_list_model_get_row(m_pTreeListModel, pos);
-	if (NULL != row)
+	if (NULL != out_item)
+		*out_item = NULL;
+	if (NULL == uri || NULL == m_pTreeListModel || NULL == m_pListStoreRoots)
+		return NULL;
+
+	std::string normalized = folder_tree_normalize_uri(uri);
+	if (normalized.empty())
+		return NULL;
+	const gchar* target = normalized.c_str();
+
+	DirItem* root = FindRootForPath(target);
+	if (NULL == root)
+		return NULL;
+
+	guint root_index = G_MAXUINT;
+	guint root_count = g_list_model_get_n_items(G_LIST_MODEL(m_pListStoreRoots));
+	for (guint i = 0 ; i < root_count ; i++)
 	{
-		gtk_tree_list_row_set_expanded(row, TRUE);
-		g_object_unref(row);
+		DirItem* item = DIR_ITEM(g_list_model_get_item(G_LIST_MODEL(m_pListStoreRoots), i));
+		gboolean match = (item == root);
+		if (NULL != item)
+			g_object_unref(item);
+		if (match)
+		{
+			root_index = i;
+			break;
+		}
 	}
+
+	GtkTreeListRow* root_row = (G_MAXUINT != root_index)
+		? gtk_tree_list_model_get_child_row(m_pTreeListModel, root_index)
+		: NULL;
+	if (NULL == root_row)
+	{
+		g_object_unref(root);
+		return NULL;
+	}
+
+	if (root->uri && (folder_tree_uri_equal(root->uri, target) ||
+		0 == g_ascii_strcasecmp(root->uri, target)))
+	{
+		if (NULL != out_item)
+			*out_item = root;
+		else
+			g_object_unref(root);
+		return root_row;
+	}
+	g_object_unref(root);
+
+	GtkTreeListRow* current = root_row;
+	std::string target_uri(target);
+	gint tries = 0;
+	while (tries++ < 1000)
+	{
+		gtk_tree_list_row_set_expanded(current, TRUE);
+		GListModel* children = gtk_tree_list_row_get_children(current);
+		if (NULL == children)
+			break;
+
+		GtkTreeListRow* next_row = NULL;
+		DirItem* found_item = NULL;
+		guint child_count = g_list_model_get_n_items(children);
+		for (guint c = 0 ; c < child_count ; c++)
+		{
+			GtkTreeListRow* child_row = gtk_tree_list_row_get_child_row(current, c);
+			if (NULL == child_row)
+				continue;
+
+			DirItem* child = DIR_ITEM(gtk_tree_list_row_get_item(child_row));
+			if (NULL == child || NULL == child->uri)
+			{
+				if (NULL != child)
+					g_object_unref(child);
+				g_object_unref(child_row);
+				continue;
+			}
+
+			if (folder_tree_uri_equal(child->uri, target_uri))
+			{
+				found_item = child;
+				next_row = child_row;
+				break;
+			}
+			else if (folder_tree_uri_has_prefix(target_uri, child->uri))
+			{
+				next_row = child_row;
+				g_object_unref(child);
+				break;
+			}
+			g_object_unref(child);
+			g_object_unref(child_row);
+		}
+
+		if (NULL != found_item)
+		{
+			g_object_unref(current);
+			if (NULL != out_item)
+				*out_item = found_item;
+			else
+				g_object_unref(found_item);
+			return next_row;
+		}
+
+		if (NULL != next_row)
+		{
+			g_object_unref(current);
+			current = next_row;
+			continue;
+		}
+		break;
+	}
+
+	g_object_unref(current);
+	return NULL;
 }
 
 void FolderTree::FolderTreeImpl::AddChildFolder(const char *parent_uri, const char *child_uri, const char *folder_name)
@@ -1223,6 +1315,7 @@ void FolderTree::FolderTreeImpl::AddChildFolder(const char *parent_uri, const ch
 	if (NULL == parent_uri || NULL == child_uri || NULL == folder_name || NULL == m_pTreeListModel)
 		return;
 
+	m_bLastSelectionValid = false;
 	std::string norm_parent = folder_tree_normalize_uri(parent_uri);
 	guint pos = FindItemByURI(norm_parent.c_str(), FALSE);
 	if (pos == G_MAXUINT)
@@ -1284,6 +1377,7 @@ void FolderTree::FolderTreeImpl::RemoveFolder(const char *folder_uri)
 	if (NULL == folder_uri || NULL == m_pTreeListModel)
 		return;
 
+	m_bLastSelectionValid = false;
 	std::string norm = folder_tree_normalize_uri(folder_uri);
 	guint pos = FindItemByURI(norm.c_str(), FALSE);
 	if (pos == G_MAXUINT)
@@ -1332,30 +1426,62 @@ guint FolderTree::FolderTreeImpl::FindItemByURI(const gchar* uri, gboolean check
 		if (NULL == row)
 			continue;
 		DirItem* item = DIR_ITEM(gtk_tree_list_row_get_item(row));
-		if (NULL != item->uri && 0 == g_strcmp0(item->uri, uri))
+		gboolean match = (NULL != item && NULL != item->uri && 0 == g_strcmp0(item->uri, uri));
+		if (NULL != item)
+			g_object_unref(item);
+		g_object_unref(row);
+		if (match)
 			return i;
 	}
 	return G_MAXUINT;
 }
 
+void FolderTree::FolderTreeImpl::RememberSelection(const std::list<std::string>& uris,
+	bool bRecursive, const std::set<std::string>& recursiveFolders)
+{
+	m_LastSelectedFolders = folder_tree_selection_key(uris);
+	m_bLastSelectedRecursive = bRecursive;
+	m_LastSelectedRecursiveFolders = folder_tree_recursive_key(recursiveFolders);
+	m_bLastSelectionValid = true;
+}
+
+void FolderTree::FolderTreeImpl::RememberCurrentSelection()
+{
+	RememberSelection(GetSelectedFolders(), GetSelectedFoldersRecursive(),
+		GetSelectedRecursiveFolders());
+}
+
 void  FolderTree::FolderTreeImpl::SetSelectedFolders(const std::list<std::string> &uris, bool bRecursive, const std::set<std::string>& recursiveFolders)
 {
-	(void)recursiveFolders;
-	ClearAllCheckboxes();
-
 	// normalize plain paths and file URIs to file:// URIs so the tree can
 	// match them; a folder passed on the command line arrives as a plain
 	// path while tree items always carry file:// URIs
 	std::list<std::string> normUris;
+	for (const auto& uri : uris)
 	{
-		std::list<std::string>::const_iterator itr;
-		for (itr = uris.begin(); uris.end() != itr; ++itr)
-		{
-			std::string normalized = folder_tree_normalize_uri(itr->c_str());
-			if (!normalized.empty())
-				normUris.push_back(normalized);
-		}
+		std::string normalized = folder_tree_normalize_uri(uri.c_str());
+		if (!normalized.empty())
+			normUris.push_back(normalized);
 	}
+
+	const std::set<std::string> selectionKey =
+		folder_tree_selection_key(normUris);
+	const std::set<std::string> recursiveKey =
+		folder_tree_recursive_key(recursiveFolders);
+
+	/* The viewer->browser path re-applies the image list's unchanged
+	 * selection.  Skip the clear-and-reselect pass in that case. */
+	if (m_bLastSelectionValid &&
+		m_LastSelectedFolders == selectionKey &&
+		m_bLastSelectedRecursive == bRecursive &&
+		m_LastSelectedRecursiveFolders == recursiveKey)
+	{
+		if (!uris.empty() && !m_bFoldersExpanded)
+			m_pFolderTree->SetFoldersExpanded(true);
+		return;
+	}
+
+	ClearAllCheckboxes();
 
 	// Compare with bookmarks: if a bookmark has the same folder set and recursive setting,
 	// check off that bookmark in the bookmarks list and check its folders.
@@ -1365,14 +1491,6 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(const std::list<std::string
 		BookmarksPtr bmPtr = Bookmarks::GetInstance();
 		if (bmPtr)
 		{
-			std::set<std::string> targetSet;
-			for (const auto& u : normUris)
-			{
-				std::string s = u;
-				while (!s.empty() && s.back() == '/') s.pop_back();
-				targetSet.insert(s);
-			}
-
 			guint bn = g_list_model_get_n_items(G_LIST_MODEL(m_pBookmarkStore));
 			for (guint i = 0; i < bn; i++)
 			{
@@ -1392,7 +1510,7 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(const std::list<std::string
 								while (!s.empty() && s.back() == '/') s.pop_back();
 								bmSet.insert(s);
 							}
-							if (!bmSet.empty() && bmSet == targetSet)
+							if (!bmSet.empty() && bmSet == selectionKey)
 							{
 								dir_item_set_checked(it, TRUE);
 								if (m_pBookmarkSelectionModel)
@@ -1426,121 +1544,28 @@ void  FolderTree::FolderTreeImpl::SetSelectedFolders(const std::list<std::string
 	{
 		SyncShortcutSelectionForURI(itr->c_str(), TRUE);
 
-		DirItem* root = FindRootForPath(itr->c_str());
-		if (NULL == root)
+		DirItem* item = NULL;
+		GtkTreeListRow* row = FindRowForPath(itr->c_str(), &item);
+		if (NULL == row)
 			continue;
 
-		if (root->uri && (0 == g_strcmp0(root->uri, itr->c_str()) || 0 == g_ascii_strcasecmp(root->uri, itr->c_str())))
-		{
-			SetCheckboxForItem(root, TRUE);
-			guint fpos = FindItemPosition(root);
-			if (G_MAXUINT == first_found)
-				first_found = fpos;
-			continue;
-		}
+		SetCheckboxForRow(item, row, TRUE);
+		if (G_MAXUINT == first_found)
+			first_found = gtk_tree_list_row_get_position(row);
 
-		// walk down the path expanding each intermediate row and
-		// locating (creating is unnecessary: subdirs are enumerated on
-		// expansion) the target folder
-		DirItem* current = root;
-		ExpandItem(current);
-
-		gchar* remaining = g_strdup(itr->c_str());
-		gint tries = 0;
-
-		gboolean done = FALSE;
-		while (!done && tries < 1000)
-		{
-			tries++;
-			guint pos = FindItemPosition(current);
-			if (G_MAXUINT == pos)
-				break;
-			GtkTreeListRow* row = gtk_tree_list_model_get_row(m_pTreeListModel, pos);
-			if (NULL == row)
-				break;
-
-			GListModel* children = gtk_tree_list_row_get_children(row);
-			if (NULL == children)
-			{
-				break;
-			}
-
-			gchar* base = g_strdup(current->uri);
-			GFile* cur_file = g_file_new_for_uri(base);
-			// remaining stays the FULL target path for the whole walk;
-			// the loop locates the child that is either an ancestor of
-			// the target (drop down into it) or equals the target.
-			GFile* tgt_file = g_file_new_for_uri(remaining);
-
-			DirItem* next = NULL;
-			guint child_count = g_list_model_get_n_items(children);
-			for (guint c = 0 ; c < child_count ; c++)
-			{
-				// child is a real row item returned by the model; take
-				// ownership of the reference so the walk can descend into
-				// it on later iterations (FindItemPosition must see the
-				// model item, not a copy)
-				DirItem* child = DIR_ITEM(g_list_model_get_item(children, c));
-				if (NULL == child || NULL == child->uri)
-				{
-					if (NULL != child)
-						g_object_unref(child);
-					continue;
-				}
-
-				GFile* child_file = g_file_new_for_uri(child->uri);
-				if (g_file_equal(child_file, tgt_file))
-				{
-					next = child;
-					done = TRUE;
-					g_object_unref(child_file);
-					break;
-				}
-				else if (g_file_has_prefix(tgt_file, child_file))
-				{
-					next = child;
-					g_object_unref(child_file);
-					break;
-				}
-				g_object_unref(child_file);
-				g_object_unref(child);
-			}
-			g_object_unref(cur_file);
-			g_object_unref(tgt_file);
-			g_free(base);
-
-			if (NULL != next)
-			{
-				if (done)
-				{
-					SetCheckboxForItem(next, TRUE);
-					guint fpos = FindItemPosition(next);
-					if (G_MAXUINT == first_found)
-						first_found = fpos;
-					g_object_unref(next);
-				}
-				else
-				{
-					g_object_unref(current);
-					current = next;
-					ExpandItem(current);
-				}
-			}
-			else
-			{
-				done = TRUE;
-			}
-		}
-
-		if (NULL != remaining)
-			g_free(remaining);
-		g_object_unref(current);
+		g_object_unref(item);
+		g_object_unref(row);
 	}
 
 	if (G_MAXUINT != first_found)
 	{
 		ScrollToTreePosition(first_found, GTK_LIST_SCROLL_NONE);
 	}
+
+	m_LastSelectedFolders = selectionKey;
+	m_bLastSelectedRecursive = bRecursive;
+	m_LastSelectedRecursiveFolders = recursiveKey;
+	m_bLastSelectionValid = true;
 }
 
 static GListModel* create_subdirs (gpointer item_data, gpointer user_data)
@@ -4789,6 +4814,7 @@ void FolderTree::FolderTreeImpl::ReloadShortcuts()
 	if (!m_pShortcutsStore)
 		return;
 
+	m_bLastSelectionValid = false;
 	std::set<std::string> checked_uris;
 	guint n = g_list_model_get_n_items(G_LIST_MODEL(m_pShortcutsStore));
 	for (guint i = 0; i < n; i++)

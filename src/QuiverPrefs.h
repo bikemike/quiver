@@ -60,6 +60,10 @@
 #define QUIVER_PREFS_VIEWER_NAV_CONTROL_VIDEO      "nav_control_video"
 #define QUIVER_PREFS_VIEWER_KINETIC_SCROLLING      "kinetic_scrolling"
 
+// map preferences
+#define QUIVER_PREFS_MAP                           "map"
+#define QUIVER_PREFS_MAP_SOURCE                    "source"
+
 // slideshow preferences
 #define QUIVER_PREFS_SLIDESHOW                     "slideshow"
 #define QUIVER_PREFS_SLIDESHOW_DURATION            "duration"
